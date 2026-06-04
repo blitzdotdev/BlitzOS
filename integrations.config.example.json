@@ -1,0 +1,30 @@
+{
+  "_comment": "Copy to integrations.config.json (gitignored). Each provider needs a one-time OAuth app whose redirect/callback URL is exactly http://127.0.0.1:8723/callback . Then connecting is pure SSO, nothing to type.",
+  "_redirectUri": "http://127.0.0.1:8723/callback",
+
+  "gmail": {
+    "clientId": "xxxx.apps.googleusercontent.com",
+    "clientSecret": "GOCSPX-xxxx",
+    "_where": "console.cloud.google.com/apis/credentials -> OAuth client. Add the redirect URI above and add your email as a Test user."
+  },
+  "github": {
+    "clientId": "Iv1.xxxx_or_Ov23xxxx",
+    "clientSecret": "xxxx",
+    "_where": "github.com/settings/developers -> New OAuth App. Authorization callback URL = the redirect URI above."
+  },
+  "slack": {
+    "clientId": "1234567890.1234567890",
+    "clientSecret": "xxxx",
+    "_where": "api.slack.com/apps -> OAuth & Permissions. Add User Token Scopes + the redirect URI. NOTE: Slack may require an https redirect; if it rejects the loopback URL this provider needs a tunnel/custom-scheme (tracked)."
+  },
+  "jira": {
+    "clientId": "xxxx",
+    "clientSecret": "xxxx",
+    "_where": "developer.atlassian.com/console/myapps -> OAuth 2.0 (3LO). Add Jira scopes + the callback URI above."
+  },
+  "discord": {
+    "clientId": "xxxx",
+    "clientSecret": "xxxx",
+    "_where": "discord.com/developers/applications -> OAuth2. Add the redirect URI above. (Connects your account; bot setup is separate.)"
+  }
+}

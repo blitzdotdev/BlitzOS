@@ -1,0 +1,420 @@
+:root {
+  --bg: #0e1116;
+  --grid: rgba(255, 255, 255, 0.04);
+  --ink: #e6edf3;
+  --muted: #8b949e;
+  --panel: #161b22;
+  --line: #30363d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  user-select: none;
+}
+
+#root-canvas {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* Background captures pan gestures and shows the infinite grid. */
+.bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  cursor: grab;
+}
+.bg:active {
+  cursor: grabbing;
+}
+
+/* The world layer: zero-size, transformed; children positioned in world px. */
+.world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  z-index: 1;
+}
+
+/* Primary space rectangle at the origin. */
+.primary-space {
+  position: absolute;
+  border: 1.5px dashed rgba(88, 166, 255, 0.5);
+  border-radius: 14px;
+  background: rgba(88, 166, 255, 0.04);
+  z-index: 1;
+}
+.primary-label {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: rgba(88, 166, 255, 0.7);
+}
+
+/* Ground plane: widgets + icons (same z band). */
+.ground-item {
+  position: absolute;
+  z-index: 5;
+}
+.ground-item.widget {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+}
+.widget-bar {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+}
+.widget-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(100% - 34px);
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.ground-item.icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.icon-tile {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.icon-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Window plane: live web apps. */
+.window {
+  position: absolute;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--panel);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+.window-bar {
+  height: 32px;
+  flex: 0 0 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 12px;
+  background: #1b222c;
+  border-bottom: 1px solid var(--line);
+  cursor: grab;
+}
+.window-title {
+  font-size: 12px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.window-close {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.window-close:hover {
+  color: #f85149;
+}
+.window-body {
+  flex: 1 1 auto;
+  background: #fff;
+}
+
+/* Screen-space toolbar (no taskbar yet). */
+.toolbar {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(22, 27, 34, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+}
+.toolbar button {
+  background: #21262d;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.toolbar button:hover {
+  background: #2c333d;
+}
+.toolbar .hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Integration widgets (ground plane). */
+.iwidget {
+  position: absolute;
+  z-index: 5;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+}
+.iwidget-bar {
+  height: 40px;
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: grab;
+}
+.iwidget-bar:active {
+  cursor: grabbing;
+}
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.dot-on {
+  background: #3fb950;
+  box-shadow: 0 0 8px #3fb950;
+}
+.dot-off {
+  background: rgba(255, 255, 255, 0.4);
+}
+.iwidget-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+}
+.iwidget-status {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.iwidget-status.connected {
+  color: #3fb950;
+}
+.iwidget-label {
+  font-size: 13px;
+  color: var(--ink);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.iwidget-btn {
+  border: 1px solid var(--line);
+  background: #21262d;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 7px 18px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.iwidget-btn:hover {
+  background: #2c333d;
+}
+.iwidget-btn.ghost {
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* Connect panel (screen-space modal). */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.panel {
+  width: 420px;
+  max-width: 90vw;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.panel-head h3 {
+  margin: 0;
+  font-size: 16px;
+  flex: 1;
+}
+.panel-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+}
+.panel-x {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 20px;
+  cursor: pointer;
+}
+.panel-help {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 4px 0 14px;
+}
+.panel-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.field input {
+  background: #0e1116;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: var(--ink);
+  font-size: 13px;
+}
+.field input:focus {
+  outline: none;
+  border-color: #1f6feb;
+}
+.device-box {
+  background: #0e1116;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  margin: 4px 0;
+}
+.device-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.device-code {
+  font-size: 26px;
+  letter-spacing: 4px;
+  font-weight: 700;
+  margin: 8px 0;
+  color: var(--ink);
+}
+.panel-error {
+  margin-top: 12px;
+  color: #f85149;
+  font-size: 12.5px;
+}
+.panel-error-hint {
+  color: var(--muted);
+  margin-top: 6px;
+}
+.panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18px;
+}
+.panel .primary {
+  background: #1f6feb;
+  border: none;
+  color: #fff;
+  border-radius: 8px;
+  padding: 9px 20px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.panel .primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.panel .link {
+  background: none;
+  border: none;
+  color: #58a6ff;
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 0;
+}
+.panel-soon {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 14px 0 0;
+  font-style: italic;
+}
