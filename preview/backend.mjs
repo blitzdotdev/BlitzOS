@@ -308,6 +308,9 @@ async function startOsAgentSocket() {
             if (!a.kind) return { status: 400, body: { error: 'kind required' } }
             const id = a.id || randomUUID()
             broadcast({ type: 'create', surface: { ...a, id } })
+            if (SERVER_MODE && host && a.kind === 'web' && !host.has(id)) {
+              host.createSurface(id, { url: a.url || 'about:blank', width: Math.round(a.w) || 1280, height: Math.round(a.h) || 800 }).catch(() => {})
+            }
             return { id }
           }
         },
@@ -324,6 +327,9 @@ async function startOsAgentSocket() {
             if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
             const id = randomUUID()
             broadcast({ type: 'create', surface: { kind: 'web', ...a, id } })
+            if (SERVER_MODE && host && !host.has(id)) {
+              host.createSurface(id, { url: a.url, width: Math.round(a.w) || 1280, height: Math.round(a.h) || 800 }).catch(() => {})
+            }
             return { id }
           }
         },
@@ -342,7 +348,9 @@ async function startOsAgentSocket() {
           description: 'Close a surface by id.',
           input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
           handler: ({ body }) => {
-            broadcast({ type: 'close', id: String(toolBody(body).id) })
+            const id = String(toolBody(body).id)
+            broadcast({ type: 'close', id })
+            if (SERVER_MODE && host) host.closeSurface(id).catch(() => {})
             return { ok: true }
           }
         },
