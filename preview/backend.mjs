@@ -18,8 +18,11 @@
 import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
 import { connect } from '@agent-socket/sdk'
+import { WebSocketServer } from 'ws'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
+import { startBrowserHost } from './browser-host.mjs'
+import { controlSession } from '../src/main/control-core.mjs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -182,6 +185,54 @@ const callbackPage = (title, sub) =>
 let osState = { surfaces: [] }
 let agentUrl = null
 const sseClients = new Set()
+
+// ---------- SERVER MODE: live web surfaces via a headless browser ----------
+// When BLITZ_SERVER_MODE=1, a server-side headless Chromium renders each `web`
+// surface as a real top-level page (bypasses X-Frame-Options) and streams JPEG
+// frames to the renderer's <canvas> over the /api/os/stream WS; CDP control
+// (surface_control) becomes available, driven by the SHARED control-core.
+const SERVER_MODE = process.env.BLITZ_SERVER_MODE === '1'
+let host = null
+const streamClients = new Set() // open /api/os/stream WebSockets
+
+async function initServerMode() {
+  if (!SERVER_MODE) return
+  try {
+    host = await startBrowserHost({
+      chromiumPath: process.env.CHROMIUM,
+      onFrame: (id, data) => {
+        const msg = JSON.stringify({ t: 'frame', id, data }) // base64 jpeg (binary framing = future opt)
+        for (const ws of streamClients) {
+          try {
+            ws.send(msg)
+          } catch {
+            /* client gone */
+          }
+        }
+      }
+    })
+    console.log('[agent-os backend] SERVER MODE on — web surfaces are live + CDP-controllable')
+  } catch (e) {
+    console.error('[agent-os backend] SERVER MODE failed to start headless browser:', e?.message || e)
+  }
+}
+
+// Reconcile the host's live targets with the web surfaces the renderer reports
+// (covers both agent- and human-created surfaces, since both land in os:state).
+function reconcileSurfaces(list) {
+  if (!host) return
+  const want = new Set(list.filter((x) => x && x.kind === 'web').map((x) => x.id))
+  for (const sfc of list) {
+    if (sfc.kind === 'web' && !host.has(sfc.id)) {
+      host
+        .createSurface(sfc.id, { url: sfc.url || 'about:blank', width: Math.round(sfc.w) || 1280, height: Math.round(sfc.h) || 800 })
+        .catch((e) => console.error('[server mode] createSurface', sfc.id, e?.message || e))
+    }
+  }
+  for (const id of host.ids()) {
+    if (!want.has(id)) host.closeSurface(id).catch(() => {})
+  }
+}
 function broadcast(obj) {
   const data = `data: ${JSON.stringify(obj)}\n\n`
   for (const r of sseClients) {
@@ -277,8 +328,41 @@ async function startOsAgentSocket() {
         { path: '/list_state', description: 'List the surfaces currently open on the canvas.', handler: () => osState },
         {
           path: '/surface_control',
-          description: 'Act INSIDE a web surface (UNAVAILABLE in the browser preview — needs the Electron desktop app).',
-          handler: () => ({ status: 501, body: { error: 'in-window control (CDP) requires the Electron desktop app; the browser preview can only open/move/close surfaces' } })
+          description: 'Act INSIDE a web surface: click, type, press a key, read text, or screenshot. Only kind "web"; requires server mode. Put the surface id in the body.',
+          input_schema: {
+            type: 'object',
+            required: ['id', 'action'],
+            properties: {
+              id: { type: 'string' },
+              action: {
+                type: 'object',
+                required: ['action'],
+                properties: {
+                  action: { type: 'string', enum: ['click', 'type', 'key', 'read', 'screenshot'] },
+                  selector: { type: 'string' },
+                  x: { type: 'number' }, y: { type: 'number' },
+                  text: { type: 'string' }, perKey: { type: 'boolean' },
+                  key: { type: 'string', description: 'Enter | Tab | ArrowDown | ...' }
+                }
+              }
+            }
+          },
+          handler: async ({ body }) => {
+            const b = toolBody(body)
+            const id = typeof b.id === 'string' ? b.id : ''
+            const action = b.action || {}
+            if (!id || !action.action) return { status: 400, body: { error: 'id and action.action required' } }
+            // eval stays localhost-only — never over the relay (confused-deputy on a logged-in session).
+            if (action.action === 'eval') return { status: 403, body: { error: 'eval is not available over the relay' } }
+            if (!SERVER_MODE || !host || !host.has(id)) {
+              return { status: 501, body: { error: 'in-window control needs server mode (BLITZ_SERVER_MODE=1) or the desktop app; this surface has no server browser target' } }
+            }
+            const r = await controlSession(host.session(id), action)
+            if (!r.ok) return { status: 400, body: { error: r.error } }
+            if (action.action === 'screenshot') return { image: r.result }
+            if (action.action === 'read') return { text: r.result }
+            return { ok: true }
+          }
         }
       ]
     })
@@ -366,7 +450,10 @@ const server = createServer(async (req, res) => {
     })
     req.on('end', () => {
       const s = toolBody(body)
-      if (s && Array.isArray(s.surfaces)) osState = s
+      if (s && Array.isArray(s.surfaces)) {
+        osState = s
+        if (SERVER_MODE) reconcileSurfaces(s.surfaces) // spin up / tear down server targets
+      }
       json(res, 200, { ok: true })
     })
     return
@@ -376,10 +463,43 @@ const server = createServer(async (req, res) => {
   json(res, 404, { error: 'not found' })
 })
 
+// /api/os/stream — binary-ish WS carrying screencast frames out (server mode) and
+// raw CDP input messages in ({t:'cdp', id, method, params} → that surface's session).
+const streamWss = new WebSocketServer({ noServer: true })
+server.on('upgrade', (req, socket, head) => {
+  const u = new URL(req.url || '/', 'http://127.0.0.1')
+  if (u.pathname !== '/api/os/stream') {
+    socket.destroy()
+    return
+  }
+  streamWss.handleUpgrade(req, socket, head, (ws) => {
+    streamClients.add(ws)
+    ws.on('close', () => streamClients.delete(ws))
+    ws.on('message', async (raw) => {
+      let m
+      try {
+        m = JSON.parse(raw.toString())
+      } catch {
+        return
+      }
+      // Human input is forwarded as raw CDP (Input.dispatch* with CSS-px coords).
+      if (m.t === 'cdp' && host && host.has(m.id) && typeof m.method === 'string') {
+        try {
+          await host.session(m.id).send(m.method, m.params || {})
+        } catch {
+          /* target gone */
+        }
+      }
+    })
+  })
+})
+
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`[agent-os backend] listening on http://127.0.0.1:${PORT}`)
   console.log(`[agent-os backend] OAuth redirect URI to register: ${REDIRECT_URI}`)
   console.log(`[agent-os backend] providers configured: ${statuses().filter((s) => s.configured).map((s) => s.id).join(', ') || '(none — add integrations.config.json)'}`)
   // Connect to the agent-socket relay so a pasted URL can drive the preview.
   startOsAgentSocket()
+  // Server mode: bring up the headless browser host for live web surfaces.
+  initServerMode()
 })

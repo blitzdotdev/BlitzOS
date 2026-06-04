@@ -171,6 +171,9 @@ export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
     has(surfaceId) {
       return surfaces.has(surfaceId)
     },
+    ids() {
+      return [...surfaces.keys()]
+    },
     async navigate(surfaceId, url) {
       const s = surfaces.get(surfaceId)
       if (!s) throw new Error(`no server surface "${surfaceId}"`)
