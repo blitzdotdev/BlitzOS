@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { WinItem } from '../types'
 import { useDesktop } from '../store'
 
@@ -12,6 +12,27 @@ export function WindowFrame({ win }: Props): JSX.Element {
   const focusWindow = useDesktop((s) => s.focusWindow)
   const closeWindow = useDesktop((s) => s.closeWindow)
   const drag = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
+  const webviewRef = useRef<HTMLWebViewElement>(null)
+
+  // Tell the main process this webview's guest webContents id once it's live, so
+  // the agent can drive it via CDP (POST /windows/:id/control). No-op in a plain
+  // browser (no Electron preload, and the <webview> never fires 'dom-ready').
+  useEffect(() => {
+    const wv = webviewRef.current as (HTMLWebViewElement & { getWebContentsId(): number }) | null
+    if (!wv) return
+    const onReady = (): void => {
+      try {
+        window.agentOS?.registerWebview?.(win.id, wv.getWebContentsId())
+      } catch {
+        // not running under Electron — ignore
+      }
+    }
+    wv.addEventListener('dom-ready', onReady)
+    return () => {
+      wv.removeEventListener('dom-ready', onReady)
+      window.agentOS?.unregisterWebview?.(win.id)
+    }
+  }, [win.id])
 
   function onBarPointerDown(e: React.PointerEvent): void {
     e.stopPropagation()
@@ -56,6 +77,7 @@ export function WindowFrame({ win }: Props): JSX.Element {
       </div>
       <div className="window-body">
         <webview
+          ref={webviewRef}
           src={win.url}
           partition="persist:agentos"
           style={{ width: '100%', height: '100%', border: 'none', display: 'inline-flex' }}

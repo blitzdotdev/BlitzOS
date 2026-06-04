@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
+import { registerWebview, unregisterWebview, controlWindow } from './cdp'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -58,11 +59,12 @@ app.whenReady().then(() => {
   // Real integration auth (paste / device flow / loopback OAuth), tokens in Keychain.
   registerIntegrations(() => mainWindow)
 
-  // Local HTTP control surface (agent <-> OS). Minimal in slice 1: open a window.
+  // Local HTTP control surface (agent <-> OS): open windows + drive them via CDP.
   startControlServer({
     openWindow: (payload) => {
       mainWindow?.webContents.send('control:open-window', payload)
-    }
+    },
+    controlWindow
   })
 
   app.on('activate', () => {
@@ -77,4 +79,13 @@ app.on('window-all-closed', () => {
 // Reserved for slice 2: renderer pushes desktop state back to main for GET /state.
 ipcMain.on('os:state', (_e, _state) => {
   // no-op for now
+})
+
+// The renderer reports each live <webview>'s guest webContents id (on dom-ready)
+// so the main process can attach CDP to it for POST /windows/:id/control.
+ipcMain.on('os:register-webview', (_e, windowId: string, webContentsId: number) => {
+  registerWebview(windowId, webContentsId)
+})
+ipcMain.on('os:unregister-webview', (_e, windowId: string) => {
+  unregisterWebview(windowId)
 })

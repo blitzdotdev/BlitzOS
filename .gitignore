@@ -6,3 +6,12 @@ dist/
 
 # real OAuth client ids / secrets (keep only the .example version in git)
 integrations.config.json
+
+# preview backend: stored OAuth tokens (real account creds) — never commit
+preview/.tokens.json
+
+# saved cloudflared tunnel token — never commit
+preview/.cf-tunnel-token
+
+# parked vision dump (ignore claude mono)
+claude-mono*.md

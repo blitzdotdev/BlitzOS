@@ -37,6 +37,14 @@ const api = {
     return () => ipcRenderer.removeListener('control:open-window', listener)
   },
 
+  /** Report a live webview's guest webContents id so main can CDP-drive it. */
+  registerWebview(windowId: string, webContentsId: number): void {
+    ipcRenderer.send('os:register-webview', windowId, webContentsId)
+  },
+  unregisterWebview(windowId: string): void {
+    ipcRenderer.send('os:unregister-webview', windowId)
+  },
+
   integrations: {
     list(): Promise<IntegrationStatus[]> {
       return ipcRenderer.invoke('integrations:list')

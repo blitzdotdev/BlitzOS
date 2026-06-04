@@ -59,7 +59,21 @@ curl -s -X POST http://127.0.0.1:<port>/windows \
   -d '{"url":"https://example.com","title":"opened by agent"}'
 ```
 
-The full control surface, the headless Claude Code / Codex runner, CDP-driving of webviews, and the integrations/auth layer are in the backlog.
+The agent can also **drive what's inside a live window** via CDP (click / type / eval / screenshot):
+
+```bash
+# read the page title
+curl -s -X POST http://127.0.0.1:<port>/windows/<id>/control \
+  -H "authorization: Bearer <token>" -H "content-type: application/json" \
+  -d '{"action":"eval","expression":"document.title"}'
+
+# type into a field (clicks the selector to focus it first)
+curl -s -X POST http://127.0.0.1:<port>/windows/<id>/control \
+  -H "authorization: Bearer <token>" -H "content-type: application/json" \
+  -d '{"action":"type","selector":"input[name=q]","text":"hello"}'
+```
+
+The full control surface, the headless Claude Code / Codex runner, and the rest of the integrations/auth layer are in the backlog.
 
 ## Stack
 
