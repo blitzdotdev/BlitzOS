@@ -6,7 +6,13 @@ import type { AgentOSApi } from '../../preload'
 
 declare global {
   interface Window {
-    agentOS?: AgentOSApi
+    // Electron preload (AgentOSApi) + optional server-mode fields the browser shim
+    // adds when BlitzOS runs as a hosted web app (live web surfaces via a headless
+    // browser streamed to a <canvas>). Both optional → Electron compiles unaffected.
+    agentOS?: AgentOSApi & {
+      serverMode?: boolean
+      mountServerSurface?: (canvas: HTMLCanvasElement, surfaceId: string, opts: { w: number; h: number }) => () => void
+    }
   }
 }
 

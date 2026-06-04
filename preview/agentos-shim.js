@@ -62,7 +62,77 @@
     })
   }
 
+  // ---- server mode: stream WS for live web surfaces (headless browser → <canvas>) ----
+  var streamWs = null
+  var frameHandlers = {} // surfaceId -> draw(base64Jpeg)
+  function ensureStream() {
+    if (streamWs && (streamWs.readyState === 0 || streamWs.readyState === 1)) return streamWs
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    streamWs = new WebSocket(proto + '//' + location.host + '/api/os/stream')
+    streamWs.onmessage = function (ev) {
+      var m
+      try { m = JSON.parse(ev.data) } catch (e) { return }
+      if (m.t === 'frame' && frameHandlers[m.id]) frameHandlers[m.id](m.data)
+    }
+    streamWs.onclose = function () { streamWs = null }
+    return streamWs
+  }
+  function streamSend(obj) {
+    var ws = ensureStream()
+    var s = JSON.stringify(obj)
+    if (ws.readyState === 1) ws.send(s)
+    else ws.addEventListener('open', function () { try { ws.send(s) } catch (e) {} }, { once: true })
+  }
+  function mountServerSurface(canvas, surfaceId) {
+    ensureStream()
+    var ctx = canvas.getContext('2d')
+    var img = new Image()
+    img.onload = function () {
+      if (canvas.width !== img.naturalWidth) canvas.width = img.naturalWidth
+      if (canvas.height !== img.naturalHeight) canvas.height = img.naturalHeight
+      ctx.drawImage(img, 0, 0)
+    }
+    frameHandlers[surfaceId] = function (b64) { img.src = 'data:image/jpeg;base64,' + b64 }
+    // map a canvas event to the page's CSS px (frame buffer is the page's CSS size at DPR 1)
+    function toPage(e) {
+      var r = canvas.getBoundingClientRect()
+      var sx = canvas.width / (r.width || 1)
+      var sy = canvas.height / (r.height || 1)
+      return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy }
+    }
+    function cdp(method, params) { streamSend({ t: 'cdp', id: surfaceId, method: method, params: params }) }
+    var onMove = function (e) { var p = toPage(e); cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }) }
+    var onDown = function (e) { e.preventDefault(); canvas.focus(); var p = toPage(e); cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 }) }
+    var onUp = function (e) { var p = toPage(e); cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 }) }
+    var onWheel = function (e) { e.preventDefault(); var p = toPage(e); cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY }) }
+    var onKey = function (e) {
+      e.preventDefault()
+      var t = e.type === 'keydown' ? 'keyDown' : 'keyUp'
+      var params = { type: t, key: e.key, code: e.code, windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode }
+      if (t === 'keyDown' && e.key && e.key.length === 1) params.text = e.key
+      cdp('Input.dispatchKeyEvent', params)
+    }
+    canvas.setAttribute('tabindex', '0')
+    canvas.addEventListener('mousemove', onMove)
+    canvas.addEventListener('mousedown', onDown)
+    canvas.addEventListener('mouseup', onUp)
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    canvas.addEventListener('keydown', onKey)
+    canvas.addEventListener('keyup', onKey)
+    return function cleanup() {
+      delete frameHandlers[surfaceId]
+      canvas.removeEventListener('mousemove', onMove)
+      canvas.removeEventListener('mousedown', onDown)
+      canvas.removeEventListener('mouseup', onUp)
+      canvas.removeEventListener('wheel', onWheel)
+      canvas.removeEventListener('keydown', onKey)
+      canvas.removeEventListener('keyup', onKey)
+    }
+  }
+
   window.agentOS = {
+    serverMode: !!window.__BLITZ_SERVER_MODE__,
+    mountServerSurface: mountServerSurface,
     onAction: function (cb) {
       ensureES()
       actionL.push(cb)

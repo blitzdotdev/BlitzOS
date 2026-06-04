@@ -30,6 +30,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
 
   const drag = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
   const webviewRef = useRef<HTMLWebViewElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const serverMode = !!window.agentOS?.serverMode
   const [draft, setDraft] = useState(surface.url ?? '')
 
   // web only: keep the URL bar synced with navigation
@@ -69,6 +71,16 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     }
   }, [surface.kind, surface.id])
 
+  // Server mode: mount the streamed <canvas> for this web surface (draws screencast
+  // frames, forwards pointer/wheel/key to the server browser via the stream WS).
+  useEffect(() => {
+    if (surface.kind !== 'web' || !serverMode) return
+    const c = canvasRef.current
+    const mount = window.agentOS?.mountServerSurface
+    if (!c || !mount) return
+    return mount(c, surface.id, { w: surface.w, h: surface.h })
+  }, [surface.kind, surface.id, surface.w, surface.h, serverMode])
+
   function go(e: React.FormEvent): void {
     e.preventDefault()
     const u = normalizeUrl(draft)
@@ -107,6 +119,10 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     const fill = { width: '100%', height: '100%', border: 'none', display: 'block' } as const
     switch (surface.kind) {
       case 'web':
+        // Server mode: the site lives in a server-side headless browser, streamed
+        // here as a <canvas> (mountServerSurface draws frames + forwards input).
+        // Electron / plain preview: a real <webview> guest.
+        if (serverMode) return <canvas ref={canvasRef} style={fill} />
         return (
           <webview
             ref={webviewRef}
