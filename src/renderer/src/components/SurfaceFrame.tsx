@@ -71,6 +71,26 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     }
   }, [surface.kind, zoom, surface.id])
 
+  // web only: report this guest's webContents id to main so the agent can drive
+  // it over CDP (POST /surfaces/:id/control). No-op outside Electron.
+  useEffect(() => {
+    if (surface.kind !== 'web') return
+    const el = webviewRef.current as (HTMLElement & { getWebContentsId(): number }) | null
+    if (!el) return
+    const onReady = (): void => {
+      try {
+        window.agentOS?.registerWebview?.(surface.id, el.getWebContentsId())
+      } catch {
+        // not running under Electron — ignore
+      }
+    }
+    el.addEventListener('dom-ready', onReady)
+    return () => {
+      el.removeEventListener('dom-ready', onReady)
+      window.agentOS?.unregisterWebview?.(surface.id)
+    }
+  }, [surface.kind, surface.id])
+
   function go(e: React.FormEvent): void {
     e.preventDefault()
     const u = normalizeUrl(draft)

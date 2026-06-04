@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'crypto'
+import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -95,4 +96,22 @@ export function osGoToPrimary(): void {
 }
 export function osGetState(): OsState {
   return cached
+}
+
+/**
+ * Act INSIDE a surface. The single dispatch core both transports (control server
+ * + agent-socket) call. Keyed on surface.kind: only `web` (a <webview> guest) is
+ * CDP-controllable; `app`/`srcdoc` (iframes) and `native` (React) would be driven
+ * cooperatively (postMessage / store) and aren't wired yet.
+ */
+export function osControlSurface(id: string, action: ControlAction): Promise<ControlResult> {
+  const surf = cached.surfaces.find((s) => s.id === id)
+  if (surf && surf.kind !== 'web') {
+    return Promise.resolve({
+      ok: false,
+      error: `in-window control not supported for kind "${surf.kind}" — only "web" surfaces (app/srcdoc via postMessage planned)`
+    })
+  }
+  // web, or state not yet synced — CDP (controlWindow errors if no guest is registered)
+  return controlWindow(id, action)
 }

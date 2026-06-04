@@ -12,8 +12,10 @@ import {
   osGoToPrimary,
   osGetState,
   osReadWindow,
+  osControlSurface,
   type SurfaceDescriptor
 } from './osActions'
+import type { ControlAction } from './cdp'
 
 const RELAY = process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev'
 const APP_ID = process.env.AGENT_SOCKET_APP_ID || 'as_app_anon'
@@ -45,6 +47,11 @@ A **surface** is one of four kinds:
 - POST /go_to_primary -> recenter on the primary workspace.
 - POST /list_state -> {surfaces:[{id,kind,x,y,w,h,title,url}]} currently open.
 - POST /read_window {id, script?} -> read what is INSIDE a web surface (its DOM). Default returns url, title, where the user is typing, and visible text. Pass a JS expression as \`script\` to extract anything specific (e.g. the chess move list).
+- POST /surface_control {id, action} -> act INSIDE a web surface. action.action is one of:
+  click {selector | x,y}, type {text, selector?, perKey?}, key {key: Enter|Tab|ArrowDown|...},
+  read {selector?} -> {text}, screenshot -> {image: base64 png}. Only works on kind "web".
+  Use 'read' to see the page (works even when panned off-screen); 'screenshot' may be
+  blank for an off-screen surface. Prefer a selector over x,y.
 `
 
 let session: Session | null = null
@@ -213,6 +220,47 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
             } catch (e) {
               return { status: 400, body: { error: e instanceof Error ? e.message : String(e) } }
             }
+          }
+        },
+        {
+          path: '/surface_control',
+          description:
+            'Act INSIDE a web surface (third-party site): click, type, press a key, read text, or screenshot. Only kind "web". Put the surface id in the body. Use read/screenshot first to see the page.',
+          input_schema: {
+            type: 'object',
+            required: ['id', 'action'],
+            properties: {
+              id: { type: 'string' },
+              action: {
+                type: 'object',
+                required: ['action'],
+                properties: {
+                  action: { type: 'string', enum: ['click', 'type', 'key', 'read', 'screenshot'] },
+                  selector: { type: 'string' },
+                  x: { type: 'number' },
+                  y: { type: 'number' },
+                  text: { type: 'string' },
+                  perKey: { type: 'boolean', description: 'fire real per-keystroke events (for editors/autocomplete)' },
+                  key: { type: 'string', description: 'Enter | Tab | Backspace | Escape | ArrowUp/Down/Left/Right' }
+                }
+              }
+            }
+          },
+          handler: async ({ body }) => {
+            const b = parse(body)
+            const id = typeof b.id === 'string' ? b.id : ''
+            const action = (b.action || {}) as { action?: string }
+            if (!id || !action.action) return { status: 400, body: { error: 'id and action.action required' } }
+            // Security: never expose raw page eval to relay callers (confused-deputy
+            // over a logged-in third-party session). eval is localhost-bearer only.
+            if (action.action === 'eval') return { status: 403, body: { error: 'eval is not available over the relay' } }
+            const r = await osControlSurface(id, action as unknown as ControlAction)
+            // The SDK wraps a return with no numeric `status` as HTTP 200, so map
+            // failures to 4xx explicitly and shape success to the documented payloads.
+            if (!r.ok) return { status: 400, body: { error: r.error } }
+            if (action.action === 'screenshot') return { image: r.result }
+            if (action.action === 'read') return { text: r.result }
+            return { ok: true }
           }
         }
       ],

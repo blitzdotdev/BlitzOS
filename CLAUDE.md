@@ -26,6 +26,7 @@ src/main/        Electron main (Node)
   osActions.ts     THE control plane: create/move/close surfaces, getState. IPC to renderer.
   control-server.ts  localhost HTTP control API (local agent path)
   agentSocket.ts   connects to the agent-socket relay; tools -> osActions (remote agent path)
+  cdp.ts           in-window control of `web` surfaces via CDP (webContents.debugger): click/type/key/read/screenshot
   integrations.ts  OAuth SSO registry + flows; tokenStore.ts = Keychain (safeStorage); oauth.ts = loopback code flow
   config.ts (inline in integrations.ts)  reads integrations.config.json
 src/preload/index.ts   contextBridge api: onAction, sendState, onAgentSocketUrl, integrations.*
@@ -48,7 +49,8 @@ integrations.config.json   gitignored; OAuth client ids/secrets
   - `native` → a built-in React component by `component` name (currently `note`).
   Pick the lightest kind that fits; agent-written code must be `srcdoc` (sandboxed), never `native`.
 - **Control plane.** `osActions.ts` is the single source of truth for desktop mutations. Both the **local control server** (HTTP on 127.0.0.1) and **agent-socket** call it; it sends `os:action` IPC to the renderer, which applies it to the zustand store. The renderer pushes `os:state` back so `list_state` works. The agent↔OS contract is plain HTTP/JSON, **not MCP** (deliberate).
-- **agent-socket tools:** `create_surface`, `open_window` (web shortcut), `move_surface`, `close_surface`, `go_to_primary`, `list_state`. Defined in `agentSocket.ts`; mints a paste URL surfaced via the in-app "Connect AI" button.
+- **agent-socket tools:** `create_surface`, `open_window` (web shortcut), `move_surface`, `close_surface`, `go_to_primary`, `list_state`, `surface_control`. Defined in `agentSocket.ts`; mints a paste URL surfaced via the in-app "Connect AI" button.
+- **In-window control (`surface_control`).** Acting *inside* a surface routes through `osActions.osControlSurface(id, action)`, keyed on `surface.kind`: **`web`** (a `<webview>` guest) → **CDP** via `webContents.debugger` (`cdp.ts`) — the only mechanism giving trusted input (`isTrusted`), no same-origin requirement, and off-screen reach; **`app`/`srcdoc`** (iframes) → cooperative `postMessage` (planned, not wired); **`native`** → store mutation. The debugger is single-client and attached lazily, then detached on idle/close so it never locks the user out of DevTools. The renderer reports each web guest's `getWebContentsId()` on `dom-ready` (`os:register-webview`). **Security:** raw `eval` is allowed only on the localhost-bearer control server, **never over the relay** (`surface_control` rejects it).
 - **Integrations.** OAuth SSO only (no token paste). `oauth.ts` runs a loopback authorization-code flow (system browser → `http://127.0.0.1:8723/callback` → token exchange in main → encrypted in Keychain via `safeStorage`). Each provider needs a one-time client id/secret in `integrations.config.json`.
 
 ## Gotchas / conventions
