@@ -16,7 +16,8 @@
  * Electron app. A provider with no creds reports configured:false.
  */
 import { createServer } from 'node:http'
-import { randomBytes, createHash } from 'node:crypto'
+import { randomBytes, createHash, randomUUID } from 'node:crypto'
+import { connect } from '@agent-socket/sdk'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -174,6 +175,122 @@ const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'applic
 const callbackPage = (title, sub) =>
   `<!doctype html><meta charset="utf-8"><body style="font-family:-apple-system,system-ui;background:#0e1116;color:#e6edf3;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center"><div><h2 style="margin:0 0 8px">${title}</h2><p style="color:#8b949e;margin:0">${sub}</p></div><script>try{window.opener&&window.opener.postMessage({type:'agentos:oauth'},'*')}catch(e){}setTimeout(function(){window.close()},1400)</script></body>`
 
+// ---------- OS bridge: surface model over SSE (browser preview) ----------
+// Mirrors src/main/{osActions,agentSocket}.ts, but pushes agent actions to the
+// renderer over Server-Sent Events instead of Electron IPC. In-window control
+// (CDP) is NOT available here — that needs the real Electron app + a <webview>.
+let osState = { surfaces: [] }
+let agentUrl = null
+const sseClients = new Set()
+function broadcast(obj) {
+  const data = `data: ${JSON.stringify(obj)}\n\n`
+  for (const r of sseClients) {
+    try {
+      r.write(data)
+    } catch {
+      /* client gone */
+    }
+  }
+}
+function toolBody(body) {
+  try {
+    return body ? JSON.parse(body) : {}
+  } catch {
+    return {}
+  }
+}
+
+const OS_AGENTS_MD = `# BlitzOS (browser preview)
+
+An infinite canvas of surfaces the user is watching live. You open and arrange surfaces; the user sees every action. Coordinates are world pixels; omit position to center.
+
+Surfaces: web (a live site — shows as a framed window here; full browsing only in the desktop app), app (iframe of a first-party app URL), srcdoc (sandboxed iframe of HTML you write inline — great for a quick tool/visualization), native (built-in widget; component "note" = a post-it, props {text?, color?: yellow|pink|blue|green}).
+
+Tools: /create_surface, /open_window (web shortcut), /move_surface, /close_surface, /go_to_primary, /list_state. (/surface_control — acting INSIDE a web surface — needs the desktop app and is unavailable in this browser preview.)
+`
+
+async function startOsAgentSocket() {
+  try {
+    const session = await connect({
+      appId: process.env.AGENT_SOCKET_APP_ID || 'as_app_anon',
+      baseUrl: process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev',
+      appDescription: 'BlitzOS (browser preview): an agent OS desktop — open and arrange surfaces on an infinite canvas.',
+      agentsMd: OS_AGENTS_MD,
+      tools: [
+        {
+          path: '/create_surface',
+          description: 'Create a surface (kind: web | app | srcdoc | native). web/app take url; srcdoc takes html; native takes component+props.',
+          input_schema: {
+            type: 'object',
+            required: ['kind'],
+            properties: {
+              kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] },
+              x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' },
+              title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' },
+              component: { type: 'string' }, props: { type: 'object' }
+            }
+          },
+          handler: ({ body }) => {
+            const a = toolBody(body)
+            if (!a.kind) return { status: 400, body: { error: 'kind required' } }
+            const id = a.id || randomUUID()
+            broadcast({ type: 'create', surface: { ...a, id } })
+            return { id }
+          }
+        },
+        {
+          path: '/open_window',
+          description: 'Open a third-party site as a web surface. Returns its id.',
+          input_schema: {
+            type: 'object',
+            required: ['url'],
+            properties: { url: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' } }
+          },
+          handler: ({ body }) => {
+            const a = toolBody(body)
+            if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
+            const id = randomUUID()
+            broadcast({ type: 'create', surface: { kind: 'web', ...a, id } })
+            return { id }
+          }
+        },
+        {
+          path: '/move_surface',
+          description: 'Move a surface to (x, y) world pixels.',
+          input_schema: { type: 'object', required: ['id', 'x', 'y'], properties: { id: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } },
+          handler: ({ body }) => {
+            const a = toolBody(body)
+            broadcast({ type: 'move', id: String(a.id), x: Number(a.x), y: Number(a.y) })
+            return { ok: true }
+          }
+        },
+        {
+          path: '/close_surface',
+          description: 'Close a surface by id.',
+          input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+          handler: ({ body }) => {
+            broadcast({ type: 'close', id: String(toolBody(body).id) })
+            return { ok: true }
+          }
+        },
+        { path: '/go_to_primary', description: 'Recenter the view on the primary workspace.', handler: () => { broadcast({ type: 'goToPrimary' }); return { ok: true } } },
+        { path: '/list_state', description: 'List the surfaces currently open on the canvas.', handler: () => osState },
+        {
+          path: '/surface_control',
+          description: 'Act INSIDE a web surface (UNAVAILABLE in the browser preview — needs the Electron desktop app).',
+          handler: () => ({ status: 501, body: { error: 'in-window control (CDP) requires the Electron desktop app; the browser preview can only open/move/close surfaces' } })
+        }
+      ]
+    })
+    const link = await session.mintAgentToken({ label: 'blitzos-preview' })
+    agentUrl = link.url
+    broadcast({ __agentUrl: agentUrl })
+    console.log('[agent-os backend] agent-socket paste URL (drive the preview from any AI chat):\n  ' + agentUrl)
+  } catch (e) {
+    console.error('[agent-os backend] agent-socket connect failed (canvas + integrations still work):', e?.message || e)
+  }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', PUBLIC_BASE_URL)
   const path = url.pathname
@@ -227,6 +344,35 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  // ---- OS bridge routes (surface model) ----
+  if (path === '/api/os/events' && req.method === 'GET') {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no' // discourage proxy buffering of the stream
+    })
+    res.write(': connected\n\n')
+    if (agentUrl) res.write(`data: ${JSON.stringify({ __agentUrl: agentUrl })}\n\n`)
+    sseClients.add(res)
+    req.on('close', () => sseClients.delete(res))
+    return
+  }
+  if (path === '/api/os/state' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => {
+      body += c
+      if (body.length > 2_000_000) req.destroy()
+    })
+    req.on('end', () => {
+      const s = toolBody(body)
+      if (s && Array.isArray(s.surfaces)) osState = s
+      json(res, 200, { ok: true })
+    })
+    return
+  }
+  if (path === '/api/os/agent-url' && req.method === 'GET') return json(res, 200, { url: agentUrl })
+
   json(res, 404, { error: 'not found' })
 })
 
@@ -234,4 +380,6 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`[agent-os backend] listening on http://127.0.0.1:${PORT}`)
   console.log(`[agent-os backend] OAuth redirect URI to register: ${REDIRECT_URI}`)
   console.log(`[agent-os backend] providers configured: ${statuses().filter((s) => s.configured).map((s) => s.id).join(', ') || '(none — add integrations.config.json)'}`)
+  // Connect to the agent-socket relay so a pasted URL can drive the preview.
+  startOsAgentSocket()
 })
