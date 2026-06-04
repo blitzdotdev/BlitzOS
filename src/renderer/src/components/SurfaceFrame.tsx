@@ -6,6 +6,8 @@ import { NoteWidget } from './NoteWidget'
 interface WebviewMethods {
   loadURL(url: string): Promise<void>
   reload(): void
+  setZoomFactor(factor: number): void
+  getWebContentsId(): number
 }
 
 function normalizeUrl(input: string): string {
@@ -25,14 +27,19 @@ const NOTE_COLORS: Record<string, string> = {
 
 export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
+  const resizeSurface = useDesktop((s) => s.resizeSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
+  const setZoom = useDesktop((s) => s.setZoom)
+  const toggleMaximize = useDesktop((s) => s.toggleMaximize)
 
   const drag = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
+  const resize = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null)
   const webviewRef = useRef<HTMLWebViewElement>(null)
   const [draft, setDraft] = useState(surface.url ?? '')
+  const zoom = surface.zoom ?? 1
 
-  // web only: keep the URL bar synced with navigation
+  // web: navigation sync + apply content zoom
   useEffect(() => {
     if (surface.kind !== 'web') return
     const el = webviewRef.current as (HTMLElement & WebviewMethods) | null
@@ -41,13 +48,28 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       const url = (e as Event & { url?: string }).url
       if (url) setDraft(url)
     }
+    const onReady = (): void => {
+      try {
+        el.setZoomFactor(zoom)
+      } catch {
+        /* not ready */
+      }
+      try {
+        window.agentOS?.reportWebview(surface.id, el.getWebContentsId())
+      } catch {
+        /* not ready */
+      }
+    }
     el.addEventListener('did-navigate', onNav)
     el.addEventListener('did-navigate-in-page', onNav)
+    el.addEventListener('dom-ready', onReady)
+    onReady()
     return () => {
       el.removeEventListener('did-navigate', onNav)
       el.removeEventListener('did-navigate-in-page', onNav)
+      el.removeEventListener('dom-ready', onReady)
     }
-  }, [surface.kind])
+  }, [surface.kind, zoom, surface.id])
 
   function go(e: React.FormEvent): void {
     e.preventDefault()
@@ -78,13 +100,38 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
     drag.current = null
   }
-  const stop = (e: React.PointerEvent): void => e.stopPropagation()
 
+  function onResizeDown(e: React.PointerEvent): void {
+    e.stopPropagation()
+    focusSurface(surface.id)
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    resize.current = { startX: e.clientX, startY: e.clientY, origW: surface.w, origH: surface.h }
+  }
+  function onResizeMove(e: React.PointerEvent): void {
+    if (!resize.current) return
+    const scale = useDesktop.getState().transform.scale
+    resizeSurface(
+      surface.id,
+      resize.current.origW + (e.clientX - resize.current.startX) / scale,
+      resize.current.origH + (e.clientY - resize.current.startY) / scale
+    )
+  }
+  function onResizeUp(e: React.PointerEvent): void {
+    ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+    resize.current = null
+  }
+
+  const stop = (e: React.PointerEvent): void => e.stopPropagation()
   const isNote = surface.kind === 'native' && surface.component === 'note'
   const noteColor = isNote ? NOTE_COLORS[(surface.props?.color as string) || 'yellow'] : undefined
 
   function body(): JSX.Element {
     const fill = { width: '100%', height: '100%', border: 'none', display: 'block' } as const
+    // CSS content-zoom for iframes (web uses native setZoomFactor instead)
+    const iframeZoom =
+      zoom === 1
+        ? fill
+        : { ...fill, width: `${100 / zoom}%`, height: `${100 / zoom}%`, transform: `scale(${zoom})`, transformOrigin: '0 0' as const }
     switch (surface.kind) {
       case 'web':
         return (
@@ -96,18 +143,16 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           />
         )
       case 'app':
-        // first-party blitz.dev app: trusted, allow scripts + same-origin
         return (
           <iframe
             title={surface.title}
             src={surface.url}
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-            style={fill}
+            style={iframeZoom}
           />
         )
       case 'srcdoc':
-        // agent-authored HTML: sandboxed, no same-origin (can't reach BlitzOS)
-        return <iframe title={surface.title} sandbox="allow-scripts" srcDoc={surface.html} style={fill} />
+        return <iframe title={surface.title} sandbox="allow-scripts" srcDoc={surface.html} style={iframeZoom} />
       case 'native':
         if (surface.component === 'note') return <NoteWidget surface={surface} />
         return <div className="native-fallback">unknown widget: {surface.component}</div>
@@ -140,6 +185,18 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         ) : (
           <span className="window-title">{surface.title}</span>
         )}
+        <button className="window-ico" title="Zoom out" onPointerDown={stop} onClick={() => setZoom(surface.id, zoom - 0.15)}>
+          −
+        </button>
+        <button className="window-ico zoom-label" title="Reset zoom" onPointerDown={stop} onClick={() => setZoom(surface.id, 1)}>
+          {Math.round(zoom * 100)}%
+        </button>
+        <button className="window-ico" title="Zoom in" onPointerDown={stop} onClick={() => setZoom(surface.id, zoom + 0.15)}>
+          +
+        </button>
+        <button className="window-ico" title="Maximize / restore" onPointerDown={stop} onClick={() => toggleMaximize(surface.id)}>
+          ⛶
+        </button>
         <button className="window-close" onPointerDown={stop} onClick={() => closeSurface(surface.id)}>
           ×
         </button>
@@ -147,6 +204,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       <div className="window-body" style={isNote ? { background: noteColor } : undefined}>
         {body()}
       </div>
+      <div className="window-resize" onPointerDown={onResizeDown} onPointerMove={onResizeMove} onPointerUp={onResizeUp} />
     </div>
   )
 }

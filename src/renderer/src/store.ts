@@ -49,6 +49,7 @@ interface DesktopState {
   panBy: (dx: number, dy: number) => void
   zoomAt: (cursorX: number, cursorY: number, deltaY: number) => void
   goToPrimary: () => void
+  focusAndZoom: (id: string) => void
 
   setIntegrations: (list: IntegrationStatus[]) => void
   setPos: (id: string, x: number, y: number) => void
@@ -56,8 +57,12 @@ interface DesktopState {
 
   createSurface: (input: CreateSurfaceInput) => string
   moveSurface: (id: string, x: number, y: number) => void
+  resizeSurface: (id: string, w: number, h: number) => void
   closeSurface: (id: string) => void
   focusSurface: (id: string) => void
+  setZoom: (id: string, zoom: number) => void
+  toggleMaximize: (id: string) => void
+  updateSurface: (id: string, patch: Partial<Surface>) => void
   updateSurfaceProps: (id: string, props: Record<string, unknown>) => void
 }
 
@@ -94,8 +99,25 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const pad = 80
       const sx = (s.viewport.w - pad * 2) / PRIMARY_W
       const sy = (s.viewport.h - pad * 2) / PRIMARY_H
-      const scale = clamp(Math.min(sx, sy), 0.2, 3)
+      // cap at 1 so content shows at real screen size (never zoomed past 100%)
+      const scale = clamp(Math.min(sx, sy, 1), 0.2, 3)
       return { transform: { scale, x: s.viewport.w / 2, y: s.viewport.h / 2 } }
+    }),
+
+  // Bring a surface to the front AND center it at real (1:1) scale so it's readable.
+  focusAndZoom: (id) =>
+    set((s) => {
+      const surf = s.surfaces.find((w) => w.id === id)
+      if (!surf) return {}
+      const m = 56
+      const fit = Math.min((s.viewport.w - m) / surf.w, (s.viewport.h - m) / surf.h)
+      const scale = clamp(Math.min(1, fit), 0.2, 3)
+      const cx = surf.x + surf.w / 2
+      const cy = surf.y + surf.h / 2
+      return {
+        surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter } : w)),
+        transform: { scale, x: s.viewport.w / 2 - cx * scale, y: s.viewport.h / 2 - cy * scale }
+      }
     }),
 
   setIntegrations: (list) =>
@@ -144,6 +166,55 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   moveSurface: (id, x, y) =>
     set((s) => ({ surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x, y } : w)) })),
+
+  resizeSurface: (id, w, h) =>
+    set((s) => ({
+      surfaces: s.surfaces.map((it) =>
+        it.id === id ? { ...it, w: Math.max(160, w), h: Math.max(120, h) } : it
+      )
+    })),
+
+  setZoom: (id, zoom) =>
+    set((s) => ({
+      surfaces: s.surfaces.map((it) => (it.id === id ? { ...it, zoom: clamp(zoom, 0.3, 3) } : it))
+    })),
+
+  toggleMaximize: (id) =>
+    set((s) => {
+      const surf = s.surfaces.find((w) => w.id === id)
+      if (!surf) return {}
+      if (surf.restore) {
+        const r = surf.restore
+        return {
+          surfaces: s.surfaces.map((w) =>
+            w.id === id ? { ...w, x: r.x, y: r.y, w: r.w, h: r.h, restore: undefined, z: ++zCounter } : w
+          )
+        }
+      }
+      // fill the current viewport (in world coords) with a small margin
+      const m = 22
+      const { transform: t, viewport: vp } = s
+      const fill = {
+        x: (m - t.x) / t.scale,
+        y: (m - t.y) / t.scale,
+        w: (vp.w - 2 * m) / t.scale,
+        h: (vp.h - 2 * m) / t.scale
+      }
+      return {
+        surfaces: s.surfaces.map((w) =>
+          w.id === id
+            ? { ...w, restore: { x: w.x, y: w.y, w: w.w, h: w.h }, ...fill, z: ++zCounter }
+            : w
+        )
+      }
+    }),
+
+  updateSurface: (id, patch) =>
+    set((s) => ({
+      surfaces: s.surfaces.map((it) =>
+        it.id === id ? { ...it, ...patch, props: { ...it.props, ...(patch.props ?? {}) } } : it
+      )
+    })),
 
   closeSurface: (id) => set((s) => ({ surfaces: s.surfaces.filter((w) => w.id !== id) })),
 

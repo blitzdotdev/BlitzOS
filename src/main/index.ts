@@ -41,6 +41,23 @@ function createWindow(): void {
     guest.on('did-fail-load', (_ev, code, desc, url) => {
       if (code !== -3) console.log(`[guest] fail-load ${code} ${desc} ${url}`)
     })
+    // Even when a webview has keyboard focus, surface a bare ⌘ tap to the desktop
+    // so "double-tap ⌘ to toggle pan-mode" works from inside a window.
+    let metaDown = false
+    let sawOther = false
+    guest.on('before-input-event', (_ev, input) => {
+      if (input.type === 'keyDown') {
+        if (input.key === 'Meta') {
+          metaDown = true
+          sawOther = false
+        } else if (metaDown) {
+          sawOther = true
+        }
+      } else if (input.type === 'keyUp' && input.key === 'Meta') {
+        if (metaDown && !sawOther) mainWindow?.webContents.send('os:metatap')
+        metaDown = false
+      }
+    })
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDesktop, type CreateSurfaceInput } from './store'
+import type { Surface } from './types'
 import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
 import { SurfaceFrame } from './components/SurfaceFrame'
@@ -17,6 +18,7 @@ export default function App(): JSX.Element {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [aiUrl, setAiUrl] = useState<string | null>(null)
   const [showAi, setShowAi] = useState(false)
+  const [panMode, setPanMode] = useState(false)
   const pan = useRef<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
@@ -64,12 +66,55 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // Double-tap ⌘ to toggle pan-mode: a full-canvas overlay steals pointer focus
+  // from every webview/iframe so you can pan anywhere. A bare ⌘ tap from a focused
+  // webview arrives via onMetaTap (main).
+  useEffect(() => {
+    let metaDown = false
+    let sawOther = false
+    let lastTap = 0
+    const registerTap = (): void => {
+      const now = performance.now()
+      if (now - lastTap < 450) {
+        lastTap = 0
+        setPanMode((v) => !v)
+      } else {
+        lastTap = now
+      }
+    }
+    const down = (e: KeyboardEvent): void => {
+      if (e.key === 'Meta') {
+        if (!e.repeat) {
+          metaDown = true
+          sawOther = false
+        }
+      } else if (metaDown) {
+        sawOther = true
+      }
+    }
+    const up = (e: KeyboardEvent): void => {
+      if (e.key === 'Meta') {
+        if (metaDown && !sawOther) registerTap()
+        metaDown = false
+      }
+    }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    const off = window.agentOS?.onMetaTap(registerTap)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      off?.()
+    }
+  }, [])
+
   // Control actions from main (local control server or agent-socket).
   useEffect(() => {
     return window.agentOS?.onAction((a) => {
       const st = useDesktop.getState()
       if (a.type === 'create') st.createSurface(a.surface as CreateSurfaceInput)
       else if (a.type === 'move') st.moveSurface(String(a.id), Number(a.x), Number(a.y))
+      else if (a.type === 'update') st.updateSurface(String(a.id), (a.patch ?? {}) as Partial<Surface>)
       else if (a.type === 'close') st.closeSurface(String(a.id))
       else if (a.type === 'goToPrimary') st.goToPrimary()
     })
@@ -131,6 +176,11 @@ export default function App(): JSX.Element {
 
   return (
     <div id="root-canvas" ref={rootRef}>
+      {/* draggable native-window title bar (macOS move/resize) */}
+      <div className="titlebar">
+        <span className="titlebar-label">BlitzOS</span>
+      </div>
+
       <div className="bg" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} />
 
       <Sidebar onAddBrowser={addBrowser} />
@@ -147,6 +197,12 @@ export default function App(): JSX.Element {
           <SurfaceFrame key={s.id} surface={s} />
         ))}
       </div>
+
+      {panMode && (
+        <div className="pan-overlay" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp}>
+          <span className="pan-hint">⌘⌘ pan mode · drag anywhere · double-tap ⌘ to exit</span>
+        </div>
+      )}
 
       <div className="toolbar">
         <button onClick={() => useDesktop.getState().goToPrimary()}>Primary (⌘0)</button>

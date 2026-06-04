@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'crypto'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
@@ -23,6 +23,8 @@ export interface OsState {
 
 let getWin: () => BrowserWindow | null = () => null
 let cached: OsState = { surfaces: [] }
+// surfaceId -> the webview guest's WebContents id (so we can read its DOM)
+const webviewIds = new Map<string, number>()
 
 /** Wire the renderer<->main control channel. Renderer pushes state on change. */
 export function initOsActions(getWindow: () => BrowserWindow | null): void {
@@ -30,6 +32,29 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) cached = state
   })
+  ipcMain.on('os:webview', (_e, m: { surfaceId: string; wcid: number }) => {
+    if (m && m.surfaceId) webviewIds.set(m.surfaceId, m.wcid)
+  })
+}
+
+const DEFAULT_READ = `(() => {
+  const ae = document.activeElement;
+  const txt = (document.body && document.body.innerText || '').replace(/\\n{2,}/g,'\\n').trim();
+  return {
+    url: location.href,
+    title: document.title,
+    typingIn: ae ? { tag: ae.tagName, id: ae.id || null, cls: (ae.className||'').slice(0,80) || null, type: ae.getAttribute && ae.getAttribute('type'), value: (ae.value || ae.textContent || '').slice(0,120) } : null,
+    text: txt.slice(0, 1500)
+  };
+})()`
+
+/** Run JS inside a web surface and return the (JSON-serializable) result. */
+export async function osReadWindow(id: string, script?: string): Promise<unknown> {
+  const wcid = webviewIds.get(id)
+  if (wcid == null) throw new Error(`surface ${id} has no readable web content yet`)
+  const wc = webContents.fromId(wcid)
+  if (!wc || wc.isDestroyed()) throw new Error(`web content for ${id} is gone`)
+  return wc.executeJavaScript(script && script.trim() ? script : DEFAULT_READ, true)
 }
 
 function send(type: string, payload: Record<string, unknown> = {}): void {
@@ -57,6 +82,10 @@ export function osOpenWindow(p: {
 
 export function osMoveSurface(id: string, x: number, y: number): void {
   send('move', { id, x, y })
+}
+/** Patch an existing surface (e.g. update a srcdoc's html, a note's text, geometry). */
+export function osUpdateSurface(id: string, patch: Record<string, unknown>): void {
+  send('update', { id, patch })
 }
 export function osCloseSurface(id: string): void {
   send('close', { id })
