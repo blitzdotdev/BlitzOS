@@ -1,13 +1,18 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { randomBytes } from 'crypto'
-import { osOpenWindow, osCreateSurface, osGetState, type SurfaceDescriptor } from './osActions'
+import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, type SurfaceDescriptor } from './osActions'
+import type { ControlAction } from './cdp'
 
 /**
  * Minimal localhost control API (the LOCAL agent path; agent-socket is the
  * remote/pasted-URL path). Both drive the same osActions.
- *   POST /windows { url, x?, y?, w?, h?, title? }  -> opens a window
- *   GET  /state                                    -> current desktop state
+ *   POST /windows { url, x?, y?, w?, h?, title? }       -> opens a window
+ *   POST /surface { kind, ... }                         -> creates any surface
+ *   POST /surfaces/:id/control { action, ... }          -> act inside a web surface (CDP)
+ *   GET  /state                                         -> current desktop state
  * Bound to 127.0.0.1 on an ephemeral port, guarded by a per-session bearer token.
+ * This path is trusted (loopback + bearer), so it allows the raw `eval` action;
+ * the agent-socket relay path does NOT (see agentSocket.ts).
  */
 export function startControlServer(): void {
   const token = randomBytes(24).toString('hex')
@@ -22,6 +27,31 @@ export function startControlServer(): void {
     if (req.method === 'GET' && req.url === '/state') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify(osGetState()))
+      return
+    }
+
+    // POST /surfaces/:id/control (also /windows/:id/control) — act inside a web surface.
+    const ctl = req.method === 'POST' && req.url ? /^\/(?:surfaces?|windows)\/([^/]+)\/control$/.exec(req.url) : null
+    if (ctl) {
+      const id = decodeURIComponent(ctl[1])
+      let body = ''
+      req.on('data', (chunk) => {
+        body += chunk
+        if (body.length > 2_000_000) req.destroy()
+      })
+      req.on('end', async () => {
+        let action: ControlAction
+        try {
+          action = (body ? JSON.parse(body) : {}) as ControlAction
+        } catch {
+          res.writeHead(400, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'invalid json' }))
+          return
+        }
+        const result = await osControlSurface(id, action)
+        res.writeHead(result.ok ? 200 : 400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(result))
+      })
       return
     }
 

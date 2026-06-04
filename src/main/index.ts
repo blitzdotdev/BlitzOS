@@ -4,6 +4,7 @@ import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { initOsActions } from './osActions'
 import { startAgentSocket } from './agentSocket'
+import { initCdp } from './cdp'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -67,6 +68,9 @@ app.whenReady().then(() => {
 
   // Wire the renderer<->main control channel (shared by control server + agent-socket).
   initOsActions(() => mainWindow)
+
+  // Register the IPC for web-surface CDP control (renderer reports guest ids).
+  initCdp()
 
   // Real integration auth (loopback OAuth SSO), tokens in Keychain.
   registerIntegrations(() => mainWindow)
