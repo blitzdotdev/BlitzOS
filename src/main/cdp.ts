@@ -79,7 +79,23 @@ function guestFor(surfaceId: string): WebContents {
 }
 
 function ensureAttached(wc: WebContents): void {
-  if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
+  if (!wc.debugger.isAttached()) {
+    try {
+      wc.debugger.attach('1.3')
+    } catch (e) {
+      // isAttached() is false when the USER's DevTools owns the debugger (their
+      // client, not ours), so attach() throws. Make that legible to the agent.
+      throw new Error(
+        `${e instanceof Error ? e.message : String(e)} — is DevTools open on this surface? close it to let the agent act`
+      )
+    }
+    // If the user opens DevTools later, Electron detaches us; drop our idle timer.
+    wc.debugger.once('detach', () => {
+      const t = idleTimers.get(wc.id)
+      if (t) clearTimeout(t)
+      idleTimers.delete(wc.id)
+    })
+  }
   // (re)arm the idle-detach timer on every op so we don't hold the debugger
   const prev = idleTimers.get(wc.id)
   if (prev) clearTimeout(prev)
@@ -147,10 +163,26 @@ async function typeText(wc: WebContents, text: string, selector?: string, perKey
   if (selector) await clickSelector(wc, selector) // focus the field first
   ensureAttached(wc)
   if (perKey) {
-    // real per-keystroke events for inputs that listen on keydown (autocomplete, editors)
+    // Real per-keystroke events for inputs that listen on keydown (autocomplete,
+    // editors). keyDown carries `text` (so the char is actually inserted) AND a
+    // virtual-key code (so legacy keyCode/which handlers fire); vk is derived from
+    // the char as a practical heuristic (exact layout mapping isn't needed to type).
     for (const ch of text) {
-      await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', text: ch, key: ch })
-      await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: ch })
+      const vk = ch.toUpperCase().charCodeAt(0)
+      await wc.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        text: ch,
+        unmodifiedText: ch,
+        key: ch,
+        windowsVirtualKeyCode: vk,
+        nativeVirtualKeyCode: vk
+      })
+      await wc.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key: ch,
+        windowsVirtualKeyCode: vk,
+        nativeVirtualKeyCode: vk
+      })
     }
   } else {
     // fast path: commit text in one shot (fires input, not keydown/keyup)
@@ -169,7 +201,9 @@ async function read(wc: WebContents, selector?: string): Promise<unknown> {
 
 async function screenshot(wc: WebContents): Promise<string> {
   ensureAttached(wc)
-  const res = (await wc.debugger.sendCommand('Page.captureScreenshot', { format: 'png', fromSurface: true })) as { data: string }
+  // Note: a fully off-screen / un-composited guest can return a blank frame — `read`
+  // (Runtime.evaluate) is the reliable way to "see" a panned-away surface.
+  const res = (await wc.debugger.sendCommand('Page.captureScreenshot', { format: 'png' })) as { data: string }
   return res.data // base64 PNG
 }
 

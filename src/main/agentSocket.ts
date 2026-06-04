@@ -42,8 +42,9 @@ A **surface** is one of four kinds:
 - POST /list_state -> {surfaces:[{id,kind,x,y,w,h,title,url}]} currently open.
 - POST /surface_control {id, action} -> act INSIDE a web surface. action.action is one of:
   click {selector | x,y}, type {text, selector?, perKey?}, key {key: Enter|Tab|ArrowDown|...},
-  read {selector?} -> text, screenshot -> {image: base64 png}. Only works on kind "web".
-  Use read/screenshot to see the page before acting; prefer a selector over x,y.
+  read {selector?} -> {text}, screenshot -> {image: base64 png}. Only works on kind "web".
+  Use 'read' to see the page (works even when panned off-screen); 'screenshot' may be
+  blank for an off-screen surface. Prefer a selector over x,y.
 `
 
 let session: Session | null = null
@@ -176,7 +177,7 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
               }
             }
           },
-          handler: ({ body }) => {
+          handler: async ({ body }) => {
             const b = parse(body)
             const id = typeof b.id === 'string' ? b.id : ''
             const action = (b.action || {}) as { action?: string }
@@ -184,7 +185,13 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
             // Security: never expose raw page eval to relay callers (confused-deputy
             // over a logged-in third-party session). eval is localhost-bearer only.
             if (action.action === 'eval') return { status: 403, body: { error: 'eval is not available over the relay' } }
-            return osControlSurface(id, action as unknown as ControlAction)
+            const r = await osControlSurface(id, action as unknown as ControlAction)
+            // The SDK wraps a return with no numeric `status` as HTTP 200, so map
+            // failures to 4xx explicitly and shape success to the documented payloads.
+            if (!r.ok) return { status: 400, body: { error: r.error } }
+            if (action.action === 'screenshot') return { image: r.result }
+            if (action.action === 'read') return { text: r.result }
+            return { ok: true }
           }
         }
       ],
