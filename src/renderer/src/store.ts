@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import {
   CanvasTransform,
-  WinItem,
+  Surface,
+  SurfaceKind,
   Vec2,
   IntegrationStatus,
   PRIMARY_W,
@@ -23,12 +24,26 @@ function overlaps(a: Vec2, b: Vec2): boolean {
 
 let zCounter = 10
 
+export interface CreateSurfaceInput {
+  id?: string
+  kind: SurfaceKind
+  x?: number
+  y?: number
+  w?: number
+  h?: number
+  title?: string
+  url?: string
+  html?: string
+  component?: string
+  props?: Record<string, unknown>
+}
+
 interface DesktopState {
   transform: CanvasTransform
   viewport: { w: number; h: number }
   integrations: IntegrationStatus[]
   positions: Record<string, Vec2>
-  windows: WinItem[]
+  surfaces: Surface[]
 
   setViewport: (w: number, h: number) => void
   panBy: (dx: number, dy: number) => void
@@ -39,10 +54,17 @@ interface DesktopState {
   setPos: (id: string, x: number, y: number) => void
   commitPos: (id: string, prevX: number, prevY: number) => void
 
-  addWindow: (w: Partial<WinItem> & { url: string }) => string
-  moveWindow: (id: string, x: number, y: number) => void
-  focusWindow: (id: string) => void
-  closeWindow: (id: string) => void
+  createSurface: (input: CreateSurfaceInput) => string
+  moveSurface: (id: string, x: number, y: number) => void
+  closeSurface: (id: string) => void
+  focusSurface: (id: string) => void
+  updateSurfaceProps: (id: string, props: Record<string, unknown>) => void
+}
+
+function defaultSize(kind: SurfaceKind): { w: number; h: number } {
+  if (kind === 'native') return { w: 240, h: 240 }
+  if (kind === 'srcdoc') return { w: 420, h: 320 }
+  return { w: 920, h: 640 } // web, app
 }
 
 export const useDesktop = create<DesktopState>((set, get) => ({
@@ -50,7 +72,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   viewport: { w: window.innerWidth, h: window.innerHeight },
   integrations: [],
   positions: {},
-  windows: [],
+  surfaces: [],
 
   setViewport: (w, h) => set({ viewport: { w, h } }),
 
@@ -60,7 +82,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   zoomAt: (cursorX, cursorY, deltaY) =>
     set((s) => {
       const { x: tx, y: ty, scale } = s.transform
-      const factor = Math.exp(-deltaY * 0.0015)
+      const factor = Math.exp(-deltaY * 0.0045)
       const newScale = clamp(scale * factor, 0.2, 3)
       const wx = (cursorX - tx) / scale
       const wy = (cursorY - ty) / scale
@@ -78,7 +100,6 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   setIntegrations: (list) =>
     set((s) => {
-      // lay out any widget that doesn't have a position yet, in a centered row
       const gap = 28
       const total = list.length * WIDGET_W + (list.length - 1) * gap
       const startX = -total / 2
@@ -96,33 +117,41 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const cur = s.positions[id]
       if (!cur) return {}
       const candidate = { x: snap(cur.x), y: snap(cur.y) }
-      const collides = Object.entries(s.positions).some(
-        ([oid, p]) => oid !== id && overlaps(candidate, p)
-      )
+      const collides = Object.entries(s.positions).some(([oid, p]) => oid !== id && overlaps(candidate, p))
       return { positions: { ...s.positions, [id]: collides ? { x: prevX, y: prevY } : candidate } }
     }),
 
-  addWindow: (w) => {
-    const id = w.id ?? `win-${zCounter}`
-    const win: WinItem = {
+  createSurface: (input) => {
+    const id = input.id ?? `srf-${zCounter}`
+    const size = defaultSize(input.kind)
+    const surface: Surface = {
       id,
-      x: w.x ?? -PRIMARY_W / 4,
-      y: w.y ?? 120,
-      w: w.w ?? 720,
-      h: w.h ?? 480,
+      kind: input.kind,
+      x: input.x ?? -size.w / 2,
+      y: input.y ?? -size.h / 2,
+      w: input.w ?? size.w,
+      h: input.h ?? size.h,
       z: ++zCounter,
-      title: w.title ?? w.url,
-      url: w.url
+      title: input.title ?? input.url ?? input.component ?? input.kind,
+      url: input.url,
+      html: input.html,
+      component: input.component,
+      props: input.props ?? {}
     }
-    set((s) => ({ windows: [...s.windows, win] }))
+    set((s) => ({ surfaces: [...s.surfaces, surface] }))
     return id
   },
 
-  moveWindow: (id, x, y) =>
-    set((s) => ({ windows: s.windows.map((w) => (w.id === id ? { ...w, x, y } : w)) })),
+  moveSurface: (id, x, y) =>
+    set((s) => ({ surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x, y } : w)) })),
 
-  focusWindow: (id) =>
-    set((s) => ({ windows: s.windows.map((w) => (w.id === id ? { ...w, z: ++zCounter } : w)) })),
+  closeSurface: (id) => set((s) => ({ surfaces: s.surfaces.filter((w) => w.id !== id) })),
 
-  closeWindow: (id) => set((s) => ({ windows: s.windows.filter((w) => w.id !== id) }))
+  focusSurface: (id) =>
+    set((s) => ({ surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter } : w)) })),
+
+  updateSurfaceProps: (id, props) =>
+    set((s) => ({
+      surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, props: { ...w.props, ...props } } : w))
+    }))
 }))

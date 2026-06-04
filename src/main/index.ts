@@ -1,7 +1,9 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
+import { initOsActions } from './osActions'
+import { startAgentSocket } from './agentSocket'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -33,6 +35,14 @@ function createWindow(): void {
     webPreferences.contextIsolation = true
   })
 
+  // Log when a web-surface guest actually loads (proof the real site rendered).
+  mainWindow.webContents.on('did-attach-webview', (_e, guest) => {
+    guest.on('did-finish-load', () => console.log('[guest] loaded:', guest.getURL()))
+    guest.on('did-fail-load', (_ev, code, desc, url) => {
+      if (code !== -3) console.log(`[guest] fail-load ${code} ${desc} ${url}`)
+    })
+  })
+
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
   // Surface real renderer failures (not normal logs) into the terminal.
@@ -55,15 +65,18 @@ function createWindow(): void {
 app.whenReady().then(() => {
   createWindow()
 
-  // Real integration auth (paste / device flow / loopback OAuth), tokens in Keychain.
+  // Wire the renderer<->main control channel (shared by control server + agent-socket).
+  initOsActions(() => mainWindow)
+
+  // Real integration auth (loopback OAuth SSO), tokens in Keychain.
   registerIntegrations(() => mainWindow)
 
-  // Local HTTP control surface (agent <-> OS). Minimal in slice 1: open a window.
-  startControlServer({
-    openWindow: (payload) => {
-      mainWindow?.webContents.send('control:open-window', payload)
-    }
-  })
+  // Local agent path: a localhost HTTP control API.
+  startControlServer()
+
+  // Remote agent path: connect to the agent-socket relay and mint a paste-able
+  // URL so any AI chat can drive BlitzOS (no MCP needed).
+  startAgentSocket(() => mainWindow)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -72,9 +85,4 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
-})
-
-// Reserved for slice 2: renderer pushes desktop state back to main for GET /state.
-ipcMain.on('os:state', (_e, _state) => {
-  // no-op for now
 })

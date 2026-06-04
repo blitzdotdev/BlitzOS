@@ -1,15 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-export interface OpenWindowPayload {
-  id: string
-  url: string
-  x?: number
-  y?: number
-  w?: number
-  h?: number
-  title?: string
-}
-
 export interface IntegrationStatus {
   id: string
   name: string
@@ -18,7 +8,6 @@ export interface IntegrationStatus {
   helpText: string
   connected: boolean
   label: string | null
-  /** whether a client id + secret are present in integrations.config.json */
   configured: boolean
 }
 
@@ -29,19 +18,37 @@ export interface ConnectResult {
   needsConfig?: boolean
 }
 
+export interface OsAction {
+  type: 'create' | 'move' | 'close' | 'goToPrimary'
+  [k: string]: unknown
+}
+
+export interface OsState {
+  surfaces: Array<{ id: string; kind: string; x: number; y: number; w: number; h: number; title: string; url?: string }>
+}
+
 const api = {
-  /** Control API (agent -> OS): open a window on request. */
-  onOpenWindow(cb: (payload: OpenWindowPayload) => void): () => void {
-    const listener = (_e: unknown, payload: OpenWindowPayload): void => cb(payload)
-    ipcRenderer.on('control:open-window', listener)
-    return () => ipcRenderer.removeListener('control:open-window', listener)
+  /** Control actions from main (local control server or agent-socket) -> renderer. */
+  onAction(cb: (a: OsAction) => void): () => void {
+    const listener = (_e: unknown, a: OsAction): void => cb(a)
+    ipcRenderer.on('os:action', listener)
+    return () => ipcRenderer.removeListener('os:action', listener)
+  },
+  /** Renderer pushes current desktop state so main can answer list_state. */
+  sendState(state: OsState): void {
+    ipcRenderer.send('os:state', state)
+  },
+  /** The agent-socket paste URL (for the "Connect AI" affordance). */
+  onAgentSocketUrl(cb: (url: string) => void): () => void {
+    const listener = (_e: unknown, url: string): void => cb(url)
+    ipcRenderer.on('agentsocket:url', listener)
+    return () => ipcRenderer.removeListener('agentsocket:url', listener)
   },
 
   integrations: {
     list(): Promise<IntegrationStatus[]> {
       return ipcRenderer.invoke('integrations:list')
     },
-    /** Run the OAuth SSO flow for a provider (opens the system browser). */
     connect(id: string): Promise<ConnectResult> {
       return ipcRenderer.invoke('integrations:connect', id)
     },

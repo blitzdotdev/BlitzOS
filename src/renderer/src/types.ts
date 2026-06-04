@@ -1,21 +1,35 @@
 export interface CanvasTransform {
-  /** screen-space translation in px */
   x: number
   y: number
-  /** zoom factor */
   scale: number
 }
 
-/** Window-plane item: a live web app. Free position in world px, own z, may overlap. */
-export interface WinItem {
+export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
+
+/**
+ * A surface on the canvas. One descriptor, four renderers:
+ *  - web    : live <webview> (third-party sites, even framing-blockers)
+ *  - app    : <iframe src> (first-party blitz.dev apps)
+ *  - srcdoc : sandboxed <iframe srcdoc> (agent-authored HTML, no backend)
+ *  - native : built-in React component (post-its, tiles) by `component` name
+ */
+export interface Surface {
   id: string
+  kind: SurfaceKind
   x: number
   y: number
   w: number
   h: number
   z: number
   title: string
-  url: string
+  /** web, app */
+  url?: string
+  /** srcdoc */
+  html?: string
+  /** native: which built-in component to render */
+  component?: string
+  /** native: component props (e.g. { text, color }) */
+  props?: Record<string, unknown>
 }
 
 export interface Vec2 {
@@ -23,14 +37,9 @@ export interface Vec2 {
   y: number
 }
 
-/** World-space rect for the primary space, centered on the origin. */
 export const PRIMARY_W = 1440
 export const PRIMARY_H = 900
-
-/** Ground-plane grid cell size in world px. */
 export const GRID = 20
-
-/** Integration widget footprint (world px). */
 export const WIDGET_W = 240
 export const WIDGET_H = 168
 

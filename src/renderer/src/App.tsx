@@ -1,29 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
-import { useDesktop } from './store'
+import { useDesktop, type CreateSurfaceInput } from './store'
 import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
-import { WindowFrame } from './components/WindowFrame'
+import { SurfaceFrame } from './components/SurfaceFrame'
 import { PrimarySpace } from './components/PrimarySpace'
+import { Sidebar } from './components/Sidebar'
 
 export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
   const integrations = useDesktop((s) => s.integrations)
-  const windows = useDesktop((s) => s.windows)
-  const addWindow = useDesktop((s) => s.addWindow)
+  const surfaces = useDesktop((s) => s.surfaces)
+  const createSurface = useDesktop((s) => s.createSurface)
   const setIntegrations = useDesktop((s) => s.setIntegrations)
 
   const [connecting, setConnecting] = useState<string | null>(null)
+  const [aiUrl, setAiUrl] = useState<string | null>(null)
+  const [showAi, setShowAi] = useState(false)
   const pan = useRef<{ x: number; y: number } | null>(null)
 
-  // Load integration statuses; refresh whenever the main process signals a change.
   useEffect(() => {
     const refresh = (): void => {
       window.agentOS?.integrations.list().then(setIntegrations)
     }
     refresh()
     const off = window.agentOS?.integrations.onUpdated(refresh)
-    // re-list on focus so edits to integrations.config.json show up without a restart
     window.addEventListener('focus', refresh)
     return () => {
       off?.()
@@ -63,11 +64,45 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // Control actions from main (local control server or agent-socket).
   useEffect(() => {
-    return window.agentOS?.onOpenWindow((p) =>
-      addWindow({ id: p.id, url: p.url, x: p.x, y: p.y, w: p.w, h: p.h, title: p.title })
-    )
-  }, [addWindow])
+    return window.agentOS?.onAction((a) => {
+      const st = useDesktop.getState()
+      if (a.type === 'create') st.createSurface(a.surface as CreateSurfaceInput)
+      else if (a.type === 'move') st.moveSurface(String(a.id), Number(a.x), Number(a.y))
+      else if (a.type === 'close') st.closeSurface(String(a.id))
+      else if (a.type === 'goToPrimary') st.goToPrimary()
+    })
+  }, [])
+
+  // Push surface state to main (so list_state works), only when surfaces change.
+  useEffect(() => {
+    const push = (): void => {
+      const surfaces = useDesktop.getState().surfaces.map((s) => ({
+        id: s.id,
+        kind: s.kind,
+        x: s.x,
+        y: s.y,
+        w: s.w,
+        h: s.h,
+        title: s.title,
+        url: s.url
+      }))
+      window.agentOS?.sendState({ surfaces })
+    }
+    push()
+    let last = useDesktop.getState().surfaces
+    return useDesktop.subscribe((state) => {
+      if (state.surfaces !== last) {
+        last = state.surfaces
+        push()
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.agentOS?.onAgentSocketUrl((url) => setAiUrl(url))
+  }, [])
 
   function onBgDown(e: React.PointerEvent): void {
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
@@ -83,11 +118,22 @@ export default function App(): JSX.Element {
     pan.current = null
   }
 
+  function addBrowser(): void {
+    const { transform: t, viewport } = useDesktop.getState()
+    const w = 920
+    const h = 640
+    const cx = (viewport.w / 2 - t.x) / t.scale
+    const cy = (viewport.h / 2 - t.y) / t.scale
+    createSurface({ kind: 'web', url: 'https://discord.com/app', title: 'Discord', x: cx - w / 2, y: cy - h / 2, w, h })
+  }
+
   const active = integrations.find((i) => i.id === connecting) ?? null
 
   return (
     <div id="root-canvas" ref={rootRef}>
       <div className="bg" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} />
+
+      <Sidebar onAddBrowser={addBrowser} />
 
       <div
         className="world"
@@ -97,16 +143,33 @@ export default function App(): JSX.Element {
         {integrations.map((it) => (
           <IntegrationWidget key={it.id} integration={it} onConnect={setConnecting} />
         ))}
-        {windows.map((w) => (
-          <WindowFrame key={w.id} win={w} />
+        {surfaces.map((s) => (
+          <SurfaceFrame key={s.id} surface={s} />
         ))}
       </div>
 
       <div className="toolbar">
-        <button onClick={() => addWindow({ url: 'https://example.com', title: 'example.com' })}>+ Window</button>
         <button onClick={() => useDesktop.getState().goToPrimary()}>Primary (⌘0)</button>
+        <button onClick={() => setShowAi((v) => !v)}>{aiUrl ? '🟢 Connect AI' : '○ Connect AI'}</button>
         <span className="hint">drag empty space to pan · pinch / ctrl-scroll to zoom</span>
       </div>
+
+      {showAi && (
+        <div className="ai-panel">
+          <div className="ai-head">Drive BlitzOS from an AI chat</div>
+          {aiUrl ? (
+            <>
+              <p className="ai-sub">Paste this URL into Claude / ChatGPT and ask it to open windows, post-its, etc.</p>
+              <input className="ai-url" readOnly value={aiUrl} onFocus={(e) => e.currentTarget.select()} />
+              <button className="primary" onClick={() => navigator.clipboard?.writeText(aiUrl)}>
+                Copy URL
+              </button>
+            </>
+          ) : (
+            <p className="ai-sub">Connecting to the agent-socket relay…</p>
+          )}
+        </div>
+      )}
 
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
     </div>

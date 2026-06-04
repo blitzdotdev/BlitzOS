@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@agent-socket/sdk": "file:./vendor/agent-socket-sdk",
+    "ws": "^8.18.0",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
