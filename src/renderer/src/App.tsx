@@ -22,6 +22,12 @@ export default function App(): JSX.Element {
   const [panMode, setPanMode] = useState(false)
   const pan = useRef<{ x: number; y: number } | null>(null)
 
+  // The browser/server preview is an infinite canvas (pan/zoom), not the fixed
+  // desktop the Electron app defaults to.
+  useEffect(() => {
+    if (window.agentOS?.serverMode) useDesktop.getState().setMode('canvas')
+  }, [])
+
   useEffect(() => {
     const refresh = (): void => {
       window.agentOS?.integrations.list().then(setIntegrations)

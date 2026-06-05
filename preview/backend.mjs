@@ -357,6 +357,52 @@ async function startOsAgentSocket() {
         { path: '/go_to_primary', description: 'Recenter the view on the primary workspace.', handler: () => { broadcast({ type: 'goToPrimary' }); return { ok: true } } },
         { path: '/list_state', description: 'List the surfaces currently open on the canvas.', handler: () => osState },
         {
+          path: '/read_window',
+          description: 'Read what is INSIDE a web surface (its DOM): url, title, and visible text. Pass a JS expression as `script` to extract something specific. Only kind "web" (server mode).',
+          input_schema: {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'string' }, script: { type: 'string', description: 'optional JS expression evaluated in the page; its value is returned' } }
+          },
+          handler: async ({ body }) => {
+            const b = toolBody(body)
+            const id = typeof b.id === 'string' ? b.id : ''
+            if (!id) return { status: 400, body: { error: 'id required' } }
+            if (!SERVER_MODE || !host || !host.has(id)) {
+              return { status: 501, body: { error: 'read_window needs server mode (or the desktop app); this surface has no server browser target' } }
+            }
+            const action = typeof b.script === 'string' && b.script ? { action: 'eval', expression: b.script } : { action: 'read' }
+            const r = await controlSession(host.session(id), action)
+            if (!r.ok) return { status: 400, body: { error: r.error } }
+            return { result: r.result }
+          }
+        },
+        {
+          path: '/update_surface',
+          description: 'Patch a surface in place: set html (srcdoc), props (native, e.g. note text), url, title, or geometry (x,y,w,h).',
+          input_schema: {
+            type: 'object',
+            required: ['id'],
+            properties: {
+              id: { type: 'string' },
+              html: { type: 'string' }, url: { type: 'string' }, title: { type: 'string' },
+              props: { type: 'object' },
+              x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }
+            }
+          },
+          handler: ({ body }) => {
+            const b = toolBody(body)
+            const id = typeof b.id === 'string' ? b.id : ''
+            if (!id) return { status: 400, body: { error: 'id required' } }
+            const patch = { ...b }
+            delete patch.id
+            broadcast({ type: 'update', id, patch })
+            // server mode: a url change navigates the live target
+            if (SERVER_MODE && host && host.has(id) && typeof b.url === 'string') host.navigate(id, b.url).catch(() => {})
+            return { ok: true }
+          }
+        },
+        {
           path: '/surface_control',
           description: 'Act INSIDE a web surface: click, type, press a key, read text, or screenshot. Only kind "web"; requires server mode. Put the surface id in the body.',
           input_schema: {
