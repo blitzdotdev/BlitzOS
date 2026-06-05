@@ -216,8 +216,19 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     e.preventDefault()
     const u = normalizeUrl(draft)
     setDraft(u)
-    if (serverMode) window.agentOS?.serverNavigate?.(surface.id, u)
-    else (webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
+    if (serverMode) {
+      window.agentOS?.serverNavigate?.(surface.id, u)
+      // Keep the OS's stored url/title in sync with the actual navigation. Otherwise
+      // list_state stays stale and surface reconciliation can snap the page back to
+      // the remembered (old) url. (Server-mode address-bar nav bypasses the store.)
+      let title = u
+      try {
+        title = new URL(u).hostname || u
+      } catch {
+        /* keep u */
+      }
+      useDesktop.getState().updateSurface(surface.id, { url: u, title })
+    } else (webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
   }
   function reload(): void {
     if (serverMode) window.agentOS?.serverReload?.(surface.id)
