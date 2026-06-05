@@ -6,7 +6,7 @@ import { initOsActions } from './osActions'
 import { startAgentSocket } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
-import { startBrain } from './brain/orchestrator'
+import { startBrain } from './brain/orchestrator.mjs'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).

@@ -1,23 +1,12 @@
 import { spawn } from 'child_process'
-import type { BlitzMoment } from '../events'
 
-// The reasoner turns a perception "moment" into a one-line observation. In P1 the
-// loop is OBSERVE-ONLY, so a reasoner is given TEXT IN / TEXT OUT and NO tools — it
-// physically cannot act on the desktop. (The act tier is gated behind P2/P3.)
-
-export interface Observation {
-  seq: number
-  ts: number
-  surfaceId: string
-  url?: string
-  title?: string
-  summary: string
-  significant: boolean
-  reasoned: boolean // true when an LLM enriched the deterministic baseline
-}
+// The reasoner turns a perception "moment" into a one-line observation. SHARED .mjs so
+// both the Electron main and the server-mode backend run the same brain. In the
+// OBSERVE-ONLY loop a reasoner gets TEXT IN / TEXT OUT and NO tools — it physically
+// cannot act on the desktop. (The act tier is gated behind P2/P3.)
 
 /** Zero-cost deterministic summary of a moment (no LLM) — the baseline observation. */
-export function summarize(m: BlitzMoment): Observation {
+export function summarize(m) {
   const acts =
     m.user && m.user.length
       ? m.user.join('; ')
@@ -39,21 +28,14 @@ export function summarize(m: BlitzMoment): Observation {
   }
 }
 
-export interface Reasoner {
-  /** Enrich a (significant) moment into a one-line observation. Text-in / text-out;
-   *  the reasoner has NO tools, so the observe loop cannot mutate anything through it. */
-  summarize(m: BlitzMoment): Promise<string>
-}
-
 /**
  * A reasoner backed by a headless `claude -p` child — uses the user's existing Claude
- * Code auth (no API key in BlitzOS) and is given NO tools, so it can only describe.
- * This is ONE option for "where the brain runs" (architecture §7, still open); it is
- * opt-in via BLITZ_BRAIN=claude and never the default.
+ * Code auth (no API key) and is given NO tools, so it can only describe. ONE option for
+ * "where the brain runs" (architecture §7, still open); opt-in via BLITZ_BRAIN=claude.
  */
-export function claudeReasoner(): Reasoner {
+export function claudeReasoner() {
   return {
-    summarize(m: BlitzMoment): Promise<string> {
+    summarize(m) {
       const moment = {
         trigger: m.trigger,
         url: m.url,

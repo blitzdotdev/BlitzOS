@@ -256,10 +256,12 @@ The critical path then follows: **P0 (privacy gate) → P1 (resident loop, obser
 - **Builds:** `StateStore` (atomic JSON + ring); `Profile`/`Snapshot` schema; `renderer:ready` handshake; `runBoot()` deterministic baseline + brain handoff; `patch_profile`/`save_layout`/`restore_layout` (localhost-only); persisted seen-set + budget; widen `sendState` to include z/zoom/transform/mode (L1).
 - **Unblocks:** the OS boots assembled, remembers, and doesn't re-surface old messages.
 
-### P5 — Server-mode perception parity + always-on reliability
+### P5 — Server-mode perception parity + always-on reliability — 🟡 PARTIAL (perception/brain LANDED 2026-06-05)
 - **Builds from:** `browser-host.mjs` `session(id)` + CDP event fan-out; P1–P4.
 - **Builds:** port the sensor/moment machinery into server mode (it has none today); persistent/shared server browser profile (logins survive); respawn supervisor + CDP reconnect; idempotent `createSurface`.
 - **Unblocks:** the previewed product (agentos.blitzmen.com) actually runs the brain; always-on is real.
+- **Done (perception/brain half):** the perception kernel + brain were extracted to shared `src/main/perception-core.mjs` (coalescer + content-share + `INJECT`/`DRAIN` sensors) and `src/main/brain/{reasoner,orchestrator}.mjs`; `events.ts` re-exports them (one implementation, no per-transport drift). `preview/backend.mjs` now injects the sensors into each server Chromium target over CDP (`Runtime.evaluate(INJECT/DRAIN)` on a 350ms drain, supervised against live targets), feeds the SAME coalescer, exposes the `/events` tool (relay-redacted by the same content-share consent), runs the resident brain (`startBrain('server-brain')`), and adds `POST /api/os/content-share` + `GET /api/os/brain-log`. The 👁 share toggle now shows in server mode. **Verified end-to-end in headless Chromium:** click → idle moment → `/events` redacted un-shared / full when shared → brain observation. So the link (agentos.blitzmen.com) runs the autonomy loop.
+- **Remaining (reliability/login half):** persistent/shared server browser profile (today `mkdtempSync` = logged-out each run), respawn supervisor + CDP reconnect, idempotent `createSurface` (the browser-host audit majors), and the server-mode `surfaceAction` callback (widget "approve" → moment). These are the always-on hardening.
 
 ### P6 — Deferred: teenybase-D1 sync + multi-tenant
 - **Builds from:** repo teenybase core + `save_version` CAS; P1–P5 stable.

@@ -31,6 +31,19 @@ import {
   PROVIDER_DATA,
   WIDGET_AUTHORING_MD
 } from '../src/main/widget-catalog.mjs'
+// Shared perception kernel + resident brain — the SAME modules the Electron main runs,
+// so server mode gets the autonomy loop with no duplicated code.
+import {
+  ingestSignals,
+  waitForEvents,
+  latestSeq,
+  setContentShare,
+  isContentShared,
+  redactMoment,
+  INJECT,
+  DRAIN
+} from '../src/main/perception-core.mjs'
+import { startBrain, getObservations } from '../src/main/brain/orchestrator.mjs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -228,9 +241,52 @@ async function initServerMode() {
       }
     })
     console.log('[agent-os backend] SERVER MODE on — web surfaces are live + CDP-controllable')
+    // Perception parity: inject the SAME in-page sensors (INJECT) into each server
+    // browser target via CDP and drain them into the SAME moment coalescer, so server
+    // mode produces the moment stream (and the resident brain) just like Electron.
+    startServerPerception()
+    // The resident OBSERVE-ONLY brain (in-process; full content; no relay redaction).
+    startBrain('server-brain')
   } catch (e) {
     console.error('[agent-os backend] SERVER MODE failed to start headless browser:', e?.message || e)
   }
+}
+
+// Per-surface sensor capture over CDP: evaluate INJECT (idempotent; re-installs after a
+// navigation because the page reset the flag) then DRAIN, feeding raw signals to the
+// shared coalescer. A supervisor keeps the capture intervals in sync with live targets.
+const captureIntervals = new Map()
+function ensureServerCapture(id) {
+  if (!host || captureIntervals.has(id)) return
+  const iv = setInterval(async () => {
+    if (!host || !host.has(id)) {
+      clearInterval(iv)
+      captureIntervals.delete(id)
+      return
+    }
+    try {
+      const s = host.session(id)
+      await s.send('Runtime.evaluate', { expression: INJECT, returnByValue: true })
+      const r = await s.send('Runtime.evaluate', { expression: DRAIN, returnByValue: true })
+      const raw = r?.result?.value
+      if (Array.isArray(raw) && raw.length) ingestSignals(id, raw)
+    } catch {
+      /* target not ready / gone — the supervisor will clean up */
+    }
+  }, 350)
+  captureIntervals.set(id, iv)
+}
+function startServerPerception() {
+  setInterval(() => {
+    if (!host) return
+    for (const id of host.ids()) ensureServerCapture(id)
+    for (const id of [...captureIntervals.keys()]) {
+      if (!host.has(id)) {
+        clearInterval(captureIntervals.get(id))
+        captureIntervals.delete(id)
+      }
+    }
+  }, 1000)
 }
 
 // Reconcile the host's live targets with the web surfaces the renderer reports
@@ -294,6 +350,7 @@ FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tel
 - POST $BASE/go_to_primary
 - POST $BASE/list_state — list the surfaces currently open.
 - POST $BASE/surface_control { id, action: { action: "click"|"type"|"key"|"read"|"screenshot", selector?, x?, y?, text?, key? } } — act INSIDE a web surface (read text, click/type, screenshot).
+- POST $BASE/events { since?, wait? } — THE AUTONOMY LOOP: long-poll the user's activity as coalesced "moments" (start since=0, then loop with since=latest and wait=25). Each moment {seq,surfaceId,url,title,trigger,signals,user[],snapshot} wakes you on meaningful change; decide whether to act, then build/arrange surfaces to help. (Page content — snapshot/user — is withheld unless the user shared that surface with the agent.)
 
 ## Widgets (integration-backed mini-apps)
 A widget is a reusable, forkable sandboxed mini-app backed by the user's connected integrations (e.g. "your Discord servers", "your GitHub repos"). There is a library you browse, read, fork, and add to.
@@ -400,6 +457,10 @@ async function startOsAgentSocket() {
             if (!SERVER_MODE || !host || !host.has(id)) {
               return { status: 501, body: { error: 'read_window needs server mode (or the desktop app); this surface has no server browser target' } }
             }
+            // Reading a logged-in surface only crosses the relay if the user shared it (P0).
+            if (!isContentShared(id)) {
+              return { status: 403, body: { error: 'content not shared — ask the user to enable "share with agent" on this surface', code: 'not_shared' } }
+            }
             // No raw eval over the relay (confused-deputy on a logged-in session) — safe DOM read only.
             const action = { action: 'read' }
             const r = await controlSession(host.session(id), action)
@@ -460,6 +521,10 @@ async function startOsAgentSocket() {
             if (!id || !action.action) return { status: 400, body: { error: 'id and action.action required' } }
             // eval stays localhost-only — never over the relay (confused-deputy on a logged-in session).
             if (action.action === 'eval') return { status: 403, body: { error: 'eval is not available over the relay' } }
+            // Reading/screenshotting a logged-in surface only crosses the relay if shared (P0).
+            if ((action.action === 'read' || action.action === 'screenshot') && !isContentShared(id)) {
+              return { status: 403, body: { error: 'content not shared — enable "share with agent" on this surface to read or screenshot it', code: 'not_shared' } }
+            }
             if (!SERVER_MODE || !host || !host.has(id)) {
               return { status: 501, body: { error: 'in-window control needs server mode (BLITZ_SERVER_MODE=1) or the desktop app; this surface has no server browser target' } }
             }
@@ -468,6 +533,21 @@ async function startOsAgentSocket() {
             if (action.action === 'screenshot') return { image: r.result }
             if (action.action === 'read') return { text: r.result }
             return { ok: true }
+          }
+        },
+        {
+          path: '/events',
+          description:
+            "Long-poll the user's activity, coalesced into framed 'moments' (batched ~15s; flushed immediately on navigation or going idle after acting). Each moment: {seq,surfaceId,url,title,trigger,signals,user[],snapshot}. THE AUTONOMY LOOP: start since=0, loop with since=latest and wait=25; on each moment decide whether to act, then build/arrange surfaces to help. (Page content — snapshot/user — is withheld for surfaces the user hasn't shared with the agent.)",
+          input_schema: { type: 'object', properties: { since: { type: 'number' }, wait: { type: 'number' } } },
+          handler: async ({ body }) => {
+            const a = toolBody(body)
+            const since = Number(a.since) || 0
+            const wait = Math.min(Math.max(Number(a.wait) || 25, 0), 25)
+            const raw = await waitForEvents(since, wait * 1000)
+            // Relay is untrusted: page content only crosses for surfaces the user shared.
+            const events = raw.map((m) => (isContentShared(m.surfaceId) ? m : redactMoment(m)))
+            return { events, latest: latestSeq() }
           }
         },
         {
@@ -711,6 +791,22 @@ const server = createServer(async (req, res) => {
     return
   }
   if (path === '/api/os/agent-url' && req.method === 'GET') return json(res, 200, { url: agentUrl })
+
+  // POST /api/os/content-share { surfaceId, on } — the human toggled "let the agent
+  // read this surface" (P0 consent; gates the relay /events snapshot + read_window).
+  if (path === '/api/os/content-share' && req.method === 'POST') {
+    let cbody = ''
+    req.on('data', (c) => { cbody += c; if (cbody.length > 10_000) req.destroy() })
+    req.on('end', () => {
+      const b = toolBody(cbody)
+      if (b && typeof b.surfaceId === 'string') setContentShare(b.surfaceId, !!b.on)
+      json(res, 200, { ok: true })
+    })
+    return
+  }
+
+  // GET /api/os/brain-log — recent observations from the resident observe loop.
+  if (path === '/api/os/brain-log' && req.method === 'GET') return json(res, 200, { observations: getObservations(100) })
 
   json(res, 404, { error: 'not found' })
 })

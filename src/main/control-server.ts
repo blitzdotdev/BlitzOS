@@ -4,7 +4,7 @@ import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, type Surfa
 import type { ControlAction } from './cdp'
 import { waitForEvents, latestSeq } from './events'
 import { setLocal } from './sessionFile'
-import { getObservations } from './brain/orchestrator'
+import { getObservations } from './brain/orchestrator.mjs'
 
 /**
  * Minimal localhost control API (the LOCAL agent path; agent-socket is the

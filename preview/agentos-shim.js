@@ -162,6 +162,13 @@
         body: JSON.stringify({ surfaceId: surfaceId })
       }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
     },
+    // P0 consent: let the agent read this web surface's content over the relay.
+    setContentShare: function (surfaceId, on) {
+      return fetch(API + '/os/content-share', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ surfaceId: surfaceId, on: on })
+      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+    },
     onAction: function (cb) {
       ensureES()
       actionL.push(cb)

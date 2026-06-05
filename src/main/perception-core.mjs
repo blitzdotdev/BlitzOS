@@ -1,0 +1,211 @@
+// The user's live activity, coalesced into batched "moments" an agent watches.
+//
+// SHARED, transport-agnostic perception kernel — imported by BOTH the Electron main
+// (via events.ts, which re-exports this) and the server-mode backend (preview/
+// backend.mjs), so the coalescer + sensors are ONE implementation, never duplicated.
+// (Mirrors the control-core.mjs pattern.)
+//
+// BlitzOS is the PRODUCER: in-page sensors (INJECT below) feed raw signals here via
+// ingestSignals(); this module coalesces them into framed snapshots ("moments") and a
+// long-poll (waitForEvents) wakes a watching agent. Why moments, not a keystroke
+// firehose: an autonomous agent should be WOKEN on meaningful change with enough
+// context to act — so we batch routine activity (~15s) and flush immediately on a
+// significant transition (navigation, or idle-after-activity). Perception is
+// content-agnostic (dumb but rich); the AGENT decides significance + action.
+
+const BATCH_MS = 15000
+
+// Signals that represent the USER doing something (vs. background page churn).
+// Only these wake the agent; content-only mutation just refreshes the snapshot.
+const USER_TYPES = new Set(['key', 'click', 'input', 'pointer', 'nav', 'idle'])
+
+const pending = new Map()
+const lastCtx = new Map()
+const LOG = []
+let seq = 0
+const MAX = 1000
+const waiters = []
+
+// ---- perception content consent (P0: the untrusted relay must not receive the
+// CONTENT of a logged-in surface unless the human shared it). The localhost-trusted
+// path (and the in-process resident brain) are never redacted. Default: not shared.
+const contentShared = new Set()
+
+/** The human toggled "let the agent read this surface" for a web surface. */
+export function setContentShare(surfaceId, on) {
+  if (!surfaceId) return
+  if (on) contentShared.add(surfaceId)
+  else contentShared.delete(surfaceId)
+}
+export function isContentShared(surfaceId) {
+  return contentShared.has(surfaceId)
+}
+export function dropContentShare(surfaceId) {
+  contentShared.delete(surfaceId)
+}
+
+/** Strip page-derived content from a moment, leaving only metadata the relay may see
+ *  (surface identity + activity counts; url/title are already exposed via list_state). */
+export function redactMoment(m) {
+  return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, url: m.url, title: m.title, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: [] }
+}
+
+/** A short human-readable line for a raw user signal (for the moment's `user` list). */
+function describe(r) {
+  switch (String(r.type ?? '')) {
+    case 'click': {
+      const txt = String(r.txt ?? '').trim()
+      return `clicked ${r.tag ?? 'element'}${txt ? ` "${txt.slice(0, 40)}"` : ''}`
+    }
+    case 'input': {
+      const val = String(r.val ?? '')
+      return `typed in ${r.tag ?? 'field'}${val ? `: "${val.slice(0, 60)}"` : ''}`
+    }
+    case 'nav':
+      return `navigated to ${String(r.url ?? '')}`
+    case 'idle':
+      return `paused (~${Math.round((Number(r.idleMs) || 0) / 1000)}s)`
+    default:
+      return null
+  }
+}
+
+/** Feed raw signals drained from a surface's page sensors; coalesce into moments. */
+export function ingestSignals(surfaceId, raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return
+  const ctx = lastCtx.get(surfaceId) || {}
+  let p = pending.get(surfaceId)
+  for (const r of raw) {
+    const type = String(r.type ?? 'event')
+    // freshest known context for this surface (snapshot is decoupled from the batch)
+    if (typeof r.url === 'string') ctx.url = r.url
+    if (typeof r.title === 'string') ctx.title = r.title
+    if (typeof r.digest === 'string' && r.digest) ctx.snapshot = r.digest
+    if (!p) {
+      p = { startTs: Number(r.t) || Date.now(), signals: {}, user: [], hasUser: false, significant: null }
+      pending.set(surfaceId, p)
+    }
+    p.signals[type] = (p.signals[type] || 0) + 1
+    if (USER_TYPES.has(type)) p.hasUser = true
+    const line = describe(r)
+    if (line) {
+      if (p.user[p.user.length - 1] !== line) p.user.push(line) // drop consecutive dupes
+      if (p.user.length > 8) p.user.splice(0, p.user.length - 8)
+    }
+    if (type === 'nav') p.significant = 'nav'
+    else if (type === 'idle' && p.significant !== 'nav') p.significant = 'idle'
+  }
+  lastCtx.set(surfaceId, ctx)
+  if (p && p.significant) flush(surfaceId, p.significant)
+}
+
+function flush(surfaceId, trigger) {
+  const p = pending.get(surfaceId)
+  if (!p) return
+  pending.delete(surfaceId)
+  // Content-only churn (a running clock, an animation) is context, not a reason to
+  // wake the agent. Only emit a moment when the user actually did something.
+  if (!p.hasUser) return
+  const ctx = lastCtx.get(surfaceId) || {}
+  const now = Date.now()
+  const moment = {
+    seq: ++seq,
+    ts: now,
+    surfaceId,
+    url: ctx.url,
+    title: ctx.title,
+    trigger,
+    windowMs: now - p.startTs,
+    signals: p.signals,
+    user: p.user,
+    snapshot: ctx.snapshot
+  }
+  LOG.push(moment)
+  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
+  for (const w of waiters.splice(0)) {
+    clearTimeout(w.timer)
+    w.resolve(LOG.filter((m) => m.seq > w.since))
+  }
+}
+
+// Batch timer: emit a moment for any surface whose window has aged past BATCH_MS
+// (significant transitions flush sooner, via ingestSignals).
+setInterval(() => {
+  const now = Date.now()
+  for (const [surfaceId, p] of pending) {
+    if (now - p.startTs >= BATCH_MS) flush(surfaceId, 'batch')
+  }
+}, 2000)
+
+export function latestSeq() {
+  return seq
+}
+
+/**
+ * A srcdoc surface (agent-authored UI) fired an action back to the agent (e.g. an
+ * "approve" click). Emitted into the SAME moment stream so /events delivers it and
+ * the watching agent is woken to act.
+ */
+export function emitSurfaceAction(surfaceId, action) {
+  const moment = {
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId,
+    trigger: 'action',
+    windowMs: 0,
+    signals: { action: 1 },
+    user: ['UI action: ' + JSON.stringify(action).slice(0, 180)],
+    action
+  }
+  LOG.push(moment)
+  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
+  for (const w of waiters.splice(0)) {
+    clearTimeout(w.timer)
+    w.resolve(LOG.filter((m) => m.seq > w.since))
+  }
+}
+
+/** Long-poll: resolve immediately if there are moments after `since`, else wait up to maxMs. */
+export function waitForEvents(since, maxMs) {
+  const have = LOG.filter((m) => m.seq > since)
+  if (have.length > 0 || maxMs <= 0) return Promise.resolve(have)
+  return new Promise((resolve) => {
+    const w = {
+      since,
+      resolve,
+      timer: setTimeout(() => {
+        const i = waiters.indexOf(w)
+        if (i >= 0) waiters.splice(i, 1)
+        resolve(LOG.filter((m) => m.seq > since))
+      }, maxMs)
+    }
+    waiters.push(w)
+  })
+}
+
+// ---- in-page SENSORS, injected into every web surface (Electron via
+// webContents.executeJavaScript; server via CDP Runtime.evaluate). Beyond input
+// (key/click/input/pointerdown — pointerdown so DRAG interactions like chess moves
+// count as activity even with no click) we sense navigation, content change (a
+// MutationObserver: async loads + DOM updates), and idle-after-activity. Each signal
+// carries a `digest` (text snapshot) where useful. Idempotent per page (re-injectable
+// after navigation); self-cleans when drained by a gone surface.
+export const INJECT = `(() => {
+  if (window.__blitzCap) return 'present';
+  window.__blitzCap = true;
+  window.__blitzEvents = [];
+  let lastAct = Date.now(), idleSent = true, lastHref = location.href, mt = null;
+  const push = (o) => { try { o.url = location.href; o.t = Date.now(); window.__blitzEvents.push(o); if (window.__blitzEvents.length > 300) window.__blitzEvents.splice(0, 150); } catch (e) {} };
+  const digest = () => { try { const m = document.querySelector('main') || document.body; return ((m && m.innerText) || '').replace(/\\s+/g, ' ').trim().slice(0, 600); } catch (e) { return ''; } };
+  const act = () => { lastAct = Date.now(); idleSent = false; };
+  addEventListener('keydown', (e) => { act(); push({ type: 'key', key: e.key, meta: (e.metaKey || e.ctrlKey) || undefined }); }, true);
+  addEventListener('click', (e) => { act(); const t = e.target; push({ type: 'click', tag: t && t.tagName, txt: ((t && t.innerText) || '').trim().slice(0, 40) }); }, true);
+  addEventListener('input', (e) => { act(); const t = e.target; push({ type: 'input', tag: t && t.tagName, val: ((t && t.value) || '').slice(0, 80) }); }, true);
+  addEventListener('pointerdown', (e) => { act(); push({ type: 'pointer', tag: e.target && e.target.tagName, x: Math.round(e.clientX || 0), y: Math.round(e.clientY || 0) }); }, true);
+  setInterval(() => { if (location.href !== lastHref) { lastHref = location.href; push({ type: 'nav', title: document.title, digest: digest() }); } }, 600);
+  try { new MutationObserver(() => { if (mt) return; mt = setTimeout(() => { mt = null; push({ type: 'content', title: document.title, digest: digest() }); }, 1200); }).observe(document.body, { childList: true, subtree: true, characterData: true }); } catch (e) {}
+  setInterval(() => { if (!idleSent && Date.now() - lastAct > 5000) { idleSent = true; push({ type: 'idle', idleMs: Date.now() - lastAct, title: document.title, digest: digest() }); } }, 1500);
+  push({ type: 'content', title: document.title, digest: digest() }); // baseline snapshot
+  return 'installed';
+})()`
+export const DRAIN = `(window.__blitzEvents && window.__blitzEvents.splice(0)) || []`
