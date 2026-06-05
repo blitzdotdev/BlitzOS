@@ -44,7 +44,6 @@ import {
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
-import { startBrain, getObservations } from '../src/main/brain/orchestrator.mjs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -244,10 +243,9 @@ async function initServerMode() {
     console.log('[agent-os backend] SERVER MODE on — web surfaces are live + CDP-controllable')
     // Perception parity: inject the SAME in-page sensors (INJECT) into each server
     // browser target via CDP and drain them into the SAME moment coalescer, so server
-    // mode produces the moment stream (and the resident brain) just like Electron.
+    // mode produces the moment stream over /events. The connected agent is the brain;
+    // BlitzOS ships NO in-process decision logic.
     startServerPerception()
-    // The resident OBSERVE-ONLY brain (in-process; full content; no relay redaction).
-    startBrain('server-brain')
   } catch (e) {
     console.error('[agent-os backend] SERVER MODE failed to start headless browser:', e?.message || e)
   }
@@ -830,9 +828,6 @@ const server = createServer(async (req, res) => {
     })
     return
   }
-
-  // GET /api/os/brain-log — recent observations from the resident observe loop.
-  if (path === '/api/os/brain-log' && req.method === 'GET') return json(res, 200, { observations: getObservations(100) })
 
   json(res, 404, { error: 'not found' })
 })

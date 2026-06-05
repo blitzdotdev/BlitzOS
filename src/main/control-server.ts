@@ -4,7 +4,6 @@ import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, type Surfa
 import type { ControlAction } from './cdp'
 import { waitForEvents, latestSeq } from './events'
 import { setLocal } from './sessionFile'
-import { getObservations } from './brain/orchestrator.mjs'
 
 /**
  * Minimal localhost control API (the LOCAL agent path; agent-socket is the
@@ -30,13 +29,6 @@ export function startControlServer(): void {
     if (req.method === 'GET' && req.url === '/state') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify(osGetState()))
-      return
-    }
-
-    // GET /brain/log -> recent observations from the resident observe loop (P1).
-    if (req.method === 'GET' && req.url && /^\/brain\/log(\?.*)?$/.test(req.url)) {
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ observations: getObservations(100) }))
       return
     }
 
