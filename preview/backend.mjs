@@ -44,6 +44,7 @@ import {
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
+import { startAgentRunner } from '../src/main/agent-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -897,4 +898,10 @@ server.listen(PORT, '127.0.0.1', () => {
   startOsAgentSocket()
   // Server mode: bring up the headless browser host for live web surfaces.
   initServerMode()
+  // Boot + supervise the brain: spawn the agent against the live relay URL and keep it
+  // alive (auto-restart on exit), so a brain is always watching. Opt-in via BLITZ_AGENT
+  // (=claude or a custom command); off by default (continuous LLM use has a cost).
+  if (process.env.BLITZ_AGENT) {
+    startAgentRunner({ getUrl: () => agentUrl, cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, label: 'server-agent' })
+  }
 })

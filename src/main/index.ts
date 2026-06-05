@@ -3,9 +3,10 @@ import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { initOsActions } from './osActions'
-import { startAgentSocket } from './agentSocket'
+import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
+import { startAgentRunner } from './agent-runner.mjs'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -108,6 +109,13 @@ app.whenReady().then(() => {
   // BRAIN — it watches /events and decides everything. BlitzOS ships NO in-process
   // decision logic (no resident reasoner/governor); it is pure substrate.
   startAgentSocket(() => mainWindow)
+
+  // Boot + supervise the brain: spawn the agent and auto-restart it on exit, so a brain
+  // is always watching. Opt-in via BLITZ_AGENT (=claude or a custom command). This is
+  // process supervision, not decision-making — the agent remains the sole decider.
+  if (process.env.BLITZ_AGENT) {
+    startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT })
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
