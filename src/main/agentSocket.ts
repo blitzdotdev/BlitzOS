@@ -57,7 +57,7 @@ FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tel
 - POST $BASE/update_surface { id, html?, props?, url?, title?, x?, y?, w?, h? } — patch a surface in place (append to a srcdoc panel, set a note's text, change url/geometry).
 - POST $BASE/close_surface { id }
 - POST $BASE/go_to_primary
-- POST $BASE/list_state — list the surfaces currently open.
+- POST $BASE/list_state — the full layout (read before arranging): { viewport:{w,h}, view:{x,y,w,h,cx,cy,scale}, mode, surfaces:[{id,kind,x,y,w,h,z,title,url}] }. See "Window management" below.
 - POST $BASE/read_window { id, script? } — read what is INSIDE a web surface (its DOM): url, title, where the user is typing, and visible text. Pass a JS expression as \`script\` to extract something specific.
 - POST $BASE/surface_control { id, action: { action: "click"|"type"|"key"|"read"|"screenshot", selector?, x?, y?, text?, key? } } — act INSIDE a web surface (click/type/key, read text, screenshot). Use read_window or surface_control:read first to see the page.
 - POST $BASE/events { since?, wait? } — the autonomy loop: long-poll the user's activity as framed "moments" (see "Watching the user" below).
@@ -86,14 +86,23 @@ A moment with \`trigger:"message"\` is the user typing to you directly in their 
 - POST $BASE/say { text } — sends a chat message back to the user (appears in their Chat panel).
 You can also \`say\` proactively (e.g. "I opened your repos on the right"). Keep replies short. Do what they ask using the other tools, then \`say\` what you did.
 
-## Manage the layout (you own the desktop arrangement)
-Before you open, navigate, or change ANY surface, do this FIRST:
-1. Is it relevant for the user to SEE right now? If not, don't surface it (close or omit it).
-2. Look at the current layout (list_state gives each surface's x/y/w/h). Is it optimal for what the user is doing right now, with only the relevant surfaces visible and READABLE and nothing important cramped or hidden behind another window?
-3. If it is not optimal, FIX the layout first (move/resize/close), THEN do your action.
-Keep the view clean: show only what matters now and give it room. Never pile windows up.
+## Window management — you are the window manager (think before you open OR close)
+You own the desktop arrangement. \`list_state\` gives you everything needed to reason spatially:
+- \`viewport {w,h}\` — the user's screen size in px (what fits).
+- \`view {x,y,w,h,cx,cy,scale}\` — the world-space rectangle the user can SEE right now (cx,cy = its center). A surface OUTSIDE \`view\` is off-screen to them — if you place a window there, they never see it. This is the #1 mistake; place inside \`view\`.
+- each surface's \`x,y,w,h\` (geometry, world px) and \`z\` (stacking; higher = on top).
 
-Coordinates are world pixels; omit position to center in the user's view. Prefer srcdoc for things you can build inline; use open_window for real external sites. Note: update_surface replacing a srcdoc's html RELOADS it (in-widget state resets) — for live data use a widget's bridge, not html rewrites.
+BEFORE opening / spawning a surface, plan the new arrangement:
+1. Relevance — is it something the user should SEE now? If not, don't surface it.
+2. Size — pick \`w,h\` for its content AND the viewport (a reading/article pane wants width + height; a note/timer/status chip is small). Don't exceed \`view\`.
+3. Position — place it INSIDE \`view\` so it's actually visible (near \`view.cx/cy\`; or omit x/y to center in their view). Never let it land off-screen.
+4. Make room — if it would overlap or hide something the user still needs, MOVE/RESIZE the existing windows first (\`move_surface\`, \`update_surface\` with w/h): tile side-by-side, shrink the now-secondary one, or close what's stale. Decide the whole layout, then apply it. Never just stack windows on top of each other.
+
+BEFORE closing a surface: after \`close_surface\`, REFLOW the survivors to fill the gap (recenter or re-tile them within \`view\`) so the arrangement stays clean instead of leaving a hole.
+
+Keep the view clean and readable: only what matters now, each with room. Arrange deliberately — don't pile up.
+
+Coordinates are world pixels. Prefer srcdoc for things you can build inline; use open_window for real external sites. Note: update_surface replacing a srcdoc's html RELOADS it (in-widget state resets) — for live data use a widget's bridge, not html rewrites.
 `
 
 let session: Session | null = null

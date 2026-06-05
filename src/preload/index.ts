@@ -24,7 +24,12 @@ export interface OsAction {
 }
 
 export interface OsState {
-  surfaces: Array<{ id: string; kind: string; x: number; y: number; w: number; h: number; title: string; url?: string }>
+  surfaces: Array<{ id: string; kind: string; x: number; y: number; w: number; h: number; z?: number; title: string; url?: string }>
+  /** Screen size in px (so the agent knows what fits). */
+  viewport?: { w: number; h: number }
+  /** World-space rectangle the user can currently see (so new surfaces land on-screen). */
+  view?: { x: number; y: number; w: number; h: number; cx: number; cy: number; scale: number }
+  mode?: 'desktop' | 'canvas'
 }
 
 const api = {

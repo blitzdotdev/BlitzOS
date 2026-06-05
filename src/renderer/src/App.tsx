@@ -177,29 +177,68 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener('message', onMsg)
   }, [])
 
-  // Push surface state to main (so list_state works), only when surfaces change.
+  // Push desktop state to main (so list_state works). Includes the layout the agent
+  // needs to arrange windows well: the viewport (screen size), the world-space rect the
+  // user can actually SEE right now (so it never drops surfaces off-screen), per-surface
+  // z (stacking), and the mode. Surface changes push immediately; camera/pan churn is
+  // throttled so panning doesn't flood the channel.
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
     const push = (): void => {
-      const surfaces = useDesktop.getState().surfaces.map((s) => ({
+      const st = useDesktop.getState()
+      const { scale, x: tx, y: ty } = st.transform
+      const vw = st.viewport.w
+      const vh = st.viewport.h
+      const surfaces = st.surfaces.map((s) => ({
         id: s.id,
         kind: s.kind,
-        x: s.x,
-        y: s.y,
+        x: Math.round(s.x),
+        y: Math.round(s.y),
         w: s.w,
         h: s.h,
+        z: s.z,
         title: s.title,
         url: s.url
       }))
-      window.agentOS?.sendState({ surfaces })
+      // The world-space rectangle currently visible on screen (screen = world*scale + t).
+      const view = {
+        x: Math.round(-tx / scale),
+        y: Math.round(-ty / scale),
+        w: Math.round(vw / scale),
+        h: Math.round(vh / scale),
+        cx: Math.round((vw / 2 - tx) / scale),
+        cy: Math.round((vh / 2 - ty) / scale),
+        scale: Math.round(scale * 100) / 100
+      }
+      window.agentOS?.sendState({ surfaces, viewport: { w: vw, h: vh }, view, mode: st.mode })
     }
     push()
-    let last = useDesktop.getState().surfaces
-    return useDesktop.subscribe((state) => {
-      if (state.surfaces !== last) {
-        last = state.surfaces
+    let lastS = useDesktop.getState().surfaces
+    let lastT = useDesktop.getState().transform
+    let lastVp = useDesktop.getState().viewport
+    let lastMode = useDesktop.getState().mode
+    const scheduleCamera = (): void => {
+      if (timer) return
+      timer = setTimeout(() => {
+        timer = null
         push()
+      }, 250)
+    }
+    const unsub = useDesktop.subscribe((state) => {
+      if (state.surfaces !== lastS) {
+        lastS = state.surfaces
+        push() // surface set changed — reflect it at once
+      } else if (state.transform !== lastT || state.viewport !== lastVp || state.mode !== lastMode) {
+        lastT = state.transform
+        lastVp = state.viewport
+        lastMode = state.mode
+        scheduleCamera() // pan/zoom — coalesce bursts
       }
     })
+    return () => {
+      if (timer) clearTimeout(timer)
+      unsub()
+    }
   }, [])
 
   useEffect(() => {
