@@ -358,11 +358,11 @@ async function startOsAgentSocket() {
         { path: '/list_state', description: 'List the surfaces currently open on the canvas.', handler: () => osState },
         {
           path: '/read_window',
-          description: 'Read what is INSIDE a web surface (its DOM): url, title, and visible text. Pass a JS expression as `script` to extract something specific. Only kind "web" (server mode).',
+          description: 'Read what is INSIDE a web surface (its DOM): url, title, and visible text. Only kind "web" (server mode).',
           input_schema: {
             type: 'object',
             required: ['id'],
-            properties: { id: { type: 'string' }, script: { type: 'string', description: 'optional JS expression evaluated in the page; its value is returned' } }
+            properties: { id: { type: 'string' } }
           },
           handler: async ({ body }) => {
             const b = toolBody(body)
@@ -371,7 +371,8 @@ async function startOsAgentSocket() {
             if (!SERVER_MODE || !host || !host.has(id)) {
               return { status: 501, body: { error: 'read_window needs server mode (or the desktop app); this surface has no server browser target' } }
             }
-            const action = typeof b.script === 'string' && b.script ? { action: 'eval', expression: b.script } : { action: 'read' }
+            // No raw eval over the relay (confused-deputy on a logged-in session) — safe DOM read only.
+            const action = { action: 'read' }
             const r = await controlSession(host.session(id), action)
             if (!r.ok) return { status: 400, body: { error: r.error } }
             return { result: r.result }
@@ -541,10 +542,34 @@ const server = createServer(async (req, res) => {
 
 // /api/os/stream — binary-ish WS carrying screencast frames out (server mode) and
 // raw CDP input messages in ({t:'cdp', id, method, params} → that surface's session).
+// Methods the renderer may drive over the stream WS. Anything else (Runtime.evaluate,
+// Network.*, Page.captureScreenshot, etc.) is rejected so the WS can't be a backdoor for
+// arbitrary CDP against a logged-in surface.
+const ALLOWED_STREAM_METHODS = new Set([
+  'Input.dispatchMouseEvent',
+  'Input.dispatchKeyEvent',
+  'Input.dispatchTouchEvent',
+  'Page.navigate',
+  'Page.reload'
+])
 const streamWss = new WebSocketServer({ noServer: true })
 server.on('upgrade', (req, socket, head) => {
   const u = new URL(req.url || '/', 'http://127.0.0.1')
   if (u.pathname !== '/api/os/stream') {
+    socket.destroy()
+    return
+  }
+  // Reject cross-origin upgrades — a page you happen to visit can't open this WS.
+  // Same-origin (the served renderer) and non-browser/loopback clients pass; the
+  // method allowlist below is the hard gate on what any client can actually do.
+  const origin = req.headers.origin
+  let allowOrigin = ''
+  try {
+    allowOrigin = new URL(PUBLIC_BASE_URL).origin
+  } catch {
+    /* ignore */
+  }
+  if (origin && origin !== allowOrigin && !/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin)) {
     socket.destroy()
     return
   }
@@ -558,8 +583,10 @@ server.on('upgrade', (req, socket, head) => {
       } catch {
         return
       }
-      // Human input is forwarded as raw CDP (Input.dispatch* with CSS-px coords).
-      if (m.t === 'cdp' && host && host.has(m.id) && typeof m.method === 'string') {
+      // Human input is forwarded as raw CDP — but ONLY input/navigation methods
+      // (never Runtime.evaluate / Network.* / screenshot), so this WS can't be an
+      // arbitrary-CDP backdoor into a logged-in surface.
+      if (m.t === 'cdp' && host && host.has(m.id) && typeof m.method === 'string' && ALLOWED_STREAM_METHODS.has(m.method)) {
         try {
           await host.session(m.id).send(m.method, m.params || {})
         } catch {

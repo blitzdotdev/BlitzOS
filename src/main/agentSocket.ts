@@ -213,16 +213,17 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
         {
           path: '/read_window',
           description:
-            'Read what is INSIDE a web surface (its live DOM). Default returns url, title, the focused element (where the user is typing), and visible text. Pass a JS expression as `script` to extract anything specific.',
+            'Read what is INSIDE a web surface (its live DOM): url, title, the focused element (where the user is typing), and visible text.',
           input_schema: {
             type: 'object',
             required: ['id'],
-            properties: { id: { type: 'string' }, script: { type: 'string' } }
+            properties: { id: { type: 'string' } }
           },
           handler: async ({ body }) => {
             const a = parse(body)
             try {
-              const result = await osReadWindow(String(a.id), typeof a.script === 'string' ? a.script : undefined)
+              // No caller-supplied script over the relay (confused-deputy eval) — fixed safe DOM read.
+              const result = await osReadWindow(String(a.id))
               return { result }
             } catch (e) {
               return { status: 400, body: { error: e instanceof Error ? e.message : String(e) } }
