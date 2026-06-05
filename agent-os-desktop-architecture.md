@@ -1,5 +1,7 @@
 # Agent OS Desktop: Architecture & Build Plan
 
+> **⚠️ Superseded for the vision by [`agent-os-dynamic-architecture.md`](agent-os-dynamic-architecture.md)** (2026-06-05) — the dynamic, AI-driven OS architecture (resident brain, perception→moments→wake loop, suggest-&-confirm autonomy, persistence/profile, attention/follow) + the phased roadmap. This doc remains useful for the original surface/canvas slice rationale.
+
 **Status:** Building. Prototype slice #1 (canvas + live windows) in progress.
 **Date:** 2026-06-03
 **Companion doc:** `plans/agent-os-integrations-oauth.md` (per-provider auth research).

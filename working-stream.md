@@ -100,7 +100,8 @@ Tokens: `preview/.tokens.json` (gitignored). Shape `{provider:{provider,label,se
 ## Git state (IMPORTANT)
 
 - **BlitzOS** — merged with origin (teammate's commits in via `4747172`). Recent local commits, most NOT pushed. **No SSH key in sandbox → the USER pushes** (`git push origin master` from their machine). Recent: `9ef28d5` working-stream expand, `777c35a` process-mgmt, `6281066` blockers, `51bfe2d` run docs, `4b92942` shim/scroll fix, `4747172` merge, `e4e876b` remote-browser.
-- **WIDGET SYSTEM = UNCOMMITTED** (working tree, not yet committed). New: `src/main/widget-catalog.{mjs,d.mts}`, `src/main/widgets.ts`, `src/renderer/src/widget-bridge.ts`, `widgets/` (manifest + 2 html). Modified: `preview/{backend.mjs,agentos-shim.js}`, `src/main/{agentSocket.ts,index.ts,integrations.ts,osActions.ts}`, `src/preload/index.ts`, `src/renderer/src/components/SurfaceFrame.tsx`, `.gitignore`. Typecheck clean. Suggested commit msg theme: "Widget system: agent-browsable, integration-backed srcdoc widgets + consent bridge". The user pushes.
+- **WIDGET SYSTEM = COMMITTED** `52830bc`. **MERGED with teammate's autonomy kernel** `4781b47` (merged `origin/agent-runtime-moments`: `events.ts` perception→moments→wake, `/events` long-poll on both transports, page-sensor INJECT in `osActions`, `surfaceAction` callback hook, `sessionFile.ts`, `control-server` /events, App.tsx surface-action forwarding). Both halves compose: a widget's `surfaceAction` "approve" → moment → wake, + my `window.blitz` data bridge. Typecheck + full electron-vite build pass. NOT pushed (user pushes). Live demo running via `start-all.sh` → agentos.blitzmen.com (server mode; widgets work there, autonomy kernel is Electron-only so far).
+- **ARCHITECTURE DOC (NEW):** `agent-os-dynamic-architecture.md` (the dynamic AI-driven OS: L1–L5 layers, perceive→reason→act loop spec, persistence/profile schema, P0–P6 roadmap, primitive-reuse table). Supersedes `agent-os-desktop-architecture.md` (pointer added). Built via a 14-agent ultracode workflow + reconciled with the user's locked decisions (see §0 of that doc).
 - **agent-socket** (separate repo) — my relay fix `f5b12d2`; the other agent built on it (`preamble.ts`, task caps). Not mine to push/deploy.
 
 ## Open audit findings (we3qbpvd3; 2 blockers FIXED, majors OPEN)
@@ -117,10 +118,12 @@ Tokens: `preview/.tokens.json` (gitignored). Shape `{provider:{provider,label,se
 
 **Minors:** `mountServerSurface` 3-arg contract lie (drop the 3rd arg + w/h effect deps — real fix = server resize #4). Per-mousemove CDP flood (throttle `onMove`).
 
-## NEXT — priority
+## NEXT — priority (per `agent-os-dynamic-architecture.md` §6 roadmap + §0 decisions)
 
-1. ~~Widget system~~ **DONE** (built + verified + reviewed 2026-06-05). Follow-ups: generic `op:'fetch'` escape-hatch + srcdoc CSP + more provider resources (see Widget system section).
-2. **Audit majors #1–#3, #5** (server-mode reliability, browser-host.mjs) — still OPEN; independent of widgets (they're `web`-surface, widgets are `srcdoc`).
+0. **P0 — close the `/events` privacy leak (IMMEDIATE, security).** `moment.snapshot` (a text digest of a logged-in page) ships to a pasted-URL relay agent via `/events` (events.ts → agentSocket.ts) with NO per-surface consent. Default the relay `/events` to metadata-only; raw page content needs an explicit per-surface grant. ALSO fold the existing ungated `__blitz:'navigate'` (App.tsx:146) + `surfaceAction` (App.tsx:154) paths under consent. Same class as the eval-403/widget-consent hardening. Nothing should build on the moment stream until this lands.
+1. **First-milestone arc = the end-to-end vertical slice** (decided): P0 → P1 (resident loop, observe-only) → P2 (governor + consent/STOP gate, Suggest mode) → P3 (act tier: `focus`/`follow` os:action driving the built-but-unreachable `store.focusAndZoom`; new `op:'tool'` `send_reply` bridge path; agent-composed structured reads; suggested-reply context-widget). Drivable by `claude -p` over `/events` to demo.
+2. ~~Widget system~~ **DONE** `52830bc`. Follow-ups folded into the roadmap: generic `op:'fetch'` escape-hatch (= the perception-framework decision), srcdoc CSP, more provider resources.
+3. **Audit majors #1–#3, #5** (server-mode reliability, browser-host.mjs) — still OPEN; feed roadmap P5 (always-on reliability).
 3. **Server-mode polish** — binary WS frames, DPR/zoom/scroll coord transform, off-screen fps throttle.
 4. **Deployment** (parked) — `issues/open/server-mode-deployment.md` (static-serve, bind 0.0.0.0 + bearer everywhere, Docker + Caddy, then multi-tenant). Note: user said CF Access handles external auth on the tunnel, so app-layer `/api` gate is deprioritized.
 5. **OS's own headless agent** — BlitzOS runs its own Claude/Codex that perceives (`list_state`/`read_window`) + acts. Now buildable.
