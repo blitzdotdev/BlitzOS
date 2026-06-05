@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
 import { useDesktop } from '../store'
 import { NoteWidget } from './NoteWidget'
+import { ChatPanel } from './ChatPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
 
 type BridgeReply = { ok: boolean; data?: unknown; error?: string }
@@ -327,6 +328,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         )
       case 'native':
         if (surface.component === 'note') return <NoteWidget surface={surface} />
+        if (surface.component === 'chat') return <ChatPanel surface={surface} />
         return <div className="native-fallback">unknown widget: {surface.component}</div>
     }
   }

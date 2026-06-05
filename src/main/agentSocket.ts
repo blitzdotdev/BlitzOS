@@ -11,6 +11,7 @@ import {
   osGetState,
   osReadWindow,
   osControlSurface,
+  osSay,
   type SurfaceDescriptor
 } from './osActions'
 import type { ControlAction } from './cdp'
@@ -79,6 +80,11 @@ A "moment" is a coalesced, framed snapshot, NOT a keystroke firehose. BlitzOS ba
   { seq, ts, surfaceId, url, title, trigger:'batch'|'nav'|'idle', windowMs, signals:{type:count}, user:[human-readable actions], snapshot:<text digest of the surface now> }
 
 On each moment: DECIDE whether it warrants action (most don't). If it does, perceive more if needed (read_window / surface_control read), then ACT: build or rearrange surfaces to help (a coach panel, a summary, a tool, reorganize the desktop). The snapshot tells you what the user is doing on ANY site, so this is general: you decide how to help. Don't narrate every moment; act when you can add value, stay quiet otherwise.
+
+## Talking with the user (chat)
+A moment with \`trigger:"message"\` is the user typing to you directly in their in-canvas Chat (the text is in the moment's \`message\` field). ALWAYS respond to those — reply with:
+- POST $BASE/say { text } — sends a chat message back to the user (appears in their Chat panel).
+You can also \`say\` proactively (e.g. "I opened your repos on the right"). Keep replies short. Do what they ask using the other tools, then \`say\` what you did.
 
 ## Manage the layout (you own the desktop arrangement)
 Before you open, navigate, or change ANY surface, do this FIRST:
@@ -407,6 +413,18 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
             // crosses for surfaces the user shared; others are reduced to metadata.
             const events = raw.map((m) => (isContentShared(m.surfaceId) ? m : redactMoment(m)))
             return { events, latest: latestSeq() }
+          }
+        },
+        {
+          path: '/say',
+          description:
+            "Send a chat message to the USER — it appears in their in-canvas Chat panel. Use this to reply when a moment has trigger:'message' (the user typed to you), or to proactively tell them something. Plain text.",
+          input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
+          handler: ({ body }) => {
+            const text = String(parse(body).text || '')
+            if (!text) return { status: 400, body: { error: 'text required' } }
+            osSay(text)
+            return { ok: true }
           }
         }
       ],

@@ -169,6 +169,13 @@
         body: JSON.stringify({ surfaceId: surfaceId, on: on })
       }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
     },
+    // The user typed a message to the agent in the in-canvas Chat.
+    sendMessage: function (text) {
+      fetch(API + '/os/user-message', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: text })
+      }).catch(function () {})
+    },
     onAction: function (cb) {
       ensureES()
       actionL.push(cb)

@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat'
   [k: string]: unknown
 }
 
@@ -69,6 +69,10 @@ const api = {
   /** Human consent: let the agent read this web surface's content over the relay (P0). */
   setContentShare(surfaceId: string, on: boolean): void {
     ipcRenderer.send('os:content-share', { surfaceId, on })
+  },
+  /** The user typed a message to the agent in the in-canvas Chat. */
+  sendMessage(text: string): void {
+    ipcRenderer.send('os:user-message', text)
   },
 
   /** Relay a sandboxed srcdoc widget's data request to main (consent-gated; token stays in main). */

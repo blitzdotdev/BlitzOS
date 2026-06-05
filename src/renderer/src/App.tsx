@@ -131,6 +131,18 @@ export default function App(): JSX.Element {
       else if (a.type === 'update') st.updateSurface(String(a.id), (a.patch ?? {}) as Partial<Surface>)
       else if (a.type === 'close') st.closeSurface(String(a.id))
       else if (a.type === 'goToPrimary') st.goToPrimary()
+      else if (a.type === 'chat') {
+        // Agent reply -> append to the Chat panel (create one if none is open).
+        const text = String(a.text ?? '')
+        if (!text) return
+        const chat = st.surfaces.find((s) => s.kind === 'native' && s.component === 'chat')
+        if (chat) {
+          const msgs = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
+          st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }] })
+        } else {
+          st.createSurface({ kind: 'native', component: 'chat', title: 'Chat', w: 360, h: 460, props: { messages: [{ role: 'agent', text }] } })
+        }
+      }
     })
   }, [])
 
@@ -214,6 +226,13 @@ export default function App(): JSX.Element {
     createSurface({ kind: 'web', url: 'https://news.ycombinator.com', title: 'Hacker News' })
   }
 
+  function openChat(): void {
+    const st = useDesktop.getState()
+    const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'chat')
+    if (existing) st.focusSurface(existing.id)
+    else createSurface({ kind: 'native', component: 'chat', title: 'Chat', w: 360, h: 460, props: { messages: [] } })
+  }
+
   const active = integrations.find((i) => i.id === connecting) ?? null
 
   return (
@@ -248,6 +267,7 @@ export default function App(): JSX.Element {
 
       <div className="toolbar">
         <button onClick={() => useDesktop.getState().goToPrimary()}>Center</button>
+        <button onClick={openChat}>💬 Chat</button>
         <button onClick={() => setShowAi((v) => !v)}>{aiUrl ? '🟢 Connect AI' : '○ Connect AI'}</button>
         <span className="hint">fixed desktop · drag the top bar to move · click the dock to focus</span>
       </div>

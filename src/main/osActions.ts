@@ -2,7 +2,7 @@ import { BrowserWindow, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'crypto'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
-import { ingestSignals, emitSurfaceAction, setContentShare, dropContentShare, INJECT, DRAIN } from './events'
+import { ingestSignals, emitSurfaceAction, emitUserMessage, setContentShare, dropContentShare, INJECT, DRAIN } from './events'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -52,6 +52,10 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   // The human toggled "let the agent read this surface" (P0 content consent).
   ipcMain.on('os:content-share', (_e, m: { surfaceId?: unknown; on?: unknown }) => {
     if (m && typeof m.surfaceId === 'string') setContentShare(m.surfaceId, !!m.on)
+  })
+  // The human typed a message to the agent in the in-canvas Chat.
+  ipcMain.on('os:user-message', (_e, text: unknown) => {
+    if (typeof text === 'string' && text.trim()) emitUserMessage(text)
   })
 }
 
@@ -139,6 +143,10 @@ export function osCloseSurface(id: string): void {
 }
 export function osGoToPrimary(): void {
   send('goToPrimary')
+}
+/** Agent → user: post a chat message into the user's in-canvas Chat panel. */
+export function osSay(text: string): void {
+  send('chat', { text })
 }
 export function osGetState(): OsState {
   return cached

@@ -40,6 +40,7 @@ import {
   setContentShare,
   isContentShared,
   redactMoment,
+  emitUserMessage,
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
@@ -351,6 +352,7 @@ FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tel
 - POST $BASE/list_state — list the surfaces currently open.
 - POST $BASE/surface_control { id, action: { action: "click"|"type"|"key"|"read"|"screenshot", selector?, x?, y?, text?, key? } } — act INSIDE a web surface (read text, click/type, screenshot).
 - POST $BASE/events { since?, wait? } — THE AUTONOMY LOOP: long-poll the user's activity as coalesced "moments" (start since=0, then loop with since=latest and wait=25). Each moment {seq,surfaceId,url,title,trigger,signals,user[],snapshot} wakes you on meaningful change; decide whether to act, then build/arrange surfaces to help. (Page content — snapshot/user — is withheld unless the user shared that surface with the agent.)
+- POST $BASE/say { text } — send a chat message to the USER (appears in their in-canvas Chat panel). A moment with trigger:"message" is the user typing to you directly (text in the moment's \`message\` field) — ALWAYS reply with say; do what they ask with the other tools, then say what you did.
 
 ## Widgets (integration-backed mini-apps)
 A widget is a reusable, forkable sandboxed mini-app backed by the user's connected integrations (e.g. "your Discord servers", "your GitHub repos"). There is a library you browse, read, fork, and add to.
@@ -548,6 +550,18 @@ async function startOsAgentSocket() {
             // Relay is untrusted: page content only crosses for surfaces the user shared.
             const events = raw.map((m) => (isContentShared(m.surfaceId) ? m : redactMoment(m)))
             return { events, latest: latestSeq() }
+          }
+        },
+        {
+          path: '/say',
+          description:
+            "Send a chat message to the USER — appears in their in-canvas Chat panel. Use this to reply when a moment has trigger:'message' (the user typed to you), or to proactively tell them what you did. Plain text.",
+          input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
+          handler: ({ body }) => {
+            const text = String(toolBody(body).text || '')
+            if (!text) return { status: 400, body: { error: 'text required' } }
+            broadcast({ type: 'chat', text })
+            return { ok: true }
           }
         },
         {
@@ -800,6 +814,18 @@ const server = createServer(async (req, res) => {
     req.on('end', () => {
       const b = toolBody(cbody)
       if (b && typeof b.surfaceId === 'string') setContentShare(b.surfaceId, !!b.on)
+      json(res, 200, { ok: true })
+    })
+    return
+  }
+
+  // POST /api/os/user-message { text } — the user typed to the agent in the Chat panel.
+  if (path === '/api/os/user-message' && req.method === 'POST') {
+    let cbody = ''
+    req.on('data', (c) => { cbody += c; if (cbody.length > 20_000) req.destroy() })
+    req.on('end', () => {
+      const t = toolBody(cbody).text
+      if (typeof t === 'string' && t.trim()) emitUserMessage(t)
       json(res, 200, { ok: true })
     })
     return

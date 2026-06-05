@@ -47,6 +47,9 @@ export function dropContentShare(surfaceId) {
 /** Strip page-derived content from a moment, leaving only metadata the relay may see
  *  (surface identity + activity counts; url/title are already exposed via list_state). */
 export function redactMoment(m) {
+  // A 'message' moment is text the user typed TO the agent (the in-canvas chat) — it
+  // is consent by construction, not scraped page content, so it crosses the relay intact.
+  if (m.trigger === 'message') return m
   return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, url: m.url, title: m.title, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: [] }
 }
 
@@ -156,6 +159,32 @@ export function emitSurfaceAction(surfaceId, action) {
     signals: { action: 1 },
     user: ['UI action: ' + JSON.stringify(action).slice(0, 180)],
     action
+  }
+  LOG.push(moment)
+  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
+  for (const w of waiters.splice(0)) {
+    clearTimeout(w.timer)
+    w.resolve(LOG.filter((m) => m.seq > w.since))
+  }
+}
+
+/**
+ * The user typed a message to the agent in the in-canvas Chat. Injected into the SAME
+ * moment stream (trigger 'message') so a watching agent is woken and reads it — a
+ * direct message ALWAYS warrants a response (unlike passive activity moments). Not
+ * redacted over the relay (the user authored it for the agent).
+ */
+export function emitUserMessage(text) {
+  const msg = String(text || '').slice(0, 2000)
+  const moment = {
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId: 'chat',
+    trigger: 'message',
+    windowMs: 0,
+    signals: { message: 1 },
+    user: [`user message: "${msg.slice(0, 400)}"`],
+    message: msg
   }
   LOG.push(moment)
   if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
