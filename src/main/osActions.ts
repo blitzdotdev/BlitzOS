@@ -43,9 +43,10 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
 }
 
 // ---- perception: inject passive SENSORS into each web surface and drain them on a
-// loop into the moments coalescer (events.ts). Beyond input (key/click/input) we
-// sense navigation, content change (a MutationObserver — this is what catches drag
-// interactions and async loads that fire no click), and idle-after-activity. Each
+// loop into the moments coalescer (events.ts). Beyond input (key/click/input/
+// pointerdown — pointerdown so DRAG interactions like chess moves count as activity
+// even though they fire no click) we sense navigation, content change (a
+// MutationObserver: async loads + board/DOM updates), and idle-after-activity. Each
 // signal carries a `digest` (a text snapshot) where useful. Re-injects on navigation
 // (os:webview re-fires on each dom-ready). Self-cleans when the guest is gone.
 
@@ -60,6 +61,8 @@ const INJECT = `(() => {
   addEventListener('keydown', (e) => { act(); push({ type: 'key', key: e.key, meta: (e.metaKey || e.ctrlKey) || undefined }); }, true);
   addEventListener('click', (e) => { act(); const t = e.target; push({ type: 'click', tag: t && t.tagName, txt: ((t && t.innerText) || '').trim().slice(0, 40) }); }, true);
   addEventListener('input', (e) => { act(); const t = e.target; push({ type: 'input', tag: t && t.tagName, val: ((t && t.value) || '').slice(0, 80) }); }, true);
+  // pointerdown: marks DRAG activity (chess moves etc.) so idle-after-activity fires even with no click
+  addEventListener('pointerdown', (e) => { act(); push({ type: 'pointer', tag: e.target && e.target.tagName, x: Math.round(e.clientX || 0), y: Math.round(e.clientY || 0) }); }, true);
   // navigation (SPA pushState / hash, and full nav once re-injected on dom-ready)
   setInterval(() => { if (location.href !== lastHref) { lastHref = location.href; push({ type: 'nav', title: document.title, digest: digest() }); } }, 600);
   // content change (coalesced): the general "the page changed" sensor

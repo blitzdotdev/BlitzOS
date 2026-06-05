@@ -48,7 +48,7 @@ interface Ctx {
 
 // Signals that represent the USER doing something (vs. background page churn).
 // Only these wake the agent; content-only mutation just refreshes the snapshot.
-const USER_TYPES = new Set(['key', 'click', 'input', 'nav', 'idle'])
+const USER_TYPES = new Set(['key', 'click', 'input', 'pointer', 'nav', 'idle'])
 
 const pending = new Map<string, Pending>()
 const lastCtx = new Map<string, Ctx>()
