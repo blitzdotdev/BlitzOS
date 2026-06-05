@@ -4,7 +4,11 @@ Guidance for Claude Code working in `agent-os/`. The root repo (`../CLAUDE.md`, 
 
 ## What this is
 
-BlitzOS is an Electron macOS desktop: an **infinite canvas** of live **surfaces**. The human drives it, and so can an AI agent over the [agent-socket](https://agentsocket.dev) relay (paste a URL into any chat, no MCP). Prototype stage; the roadmap/backlog lives in `../plans/agent-os-desktop-architecture.md` and integration research in `../plans/agent-os-integrations-oauth.md`.
+BlitzOS is an Electron macOS desktop for human+agent collaboration on live **surfaces** (browser windows, post-its, blitz.dev apps, agent-authored HTML). The human drives it, and so can an AI agent over the [agent-socket](https://agentsocket.dev) relay (paste a URL / "connect to blitz os", no MCP).
+
+**Navigation model (default = a fixed desktop).** The human starts on **one bounded desktop** (a normal screen) where surfaces z-stack; pan/zoom is off. An **infinite canvas** is the substrate underneath (store `mode: 'canvas'`, currently dormant): it's the seam for *multiple* desktops and agent-driven **follow mode** later, where the agent moves the human's view/attention to whatever needs it. Rationale (HCI): an infinite pan-zoom plane is great for the *agent* (it teleports by id, no nav cost) but uncomfortable for the *human* (desert-fog disorientation), so the human gets a bounded stage and the agent gets the unlimited substrate. See `../plans/agent-os-desktop-architecture.md`.
+
+Prototype stage; roadmap/backlog in `../plans/agent-os-desktop-architecture.md`, integration research in `../plans/agent-os-integrations-oauth.md`.
 
 ## Commands
 
@@ -32,7 +36,7 @@ src/main/        Electron main (Node)
 src/preload/index.ts   contextBridge api: onAction, sendState, onAgentSocketUrl, integrations.*
 src/renderer/src/
   store.ts         zustand: transform, surfaces[], integrations[], actions
-  App.tsx          canvas (pan/zoom), renders surfaces + integration widgets + sidebar + toolbar
+  App.tsx          desktop/canvas modes, renders surfaces + integration widgets + sidebar + toolbar
   components/SurfaceFrame.tsx  ONE frame, four renderers (web/app/srcdoc/native)
   components/NoteWidget.tsx    native 'note' = post-it
   components/{Sidebar,IntegrationWidget,ConnectPanel,PrimarySpace}.tsx
@@ -51,6 +55,7 @@ integrations.config.json   gitignored; OAuth client ids/secrets
 - **Control plane.** `osActions.ts` is the single source of truth for desktop mutations. Both the **local control server** (HTTP on 127.0.0.1) and **agent-socket** call it; it sends `os:action` IPC to the renderer, which applies it to the zustand store. The renderer pushes `os:state` back so `list_state` works. The agent↔OS contract is plain HTTP/JSON, **not MCP** (deliberate).
 - **agent-socket tools:** `create_surface`, `open_window` (web shortcut), `move_surface`, `close_surface`, `go_to_primary`, `list_state`, `surface_control`. Defined in `agentSocket.ts`; mints a paste URL surfaced via the in-app "Connect AI" button.
 - **In-window control (`surface_control`).** Acting *inside* a surface routes through `osActions.osControlSurface(id, action)`, keyed on `surface.kind`: **`web`** (a `<webview>` guest) → **CDP** via `webContents.debugger` (`cdp.ts`) — the only mechanism giving trusted input (`isTrusted`), no same-origin requirement, and off-screen reach; **`app`/`srcdoc`** (iframes) → cooperative `postMessage` (planned, not wired); **`native`** → store mutation. The debugger is single-client and attached lazily, then detached on idle/close so it never locks the user out of DevTools. The renderer reports each web guest's `getWebContentsId()` on `dom-ready` (`os:register-webview`). **Security:** raw `eval` is allowed only on the localhost-bearer control server, **never over the relay** (`surface_control` rejects it).
+- **Navigation modes (`store.mode`).** `desktop` (default): transform locked to scale 1 centered, wheel-pan/zoom and ⌘-pan disabled, `PrimarySpace` marker hidden; windows z-stack, cascade on open, and clamp so the title bar stays on-screen (nothing gets lost); the **dock** (Sidebar) + draggable **titlebar** are how you move/focus. `canvas` (dormant): the infinite pan/zoom plane, reserved for multi-desktop + follow mode. `go_to_primary` re-centers the desktop in `desktop` mode.
 - **Integrations.** OAuth SSO only (no token paste). `oauth.ts` runs a loopback authorization-code flow (system browser → `http://127.0.0.1:8723/callback` → token exchange in main → encrypted in Keychain via `safeStorage`). Each provider needs a one-time client id/secret in `integrations.config.json`.
 
 ## Gotchas / conventions

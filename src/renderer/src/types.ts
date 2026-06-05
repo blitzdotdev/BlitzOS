@@ -30,6 +30,10 @@ export interface Surface {
   component?: string
   /** native: component props (e.g. { text, color }) */
   props?: Record<string, unknown>
+  /** content zoom factor (web: webview zoom; app/srcdoc: CSS scale). default 1 */
+  zoom?: number
+  /** saved geometry when maximized, for restore */
+  restore?: { x: number; y: number; w: number; h: number }
 }
 
 export interface Vec2 {

@@ -30,6 +30,28 @@ body,
   overflow: hidden;
 }
 
+/* Native-window drag bar (macOS): grab to move; window resizes from its edges. */
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  z-index: 5000;
+  -webkit-app-region: drag;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(14, 17, 22, 0.55);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(6px);
+}
+.titlebar-label {
+  font-size: 11px;
+  letter-spacing: 2.5px;
+  color: var(--muted);
+}
+
 /* Background captures pan gestures and shows the infinite grid. */
 .bg {
   position: absolute;
@@ -422,7 +444,7 @@ body,
 /* Left sidebar (screen-space). For now just a + to add a browser window. */
 .sidebar {
   position: fixed;
-  top: 0;
+  top: 32px;
   left: 0;
   bottom: 0;
   width: 52px;
@@ -432,8 +454,7 @@ body,
   display: flex;
   flex-direction: column;
   align-items: center;
-  /* clear the macOS traffic-light buttons */
-  padding-top: 40px;
+  padding-top: 12px;
   gap: 10px;
   backdrop-filter: blur(8px);
 }
@@ -450,6 +471,47 @@ body,
 }
 .sidebar-btn:hover {
   background: #2c333d;
+}
+.sidebar-sep {
+  width: 24px;
+  height: 1px;
+  background: var(--line);
+  margin: 2px 0;
+  flex: 0 0 auto;
+}
+.sidebar-apps {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 10px;
+}
+.sidebar-app {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #1a1f27;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.sidebar-app:hover {
+  background: #262d38;
+  border-color: #3b4452;
+}
+.sidebar-app-ic {
+  font-size: 18px;
+  line-height: 1;
+}
+.sidebar-app-label {
+  display: none;
 }
 
 /* Browser-window chrome additions. */
@@ -497,6 +559,31 @@ body,
 .window-url input:focus {
   border-color: #1f6feb;
 }
+.window-ico.zoom-label {
+  font-size: 10px;
+  min-width: 36px;
+  color: var(--muted);
+}
+.window-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  z-index: 3;
+}
+.window-resize::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  opacity: 0.6;
+}
 
 /* Post-it (native 'note'). */
 .window.note {
@@ -526,6 +613,33 @@ body,
   height: 100%;
   color: var(--muted);
   font-size: 12px;
+}
+
+/* Hold-⌘ pan overlay: steals pointer focus from all windows so you can pan anywhere. */
+.pan-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  background: transparent;
+  cursor: grab;
+  box-shadow: inset 0 0 0 2px rgba(88, 166, 255, 0.45);
+}
+.pan-overlay:active {
+  cursor: grabbing;
+}
+.pan-hint {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(88, 166, 255, 0.95);
+  color: #06121f;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* "Connect AI" panel (agent-socket paste URL). */

@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'close' | 'goToPrimary'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary'
   [k: string]: unknown
 }
 
@@ -38,11 +38,21 @@ const api = {
   sendState(state: OsState): void {
     ipcRenderer.send('os:state', state)
   },
+  /** Renderer reports a web surface's guest WebContents id so main can read its DOM. */
+  reportWebview(surfaceId: string, wcid: number): void {
+    ipcRenderer.send('os:webview', { surfaceId, wcid })
+  },
   /** The agent-socket paste URL (for the "Connect AI" affordance). */
   onAgentSocketUrl(cb: (url: string) => void): () => void {
     const listener = (_e: unknown, url: string): void => cb(url)
     ipcRenderer.on('agentsocket:url', listener)
     return () => ipcRenderer.removeListener('agentsocket:url', listener)
+  },
+  /** A bare ⌘ tap forwarded from a focused webview (for double-tap-⌘ pan toggle). */
+  onMetaTap(cb: () => void): () => void {
+    const listener = (): void => cb()
+    ipcRenderer.on('os:metatap', listener)
+    return () => ipcRenderer.removeListener('os:metatap', listener)
   },
 
   /** Report a live webview's guest webContents id so main can CDP-drive it. */
