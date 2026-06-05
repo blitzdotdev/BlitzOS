@@ -24,7 +24,7 @@ export interface OsAction {
 }
 
 export interface OsState {
-  surfaces: Array<{ id: string; kind: string; x: number; y: number; w: number; h: number; z?: number; title: string; url?: string }>
+  surfaces: Array<{ id: string; kind: string; x: number; y: number; w: number; h: number; z?: number; title: string; url?: string; component?: string; pinned?: boolean }>
   /** Screen size in px (so the agent knows what fits). */
   viewport?: { w: number; h: number }
   /** World-space rectangle the user can currently see (so new surfaces land on-screen). */

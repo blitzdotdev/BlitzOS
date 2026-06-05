@@ -336,7 +336,15 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   return (
     <div
       className={isNote ? 'window note' : 'window'}
-      style={{ left: surface.x, top: surface.y, width: surface.w, height: surface.h, zIndex: surface.z }}
+      style={{
+        left: surface.x,
+        top: surface.y,
+        width: surface.w,
+        height: surface.h,
+        // The Chat panel is pinned: a z-band far above any focus-raised window, so the
+        // agent (or the user) can never bury the channel they talk to the agent through.
+        zIndex: surface.kind === 'native' && surface.component === 'chat' ? 2_000_000 + surface.z : surface.z
+      }}
       onPointerDown={() => focusSurface(surface.id)}
     >
       <div

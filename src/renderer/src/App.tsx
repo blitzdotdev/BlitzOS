@@ -140,7 +140,7 @@ export default function App(): JSX.Element {
           const msgs = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
           st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }] })
         } else {
-          st.createSurface({ kind: 'native', component: 'chat', title: 'Chat', w: 360, h: 460, props: { messages: [{ role: 'agent', text }] } })
+          st.createSurface(chatSurfaceInput([{ role: 'agent', text }]))
         }
       }
     })
@@ -198,7 +198,10 @@ export default function App(): JSX.Element {
         h: s.h,
         z: s.z,
         title: s.title,
-        url: s.url
+        url: s.url,
+        component: s.component,
+        // the Chat panel is pinned always-on-top — the agent must not cover it
+        pinned: s.kind === 'native' && s.component === 'chat'
       }))
       // The world-space rectangle currently visible on screen (screen = world*scale + t).
       const view = {
@@ -260,6 +263,18 @@ export default function App(): JSX.Element {
     pan.current = null
   }
 
+  // The Chat panel docks to the LEFT of whatever the user is currently looking at,
+  // so it opens visible (and stays out of the area where the agent puts windows).
+  function chatSurfaceInput(messages: Array<{ role: string; text: string }>): CreateSurfaceInput {
+    const st = useDesktop.getState()
+    const { scale, x: tx, y: ty } = st.transform
+    const W = 360
+    const H = 460
+    const x = Math.round(-tx / scale + 24) // 24 world-px from the left edge of the view
+    const y = Math.round((st.viewport.h / 2 - ty) / scale - H / 2) // vertically centered
+    return { kind: 'native', component: 'chat', title: 'Chat', w: W, h: H, x, y, props: { messages } }
+  }
+
   function addBrowser(): void {
     // let the store cascade + clamp onto the desktop
     createSurface({ kind: 'web', url: 'https://news.ycombinator.com', title: 'Hacker News' })
@@ -269,7 +284,7 @@ export default function App(): JSX.Element {
     const st = useDesktop.getState()
     const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'chat')
     if (existing) st.focusSurface(existing.id)
-    else createSurface({ kind: 'native', component: 'chat', title: 'Chat', w: 360, h: 460, props: { messages: [] } })
+    else createSurface(chatSurfaceInput([]))
   }
 
   const active = integrations.find((i) => i.id === connecting) ?? null
