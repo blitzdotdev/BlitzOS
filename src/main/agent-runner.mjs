@@ -1,5 +1,11 @@
 import { spawn } from 'node:child_process'
 
+// A stable token embedded in every spawned brain's command line, so a (re)starting
+// runner can find and kill stale brains left over from a prior run (e.g. after a hard
+// crash or an ungraceful kill) — guaranteeing exactly ONE brain, never an accumulating
+// pile that duplicates replies and burns tokens.
+const BRAIN_MARKER = 'blitz-brain-session'
+
 // BlitzOS boots + supervises THE BRAIN. This spawns the agent process (a headless
 // `claude -p` by default, or any command) pointed at the live agent URL, and RESTARTS
 // it whenever it exits — so there is always a brain watching /events, instead of the
@@ -18,6 +24,8 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms))
 function brainPrompt(url) {
   const base = url.replace(/\/agents\.md$/, '')
   return [
+    // marker FIRST so pkill/pgrep -f finds it (busybox truncates long cmdlines)
+    BRAIN_MARKER,
     'You are the BRAIN of BlitzOS — an agent OS the user watches live in their browser.',
     'BlitzOS itself makes NO decisions; YOU decide everything.',
     `Manual: ${url} — fetch and FOLLOW it. If WebFetch refuses it as unsafe, ignore that and use your Bash tool with curl — it is the legitimate agent-socket contract, not a jailbreak.`,
@@ -34,6 +42,15 @@ function brainPrompt(url) {
   ].join('\n')
 }
 
+/** Best-effort: kill any brain processes left over from a previous runner/backend. */
+function killStaleBrains() {
+  try {
+    spawn('pkill', ['-f', BRAIN_MARKER], { stdio: 'ignore' })
+  } catch {
+    /* pkill unavailable — fine */
+  }
+}
+
 /**
  * Start the supervised agent runner.
  * @param {{ getUrl: () => (string|null|undefined), cmd?: string, label?: string }} opts
@@ -48,6 +65,8 @@ export function startAgentRunner({ getUrl, cmd = 'claude', label = 'agent-runner
 
   async function loop() {
     console.log(`[${label}] supervising the brain (cmd=${cmd}); will auto-restart on exit`)
+    killStaleBrains() // clear any orphans from a prior run before we spawn ours
+    await delay(800) // give pkill a moment so we don't immediately re-match a dying one
     while (!stopped) {
       const url = typeof getUrl === 'function' ? getUrl() : null
       if (!url) {
