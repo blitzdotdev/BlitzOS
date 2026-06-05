@@ -134,6 +134,29 @@ export default function App(): JSX.Element {
     })
   }, [])
 
+  // srcdoc surfaces (agent-authored UI) can fire actions back to the agent: a
+  // sandboxed iframe postMessages {__blitz:'action', surfaceId, ...} to us and we
+  // forward it to main, which emits it into the agent's event stream (the callback
+  // half of interactive surfaces, e.g. an "approve" button in a triage panel).
+  useEffect(() => {
+    const onMsg = (e: MessageEvent): void => {
+      const d = e.data as Record<string, unknown> | null
+      if (!d || typeof d !== 'object') return
+      // Local UI action: navigate the shared "Sources" tab instantly, no agent round-trip.
+      if (d.__blitz === 'navigate' && typeof d.url === 'string') {
+        const st = useDesktop.getState()
+        const tab = st.surfaces.find((s) => s.kind === 'web' && s.title === 'Sources')
+        if (tab) st.updateSurface(tab.id, { url: d.url as string })
+        else st.createSurface({ kind: 'web', url: d.url as string, title: 'Sources' })
+        return
+      }
+      // Agent action: forward to the agent's event stream (approve, etc.).
+      if (d.__blitz === 'action') window.agentOS?.surfaceAction(d)
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [])
+
   // Push surface state to main (so list_state works), only when surfaces change.
   useEffect(() => {
     const push = (): void => {

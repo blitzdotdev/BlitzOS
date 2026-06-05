@@ -1,7 +1,7 @@
 import { BrowserWindow, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'crypto'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
-import { ingestSignals } from './events'
+import { ingestSignals, emitSurfaceAction } from './events'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -39,6 +39,14 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
       webviewIds.set(m.surfaceId, m.wcid)
       ensureCapture(m.surfaceId)
     }
+  })
+  // A srcdoc surface fired an action back (e.g. "approve" in a triage panel).
+  // Strip the envelope and emit it into the agent's event stream.
+  ipcMain.on('os:surface-action', (_e, payload: Record<string, unknown>) => {
+    if (!payload || typeof payload !== 'object') return
+    const { surfaceId, __blitz, ...action } = payload as { surfaceId?: unknown; __blitz?: unknown } & Record<string, unknown>
+    void __blitz
+    emitSurfaceAction(typeof surfaceId === 'string' ? surfaceId : 'unknown', action)
   })
 }
 

@@ -62,6 +62,10 @@ const api = {
   unregisterWebview(windowId: string): void {
     ipcRenderer.send('os:unregister-webview', windowId)
   },
+  /** A srcdoc surface (agent-authored UI) fired an action back to the agent. */
+  surfaceAction(payload: Record<string, unknown>): void {
+    ipcRenderer.send('os:surface-action', payload)
+  },
 
   integrations: {
     list(): Promise<IntegrationStatus[]> {

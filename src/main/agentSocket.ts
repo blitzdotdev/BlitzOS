@@ -68,6 +68,13 @@ A "moment" is a coalesced, framed snapshot, NOT a keystroke firehose. BlitzOS ba
   { seq, ts, surfaceId, url, title, trigger:'batch'|'nav'|'idle', windowMs, signals:{type:count}, user:[human-readable actions], snapshot:<text digest of the surface now> }
 
 On each moment: DECIDE whether it warrants action (most don't). If it does, perceive more if needed (read_window / surface_control read), then ACT: build or rearrange surfaces to help (a coach panel, a summary, a tool, reorganize the desktop). The snapshot tells you what the user is doing on ANY site, so this is general: you decide how to help. Don't narrate every moment; act when you can add value, stay quiet otherwise.
+
+## Manage the layout (you own the desktop arrangement)
+Before you open, navigate, or change ANY surface, do this FIRST:
+1. Is it relevant for the user to SEE right now? If not, don't surface it (close or omit it).
+2. Look at the current layout (list_state gives each surface's x/y/w/h). Is it optimal for what the user is doing right now, with only the relevant surfaces visible and READABLE and nothing important cramped or hidden behind another window?
+3. If it is not optimal, FIX the layout first (move/resize/close), THEN do your action.
+Keep the view clean: show only what matters now and give it room. Never pile windows up.
 `
 
 let session: Session | null = null

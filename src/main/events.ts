@@ -21,11 +21,12 @@ export interface BlitzMoment {
   surfaceId: string
   url?: string
   title?: string
-  trigger: 'batch' | 'nav' | 'idle'
+  trigger: 'batch' | 'nav' | 'idle' | 'action'
   windowMs: number
   signals: Record<string, number>
   user: string[]
   snapshot?: string
+  action?: Record<string, unknown>
 }
 
 // Routine activity rides at most this long before a moment is emitted; significant
@@ -152,6 +153,32 @@ setInterval(() => {
 
 export function latestSeq(): number {
   return seq
+}
+
+/**
+ * A srcdoc surface (agent-authored UI) fired an action back to the agent, e.g. the
+ * user clicked "approve" in a triage panel. Emitted into the SAME moment stream so
+ * /events delivers it and the watching agent is woken to act. This is the callback
+ * half of interactive surfaces (the renderer forwards a sandboxed iframe's
+ * postMessage here via ipc 'os:surface-action').
+ */
+export function emitSurfaceAction(surfaceId: string, action: Record<string, unknown>): void {
+  const moment: BlitzMoment = {
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId,
+    trigger: 'action',
+    windowMs: 0,
+    signals: { action: 1 },
+    user: ['UI action: ' + JSON.stringify(action).slice(0, 180)],
+    action
+  }
+  LOG.push(moment)
+  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
+  for (const w of waiters.splice(0)) {
+    clearTimeout(w.timer)
+    w.resolve(LOG.filter((m) => m.seq > w.since))
+  }
 }
 
 /** Long-poll: resolve immediately if there are moments after `since`, else wait up to maxMs. */
