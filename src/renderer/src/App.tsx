@@ -10,6 +10,7 @@ import { Sidebar } from './components/Sidebar'
 export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
+  const mode = useDesktop((s) => s.mode)
   const integrations = useDesktop((s) => s.integrations)
   const surfaces = useDesktop((s) => s.surfaces)
   const createSurface = useDesktop((s) => s.createSurface)
@@ -35,7 +36,10 @@ export default function App(): JSX.Element {
   }, [setIntegrations])
 
   useEffect(() => {
-    const onResize = (): void => useDesktop.getState().setViewport(window.innerWidth, window.innerHeight)
+    const onResize = (): void => {
+      useDesktop.getState().setViewport(window.innerWidth, window.innerHeight)
+      if (useDesktop.getState().mode === 'desktop') useDesktop.getState().goToPrimary()
+    }
     onResize()
     useDesktop.getState().goToPrimary()
     window.addEventListener('resize', onResize)
@@ -46,6 +50,8 @@ export default function App(): JSX.Element {
     const el = rootRef.current
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
+      // fixed desktop: no canvas pan/zoom (let webviews/iframes scroll normally)
+      if (useDesktop.getState().mode !== 'canvas') return
       e.preventDefault()
       const st = useDesktop.getState()
       if (e.ctrlKey) st.zoomAt(e.clientX, e.clientY, e.deltaY)
@@ -74,6 +80,8 @@ export default function App(): JSX.Element {
     let sawOther = false
     let lastTap = 0
     const registerTap = (): void => {
+      // ⌘-pan only exists in canvas mode
+      if (useDesktop.getState().mode !== 'canvas') return
       const now = performance.now()
       if (now - lastTap < 450) {
         lastTap = 0
@@ -150,6 +158,7 @@ export default function App(): JSX.Element {
   }, [])
 
   function onBgDown(e: React.PointerEvent): void {
+    if (useDesktop.getState().mode !== 'canvas') return
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     pan.current = { x: e.clientX, y: e.clientY }
   }
@@ -164,12 +173,8 @@ export default function App(): JSX.Element {
   }
 
   function addBrowser(): void {
-    const { transform: t, viewport } = useDesktop.getState()
-    const w = 920
-    const h = 640
-    const cx = (viewport.w / 2 - t.x) / t.scale
-    const cy = (viewport.h / 2 - t.y) / t.scale
-    createSurface({ kind: 'web', url: 'https://discord.com/app', title: 'Discord', x: cx - w / 2, y: cy - h / 2, w, h })
+    // let the store cascade + clamp onto the desktop
+    createSurface({ kind: 'web', url: 'https://discord.com/app', title: 'Discord' })
   }
 
   const active = integrations.find((i) => i.id === connecting) ?? null
@@ -189,7 +194,7 @@ export default function App(): JSX.Element {
         className="world"
         style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
       >
-        <PrimarySpace />
+        {mode === 'canvas' && <PrimarySpace />}
         {integrations.map((it) => (
           <IntegrationWidget key={it.id} integration={it} onConnect={setConnecting} />
         ))}
@@ -198,16 +203,16 @@ export default function App(): JSX.Element {
         ))}
       </div>
 
-      {panMode && (
+      {panMode && mode === 'canvas' && (
         <div className="pan-overlay" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp}>
           <span className="pan-hint">⌘⌘ pan mode · drag anywhere · double-tap ⌘ to exit</span>
         </div>
       )}
 
       <div className="toolbar">
-        <button onClick={() => useDesktop.getState().goToPrimary()}>Primary (⌘0)</button>
+        <button onClick={() => useDesktop.getState().goToPrimary()}>Center</button>
         <button onClick={() => setShowAi((v) => !v)}>{aiUrl ? '🟢 Connect AI' : '○ Connect AI'}</button>
-        <span className="hint">drag empty space to pan · pinch / ctrl-scroll to zoom</span>
+        <span className="hint">fixed desktop · drag the top bar to move · click the dock to focus</span>
       </div>
 
       {showAi && (
