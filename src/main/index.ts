@@ -6,6 +6,7 @@ import { initOsActions } from './osActions'
 import { startAgentSocket } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
+import { startBrain } from './brain/orchestrator'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -106,6 +107,10 @@ app.whenReady().then(() => {
   // Remote agent path: connect to the agent-socket relay and mint a paste-able
   // URL so any AI chat can drive BlitzOS (no MCP needed).
   startAgentSocket(() => mainWindow)
+
+  // Resident brain (P1): the OBSERVE-ONLY loop — consumes the moment stream and logs
+  // what it perceives, no desktop mutations. BLITZ_BRAIN=claude|deterministic(default)|off.
+  startBrain()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

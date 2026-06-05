@@ -235,10 +235,11 @@ The critical path then follows: **P0 (privacy gate) → P1 (resident loop, obser
 - **Unblocks:** any safe consumption of the moment stream.
 - **Done:** per-surface `contentShared` consent in `events.ts` (`setContentShare`/`isContentShared`/`redactMoment`, default OFF). Relay gates all 3 content egresses (`/events` redacts to metadata, `read_window` + `surface_control:read/screenshot` → 403 `not_shared`); localhost control-server stays full (the brain's path). 👁 share toggle per web surface (`SurfaceFrame`, Electron-only) → `os:content-share` IPC; dropped on close. `__blitz:navigate` now http(s)-only; `surfaceAction` payload capped 4KB. Typecheck + build pass. *Remaining:* server-mode (`backend.mjs`) relay content gating → P5 (no `/events` kernel there, so no proactive leak today).
 
-### P1 — Resident loop, OBSERVE-ONLY *(no mutations)*
+### P1 — Resident loop, OBSERVE-ONLY *(no mutations)* — ✅ LANDED 2026-06-05
 - **Builds from:** `/events` (control-server.ts), `osReadWindow`, the moment stream, `index.ts` startup wiring.
 - **Builds:** `brain/orchestrator.ts` started from `index.ts` alongside `startControlServer`; subscribes to `/events`, logs "world deltas," reasons into an activity-log summary, **zero osActions calls**. Decide: hosted API vs headless child (§7).
 - **Unblocks:** proves a long-lived loop runs without acting. *Note: this is NOT a new perception subsystem — that exists; this is the missing consumer.*
+- **Done:** `src/main/brain/orchestrator.ts` (`startBrain`, started from `index.ts` after `startAgentSocket`) consumes the moment stream IN-PROCESS via `waitForEvents` (trusted, full content — no relay round-trip) and reasons each significant moment into an Observation ring (console + localhost `GET /brain/log`). **Imports no osActions and hands the reasoner no tools → observe-only by construction.** `brain/reasoner.ts`: pluggable `Reasoner` — `deterministic` (default, zero-cost; significance = nav/idle/action) + optional headless `claude -p` (text-in/out, no tools) via `BLITZ_BRAIN=claude`; `off` disables. The §7 "where the brain runs" decision is deferred — both reasoners plug into this loop. Typecheck + build pass; deterministic reasoner unit-tested.
 
 ### P2 — Governor + human-control gate *(Suggest mode; no auto-act)*
 - **Builds from:** P1 loop; the existing widget-consent ledger generalized to actions; the `AGENTS_MD`/tools.json prompt-cache blob; the `USER_TYPES` coalescing as the (already-built) cheap triage.
