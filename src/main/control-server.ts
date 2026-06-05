@@ -2,6 +2,8 @@ import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { randomBytes } from 'crypto'
 import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, type SurfaceDescriptor } from './osActions'
 import type { ControlAction } from './cdp'
+import { waitForEvents, latestSeq } from './events'
+import { setLocal } from './sessionFile'
 
 /**
  * Minimal localhost control API (the LOCAL agent path; agent-socket is the
@@ -93,6 +95,30 @@ export function startControlServer(): void {
       return
     }
 
+    // POST /events { since?, wait? } -> the user's activity as coalesced "moments"
+    // (framed snapshots, batched ~15s, flushed on navigation/idle). Local + reliable.
+    if (req.method === 'POST' && req.url === '/events') {
+      let body = ''
+      req.on('data', (chunk) => {
+        body += chunk
+        if (body.length > 100_000) req.destroy()
+      })
+      req.on('end', async () => {
+        let p: { since?: number; wait?: number } = {}
+        try {
+          p = body ? JSON.parse(body) : {}
+        } catch {
+          /* default */
+        }
+        const since = Number(p.since) || 0
+        const wait = Math.min(Math.max(Number(p.wait) || 0, 0), 25)
+        const events = await waitForEvents(since, wait * 1000)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ events, latest: latestSeq() }))
+      })
+      return
+    }
+
     res.writeHead(404, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ error: 'not found' }))
   })
@@ -100,6 +126,7 @@ export function startControlServer(): void {
   server.listen(0, '127.0.0.1', () => {
     const addr = server.address()
     const port = typeof addr === 'object' && addr ? addr.port : 0
+    setLocal(`http://127.0.0.1:${port}`, token)
     console.log(`[agent-os] local control API: http://127.0.0.1:${port}  token=${token}`)
   })
 }

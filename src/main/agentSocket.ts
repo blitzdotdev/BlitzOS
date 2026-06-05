@@ -1,8 +1,6 @@
 import { BrowserWindow } from 'electron'
-import { writeFileSync, mkdirSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
 import { connect, type Session } from '@agent-socket/sdk'
+import { setRelay } from './sessionFile'
 import {
   osCreateSurface,
   osOpenWindow,
@@ -16,6 +14,7 @@ import {
   type SurfaceDescriptor
 } from './osActions'
 import type { ControlAction } from './cdp'
+import { waitForEvents, latestSeq } from './events'
 
 const RELAY = process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev'
 const APP_ID = process.env.AGENT_SOCKET_APP_ID || 'as_app_anon'
@@ -52,6 +51,15 @@ A **surface** is one of four kinds:
   read {selector?} -> {text}, screenshot -> {image: base64 png}. Only works on kind "web".
   Use 'read' to see the page (works even when panned off-screen); 'screenshot' may be
   blank for an off-screen surface. Prefer a selector over x,y.
+
+## Watching the user — the autonomy loop (/events)
+BlitzOS watches the user for you and WAKES you on meaningful moments, so you behave like an always-on assistant without writing any polling logic. Run ONE long-poll loop:
+- POST /events {since?, wait?} -> {events:[<moment>], latest}. Start since=0, then loop with since=latest and wait=25. It blocks until a moment is ready, then returns instantly.
+
+A **moment** is a coalesced, framed snapshot, NOT a keystroke firehose. BlitzOS batches routine activity (~15s) and flushes immediately when the user navigates or goes idle after acting. Each moment:
+  { seq, ts, surfaceId, url, title, trigger:'batch'|'nav'|'idle', windowMs, signals:{type:count}, user:[human-readable actions], snapshot:<text digest of the surface now> }
+
+On each moment: DECIDE whether it warrants action (most don't). If it does, perceive more if needed (read_window / surface_control read), then ACT: build or rearrange surfaces to help (a coach panel, a summary, a tool, reorganize the desktop). The snapshot tells you what the user is doing on ANY site, so this is general: you decide how to help. Don't narrate every moment; act when you can add value, stay quiet otherwise.
 `
 
 let session: Session | null = null
@@ -61,27 +69,11 @@ export function getAgentSocketUrl(): string | null {
   return currentUrl
 }
 
-// Publish the live session to a well-known file so any local agent can discover
-// it ("connect to blitz os") without a manual copy-paste.
-function writeSessionFile(url: string): void {
-  try {
-    const dir = join(homedir(), '.blitzos')
-    mkdirSync(dir, { recursive: true })
-    const base = url.replace(/\/agents\.md$/, '')
-    writeFileSync(
-      join(dir, 'session.json'),
-      JSON.stringify({ app: 'BlitzOS', url, base, updatedAt: new Date().toISOString() }, null, 2)
-    )
-  } catch (e) {
-    console.error('[agent-socket] could not write session file:', e instanceof Error ? e.message : e)
-  }
-}
-
 async function publish(getWindow: () => BrowserWindow | null): Promise<void> {
   if (!session) return
   const link = await session.mintAgentToken({ label: 'blitzos' })
   currentUrl = link.url
-  writeSessionFile(link.url)
+  setRelay(link.url)
   console.log('[agent-socket] paste this into an AI chat to drive BlitzOS:\n  ' + link.url)
   console.log('[agent-socket] session written to ~/.blitzos/session.json')
   getWindow()?.webContents.send('agentsocket:url', link.url)
@@ -262,6 +254,22 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
             if (action.action === 'read') return { text: r.result }
             return { ok: true }
           }
+        },
+        {
+          path: '/events',
+          description:
+            "Long-poll the user's activity, coalesced into framed 'moments' (batched ~15s; flushed immediately on navigation or going idle after acting). Each moment carries a snapshot of the surface so you can react without a second read: {seq,surfaceId,url,title,trigger,signals,user[],snapshot}. THE AUTONOMY LOOP: start since=0, loop with since=latest and wait=25; on each moment decide whether to act, then build/arrange surfaces to help.",
+          input_schema: {
+            type: 'object',
+            properties: { since: { type: 'number' }, wait: { type: 'number' } }
+          },
+          handler: async ({ body }) => {
+            const a = parse(body)
+            const since = Number(a.since) || 0
+            const wait = Math.min(Math.max(Number(a.wait) || 25, 0), 25)
+            const events = await waitForEvents(since, wait * 1000)
+            return { events, latest: latestSeq() }
+          }
         }
       ],
       onSessionChanged: (info) => {
@@ -269,7 +277,7 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
           const next = info.tokensRemapped.get(currentUrl)
           if (next) {
             currentUrl = next
-            writeSessionFile(next)
+            setRelay(next)
             getWindow()?.webContents.send('agentsocket:url', next)
           }
         }
