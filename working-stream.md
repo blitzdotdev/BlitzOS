@@ -1,10 +1,10 @@
-# BlitzOS — Working Stream (session handoff)
+# BlitzOS — Working Stream
 
-**Updated:** 2026-06-05. Written before a context compaction so the next session can continue. Read this first.
+**My working notes — agent self-continuity, not a handoff doc.** This is for *me* to keep state across context compactions: what I'm doing, current state, decisions, open threads, next actions. Terse + operational. I keep it updated as I work and re-read it on resume. Last touched 2026-06-05.
 
 ---
 
-## TL;DR — where we are
+## TL;DR — where I am
 
 BlitzOS / "Agent OS" = an Electron macOS infinite-canvas spatial desktop of **surfaces** an AI agent drives. This session's big build was a new **server mode** (deployable browser+backend) plus merging a teammate's work, fixing security blockers, and making process management robust. It runs live at **https://agentos.blitzmen.com**. The immediate next task is the **widget system** (design agreed, not yet built). A multi-agent audit found bugs — the 2 blockers are fixed; several majors remain.
 
