@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'crypto'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
+import { ingestSignals, emitSurfaceAction } from './events'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -35,8 +36,69 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     if (state && Array.isArray(state.surfaces)) cached = state
   })
   ipcMain.on('os:webview', (_e, m: { surfaceId: string; wcid: number }) => {
-    if (m && m.surfaceId) webviewIds.set(m.surfaceId, m.wcid)
+    if (m && m.surfaceId) {
+      webviewIds.set(m.surfaceId, m.wcid)
+      ensureCapture(m.surfaceId)
+    }
   })
+  // A srcdoc surface fired an action back (e.g. "approve" in a triage panel).
+  // Strip the envelope and emit it into the agent's event stream.
+  ipcMain.on('os:surface-action', (_e, payload: Record<string, unknown>) => {
+    if (!payload || typeof payload !== 'object') return
+    const { surfaceId, __blitz, ...action } = payload as { surfaceId?: unknown; __blitz?: unknown } & Record<string, unknown>
+    void __blitz
+    emitSurfaceAction(typeof surfaceId === 'string' ? surfaceId : 'unknown', action)
+  })
+}
+
+// ---- perception: inject passive SENSORS into each web surface and drain them on a
+// loop into the moments coalescer (events.ts). Beyond input (key/click/input/
+// pointerdown — pointerdown so DRAG interactions like chess moves count as activity
+// even though they fire no click) we sense navigation, content change (a
+// MutationObserver: async loads + board/DOM updates), and idle-after-activity. Each
+// signal carries a `digest` (a text snapshot) where useful. Re-injects on navigation
+// (os:webview re-fires on each dom-ready). Self-cleans when the guest is gone.
+
+const INJECT = `(() => {
+  if (window.__blitzCap) return 'present';
+  window.__blitzCap = true;
+  window.__blitzEvents = [];
+  let lastAct = Date.now(), idleSent = true, lastHref = location.href, mt = null;
+  const push = (o) => { try { o.url = location.href; o.t = Date.now(); window.__blitzEvents.push(o); if (window.__blitzEvents.length > 300) window.__blitzEvents.splice(0, 150); } catch (e) {} };
+  const digest = () => { try { const m = document.querySelector('main') || document.body; return ((m && m.innerText) || '').replace(/\\s+/g, ' ').trim().slice(0, 600); } catch (e) { return ''; } };
+  const act = () => { lastAct = Date.now(); idleSent = false; };
+  addEventListener('keydown', (e) => { act(); push({ type: 'key', key: e.key, meta: (e.metaKey || e.ctrlKey) || undefined }); }, true);
+  addEventListener('click', (e) => { act(); const t = e.target; push({ type: 'click', tag: t && t.tagName, txt: ((t && t.innerText) || '').trim().slice(0, 40) }); }, true);
+  addEventListener('input', (e) => { act(); const t = e.target; push({ type: 'input', tag: t && t.tagName, val: ((t && t.value) || '').slice(0, 80) }); }, true);
+  // pointerdown: marks DRAG activity (chess moves etc.) so idle-after-activity fires even with no click
+  addEventListener('pointerdown', (e) => { act(); push({ type: 'pointer', tag: e.target && e.target.tagName, x: Math.round(e.clientX || 0), y: Math.round(e.clientY || 0) }); }, true);
+  // navigation (SPA pushState / hash, and full nav once re-injected on dom-ready)
+  setInterval(() => { if (location.href !== lastHref) { lastHref = location.href; push({ type: 'nav', title: document.title, digest: digest() }); } }, 600);
+  // content change (coalesced): the general "the page changed" sensor
+  try { new MutationObserver(() => { if (mt) return; mt = setTimeout(() => { mt = null; push({ type: 'content', title: document.title, digest: digest() }); }, 1200); }).observe(document.body, { childList: true, subtree: true, characterData: true }); } catch (e) {}
+  // idle after activity: the general "user paused, good moment to react" sensor
+  setInterval(() => { if (!idleSent && Date.now() - lastAct > 5000) { idleSent = true; push({ type: 'idle', idleMs: Date.now() - lastAct, title: document.title, digest: digest() }); } }, 1500);
+  push({ type: 'content', title: document.title, digest: digest() }); // baseline snapshot
+  return 'installed';
+})()`
+const DRAIN = `(window.__blitzEvents && window.__blitzEvents.splice(0)) || []`
+
+const captureIntervals = new Map<string, ReturnType<typeof setInterval>>()
+
+function ensureCapture(surfaceId: string): void {
+  // (re)install the listener; idempotent within a page, fresh after a navigation
+  osReadWindow(surfaceId, INJECT).catch(() => {})
+  if (captureIntervals.has(surfaceId)) return
+  const iv = setInterval(async () => {
+    try {
+      const raw = (await osReadWindow(surfaceId, DRAIN)) as Array<Record<string, unknown>>
+      ingestSignals(surfaceId, raw)
+    } catch {
+      clearInterval(iv)
+      captureIntervals.delete(surfaceId)
+    }
+  }, 350)
+  captureIntervals.set(surfaceId, iv)
 }
 
 const DEFAULT_READ = `(() => {

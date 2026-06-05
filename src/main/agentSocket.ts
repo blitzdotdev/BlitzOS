@@ -1,8 +1,6 @@
 import { BrowserWindow } from 'electron'
-import { writeFileSync, mkdirSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
 import { connect, type Session } from '@agent-socket/sdk'
+import { setRelay } from './sessionFile'
 import {
   osCreateSurface,
   osOpenWindow,
@@ -19,6 +17,7 @@ import type { ControlAction } from './cdp'
 import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from './widget-catalog.mjs'
 import type { SaveWidgetInput } from './widget-catalog.mjs'
 import { integrationStatuses, connectedProviders } from './integrations'
+import { waitForEvents, latestSeq } from './events'
 
 const RELAY = process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev'
 const APP_ID = process.env.AGENT_SOCKET_APP_ID || 'as_app_anon'
@@ -60,6 +59,7 @@ FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tel
 - POST $BASE/list_state — list the surfaces currently open.
 - POST $BASE/read_window { id, script? } — read what is INSIDE a web surface (its DOM): url, title, where the user is typing, and visible text. Pass a JS expression as \`script\` to extract something specific.
 - POST $BASE/surface_control { id, action: { action: "click"|"type"|"key"|"read"|"screenshot", selector?, x?, y?, text?, key? } } — act INSIDE a web surface (click/type/key, read text, screenshot). Use read_window or surface_control:read first to see the page.
+- POST $BASE/events { since?, wait? } — the autonomy loop: long-poll the user's activity as framed "moments" (see "Watching the user" below).
 
 ## Widgets (integration-backed mini-apps)
 A widget is a reusable, forkable sandboxed mini-app backed by the user's connected integrations (e.g. "your Discord servers", "your GitHub repos"). There is a library you browse, read, fork, and add to.
@@ -71,6 +71,22 @@ A widget is a reusable, forkable sandboxed mini-app backed by the user's connect
 - POST $BASE/get_widget_authoring — READ THIS before authoring a new widget: it explains the \`window.blitz\` data bridge (a sandboxed widget cannot fetch(); it gets integration data only via window.blitz.data(provider, resource)).
 Typical flow: list_widgets → spawn_widget to use one; or get_widget_source → edit → save_widget to fork; or get_widget_authoring → write HTML → save_widget → spawn_widget to author new.
 
+## Watching the user: the autonomy loop ($BASE/events)
+BlitzOS watches the user for you and WAKES you on meaningful moments, so you behave like an always-on assistant without writing any polling logic. Run ONE long-poll loop:
+- POST $BASE/events { since?, wait? } -> { events:[<moment>], latest }. Start since=0, then loop with since=latest and wait=25. It blocks until a moment is ready, then returns instantly.
+
+A "moment" is a coalesced, framed snapshot, NOT a keystroke firehose. BlitzOS batches routine activity (~15s) and flushes immediately when the user navigates or goes idle after acting. Each moment:
+  { seq, ts, surfaceId, url, title, trigger:'batch'|'nav'|'idle', windowMs, signals:{type:count}, user:[human-readable actions], snapshot:<text digest of the surface now> }
+
+On each moment: DECIDE whether it warrants action (most don't). If it does, perceive more if needed (read_window / surface_control read), then ACT: build or rearrange surfaces to help (a coach panel, a summary, a tool, reorganize the desktop). The snapshot tells you what the user is doing on ANY site, so this is general: you decide how to help. Don't narrate every moment; act when you can add value, stay quiet otherwise.
+
+## Manage the layout (you own the desktop arrangement)
+Before you open, navigate, or change ANY surface, do this FIRST:
+1. Is it relevant for the user to SEE right now? If not, don't surface it (close or omit it).
+2. Look at the current layout (list_state gives each surface's x/y/w/h). Is it optimal for what the user is doing right now, with only the relevant surfaces visible and READABLE and nothing important cramped or hidden behind another window?
+3. If it is not optimal, FIX the layout first (move/resize/close), THEN do your action.
+Keep the view clean: show only what matters now and give it room. Never pile windows up.
+
 Coordinates are world pixels; omit position to center in the user's view. Prefer srcdoc for things you can build inline; use open_window for real external sites. Note: update_surface replacing a srcdoc's html RELOADS it (in-widget state resets) — for live data use a widget's bridge, not html rewrites.
 `
 
@@ -81,27 +97,11 @@ export function getAgentSocketUrl(): string | null {
   return currentUrl
 }
 
-// Publish the live session to a well-known file so any local agent can discover
-// it ("connect to blitz os") without a manual copy-paste.
-function writeSessionFile(url: string): void {
-  try {
-    const dir = join(homedir(), '.blitzos')
-    mkdirSync(dir, { recursive: true })
-    const base = url.replace(/\/agents\.md$/, '')
-    writeFileSync(
-      join(dir, 'session.json'),
-      JSON.stringify({ app: 'BlitzOS', url, base, updatedAt: new Date().toISOString() }, null, 2)
-    )
-  } catch (e) {
-    console.error('[agent-socket] could not write session file:', e instanceof Error ? e.message : e)
-  }
-}
-
 async function publish(getWindow: () => BrowserWindow | null): Promise<void> {
   if (!session) return
   const link = await session.mintAgentToken({ label: 'blitzos' })
   currentUrl = link.url
-  writeSessionFile(link.url)
+  setRelay(link.url)
   console.log('[agent-socket] paste this into an AI chat to drive BlitzOS:\n  ' + link.url)
   console.log('[agent-socket] session written to ~/.blitzos/session.json')
   getWindow()?.webContents.send('agentsocket:url', link.url)
@@ -380,6 +380,22 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
           description:
             'Get the widget-authoring guide: how to write a widget that reads integration data via the sandboxed window.blitz bridge. Read this BEFORE authoring a new widget with save_widget.',
           handler: () => ({ markdown: WIDGET_AUTHORING_MD })
+        },
+        {
+          path: '/events',
+          description:
+            "Long-poll the user's activity, coalesced into framed 'moments' (batched ~15s; flushed immediately on navigation or going idle after acting). Each moment carries a snapshot of the surface so you can react without a second read: {seq,surfaceId,url,title,trigger,signals,user[],snapshot}. THE AUTONOMY LOOP: start since=0, loop with since=latest and wait=25; on each moment decide whether to act, then build/arrange surfaces to help.",
+          input_schema: {
+            type: 'object',
+            properties: { since: { type: 'number' }, wait: { type: 'number' } }
+          },
+          handler: async ({ body }) => {
+            const a = parse(body)
+            const since = Number(a.since) || 0
+            const wait = Math.min(Math.max(Number(a.wait) || 25, 0), 25)
+            const events = await waitForEvents(since, wait * 1000)
+            return { events, latest: latestSeq() }
+          }
         }
       ],
       onSessionChanged: (info) => {
@@ -387,7 +403,7 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
           const next = info.tokensRemapped.get(currentUrl)
           if (next) {
             currentUrl = next
-            writeSessionFile(next)
+            setRelay(next)
             getWindow()?.webContents.send('agentsocket:url', next)
           }
         }

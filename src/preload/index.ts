@@ -62,6 +62,10 @@ const api = {
   unregisterWebview(windowId: string): void {
     ipcRenderer.send('os:unregister-webview', windowId)
   },
+  /** A srcdoc surface (agent-authored UI) fired an action back to the agent. */
+  surfaceAction(payload: Record<string, unknown>): void {
+    ipcRenderer.send('os:surface-action', payload)
+  },
 
   /** Relay a sandboxed srcdoc widget's data request to main (consent-gated; token stays in main). */
   widgetRequest(req: {
