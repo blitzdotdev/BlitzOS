@@ -5,6 +5,11 @@ import { registerIntegrations } from './integrations'
 import { initOsActions } from './osActions'
 import { startAgentSocket } from './agentSocket'
 import { initCdp } from './cdp'
+import { registerWidgets } from './widgets'
+
+// The widget library lives in <appRoot>/widgets; tell the shared catalog where it
+// is (main is bundled to out/, so import.meta-relative resolution there is wrong).
+process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getAppPath(), 'widgets')
 
 let mainWindow: BrowserWindow | null = null
 
@@ -91,6 +96,9 @@ app.whenReady().then(() => {
 
   // Real integration auth (loopback OAuth SSO), tokens in Keychain.
   registerIntegrations(() => mainWindow)
+
+  // Widget data bridge: relays sandboxed widgets' integration-data requests (consented).
+  registerWidgets()
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()

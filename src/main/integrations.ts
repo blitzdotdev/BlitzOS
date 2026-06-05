@@ -111,6 +111,16 @@ function publicEntry(d: Def): Record<string, unknown> {
   }
 }
 
+/** Public status of every integration (for the list_integrations agent tool). */
+export function integrationStatuses(): Record<string, unknown>[] {
+  return REGISTRY.map(publicEntry)
+}
+
+/** The ids of integrations that are currently connected (have a stored token). */
+export function connectedProviders(): string[] {
+  return REGISTRY.filter((d) => !!loadRecord(d.id)).map((d) => d.id)
+}
+
 // ---------- token exchange helpers ----------
 
 async function postForm(url: string, body: Record<string, string>): Promise<Record<string, unknown>> {

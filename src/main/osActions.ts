@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'crypto'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
+import { dropConsent } from './widgets'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -64,7 +65,9 @@ function send(type: string, payload: Record<string, unknown> = {}): void {
 
 /** Create any surface kind. Returns its id. */
 export function osCreateSurface(desc: SurfaceDescriptor): string {
-  const id = desc.id ?? randomUUID()
+  // srcdoc ids are server-minted: a consent grant is keyed by surface id, so an
+  // untrusted caller must not be able to pick one and inherit a prior grant.
+  const id = desc.kind === 'srcdoc' ? randomUUID() : desc.id ?? randomUUID()
   send('create', { surface: { ...desc, id } })
   return id
 }
@@ -89,6 +92,7 @@ export function osUpdateSurface(id: string, patch: Record<string, unknown>): voi
   send('update', { id, patch })
 }
 export function osCloseSurface(id: string): void {
+  dropConsent(id)
   send('close', { id })
 }
 export function osGoToPrimary(): void {

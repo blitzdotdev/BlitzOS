@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Discord servers</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font: 13px/1.45 -apple-system, system-ui, sans-serif;
+    margin: 0; padding: 12px; color: #e6edf3; background: #0e1116;
+  }
+  h1 { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: #8b949e; margin: 0 0 10px; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  a.card {
+    display: flex; flex-direction: column; align-items: center; gap: 6px; text-decoration: none;
+    color: inherit; padding: 10px 8px; border-radius: 12px; background: #161b22;
+    border: 1px solid #21262d; transition: background .12s, border-color .12s;
+  }
+  a.card:hover { background: #1b2230; border-color: #5865F2; }
+  .ico { width: 44px; height: 44px; border-radius: 14px; object-fit: cover; background: #5865F2;
+         display: grid; place-items: center; font-weight: 700; color: #fff; font-size: 16px; overflow: hidden; }
+  .ico img { width: 100%; height: 100%; object-fit: cover; }
+  .name { font-size: 12px; text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .owner { font-size: 10px; color: #f6c177; }
+  #status { color: #8b949e; }
+  .err { color: #ff7b72; }
+</style>
+<h1 id="hd">Discord servers</h1>
+<div id="status">Loading your servers…</div>
+<div id="grid"></div>
+<script>
+  function initial(name) { return (name || '?').trim().charAt(0).toUpperCase() }
+  function render(items) {
+    var status = document.getElementById('status')
+    var grid = document.getElementById('grid')
+    if (!items.length) { status.textContent = 'No servers found.'; return }
+    status.style.display = 'none'
+    grid.innerHTML = items.map(function (it) {
+      var ico = it.icon
+        ? '<span class="ico"><img src="' + it.icon + '" alt=""></span>'
+        : '<span class="ico">' + initial(it.label) + '</span>'
+      var owner = it.sub === 'owner' ? '<span class="owner">owner</span>' : ''
+      return '<a class="card" href="' + (it.url || '#') + '" target="_blank" rel="noopener" title="' +
+        (it.label || '') + '">' + ico + '<span class="name">' + (it.label || '') + '</span>' + owner + '</a>'
+    }).join('')
+  }
+  window.blitz.ready(function (props) {
+    if (props && props.title) document.getElementById('hd').textContent = props.title
+    window.blitz.data('discord', 'guilds').then(function (r) {
+      render(r.items || [])
+    }).catch(function (e) {
+      var status = document.getElementById('status')
+      status.className = 'err'
+      status.textContent = String((e && e.message) || e)
+    })
+  })
+</script>

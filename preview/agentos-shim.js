@@ -136,6 +136,32 @@
     mountServerSurface: mountServerSurface,
     serverNavigate: function (id, url) { streamSend({ t: 'cdp', id: id, method: 'Page.navigate', params: { url: url } }) },
     serverReload: function (id) { streamSend({ t: 'cdp', id: id, method: 'Page.reload', params: {} }) },
+
+    // srcdoc widget bridge: relay a widget's data request to the backend data route
+    // (consent-gated). Token stays server-side; the widget only ever sees {items}.
+    widgetRequest: function (reqObj) {
+      var p = '/integrations/' + encodeURIComponent(reqObj.provider) + '/' + encodeURIComponent(reqObj.resource) +
+        '?surface=' + encodeURIComponent(reqObj.surfaceId)
+      return fetch(API + p).then(function (r) {
+        return r.json().then(function (b) {
+          if (r.ok) return { ok: true, data: b }
+          return { ok: false, error: (b && b.error) || 'request failed', code: b && b.code }
+        })
+      }).catch(function (e) { return { ok: false, error: String((e && e.message) || e) } })
+    },
+    grantConsent: function (surfaceId, provider) {
+      return fetch(API + '/os/consent', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ surfaceId: surfaceId, provider: provider })
+      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+    },
+    // Drop all consent for a surface (its widget code changed → re-approval required).
+    revokeConsent: function (surfaceId) {
+      return fetch(API + '/os/consent/revoke', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ surfaceId: surfaceId })
+      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+    },
     onAction: function (cb) {
       ensureES()
       actionL.push(cb)

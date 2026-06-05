@@ -1,0 +1,73 @@
+// The OS<->widget bridge, shared by the renderer (parent side, in SurfaceFrame) and
+// injected into every `srcdoc` widget (the `window.blitz` shim below).
+//
+// A widget is a sandboxed iframe (`sandbox="allow-scripts"`, no same-origin, no
+// network). Its ONLY channel to the OS — and through the OS to the user's connected
+// integrations — is postMessage. The renderer prepends BRIDGE_SHIM to every widget's
+// srcDoc so `window.blitz` is always present; the widget's own (forkable) html never
+// contains the shim. Keep this in sync with widget-catalog.mjs's WIDGET_AUTHORING_MD.
+//
+// Wire protocol (widget <-> parent):
+//   widget -> parent  { type:'blitz:hello' }                                  (I'm alive)
+//   parent -> widget  { type:'blitz:init',  props }                           (seed/rehydrate)
+//   parent -> widget  { type:'blitz:props', props }                           (live prop change, no reload)
+//   widget -> parent  { type:'blitz:req',   reqId, op:'data', provider, resource }
+//   parent -> widget  { type:'blitz:res',   reqId, ok, data? , error? }
+//
+// The parent authenticates the sender by object identity (event.source ===
+// iframe.contentWindow) — NOT event.origin, which is the literal string "null" for a
+// sandboxed srcdoc and is forgeable. reqId is namespaced per-surface by that identity.
+
+export const BLITZ_MSG = {
+  hello: 'blitz:hello',
+  init: 'blitz:init',
+  props: 'blitz:props',
+  req: 'blitz:req',
+  res: 'blitz:res'
+} as const
+
+/** Injected (prepended to srcDoc) so `window.blitz` exists in every widget. */
+export const BRIDGE_SHIM = `<script>
+(function () {
+  if (window.blitz) return;
+  // Per-document instance nonce: a reqId from one widget generation can never
+  // collide with another's after an html reload (the parent also checks the
+  // issuing window, so a stale reply can't be cross-delivered).
+  var inst = Math.random().toString(36).slice(2);
+  var seq = 0, pending = {}, props = {}, ready = false, queue = [], readyCbs = [], propCbs = [];
+  function post(m) { try { window.parent.postMessage(m, '*'); } catch (e) {} }
+  function flush() { var q = queue; queue = []; for (var i = 0; i < q.length; i++) q[i](); }
+  window.addEventListener('message', function (e) {
+    if (e.source !== window.parent) return;            // only the OS parent
+    var m = e.data; if (!m || typeof m !== 'object') return;
+    if (m.type === 'blitz:init') {
+      props = m.props || {};
+      if (!ready) { ready = true; flush(); for (var i = 0; i < readyCbs.length; i++) try { readyCbs[i](props); } catch (x) {} }
+      for (var j = 0; j < propCbs.length; j++) try { propCbs[j](props); } catch (x) {}
+    } else if (m.type === 'blitz:props') {
+      props = Object.assign({}, props, m.props || {});
+      for (var k = 0; k < propCbs.length; k++) try { propCbs[k](props); } catch (x) {}
+    } else if (m.type === 'blitz:res' && m.reqId && pending[m.reqId]) {
+      var p = pending[m.reqId]; delete pending[m.reqId];
+      if (m.ok) p.resolve(m.data); else p.reject(new Error(m.error || 'request failed'));
+    }
+  });
+  function request(op, payload) {
+    return new Promise(function (resolve, reject) {
+      var reqId = inst + '-' + (++seq);
+      pending[reqId] = { resolve: resolve, reject: reject };
+      var send = function () { post(Object.assign({ type: 'blitz:req', reqId: reqId, op: op }, payload)); };
+      if (ready) send(); else queue.push(send);
+    });
+  }
+  window.blitz = {
+    data: function (provider, resource) { return request('data', { provider: provider, resource: resource }); },
+    tool: function (tool, args) { return request('tool', { tool: tool, args: args || {} }); },
+    props: function () { return props; },
+    onProps: function (cb) { propCbs.push(cb); if (ready) try { cb(props); } catch (x) {} },
+    ready: function (cb) { if (ready) { try { cb(props); } catch (x) {} } else readyCbs.push(cb); }
+  };
+  post({ type: 'blitz:hello' });   // the parent also pushes init on iframe load
+})();
+</script>
+`

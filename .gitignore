@@ -13,5 +13,8 @@ preview/.tokens.json
 # saved cloudflared tunnel token — never commit
 preview/.cf-tunnel-token
 
+# agent-authored widgets saved at runtime (the tracked widget library is widgets/*.html)
+widgets/authored/
+
 # parked vision dump (ignore claude mono)
 claude-mono*.md

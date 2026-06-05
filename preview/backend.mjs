@@ -23,6 +23,14 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
+import {
+  listWidgets,
+  getWidgetSource,
+  saveWidget,
+  fetchProviderResource,
+  PROVIDER_DATA,
+  WIDGET_AUTHORING_MD
+} from '../src/main/widget-catalog.mjs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -185,6 +193,14 @@ const callbackPage = (title, sub) =>
 let osState = { surfaces: [] }
 let agentUrl = null
 const sseClients = new Set()
+// Widget data consent: `${surfaceId}:${provider}` the human approved (via the
+// renderer prompt). The data route 403s until the pair is here — a widget can't
+// read an integration the user hasn't allowed for that surface.
+const consentGranted = new Set()
+// Coarse per-(surface,provider,resource) min-interval, so a runaway widget can't
+// hammer a provider API (burning the user's rate limit). Best-effort, in-memory.
+const lastFetch = new Map()
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
 
 // ---------- SERVER MODE: live web surfaces via a headless browser ----------
 // When BLITZ_SERVER_MODE=1, a server-side headless Chromium renders each `web`
@@ -267,7 +283,7 @@ FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tel
 ## Surface kinds
 - web — a live third-party website, fully rendered server-side and controllable (no X-Frame-Options limits).
 - app — an iframe of a first-party app URL.
-- srcdoc — a sandboxed iframe of HTML you write inline; great for a quick tool/visualization (calculator, chart, timer).
+- srcdoc — a sandboxed iframe of HTML you write inline; great for a quick tool/visualization (calculator, chart, timer). It has NO network/fetch — to show data from a connected integration, use a Widget (see below), which gets data over the \`window.blitz\` bridge.
 - native — a built-in widget; component "note" = a post-it (props { text?, color?: yellow|pink|blue|green }).
 
 ## Tools (authoritative schemas at $BASE/tools.json)
@@ -279,7 +295,17 @@ FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tel
 - POST $BASE/list_state — list the surfaces currently open.
 - POST $BASE/surface_control { id, action: { action: "click"|"type"|"key"|"read"|"screenshot", selector?, x?, y?, text?, key? } } — act INSIDE a web surface (read text, click/type, screenshot).
 
-Coordinates are world pixels; omit position to center in the user's view. Prefer srcdoc for things you can build inline; use open_window for real external sites. Use list_state and surface_control:read to see the screen before acting.
+## Widgets (integration-backed mini-apps)
+A widget is a reusable, forkable sandboxed mini-app backed by the user's connected integrations (e.g. "your Discord servers", "your GitHub repos"). There is a library you browse, read, fork, and add to.
+- POST $BASE/list_integrations — see which integrations are connected (so you know what has real data).
+- POST $BASE/list_widgets — browse the library; each entry has { name, description, needs, needsMet }.
+- POST $BASE/get_widget_source { name } — read a widget's exact HTML (to understand or fork it).
+- POST $BASE/spawn_widget { name, x?, y?, w?, h?, title?, props? } — open a library widget live on the canvas (returns { id }; the user approves integration access once).
+- POST $BASE/save_widget { name, html, description?, needs?, props?, forkedFrom? } — add a NEW or forked widget to the library.
+- POST $BASE/get_widget_authoring — READ THIS before authoring a new widget: it explains the \`window.blitz\` data bridge (a sandboxed widget cannot fetch(); it gets integration data only via window.blitz.data(provider, resource)).
+Typical flow: list_widgets → spawn_widget to use one; or get_widget_source → edit → save_widget to fork; or get_widget_authoring → write HTML → save_widget → spawn_widget to author new.
+
+Coordinates are world pixels; omit position to center in the user's view. Prefer srcdoc for things you can build inline; use open_window for real external sites. Use list_state and surface_control:read to see the screen before acting. Note: update_surface replacing a srcdoc's html RELOADS it (in-widget state resets) — for live data use a widget's bridge, not html rewrites.
 `
 
 async function startOsAgentSocket() {
@@ -306,7 +332,9 @@ async function startOsAgentSocket() {
           handler: ({ body }) => {
             const a = toolBody(body)
             if (!a.kind) return { status: 400, body: { error: 'kind required' } }
-            const id = a.id || randomUUID()
+            // srcdoc ids are server-minted: a consent grant is keyed by surface id, so
+            // an untrusted caller must not be able to choose one and inherit a grant.
+            const id = a.kind === 'srcdoc' ? randomUUID() : a.id || randomUUID()
             broadcast({ type: 'create', surface: { ...a, id } })
             if (SERVER_MODE && host && a.kind === 'web' && !host.has(id)) {
               host.createSurface(id, { url: a.url || 'about:blank', width: Math.round(a.w) || 1280, height: Math.round(a.h) || 800 }).catch(() => {})
@@ -350,6 +378,7 @@ async function startOsAgentSocket() {
           handler: ({ body }) => {
             const id = String(toolBody(body).id)
             broadcast({ type: 'close', id })
+            for (const k of consentGranted) if (k.startsWith(`${id}:`)) consentGranted.delete(k)
             if (SERVER_MODE && host) host.closeSurface(id).catch(() => {})
             return { ok: true }
           }
@@ -440,6 +469,93 @@ async function startOsAgentSocket() {
             if (action.action === 'read') return { text: r.result }
             return { ok: true }
           }
+        },
+        {
+          path: '/list_widgets',
+          description:
+            'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML) backed by the user’s connected integrations. Returns each widget’s name, description, and which integrations it needs (needsMet=true if connected). Use get_widget_source to read one, spawn_widget to open it.',
+          handler: () => {
+            const connected = readTokens()
+            return {
+              widgets: listWidgets().map((w) => ({ ...w, needsMet: (w.needs || []).every((n) => !!connected[n]) })),
+              connected: Object.keys(connected)
+            }
+          }
+        },
+        {
+          path: '/get_widget_source',
+          description:
+            'Read the exact, forkable HTML source of a library widget by name (to understand or fork it). Returns { name, html, needs, props, version, origin }.',
+          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+          handler: ({ body }) => {
+            const name = String(toolBody(body).name || '')
+            const w = getWidgetSource(name)
+            if (!w) return { status: 404, body: { error: `no widget named "${name}"` } }
+            return w
+          }
+        },
+        {
+          path: '/spawn_widget',
+          description:
+            'Open a library widget on the canvas as a live sandboxed surface. It fetches its data through the OS bridge; the user approves integration access once. Returns { id } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
+          input_schema: {
+            type: 'object',
+            required: ['name'],
+            properties: {
+              name: { type: 'string' },
+              x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' },
+              title: { type: 'string' }, props: { type: 'object' }
+            }
+          },
+          handler: ({ body }) => {
+            const a = toolBody(body)
+            const w = getWidgetSource(String(a.name || ''))
+            if (!w) return { status: 404, body: { error: `no widget named "${a.name}"` } }
+            const id = randomUUID()
+            const surface = { kind: 'srcdoc', id, html: w.html, props: { ...(w.props || {}), ...(a.props || {}) }, title: a.title || w.name }
+            for (const k of ['x', 'y', 'w', 'h']) if (a[k] != null) surface[k] = Number(a[k])
+            broadcast({ type: 'create', surface })
+            const connected = readTokens()
+            const needsConnect = (w.needs || []).filter((n) => !connected[n])
+            return needsConnect.length ? { id, needsConnect } : { id }
+          }
+        },
+        {
+          path: '/save_widget',
+          description:
+            'Save a NEW or forked widget (sandboxed HTML using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST to learn the bridge. Returns { name, version }.',
+          input_schema: {
+            type: 'object',
+            required: ['name', 'html'],
+            properties: {
+              name: { type: 'string', description: 'a-z 0-9 -, 2-49 chars' },
+              html: { type: 'string' },
+              description: { type: 'string' },
+              needs: { type: 'array', items: { type: 'string' } },
+              props: { type: 'object' },
+              forkedFrom: { type: 'string' }
+            }
+          },
+          handler: ({ body }) => {
+            const a = toolBody(body)
+            try {
+              return saveWidget(a)
+            } catch (e) {
+              return { status: 400, body: { error: e?.message || 'save failed' } }
+            }
+          }
+        },
+        {
+          path: '/list_integrations',
+          description:
+            'List the integrations (Discord, GitHub, Gmail, Jira, Slack) and whether each is connected — so you know which widgets can show real data and what to ask the user to connect.',
+          handler: () => ({ integrations: statuses() })
+        },
+        {
+          path: '/get_widget_authoring',
+          description:
+            'Get the widget-authoring guide: how to write a widget that reads integration data via the sandboxed window.blitz bridge. Read this BEFORE authoring a new widget with save_widget.',
+          handler: () => ({ markdown: WIDGET_AUTHORING_MD })
         }
       ]
     })
@@ -479,6 +595,65 @@ const server = createServer(async (req, res) => {
   if (m && req.method === 'POST') {
     const toks = readTokens(); delete toks[m[1]]; writeTokens(toks)
     return json(res, 200, { ok: true })
+  }
+
+  // GET /api/integrations/:provider/:resource?surface=ID -> normalized {items:[...]}
+  // The data backend for the widget bridge. CLOSED registry: (provider,resource) must
+  // be in PROVIDER_DATA (no caller string builds a URL — SSRF guard). Consent-gated
+  // per (surface, provider): 403 until the human approved it in the renderer.
+  let dm = path.match(/^\/api\/integrations\/([a-z]+)\/([a-z0-9_-]+)$/)
+  if (dm && req.method === 'GET') {
+    const [, provider, resource] = dm
+    // Own-property check so a resource like "__proto__"/"constructor" can't reach
+    // Object.prototype (the registry is closed; only literal entries are valid).
+    if (!hasOwn(PROVIDER_DATA, provider) || !hasOwn(PROVIDER_DATA[provider], resource)) {
+      return json(res, 404, { error: `unknown data resource ${provider}/${resource}` })
+    }
+    const surface = url.searchParams.get('surface') || ''
+    if (!surface || !consentGranted.has(`${surface}:${provider}`)) {
+      return json(res, 403, { error: `consent required for ${provider}`, code: 'consent_required', provider })
+    }
+    const rk = `${surface}:${provider}:${resource}`
+    const now = Date.now()
+    if (now - (lastFetch.get(rk) || 0) < 500) return json(res, 429, { error: 'slow down', code: 'rate_limited' })
+    lastFetch.set(rk, now)
+    const token = readTokens()[provider]?.secrets?.access_token
+    try {
+      return json(res, 200, await fetchProviderResource(provider, resource, token))
+    } catch (e) {
+      return json(res, e?.code || 502, { error: e?.message || 'data fetch failed' })
+    }
+  }
+
+  // POST /api/os/consent { surfaceId, provider } — the renderer records a human grant.
+  if (path === '/api/os/consent' && req.method === 'POST') {
+    let cbody = ''
+    req.on('data', (c) => { cbody += c; if (cbody.length > 10_000) req.destroy() })
+    req.on('end', () => {
+      const b = toolBody(cbody)
+      if (b && b.surfaceId && b.provider) consentGranted.add(`${String(b.surfaceId)}:${String(b.provider)}`)
+      json(res, 200, { ok: true })
+    })
+    return
+  }
+
+  // POST /api/os/consent/revoke { surfaceId } — drop every grant for a surface
+  // (its widget code changed, or it closed). Forces re-approval of the new code.
+  if (path === '/api/os/consent/revoke' && req.method === 'POST') {
+    let cbody = ''
+    req.on('data', (c) => { cbody += c; if (cbody.length > 10_000) req.destroy() })
+    req.on('end', () => {
+      const sid = String(toolBody(cbody).surfaceId || '')
+      if (sid) for (const k of consentGranted) if (k.startsWith(`${sid}:`)) consentGranted.delete(k)
+      json(res, 200, { ok: true })
+    })
+    return
+  }
+
+  // GET /api/widget-authoring.md — the bridge-authoring guide (also a tool).
+  if (path === '/api/widget-authoring.md' && req.method === 'GET') {
+    res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' })
+    return res.end(WIDGET_AUTHORING_MD)
   }
 
   // GET /api/oauth/callback?code&state -> exchange + store, return a close-me page

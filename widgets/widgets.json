@@ -1,0 +1,16 @@
+[
+  {
+    "name": "discord-servers",
+    "description": "Your Discord servers (guilds) as a live grid — icons, names, owner badge; click to open in Discord.",
+    "needs": ["discord"],
+    "props": { "title": "Discord servers" },
+    "version": 1
+  },
+  {
+    "name": "github-repos",
+    "description": "Your most recently updated GitHub repositories — name, description, private/star badge; click to open.",
+    "needs": ["github"],
+    "props": { "title": "GitHub repos" },
+    "version": 1
+  }
+]

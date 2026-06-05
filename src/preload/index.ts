@@ -63,6 +63,24 @@ const api = {
     ipcRenderer.send('os:unregister-webview', windowId)
   },
 
+  /** Relay a sandboxed srcdoc widget's data request to main (consent-gated; token stays in main). */
+  widgetRequest(req: {
+    surfaceId: string
+    op: 'data'
+    provider: string
+    resource: string
+  }): Promise<{ ok: boolean; data?: unknown; error?: string; code?: string }> {
+    return ipcRenderer.invoke('widget:req', req)
+  },
+  /** Record the human's one-time consent for (surface, provider). */
+  grantConsent(surfaceId: string, provider: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('widget:consent', surfaceId, provider)
+  },
+  /** Drop all consent for a surface (its widget code changed → re-approval required). */
+  revokeConsent(surfaceId: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('widget:consent:revoke', surfaceId)
+  },
+
   integrations: {
     list(): Promise<IntegrationStatus[]> {
       return ipcRenderer.invoke('integrations:list')

@@ -16,6 +16,9 @@ import {
   type SurfaceDescriptor
 } from './osActions'
 import type { ControlAction } from './cdp'
+import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from './widget-catalog.mjs'
+import type { SaveWidgetInput } from './widget-catalog.mjs'
+import { integrationStatuses, connectedProviders } from './integrations'
 
 const RELAY = process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev'
 const APP_ID = process.env.AGENT_SOCKET_APP_ID || 'as_app_anon'
@@ -44,7 +47,7 @@ FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tel
 ## Surface kinds
 - web — a live website (any third-party URL); a real browsing context you can also control.
 - app — an iframe of a first-party blitz.dev app URL.
-- srcdoc — a sandboxed iframe of HTML you write inline; great for a quick tool/visualization (calculator, chart, timer).
+- srcdoc — a sandboxed iframe of HTML you write inline; great for a quick tool/visualization (calculator, chart, timer). It has NO network/fetch — to show data from a connected integration, use a Widget (see below), which gets data over the \`window.blitz\` bridge.
 - native — a built-in widget; component "note" = a post-it (props { text?, color?: yellow|pink|blue|green }).
 
 ## Tools (authoritative schemas at $BASE/tools.json)
@@ -58,7 +61,17 @@ FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tel
 - POST $BASE/read_window { id, script? } — read what is INSIDE a web surface (its DOM): url, title, where the user is typing, and visible text. Pass a JS expression as \`script\` to extract something specific.
 - POST $BASE/surface_control { id, action: { action: "click"|"type"|"key"|"read"|"screenshot", selector?, x?, y?, text?, key? } } — act INSIDE a web surface (click/type/key, read text, screenshot). Use read_window or surface_control:read first to see the page.
 
-Coordinates are world pixels; omit position to center in the user's view. Prefer srcdoc for things you can build inline; use open_window for real external sites.
+## Widgets (integration-backed mini-apps)
+A widget is a reusable, forkable sandboxed mini-app backed by the user's connected integrations (e.g. "your Discord servers", "your GitHub repos"). There is a library you browse, read, fork, and add to.
+- POST $BASE/list_integrations — see which integrations are connected (so you know what has real data).
+- POST $BASE/list_widgets — browse the library; each entry has { name, description, needs, needsMet }.
+- POST $BASE/get_widget_source { name } — read a widget's exact HTML (to understand or fork it).
+- POST $BASE/spawn_widget { name, x?, y?, w?, h?, title?, props? } — open a library widget live on the canvas (returns { id }; the user approves integration access once).
+- POST $BASE/save_widget { name, html, description?, needs?, props?, forkedFrom? } — add a NEW or forked widget to the library.
+- POST $BASE/get_widget_authoring — READ THIS before authoring a new widget: it explains the \`window.blitz\` data bridge (a sandboxed widget cannot fetch(); it gets integration data only via window.blitz.data(provider, resource)).
+Typical flow: list_widgets → spawn_widget to use one; or get_widget_source → edit → save_widget to fork; or get_widget_authoring → write HTML → save_widget → spawn_widget to author new.
+
+Coordinates are world pixels; omit position to center in the user's view. Prefer srcdoc for things you can build inline; use open_window for real external sites. Note: update_surface replacing a srcdoc's html RELOADS it (in-widget state resets) — for live data use a widget's bridge, not html rewrites.
 `
 
 let session: Session | null = null
@@ -270,6 +283,103 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
             if (action.action === 'read') return { text: r.result }
             return { ok: true }
           }
+        },
+        {
+          path: '/list_widgets',
+          description:
+            'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML) backed by the user’s connected integrations. Returns each widget’s name, description, and which integrations it needs (needsMet=true if connected). Use get_widget_source to read one, spawn_widget to open it.',
+          handler: () => {
+            const connected = connectedProviders()
+            return {
+              widgets: listWidgets().map((w) => ({ ...w, needsMet: w.needs.every((n) => connected.includes(n)) })),
+              connected
+            }
+          }
+        },
+        {
+          path: '/get_widget_source',
+          description:
+            'Read the exact, forkable HTML source of a library widget by name (to understand or fork it). Returns { name, html, needs, props, version, origin }.',
+          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+          handler: ({ body }) => {
+            const name = String(parse(body).name || '')
+            const w = getWidgetSource(name)
+            if (!w) return { status: 404, body: { error: `no widget named "${name}"` } }
+            return w
+          }
+        },
+        {
+          path: '/spawn_widget',
+          description:
+            'Open a library widget on the canvas as a live sandboxed surface. It fetches its data through the OS bridge; the user approves integration access once. Returns { id } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
+          input_schema: {
+            type: 'object',
+            required: ['name'],
+            properties: {
+              name: { type: 'string' },
+              x: { type: 'number' },
+              y: { type: 'number' },
+              w: { type: 'number' },
+              h: { type: 'number' },
+              title: { type: 'string' },
+              props: { type: 'object' }
+            }
+          },
+          handler: ({ body }) => {
+            const a = parse(body)
+            const w = getWidgetSource(String(a.name || ''))
+            if (!w) return { status: 404, body: { error: `no widget named "${String(a.name)}"` } }
+            const desc: SurfaceDescriptor = {
+              kind: 'srcdoc',
+              html: w.html,
+              props: { ...w.props, ...((a.props as Record<string, unknown>) || {}) },
+              title: typeof a.title === 'string' ? a.title : w.name
+            }
+            if (typeof a.x === 'number') desc.x = a.x
+            if (typeof a.y === 'number') desc.y = a.y
+            if (typeof a.w === 'number') desc.w = a.w
+            if (typeof a.h === 'number') desc.h = a.h
+            const id = osCreateSurface(desc)
+            const connected = connectedProviders()
+            const needsConnect = w.needs.filter((n) => !connected.includes(n))
+            return needsConnect.length ? { id, needsConnect } : { id }
+          }
+        },
+        {
+          path: '/save_widget',
+          description:
+            'Save a NEW or forked widget (sandboxed HTML using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST to learn the bridge. Returns { name, version }.',
+          input_schema: {
+            type: 'object',
+            required: ['name', 'html'],
+            properties: {
+              name: { type: 'string', description: 'a-z 0-9 -, 2-49 chars' },
+              html: { type: 'string' },
+              description: { type: 'string' },
+              needs: { type: 'array', items: { type: 'string' } },
+              props: { type: 'object' },
+              forkedFrom: { type: 'string' }
+            }
+          },
+          handler: ({ body }) => {
+            try {
+              return saveWidget(parse(body) as unknown as SaveWidgetInput)
+            } catch (e) {
+              return { status: 400, body: { error: e instanceof Error ? e.message : String(e) } }
+            }
+          }
+        },
+        {
+          path: '/list_integrations',
+          description:
+            'List the integrations (Discord, GitHub, Gmail, Jira, Slack) and whether each is connected — so you know which widgets can show real data and what to ask the user to connect.',
+          handler: () => ({ integrations: integrationStatuses() })
+        },
+        {
+          path: '/get_widget_authoring',
+          description:
+            'Get the widget-authoring guide: how to write a widget that reads integration data via the sandboxed window.blitz bridge. Read this BEFORE authoring a new widget with save_widget.',
+          handler: () => ({ markdown: WIDGET_AUTHORING_MD })
         }
       ],
       onSessionChanged: (info) => {

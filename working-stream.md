@@ -6,7 +6,7 @@
 
 ## TL;DR — where I am
 
-BlitzOS / "Agent OS" = an Electron macOS infinite-canvas spatial desktop of **surfaces** an AI agent drives. This session's big build was a new **server mode** (deployable browser+backend: headless Chromium per web surface, streamed to a canvas, CDP-controlled), plus merging a teammate's work, fixing security blockers, and making process management robust. Live at **https://agentos.blitzmen.com**. Immediate next: the **widget system** (design locked below, not built). Multi-agent audit found 2 blockers (FIXED) + majors (open).
+BlitzOS / "Agent OS" = an Electron macOS infinite-canvas spatial desktop of **surfaces** an AI agent drives. Earlier this session: a new **server mode** (deployable browser+backend: headless Chromium per web surface, streamed to a canvas, CDP-controlled), a teammate merge, security blockers fixed, robust process mgmt. Live at **https://agentos.blitzmen.com**. **LATEST (2026-06-05): the widget system is BUILT + verified end-to-end in a real browser + adversarially reviewed (8 findings fixed).** Agents now browse/spawn/fork/author sandboxed `srcdoc` widgets backed by the user's OAuth integrations, over a consent-gated `window.blitz` bridge. Next: server-mode audit majors (browser-host.mjs), then deploy.
 
 ## Run it
 
@@ -72,17 +72,20 @@ Tokens: `preview/.tokens.json` (gitignored). Shape `{provider:{provider,label,se
 - gmail/jira: more API shape work (gmail messages = list+get; jira needs `cloudId`+`siteUrl` from `secrets`).
 - **NOTE:** I designed a `GET /api/integrations/:provider/:resource` route + a `PROVIDER_DATA` registry but did NOT add it (pivoted to the bridge after the alignment chat). Build it as the bridge's data backend.
 
-## Widget system — build-ready design (NEXT, do this)
+## Widget system — BUILT (full loop verified in a real browser, 2026-06-05)
 
-**Goal:** a library of widgets the user's agents browse, read the source of, instantiate, OR author new ones at runtime — backed by the connected integrations. The "agent OS" thesis.
+**The "agent OS" thesis, working:** agents browse a library, read/fork widget source, spawn them, OR author new ones at runtime — all backed by the user's connected integrations, over a consent-gated bridge. Verified e2e (headless Chromium + real relay): spawn discord-servers → consent overlay → Allow → 73 real Discord guilds render in the sandbox; author via save_widget → appears in library; code-swap re-prompts consent.
 
-**Pieces:**
-1. **Widget library** — a registry of `srcdoc` widget definitions (source available). Store as files, e.g. `preview/widgets/<name>.html` + a manifest (`widgets.json`: `[{name, description, needs:['discord'], props?}]`). Agent tools: `list_widgets` → `[{name,description,needs}]`; `get_widget_source {name}` → html; instantiate via existing `create_surface {kind:'srcdoc', html}` (or a `spawn_widget {name, props}` convenience that reads the library + creates the surface).
-2. **OS↔widget bridge** — `srcdoc` is sandboxed (no fetch/network), so widgets get data via `postMessage`: widget → parent `{type:'blitz:req', reqId, op:'data', provider, resource}` or `{op:'tool', tool, args}`; the renderer (SurfaceFrame `srcdoc` branch) relays to the backend (`fetch('/api/integrations/'+provider+'/'+resource)` or a tool route) and posts back `{type:'blitz:res', reqId, ok, data|error}`. **Consent gate:** first data/tool request per (widget, provider) prompts the user (BlitzOS holds the tokens; the widget never sees them).
-3. **Data backend** — add `GET /api/integrations/:provider/:resource` to `backend.mjs` with a `PROVIDER_DATA` registry returning normalized `{items:[{label, sub?, icon?, badge?, url?}]}` (discord/guilds, github/repos to start). Reads `.tokens.json`.
-4. **Agent flow:** `list_widgets` → `get_widget_source` (read code) → `create_surface srcdoc` (instantiate) OR author a new srcdoc using the bridge → `update_surface` to evolve it live.
+**Pieces (all built):**
+1. **Shared catalog** `src/main/widget-catalog.mjs` (+`.d.mts`) — ONE source of truth for BOTH transports (mirrors control-core.mjs). `listWidgets/getWidgetSource/saveWidget`, the **closed** `PROVIDER_DATA` registry (`discord/guilds`, `github/repos`) + `fetchProviderResource(provider,resource,token)` (10s timeout, 5MB cap, own-property guard), and `WIDGET_AUTHORING_MD`.
+2. **Library** `widgets/` — `widgets.json` manifest + `discord-servers.html` + `github-repos.html` (builtin, tracked). Authored widgets → `widgets/authored/` (gitignored). Each uses `window.blitz`.
+3. **Bridge** `src/renderer/src/widget-bridge.ts` (`BRIDGE_SHIM`, the injected `window.blitz`: `data/tool/props/onProps/ready`, per-instance nonce reqId) + `SurfaceFrame.tsx` srcdoc branch (ref + shim-injected srcDoc + `onLoad` init + `window 'message'` listener authenticated by **`event.source===iframe.contentWindow`**). Consent overlay + per-generation local consent gate.
+4. **Data + consent (server)** `preview/backend.mjs` — `GET /api/integrations/:provider/:resource?surface=ID` (closed registry, **consent-gated per (surface,provider)**, rate-limited), `POST /api/os/consent`, `POST /api/os/consent/revoke`, `GET /api/widget-authoring.md`. Consent pruned on close + revoked on code-swap.
+5. **Tools (both transports)** — `list_widgets, get_widget_source, spawn_widget, save_widget, list_integrations, get_widget_authoring`. Server in `backend.mjs`; Electron in `agentSocket.ts` (+`widgets.ts` ipc `widget:req/consent/consent:revoke` via tokenStore Keychain, `dropConsent` from osActions on close). OS_AGENTS_MD + AGENTS_MD have a `## Widgets` section.
 
-**First slice to build:** (a) the bridge in `SurfaceFrame.tsx` srcdoc branch + the shim plumbing; (b) `/api/integrations/:provider/:resource` data route; (c) a `discord-servers.html` srcdoc widget that uses the bridge; (d) `list_widgets`/`get_widget_source` tools (both transports). Keep it `srcdoc`-based so it's agent-readable + forkable. Add a consent gate.
+**Security model (post-review, 8 findings fixed):** token NEVER crosses into the widget (only normalized `{items}`). **srcdoc surface ids are server-minted** (agent can't pick one to inherit a grant). Consent is keyed `(surfaceId,provider)`, **revoked when html changes** (renderer clears a per-generation `consented` set → new code re-prompts; deterministic, not race-dependent) and **pruned on close**. Bridge replies are **window-checked** (`postRes` only delivers to the issuing `contentWindow`) so a reload can't cross-deliver. Closed `PROVIDER_DATA` (own-property lookup) = no SSRF. Rate-limited + size-capped + timed-out fetches.
+
+**Not yet done (widget follow-ups):** generic consent-gated `op:'fetch'` escape-hatch so an authored widget can hit a NOT-yet-registered provider/resource without a backend edit (today PROVIDER_DATA is the closed allowlist — discord/guilds, github/repos only); a CSP on the srcdoc iframe to block data egress (defense-in-depth; deferred — the data is already user-consented); more provider resources (gmail messages, jira issues).
 
 ## Verify commands I use (re-runnable)
 
@@ -96,7 +99,8 @@ Tokens: `preview/.tokens.json` (gitignored). Shape `{provider:{provider,label,se
 
 ## Git state (IMPORTANT)
 
-- **BlitzOS** — merged with origin (teammate's commits in via `4747172`). Recent local commits, most NOT pushed (security, process-mgmt, docs, working-stream). **No SSH key in sandbox → the USER pushes** (`git push origin master` from their machine). Recent: `bd020a5/0d44efb` working-stream, `777c35a` process-mgmt, `6281066` blockers, `51bfe2d` run docs, `904ae22` deploy issue, `4b92942` shim/scroll fix, `fcfcc9f` post-merge parity, `4747172` merge, `e4e876b` remote-browser, `821c889` teammate merge, `28a23a7` agents.md fix.
+- **BlitzOS** — merged with origin (teammate's commits in via `4747172`). Recent local commits, most NOT pushed. **No SSH key in sandbox → the USER pushes** (`git push origin master` from their machine). Recent: `9ef28d5` working-stream expand, `777c35a` process-mgmt, `6281066` blockers, `51bfe2d` run docs, `4b92942` shim/scroll fix, `4747172` merge, `e4e876b` remote-browser.
+- **WIDGET SYSTEM = UNCOMMITTED** (working tree, not yet committed). New: `src/main/widget-catalog.{mjs,d.mts}`, `src/main/widgets.ts`, `src/renderer/src/widget-bridge.ts`, `widgets/` (manifest + 2 html). Modified: `preview/{backend.mjs,agentos-shim.js}`, `src/main/{agentSocket.ts,index.ts,integrations.ts,osActions.ts}`, `src/preload/index.ts`, `src/renderer/src/components/SurfaceFrame.tsx`, `.gitignore`. Typecheck clean. Suggested commit msg theme: "Widget system: agent-browsable, integration-backed srcdoc widgets + consent bridge". The user pushes.
 - **agent-socket** (separate repo) — my relay fix `f5b12d2`; the other agent built on it (`preamble.ts`, task caps). Not mine to push/deploy.
 
 ## Open audit findings (we3qbpvd3; 2 blockers FIXED, majors OPEN)
@@ -115,11 +119,18 @@ Tokens: `preview/.tokens.json` (gitignored). Shape `{provider:{provider,label,se
 
 ## NEXT — priority
 
-1. **Widget system** (design above — build it; start with the first slice).
-2. **Audit majors #1–#3, #5** (server-mode reliability).
+1. ~~Widget system~~ **DONE** (built + verified + reviewed 2026-06-05). Follow-ups: generic `op:'fetch'` escape-hatch + srcdoc CSP + more provider resources (see Widget system section).
+2. **Audit majors #1–#3, #5** (server-mode reliability, browser-host.mjs) — still OPEN; independent of widgets (they're `web`-surface, widgets are `srcdoc`).
 3. **Server-mode polish** — binary WS frames, DPR/zoom/scroll coord transform, off-screen fps throttle.
-4. **Deployment** (parked) — `issues/open/server-mode-deployment.md` (static-serve, bind 0.0.0.0 + bearer everywhere, Docker + Caddy, then multi-tenant).
+4. **Deployment** (parked) — `issues/open/server-mode-deployment.md` (static-serve, bind 0.0.0.0 + bearer everywhere, Docker + Caddy, then multi-tenant). Note: user said CF Access handles external auth on the tunnel, so app-layer `/api` gate is deprioritized.
 5. **OS's own headless agent** — BlitzOS runs its own Claude/Codex that perceives (`list_state`/`read_window`) + acts. Now buildable.
+
+## Widget system verify recipe (re-runnable, server mode)
+
+Bring up backend+vite (no tunnel): two background tasks running `node preview/backend.mjs` (env `BLITZ_SERVER_MODE=1 BACKEND_PORT=8799 PUBLIC_BASE_URL=http://127.0.0.1:5174`) and `npx vite --config vite.renderer.preview.mjs` (env `BLITZ_SERVER_MODE=1 BACKEND_PORT=8799`). **Run node in the task's foreground (NO `&`)** or it gets orphaned/killed. Restart vite after editing `agentos-shim.js` (it `readFileSync`s the shim once at config load).
+- **Catalog** (no server): `node` import `../src/main/widget-catalog.mjs`; `fetchProviderResource('discord','guilds', <token from preview/.tokens.json>)` → 65 guilds; `'__proto__'`/`'constructor'` → 404.
+- **Relay tools + data route + consent**: `$BASE` = `GET :8799/api/os/agent-url` minus `/agents.md`; POST `$BASE/{list_widgets,get_widget_source,spawn_widget,save_widget,list_integrations,get_widget_authoring}`. Data route is backend HTTP (not a relay tool): `GET :8799/api/integrations/discord/guilds?surface=ID` → 403 w/o consent; `POST :8799/api/os/consent {surfaceId,provider}` → 200; revoke → 403; close_surface prunes; 2 rapid → 429.
+- **Full bridge render** (headless chromium, auto-attach to the iframe target via `Target.setAutoAttach`): load `:5174`, spawn_widget over relay, poll for the parent's "Allow" button, `.click()` it, read the iframe session's `document.body.innerText` → guild names. Code-swap test: `update_surface {id, html:new}` → "Allow" button RE-APPEARS (consent-reuse fix). NOTE: discord rate-limits guild fetches hard after many runs (their 429 → our 502); retry with delay.
 
 ## Key docs
 

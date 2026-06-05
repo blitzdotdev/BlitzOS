@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
 import { useDesktop } from '../store'
 import { NoteWidget } from './NoteWidget'
+import { BRIDGE_SHIM } from '../widget-bridge'
+
+type BridgeReply = { ok: boolean; data?: unknown; error?: string }
+type HeldReply = { provider: string; resource: string; win: Window; reply: (r: BridgeReply) => void }
 
 interface WebviewMethods {
   loadURL(url: string): Promise<void>
@@ -37,8 +41,13 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const resize = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null)
   const webviewRef = useRef<HTMLWebViewElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const heldReplies = useRef<Map<string, HeldReply>>(new Map())
+  const consented = useRef<Set<string>>(new Set()) // providers the human OK'd for THIS widget generation
+  const prevHtml = useRef(surface.html)
   const serverMode = !!window.agentOS?.serverMode
   const [draft, setDraft] = useState(surface.url ?? '')
+  const [consentProvider, setConsentProvider] = useState<string | null>(null)
   const zoom = surface.zoom ?? 1
 
   // web: navigation sync + apply content zoom
@@ -102,6 +111,105 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     if (!c || !mount) return
     return mount(c, surface.id, { w: surface.w, h: surface.h })
   }, [surface.kind, surface.id, surface.w, surface.h, serverMode])
+
+  // srcdoc widget bridge: relay the widget's blitz:req (data from a connected
+  // integration) to the OS, gated by a one-time consent prompt; reply over
+  // postMessage. The sender is authenticated by object identity (event.source ===
+  // our iframe.contentWindow) — origin is the unusable "null" for a sandboxed frame.
+  // Deliver a reply ONLY to the generation that asked: an html reload swaps the
+  // iframe's contentWindow, so a stale held reply for the old document must never
+  // land on the new one (would cross-deliver consented data to different code).
+  function postRes(win: Window, reqId: string, r: BridgeReply): void {
+    if (iframeRef.current?.contentWindow === win) win.postMessage({ type: 'blitz:res', reqId, ...r }, '*')
+  }
+  async function serveData(win: Window, reqId: string, provider: string, resource: string): Promise<void> {
+    const api = window.agentOS
+    if (!api?.widgetRequest) return postRes(win, reqId, { ok: false, error: 'widget data bridge unavailable here' })
+    // The renderer is the consent authority: a provider must be approved for THIS
+    // generation before any backend call. This is deterministic (no dependence on a
+    // revoke round-trip): a reloaded widget starts with an empty `consented` set, so
+    // new code always re-prompts even if the backend grant hasn't been dropped yet.
+    if (!consented.current.has(provider)) {
+      heldReplies.current.set(reqId, { provider, resource, win, reply: (r) => postRes(win, reqId, r) })
+      setConsentProvider((cur) => cur ?? provider)
+      return
+    }
+    const res = await api.widgetRequest({ surfaceId: surface.id, op: 'data', provider, resource })
+    if (res?.ok) return postRes(win, reqId, { ok: true, data: res.data })
+    if (res?.code === 'consent_required') {
+      // backend dropped the grant (e.g. revoked) — fall back to re-prompting
+      consented.current.delete(provider)
+      heldReplies.current.set(reqId, { provider, resource, win, reply: (r) => postRes(win, reqId, r) })
+      setConsentProvider((cur) => cur ?? provider)
+      return
+    }
+    postRes(win, reqId, { ok: false, error: res?.error || 'request failed' })
+  }
+  async function resolveConsent(provider: string, allow: boolean): Promise<void> {
+    setConsentProvider(null)
+    const held = [...heldReplies.current.entries()].filter(([, v]) => v.provider === provider)
+    held.forEach(([k]) => heldReplies.current.delete(k))
+    if (!allow) {
+      held.forEach(([, v]) => v.reply({ ok: false, error: 'access denied by the user' }))
+    } else {
+      consented.current.add(provider)
+      await window.agentOS?.grantConsent?.(surface.id, provider)
+      for (const [, v] of held) {
+        const res = await window.agentOS?.widgetRequest?.({ surfaceId: surface.id, op: 'data', provider, resource: v.resource })
+        v.reply(res?.ok ? { ok: true, data: res.data } : { ok: false, error: res?.error || 'request failed' })
+      }
+    }
+    const next = [...heldReplies.current.values()][0]?.provider ?? null
+    if (next) setConsentProvider(next)
+  }
+
+  useEffect(() => {
+    if (surface.kind !== 'srcdoc') return
+    const onMessage = (e: MessageEvent): void => {
+      const win = iframeRef.current?.contentWindow
+      if (!win || e.source !== win) return // only OUR widget (origin is unusable "null")
+      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string }
+      if (!m || typeof m !== 'object') return
+      if (m.type === 'blitz:hello') {
+        win.postMessage({ type: 'blitz:init', props: surface.props ?? {} }, '*')
+      } else if (m.type === 'blitz:req' && typeof m.reqId === 'string') {
+        if (m.op === 'data') void serveData(win, m.reqId, String(m.provider ?? ''), String(m.resource ?? ''))
+        else postRes(win, m.reqId, { ok: false, error: `unsupported op: ${String(m.op)}` })
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+    // surface.props intentionally in deps: a hello after a prop change re-seeds fresh props
+  }, [surface.kind, surface.id, surface.props])
+
+  // Live prop changes reach the widget without reloading it (html stays put).
+  useEffect(() => {
+    if (surface.kind !== 'srcdoc') return
+    iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:props', props: surface.props ?? {} }, '*')
+  }, [surface.kind, surface.props])
+
+  // An html change is a NEW code generation: the human approved the OLD code, not
+  // this one. Revoke any prior consent (so the reloaded widget must re-ask) and
+  // deny in-flight held replies so they can't cross into the new document.
+  useEffect(() => {
+    if (surface.kind !== 'srcdoc') return
+    if (prevHtml.current === surface.html) return // initial mount, or no change
+    prevHtml.current = surface.html
+    consented.current.clear() // new generation must re-earn consent (deterministic gate)
+    window.agentOS?.revokeConsent?.(surface.id)
+    heldReplies.current.forEach((v) => v.reply({ ok: false, error: 'widget reloaded' }))
+    heldReplies.current.clear()
+    setConsentProvider(null)
+  }, [surface.kind, surface.id, surface.html])
+
+  // On close/unmount, deny any pending consent requests (no dangling held replies).
+  useEffect(() => {
+    if (surface.kind !== 'srcdoc') return
+    return () => {
+      heldReplies.current.forEach((v) => v.reply({ ok: false, error: 'closed' }))
+      heldReplies.current.clear()
+    }
+  }, [surface.kind, surface.id])
 
   function go(e: React.FormEvent): void {
     e.preventDefault()
@@ -190,7 +298,21 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           />
         )
       case 'srcdoc':
-        return <iframe title={surface.title} sandbox="allow-scripts" srcDoc={surface.html} style={iframeZoom} />
+        // Prepend the OS<->widget bridge shim so window.blitz exists in every
+        // widget; the stored html stays clean (forkable). onLoad seeds props after
+        // the document (incl. the shim) has parsed — closes the listener race.
+        return (
+          <iframe
+            ref={iframeRef}
+            title={surface.title}
+            sandbox="allow-scripts"
+            srcDoc={BRIDGE_SHIM + (surface.html ?? '')}
+            style={iframeZoom}
+            onLoad={() =>
+              iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:init', props: surface.props ?? {} }, '*')
+            }
+          />
+        )
       case 'native':
         if (surface.component === 'note') return <NoteWidget surface={surface} />
         return <div className="native-fallback">unknown widget: {surface.component}</div>
@@ -239,8 +361,40 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           ×
         </button>
       </div>
-      <div className="window-body" style={isNote ? { background: noteColor } : undefined}>
+      <div
+        className="window-body"
+        style={{ position: 'relative', ...(isNote ? { background: noteColor } : {}) }}
+      >
         {body()}
+        {consentProvider && (
+          <div
+            onPointerDown={stop}
+            style={{
+              position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
+              background: 'rgba(8,10,14,.72)', backdropFilter: 'blur(2px)', zIndex: 5, padding: 16
+            }}
+          >
+            <div style={{ maxWidth: 280, textAlign: 'center', color: '#e6edf3', font: '13px/1.5 -apple-system,system-ui' }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                Allow this widget to read your <span style={{ textTransform: 'capitalize' }}>{consentProvider}</span>?
+              </div>
+              <div style={{ color: '#8b949e', marginBottom: 12 }}>
+                It receives only the data — never your account tokens.
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                <button onClick={() => resolveConsent(consentProvider, false)} style={{ padding: '5px 12px' }}>
+                  Deny
+                </button>
+                <button
+                  onClick={() => resolveConsent(consentProvider, true)}
+                  style={{ padding: '5px 12px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6 }}
+                >
+                  Allow
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       <div className="window-resize" onPointerDown={onResizeDown} onPointerMove={onResizeMove} onPointerUp={onResizeUp} />
     </div>
