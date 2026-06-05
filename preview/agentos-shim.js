@@ -102,9 +102,10 @@
     }
     function cdp(method, params) { streamSend({ t: 'cdp', id: surfaceId, method: method, params: params }) }
     var onMove = function (e) { var p = toPage(e); cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }) }
-    var onDown = function (e) { e.preventDefault(); canvas.focus(); var p = toPage(e); cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 }) }
+    var onDown = function (e) { e.preventDefault(); e.stopPropagation(); canvas.focus(); var p = toPage(e); cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 }) }
     var onUp = function (e) { var p = toPage(e); cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 }) }
-    var onWheel = function (e) { e.preventDefault(); var p = toPage(e); cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY }) }
+    // stopPropagation so scrolling a surface drives the page, not the canvas pan/zoom
+    var onWheel = function (e) { e.preventDefault(); e.stopPropagation(); var p = toPage(e); cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY }) }
     var onKey = function (e) {
       e.preventDefault()
       var t = e.type === 'keydown' ? 'keyDown' : 'keyUp'
@@ -152,6 +153,8 @@
     },
     registerWebview: function () {}, // no CDP/<webview> in the browser preview
     unregisterWebview: function () {},
+    reportWebview: function () {}, // electron-only (webview guest -> main); no-op in the browser
+    onMetaTap: function () { return function () {} }, // electron-only ⌘-tap; no-op subscribe
 
     integrations: {
       list: function () { return getJSON('/integrations') },
