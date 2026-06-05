@@ -351,7 +351,7 @@ FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tel
 - POST $BASE/go_to_primary
 - POST $BASE/list_state — the full layout (read before arranging): { viewport:{w,h}, view:{x,y,w,h,cx,cy,scale}, mode, surfaces:[{id,kind,x,y,w,h,z,title,url}] }. See "Window management" below.
 - POST $BASE/surface_control { id, action: { action: "click"|"type"|"key"|"read"|"screenshot", selector?, x?, y?, text?, key? } } — act INSIDE a web surface (read text, click/type, screenshot).
-- POST $BASE/events { since?, wait? } — THE AUTONOMY LOOP: long-poll the user's activity as coalesced "moments" (start since=0, then loop with since=latest and wait=25). Each moment {seq,surfaceId,url,title,trigger,signals,user[],snapshot} wakes you on meaningful change; decide whether to act, then build/arrange surfaces to help. (Page content — snapshot/user — is withheld unless the user shared that surface with the agent.)
+- POST $BASE/events { since?, wait? } — THE AUTONOMY LOOP: long-poll the user's activity as coalesced "moments" (start since=0, then loop with since=latest and wait=25). Each moment {seq,surfaceId,url,title,trigger,signals,user[],snapshot} wakes you on meaningful change; decide whether to act, then build/arrange surfaces to help. (Page content — snapshot/user — is readable for surfaces YOU opened; for surfaces the USER opened it is withheld until they click the green eye to share it.)
 - POST $BASE/say { text } — send a chat message to the USER (appears in their in-canvas Chat panel). A moment with trigger:"message" is the user typing to you directly (text in the moment's \`message\` field) — ALWAYS reply with say; do what they ask with the other tools, then say what you did.
 
 ## Widgets (integration-backed mini-apps)
@@ -384,6 +384,51 @@ Keep the view clean and readable: only what matters now, each with room. Arrange
 Coordinates are world pixels. Prefer srcdoc for things you can build inline; use open_window for real external sites. Use list_state and surface_control:read to see the screen before acting. Note: update_surface replacing a srcdoc's html RELOADS it (in-widget state resets) — for live data use a widget's bridge, not html rewrites.
 `
 
+// Tools whose calls are surfaced in the on-screen "Agent activity" log, so the user can
+// SEE what the agent is doing during reply latency (polls/reads like /events, list_state,
+// list_widgets are excluded as noise).
+const ACTIVITY_TOOLS = new Set([
+  '/open_window', '/create_surface', '/update_surface', '/move_surface', '/close_surface',
+  '/surface_control', '/read_window', '/spawn_widget', '/save_widget', '/say', '/go_to_primary'
+])
+
+/** A short human label for an agent tool call, for the activity feed. */
+function activityText(path, a) {
+  a = a || {}
+  const host = (u) => { try { return new URL(u).hostname } catch { return String(u || '').slice(0, 40) } }
+  const sid = (id) => (id ? String(id).slice(0, 6) : '')
+  switch (path) {
+    case '/open_window': return `↗ open ${host(a.url)}`
+    case '/create_surface': return `+ ${a.kind || 'surface'}${a.url ? ' ' + host(a.url) : ''}${a.component ? ' ' + a.component : ''}`
+    case '/update_surface': return `✎ update ${sid(a.id)}${a.url ? ' → ' + host(a.url) : ''}`
+    case '/move_surface': return `⇄ move ${sid(a.id)}`
+    case '/close_surface': return `✕ close ${sid(a.id)}`
+    case '/surface_control': return `⌖ ${a.action?.action || 'control'}${a.action?.selector ? ' ' + a.action.selector : ''}`
+    case '/read_window': return `👁 read page ${sid(a.id)}`
+    case '/spawn_widget': return `▣ widget ${a.name || ''}`
+    case '/save_widget': return `💾 save widget ${a.name || ''}`
+    case '/say': return '💬 replying'
+    case '/go_to_primary': return '⌂ recenter'
+    default: return path.replace(/^\//, '')
+  }
+}
+
+/** Wrap action-tool handlers to broadcast an activity event (before running) so the
+ *  on-screen Agent-activity panel shows what the agent is doing in real time. */
+function withActivity(tools) {
+  return tools.map((t) => {
+    if (!ACTIVITY_TOOLS.has(t.path)) return t
+    const orig = t.handler
+    return {
+      ...t,
+      handler: (ctx) => {
+        try { broadcast({ type: 'activity', at: Date.now(), text: activityText(t.path, toolBody(ctx?.body)) }) } catch {}
+        return orig(ctx)
+      }
+    }
+  })
+}
+
 async function startOsAgentSocket() {
   try {
     const session = await connect({
@@ -391,7 +436,7 @@ async function startOsAgentSocket() {
       baseUrl: process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev',
       appDescription: 'BlitzOS (browser preview): an agent OS desktop — open and arrange surfaces on an infinite canvas.',
       agentsMd: OS_AGENTS_MD,
-      tools: [
+      tools: withActivity([
         {
           path: '/create_surface',
           description: 'Create a surface (kind: web | app | srcdoc | native). web/app take url; srcdoc takes html; native takes component+props.',
@@ -411,6 +456,11 @@ async function startOsAgentSocket() {
             // srcdoc ids are server-minted: a consent grant is keyed by surface id, so
             // an untrusted caller must not be able to choose one and inherit a grant.
             const id = a.kind === 'srcdoc' ? randomUUID() : a.id || randomUUID()
+            // The agent opened this surface itself (it chose the url), so reading it back
+            // leaks nothing the agent didn't already pick — auto-share web/app so the agent
+            // can read/control what it opened. (Surfaces the USER opens stay private until
+            // they share — that's the P0 confused-deputy gate, which this does not weaken.)
+            if (a.kind === 'web' || a.kind === 'app') setContentShare(id, true)
             broadcast({ type: 'create', surface: { ...a, id } })
             if (SERVER_MODE && host && a.kind === 'web' && !host.has(id)) {
               host.createSurface(id, { url: a.url || 'about:blank', width: Math.round(a.w) || 1280, height: Math.round(a.h) || 800 }).catch(() => {})
@@ -430,6 +480,7 @@ async function startOsAgentSocket() {
             const a = toolBody(body)
             if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
             const id = randomUUID()
+            setContentShare(id, true) // the agent opened this page — it can read what it opened
             broadcast({ type: 'create', surface: { kind: 'web', ...a, id } })
             if (SERVER_MODE && host && !host.has(id)) {
               host.createSurface(id, { url: a.url, width: Math.round(a.w) || 1280, height: Math.round(a.h) || 800 }).catch(() => {})
@@ -668,7 +719,7 @@ async function startOsAgentSocket() {
             'Get the widget-authoring guide: how to write a widget that reads integration data via the sandboxed window.blitz bridge. Read this BEFORE authoring a new widget with save_widget.',
           handler: () => ({ markdown: WIDGET_AUTHORING_MD })
         }
-      ]
+      ])
     })
     const link = await session.mintAgentToken({ label: 'blitzos-preview' })
     agentUrl = link.url

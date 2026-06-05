@@ -113,6 +113,10 @@ export function osCreateSurface(desc: SurfaceDescriptor): string {
   // srcdoc ids are server-minted: a consent grant is keyed by surface id, so an
   // untrusted caller must not be able to pick one and inherit a prior grant.
   const id = desc.kind === 'srcdoc' ? randomUUID() : desc.id ?? randomUUID()
+  // The agent opened this surface itself (it chose the url), so reading it back leaks
+  // nothing the agent didn't pick — auto-share web/app so it can read/control what it
+  // opened. Surfaces the USER opens stay private until they share (the P0 gate).
+  if (desc.kind === 'web' || desc.kind === 'app') setContentShare(id, true)
   send('create', { surface: { ...desc, id } })
   return id
 }

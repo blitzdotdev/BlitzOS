@@ -52,6 +52,8 @@ export interface CreateSurfaceInput {
   html?: string
   component?: string
   props?: Record<string, unknown>
+  /** P0: agent may read this surface's content over the relay (auto-true for agent-opened web/app). */
+  shared?: boolean
 }
 
 interface DesktopState {
@@ -197,7 +199,8 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       url: input.url,
       html: input.html,
       component: input.component,
-      props: input.props ?? {}
+      props: input.props ?? {},
+      shared: input.shared
     }
     set((s) => ({ surfaces: [...s.surfaces, surface] }))
     return id

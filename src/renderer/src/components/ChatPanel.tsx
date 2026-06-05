@@ -35,7 +35,7 @@ export function ChatPanel({ surface }: { surface: Surface }): JSX.Element {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0e1116', color: '#e6edf3' }}>
       <div
-        style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}
+        style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}
         onPointerDown={(e) => e.stopPropagation()}
         onWheel={(e) => e.stopPropagation()}
       >
@@ -65,6 +65,21 @@ export function ChatPanel({ surface }: { surface: Surface }): JSX.Element {
             {m.text}
           </div>
         ))}
+        {msgs.length > 0 && msgs[msgs.length - 1].role === 'user' && (
+          <div
+            style={{
+              alignSelf: 'flex-start',
+              padding: '7px 11px',
+              borderRadius: 12,
+              fontSize: 13,
+              background: '#161b22',
+              color: '#7d8590',
+              border: '1px solid #21262d'
+            }}
+          >
+            working… <span style={{ opacity: 0.7 }}>(see the Agent activity panel)</span>
+          </div>
+        )}
         <div ref={endRef} />
       </div>
       <form

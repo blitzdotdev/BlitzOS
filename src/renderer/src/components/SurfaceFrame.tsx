@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
 import { useDesktop } from '../store'
 import { NoteWidget } from './NoteWidget'
+import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
 
@@ -49,7 +50,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const serverMode = !!window.agentOS?.serverMode
   const [draft, setDraft] = useState(surface.url ?? '')
   const [consentProvider, setConsentProvider] = useState<string | null>(null)
-  const [shared, setShared] = useState(false) // P0: agent may read this surface over the relay
+  const [shared, setShared] = useState(surface.shared ?? false) // P0: agent may read this surface over the relay (agent-opened web/app start shared)
   const zoom = surface.zoom ?? 1
 
   // web: navigation sync + apply content zoom
@@ -329,6 +330,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       case 'native':
         if (surface.component === 'note') return <NoteWidget surface={surface} />
         if (surface.component === 'chat') return <ChatPanel surface={surface} />
+        if (surface.component === 'activity') return <ActivityPanel surface={surface} />
         return <div className="native-fallback">unknown widget: {surface.component}</div>
     }
   }
@@ -341,9 +343,12 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         top: surface.y,
         width: surface.w,
         height: surface.h,
-        // The Chat panel is pinned: a z-band far above any focus-raised window, so the
-        // agent (or the user) can never bury the channel they talk to the agent through.
-        zIndex: surface.kind === 'native' && surface.component === 'chat' ? 2_000_000 + surface.z : surface.z
+        // The Chat + Agent-activity panels are pinned: a z-band far above any focus-raised
+        // window, so the agent (or the user) can never bury the channel/feed they rely on.
+        zIndex:
+          surface.kind === 'native' && (surface.component === 'chat' || surface.component === 'activity')
+            ? 2_000_000 + surface.z
+            : surface.z
       }}
       onPointerDown={() => focusSurface(surface.id)}
     >

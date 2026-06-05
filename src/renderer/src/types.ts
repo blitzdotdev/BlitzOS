@@ -34,6 +34,8 @@ export interface Surface {
   zoom?: number
   /** saved geometry when maximized, for restore */
   restore?: { x: number; y: number; w: number; h: number }
+  /** P0: agent may read this surface's content over the relay (default off; auto-on for agent-opened web/app). */
+  shared?: boolean
 }
 
 export interface Vec2 {

@@ -126,7 +126,12 @@ export default function App(): JSX.Element {
   useEffect(() => {
     return window.agentOS?.onAction((a) => {
       const st = useDesktop.getState()
-      if (a.type === 'create') st.createSurface(a.surface as CreateSurfaceInput)
+      if (a.type === 'create') {
+        const surf = a.surface as CreateSurfaceInput
+        // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
+        if (surf && (surf.kind === 'web' || surf.kind === 'app')) surf.shared = true
+        st.createSurface(surf)
+      }
       else if (a.type === 'move') st.moveSurface(String(a.id), Number(a.x), Number(a.y))
       else if (a.type === 'update') st.updateSurface(String(a.id), (a.patch ?? {}) as Partial<Surface>)
       else if (a.type === 'close') st.closeSurface(String(a.id))
@@ -141,6 +146,19 @@ export default function App(): JSX.Element {
           st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }] })
         } else {
           st.createSurface(chatSurfaceInput([{ role: 'agent', text }]))
+        }
+      } else if (a.type === 'activity') {
+        // A live feed of what the agent is doing (its tool calls) -> the Agent-activity
+        // panel (auto-created, pinned), so the user can see it working during latency.
+        const text = String(a.text ?? '')
+        if (!text) return
+        const evt = { at: Number(a.at) || Date.now(), text }
+        const panel = st.surfaces.find((s) => s.kind === 'native' && s.component === 'activity')
+        if (panel) {
+          const evs = (panel.props?.events as Array<{ at: number; text: string }>) ?? []
+          st.updateSurfaceProps(panel.id, { events: [...evs, evt].slice(-60) })
+        } else {
+          st.createSurface(activitySurfaceInput([evt]))
         }
       }
     })
@@ -200,8 +218,8 @@ export default function App(): JSX.Element {
         title: s.title,
         url: s.url,
         component: s.component,
-        // the Chat panel is pinned always-on-top — the agent must not cover it
-        pinned: s.kind === 'native' && s.component === 'chat'
+        // Chat + Agent-activity panels are pinned always-on-top — the agent must not cover them
+        pinned: s.kind === 'native' && (s.component === 'chat' || s.component === 'activity')
       }))
       // The world-space rectangle currently visible on screen (screen = world*scale + t).
       const view = {
@@ -273,6 +291,17 @@ export default function App(): JSX.Element {
     const x = Math.round(-tx / scale + 24) // 24 world-px from the left edge of the view
     const y = Math.round((st.viewport.h / 2 - ty) / scale - H / 2) // vertically centered
     return { kind: 'native', component: 'chat', title: 'Chat', w: W, h: H, x, y, props: { messages } }
+  }
+
+  // The Agent-activity feed docks to the TOP-LEFT of the view (above the centered chat).
+  function activitySurfaceInput(events: Array<{ at: number; text: string }>): CreateSurfaceInput {
+    const st = useDesktop.getState()
+    const { scale, x: tx, y: ty } = st.transform
+    const W = 320
+    const H = 200
+    const x = Math.round(-tx / scale + 24)
+    const y = Math.round(-ty / scale + 24)
+    return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x, y, props: { events } }
   }
 
   function addBrowser(): void {

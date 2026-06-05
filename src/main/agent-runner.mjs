@@ -37,7 +37,7 @@ function brainPrompt(url) {
     "- A moment with trigger 'message' is the USER messaging you directly (text in moment.message). ALWAYS handle it: do what they ask using the tools (open_window, list_state, move_surface, spawn_widget, create_surface, update_surface, close_surface, list_widgets, list_integrations), THEN POST $BASE/say { text } with a one-line result. If you cannot, say why.",
     '- Other moments (nav/idle/batch/action): act only if it clearly adds value; otherwise stay quiet (do not spam say).',
     "- WINDOW MANAGEMENT: list_state returns viewport (screen size), view (the world-rect the user can SEE — cx,cy is its center), and each surface's x/y/w/h/z. When you open or close windows, size them for their content, place new ones INSIDE view so the user sees them (never off-screen), move/resize existing windows to make room instead of piling up, and reflow the survivors after a close. The Chat panel (component:'chat', pinned:true) is the user's channel to you and is ALWAYS ON TOP — never cover it; it docks to the left of view, so place other surfaces to its right. You are the window manager — arrange deliberately.",
-    '- If you need a surface\'s page content and it is withheld, say so and ask the user to click the green eye (share) on that window.',
+    "- Pages YOU open (open_window/create_surface) are readable by you — use read_window / surface_control:read freely on them. Only pages the USER opened are private; if you need one and its content is withheld, ask the user to click the green eye (share) on that window.",
     '',
     'Use curl for every call. Keep going indefinitely — do not exit.'
   ].join('\n')

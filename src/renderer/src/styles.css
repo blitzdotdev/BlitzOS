@@ -187,6 +187,10 @@ body,
 }
 .window-body {
   flex: 1 1 auto;
+  /* min-height:0 lets a flex child (e.g. the chat transcript) actually scroll inside
+     the window instead of growing the body past its bounds. */
+  min-height: 0;
+  overflow: hidden;
   background: #fff;
 }
 
@@ -568,10 +572,10 @@ body,
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   cursor: nwse-resize;
-  z-index: 3;
+  z-index: 2000050; /* above pinned panels so the corner is always grabbable */
 }
 .window-resize::after {
   content: '';
