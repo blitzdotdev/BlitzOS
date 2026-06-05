@@ -43,6 +43,6 @@ export default defineConfig({
     // Same-origin path to the standalone integrations backend (preview/backend.mjs),
     // so the renderer's fetch('/api/...') and the OAuth callback both route here.
     // ws:true so the /api/os/stream screencast WebSocket proxies to the backend too.
-    proxy: { '/api': { target: 'http://127.0.0.1:8787', changeOrigin: true, ws: true } }
+    proxy: { '/api': { target: `http://127.0.0.1:${process.env.BACKEND_PORT || 8799}`, changeOrigin: true, ws: true } }
   }
 })

@@ -9,28 +9,33 @@ Electron desktop is `npm run dev`.)
 ## One command
 
 ```bash
-bash preview/start-all.sh
+bash preview/start-all.sh            # = restart: clean stop, then start
+bash preview/start-all.sh stop       # cleanly stop everything (incl. headless Chromium)
+bash preview/start-all.sh status     # what's running + port health
 ```
 
 → live at **https://agentos.blitzmen.com**. **Hard-refresh the tab after any restart**
 (the page caches the shim; a restart re-mints the agent URL).
+
+Each service (vite, backend, tunnel) runs in its **own process group** (`setsid`) with a
+pidfile in `/tmp/blitzos-run/`, so `stop` kills the whole group — the backend's headless
+Chromium children die with it (no zombies, no orphaned chrome, no port squatting), and
+`start` always begins from a clean slate. Logs: `/tmp/blitzos-run/{vite,backend,tunnel}.log`.
 
 Useful overrides:
 ```bash
 PUBLIC_BASE_URL=https://foo.example.com bash preview/start-all.sh   # different domain
 SERVER_MODE=0 bash preview/start-all.sh                             # no Chromium; web surfaces show as empty frames
 CHROMIUM=/path/to/chromium bash preview/start-all.sh               # explicit browser binary
+BACKEND_PORT=8801 bash preview/start-all.sh                        # if 8799 is taken
 ```
-
-Logs: `/tmp/agentos-{vite,backend,tunnel}.log`.
-Stop: `pkill -f preview/backend.mjs; pkill -f 'vite --config vite.renderer.preview'; pkill -f 'cloudflared tunnel run'; pkill -f remote-debugging-port`
 
 ## What it starts
 
 | Process | Port | Role |
 |---|---|---|
 | Vite (`vite.renderer.preview.mjs`) | 5174 | serves the renderer + proxies `/api` (incl. the `/api/os/stream` WS) to the backend; injects the server-mode flag |
-| `preview/backend.mjs` (`BLITZ_SERVER_MODE=1`) | 8787 | spawns headless Chromium, renders each `web` surface as a top-level target, streams JPEG frames; runs the agent-socket session + OAuth integrations |
+| `preview/backend.mjs` (`BLITZ_SERVER_MODE=1`) | 8799 | spawns headless Chromium, renders each `web` surface as a top-level target, streams JPEG frames; runs the agent-socket session + OAuth integrations. (Port 8799, not 8787 — wrangler's default 8787 collides.) |
 | `cloudflared` (named tunnel) | — | connects the saved tunnel; CF maps the public hostname → `localhost:5174` |
 
 ## One-time setup (already done for agentos.blitzmen.com)
