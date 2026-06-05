@@ -229,10 +229,11 @@ interface BrainState {
 
 The critical path then follows: **P0 (privacy gate) → P1 (resident loop, observe-only) → P2 (governor + control gate) → P3 (attention + act tier through existing tools) → P4 (boot/profile/persistence) → P5 (server-mode parity + reliability) → P6 (deferred: D1 sync, multi-tenant).**
 
-### P0 — Close the privacy leak + reach unblock *(prerequisite)*
+### P0 — Close the privacy leak + reach unblock *(prerequisite)* — ✅ LANDED (Electron) 2026-06-05
 - **Builds from:** `events.ts` moment shape, `waitForEvents`, the existing consent ledger pattern.
 - **Builds:** relay `/events` defaults to metadata-only (strip `snapshot`); raw content per-surface grant; **also** fold the existing ungated `__blitz:'navigate'` (App.tsx:146) and `surfaceAction` (App.tsx:154) paths under consent.
 - **Unblocks:** any safe consumption of the moment stream.
+- **Done:** per-surface `contentShared` consent in `events.ts` (`setContentShare`/`isContentShared`/`redactMoment`, default OFF). Relay gates all 3 content egresses (`/events` redacts to metadata, `read_window` + `surface_control:read/screenshot` → 403 `not_shared`); localhost control-server stays full (the brain's path). 👁 share toggle per web surface (`SurfaceFrame`, Electron-only) → `os:content-share` IPC; dropped on close. `__blitz:navigate` now http(s)-only; `surfaceAction` payload capped 4KB. Typecheck + build pass. *Remaining:* server-mode (`backend.mjs`) relay content gating → P5 (no `/events` kernel there, so no proactive leak today).
 
 ### P1 — Resident loop, OBSERVE-ONLY *(no mutations)*
 - **Builds from:** `/events` (control-server.ts), `osReadWindow`, the moment stream, `index.ts` startup wiring.

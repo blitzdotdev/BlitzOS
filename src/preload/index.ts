@@ -66,6 +66,10 @@ const api = {
   surfaceAction(payload: Record<string, unknown>): void {
     ipcRenderer.send('os:surface-action', payload)
   },
+  /** Human consent: let the agent read this web surface's content over the relay (P0). */
+  setContentShare(surfaceId: string, on: boolean): void {
+    ipcRenderer.send('os:content-share', { surfaceId, on })
+  },
 
   /** Relay a sandboxed srcdoc widget's data request to main (consent-gated; token stays in main). */
   widgetRequest(req: {

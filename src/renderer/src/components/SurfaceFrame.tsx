@@ -48,6 +48,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const serverMode = !!window.agentOS?.serverMode
   const [draft, setDraft] = useState(surface.url ?? '')
   const [consentProvider, setConsentProvider] = useState<string | null>(null)
+  const [shared, setShared] = useState(false) // P0: agent may read this surface over the relay
   const zoom = surface.zoom ?? 1
 
   // web: navigation sync + apply content zoom
@@ -341,6 +342,21 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
             <form className="window-url" onSubmit={go} onPointerDown={stop}>
               <input value={draft} spellCheck={false} onChange={(e) => setDraft(e.target.value)} />
             </form>
+            {!serverMode && (
+              <button
+                className="window-ico"
+                title={shared ? 'Agent can read this page — click to stop sharing' : 'Let the agent read this page (off by default)'}
+                onPointerDown={stop}
+                onClick={() => {
+                  const next = !shared
+                  setShared(next)
+                  window.agentOS?.setContentShare?.(surface.id, next)
+                }}
+                style={shared ? { color: '#4ade80' } : { opacity: 0.45 }}
+              >
+                👁
+              </button>
+            )}
           </>
         ) : (
           <span className="window-title">{surface.title}</span>

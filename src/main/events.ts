@@ -64,6 +64,33 @@ interface Waiter {
 }
 const waiters: Waiter[] = []
 
+// ---- perception content consent (P0: the untrusted relay must not receive the
+// CONTENT of a logged-in surface unless the human shared it). A moment's snapshot +
+// user lines + action payload are page-derived content; over the relay they are
+// withheld for un-shared surfaces (redactMoment), and read_window/surface_control
+// reads are refused (see agentSocket.ts). The localhost-trusted path is never
+// redacted — that is where the resident brain runs. Default: nothing is shared.
+const contentShared = new Set<string>()
+
+/** The human toggled "let the agent read this surface" for a web surface. */
+export function setContentShare(surfaceId: string, on: boolean): void {
+  if (!surfaceId) return
+  if (on) contentShared.add(surfaceId)
+  else contentShared.delete(surfaceId)
+}
+export function isContentShared(surfaceId: string): boolean {
+  return contentShared.has(surfaceId)
+}
+export function dropContentShare(surfaceId: string): void {
+  contentShared.delete(surfaceId)
+}
+
+/** Strip page-derived content from a moment, leaving only metadata the relay may see
+ *  (surface identity + activity counts; url/title are already exposed via list_state). */
+export function redactMoment(m: BlitzMoment): BlitzMoment {
+  return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, url: m.url, title: m.title, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: [] }
+}
+
 /** A short human-readable line for a raw user signal (for the moment's `user` list). */
 function describe(r: Record<string, unknown>): string | null {
   switch (String(r.type ?? '')) {

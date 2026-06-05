@@ -143,15 +143,23 @@ export default function App(): JSX.Element {
       const d = e.data as Record<string, unknown> | null
       if (!d || typeof d !== 'object') return
       // Local UI action: navigate the shared "Sources" tab instantly, no agent round-trip.
-      if (d.__blitz === 'navigate' && typeof d.url === 'string') {
+      // Only http(s) — a sandboxed widget must not push javascript:/data:/file: URLs into a web surface.
+      if (d.__blitz === 'navigate' && typeof d.url === 'string' && /^https?:\/\//i.test(d.url)) {
         const st = useDesktop.getState()
         const tab = st.surfaces.find((s) => s.kind === 'web' && s.title === 'Sources')
         if (tab) st.updateSurface(tab.id, { url: d.url as string })
         else st.createSurface({ kind: 'web', url: d.url as string, title: 'Sources' })
         return
       }
-      // Agent action: forward to the agent's event stream (approve, etc.).
-      if (d.__blitz === 'action') window.agentOS?.surfaceAction(d)
+      // Agent action: forward to the agent's event stream (approve, etc.). Cap the
+      // payload so a hostile widget can't pump large/looping content through it.
+      if (d.__blitz === 'action') {
+        try {
+          if (JSON.stringify(d).length <= 4000) window.agentOS?.surfaceAction(d)
+        } catch {
+          /* non-serializable payload — drop */
+        }
+      }
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)

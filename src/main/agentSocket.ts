@@ -17,7 +17,7 @@ import type { ControlAction } from './cdp'
 import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from './widget-catalog.mjs'
 import type { SaveWidgetInput } from './widget-catalog.mjs'
 import { integrationStatuses, connectedProviders } from './integrations'
-import { waitForEvents, latestSeq } from './events'
+import { waitForEvents, latestSeq, isContentShared, redactMoment } from './events'
 
 const RELAY = process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev'
 const APP_ID = process.env.AGENT_SOCKET_APP_ID || 'as_app_anon'
@@ -234,9 +234,14 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
           },
           handler: async ({ body }) => {
             const a = parse(body)
+            const id = String(a.id)
+            // Reading a logged-in surface's DOM only crosses the relay if the user shared it.
+            if (!isContentShared(id)) {
+              return { status: 403, body: { error: 'content not shared — ask the user to enable "share with agent" on this surface', code: 'not_shared' } }
+            }
             try {
               // No caller-supplied script over the relay (confused-deputy eval) — fixed safe DOM read.
-              const result = await osReadWindow(String(a.id))
+              const result = await osReadWindow(id)
               return { result }
             } catch (e) {
               return { status: 400, body: { error: e instanceof Error ? e.message : String(e) } }
@@ -275,6 +280,10 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
             // Security: never expose raw page eval to relay callers (confused-deputy
             // over a logged-in third-party session). eval is localhost-bearer only.
             if (action.action === 'eval') return { status: 403, body: { error: 'eval is not available over the relay' } }
+            // Reading/screenshotting a logged-in surface only crosses the relay if shared.
+            if ((action.action === 'read' || action.action === 'screenshot') && !isContentShared(id)) {
+              return { status: 403, body: { error: 'content not shared — enable "share with agent" on this surface to read or screenshot it', code: 'not_shared' } }
+            }
             const r = await osControlSurface(id, action as unknown as ControlAction)
             // The SDK wraps a return with no numeric `status` as HTTP 200, so map
             // failures to 4xx explicitly and shape success to the documented payloads.
@@ -393,7 +402,10 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
             const a = parse(body)
             const since = Number(a.since) || 0
             const wait = Math.min(Math.max(Number(a.wait) || 25, 0), 25)
-            const events = await waitForEvents(since, wait * 1000)
+            const raw = await waitForEvents(since, wait * 1000)
+            // Relay is untrusted: a moment's page content (snapshot/user/action) only
+            // crosses for surfaces the user shared; others are reduced to metadata.
+            const events = raw.map((m) => (isContentShared(m.surfaceId) ? m : redactMoment(m)))
             return { events, latest: latestSeq() }
           }
         }

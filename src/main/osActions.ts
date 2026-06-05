@@ -2,7 +2,7 @@ import { BrowserWindow, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'crypto'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
-import { ingestSignals, emitSurfaceAction } from './events'
+import { ingestSignals, emitSurfaceAction, setContentShare, dropContentShare } from './events'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -48,6 +48,10 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     const { surfaceId, __blitz, ...action } = payload as { surfaceId?: unknown; __blitz?: unknown } & Record<string, unknown>
     void __blitz
     emitSurfaceAction(typeof surfaceId === 'string' ? surfaceId : 'unknown', action)
+  })
+  // The human toggled "let the agent read this surface" (P0 content consent).
+  ipcMain.on('os:content-share', (_e, m: { surfaceId?: unknown; on?: unknown }) => {
+    if (m && typeof m.surfaceId === 'string') setContentShare(m.surfaceId, !!m.on)
   })
 }
 
@@ -155,6 +159,7 @@ export function osUpdateSurface(id: string, patch: Record<string, unknown>): voi
 }
 export function osCloseSurface(id: string): void {
   dropConsent(id)
+  dropContentShare(id)
   send('close', { id })
 }
 export function osGoToPrimary(): void {
