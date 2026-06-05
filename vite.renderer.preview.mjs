@@ -11,6 +11,10 @@ import { resolve } from 'path'
 import { readFileSync } from 'fs'
 
 const shim = readFileSync(resolve('preview/agentos-shim.js'), 'utf8')
+// Tell the renderer whether the backend is in server mode (live web surfaces via a
+// headless browser). Set the flag BEFORE the shim runs so SurfaceFrame can branch.
+const serverMode = process.env.BLITZ_SERVER_MODE === '1'
+const headScript = `window.__BLITZ_SERVER_MODE__=${JSON.stringify(serverMode)};\n` + shim
 
 export default defineConfig({
   root: resolve('src/renderer'),
@@ -26,7 +30,7 @@ export default defineConfig({
           html,
           // classic (non-module) script runs during parse, before the deferred
           // module entry — so window.agentOS exists before React's effects run.
-          tags: [{ tag: 'script', injectTo: 'head-prepend', children: shim }]
+          tags: [{ tag: 'script', injectTo: 'head-prepend', children: headScript }]
         }
       }
     }
@@ -38,6 +42,7 @@ export default defineConfig({
     allowedHosts: true, // accept the *.trycloudflare.com Host header
     // Same-origin path to the standalone integrations backend (preview/backend.mjs),
     // so the renderer's fetch('/api/...') and the OAuth callback both route here.
-    proxy: { '/api': { target: 'http://127.0.0.1:8787', changeOrigin: true } }
+    // ws:true so the /api/os/stream screencast WebSocket proxies to the backend too.
+    proxy: { '/api': { target: 'http://127.0.0.1:8787', changeOrigin: true, ws: true } }
   }
 })

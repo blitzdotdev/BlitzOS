@@ -22,6 +22,12 @@ export default function App(): JSX.Element {
   const [panMode, setPanMode] = useState(false)
   const pan = useRef<{ x: number; y: number } | null>(null)
 
+  // The browser/server preview is an infinite canvas (pan/zoom), not the fixed
+  // desktop the Electron app defaults to.
+  useEffect(() => {
+    if (window.agentOS?.serverMode) useDesktop.getState().setMode('canvas')
+  }, [])
+
   useEffect(() => {
     const refresh = (): void => {
       window.agentOS?.integrations.list().then(setIntegrations)
@@ -174,7 +180,7 @@ export default function App(): JSX.Element {
 
   function addBrowser(): void {
     // let the store cascade + clamp onto the desktop
-    createSurface({ kind: 'web', url: 'https://discord.com/app', title: 'Discord' })
+    createSurface({ kind: 'web', url: 'https://news.ycombinator.com', title: 'Hacker News' })
   }
 
   const active = integrations.find((i) => i.id === connecting) ?? null

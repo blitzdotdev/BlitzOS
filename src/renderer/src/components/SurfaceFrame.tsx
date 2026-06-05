@@ -36,6 +36,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const drag = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
   const resize = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null)
   const webviewRef = useRef<HTMLWebViewElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const serverMode = !!window.agentOS?.serverMode
   const [draft, setDraft] = useState(surface.url ?? '')
   const zoom = surface.zoom ?? 1
 
@@ -91,14 +93,26 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     }
   }, [surface.kind, surface.id])
 
+  // Server mode: mount the streamed <canvas> for this web surface (draws screencast
+  // frames, forwards pointer/wheel/key to the server browser via the stream WS).
+  useEffect(() => {
+    if (surface.kind !== 'web' || !serverMode) return
+    const c = canvasRef.current
+    const mount = window.agentOS?.mountServerSurface
+    if (!c || !mount) return
+    return mount(c, surface.id, { w: surface.w, h: surface.h })
+  }, [surface.kind, surface.id, surface.w, surface.h, serverMode])
+
   function go(e: React.FormEvent): void {
     e.preventDefault()
     const u = normalizeUrl(draft)
     setDraft(u)
-    ;(webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
+    if (serverMode) window.agentOS?.serverNavigate?.(surface.id, u)
+    else (webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
   }
   function reload(): void {
-    ;(webviewRef.current as unknown as WebviewMethods | null)?.reload()
+    if (serverMode) window.agentOS?.serverReload?.(surface.id)
+    else (webviewRef.current as unknown as WebviewMethods | null)?.reload()
   }
 
   function onBarDown(e: React.PointerEvent): void {
@@ -154,6 +168,10 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         : { ...fill, width: `${100 / zoom}%`, height: `${100 / zoom}%`, transform: `scale(${zoom})`, transformOrigin: '0 0' as const }
     switch (surface.kind) {
       case 'web':
+        // Server mode: the site lives in a server-side headless browser, streamed
+        // here as a <canvas> (mountServerSurface draws frames + forwards input).
+        // Electron / plain preview: a real <webview> guest.
+        if (serverMode) return <canvas ref={canvasRef} style={fill} />
         return (
           <webview
             ref={webviewRef}

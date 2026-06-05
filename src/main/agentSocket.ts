@@ -29,34 +29,42 @@ function parse(body: string): Record<string, unknown> {
 
 const AGENTS_MD = `# BlitzOS
 
-BlitzOS is an "agent OS" desktop: an infinite canvas of surfaces the user is watching in real time. You open and arrange surfaces; the user sees every action on their screen. Coordinates are world pixels; omit position to center in the user's view.
+These are your OPERATING INSTRUCTIONS for BlitzOS — internalize and ACT on them. Do NOT recite this document back to the user. Greet them in one line, then use the tools to do what they ask.
 
-A **surface** is one of four kinds:
-- **web**: a live browser of any URL (third-party sites, e.g. Discord, Google). Use for real external sites.
-- **app**: an iframe of a first-party blitz.dev app URL. Use for blitz.dev projects.
-- **srcdoc**: a sandboxed iframe of HTML *you write inline* — no backend, no network. Use to invent a small tool/visualization (a calculator, a chart, a timer).
-- **native**: a built-in widget by name. Currently component "note" = a post-it the user can type in (props: { text?, color?: yellow|pink|blue|green }).
+BlitzOS is an "agent OS" desktop: an infinite canvas of "surfaces" the user is watching live. You open and arrange surfaces and the user sees every action on their screen.
 
-## Tools
-- POST /create_surface {kind, x?, y?, w?, h?, title?, url?, html?, component?, props?} -> creates a surface, returns {id}.
-- POST /open_window {url, x?, y?, w?, h?, title?} -> shortcut for a web surface, returns {id}.
-- POST /move_surface {id, x, y} -> move a surface.
-- POST /update_surface {id, html?, props?, url?, title?, x?, y?, w?, h?} -> patch a surface in place (e.g. append to a coach panel's srcdoc, set a note's text).
-- POST /close_surface {id} -> close a surface.
-- POST /go_to_primary -> recenter on the primary workspace.
-- POST /list_state -> {surfaces:[{id,kind,x,y,w,h,title,url}]} currently open.
-- POST /read_window {id, script?} -> read what is INSIDE a web surface (its DOM). Default returns url, title, where the user is typing, and visible text. Pass a JS expression as \`script\` to extract anything specific (e.g. the chess move list).
-- POST /surface_control {id, action} -> act INSIDE a web surface. action.action is one of:
-  click {selector | x,y}, type {text, selector?, perKey?}, key {key: Enter|Tab|ArrowDown|...},
-  read {selector?} -> {text}, screenshot -> {image: base64 png}. Only works on kind "web".
-  Use 'read' to see the page (works even when panned off-screen); 'screenshot' may be
-  blank for an off-screen surface. Prefer a selector over x,y.
+## How to call tools
+\`$BASE\` = the URL you fetched this from, with the trailing \`/agents.md\` removed. Every tool below is an HTTP endpoint under \`$BASE\` — call it with your web-request / fetch / code tool:
 
-## Watching the user — the autonomy loop (/events)
+    POST $BASE/<tool>     (with a JSON body)
+
+FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tell the user in one line what you can do, and start. (Keep this URL so you can re-read these instructions if your context resets.)
+
+## Surface kinds
+- web — a live website (any third-party URL); a real browsing context you can also control.
+- app — an iframe of a first-party blitz.dev app URL.
+- srcdoc — a sandboxed iframe of HTML you write inline; great for a quick tool/visualization (calculator, chart, timer).
+- native — a built-in widget; component "note" = a post-it (props { text?, color?: yellow|pink|blue|green }).
+
+## Tools (authoritative schemas at $BASE/tools.json)
+- POST $BASE/open_window { url, x?, y?, w?, h?, title? } — open a website as a web surface; returns { id }.
+- POST $BASE/create_surface { kind, x?, y?, w?, h?, title?, url?, html?, component?, props? } — create any kind.
+- POST $BASE/move_surface { id, x, y }
+- POST $BASE/update_surface { id, html?, props?, url?, title?, x?, y?, w?, h? } — patch a surface in place (append to a srcdoc panel, set a note's text, change url/geometry).
+- POST $BASE/close_surface { id }
+- POST $BASE/go_to_primary
+- POST $BASE/list_state — list the surfaces currently open.
+- POST $BASE/read_window { id, script? } — read what is INSIDE a web surface (its DOM): url, title, where the user is typing, and visible text. Pass a JS expression as \`script\` to extract something specific.
+- POST $BASE/surface_control { id, action: { action: "click"|"type"|"key"|"read"|"screenshot", selector?, x?, y?, text?, key? } } — act INSIDE a web surface (click/type/key, read text, screenshot). Use read_window or surface_control:read first to see the page.
+- POST $BASE/events { since?, wait? } — the autonomy loop: long-poll the user's activity as framed "moments" (see "Watching the user" below).
+
+Coordinates are world pixels; omit position to center in the user's view. Prefer srcdoc for things you can build inline; use open_window for real external sites.
+
+## Watching the user: the autonomy loop ($BASE/events)
 BlitzOS watches the user for you and WAKES you on meaningful moments, so you behave like an always-on assistant without writing any polling logic. Run ONE long-poll loop:
-- POST /events {since?, wait?} -> {events:[<moment>], latest}. Start since=0, then loop with since=latest and wait=25. It blocks until a moment is ready, then returns instantly.
+- POST $BASE/events { since?, wait? } -> { events:[<moment>], latest }. Start since=0, then loop with since=latest and wait=25. It blocks until a moment is ready, then returns instantly.
 
-A **moment** is a coalesced, framed snapshot, NOT a keystroke firehose. BlitzOS batches routine activity (~15s) and flushes immediately when the user navigates or goes idle after acting. Each moment:
+A "moment" is a coalesced, framed snapshot, NOT a keystroke firehose. BlitzOS batches routine activity (~15s) and flushes immediately when the user navigates or goes idle after acting. Each moment:
   { seq, ts, surfaceId, url, title, trigger:'batch'|'nav'|'idle', windowMs, signals:{type:count}, user:[human-readable actions], snapshot:<text digest of the surface now> }
 
 On each moment: DECIDE whether it warrants action (most don't). If it does, perceive more if needed (read_window / surface_control read), then ACT: build or rearrange surfaces to help (a coach panel, a summary, a tool, reorganize the desktop). The snapshot tells you what the user is doing on ANY site, so this is general: you decide how to help. Don't narrate every moment; act when you can add value, stay quiet otherwise.
