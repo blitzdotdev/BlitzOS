@@ -85,10 +85,12 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     e.preventDefault()
     const u = normalizeUrl(draft)
     setDraft(u)
-    ;(webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
+    if (serverMode) window.agentOS?.serverNavigate?.(surface.id, u)
+    else (webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
   }
   function reload(): void {
-    ;(webviewRef.current as unknown as WebviewMethods | null)?.reload()
+    if (serverMode) window.agentOS?.serverReload?.(surface.id)
+    else (webviewRef.current as unknown as WebviewMethods | null)?.reload()
   }
 
   function onBarDown(e: React.PointerEvent): void {

@@ -124,7 +124,7 @@ export default function App(): JSX.Element {
     const h = 640
     const cx = (viewport.w / 2 - t.x) / t.scale
     const cy = (viewport.h / 2 - t.y) / t.scale
-    createSurface({ kind: 'web', url: 'https://discord.com/app', title: 'Discord', x: cx - w / 2, y: cy - h / 2, w, h })
+    createSurface({ kind: 'web', url: 'https://news.ycombinator.com', title: 'Hacker News', x: cx - w / 2, y: cy - h / 2, w, h })
   }
 
   const active = integrations.find((i) => i.id === connecting) ?? null

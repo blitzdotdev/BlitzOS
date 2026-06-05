@@ -12,6 +12,8 @@ declare global {
     agentOS?: AgentOSApi & {
       serverMode?: boolean
       mountServerSurface?: (canvas: HTMLCanvasElement, surfaceId: string, opts: { w: number; h: number }) => () => void
+      serverNavigate?: (surfaceId: string, url: string) => void
+      serverReload?: (surfaceId: string) => void
     }
   }
 }

@@ -133,6 +133,8 @@
   window.agentOS = {
     serverMode: !!window.__BLITZ_SERVER_MODE__,
     mountServerSurface: mountServerSurface,
+    serverNavigate: function (id, url) { streamSend({ t: 'cdp', id: id, method: 'Page.navigate', params: { url: url } }) },
+    serverReload: function (id) { streamSend({ t: 'cdp', id: id, method: 'Page.reload', params: {} }) },
     onAction: function (cb) {
       ensureES()
       actionL.push(cb)
