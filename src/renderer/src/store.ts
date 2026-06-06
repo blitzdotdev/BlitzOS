@@ -181,7 +181,10 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   createSurface: (input) => {
     get().snapshotLayout()
-    const id = input.id ?? `srf-${zCounter}`
+    // Stable, unique id (Phase 0 of the workspaces design): survives serialization +
+    // restart, so layout/consent can key off it. zCounter is now ONLY the session
+    // z-order allocator, never identity. (UUIDv4 here; ULID is a deferred sortable swap.)
+    const id = input.id ?? crypto.randomUUID()
     const size = defaultSize(input.kind)
     const w = input.w ?? size.w
     const h = input.h ?? size.h
