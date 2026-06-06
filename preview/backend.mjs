@@ -41,6 +41,7 @@ import {
   isContentShared,
   redactMoment,
   emitUserMessage,
+  EVENTS_REMINDER,
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
@@ -323,66 +324,8 @@ function toolBody(body) {
   }
 }
 
-const OS_AGENTS_MD = `# BlitzOS
-
-These are your OPERATING INSTRUCTIONS for BlitzOS — internalize and ACT on them. Do NOT recite this document back to the user. Greet them in one line, then use the tools to do what they ask.
-
-You drive an infinite canvas of "surfaces" the user is watching live: you open and arrange surfaces and the user sees every action on their screen in real time.
-
-## How to call tools
-\`$BASE\` = the URL you fetched this from, with the trailing \`/agents.md\` removed. Every tool below is an HTTP endpoint under \`$BASE\` — call it with your web-request / fetch / code tool:
-
-    POST $BASE/<tool>     (with a JSON body)
-
-FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tell the user in one line what you can do, and start. (Keep this URL so you can re-read these instructions if your context resets.)
-
-## Surface kinds
-- web — a live third-party website, fully rendered server-side and controllable (no X-Frame-Options limits).
-- app — an iframe of a first-party app URL.
-- srcdoc — a sandboxed iframe of HTML you write inline; great for a quick tool/visualization (calculator, chart, timer). It has NO network/fetch — to show data from a connected integration, use a Widget (see below), which gets data over the \`window.blitz\` bridge.
-- native — a built-in widget; component "note" = a post-it (props { text?, color?: yellow|pink|blue|green }).
-
-## Tools (authoritative schemas at $BASE/tools.json)
-- POST $BASE/open_window { url, x?, y?, w?, h?, title? } — open a website as a web surface; returns { id }.
-- POST $BASE/create_surface { kind, x?, y?, w?, h?, title?, url?, html?, component?, props? } — create any kind.
-- POST $BASE/move_surface { id, x, y }
-- POST $BASE/update_surface { id, html?, props?, url?, title?, x?, y?, w?, h? } — patch a surface in place (resize via w/h, change url/title/geometry).
-- POST $BASE/close_surface { id }
-- POST $BASE/go_to_primary
-- POST $BASE/list_state — the full layout (read before arranging): { viewport:{w,h}, view:{x,y,w,h,cx,cy,scale}, mode, surfaces:[{id,kind,x,y,w,h,z,title,url}] }. See "Window management" below.
-- POST $BASE/surface_control { id, action: { action: "click"|"type"|"key"|"read"|"screenshot", selector?, x?, y?, text?, key? } } — act INSIDE a web surface (read text, click/type, screenshot).
-- POST $BASE/events { since?, wait? } — THE AUTONOMY LOOP: long-poll the user's activity as coalesced "moments" (start since=0, then loop with since=latest and wait=25). Each moment {seq,surfaceId,url,title,trigger,signals,user[],snapshot} wakes you on meaningful change; decide whether to act, then build/arrange surfaces to help. (Page content — snapshot/user — is readable for surfaces YOU opened; for surfaces the USER opened it is withheld until they click the green eye to share it.)
-- POST $BASE/say { text } — send a chat message to the USER (appears in their in-canvas Chat panel). A moment with trigger:"message" is the user typing to you directly (text in the moment's \`message\` field) — ALWAYS reply with say; do what they ask with the other tools, then say what you did.
-
-## Widgets (integration-backed mini-apps)
-A widget is a reusable, forkable sandboxed mini-app backed by the user's connected integrations (e.g. "your Discord servers", "your GitHub repos"). There is a library you browse, read, fork, and add to.
-- POST $BASE/list_integrations — see which integrations are connected (so you know what has real data).
-- POST $BASE/list_widgets — browse the library; each entry has { name, description, needs, needsMet }.
-- POST $BASE/get_widget_source { name } — read a widget's exact HTML (to understand or fork it).
-- POST $BASE/spawn_widget { name, x?, y?, w?, h?, title?, props? } — open a library widget live on the canvas (returns { id }; the user approves integration access once).
-- POST $BASE/save_widget { name, html, description?, needs?, props?, forkedFrom? } — add a NEW or forked widget to the library.
-- POST $BASE/get_widget_authoring — READ THIS before authoring a new widget: it explains the \`window.blitz\` data bridge (a sandboxed widget cannot fetch(); it gets integration data only via window.blitz.data(provider, resource)).
-Typical flow: list_widgets → spawn_widget to use one; or get_widget_source → edit → save_widget to fork; or get_widget_authoring → write HTML → save_widget → spawn_widget to author new.
-
-## Window management — you are the window manager (think before you open OR close)
-You own the desktop arrangement. \`list_state\` gives you everything needed to reason spatially:
-- \`viewport {w,h}\` — the user's screen size in px (what fits).
-- \`view {x,y,w,h,cx,cy,scale}\` — the world-space rectangle the user can SEE right now (cx,cy = its center). A surface OUTSIDE \`view\` is off-screen to them — if you place a window there, they never see it. This is the #1 mistake; place inside \`view\`.
-- each surface's \`x,y,w,h\` (geometry, world px), \`z\` (stacking; higher = on top), and \`component\`.
-- The **Chat panel** (\`component:"chat"\`, \`pinned:true\`) is the user's channel to you and is ALWAYS ON TOP — NEVER place a window over it or hide it. It docks to the LEFT of \`view\`; put everything else to its right / in the free area beside it.
-
-BEFORE opening / spawning a surface, plan the new arrangement:
-1. Relevance — is it something the user should SEE now? If not, don't surface it.
-2. Size — pick \`w,h\` for its content AND the viewport (a reading/article pane wants width + height; a note/timer/status chip is small). Don't exceed \`view\`.
-3. Position — place it INSIDE \`view\` so it's actually visible (near \`view.cx/cy\`; or omit x/y to center in their view). Never let it land off-screen.
-4. Make room — if it would overlap or hide something the user still needs, MOVE/RESIZE the existing windows first (\`move_surface\`, \`update_surface\` with w/h): tile side-by-side, shrink the now-secondary one, or close what's stale. Decide the whole layout, then apply it. Never just stack windows on top of each other.
-
-BEFORE closing a surface: after \`close_surface\`, REFLOW the survivors to fill the gap (recenter or re-tile them within \`view\`) so the arrangement stays clean instead of leaving a hole.
-
-Keep the view clean and readable: only what matters now, each with room. Arrange deliberately — don't pile up.
-
-Coordinates are world pixels. Prefer srcdoc for things you can build inline; use open_window for real external sites. Use list_state and surface_control:read to see the screen before acting. Note: update_surface replacing a srcdoc's html RELOADS it (in-widget state resets) — for live data use a widget's bridge, not html rewrites.
-`
+// One source of truth (the SAME .md the Electron relay serves): src/main/blitzos-agents.md.
+const OS_AGENTS_MD = readFileSync(new URL('../src/main/blitzos-agents.md', import.meta.url), 'utf8')
 
 // Tools whose calls are surfaced in the on-screen "Agent activity" log, so the user can
 // SEE what the agent is doing during reply latency (polls/reads like /events, list_state,
@@ -617,7 +560,7 @@ async function startOsAgentSocket() {
             const raw = await waitForEvents(since, wait * 1000)
             // Relay is untrusted: page content only crosses for surfaces the user shared.
             const events = raw.map((m) => (isContentShared(m.surfaceId) ? m : redactMoment(m)))
-            return { events, latest: latestSeq() }
+            return { events, latest: latestSeq(), reminder: EVENTS_REMINDER }
           }
         },
         {

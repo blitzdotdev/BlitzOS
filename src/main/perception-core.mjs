@@ -17,7 +17,13 @@ const BATCH_MS = 15000
 
 // Signals that represent the USER doing something (vs. background page churn).
 // Only these wake the agent; content-only mutation just refreshes the snapshot.
-const USER_TYPES = new Set(['key', 'click', 'input', 'pointer', 'nav', 'idle'])
+const USER_TYPES = new Set(['key', 'click', 'input', 'pointer', 'select', 'nav', 'idle'])
+
+// A short standing nudge BlitzOS ships on EVERY /events response (like a system
+// reminder). The watcher surfaces it with each moment so the agent honors it on each
+// wake: think about what the user should see next, and arrange the desktop for it.
+export const EVENTS_REMINDER =
+  'Reminder: after you act on this, manage the layout. Re-arrange or close surfaces so the user sees only what is relevant to their next step; you own the desktop.'
 
 const pending = new Map()
 const lastCtx = new Map()
@@ -68,6 +74,8 @@ function describe(r) {
       return `navigated to ${String(r.url ?? '')}`
     case 'idle':
       return `paused (~${Math.round((Number(r.idleMs) || 0) / 1000)}s)`
+    case 'select':
+      return `highlighted: "${String(r.text ?? '').slice(0, 160)}"`
     default:
       return null
   }
@@ -96,7 +104,8 @@ export function ingestSignals(surfaceId, raw) {
       if (p.user.length > 8) p.user.splice(0, p.user.length - 8)
     }
     if (type === 'nav') p.significant = 'nav'
-    else if (type === 'idle' && p.significant !== 'nav') p.significant = 'idle'
+    else if (type === 'select' && p.significant !== 'nav') p.significant = 'select'
+    else if (type === 'idle' && p.significant !== 'nav' && p.significant !== 'select') p.significant = 'idle'
   }
   lastCtx.set(surfaceId, ctx)
   if (p && p.significant) flush(surfaceId, p.significant)
@@ -231,6 +240,8 @@ export const INJECT = `(() => {
   addEventListener('click', (e) => { act(); const t = e.target; push({ type: 'click', tag: t && t.tagName, txt: ((t && t.innerText) || '').trim().slice(0, 40) }); }, true);
   addEventListener('input', (e) => { act(); const t = e.target; push({ type: 'input', tag: t && t.tagName, val: ((t && t.value) || '').slice(0, 80) }); }, true);
   addEventListener('pointerdown', (e) => { act(); push({ type: 'pointer', tag: e.target && e.target.tagName, x: Math.round(e.clientX || 0), y: Math.round(e.clientY || 0) }); }, true);
+  // text selection: the human highlighting a passage is a deliberate "look at this" gesture
+  addEventListener('mouseup', () => { try { const s = String((window.getSelection && getSelection()) || '').replace(/\\s+/g, ' ').trim(); if (s.length > 2) { act(); push({ type: 'select', text: s.slice(0, 500) }); } } catch (e) {} }, true);
   setInterval(() => { if (location.href !== lastHref) { lastHref = location.href; push({ type: 'nav', title: document.title, digest: digest() }); } }, 600);
   try { new MutationObserver(() => { if (mt) return; mt = setTimeout(() => { mt = null; push({ type: 'content', title: document.title, digest: digest() }); }, 1200); }).observe(document.body, { childList: true, subtree: true, characterData: true }); } catch (e) {}
   setInterval(() => { if (!idleSent && Date.now() - lastAct > 5000) { idleSent = true; push({ type: 'idle', idleMs: Date.now() - lastAct, title: document.title, digest: digest() }); } }, 1500);
