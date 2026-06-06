@@ -39,6 +39,8 @@ function desktopClamp(x: number, y: number, w: number, vp: { w: number; h: numbe
 }
 
 let zCounter = 10
+// Quiet-period boundary (ms): layout changes closer than this coalesce into ONE undo step.
+let lastSnapTs = 0
 
 export interface CreateSurfaceInput {
   id?: string
@@ -61,6 +63,7 @@ interface DesktopState {
   integrations: IntegrationStatus[]
   positions: Record<string, Vec2>
   surfaces: Surface[]
+  layoutHistory: Surface[][]
 
   setViewport: (w: number, h: number) => void
   setMode: (m: 'desktop' | 'canvas') => void
@@ -82,6 +85,9 @@ interface DesktopState {
   toggleMaximize: (id: string) => void
   updateSurface: (id: string, patch: Partial<Surface>) => void
   updateSurfaceProps: (id: string, props: Record<string, unknown>) => void
+  // Layout undo: the agent auto-applies layouts; the human reverts with Cmd+Z.
+  snapshotLayout: () => void
+  undoLayout: () => void
 }
 
 function defaultSize(kind: SurfaceKind): { w: number; h: number } {
@@ -97,6 +103,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   integrations: [],
   positions: {},
   surfaces: [],
+  layoutHistory: [],
 
   setViewport: (w, h) => set({ viewport: { w, h } }),
   setMode: (m) => set({ mode: m }),
@@ -171,6 +178,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     }),
 
   createSurface: (input) => {
+    get().snapshotLayout()
     const id = input.id ?? `srf-${zCounter}`
     const size = defaultSize(input.kind)
     const w = input.w ?? size.w
@@ -203,27 +211,32 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     return id
   },
 
-  moveSurface: (id, x, y) =>
+  moveSurface: (id, x, y) => {
+    get().snapshotLayout()
     set((s) => {
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
       const p = s.mode === 'desktop' ? desktopClamp(x, y, surf.w, s.viewport) : { x, y }
       return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y } : w)) }
-    }),
+    })
+  },
 
-  resizeSurface: (id, w, h) =>
+  resizeSurface: (id, w, h) => {
+    get().snapshotLayout()
     set((s) => ({
       surfaces: s.surfaces.map((it) =>
         it.id === id ? { ...it, w: Math.max(160, w), h: Math.max(120, h) } : it
       )
-    })),
+    }))
+  },
 
   setZoom: (id, zoom) =>
     set((s) => ({
       surfaces: s.surfaces.map((it) => (it.id === id ? { ...it, zoom: clamp(zoom, 0.3, 3) } : it))
     })),
 
-  toggleMaximize: (id) =>
+  toggleMaximize: (id) => {
+    get().snapshotLayout()
     set((s) => {
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
@@ -251,16 +264,23 @@ export const useDesktop = create<DesktopState>((set, get) => ({
             : w
         )
       }
-    }),
+    })
+  },
 
-  updateSurface: (id, patch) =>
+  updateSurface: (id, patch) => {
+    // Only a geometry change is "layout"; html/props updates are not undoable via Cmd+Z.
+    if (patch.x !== undefined || patch.y !== undefined || patch.w !== undefined || patch.h !== undefined) get().snapshotLayout()
     set((s) => ({
       surfaces: s.surfaces.map((it) =>
         it.id === id ? { ...it, ...patch, props: { ...it.props, ...(patch.props ?? {}) } } : it
       )
-    })),
+    }))
+  },
 
-  closeSurface: (id) => set((s) => ({ surfaces: s.surfaces.filter((w) => w.id !== id) })),
+  closeSurface: (id) => {
+    get().snapshotLayout()
+    set((s) => ({ surfaces: s.surfaces.filter((w) => w.id !== id) }))
+  },
 
   focusSurface: (id) =>
     set((s) => ({ surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter } : w)) })),
@@ -268,5 +288,30 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   updateSurfaceProps: (id, props) =>
     set((s) => ({
       surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, props: { ...w.props, ...props } } : w))
-    }))
+    })),
+
+  // Push the current arrangement onto the undo stack, coalescing a burst of changes (an
+  // agent rearrange, a human drag) into ONE entry via a quiet-period boundary. Surfaces
+  // are updated immutably, so a snapshot is just the array ref (cheap).
+  snapshotLayout: () => {
+    const now = Date.now()
+    const newTxn = now - lastSnapTs > 600
+    lastSnapTs = now
+    if (!newTxn) return
+    set((s) => {
+      const hist = [...s.layoutHistory, s.surfaces]
+      if (hist.length > 12) hist.shift()
+      return { layoutHistory: hist }
+    })
+  },
+
+  // Revert to the previous arrangement (Cmd+Z with nothing editable focused). Restores the
+  // exact prior surface set + geometry by swapping back the snapshotted array.
+  undoLayout: () =>
+    set((s) => {
+      if (!s.layoutHistory.length) return {}
+      const hist = [...s.layoutHistory]
+      const prev = hist.pop() as Surface[]
+      return { layoutHistory: hist, surfaces: prev }
+    })
 }))

@@ -2,9 +2,10 @@ import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { randomBytes } from 'crypto'
 import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, type SurfaceDescriptor } from './osActions'
 import type { ControlAction } from './cdp'
-import { waitForEvents, latestSeq } from './events'
+import { waitForEvents, latestSeq, EVENTS_REMINDER } from './events'
 import { setLocal } from './sessionFile'
 import { getObservations } from './brain/orchestrator.mjs'
+import { fsOp, shFs } from './journal.mjs'
 
 /**
  * Minimal localhost control API (the LOCAL agent path; agent-socket is the
@@ -122,7 +123,31 @@ export function startControlServer(): void {
         const wait = Math.min(Math.max(Number(p.wait) || 0, 0), 25)
         const events = await waitForEvents(since, wait * 1000)
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ events, latest: latestSeq() }))
+        res.end(JSON.stringify({ events, latest: latestSeq(), reminder: EVENTS_REMINDER }))
+      })
+      return
+    }
+
+    // POST /fs {op,path,...} | POST /sh {cmd} -> the agent's MEMORY as a sandboxed
+    // virtual filesystem (markdown journal). FS-native verbs (ls/cat/write/append/
+    // mkdir/rm/mv/grep), OS-owned storage under ~/.blitzos/journal. Not a shell.
+    if (req.method === 'POST' && (req.url === '/fs' || req.url === '/sh')) {
+      const route = req.url
+      let body = ''
+      req.on('data', (chunk) => {
+        body += chunk
+        if (body.length > 4_000_000) req.destroy()
+      })
+      req.on('end', () => {
+        try {
+          const p = body ? JSON.parse(body) : {}
+          const result = route === '/sh' ? shFs(String(p.cmd ?? '')) : fsOp(String(p.op ?? ''), p)
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(result ?? { ok: true }))
+        } catch (e) {
+          res.writeHead(400, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }))
+        }
       })
       return
     }

@@ -323,47 +323,8 @@ function toolBody(body) {
   }
 }
 
-const OS_AGENTS_MD = `# BlitzOS
-
-These are your OPERATING INSTRUCTIONS for BlitzOS — internalize and ACT on them. Do NOT recite this document back to the user. Greet them in one line, then use the tools to do what they ask.
-
-You drive an infinite canvas of "surfaces" the user is watching live: you open and arrange surfaces and the user sees every action on their screen in real time.
-
-## How to call tools
-\`$BASE\` = the URL you fetched this from, with the trailing \`/agents.md\` removed. Every tool below is an HTTP endpoint under \`$BASE\` — call it with your web-request / fetch / code tool:
-
-    POST $BASE/<tool>     (with a JSON body)
-
-FIRST: \`GET $BASE/tools.json\` to see the exact tools + input schemas. Then tell the user in one line what you can do, and start. (Keep this URL so you can re-read these instructions if your context resets.)
-
-## Surface kinds
-- web — a live third-party website, fully rendered server-side and controllable (no X-Frame-Options limits).
-- app — an iframe of a first-party app URL.
-- srcdoc — a sandboxed iframe of HTML you write inline; great for a quick tool/visualization (calculator, chart, timer). It has NO network/fetch — to show data from a connected integration, use a Widget (see below), which gets data over the \`window.blitz\` bridge.
-- native — a built-in widget; component "note" = a post-it (props { text?, color?: yellow|pink|blue|green }).
-
-## Tools (authoritative schemas at $BASE/tools.json)
-- POST $BASE/open_window { url, x?, y?, w?, h?, title? } — open a website as a web surface; returns { id }.
-- POST $BASE/create_surface { kind, x?, y?, w?, h?, title?, url?, html?, component?, props? } — create any kind.
-- POST $BASE/move_surface { id, x, y }
-- POST $BASE/close_surface { id }
-- POST $BASE/go_to_primary
-- POST $BASE/list_state — list the surfaces currently open.
-- POST $BASE/surface_control { id, action: { action: "click"|"type"|"key"|"read"|"screenshot", selector?, x?, y?, text?, key? } } — act INSIDE a web surface (read text, click/type, screenshot).
-- POST $BASE/events { since?, wait? } — THE AUTONOMY LOOP: long-poll the user's activity as coalesced "moments" (start since=0, then loop with since=latest and wait=25). Each moment {seq,surfaceId,url,title,trigger,signals,user[],snapshot} wakes you on meaningful change; decide whether to act, then build/arrange surfaces to help. (Page content — snapshot/user — is withheld unless the user shared that surface with the agent.)
-
-## Widgets (integration-backed mini-apps)
-A widget is a reusable, forkable sandboxed mini-app backed by the user's connected integrations (e.g. "your Discord servers", "your GitHub repos"). There is a library you browse, read, fork, and add to.
-- POST $BASE/list_integrations — see which integrations are connected (so you know what has real data).
-- POST $BASE/list_widgets — browse the library; each entry has { name, description, needs, needsMet }.
-- POST $BASE/get_widget_source { name } — read a widget's exact HTML (to understand or fork it).
-- POST $BASE/spawn_widget { name, x?, y?, w?, h?, title?, props? } — open a library widget live on the canvas (returns { id }; the user approves integration access once).
-- POST $BASE/save_widget { name, html, description?, needs?, props?, forkedFrom? } — add a NEW or forked widget to the library.
-- POST $BASE/get_widget_authoring — READ THIS before authoring a new widget: it explains the \`window.blitz\` data bridge (a sandboxed widget cannot fetch(); it gets integration data only via window.blitz.data(provider, resource)).
-Typical flow: list_widgets → spawn_widget to use one; or get_widget_source → edit → save_widget to fork; or get_widget_authoring → write HTML → save_widget → spawn_widget to author new.
-
-Coordinates are world pixels; omit position to center in the user's view. Prefer srcdoc for things you can build inline; use open_window for real external sites. Use list_state and surface_control:read to see the screen before acting. Note: update_surface replacing a srcdoc's html RELOADS it (in-widget state resets) — for live data use a widget's bridge, not html rewrites.
-`
+// One source of truth (the SAME .md the Electron relay serves): src/main/blitzos-agents.md.
+const OS_AGENTS_MD = readFileSync(new URL('../src/main/blitzos-agents.md', import.meta.url), 'utf8')
 
 async function startOsAgentSocket() {
   try {

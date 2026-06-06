@@ -72,6 +72,14 @@ export default function App(): JSX.Element {
       if ((e.metaKey || e.ctrlKey) && e.key === '0') {
         e.preventDefault()
         useDesktop.getState().goToPrimary()
+      } else if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+        // layout undo (Cmd+Z) when nothing editable is focused; else let the browser text-undo win
+        const ae = document.activeElement as HTMLElement | null
+        const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
+        if (!editable) {
+          e.preventDefault()
+          useDesktop.getState().undoLayout()
+        }
       }
     }
     window.addEventListener('keydown', onKey)

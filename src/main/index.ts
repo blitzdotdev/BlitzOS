@@ -7,6 +7,7 @@ import { startAgentSocket } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
 import { startBrain } from './brain/orchestrator.mjs'
+import { startSessionPersistence } from './persistence'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -17,7 +18,7 @@ let mainWindow: BrowserWindow | null = null
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1440,
-    height: 900,
+    height: 900, // TODO make sure its close to windowless fullscreen
     show: false,
     backgroundColor: '#0e1116',
     titleBarStyle: 'hiddenInset',
@@ -88,6 +89,10 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   createWindow()
+
+  // Durably flush cookies + localStorage to disk (web surfaces persist their logins;
+  // otherwise the freshest auth token is lost on quit and sites log you back out).
+  startSessionPersistence()
 
   // Wire the renderer<->main control channel (shared by control server + agent-socket).
   initOsActions(() => mainWindow)

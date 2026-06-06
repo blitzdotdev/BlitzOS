@@ -6,7 +6,7 @@ export interface BlitzMoment {
   surfaceId: string
   url?: string
   title?: string
-  trigger: 'batch' | 'nav' | 'idle' | 'action'
+  trigger: 'batch' | 'nav' | 'idle' | 'action' | 'select'
   windowMs: number
   signals: Record<string, number>
   user: string[]
@@ -22,6 +22,7 @@ export function ingestSignals(surfaceId: string, raw: Array<Record<string, unkno
 export function latestSeq(): number
 export function emitSurfaceAction(surfaceId: string, action: Record<string, unknown>): void
 export function waitForEvents(since: number, maxMs: number): Promise<BlitzMoment[]>
+export const EVENTS_REMINDER: string
 
 /** In-page sensor installer (evaluate in a web surface). */
 export const INJECT: string
