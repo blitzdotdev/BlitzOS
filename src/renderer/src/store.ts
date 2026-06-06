@@ -220,21 +220,24 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   },
 
   hydrate: (surfaces, camera, mode) =>
-    set(() => {
+    set((s) => {
       // Normalize incoming descriptors to full Surface objects (defaults for anything the
       // persisted node didn't carry), and lift the z-allocator above the restored max so
       // surfaces created after a restore land on top.
-      const restored: Surface[] = surfaces.map((s) => ({
+      const restored: Surface[] = surfaces.map((w) => ({
         zoom: 1,
         props: {},
-        ...s,
-        z: s.z ?? ++zCounter
+        ...w,
+        z: w.z ?? ++zCounter
       })) as Surface[]
-      const maxZ = restored.reduce((m, s) => Math.max(m, s.z || 0), 0)
+      const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
       zCounter = Math.max(zCounter, maxZ + 1)
+      // camera is the WORLD point at screen center + scale -> compute the transform that puts
+      // that world point at the current viewport's center (viewport-independent restore).
+      const sc = camera.scale || 1
       return {
         surfaces: restored,
-        transform: { x: camera.x, y: camera.y, scale: camera.scale },
+        transform: { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc },
         mode,
         layoutHistory: []
       }

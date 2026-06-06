@@ -62,16 +62,23 @@ const UA = 'agent-os-preview/0.1'
 // it to <dir>/.blitzos/workspace.json + content files (debounced, additive, never deletes).
 const WORKSPACE_DIR = process.env.BLITZ_WORKSPACE || join(ROOT, 'preview', '.workspace', 'Home')
 let wsWriteTimer = null
-function scheduleWorkspaceWrite() {
-  if (wsWriteTimer) return
-  wsWriteTimer = setTimeout(() => {
+// Synchronous write (clears any pending timer). Used by the debounce + the shutdown flush.
+function flushWorkspace() {
+  if (wsWriteTimer) {
+    clearTimeout(wsWriteTimer)
     wsWriteTimer = null
-    try {
-      writeWorkspace(WORKSPACE_DIR, osState)
-    } catch (e) {
-      console.error('[workspace] write failed:', e?.message || e)
-    }
-  }, 500)
+  }
+  try {
+    writeWorkspace(WORKSPACE_DIR, osState)
+  } catch (e) {
+    console.error('[workspace] write failed:', e?.message || e)
+  }
+}
+function scheduleWorkspaceWrite() {
+  // Trailing debounce: fire once 500ms after activity STOPS, so a burst persists only the
+  // final state (not mid-burst snapshots). gracefulExit flushes any pending write on quit.
+  if (wsWriteTimer) clearTimeout(wsWriteTimer)
+  wsWriteTimer = setTimeout(flushWorkspace, 500)
 }
 
 // Phase 3: watch the workspace folder as a DOORBELL — an EXTERNAL file edit (the agent's own
@@ -487,7 +494,9 @@ async function startOsAgentSocket() {
             if (!a.kind) return { status: 400, body: { error: 'kind required' } }
             // srcdoc ids are server-minted: a consent grant is keyed by surface id, so
             // an untrusted caller must not be able to choose one and inherit a grant.
-            const id = a.kind === 'srcdoc' ? randomUUID() : a.id || randomUUID()
+            // Always OS-mint the id (the agent gets it back in the response). Honoring an
+            // agent-supplied id let two surfaces collide on one content-file path -> clobber.
+            const id = randomUUID()
             // The agent opened this surface itself (it chose the url), so reading it back
             // leaks nothing the agent didn't already pick — auto-share web/app so the agent
             // can read/control what it opened. (Surfaces the USER opens stay private until
@@ -543,7 +552,29 @@ async function startOsAgentSocket() {
           }
         },
         { path: '/go_to_primary', description: 'Recenter the view on the primary workspace.', handler: () => { broadcast({ type: 'goToPrimary' }); return { ok: true } } },
-        { path: '/list_state', description: 'List the surfaces currently open on the canvas.', handler: () => osState },
+        {
+          path: '/list_state',
+          description: 'List the surfaces currently open on the canvas.',
+          // Whitelist layout fields only — html + props ride the state push for serialization,
+          // but the agent's list_state view must not leak full srcdoc HTML or the chat transcript.
+          handler: () => ({
+            ...osState,
+            surfaces: (osState.surfaces || []).map((s) => ({
+              id: s.id,
+              kind: s.kind,
+              x: s.x,
+              y: s.y,
+              w: s.w,
+              h: s.h,
+              z: s.z,
+              zoom: s.zoom,
+              title: s.title,
+              url: s.url,
+              component: s.component,
+              pinned: s.pinned
+            }))
+          })
+        },
         {
           path: '/read_window',
           description: 'Read what is INSIDE a web surface (its DOM): url, title, and visible text. Only kind "web" (server mode).',
@@ -1021,6 +1052,9 @@ let shuttingDown = false
 async function gracefulExit() {
   if (shuttingDown) return
   shuttingDown = true
+  // Flush a pending workspace write FIRST (before the possibly-slow host.stop), so a surface
+  // created/moved right before quit lands on disk — otherwise hydrate restores the stale state.
+  flushWorkspace()
   try {
     if (host) await host.stop()
   } catch {

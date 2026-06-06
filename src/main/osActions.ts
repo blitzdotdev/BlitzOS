@@ -112,7 +112,9 @@ function send(type: string, payload: Record<string, unknown> = {}): void {
 export function osCreateSurface(desc: SurfaceDescriptor): string {
   // srcdoc ids are server-minted: a consent grant is keyed by surface id, so an
   // untrusted caller must not be able to pick one and inherit a prior grant.
-  const id = desc.kind === 'srcdoc' ? randomUUID() : desc.id ?? randomUUID()
+  // Always OS-mint the id (parity with the relay backend): honoring a caller-supplied id let
+  // two surfaces collide on one content-file path -> clobber on serialize.
+  const id = randomUUID()
   // The agent opened this surface itself (it chose the url), so reading it back leaks
   // nothing the agent didn't pick — auto-share web/app so it can read/control what it
   // opened. Surfaces the USER opens stay private until they share (the P0 gate).

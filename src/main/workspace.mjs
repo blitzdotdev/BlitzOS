@@ -47,15 +47,19 @@ export function wasSelfWrite(absPath, windowMs = 900) {
 // Which surfaces become canvas NODES. The chat + agent-activity native panels are RUNTIME
 // (they belong in .blitzos/state/*.jsonl, Phase 4), never nodes. Unknown kinds are skipped.
 function nodeKind(s) {
-  if (s.kind === 'web') return 'web'
-  if (s.kind === 'app') return 'app'
+  if (s.kind === 'web' || s.kind === 'app') return 'web' // app folds to web (both -> .weblink; 'app' is not a schema kind)
   if (s.kind === 'srcdoc') return 'srcdoc'
   if (s.kind === 'native' && s.component === 'note') return 'note'
   return null
 }
 
+// Generated root basenames that must never be reused for a content file.
+const RESERVED_ROOT = new Set(['blitzos.md', '.gitignore'])
+
 function slug(str, fallback) {
   const base = String(str || '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '') // fold combining accents: café→cafe, Über→uber
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
@@ -90,7 +94,14 @@ function contentFor(kind, s) {
 function viewFor(kind, s) {
   if (kind === 'note' && s.props && typeof s.props.color === 'string') return { color: s.props.color }
   if ((kind === 'web' || kind === 'app') && s.title) return { lastTitle: s.title }
-  if (kind === 'srcdoc' && s.props && Object.keys(s.props).length) return { props: s.props }
+  if (kind === 'srcdoc' && s.props && Object.keys(s.props).length) {
+    // view must stay "small" (spec §3.3) — don't inline an unbounded props blob.
+    try {
+      if (JSON.stringify(s.props).length <= 8192) return { props: s.props }
+    } catch {
+      /* non-serializable — drop */
+    }
+  }
   return {}
 }
 
@@ -145,18 +156,25 @@ export function writeWorkspace(dir, osState) {
   const metaDir = join(dir, '.blitzos')
   const metaFile = join(metaDir, 'workspace.json')
   const { idToPath, wsId } = readPrior(metaFile)
-  const taken = new Set(idToPath.values())
+  // Seed `taken` with reserved generated basenames so a content file can never clobber them.
+  const taken = new Set([...idToPath.values(), ...RESERVED_ROOT])
   const surfaces = Array.isArray(osState?.surfaces) ? osState.surfaces : []
 
   const nodes = []
+  const order = [] // { id, z } for the stack, built from the SAME kept nodes (no divergent pass)
+  const seen = new Set() // dedupe: an agent-reused/duplicate id must not clobber another's file
   for (const s of surfaces) {
+    if (!s || typeof s.id !== 'string' || !s.id) continue // never write a node with no/blank id
+    if (seen.has(s.id)) continue
     const kind = nodeKind(s)
     if (!kind) continue
     const c = contentFor(kind, s)
     if (!c) continue
-    // stable path: reuse the prior assignment for this id, else mint + dedupe.
+    seen.add(s.id)
+    // stable path: reuse the prior assignment for this id — but only if its extension still
+    // matches this kind (a surface that changed kind must get a fresh, correct-extension path).
     let rel = idToPath.get(s.id)
-    if (!rel) rel = uniquePath(c.name, c.ext, taken)
+    if (!rel || extname(rel).toLowerCase() !== '.' + c.ext) rel = uniquePath(c.name, c.ext, taken)
     const abs = safeJoin(dir, rel) // jail: a reused path from a hand-edited workspace.json can't escape
     if (!abs) continue
     idToPath.set(s.id, rel)
@@ -173,15 +191,18 @@ export function writeWorkspace(dir, osState) {
       ...(s.zoom && s.zoom !== 1 ? { zoom: s.zoom } : {}),
       ...(Object.keys(view).length ? { view } : {})
     })
+    order.push({ id: s.id, z: s.z || 0 })
   }
 
-  // z-order: node ids back→front by their session z.
-  const stack = surfaces
-    .filter((s) => nodeKind(s))
+  // Don't materialize an empty workspace.json (or scaffold) for a fresh, empty canvas — only
+  // once there's something to persist (or a workspace already exists to keep in sync).
+  if (nodes.length === 0 && !existsSync(metaFile)) return { metaFile, nodeCount: 0 }
+
+  // z-order: node ids back→front, from the kept nodes only.
+  const stack = order
     .slice()
-    .sort((a, b) => (a.z || 0) - (b.z || 0))
-    .map((s) => s.id)
-    .filter((id) => nodes.some((n) => n.id === id))
+    .sort((a, b) => a.z - b.z)
+    .map((o) => o.id)
 
   const cam = osState?.camera
   const camera =

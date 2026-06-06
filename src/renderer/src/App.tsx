@@ -162,7 +162,7 @@ export default function App(): JSX.Element {
         const chat = st.surfaces.find((s) => s.kind === 'native' && s.component === 'chat')
         if (chat) {
           const msgs = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
-          st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }] })
+          st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }].slice(-200) })
         } else {
           st.createSurface(chatSurfaceInput([{ role: 'agent', text }]))
         }
@@ -254,8 +254,9 @@ export default function App(): JSX.Element {
         cy: Math.round((vh / 2 - ty) / scale),
         scale: Math.round(scale * 100) / 100
       }
-      // camera = the raw transform (workspace.json persists this; `view` is the derived rect for the agent)
-      window.agentOS?.sendState({ surfaces, viewport: { w: vw, h: vh }, view, mode: st.mode, camera: { x: Math.round(tx), y: Math.round(ty), scale } })
+      // camera = the WORLD point at screen center + scale (viewport-independent, so it restores
+      // correctly on a different screen size — view.cx/cy are exactly that world point).
+      window.agentOS?.sendState({ surfaces, viewport: { w: vw, h: vh }, view, mode: st.mode, camera: { x: view.cx, y: view.cy, scale } })
     }
     push()
     // If no hydrate arrives (fresh workspace, or Electron without server hydrate), start
