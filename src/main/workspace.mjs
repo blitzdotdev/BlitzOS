@@ -1,14 +1,18 @@
-// Workspace serializer — Phase 1 of the workspaces design (agent-os-workspaces.md).
+// Workspace serializer — the workspaces design (agent-os-workspaces.md), Phases 1–3.
 //
-// Projects the live desktop (osState pushed by the renderer) onto a workspace FOLDER:
+// Maps the canvas <-> a workspace FOLDER, both ways:
 //   <dir>/.blitzos/workspace.json   ← the one layout file: { version, id, kind, camera, mode, stack, nodes[] }
-//   <dir>/<content files>           ← everything-is-a-file: note→.md, web/app→.weblink, srcdoc→.html
+//   <dir>/<content files>           ← everything-is-a-file: note→.md, web→.weblink, srcdoc→.html
 //
-// Phase 1 is WRITE-ONLY: no hydrate, no watch, no reconcile, no deletion. It is purely
-// additive (it never removes a file), so it cannot harm the running app — it just lets the
-// canvas materialize on disk. Writes are atomic (temp + rename); content files are written
-// only when their bytes change (so unchanged notes don't churn mtime/git). BlitzOS owns the
-// layout file; content files are the source of truth for content.
+//   writeWorkspace()      project the live desktop (osState) onto the folder.
+//   readWorkspace()       reconstruct surface descriptors (hydrate on boot/connect).
+//   reconcileWorkspace()  idempotent re-scan when the folder changes externally (reload content,
+//                         auto-place new files, heal a rename, drop missing).
+//
+// BlitzOS owns the layout file; content files are the source of truth for content. Writes are
+// atomic (temp + rename) and content is rewritten only when its bytes change. Every read/write
+// is path-jailed inside the workspace, and every BlitzOS write is stamped so the backend's
+// watcher (wasSelfWrite) reconciles only on EXTERNAL edits, never its own.
 //
 // Shared module (the control-core.mjs / perception-core.mjs pattern): plain Node, importable
 // by the server backend now and Electron main later.
@@ -75,13 +79,13 @@ function hostOf(url) {
   }
 }
 
-// The content file (extension, desired basename, body bytes) for a node kind.
+// The content file (extension, desired basename, body bytes) for a node kind. nodeKind folds
+// 'app' into 'web', so only note/web/srcdoc reach here.
 function contentFor(kind, s) {
   switch (kind) {
     case 'note':
       return { ext: 'md', name: slug(s.title, 'note'), body: String(s.props?.text ?? '') }
     case 'web':
-    case 'app':
       return { ext: 'weblink', name: slug(hostOf(s.url) || s.title, 'link'), body: JSON.stringify({ url: s.url || '' }, null, 2) + '\n' }
     case 'srcdoc':
       return { ext: 'html', name: slug(s.title, 'panel'), body: String(s.html ?? '') }
@@ -93,7 +97,7 @@ function contentFor(kind, s) {
 // Per-kind view state for the node entry (small, cosmetic — content lives in the file).
 function viewFor(kind, s) {
   if (kind === 'note' && s.props && typeof s.props.color === 'string') return { color: s.props.color }
-  if ((kind === 'web' || kind === 'app') && s.title) return { lastTitle: s.title }
+  if (kind === 'web' && s.title) return { lastTitle: s.title }
   if (kind === 'srcdoc' && s.props && Object.keys(s.props).length) {
     // view must stay "small" (spec §3.3) — don't inline an unbounded props blob.
     try {
