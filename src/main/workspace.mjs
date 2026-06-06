@@ -199,6 +199,7 @@ export function writeWorkspace(dir, osState) {
     nodes
   }
   atomicWrite(metaFile, JSON.stringify(ws, null, 2) + '\n')
+  scaffold(dir) // self-describing BLITZOS.md + .gitignore (once)
   return { metaFile, nodeCount: nodes.length }
 }
 
@@ -287,12 +288,47 @@ export function readWorkspace(dir) {
 // in Phase 3: only the unambiguous text/invented kinds — a dropped binary, .html, image, or
 // folder is left alone (the spec's passive-file/bundle handling isn't built yet). Dotfiles,
 // the .blitzos dir, and temp files never surface.
+// Well-known workspace meta files that must NEVER auto-surface as canvas nodes.
+const META_FILES = new Set(['blitzos.md', '.gitignore'])
 function autoKind(name) {
-  if (name.startsWith('.') || /\.tmp(-[0-9a-f]+)?$/.test(name)) return null
+  if (name.startsWith('.') || /\.tmp(-[0-9a-f]+)?$/.test(name) || META_FILES.has(name.toLowerCase())) return null
   const ext = extname(name).toLowerCase()
   if (ext === '.weblink') return 'web'
   if (ext === '.md') return 'note'
   return null
+}
+
+const BLITZOS_MD = `# This folder is a BlitzOS workspace
+
+BlitzOS shows this folder as a spatial canvas. Every loose file here is a node you can see and
+arrange; edit the files and the canvas updates live. The board IS this folder.
+
+## File kinds
+- \`*.md\` — a note (the markdown text is the file).
+- \`*.weblink\` — a web window: \`{ "url": "https://…" }\`.
+- \`*.html\` — an agent-authored panel.
+- a plain folder — a collapsed tile; its contents are NOT on the canvas (good for grouping +
+  cloned repos, so a repo is one tile, not thousands of nodes).
+- images / other files — a tile.
+
+## Layout
+\`.blitzos/workspace.json\` holds the spatial layout: for each node, its \`id\`, file \`path\`,
+\`x/y/w/h\`, the z-order in \`stack\`, and the \`camera\`. BlitzOS owns this file — edit a node's
+\`x\`/\`y\` to move it, reorder \`stack\` to restack.
+
+## For an agent
+Operate this workspace with plain file tools — no API needed:
+- new note → write a \`.md\`; open a site → write a \`.weblink\`; move/resize → edit the node in
+  \`.blitzos/workspace.json\`; delete → remove the file; group → move files into a subfolder.
+- A node's content = its file. \`.blitzos/state/\` is BlitzOS runtime state — do not read or edit it.
+`
+
+// Scaffold the self-describing doc + a .gitignore (state/ is machine-local) once per workspace.
+function scaffold(dir) {
+  const md = join(dir, 'BLITZOS.md')
+  if (!existsSync(md)) atomicWrite(md, BLITZOS_MD)
+  const gi = join(dir, '.gitignore')
+  if (!existsSync(gi)) atomicWrite(gi, '# BlitzOS runtime state (machine-local, not part of the workspace)\n.blitzos/state/\n')
 }
 function defaultSizeFor(kind) {
   return kind === 'note' ? { w: 240, h: 240 } : { w: 920, h: 640 }
