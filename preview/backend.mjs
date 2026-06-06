@@ -676,7 +676,7 @@ async function startOsAgentSocket() {
           handler: async ({ body }) => {
             const a = toolBody(body)
             const since = Number(a.since) || 0
-            const wait = Math.min(Math.max(Number(a.wait) || 25, 0), 25)
+            const wait = Math.min(Math.max(a.wait == null ? 25 : Number(a.wait) || 0, 0), 25) // default 25, but honor an explicit wait:0 (the startup latest-read)
             const raw = await waitForEvents(since, wait * 1000)
             // Relay is untrusted: page content only crosses for surfaces the user shared.
             const events = raw.map((m) => (isContentShared(m.surfaceId) ? m : redactMoment(m)))
