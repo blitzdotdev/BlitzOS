@@ -35,7 +35,18 @@ stop_svc() {
   local pg; pg="$(cat "$f" 2>/dev/null || true)"
   if [ -n "$pg" ]; then
     kill -TERM -- "-${pg}" 2>/dev/null || true
-    kill -KILL -- "-${pg}" 2>/dev/null || true # immediate fallback (no sleep)
+    # The backend owns the headless browser; give it a brief grace on SIGTERM to flush the
+    # persistent profile (the user's logins) to disk before we force-kill. Poll for clean
+    # exit so we wait no longer than needed; cap ~3s. (curl-to-closed-port is our no-sleep
+    # tick — foreground `sleep` is blocked in-harness.) Other services get no grace.
+    if [ "$1" = backend ]; then
+      for _ in 1 2 3 4; do
+        alive "$pg" || break
+        # ~1s tick: connrefused on a closed port, then one retry after a 1s delay.
+        curl -s -o /dev/null --max-time 3 --retry 1 --retry-delay 1 --retry-connrefused "http://127.0.0.1:9/" 2>/dev/null || true
+      done
+    fi
+    kill -KILL -- "-${pg}" 2>/dev/null || true # force-kill fallback (no zombies)
   fi
   rm -f "$f"
 }

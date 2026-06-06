@@ -917,3 +917,19 @@ server.listen(PORT, '127.0.0.1', () => {
     startAgentRunner({ getUrl: () => agentUrl, cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, label: 'server-agent' })
   }
 })
+
+// On shutdown, gracefully close the browser so its profile (cookies/localStorage = the
+// user's logins) is flushed to disk before we exit. Best-effort + bounded.
+let shuttingDown = false
+async function gracefulExit() {
+  if (shuttingDown) return
+  shuttingDown = true
+  try {
+    if (host) await host.stop()
+  } catch {
+    /* ignore */
+  }
+  process.exit(0)
+}
+process.on('SIGTERM', gracefulExit)
+process.on('SIGINT', gracefulExit)

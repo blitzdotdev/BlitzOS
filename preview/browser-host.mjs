@@ -9,10 +9,17 @@
  * per tenant — a BrowserContext is a cookie jar, not a security boundary.
  */
 import { spawn } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { mkdirSync, rmSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
+
+// PERSISTENT profile: a fixed on-disk user-data-dir (NOT a per-run mkdtemp), so cookies +
+// localStorage survive a restart and the user stays logged into Gmail/Discord/etc. once they
+// sign in inside BlitzOS's browser. Keeps "blitz-chrome" in the path so start-all.sh's kill
+// pattern still matches. Override with BLITZ_CHROME_PROFILE.
+const PROFILE_DIR =
+  process.env.BLITZ_CHROME_PROFILE || join(dirname(fileURLToPath(import.meta.url)), '..', '.blitz-chrome-profile')
 
 // Minimal CDP client over the DevTools WS. Routes command replies by id and
 // events to listeners; supports flat-target sessionId on both directions.
@@ -83,7 +90,12 @@ function defaultChromium() {
  */
 export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
   const bin = chromiumPath || defaultChromium()
-  const userDataDir = mkdtempSync(join(tmpdir(), 'blitz-chrome-'))
+  // Reuse the persistent profile. Clear any stale singleton locks left by an unclean prior
+  // exit (a SIGKILL leaves these behind and a fresh Chromium would refuse the profile).
+  mkdirSync(PROFILE_DIR, { recursive: true })
+  for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+    try { rmSync(join(PROFILE_DIR, lock), { force: true }) } catch { /* ignore */ }
+  }
   const args = [
     '--headless=new',
     '--no-sandbox',
@@ -93,8 +105,10 @@ export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
     '--mute-audio',
     '--no-first-run',
     '--no-default-browser-check',
+    // reduce automation fingerprinting so logins are less likely to be blocked
+    '--disable-blink-features=AutomationControlled',
     '--remote-debugging-port=0',
-    `--user-data-dir=${userDataDir}`
+    `--user-data-dir=${PROFILE_DIR}`
   ]
   const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
   let stderr = ''
@@ -135,16 +149,26 @@ export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
   })
 
   return {
-    /** Create a live web surface: top-level target + per-surface cookie jar + screencast. */
+    /** Create a live web surface: a top-level page in the DEFAULT (persisted) browser
+     *  context + screencast. Default context (no createBrowserContext) is what writes
+     *  cookies/localStorage to the on-disk profile, so logins survive a restart — a
+     *  CDP-created BrowserContext is always incognito/in-memory and would log out. All
+     *  surfaces share the one profile, which is exactly what "log in once" needs. */
     async createSurface(surfaceId, { url, width = 1280, height = 800, quality = 70 } = {}) {
-      const { browserContextId } = await client.send('Target.createBrowserContext', { disposeOnDetach: false })
-      const { targetId } = await client.send('Target.createTarget', { url: url || 'about:blank', browserContextId, width, height })
+      // No width/height on createTarget: the default (persisted) context rejects window
+      // sizing ("only for new windows"). Size the render viewport via Emulation instead.
+      const { targetId } = await client.send('Target.createTarget', { url: url || 'about:blank' })
       const { sessionId } = await client.send('Target.attachToTarget', { targetId, flatten: true })
       sessionToSurface.set(sessionId, surfaceId)
-      surfaces.set(surfaceId, { targetId, sessionId, browserContextId })
+      surfaces.set(surfaceId, { targetId, sessionId })
       await client.send('Page.enable', {}, sessionId)
+      try {
+        await client.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }, sessionId)
+      } catch {
+        /* non-fatal: screencast max bounds still constrain the frame */
+      }
       await client.send('Page.startScreencast', { format: 'jpeg', quality, maxWidth: width, maxHeight: height, everyNthFrame: 1 }, sessionId)
-      return { targetId, sessionId, browserContextId }
+      return { targetId, sessionId }
     },
     async closeSurface(surfaceId) {
       const s = surfaces.get(surfaceId)
@@ -156,11 +180,7 @@ export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
       } catch {
         /* ignore */
       }
-      try {
-        await client.send('Target.disposeBrowserContext', { browserContextId: s.browserContextId })
-      } catch {
-        /* ignore */
-      }
+      // No disposeBrowserContext: surfaces live in the shared default (persisted) context.
     },
     /** A control-core CdpSession bound to this surface's target. */
     session(surfaceId) {
@@ -180,12 +200,28 @@ export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
       return client.send('Page.navigate', { url }, s.sessionId)
     },
     async stop() {
-      client.close()
+      // Graceful close flushes cookies/localStorage to the persistent profile, so a restart
+      // keeps the user logged in. Browser.close starts the shutdown; we must WAIT for the
+      // process to actually exit (that's when the flush completes) — SIGKILLing right after
+      // the command reply would kill Chromium mid-flush and lose the session. Bounded so a
+      // stuck browser can't hang shutdown.
       try {
-        child.kill()
+        await client.send('Browser.close')
       } catch {
-        /* ignore */
+        /* already gone */
       }
+      await new Promise((resolve) => {
+        if (child.exitCode !== null || child.signalCode) return resolve()
+        const t = setTimeout(() => {
+          try { child.kill('SIGKILL') } catch { /* ignore */ }
+          resolve()
+        }, 4000)
+        child.on('exit', () => {
+          clearTimeout(t)
+          resolve()
+        })
+      })
+      client.close()
     }
   }
 }
