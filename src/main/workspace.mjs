@@ -13,11 +13,36 @@
 // Shared module (the control-core.mjs / perception-core.mjs pattern): plain Node, importable
 // by the server backend now and Electron main later.
 
-import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync, readdirSync } from 'node:fs'
+import { join, dirname, resolve, sep, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 const VERSION = 1
+
+// ---- path jail: a content path (read from a possibly hand-edited workspace.json, or a
+// scanned dirent) must resolve INSIDE the workspace root. Rejects ../ traversal and absolute
+// paths. (Full realpath/symlink jail is Phase 4 security; this stops the obvious traversal.)
+function safeJoin(dir, rel) {
+  if (typeof rel !== 'string' || !rel) return null
+  const base = resolve(dir)
+  const abs = resolve(base, rel)
+  if (abs !== base && !abs.startsWith(base + sep)) return null
+  return abs
+}
+
+// ---- self-write suppression: every file BlitzOS writes is stamped here so the workspace
+// watcher (Phase 3) can ignore its own writes and only reconcile on EXTERNAL edits.
+const recentWrites = new Map() // absPath -> ts
+function markWrite(absPath) {
+  const now = Date.now()
+  recentWrites.set(absPath, now)
+  if (recentWrites.size > 400) for (const [k, v] of recentWrites) if (now - v > 3000) recentWrites.delete(k)
+}
+/** True if BlitzOS wrote this absolute path within the window (so a watch event is its own). */
+export function wasSelfWrite(absPath, windowMs = 900) {
+  const t = recentWrites.get(resolve(absPath))
+  return t != null && Date.now() - t < windowMs
+}
 
 // Which surfaces become canvas NODES. The chat + agent-activity native panels are RUNTIME
 // (they belong in .blitzos/state/*.jsonl, Phase 4), never nodes. Unknown kinds are skipped.
@@ -74,6 +99,7 @@ function atomicWrite(file, data) {
   const tmp = `${file}.tmp-${randomUUID().slice(0, 8)}`
   writeFileSync(tmp, data)
   renameSync(tmp, file)
+  markWrite(resolve(file)) // stamp for self-write suppression (Phase 3 watcher)
 }
 
 // Write a content file only if its bytes changed — avoids rewriting unchanged notes (no git
@@ -131,8 +157,10 @@ export function writeWorkspace(dir, osState) {
     // stable path: reuse the prior assignment for this id, else mint + dedupe.
     let rel = idToPath.get(s.id)
     if (!rel) rel = uniquePath(c.name, c.ext, taken)
+    const abs = safeJoin(dir, rel) // jail: a reused path from a hand-edited workspace.json can't escape
+    if (!abs) continue
     idToPath.set(s.id, rel)
-    writeIfChanged(join(dir, rel), c.body)
+    writeIfChanged(abs, c.body)
     const view = viewFor(kind, s)
     nodes.push({
       id: s.id,
@@ -191,7 +219,94 @@ function titleFromPath(p) {
  * { surfaces, camera, mode } or null if there is no workspace.json.
  * @param {string} dir absolute path to the workspace folder.
  */
+// Reconstruct ONE surface descriptor from a node + its (jail-confined) content file.
+// Returns null if the path escapes the workspace or the file is unreadable.
+function nodeToSurface(dir, n, z) {
+  if (!n || typeof n.id !== 'string' || typeof n.path !== 'string') return null
+  const abs = safeJoin(dir, n.path)
+  if (!abs) return null // JAIL: a hand-edited workspace.json path can't escape the workspace
+  let content
+  try {
+    content = readFileSync(abs, 'utf8')
+  } catch {
+    return null // missing content file
+  }
+  const view = n.view && typeof n.view === 'object' ? n.view : {}
+  const base = {
+    id: n.id,
+    x: Number(n.x) || 0,
+    y: Number(n.y) || 0,
+    w: Number(n.w) || 240,
+    h: Number(n.h) || 240,
+    z,
+    ...(n.zoom ? { zoom: Number(n.zoom) } : {})
+  }
+  if (n.kind === 'note') {
+    return { ...base, kind: 'native', component: 'note', title: titleFromPath(n.path), props: { text: content, ...(typeof view.color === 'string' ? { color: view.color } : {}) } }
+  }
+  if (n.kind === 'web' || n.kind === 'app') {
+    let url = ''
+    try {
+      url = String(JSON.parse(content).url || '')
+    } catch {
+      /* malformed .weblink — leave url empty */
+    }
+    return { ...base, kind: n.kind, url, title: typeof view.lastTitle === 'string' ? view.lastTitle : titleFromPath(n.path), props: {} }
+  }
+  if (n.kind === 'srcdoc') {
+    return { ...base, kind: 'srcdoc', html: content, title: titleFromPath(n.path), props: view.props && typeof view.props === 'object' ? view.props : {} }
+  }
+  return null // image/file/folder/widget not materialized yet
+}
+
+/**
+ * Reconstruct surface descriptors from a workspace folder (inverse of writeWorkspace) —
+ * Phase 2 hydrate. Returns { surfaces, camera, mode } or null if there is no workspace.json.
+ */
 export function readWorkspace(dir) {
+  let ws
+  try {
+    ws = JSON.parse(readFileSync(join(dir, '.blitzos', 'workspace.json'), 'utf8'))
+  } catch {
+    return null
+  }
+  if (!ws || !Array.isArray(ws.nodes)) return null
+  const zByIdx = new Map((Array.isArray(ws.stack) ? ws.stack : []).map((id, i) => [id, i + 1]))
+  const surfaces = []
+  let seq = 1
+  for (const n of ws.nodes) {
+    const s = nodeToSurface(dir, n, zByIdx.get(n?.id) ?? seq)
+    seq++
+    if (s) surfaces.push(s)
+  }
+  const camera = ws.camera && typeof ws.camera.scale === 'number' ? { x: Number(ws.camera.x) || 0, y: Number(ws.camera.y) || 0, scale: ws.camera.scale } : { x: 0, y: 0, scale: 1 }
+  return { surfaces, camera, mode: ws.mode === 'desktop' ? 'desktop' : 'canvas' }
+}
+
+// Which loose root files auto-surface as new nodes on reconcile, and as what kind. Conservative
+// in Phase 3: only the unambiguous text/invented kinds — a dropped binary, .html, image, or
+// folder is left alone (the spec's passive-file/bundle handling isn't built yet). Dotfiles,
+// the .blitzos dir, and temp files never surface.
+function autoKind(name) {
+  if (name.startsWith('.') || /\.tmp(-[0-9a-f]+)?$/.test(name)) return null
+  const ext = extname(name).toLowerCase()
+  if (ext === '.weblink') return 'web'
+  if (ext === '.md') return 'note'
+  return null
+}
+function defaultSizeFor(kind) {
+  return kind === 'note' ? { w: 240, h: 240 } : { w: 920, h: 640 }
+}
+
+/**
+ * Reconcile the canvas with the folder on disk (Phase 3). Idempotent re-scan: reads the nodes
+ * (fresh content), auto-places NEW loose .md/.weblink files, heals a single unambiguous rename,
+ * drops nodes whose file vanished, and writes back workspace.json only if the node set changed.
+ * Returns { surfaces, camera, mode, changed } or null if there is no workspace.json.
+ * @param {string} dir workspace folder
+ * @param {{cx?:number, cy?:number}} [placeAt] world-space center to cascade new nodes around
+ */
+export function reconcileWorkspace(dir, placeAt = {}) {
   const metaFile = join(dir, '.blitzos', 'workspace.json')
   let ws
   try {
@@ -200,45 +315,64 @@ export function readWorkspace(dir) {
     return null
   }
   if (!ws || !Array.isArray(ws.nodes)) return null
+  const nodes = ws.nodes.filter((n) => n && typeof n.id === 'string' && typeof n.path === 'string')
+  const known = new Set(nodes.map((n) => n.path))
 
-  // z from stack order (back→front); fall back to nodes order.
-  const zByIdx = new Map((Array.isArray(ws.stack) ? ws.stack : []).map((id, i) => [id, i + 1]))
+  let entries = []
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    /* unreadable workspace dir */
+  }
+  const newFiles = entries.filter((e) => e.isFile() && autoKind(e.name) && !known.has(e.name) && safeJoin(dir, e.name)).map((e) => e.name)
+
+  let changed = false
+  // single-rename heal: a node's file is gone AND exactly one NEW file of the same kind exists.
+  const usedNew = new Set()
+  for (const n of nodes) {
+    const abs = safeJoin(dir, n.path)
+    if (abs && existsSync(abs)) continue
+    const cand = newFiles.filter((f) => !usedNew.has(f) && (autoKind(f) === n.kind || (n.kind === 'app' && autoKind(f) === 'web')))
+    if (cand.length === 1) {
+      n.path = cand[0]
+      usedNew.add(cand[0])
+      changed = true
+    }
+  }
+  // drop nodes whose file is still gone
+  const alive = nodes.filter((n) => {
+    const abs = safeJoin(dir, n.path)
+    return abs && existsSync(abs)
+  })
+  if (alive.length !== nodes.length) changed = true
+
+  // auto-place the still-unclaimed new files
+  const cx = Number(placeAt.cx) || 0
+  const cy = Number(placeAt.cy) || 0
+  let i = 0
+  for (const f of newFiles) {
+    if (usedNew.has(f)) continue
+    const kind = autoKind(f)
+    const sz = defaultSizeFor(kind)
+    alive.push({ id: randomUUID(), path: f, kind, x: Math.round(cx - sz.w / 2 + (i % 6) * 28), y: Math.round(cy - sz.h / 2 + (i % 6) * 24), w: sz.w, h: sz.h })
+    i++
+    changed = true
+  }
+
+  const stackPrev = Array.isArray(ws.stack) ? ws.stack : []
+  const zByIdx = new Map(stackPrev.map((id, idx) => [id, idx + 1]))
+  let seq = stackPrev.length + 1
   const surfaces = []
-  let seq = 1
-  for (const n of ws.nodes) {
-    if (!n || typeof n.id !== 'string' || typeof n.path !== 'string') continue
-    let content
-    try {
-      content = readFileSync(join(dir, n.path), 'utf8')
-    } catch {
-      continue // missing content file — skip (reconcile handles "missing" in Phase 3)
-    }
-    const view = n.view && typeof n.view === 'object' ? n.view : {}
-    const base = {
-      id: n.id,
-      x: Number(n.x) || 0,
-      y: Number(n.y) || 0,
-      w: Number(n.w) || 240,
-      h: Number(n.h) || 240,
-      z: zByIdx.get(n.id) ?? seq,
-      ...(n.zoom ? { zoom: Number(n.zoom) } : {})
-    }
-    seq++
-    if (n.kind === 'note') {
-      surfaces.push({ ...base, kind: 'native', component: 'note', title: titleFromPath(n.path), props: { text: content, ...(typeof view.color === 'string' ? { color: view.color } : {}) } })
-    } else if (n.kind === 'web' || n.kind === 'app') {
-      let url = ''
-      try {
-        url = String(JSON.parse(content).url || '')
-      } catch {
-        /* malformed .weblink — leave url empty */
-      }
-      surfaces.push({ ...base, kind: n.kind, url, title: typeof view.lastTitle === 'string' ? view.lastTitle : titleFromPath(n.path), props: {} })
-    } else if (n.kind === 'srcdoc') {
-      surfaces.push({ ...base, kind: 'srcdoc', html: content, title: titleFromPath(n.path), props: view.props && typeof view.props === 'object' ? view.props : {} })
-    }
-    // image/file/folder/widget kinds are not materialized in Phase 1/2 — skipped.
+  for (const n of alive) {
+    const s = nodeToSurface(dir, n, zByIdx.get(n.id) ?? seq++)
+    if (s) surfaces.push(s)
   }
   const camera = ws.camera && typeof ws.camera.scale === 'number' ? { x: Number(ws.camera.x) || 0, y: Number(ws.camera.y) || 0, scale: ws.camera.scale } : { x: 0, y: 0, scale: 1 }
-  return { surfaces, camera, mode: ws.mode === 'desktop' ? 'desktop' : 'canvas' }
+  const mode = ws.mode === 'desktop' ? 'desktop' : 'canvas'
+
+  if (changed) {
+    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stack: surfaces.map((s) => s.id), nodes: alive }
+    atomicWrite(metaFile, JSON.stringify(out, null, 2) + '\n')
+  }
+  return { surfaces, camera, mode, changed }
 }

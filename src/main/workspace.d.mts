@@ -16,3 +16,12 @@ export interface HydratedWorkspace {
 
 /** Reconstruct surface descriptors from a workspace folder (inverse of writeWorkspace). */
 export function readWorkspace(dir: string): HydratedWorkspace | null
+
+/** True if BlitzOS wrote this absolute path within the suppression window (Phase 3 watcher). */
+export function wasSelfWrite(absPath: string, windowMs?: number): boolean
+
+/** Reconcile the canvas with the folder (auto-place new files, heal rename, drop missing). */
+export function reconcileWorkspace(
+  dir: string,
+  placeAt?: { cx?: number; cy?: number }
+): (HydratedWorkspace & { changed: boolean }) | null

@@ -19,7 +19,7 @@ import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
 import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, watch } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
@@ -46,7 +46,7 @@ import {
   DRAIN
 } from '../src/main/perception-core.mjs'
 import { startAgentRunner } from '../src/main/agent-runner.mjs'
-import { writeWorkspace, readWorkspace } from '../src/main/workspace.mjs'
+import { writeWorkspace, readWorkspace, reconcileWorkspace, wasSelfWrite } from '../src/main/workspace.mjs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -72,6 +72,59 @@ function scheduleWorkspaceWrite() {
       console.error('[workspace] write failed:', e?.message || e)
     }
   }, 500)
+}
+
+// Phase 3: watch the workspace folder as a DOORBELL — an EXTERNAL file edit (the agent's own
+// file tools, Finder, git, VS Code) triggers a 250ms-coalesced idempotent reconcile. BlitzOS's
+// own writes are skipped via self-write suppression, so this fires only on outside changes. The
+// reconcile reloads content, auto-places new files, heals renames — then re-hydrates renderers.
+let wsReconcileTimer = null
+function scheduleReconcile() {
+  if (wsReconcileTimer) return
+  wsReconcileTimer = setTimeout(() => {
+    wsReconcileTimer = null
+    try {
+      const v = osState.view
+      const r = reconcileWorkspace(WORKSPACE_DIR, v ? { cx: v.cx, cy: v.cy } : {})
+      if (!r) return
+      // preserve runtime-only panels (chat/activity) — they're not files, so reconcile (which
+      // reads from disk) doesn't know about them; without this an external edit would wipe them.
+      const runtime = (osState.surfaces || []).filter((s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+      const merged = [...r.surfaces, ...runtime]
+      osState = { ...osState, surfaces: merged, camera: r.camera, mode: r.mode }
+      if (SERVER_MODE) {
+        try {
+          reconcileSurfaces(merged)
+        } catch {
+          /* best-effort */
+        }
+      }
+      broadcast({ type: 'hydrate', surfaces: merged, camera: r.camera, mode: r.mode })
+    } catch (e) {
+      console.error('[workspace] reconcile failed:', e?.message || e)
+    }
+  }, 250)
+}
+
+function startWorkspaceWatch() {
+  try {
+    mkdirSync(join(WORKSPACE_DIR, '.blitzos'), { recursive: true })
+  } catch {
+    /* ignore */
+  }
+  const onEvent = (sub) => (_evt, filename) => {
+    if (!filename) return scheduleReconcile() // some platforms omit the name — reconcile anyway
+    if (/(^\.tmp)|(\.tmp(-[0-9a-f]+)?$)/.test(filename)) return // our atomic temp files
+    if (wasSelfWrite(join(WORKSPACE_DIR, sub, filename))) return // BlitzOS's own write — ignore
+    scheduleReconcile()
+  }
+  try {
+    watch(WORKSPACE_DIR, onEvent('')) // root content files
+    watch(join(WORKSPACE_DIR, '.blitzos'), onEvent('.blitzos')) // hand edits of workspace.json
+    console.log(`[workspace] watching ${WORKSPACE_DIR} for external edits`)
+  } catch (e) {
+    console.error('[workspace] watch failed:', e?.message || e)
+  }
 }
 
 // ---------- provider registry (ported from src/main/integrations.ts) ----------
@@ -952,6 +1005,8 @@ server.listen(PORT, '127.0.0.1', () => {
   startOsAgentSocket()
   // Server mode: bring up the headless browser host for live web surfaces.
   initServerMode()
+  // Phase 3: watch the workspace folder so external file edits (agent/Finder/git) reflect live.
+  startWorkspaceWatch()
   // Boot + supervise the brain: spawn the agent against the live relay URL and keep it
   // alive (auto-restart on exit), so a brain is always watching. Opt-in via BLITZ_AGENT
   // (=claude or a custom command); off by default (continuous LLM use has a cost).
