@@ -200,6 +200,21 @@ export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
       return client.send('Page.navigate', { url }, s.sessionId)
     },
     async stop() {
+      // Some apps (Discord) deliberately keep their auth token in memory while running and
+      // persist it ONLY from a real pagehide/unload handler (so an XSS can't read it at
+      // rest). A plain close never captures it. So FIRST navigate every surface to
+      // about:blank: that fires the page's unload (the app writes its session to
+      // localStorage) WITHOUT rebooting the app (which would just read + re-clear the
+      // token). Then Browser.close flushes it all to the persistent profile.
+      try {
+        const sessions = [...surfaces.values()]
+        await Promise.all(
+          sessions.map((s) => client.send('Page.navigate', { url: 'about:blank' }, s.sessionId).catch(() => {}))
+        )
+        if (sessions.length) await new Promise((r) => setTimeout(r, 800)) // let the unload writes land
+      } catch {
+        /* ignore */
+      }
       // Graceful close flushes cookies/localStorage to the persistent profile, so a restart
       // keeps the user logged in. Browser.close starts the shutdown; we must WAIT for the
       // process to actually exit (that's when the flush completes) — SIGKILLing right after
