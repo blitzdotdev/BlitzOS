@@ -17,7 +17,7 @@
 // Shared module (the control-core.mjs / perception-core.mjs pattern): plain Node, importable
 // by the server backend now and Electron main later.
 
-import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync, readdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, copyFileSync } from 'node:fs'
 import { join, dirname, resolve, sep, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -48,10 +48,28 @@ export function wasSelfWrite(absPath, windowMs = 900) {
   return t != null && Date.now() - t < windowMs
 }
 
+// Hardening helpers for the read/hydrate path — a workspace.json or content file can be
+// hand-edited, corrupt, copied from elsewhere, or malicious; never trust it blindly.
+const MAX_CONTENT = 2_000_000 // cap a content file we load whole into memory + ship to renderers
+function clampScale(v) {
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.min(Math.max(n, 0.2), 3) : 1
+}
+function safeCamera(c) {
+  if (!c || typeof c !== 'object') return { x: 0, y: 0, scale: 1 }
+  const x = Number(c.x)
+  const y = Number(c.y)
+  return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0, scale: clampScale(c.scale) }
+}
+function safeUrl(u) {
+  const s = String(u || '')
+  return /^https?:\/\//i.test(s) ? s : '' // never hydrate javascript:/data:/file: into a web surface
+}
+
 // Which surfaces become canvas NODES. The chat + agent-activity native panels are RUNTIME
 // (they belong in .blitzos/state/*.jsonl, Phase 4), never nodes. Unknown kinds are skipped.
 function nodeKind(s) {
-  if (s.kind === 'web' || s.kind === 'app') return 'web' // app folds to web (both -> .weblink; 'app' is not a schema kind)
+  if (s.kind === 'web' || s.kind === 'app') return 'web' // app folds to web (both serialize to a .weblink; no distinct 'app' node kind)
   if (s.kind === 'srcdoc') return 'srcdoc'
   if (s.kind === 'native' && s.component === 'note') return 'note'
   return null
@@ -94,19 +112,25 @@ function contentFor(kind, s) {
   }
 }
 
-// Per-kind view state for the node entry (small, cosmetic — content lives in the file).
+// Per-kind view state for the node entry (small, cosmetic — content lives in the file). The
+// title is persisted here (the authoritative display label) so it survives a restart + edits,
+// instead of being lossily re-derived from the slugged filename.
 function viewFor(kind, s) {
-  if (kind === 'note' && s.props && typeof s.props.color === 'string') return { color: s.props.color }
-  if (kind === 'web' && s.title) return { lastTitle: s.title }
+  const v = {}
+  if (typeof s.title === 'string' && s.title) {
+    if (kind === 'web' || kind === 'app') v.lastTitle = s.title
+    else v.title = s.title
+  }
+  if (kind === 'note' && s.props && typeof s.props.color === 'string') v.color = s.props.color
   if (kind === 'srcdoc' && s.props && Object.keys(s.props).length) {
     // view must stay "small" (spec §3.3) — don't inline an unbounded props blob.
     try {
-      if (JSON.stringify(s.props).length <= 8192) return { props: s.props }
+      if (JSON.stringify(s.props).length <= 8192) v.props = s.props
     } catch {
       /* non-serializable — drop */
     }
   }
-  return {}
+  return v
 }
 
 function atomicWrite(file, data) {
@@ -127,6 +151,17 @@ function writeIfChanged(file, data) {
   }
   atomicWrite(file, data)
   return true
+}
+
+// Write workspace.json, keeping the previous copy as .bak so a crash mid-write or a corrupt
+// file still has a last-good fallback to boot from (spec §3.1).
+function writeMeta(metaFile, obj) {
+  try {
+    if (existsSync(metaFile)) copyFileSync(metaFile, metaFile + '.bak')
+  } catch {
+    /* best-effort */
+  }
+  atomicWrite(metaFile, JSON.stringify(obj, null, 2) + '\n')
 }
 
 // Read the prior workspace.json to recover (id → path) and the workspace id, so a node's
@@ -223,7 +258,7 @@ export function writeWorkspace(dir, osState) {
     stack,
     nodes
   }
-  atomicWrite(metaFile, JSON.stringify(ws, null, 2) + '\n')
+  writeMeta(metaFile, ws) // atomic + keeps workspace.json.bak
   scaffold(dir) // self-describing BLITZOS.md + .gitignore (once)
   return { metaFile, nodeCount: nodes.length }
 }
@@ -253,11 +288,15 @@ function nodeToSurface(dir, n, z) {
   if (!abs) return null // JAIL: a hand-edited workspace.json path can't escape the workspace
   let content
   try {
+    if (statSync(abs).size > MAX_CONTENT) return null // don't load a giant file whole into memory
     content = readFileSync(abs, 'utf8')
   } catch {
-    return null // missing content file
+    return null // missing/unreadable content file
   }
   const view = n.view && typeof n.view === 'object' ? n.view : {}
+  // title is the authoritative display label (persisted in view); the filename is just a stable
+  // path. Fall back to deriving it from the filename only for older/hand-written nodes.
+  const title = typeof view.title === 'string' ? view.title : typeof view.lastTitle === 'string' ? view.lastTitle : titleFromPath(n.path)
   const base = {
     id: n.id,
     x: Number(n.x) || 0,
@@ -265,22 +304,22 @@ function nodeToSurface(dir, n, z) {
     w: Number(n.w) || 240,
     h: Number(n.h) || 240,
     z,
-    ...(n.zoom ? { zoom: Number(n.zoom) } : {})
+    ...(n.zoom ? { zoom: clampScale(n.zoom) } : {})
   }
   if (n.kind === 'note') {
-    return { ...base, kind: 'native', component: 'note', title: titleFromPath(n.path), props: { text: content, ...(typeof view.color === 'string' ? { color: view.color } : {}) } }
+    return { ...base, kind: 'native', component: 'note', title, props: { text: content, ...(typeof view.color === 'string' ? { color: view.color } : {}) } }
   }
   if (n.kind === 'web' || n.kind === 'app') {
     let url = ''
     try {
-      url = String(JSON.parse(content).url || '')
+      url = safeUrl(JSON.parse(content).url) // scheme-filtered: no javascript:/data:/file:
     } catch {
       /* malformed .weblink — leave url empty */
     }
-    return { ...base, kind: n.kind, url, title: typeof view.lastTitle === 'string' ? view.lastTitle : titleFromPath(n.path), props: {} }
+    return { ...base, kind: n.kind, url, title, props: {} }
   }
   if (n.kind === 'srcdoc') {
-    return { ...base, kind: 'srcdoc', html: content, title: titleFromPath(n.path), props: view.props && typeof view.props === 'object' ? view.props : {} }
+    return { ...base, kind: 'srcdoc', html: content, title, props: view.props && typeof view.props === 'object' ? view.props : {} }
   }
   return null // image/file/folder/widget not materialized yet
 }
@@ -289,24 +328,29 @@ function nodeToSurface(dir, n, z) {
  * Reconstruct surface descriptors from a workspace folder (inverse of writeWorkspace) —
  * Phase 2 hydrate. Returns { surfaces, camera, mode } or null if there is no workspace.json.
  */
-export function readWorkspace(dir) {
-  let ws
+function parseMeta(file) {
   try {
-    ws = JSON.parse(readFileSync(join(dir, '.blitzos', 'workspace.json'), 'utf8'))
+    return JSON.parse(readFileSync(file, 'utf8'))
   } catch {
     return null
   }
+}
+
+export function readWorkspace(dir) {
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  // fall back to the last-good copy if the live file is corrupt/truncated (spec §3.1 safety net).
+  const ws = parseMeta(metaFile) ?? parseMeta(metaFile + '.bak')
   if (!ws || !Array.isArray(ws.nodes)) return null
-  const zByIdx = new Map((Array.isArray(ws.stack) ? ws.stack : []).map((id, i) => [id, i + 1]))
+  const stack = Array.isArray(ws.stack) ? ws.stack : []
+  const zByIdx = new Map(stack.map((id, i) => [id, i + 1]))
   const surfaces = []
-  let seq = 1
+  let seq = stack.length + 1 // seed fallback z ABOVE all stacked nodes (no collision)
   for (const n of ws.nodes) {
     const s = nodeToSurface(dir, n, zByIdx.get(n?.id) ?? seq)
     seq++
     if (s) surfaces.push(s)
   }
-  const camera = ws.camera && typeof ws.camera.scale === 'number' ? { x: Number(ws.camera.x) || 0, y: Number(ws.camera.y) || 0, scale: ws.camera.scale } : { x: 0, y: 0, scale: 1 }
-  return { surfaces, camera, mode: ws.mode === 'desktop' ? 'desktop' : 'canvas' }
+  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas' }
 }
 
 // Which loose root files auto-surface as new nodes on reconcile, and as what kind. Conservative
@@ -428,12 +472,12 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     const s = nodeToSurface(dir, n, zByIdx.get(n.id) ?? seq++)
     if (s) surfaces.push(s)
   }
-  const camera = ws.camera && typeof ws.camera.scale === 'number' ? { x: Number(ws.camera.x) || 0, y: Number(ws.camera.y) || 0, scale: ws.camera.scale } : { x: 0, y: 0, scale: 1 }
+  const camera = safeCamera(ws.camera)
   const mode = ws.mode === 'desktop' ? 'desktop' : 'canvas'
 
   if (changed) {
     const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stack: surfaces.map((s) => s.id), nodes: alive }
-    atomicWrite(metaFile, JSON.stringify(out, null, 2) + '\n')
+    writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
   return { surfaces, camera, mode, changed }
 }

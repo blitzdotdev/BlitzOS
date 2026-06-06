@@ -18,10 +18,6 @@ import { homedir } from 'os'
 // ~/.blitzos/fs; a cloud build points this at a per-tenant prefix in D1/R2.
 const ROOT = join(homedir(), '.blitzos', 'fs')
 
-export function journalRoot() {
-  return ROOT
-}
-
 // Resolve a virtual path under ROOT; reject any escape (.. or absolute breakout).
 function resolvePath(p) {
   const v = normalize(String(p == null ? '' : p)).replace(/^([/\\])+/, '')

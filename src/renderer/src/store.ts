@@ -234,7 +234,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       zCounter = Math.max(zCounter, maxZ + 1)
       // camera is the WORLD point at screen center + scale -> compute the transform that puts
       // that world point at the current viewport's center (viewport-independent restore).
-      const sc = camera.scale || 1
+      const sc = clamp(Number(camera.scale) || 1, 0.2, 3) // never a 0/Infinity/NaN scale (would wedge the canvas)
       return {
         surfaces: restored,
         transform: { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc },

@@ -139,6 +139,9 @@ export default function App(): JSX.Element {
     return window.agentOS?.onAction((a) => {
       const st = useDesktop.getState()
       if (a.type === 'hydrate') {
+        // FIRST hydrate wins: a live renderer is the source of truth mid-session, so an SSE
+        // RECONNECT re-sending hydrate must not wholesale-replace (and wipe undo/camera/canvas).
+        if (hydrated.current) return
         // Restore a persisted workspace from disk (Phase 2). Replaces the canvas wholesale.
         const surfs = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
@@ -259,14 +262,19 @@ export default function App(): JSX.Element {
       window.agentOS?.sendState({ surfaces, viewport: { w: vw, h: vh }, view, mode: st.mode, camera: { x: view.cx, y: view.cy, scale } })
     }
     push()
-    // If no hydrate arrives (fresh workspace, or Electron without server hydrate), start
-    // pushing after a grace so the canvas still persists.
-    const hydrateFallback = setTimeout(() => {
-      if (!hydrated.current) {
-        hydrated.current = true
-        push()
-      }
-    }, 1500)
+    // SERVER mode always delivers a hydrate on SSE connect, so we wait for it (no fallback) —
+    // a fallback there could fire before a slow hydrate, which the first-hydrate-wins guard
+    // would then ignore, never restoring. Electron has no server hydrate, so it gets a grace
+    // timer to start pushing (and only if it actually has surfaces, to never push an empty store).
+    const isServer = !!window.agentOS?.serverMode
+    const hydrateFallback = isServer
+      ? null
+      : setTimeout(() => {
+          if (!hydrated.current) {
+            hydrated.current = true
+            if (useDesktop.getState().surfaces.length) push()
+          }
+        }, 1500)
     let lastS = useDesktop.getState().surfaces
     let lastT = useDesktop.getState().transform
     let lastVp = useDesktop.getState().viewport
@@ -290,7 +298,7 @@ export default function App(): JSX.Element {
       }
     })
     return () => {
-      clearTimeout(hydrateFallback)
+      if (hydrateFallback) clearTimeout(hydrateFallback)
       if (timer) clearTimeout(timer)
       unsub()
     }

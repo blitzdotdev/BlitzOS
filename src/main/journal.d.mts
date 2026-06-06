@@ -1,4 +1,3 @@
-export function journalRoot(): string
 export function ls(p?: string): Array<{ name: string; type: 'file' | 'dir'; size: number }>
 export function cat(p: string): string
 export function write(p: string, content: string): { ok: boolean; path: string }

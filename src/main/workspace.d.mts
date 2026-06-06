@@ -1,4 +1,4 @@
-// Types for the workspace serializer (workspace.mjs). Phase 1: write-only.
+// Types for the workspace serializer (workspace.mjs): write + read(hydrate) + reconcile.
 
 export interface WriteWorkspaceResult {
   metaFile: string
