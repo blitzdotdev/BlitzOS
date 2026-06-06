@@ -46,6 +46,7 @@ import {
   DRAIN
 } from '../src/main/perception-core.mjs'
 import { startAgentRunner } from '../src/main/agent-runner.mjs'
+import { writeWorkspace, readWorkspace } from '../src/main/workspace.mjs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -55,6 +56,23 @@ const PORT = Number(process.env.BACKEND_PORT || 8787)
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${PORT}`).replace(/\/$/, '')
 const REDIRECT_URI = `${PUBLIC_BASE_URL}/api/oauth/callback`
 const UA = 'agent-os-preview/0.1'
+
+// Workspaces Phase 1 (write-only): the active workspace folder. Server-mode default is a
+// gitignored sandbox dir; override with BLITZ_WORKSPACE. As the canvas changes, we project
+// it to <dir>/.blitzos/workspace.json + content files (debounced, additive, never deletes).
+const WORKSPACE_DIR = process.env.BLITZ_WORKSPACE || join(ROOT, 'preview', '.workspace', 'Home')
+let wsWriteTimer = null
+function scheduleWorkspaceWrite() {
+  if (wsWriteTimer) return
+  wsWriteTimer = setTimeout(() => {
+    wsWriteTimer = null
+    try {
+      writeWorkspace(WORKSPACE_DIR, osState)
+    } catch (e) {
+      console.error('[workspace] write failed:', e?.message || e)
+    }
+  }, 500)
+}
 
 // ---------- provider registry (ported from src/main/integrations.ts) ----------
 
@@ -206,6 +224,17 @@ const callbackPage = (title, sub) =>
 // renderer over Server-Sent Events instead of Electron IPC. In-window control
 // (CDP) is NOT available here — that needs the real Electron app + a <webview>.
 let osState = { surfaces: [] }
+// Phase 2: hydrate the canvas from the persisted workspace on boot, so a restart restores
+// it. The renderer adopts this via a `hydrate` event on SSE connect (below).
+try {
+  const _h = readWorkspace(WORKSPACE_DIR)
+  if (_h && _h.surfaces.length) {
+    osState = { surfaces: _h.surfaces, camera: _h.camera, mode: _h.mode }
+    console.log(`[workspace] hydrated ${_h.surfaces.length} surface(s) from ${WORKSPACE_DIR}`)
+  }
+} catch (e) {
+  console.error('[workspace] hydrate failed:', e?.message || e)
+}
 let agentUrl = null
 const sseClients = new Set()
 // Widget data consent: `${surfaceId}:${provider}` the human approved (via the
@@ -248,6 +277,13 @@ async function initServerMode() {
     // mode produces the moment stream over /events. The connected agent is the brain;
     // BlitzOS ships NO in-process decision logic.
     startServerPerception()
+    // Phase 2: spin up server targets for any web surfaces restored from the workspace, so a
+    // hydrated canvas is live even before a renderer connects + pushes.
+    try {
+      reconcileSurfaces(osState.surfaces)
+    } catch {
+      /* best-effort */
+    }
   } catch (e) {
     console.error('[agent-os backend] SERVER MODE failed to start headless browser:', e?.message || e)
   }
@@ -795,6 +831,11 @@ const server = createServer(async (req, res) => {
     })
     res.write(': connected\n\n')
     if (agentUrl) res.write(`data: ${JSON.stringify({ __agentUrl: agentUrl })}\n\n`)
+    // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
+    // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
+    res.write(
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas' })}\n\n`
+    )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))
     return
@@ -810,6 +851,7 @@ const server = createServer(async (req, res) => {
       if (s && Array.isArray(s.surfaces)) {
         osState = s
         if (SERVER_MODE) reconcileSurfaces(s.surfaces) // spin up / tear down server targets
+        scheduleWorkspaceWrite() // Phase 1: project the canvas onto the workspace folder
       }
       json(res, 200, { ok: true })
     })

@@ -79,6 +79,8 @@ interface DesktopState {
   commitPos: (id: string, prevX: number, prevY: number) => void
 
   createSurface: (input: CreateSurfaceInput) => string
+  // Phase 2: adopt a persisted workspace (restore surfaces + camera + mode from disk).
+  hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas') => void
   moveSurface: (id: string, x: number, y: number) => void
   resizeSurface: (id: string, w: number, h: number) => void
   closeSurface: (id: string) => void
@@ -216,6 +218,27 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => ({ surfaces: [...s.surfaces, surface] }))
     return id
   },
+
+  hydrate: (surfaces, camera, mode) =>
+    set(() => {
+      // Normalize incoming descriptors to full Surface objects (defaults for anything the
+      // persisted node didn't carry), and lift the z-allocator above the restored max so
+      // surfaces created after a restore land on top.
+      const restored: Surface[] = surfaces.map((s) => ({
+        zoom: 1,
+        props: {},
+        ...s,
+        z: s.z ?? ++zCounter
+      })) as Surface[]
+      const maxZ = restored.reduce((m, s) => Math.max(m, s.z || 0), 0)
+      zCounter = Math.max(zCounter, maxZ + 1)
+      return {
+        surfaces: restored,
+        transform: { x: camera.x, y: camera.y, scale: camera.scale },
+        mode,
+        layoutHistory: []
+      }
+    }),
 
   moveSurface: (id, x, y) => {
     get().snapshotLayout()
