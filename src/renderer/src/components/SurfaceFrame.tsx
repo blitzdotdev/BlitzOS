@@ -5,6 +5,7 @@ import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
+import { UI_KIT } from '../widget-ui-kit'
 import { IconEye } from './Icons'
 import { FolderWidget } from './FolderWidget'
 import { FileWidget, DirWidget } from './FileWidget'
@@ -464,15 +465,15 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           />
         )
       case 'srcdoc':
-        // Prepend the OS<->widget bridge shim so window.blitz exists in every
-        // widget; the stored html stays clean (forkable). onLoad seeds props after
-        // the document (incl. the shim) has parsed — closes the listener race.
+        // Prepend the OS<->widget bridge shim (window.blitz) + the Blitz UI kit (design tokens +
+        // <blitz-*> web components) so every widget shares ONE component library; the stored html stays
+        // clean (forkable). onLoad seeds props after the document (incl. the shim) has parsed.
         return (
           <iframe
             ref={iframeRef}
             title={surface.title}
             sandbox="allow-scripts"
-            srcDoc={BRIDGE_SHIM + (surface.html ?? '')}
+            srcDoc={BRIDGE_SHIM + UI_KIT + (surface.html ?? '')}
             style={iframeZoom}
             onLoad={() =>
               iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:init', props: surface.props ?? {} }, '*')
