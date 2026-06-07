@@ -234,9 +234,14 @@ export function writeWorkspace(dir, osState) {
     order.push({ id: s.id, z: s.z || 0 })
   }
 
+  // Runtime panels (chat / agent-activity) aren't folder nodes, but their content (the chat
+  // transcript, the activity feed) must survive a backend RESTART — persist them to
+  // .blitzos/state/panels.json (machine-local) and merge them back in on boot (#38).
+  const runtimePanels = surfaces.filter((s) => s && s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+
   // Don't materialize an empty workspace.json (or scaffold) for a fresh, empty canvas — only
-  // once there's something to persist (or a workspace already exists to keep in sync).
-  if (nodes.length === 0 && !existsSync(metaFile)) return { metaFile, nodeCount: 0 }
+  // once there's something to persist (a node, a runtime panel, or an existing workspace to sync).
+  if (nodes.length === 0 && runtimePanels.length === 0 && !existsSync(metaFile)) return { metaFile, nodeCount: 0 }
 
   // z-order: node ids back→front, from the kept nodes only.
   const stack = order
@@ -261,7 +266,63 @@ export function writeWorkspace(dir, osState) {
   }
   writeMeta(metaFile, ws) // atomic + keeps workspace.json.bak
   scaffold(dir) // self-describing BLITZOS.md + .gitignore (once)
+  writeRuntimePanels(dir, runtimePanels) // chat/activity → .blitzos/state (survives a restart)
   return { metaFile, nodeCount: nodes.length }
+}
+
+// Runtime panels (chat / agent-activity) aren't folder nodes — their content is machine-local
+// session state, persisted under .blitzos/state so it survives a backend RESTART (that subdir
+// isn't watched, so no self-write loop). Merged back into the canvas on boot (#38).
+function writeRuntimePanels(dir, panels) {
+  const stateDir = join(dir, '.blitzos', 'state')
+  const file = join(stateDir, 'panels.json')
+  try {
+    mkdirSync(stateDir, { recursive: true })
+    const slim = (panels || []).map((s) => ({
+      id: s.id,
+      component: s.component === 'activity' ? 'activity' : 'chat',
+      x: Math.round(s.x) || 0,
+      y: Math.round(s.y) || 0,
+      w: Math.round(s.w) || 360,
+      h: Math.round(s.h) || 460,
+      z: s.z || 0,
+      title: typeof s.title === 'string' ? s.title : s.component,
+      props: s.props && typeof s.props === 'object' ? s.props : {}
+    }))
+    atomicWrite(file, JSON.stringify({ version: VERSION, panels: slim }, null, 2) + '\n')
+  } catch {
+    /* best-effort: runtime panels are a convenience, never block a workspace write */
+  }
+}
+
+/** Read the persisted runtime panels (chat/activity) back as surface descriptors (inverse of
+ *  writeRuntimePanels). Empty array if absent/corrupt. Used by the host on boot. */
+export function readRuntimePanels(dir) {
+  try {
+    const file = join(dir, '.blitzos', 'state', 'panels.json')
+    if (!existsSync(file)) return []
+    const raw = readFileSync(file, 'utf8')
+    if (raw.length > MAX_META) return []
+    const o = JSON.parse(raw)
+    const list = Array.isArray(o?.panels) ? o.panels : []
+    return list
+      .filter((s) => s && (s.component === 'chat' || s.component === 'activity'))
+      .slice(0, 4)
+      .map((s) => ({
+        id: String(s.id || (s.component === 'activity' ? 'activity' : 'chat')),
+        kind: 'native',
+        component: s.component === 'activity' ? 'activity' : 'chat',
+        x: Number(s.x) || 0,
+        y: Number(s.y) || 0,
+        w: Number(s.w) || 360,
+        h: Number(s.h) || 460,
+        z: Number(s.z) || 0,
+        title: typeof s.title === 'string' ? s.title : s.component,
+        props: s.props && typeof s.props === 'object' ? s.props : {}
+      }))
+  } catch {
+    return []
+  }
 }
 
 // A human-ish title from a content-file path ("grocery-list.md" -> "Grocery list").

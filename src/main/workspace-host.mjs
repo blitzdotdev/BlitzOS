@@ -9,6 +9,7 @@ import { join, basename, resolve } from 'node:path'
 import {
   writeWorkspace,
   readWorkspace,
+  readRuntimePanels,
   reconcileWorkspace,
   wasSelfWrite,
   listWorkspaces,
@@ -127,9 +128,14 @@ export function createWorkspaceHost(a) {
   function hydrateOnBoot() {
     try {
       const h = readWorkspace(activeWorkspace)
-      if (h && h.surfaces.length) {
-        a.setState({ surfaces: h.surfaces, camera: h.camera, mode: h.mode })
-        console.log(`[workspace] hydrated ${h.surfaces.length} surface(s) from ${activeWorkspace}`)
+      // Runtime panels (chat/activity) live in .blitzos/state, not as nodes — merge them back so the
+      // chat transcript + activity feed survive a backend RESTART (#38), not just a page refresh.
+      const panels = readRuntimePanels(activeWorkspace)
+      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas' }
+      const surfaces = [...base.surfaces, ...panels]
+      if (surfaces.length) {
+        a.setState({ surfaces, camera: base.camera, mode: base.mode })
+        console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
       }
     } catch (e) {
       console.error('[workspace] hydrate failed:', e?.message || e)

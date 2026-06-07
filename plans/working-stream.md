@@ -57,6 +57,16 @@ Normal-mode edge snapping relative to the PRIMARY AREA. Headless test: drag a no
 - SurfaceFrame: onBarMove sets the preview (desktop mode, single-window drag, not over a folder); onBarUp applies it (a folder drop wins over a snap).
 - App: renders `.snap-preview` in the world layer; CSS = translucent accent rect, z 1.5M (above windows, below the pinned chat/activity band), glides between zones.
 
+### Chunk 4 — DONE (#38 chat/activity survive a backend restart, 2026-06-07, round-trip verified)
+Runtime panels (chat/activity) persist to `.blitzos/state/panels.json` and merge back on boot (Phase-4 design that nodeKind always pointed at).
+- workspace.mjs: `writeRuntimePanels(dir,panels)` (internal — called at the end of writeWorkspace; slims chat→props.messages, activity→props.events) + `readRuntimePanels(dir)` (export). The empty-canvas early-return now also keeps a chat-only workspace. `.blitzos/state` isn't watched (non-recursive watch on `.blitzos`) → no self-write loop.
+- workspace-host.mjs: `hydrateOnBoot` merges `readRuntimePanels` into the boot surfaces (nodes + panels). reconcile/switch keep carrying the LIVE panels (unchanged) so the chat follows across switches.
+- Verified (node round-trip): chat (2 msgs) + activity (1 event) → state; note stays a node; messages survive the re-read. Chat history now survives a backend RESTART, not just a page refresh.
+
+### NEW user requests (2026-06-07) → #41 #42
+- #42: snapping should work in CONTROL mode too (remove the desktop-only gate in SurfaceFrame onBarMove/onBarUp).
+- #41: macOS-style resize from ALL sides + corners (8 handles, edges move the opposite side's position), and it must work in control mode (handles above the drag-overlay; traffic lights/eye stay clickable via higher z).
+
 ## Workspaces — folder-backed persistence/serialization (Phases 0–3 DONE + reviewed, 2026-06-06)
 
 **Spec:** `agent-os-workspaces.md` (synthesized from a 14-agent brainstorm; §10 KEEP/REWRITE/REMOVE, §11 build order, §12 open decisions). **Model:** a workspace = a FOLDER on disk; ONE `.blitzos/workspace.json` holds layout `{version,id,kind,camera,mode,stack,nodes[]}`; everything-is-a-file content (note→`.md`, web/app→`.weblink {url}`, srcdoc→`.html`); BlitzOS owns layout, content files own content. **Two big reversals from the chat's earlier ideas (the brainstorm overruled, user OK'd):** ONE central workspace.json (NOT per-item sidecar metas) + one-way layout authority with editor-style content reload (NOT three-way merge). `.group` cut from v1; secrets NEVER in the folder. Consent-persist = YES (decided), lands Phase 4 in agent-read-denied `.blitzos/state/consent.json`.
