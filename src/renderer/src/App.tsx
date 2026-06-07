@@ -88,8 +88,19 @@ export default function App(): JSX.Element {
     st.setSnapPreview(null) // a mode switch cancels any in-flight drag UI
     st.setDragTarget(null)
     const next = st.mode === 'desktop' ? 'canvas' : 'desktop'
-    st.setMode(next)
-    animateTransform(viewTransform(next, st.viewport))
+    if (next === 'canvas') {
+      // Entering control mode: restore the camera we left it at last time (so it "remembers" the
+      // panned/zoomed bird's-eye position), or the default wide view the first time.
+      const target = st.controlTransform ?? viewTransform('canvas', st.viewport)
+      st.setMode('canvas')
+      animateTransform(target)
+    } else {
+      // Leaving control mode: animate back to the view-locked primary area. controlTransform was
+      // already kept current by every pan/zoom/center in canvas mode, so there's nothing to capture
+      // here (capturing st.transform now could grab a mid-animation frame — the ISSUE-3 trap).
+      st.setMode('desktop')
+      animateTransform(viewTransform('desktop', st.viewport))
+    }
   }
 
   useEffect(() => {

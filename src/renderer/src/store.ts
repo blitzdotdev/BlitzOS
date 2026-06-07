@@ -48,9 +48,11 @@ export function viewTransform(mode: 'desktop' | 'canvas', vp: { w: number; h: nu
   const cy = TITLEBAR + r.h / 2
   return { scale: mode === 'desktop' ? 1 : 0.31, x: cx, y: cy } // control = a wide bird's-eye (zoomed out)
 }
-/** While dragging a window in normal mode, if the cursor (world coords) is near a primary-area edge,
- *  return the snap-target rect: full (top edge), left/right half (side edges), or a quarter (corner).
- *  Null = no snap. Mirrors macOS/Windows edge-snapping, but relative to the PRIMARY AREA. */
+/** While dragging a window, if the CURSOR (world coords) reaches a primary-area edge, return the
+ *  macOS tiling target: left/right half (a side edge) or a quarter (a corner). There is intentionally
+ *  NO full-screen / top-half / bottom-half snap — macOS only tiles to halves and quarters, and the
+ *  user explicitly does not want a window full-screening on a stray upward drag. Null = free drag.
+ *  Mirrors macOS edge-tiling, relative to the PRIMARY AREA (so it works on the infinite canvas). */
 export function snapTargetFor(
   wx: number,
   wy: number,
@@ -59,12 +61,15 @@ export function snapTargetFor(
   const r = primaryRect(vp)
   const nx = (wx - r.x) / r.w
   const ny = (wy - r.y) / r.h
-  if (nx < -0.08 || nx > 1.08 || ny < -0.08 || ny > 1.08) return null // cursor well outside the area
-  const E = 0.09 // edge/quadrant snap-intent zone width (≈9% of the area on each side)
+  if (nx < -0.05 || nx > 1.05 || ny < -0.05 || ny > 1.05) return null // cursor well outside the area
+  const E = 0.135 // edge/corner snap-intent zone (≈13.5% per side; the user asked for a generous zone)
   const nearL = nx < E
   const nearR = nx > 1 - E
   const nearT = ny < E
   const nearB = ny > 1 - E
+  // Only the LEFT/RIGHT edges (and their corners) tile — the top/bottom edges do nothing on their own,
+  // so a window can never go full-screen and an upward drag just moves it freely (macOS-faithful).
+  if (!nearL && !nearR) return null
   // integer split points so adjacent halves/quarters tile with NO 1px seam on odd-width areas
   const x0 = Math.round(r.x)
   const y0 = Math.round(r.y)
@@ -72,14 +77,12 @@ export function snapTargetFor(
   const H = Math.round(r.h)
   const halfW = Math.round(W / 2)
   const halfH = Math.round(H / 2)
-  if (nearL && nearT) return { x: x0, y: y0, w: halfW, h: halfH } // corners → quarters
-  if (nearL && nearB) return { x: x0, y: y0 + halfH, w: halfW, h: H - halfH }
-  if (nearR && nearT) return { x: x0 + halfW, y: y0, w: W - halfW, h: halfH }
-  if (nearR && nearB) return { x: x0 + halfW, y: y0 + halfH, w: W - halfW, h: H - halfH }
-  if (nearT) return { x: x0, y: y0, w: W, h: H } // top edge → full
+  if (nearL && nearT) return { x: x0, y: y0, w: halfW, h: halfH } // top-left quarter
+  if (nearL && nearB) return { x: x0, y: y0 + halfH, w: halfW, h: H - halfH } // bottom-left quarter
+  if (nearR && nearT) return { x: x0 + halfW, y: y0, w: W - halfW, h: halfH } // top-right quarter
+  if (nearR && nearB) return { x: x0 + halfW, y: y0 + halfH, w: W - halfW, h: H - halfH } // bottom-right quarter
   if (nearL) return { x: x0, y: y0, w: halfW, h: H } // left half
-  if (nearR) return { x: x0 + halfW, y: y0, w: W - halfW, h: H } // right half
-  return null
+  return { x: x0 + halfW, y: y0, w: W - halfW, h: H } // right half (nearR)
 }
 
 let zCounter = 10
@@ -104,6 +107,9 @@ export interface CreateSurfaceInput {
 
 interface DesktopState {
   transform: CanvasTransform
+  // The last camera the user had while IN control mode — restored on re-entry so control mode
+  // "remembers" where you were panned/zoomed (instead of always snapping back to the default view).
+  controlTransform: CanvasTransform | null
   viewport: { w: number; h: number }
   mode: 'desktop' | 'canvas'
   integrations: IntegrationStatus[]
@@ -121,6 +127,7 @@ interface DesktopState {
   setViewport: (w: number, h: number) => void
   setMode: (m: 'desktop' | 'canvas') => void
   setTransform: (t: CanvasTransform) => void
+  setControlTransform: (t: CanvasTransform | null) => void
   panBy: (dx: number, dy: number) => void
   zoomAt: (cursorX: number, cursorY: number, deltaY: number) => void
   goToPrimary: () => void
@@ -167,6 +174,7 @@ function defaultSize(kind: SurfaceKind): { w: number; h: number } {
 
 export const useDesktop = create<DesktopState>((set, get) => ({
   transform: { x: 0, y: 0, scale: 1 },
+  controlTransform: null,
   viewport: { w: window.innerWidth, h: window.innerHeight },
   mode: 'desktop',
   integrations: [],
@@ -184,6 +192,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   setViewport: (w, h) => set({ viewport: { w, h } }),
   setMode: (m) => set({ mode: m }),
   setTransform: (t) => set({ transform: t }),
+  setControlTransform: (t) => set({ controlTransform: t }),
 
   setSelection: (ids) => set({ selection: ids }),
   clearSelection: () => set({ selection: [] }),
@@ -289,8 +298,14 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     }, 220)
   },
 
+  // Every user-driven camera move in CONTROL mode also updates controlTransform, so the remembered
+  // bird's-eye position is always a settled value — this is what makes "enter/exit returns to the same
+  // position" hold even across a resize, a Center, or a fast toggle (no mid-animation capture needed).
   panBy: (dx, dy) =>
-    set((s) => ({ transform: { ...s.transform, x: s.transform.x + dx, y: s.transform.y + dy } })),
+    set((s) => {
+      const transform = { ...s.transform, x: s.transform.x + dx, y: s.transform.y + dy }
+      return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
+    }),
 
   zoomAt: (cursorX, cursorY, deltaY) =>
     set((s) => {
@@ -299,10 +314,15 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const newScale = clamp(scale * factor, 0.2, 3)
       const wx = (cursorX - tx) / scale
       const wy = (cursorY - ty) / scale
-      return { transform: { scale: newScale, x: cursorX - wx * newScale, y: cursorY - wy * newScale } }
+      const transform = { scale: newScale, x: cursorX - wx * newScale, y: cursorY - wy * newScale }
+      return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
     }),
 
-  goToPrimary: () => set((s) => ({ transform: viewTransform(s.mode, s.viewport) })),
+  goToPrimary: () =>
+    set((s) => {
+      const transform = viewTransform(s.mode, s.viewport)
+      return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
+    }),
 
   // Bring a surface to the front. Desktop: raise z + clamp on-screen. Canvas: center at 1:1.
   focusAndZoom: (id) =>
@@ -318,9 +338,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const scale = clamp(Math.min(1, fit), 0.2, 3)
       const cx = surf.x + surf.w / 2
       const cy = surf.y + surf.h / 2
+      const transform = { scale, x: s.viewport.w / 2 - cx * scale, y: s.viewport.h / 2 - cy * scale }
       return {
         surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter } : w)),
-        transform: { scale, x: s.viewport.w / 2 - cx * scale, y: s.viewport.h / 2 - cy * scale }
+        transform,
+        controlTransform: transform // a dock-focus in control mode is a settled camera to remember
       }
     }),
 
@@ -406,7 +428,8 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         mode === 'desktop'
           ? viewTransform('desktop', s.viewport)
           : { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc }
-      return { surfaces: restored, transform, mode, layoutHistory: [] }
+      // A fresh board starts control mode from the default bird's-eye (no stale camera from a prior workspace).
+      return { surfaces: restored, transform, mode, layoutHistory: [], controlTransform: null }
     }),
 
   // Apply an external folder reconcile (dropped/edited/removed files) to a LIVE canvas WITHOUT
@@ -420,10 +443,38 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const fileBacked = incoming
         .filter((w) => !isRuntime(w))
         .map((w) => {
-          // Don't clobber the surface the user is actively editing (unsaved note text not yet on disk).
           const live = localById.get(w.id)
-          if (live && w.id === s.editingId) return live
-          return { zoom: 1, props: {}, ...w, z: w.z ?? ++zCounter } as Surface
+          // Brand-new surface (a just-dropped file, a folder the agent created): take its disk content,
+          // but ALWAYS mint a fresh top z (the backend's z is a small dense stack-index that would bury
+          // the new tile behind existing windows). ++zCounter keeps it monotonic and on top.
+          if (!live) return { zoom: 1, props: {}, ...w, z: ++zCounter } as Surface
+          // Actively-edited surface (the user is focused in its textarea): adopt disk content EXCEPT the
+          // in-progress text, so an agent edit to a focused-but-untyped note still lands while unsaved
+          // keystrokes aren't clobbered. (Last-writer on `text` is unavoidable without dirty-tracking.)
+          if (w.id === s.editingId) {
+            return {
+              ...live,
+              kind: w.kind,
+              component: w.component,
+              title: w.title,
+              url: w.url,
+              html: w.html,
+              props: { ...live.props, ...(w.props ?? {}), text: live.props?.text }
+            } as Surface
+          }
+          // Existing surface → KEEP the live geometry + interaction state (x/y/w/h/z/restore/minimized/
+          // peek/groupId/preSnap). A reconcile reflects *content* changes on disk; it must never revert a
+          // window the user (or agent) just moved/resized/focused — that was the "reverts to original
+          // position" + drag/focus "previous-state" jerk. Adopt only the disk content fields.
+          return {
+            ...live,
+            kind: w.kind,
+            component: w.component,
+            title: w.title,
+            url: w.url,
+            html: w.html,
+            props: { ...live.props, ...(w.props ?? {}) }
+          } as Surface
         })
       const restored = [...fileBacked, ...keepRuntime]
       const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
@@ -468,7 +519,9 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       return {
         surfaces: s.surfaces.map((w) =>
           w.id === id
-            ? { ...w, restore: { x: w.x, y: w.y, w: w.w, h: w.h }, ...fill, z: ++zCounter }
+            ? // a maximized window is no longer "tiled" — drop preSnap so a later drag doesn't pop it
+              // to a stale floating size (and clobber `restore`)
+              { ...w, restore: { x: w.x, y: w.y, w: w.w, h: w.h }, ...fill, preSnap: undefined, z: ++zCounter }
             : w
         )
       }

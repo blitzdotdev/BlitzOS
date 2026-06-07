@@ -36,7 +36,16 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const isControl = useDesktop((s) => s.mode === 'canvas') // control mode: drag cards, don't interact
   const [isDragging, setIsDragging] = useState(false)
 
-  const drag = useRef<{ startX: number; startY: number; items: Array<{ id: string; ox: number; oy: number }> } | null>(null)
+  const drag = useRef<{
+    startX: number
+    startY: number
+    items: Array<{ id: string; ox: number; oy: number; ow: number; oh: number }>
+    single: boolean
+    grabFracX: number // where along the window the pointer grabbed (0..1) — for pop-out repositioning
+    grabFracY: number
+    startPreSnap?: { w: number; h: number } // floating size if this window started the drag already tiled
+    poppedOut: boolean // a tiled window has been dragged back out to floating this gesture
+  } | null>(null)
   const resize = useRef<{ startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; dir: string } | null>(null)
   const webviewRef = useRef<HTMLWebViewElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -48,6 +57,18 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const [consentProvider, setConsentProvider] = useState<string | null>(null)
   const [shared, setShared] = useState(surface.shared ?? false) // P0: agent may read this surface over the relay (agent-opened web/app start shared)
   const zoom = surface.zoom ?? 1
+
+  // If this surface unmounts mid-drag (the agent closes it, a reconcile removes its file, a folder
+  // absorbs it), onBarUp never fires — so clear any ghost snap-preview / drop-target it left behind.
+  useEffect(() => {
+    return () => {
+      if (drag.current) {
+        const st = useDesktop.getState()
+        st.setSnapPreview(null)
+        st.setDragTarget(null)
+      }
+    }
+  }, [])
 
   // web: navigation sync + apply content zoom
   useEffect(() => {
@@ -205,8 +226,10 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   function onBarDown(e: React.PointerEvent): void {
     e.stopPropagation()
     focusSurface(surface.id)
+    // Capture on currentTarget (the bar / drag-overlay) so move+up always land here even if the
+    // pointer leaves the window — the clean-capture fix for "stuck mouse events / can't unsnap".
     try {
-      ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     } catch {
       /* ignore (synthetic events) */
     }
@@ -224,32 +247,58 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     const items = ids
       .map((id) => st.surfaces.find((w) => w.id === id))
       .filter((w): w is Surface => !!w)
-      .map((w) => ({ id: w.id, ox: w.x, oy: w.y }))
-    drag.current = { startX: e.clientX, startY: e.clientY, items }
+      .map((w) => ({ id: w.id, ox: w.x, oy: w.y, ow: w.w, oh: w.h }))
+    const single = items.length === 1
+    // Grab fraction along THIS window (so a tiled window pops out under the cursor at the same spot).
+    const t = st.transform
+    const wx = (e.clientX - t.x) / t.scale
+    const wy = (e.clientY - t.y) / t.scale
+    const grabFracX = surface.w ? Math.min(1, Math.max(0, (wx - surface.x) / surface.w)) : 0.5
+    const grabFracY = surface.h ? Math.min(1, Math.max(0, (wy - surface.y) / surface.h)) : 0
+    drag.current = { startX: e.clientX, startY: e.clientY, items, single, grabFracX, grabFracY, startPreSnap: surface.preSnap, poppedOut: false }
   }
   function onBarMove(e: React.PointerEvent): void {
     const d = drag.current
     if (!d) return
     const st = useDesktop.getState()
     const t = st.transform
+    const wx = (e.clientX - t.x) / t.scale
+    const wy = (e.clientY - t.y) / t.scale
+    // macOS "pop-out": dragging a tiled window past a small threshold un-tiles it back to its floating
+    // size, re-centered under the cursor at the same grab spot, then it follows the pointer normally.
+    if (d.single && !d.poppedOut && d.startPreSnap && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 6) {
+      const fw = d.startPreSnap.w
+      const fh = d.startPreSnap.h
+      const nx = Math.round(wx - d.grabFracX * fw)
+      const ny = Math.round(wy - d.grabFracY * fh)
+      st.updateSurface(d.items[0].id, { x: nx, y: ny, w: fw, h: fh, preSnap: undefined, restore: undefined })
+      // rebase the drag so subsequent deltas apply from the floating rect
+      d.startX = e.clientX
+      d.startY = e.clientY
+      d.items = [{ id: d.items[0].id, ox: nx, oy: ny, ow: fw, oh: fh }]
+      d.poppedOut = true
+      // Drop any snap preview captured BEFORE the pop-out (the cursor may still sit in the edge zone) so
+      // releasing right after popping out doesn't instantly re-tile the window. A later move re-evaluates.
+      st.setSnapPreview(null)
+      return
+    }
     const dx = (e.clientX - d.startX) / t.scale
     const dy = (e.clientY - d.startY) / t.scale
     for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
     // highlight a folder under the cursor as an add-to-folder drop target
-    const wx = (e.clientX - t.x) / t.scale
-    const wy = (e.clientY - t.y) / t.scale
     const dragged = new Set(d.items.map((it) => it.id))
     const folder = st.surfaces.find(
       (w) => w.component === 'folder' && !dragged.has(w.id) && wx >= w.x && wx <= w.x + w.w && wy >= w.y && wy <= w.y + w.h
     )
     st.setDragTarget(folder ? folder.id : null)
-    // Snap preview (BOTH modes, #42): dragging a single window near a primary-area edge shows where
-    // it will dock on release (full / left|right half / quarter). Suppressed over a folder target.
-    st.setSnapPreview(d.items.length === 1 && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport) : null)
+    // Snap preview (BOTH modes, #42): dragging a single window so the cursor reaches a primary-area
+    // side/corner shows where it will tile on release (left|right half / quarter — never full-screen).
+    // Suppressed over a folder target and for file/dir tiles (they aren't windows).
+    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport) : null)
   }
   function onBarUp(e: React.PointerEvent): void {
     try {
-      ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+      ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
     } catch {
       /* ignore */
     }
@@ -262,8 +311,12 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     st.setDragTarget(null)
     st.setSnapPreview(null)
     if (d && target) st.dropIntoFolder(target, d.items.map((it) => it.id))
-    // Apply the snap; clear `restore` so a previously-maximized window's green-zoom isn't stale.
-    else if (d && snap && d.items.length === 1 && !isFileTile) st.updateSurface(d.items[0].id, { ...snap, restore: undefined })
+    // Apply the tile; remember the floating size in `preSnap` so a later drag pops it back out
+    // (macOS). `restore` is cleared so a previously-maximized window's green-zoom isn't stale.
+    else if (d && snap && d.single && !isFileTile) {
+      const floating = d.startPreSnap ?? { w: d.items[0].ow, h: d.items[0].oh }
+      st.updateSurface(d.items[0].id, { ...snap, preSnap: floating, restore: undefined })
+    }
   }
 
   // macOS-style resize from any side/corner. `dir` is a combination of n/s/e/w; a side handle
@@ -327,7 +380,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       nw = Math.max(MINW, nw)
       nh = Math.max(MINH, nh)
     }
-    useDesktop.getState().updateSurface(surface.id, { x: Math.round(nx), y: Math.round(ny), w: Math.round(nw), h: Math.round(nh) })
+    // A manual resize takes the window out of any tiled state (so it won't pop to a stale floating size).
+    useDesktop.getState().updateSurface(surface.id, { x: Math.round(nx), y: Math.round(ny), w: Math.round(nw), h: Math.round(nh), preSnap: undefined })
   }
   function onResizeUp(e: React.PointerEvent): void {
     try {

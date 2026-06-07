@@ -614,17 +614,7 @@ button {
   height: 14px;
   cursor: nwse-resize;
 }
-.rsz-se::after {
-  content: '';
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid var(--text-tertiary);
-  border-bottom: 2px solid var(--text-tertiary);
-  opacity: 0.6;
-}
+/* No visible corner grip — macOS windows resize from every edge/corner with no drawn handle. */
 
 /* macOS traffic lights — red=close, yellow=minimize, green=zoom. Gray unless the
    surface is active (front-most) or the cluster is hovered (then glyphs appear). */
