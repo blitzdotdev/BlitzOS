@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Surface } from '../types'
+import { useDesktop } from '../store'
 
 // A real file in the workspace folder, shown as a canvas tile (#37): image preview for images,
 // otherwise a typed glyph + name + size. Image bytes come over the jailed file route (server) or
@@ -60,17 +61,19 @@ export function FileWidget({ surface }: { surface: Surface }): JSX.Element {
 }
 
 export function DirWidget({ surface }: { surface: Surface }): JSX.Element {
-  const p = (surface.props ?? {}) as { name?: string; entries?: number }
+  const p = (surface.props ?? {}) as { name?: string; entries?: number; path?: string }
+  const setOpenDirPath = useDesktop((s) => s.setOpenDirPath)
   const name = String(p.name || surface.title || 'folder')
+  const path = String(p.path || p.name || '')
   const n = Number(p.entries || 0)
   return (
-    <div className="dir-tile">
+    <div className="dir-tile" title="Double-click to open" onDoubleClick={() => path && setOpenDirPath(path)}>
       <div className="dir-icon" />
       <div className="file-name" title={name}>
         {name}
       </div>
       <div className="file-meta">
-        {n} item{n === 1 ? '' : 's'}
+        {n} item{n === 1 ? '' : 's'} · open
       </div>
     </div>
   )

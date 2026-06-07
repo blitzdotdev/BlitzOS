@@ -10,6 +10,7 @@ import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
 import { IconCrosshair, IconChat, IconSparkle } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
+import { DirOverlay } from './components/DirOverlay'
 
 // The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
 // hydrate so a fresh workspace gets one (it then persists as a file); idempotent on a restored board.
@@ -37,6 +38,7 @@ export default function App(): JSX.Element {
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
   const snapPreview = useDesktop((s) => s.snapPreview)
+  const openDirPath = useDesktop((s) => s.openDirPath)
   const createSurface = useDesktop((s) => s.createSurface)
   const setIntegrations = useDesktop((s) => s.setIntegrations)
 
@@ -682,6 +684,7 @@ export default function App(): JSX.Element {
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
 
       {openFolder && <FolderOverlay folder={openFolder} />}
+      {openDirPath !== null && <DirOverlay path={openDirPath} />}
     </div>
   )
 }

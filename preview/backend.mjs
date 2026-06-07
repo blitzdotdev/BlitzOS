@@ -19,7 +19,7 @@ import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
 import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync, readdirSync } from 'node:fs'
 import { join, dirname, basename, resolve, sep } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
@@ -948,6 +948,44 @@ const server = createServer(async (req, res) => {
         'content-disposition': inlineOk ? 'inline' : `attachment; filename="${basename(real).replace(/["\\\r\n]/g, '')}"`
       })
       return res.end(buf)
+    } catch {
+      return json(res, 404, { error: 'not found' })
+    }
+  }
+  // List a subfolder's contents so a folder tile can OPEN (#44) — jailed to the active workspace,
+  // never .blitzos, capped. Read-only.
+  if (path === '/api/os/dir' && req.method === 'GET') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    try {
+      const root = realpathSync(resolve(wsHost.activePath()))
+      const rel = url.searchParams.get('path') || ''
+      const real = realpathSync(resolve(root, rel))
+      if (real !== root && !real.startsWith(root + sep)) return json(res, 403, { error: 'forbidden' })
+      if (/(^|[/\\])\.blitzos([/\\]|$)/i.test(real.slice(root.length))) return json(res, 403, { error: 'forbidden' })
+      if (!statSync(real).isDirectory()) return json(res, 404, { error: 'not a directory' })
+      const relBase = real.slice(root.length).replace(/^[/\\]/, '')
+      const entries = readdirSync(real, { withFileTypes: true })
+        .filter((e) => !e.name.startsWith('.'))
+        .slice(0, 1000)
+        .map((e) => {
+          let size = 0
+          try {
+            if (e.isFile()) size = statSync(join(real, e.name)).size
+          } catch {
+            /* unreadable */
+          }
+          const ext = e.isFile() ? (e.name.split('.').pop() || '').toLowerCase() : ''
+          return {
+            name: e.name,
+            dir: e.isDirectory(),
+            ext,
+            size,
+            isImage: /^(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(ext),
+            path: relBase ? `${relBase}/${e.name}` : e.name
+          }
+        })
+        .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
+      return json(res, 200, { path: rel, entries })
     } catch {
       return json(res, 404, { error: 'not found' })
     }
