@@ -12,6 +12,7 @@ import {
   readRuntimePanels,
   reconcileWorkspace,
   writeDroppedFile,
+  groupIntoFolder,
   wasSelfWrite,
   listWorkspaces,
   createWorkspace,
@@ -115,6 +116,17 @@ export function createWorkspaceHost(a) {
     if (!w) return { error: 'could not write the file' }
     doReconcile({ cx: Number(x) || 0, cy: Number(y) || 0 })
     return { ok: true, name: w.rel }
+  }
+  /** #52: group the given member surfaces into a REAL subdirectory (mkdir + mv their content files in).
+   *  Flush first so every member has a content file on disk, then group, then reconcile so the new
+   *  folder surfaces as one tile and the moved files leave the canvas root. */
+  function group(name, memberIds, x, y) {
+    if (switching) return { error: 'switch in progress' }
+    flush() // persist current state so every member's content file exists + workspace.json is current
+    const r = groupIntoFolder(activeWorkspace, name, memberIds)
+    if (!r || !r.ok) return { error: (r && r.error) || 'could not group' }
+    doReconcile({ cx: Number(x) || 0, cy: Number(y) || 0 })
+    return { ok: true, folder: r.folder, moved: r.moved }
   }
   function startWatch() {
     try {
@@ -256,6 +268,7 @@ export function createWorkspaceHost(a) {
     active,
     activePath: () => activeWorkspace,
     ingestFile,
+    group,
     isSwitching: () => switching,
     hydrateOnBoot,
     onStatePush,

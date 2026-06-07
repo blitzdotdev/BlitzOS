@@ -14,7 +14,16 @@ import type { ProviderDescriptor, ProviderResult, ApprovalRequest } from './prov
 const approvals = createApprovalLedger()
 const rate = createRateLimiter()
 const consent = new Set<string>() // providers the human approved for SENSITIVE agent reads (message bodies, file contents)
-const pending = new Map<string, (token: string | null) => void>() // approvalRequest.id -> resolver
+const pending = new Map<string, { resolve: (token: string | null) => void; timer: ReturnType<typeof setTimeout> }>() // approvalRequest.id -> resolver + its expiry timer
+
+// Settle a pending approval once (clears its expiry timer so no orphan timer fires later).
+function settle(id: string, token: string | null): void {
+  const p = pending.get(id)
+  if (!p) return
+  pending.delete(id)
+  clearTimeout(p.timer)
+  p.resolve(token)
+}
 
 let broadcast: (action: Record<string, unknown>) => void = () => {}
 /** Wired in index.ts so an approval request reaches the renderer (it shows the card). */
@@ -39,31 +48,20 @@ export function grantProviderConsent(provider: string, allow: boolean): void {
 
 /** The human approved a pending WRITE (renderer → IPC) — mints + hands back the request-bound token. */
 export function resolveProviderApproval(id: string): void {
-  const r = pending.get(id)
-  if (!r) return
-  pending.delete(id)
-  r(approvals.approve(id, Date.now()))
+  settle(id, approvals.approve(id, Date.now()))
 }
 /** The human denied a pending write. */
 export function denyProviderApproval(id: string): void {
-  const r = pending.get(id)
-  if (!r) return
-  pending.delete(id)
-  r(null)
+  settle(id, null)
 }
 
 // Show the approval card and wait for the human (or time out at the request's own expiry).
 function requestApproval(req: ApprovalRequest): Promise<string | null> {
   return new Promise((resolve) => {
-    pending.set(req.id, resolve)
-    broadcast({ type: 'provider-approval', request: req })
     const ms = Math.max(1000, req.expiresAt - Date.now())
-    setTimeout(() => {
-      if (pending.has(req.id)) {
-        pending.delete(req.id)
-        resolve(null)
-      }
-    }, ms)
+    const timer = setTimeout(() => settle(req.id, null), ms) // expiry → denied (timer cleared on any earlier settle)
+    pending.set(req.id, { resolve, timer })
+    broadcast({ type: 'provider-approval', request: req })
   })
 }
 

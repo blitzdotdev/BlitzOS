@@ -3,7 +3,7 @@ import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent } from './provider-bridge'
-import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace } from './osActions'
+import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -161,6 +161,8 @@ app.whenReady().then(() => {
     grantProviderConsent(String(provider), allow !== false)
     return { ok: true }
   })
+  // #52: group surfaces into a REAL folder (mkdir + mv) — the renderer's Cmd+G in the desktop app.
+  ipcMain.handle('os:group', (_e, name: string, ids: string[]) => osGroupIntoFolder(String(name), Array.isArray(ids) ? ids : []))
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()

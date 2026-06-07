@@ -619,6 +619,24 @@ async function startOsAgentSocket() {
           }
         },
         {
+          path: '/group',
+          description:
+            'Group surfaces into a REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' ' +
+            'files into it. They become ONE collapsed folder tile (drill in to see contents) — a real ' +
+            'filesystem folder, so it persists and a many-file group stays one tile. Args: {name, ids:[surfaceId]}.',
+          input_schema: {
+            type: 'object',
+            required: ['ids'],
+            properties: { name: { type: 'string' }, ids: { type: 'array', items: { type: 'string' } } }
+          },
+          handler: ({ body }) => {
+            const b = toolBody(body)
+            const ids = Array.isArray(b.ids) ? b.ids.map(String) : []
+            if (!ids.length) return { ok: false, error: 'no members to group' }
+            return wsHost.group(String(b.name || 'Folder'), ids, 0, 0)
+          }
+        },
+        {
           path: '/read_window',
           description: 'Read what is INSIDE a web surface (its DOM): url, title, and visible text. Only kind "web" (server mode).',
           input_schema: {
@@ -1070,6 +1088,23 @@ const server = createServer(async (req, res) => {
   }
   // Receive a file the user DROPPED onto the canvas (#43): raw body bytes → jailed write into the
   // active workspace at the drop world-position → reconcile so the tile appears where it landed.
+  // #52: group surfaces into a REAL folder (mkdir + mv their files into a subdir). Renderer Cmd+G posts here.
+  if (path === '/api/os/group' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let gbody = ''
+    req.on('data', (c) => {
+      gbody += c
+      if (gbody.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(gbody)
+      const ids = Array.isArray(b.ids) ? b.ids.map(String) : []
+      if (!ids.length) return json(res, 400, { error: 'no members to group' })
+      const r = wsHost.group(String(b.name || 'Folder'), ids, Number(b.x) || 0, Number(b.y) || 0)
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
   if (path === '/api/os/upload' && req.method === 'POST') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
     const chunks = []

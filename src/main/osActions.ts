@@ -241,6 +241,13 @@ export function osGroup(ids: string[], name?: string, x?: number, y?: number): s
   send('group', { ids: existing, folderId, ...(name ? { name } : {}), ...(x != null ? { x } : {}), ...(y != null ? { y } : {}) })
   return folderId
 }
+/** #52: group surfaces into a REAL folder on disk (mkdir + mv their files into a subdir), via the shared
+ *  workspace host. Returns the host result. The reconcile that follows surfaces the new folder as a tile. */
+export function osGroupIntoFolder(name: string, ids: string[], x?: number, y?: number): { ok: boolean; folder?: string; moved?: number; error?: string } {
+  if (!wsHost) return { ok: false, error: 'no workspace host' }
+  const r = wsHost.group(String(name || 'Folder'), Array.isArray(ids) ? ids.map(String) : [], Number(x) || 0, Number(y) || 0)
+  return 'ok' in r ? r : { ok: false, error: r.error }
+}
 export function osGetState(): OsState {
   return cached
 }

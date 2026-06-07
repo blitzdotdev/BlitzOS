@@ -49,8 +49,10 @@ export default function App(): JSX.Element {
   const [showAi, setShowAi] = useState(false)
   const [showOverview, setShowOverview] = useState(false)
   const [activeWs, setActiveWs] = useState<string | null>(null)
-  // #51: a pending write-approval the agent requested (provider.call write) — the human OKs or denies.
-  const [providerApproval, setProviderApproval] = useState<{ id: string; summary: string; risk: string } | null>(null)
+  // #51: pending write-approvals the agent requested (provider.call writes) — the human OKs or denies each.
+  // A QUEUE (not a single slot) so concurrent writes don't overwrite each other's card (review fix); we
+  // show the oldest and pop it on answer. Keyed by id, matching provider-bridge's pending Map.
+  const [providerApprovals, setProviderApprovals] = useState<Array<{ id: string; summary: string; risk: string }>>([])
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
@@ -172,9 +174,18 @@ export default function App(): JSX.Element {
         e.preventDefault()
         useDesktop.getState().goToPrimary()
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'g' || e.key === 'G')) {
-        // Cmd+G: pack the current selection into an iPhone-style folder.
+        // Cmd+G: group the selection into a REAL folder on disk (mkdir + mv); the reconcile that follows
+        // replaces the loose tiles with one folder tile (#52). Falls back to in-memory grouping only if
+        // no host is wired (e.g. a bare preview with no backend).
         e.preventDefault()
-        useDesktop.getState().groupSelection()
+        const st = useDesktop.getState()
+        const ids = [...st.selection]
+        if (ids.length >= 2 && window.agentOS?.groupIntoFolder) {
+          void window.agentOS.groupIntoFolder('Folder', ids)
+          st.clearSelection()
+        } else {
+          st.groupSelection()
+        }
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
         // layout undo (Cmd+Z) when nothing editable is focused; else let the browser text-undo win
         const ae = document.activeElement as HTMLElement | null
@@ -326,7 +337,10 @@ export default function App(): JSX.Element {
       else if (a.type === 'provider-approval') {
         // The agent asked to perform a WRITE on a connected provider (#51) — show the human a card.
         const req = a.request as { id?: string; summary?: string; risk?: string } | undefined
-        if (req && req.id) setProviderApproval({ id: String(req.id), summary: String(req.summary || 'a provider write'), risk: String(req.risk || 'write') })
+        if (req && req.id) {
+          const card = { id: String(req.id), summary: String(req.summary || 'a provider write'), risk: String(req.risk || 'write') }
+          setProviderApprovals((q) => (q.some((c) => c.id === card.id) ? q : [...q, card])) // enqueue (dedupe by id)
+        }
       }
       else if (a.type === 'move') st.moveSurface(String(a.id), Number(a.x), Number(a.y))
       else if (a.type === 'update') st.updateSurface(String(a.id), (a.patch ?? {}) as Partial<Surface>)
@@ -769,36 +783,25 @@ export default function App(): JSX.Element {
       {openDirPath !== null && <DirOverlay path={openDirPath} />}
 
       {/* #51: the agent asked to perform a WRITE on a connected account — the human must approve it
-          (per-call, request-bound). Reads never reach here. */}
-      {providerApproval && (
-        <div className="consent" onPointerDown={(e) => e.stopPropagation()}>
-          <div className="consent-card">
-            <h4>Allow the agent to {providerApproval.risk === 'destructive' ? <span style={{ color: 'var(--negative, #e5484d)' }}>make a destructive change</span> : 'make a change'} to your account?</h4>
-            <p><code>{providerApproval.summary}</code></p>
-            <p>This acts on your real connected account. It runs only if you allow it.</p>
-            <div className="consent-actions">
-              <button
-                className="btn ghost"
-                onClick={() => {
-                  window.agentOS?.denyProviderCall?.(providerApproval.id)
-                  setProviderApproval(null)
-                }}
-              >
-                Deny
-              </button>
-              <button
-                className="btn primary"
-                onClick={() => {
-                  window.agentOS?.approveProviderCall?.(providerApproval.id)
-                  setProviderApproval(null)
-                }}
-              >
-                Allow
-              </button>
+          (per-call, request-bound). Reads never reach here. The OLDEST pending card shows; answering it
+          pops it and reveals the next, so concurrent writes each get their own decision (review fix). */}
+      {providerApprovals.length > 0 && (() => {
+        const card = providerApprovals[0]
+        const pop = (): void => setProviderApprovals((q) => q.filter((c) => c.id !== card.id))
+        return (
+          <div className="consent" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="consent-card">
+              <h4>Allow the agent to {card.risk === 'destructive' ? <span style={{ color: 'var(--negative, #e5484d)' }}>make a destructive change</span> : 'make a change'} to your account?</h4>
+              <p><code>{card.summary}</code></p>
+              <p>This acts on your real connected account. It runs only if you allow it.{providerApprovals.length > 1 ? ` (${providerApprovals.length - 1} more pending)` : ''}</p>
+              <div className="consent-actions">
+                <button className="btn ghost" onClick={() => { window.agentOS?.denyProviderCall?.(card.id); pop() }}>Deny</button>
+                <button className="btn primary" onClick={() => { window.agentOS?.approveProviderCall?.(card.id); pop() }}>Allow</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

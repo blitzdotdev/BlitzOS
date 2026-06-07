@@ -12,7 +12,7 @@ import {
   osReadWindow,
   osControlSurface,
   osSay,
-  osGroup,
+  osGroupIntoFolder,
   type SurfaceDescriptor
 } from './osActions'
 import type { ControlAction } from './cdp'
@@ -169,7 +169,7 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
         {
           path: '/group',
           description:
-            'Pack related surfaces into ONE named iPhone-style folder (returns { id }). Pass the ids of MORE THAN 2 surfaces you opened that share a purpose, a folder name, and the top-left x,y to place it inside the user view. Use this instead of leaving 3+ related windows loose; then drop a note next to it saying what it is.',
+            'Group related surfaces into ONE REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' files into it. They collapse to one folder tile (drill in to browse) — a real filesystem folder that persists, and a many-file group stays one tile. Pass the ids of 2+ surfaces that share a purpose + a folder name.',
           input_schema: {
             type: 'object',
             required: ['ids', 'name'],
@@ -183,15 +183,8 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
           handler: ({ body }) => {
             const a = parse(body)
             const ids = Array.isArray(a.ids) ? (a.ids as unknown[]).map(String) : []
-            if (ids.length < 2) return { status: 400, body: { error: 'group needs at least 2 surface ids' } }
-            const id = osGroup(
-              ids,
-              a.name != null ? String(a.name) : undefined,
-              a.x != null ? Number(a.x) : undefined,
-              a.y != null ? Number(a.y) : undefined
-            )
-            if (!id) return { status: 400, body: { error: 'group failed: fewer than 2 of the ids are real surfaces' } }
-            return { id }
+            if (!ids.length) return { status: 400, body: { error: 'group needs surface ids' } }
+            return osGroupIntoFolder(a.name != null ? String(a.name) : 'Folder', ids, a.x != null ? Number(a.x) : undefined, a.y != null ? Number(a.y) : undefined)
           }
         },
         {

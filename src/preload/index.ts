@@ -152,6 +152,10 @@ const api = {
   grantProviderConsent(provider: string, allow: boolean): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('os:provider-consent', provider, allow)
   },
+  // #52: group surfaces into a REAL folder on disk (mkdir + mv). Server mode overrides this in the shim.
+  groupIntoFolder(name: string, ids: string[]): Promise<{ ok: boolean; folder?: string; moved?: number; error?: string }> {
+    return ipcRenderer.invoke('os:group', name, ids)
+  },
 
   // Workspaces (one feature, both modes). Electron thumbnails are captured main-side (capturePage)
   // and served over the blitz-thumb:// protocol; switching is the shared host's atomic switch.
