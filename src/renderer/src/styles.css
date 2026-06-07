@@ -167,7 +167,7 @@ body,
 /* Marquee-selected surface: crisp white outline (wins over the focus ring). */
 .window.is-selected {
   box-shadow:
-    0 0 0 2px #ffffff,
+    0 0 0 2px var(--accent),
     inset 0 1px 0 var(--edge-highlight),
     var(--shadow-lg);
 }
@@ -601,9 +601,14 @@ body,
   background: var(--control-hover);
 }
 .toolbar .hint {
+  flex: 0 0 auto;
+  width: 250px;
   font-size: 11px;
   color: var(--text-muted);
   padding: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Left dock. */
@@ -715,7 +720,7 @@ body,
   align-items: center;
   justify-content: space-between;
   padding: 0 14px;
-  color: #fff;
+  color: var(--text);
   font-weight: var(--fw-semibold);
   font-size: 14px;
   cursor: grab;
@@ -951,31 +956,25 @@ body,
   margin: 14px 0 0;
 }
 
-/* Hold-⌘ pan overlay (canvas mode). */
-.pan-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 4000;
-  background: transparent;
-  cursor: grab;
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+/* View-lock toggle (⌘⌘): freezes the infinite canvas at its current frame. */
+.lock-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--text-secondary);
 }
-.pan-overlay:active {
-  cursor: grabbing;
-}
-.pan-hint {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
+.lock-btn.locked {
   background: var(--accent);
   color: var(--paper-coral-ink);
-  font-size: 12px;
-  font-weight: var(--fw-semibold);
-  padding: 5px 12px;
-  border-radius: var(--radius-pill);
-  white-space: nowrap;
-  pointer-events: none;
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.lock-btn.locked:hover {
+  background: color-mix(in srgb, var(--accent) 88%, black);
 }
 
 /* Command HUD (the agent-connect / scratch-pad-style bar). */
@@ -1230,7 +1229,7 @@ body,
 }
 .window.folder.drop-target .folder-tile {
   box-shadow:
-    0 0 0 2px #ffffff,
+    0 0 0 2px var(--accent),
     inset 0 1px 0 rgba(255, 255, 255, 0.22),
     var(--shadow-lg);
 }
@@ -1269,8 +1268,14 @@ body,
 
 /* Workspace switcher: the toolbar pill + the shared name input (reused by the overview). */
 .ws-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-weight: var(--fw-semibold);
-  max-width: 220px;
+  color: var(--text-secondary);
+}
+.ws-btn .ws-name {
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

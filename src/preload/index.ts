@@ -110,6 +110,10 @@ const api = {
   captureSurface(surfaceId: string): Promise<string | null> {
     return ipcRenderer.invoke('surface:capture', surfaceId)
   },
+  /** Best-effort: the user's macOS wallpaper as a downscaled data URL (frosted onboarding backdrop). */
+  getWallpaper(): Promise<string | null> {
+    return ipcRenderer.invoke('os:wallpaper')
+  },
   /** The user typed a message to the agent in the in-canvas Chat. */
   sendMessage(text: string): void {
     ipcRenderer.send('os:user-message', text)

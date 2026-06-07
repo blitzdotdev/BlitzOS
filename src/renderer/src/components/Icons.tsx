@@ -104,6 +104,23 @@ export const IconArrowLeft = (p: P): JSX.Element => (
     <path d="M15 6l-6 6 6 6" />
   </Svg>
 )
+export const IconChevronDown = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M6 9l6 6 6-6" />
+  </Svg>
+)
+export const IconLock = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <rect x="5" y="11" width="14" height="9" rx="2" />
+    <path d="M8 11V7.5a4 4 0 0 1 8 0V11" />
+  </Svg>
+)
+export const IconLockOpen = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <rect x="5" y="11" width="14" height="9" rx="2" />
+    <path d="M8 11V7.5a4 4 0 0 1 7-2.3" />
+  </Svg>
+)
 
 /** Surface-kind glyph for the dock. */
 export function KindIcon({ kind, size }: { kind: string; size?: number }): JSX.Element {

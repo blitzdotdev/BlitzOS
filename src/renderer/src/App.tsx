@@ -8,8 +8,10 @@ import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame } from './components/SurfaceFrame'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
-import { IconCrosshair, IconChat, IconSparkle } from './components/Icons'
+import { IconCrosshair, IconChat, IconSparkle, IconGrid, IconChevronDown } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
+import { OnboardingFlow } from './onboarding/OnboardingFlow'
+import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
 
 // The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
 // hydrate so a fresh workspace gets one (it then persists as a file); idempotent on a restored board.
@@ -43,7 +45,8 @@ export default function App(): JSX.Element {
   const [showAi, setShowAi] = useState(false)
   const [showOverview, setShowOverview] = useState(false)
   const [activeWs, setActiveWs] = useState<string | null>(null)
-  const [panMode, setPanMode] = useState(false)
+  const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
+  const locked = useDesktop((s) => s.locked) // canvas frozen at current frame (⌘⌘); pan/zoom off
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
@@ -58,10 +61,11 @@ export default function App(): JSX.Element {
   // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
   const activeWsRef = useRef<string | null>(null)
 
-  // The browser/server preview is an infinite canvas (pan/zoom), not the fixed
-  // desktop the Electron app defaults to.
+  // BlitzOS runs on the infinite canvas in BOTH the Electron app and the browser/server
+  // preview. (Desktop mode — a fixed bounded screen — is dormant; see agent-os/CLAUDE.md.)
+  // The view starts unlocked (free pan/zoom); double-tap ⌘ to lock it to the current frame.
   useEffect(() => {
-    if (window.agentOS?.serverMode) useDesktop.getState().setMode('canvas')
+    useDesktop.getState().setMode('canvas')
   }, [])
 
   useEffect(() => {
@@ -95,8 +99,10 @@ export default function App(): JSX.Element {
     const el = rootRef.current
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
-      // fixed desktop: no canvas pan/zoom (let webviews/iframes scroll normally)
-      if (useDesktop.getState().mode !== 'canvas') return
+      // pan/zoom only on an UNLOCKED canvas; when locked (⌘⌘) or in desktop mode,
+      // let webviews/iframes scroll normally
+      const w = useDesktop.getState()
+      if (w.mode !== 'canvas' || w.locked) return
       e.preventDefault()
       const st = useDesktop.getState()
       if (e.ctrlKey) st.zoomAt(e.clientX, e.clientY, e.deltaY)
@@ -170,20 +176,20 @@ export default function App(): JSX.Element {
     }
   }, [])
 
-  // Double-tap ⌘ to toggle pan-mode: a full-canvas overlay steals pointer focus
-  // from every webview/iframe so you can pan anywhere. A bare ⌘ tap from a focused
-  // webview arrives via onMetaTap (main).
+  // Double-tap ⌘ to LOCK/UNLOCK the view: locking freezes the infinite canvas at its current
+  // frame (pan/zoom off) so you can work inside surfaces without it drifting; double-tap again
+  // to unlock. A bare ⌘ tap from a focused webview arrives via onMetaTap (main).
   useEffect(() => {
     let metaDown = false
     let sawOther = false
     let lastTap = 0
     const registerTap = (): void => {
-      // ⌘-pan only exists in canvas mode
+      // the lock only applies to the infinite canvas
       if (useDesktop.getState().mode !== 'canvas') return
       const now = performance.now()
       if (now - lastTap < 450) {
         lastTap = 0
-        setPanMode((v) => !v)
+        useDesktop.getState().toggleLock()
       } else {
         lastTap = now
       }
@@ -225,8 +231,10 @@ export default function App(): JSX.Element {
         // Restore a persisted workspace from disk (Phase 2). Replaces the canvas wholesale.
         const surfs = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        const md = a.mode === 'desktop' ? 'desktop' : 'canvas'
-        st.hydrate(surfs, cam, md)
+        // BlitzOS is canvas-first; desktop mode is dormant, so restore every workspace onto the
+        // infinite canvas regardless of the persisted mode (older boards may be saved as 'desktop').
+        // TODO: honor a.mode again once desktop mode becomes a user-selectable per-workspace option.
+        st.hydrate(surfs, cam, 'canvas')
         ensureNotepad()
         hydrated.current = true
         if (typeof a.workspace === 'string') {
@@ -239,7 +247,7 @@ export default function App(): JSX.Element {
         // reconnect's hydrate still can't clobber the new board.
         const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        st.hydrate(sf, cm, a.mode === 'desktop' ? 'desktop' : 'canvas')
+        st.hydrate(sf, cm, 'canvas') // canvas-first; see the 'hydrate' branch above
         ensureNotepad()
         hydrated.current = true // a switch is also a valid first hydrate — don't depend on a prior 'hydrate'
         if (typeof a.workspace === 'string') {
@@ -423,10 +431,11 @@ export default function App(): JSX.Element {
 
   function onBgDown(e: React.PointerEvent): void {
     const st = useDesktop.getState()
-    if (st.mode === 'canvas') {
+    if (st.mode === 'canvas' && !st.locked) {
+      // unlocked canvas: drag the background to pan
       pan.current = { x: e.clientX, y: e.clientY }
     } else {
-      // desktop: rubber-band (marquee) selection. Shift adds to the current selection.
+      // locked canvas (or desktop): rubber-band (marquee) selection. Shift adds to the selection.
       if (!e.shiftKey) st.clearSelection()
       marquee.current = { x0: e.clientX, y0: e.clientY }
       setMarqueeRect({ x: e.clientX, y: e.clientY, w: 0, h: 0 })
@@ -563,12 +572,6 @@ export default function App(): JSX.Element {
         )}
       </div>
 
-      {panMode && mode === 'canvas' && (
-        <div className="pan-overlay" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp}>
-          <span className="pan-hint">⌘⌘ pan mode · drag anywhere · double-tap ⌘ to exit</span>
-        </div>
-      )}
-
       {marqueeRect && (
         <div
           className="marquee"
@@ -579,7 +582,9 @@ export default function App(): JSX.Element {
       <div className="toolbar">
         {hasWorkspaces && (
           <button className="ws-btn" onClick={() => void openOverview()} title="Workspaces (Mission Control)">
-            ▦ {activeWs ?? '…'} ▾
+            <IconGrid size={14} />
+            <span className="ws-name">{activeWs ?? '…'}</span>
+            <IconChevronDown size={13} />
           </button>
         )}
         <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => useDesktop.getState().goToPrimary()}>
@@ -594,7 +599,11 @@ export default function App(): JSX.Element {
           </span>
           Connect AI
         </button>
-        {!isServer && <span className="hint">fixed desktop · drag the top bar to move · click the dock to focus</span>}
+        {!isServer && (
+          <span className="hint">
+            {locked ? 'locked · ⌘⌘ to unlock' : 'drag to pan · ⌘-scroll to zoom · ⌘⌘ to lock'}
+          </span>
+        )}
       </div>
 
       {showAi && (
@@ -620,6 +629,15 @@ export default function App(): JSX.Element {
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
 
       {openFolder && <FolderOverlay folder={openFolder} />}
+
+      {onboarding && (
+        <OnboardingFlow
+          onComplete={() => {
+            markOnboarded()
+            setOnboarding(false)
+          }}
+        />
+      )}
     </div>
   )
 }

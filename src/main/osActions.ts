@@ -62,7 +62,7 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     },
     broadcast: (obj) => getWin()?.webContents.send('os:action', obj),
     onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
-    defaultMode: 'desktop'
+    defaultMode: 'canvas' // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
   })
   wsHost.hydrateOnBoot()
   wsHost.startWatch()

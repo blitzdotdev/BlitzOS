@@ -9,6 +9,7 @@ import { registerWidgets } from './widgets'
 import { startAgentRunner } from './agent-runner.mjs'
 // Keep web surfaces logged in across quit/relaunch (cookie/localStorage flush + unload).
 import { startSessionPersistence } from './persistence'
+import { registerWallpaperIpc } from './wallpaper'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -25,7 +26,7 @@ function createWindow(): void {
     width: 1440,
     height: 900, // TODO make sure its close to windowless fullscreen
     show: false,
-    backgroundColor: '#0e1116',
+    backgroundColor: '#e9e9e7',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -129,6 +130,9 @@ app.whenReady().then(() => {
 
   // Widget data bridge: relays sandboxed widgets' integration-data requests (consented).
   registerWidgets()
+
+  // Onboarding/boot frosted backdrop: serve the user's macOS wallpaper to the renderer.
+  registerWallpaperIpc()
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()

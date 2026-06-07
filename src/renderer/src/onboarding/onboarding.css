@@ -1,0 +1,233 @@
+/* Onboarding / boot — a light, frosted-wallpaper "OS boot" over the desktop.
+   Consumes tokens.css; forces light via [data-theme='light'] on .onb. */
+
+.onb {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-ui);
+  color: var(--text);
+  /* fallback gradient when no wallpaper resolves */
+  background: radial-gradient(125% 100% at 50% 0%, #fdfdfc 0%, #ececea 55%, #e2e2df 100%);
+  animation: onbFade var(--dur-slow) var(--ease-out);
+}
+
+/* blurred copy of the user's wallpaper */
+.onb-wall {
+  position: absolute;
+  inset: -8%;
+  background-size: cover;
+  background-position: center;
+  filter: blur(64px) saturate(1.2) brightness(1.2);
+  transform: scale(1.12);
+}
+
+/* frost: lighten + unify so text stays legible and the feel reads "light" even over
+   a dark wallpaper (kept translucent so the wallpaper's color/texture shows through). */
+.onb-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.8) 0%,
+    rgba(255, 255, 255, 0.66) 45%,
+    rgba(255, 255, 255, 0.78) 100%
+  );
+}
+
+.onb-content {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  padding: 0 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ---- Boot ---- */
+.boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+.boot-mark {
+  font-size: 60px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--track-tight);
+  color: var(--text);
+  animation: bootBreath 2.4s var(--ease-in-out) infinite;
+}
+.boot-bar {
+  width: 200px;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+.boot-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+.boot-stage {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ---- Questions ---- */
+.onb-q {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: onbQIn var(--dur-base) var(--ease-out);
+}
+.onb-q-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--track-label);
+  color: var(--text);
+}
+.onb-q-count span {
+  color: var(--text-tertiary);
+}
+.onb-q-prompt {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.18;
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--track-tight);
+  color: var(--text);
+}
+.onb-q-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.onb-opt {
+  text-align: left;
+  padding: 13px 16px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background var(--dur-fast),
+    border-color var(--dur-fast),
+    box-shadow var(--dur-fast);
+}
+.onb-opt:hover {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+.onb-opt.sel {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.onb-q-more {
+  margin-top: 6px;
+  width: 100%;
+  resize: none;
+  border: none;
+  border-bottom: 1px solid var(--divider);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: 1.5;
+  padding: 8px 2px;
+  outline: none;
+}
+.onb-q-more::placeholder {
+  color: var(--text-tertiary);
+}
+.onb-q-more:focus {
+  border-bottom-color: var(--accent);
+}
+.onb-q-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+.onb-skip {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-ui);
+  cursor: pointer;
+  padding: 8px 4px;
+}
+.onb-skip:hover {
+  color: var(--text);
+}
+.onb-next {
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: var(--text-ui);
+  font-weight: var(--fw-medium);
+  padding: 10px 22px;
+  cursor: pointer;
+  transition:
+    opacity var(--dur-fast),
+    transform var(--dur-fast) var(--ease-out);
+}
+.onb-next:hover {
+  transform: translateY(-1px);
+}
+.onb-next:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+}
+
+@keyframes onbFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes bootBreath {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes onbQIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -70,6 +70,10 @@ interface DesktopState {
   dragTarget: string | null
   absorbing: string[]
   grabMode: boolean
+  /** View locked (⌘⌘): the infinite canvas is frozen at its current camera — pan/zoom are off
+   *  and a background drag becomes marquee-select. Lets you work inside surfaces without the
+   *  canvas drifting. Toggled by double-tapping ⌘ (or the toolbar lock button). */
+  locked: boolean
 
   setViewport: (w: number, h: number) => void
   setMode: (m: 'desktop' | 'canvas') => void
@@ -86,6 +90,7 @@ interface DesktopState {
   addToFolder: (folderId: string, ids: string[]) => void
   dropIntoFolder: (folderId: string, ids: string[]) => void
   setGrabMode: (on: boolean) => void
+  toggleLock: () => void
 
   setIntegrations: (list: IntegrationStatus[]) => void
   setPos: (id: string, x: number, y: number) => void
@@ -117,7 +122,7 @@ function defaultSize(kind: SurfaceKind): { w: number; h: number } {
 export const useDesktop = create<DesktopState>((set, get) => ({
   transform: { x: 0, y: 0, scale: 1 },
   viewport: { w: window.innerWidth, h: window.innerHeight },
-  mode: 'desktop',
+  mode: 'canvas', // BlitzOS is canvas-first now (infinite canvas in both Electron + server); desktop mode is dormant
   integrations: [],
   positions: {},
   surfaces: [],
@@ -126,6 +131,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   dragTarget: null,
   absorbing: [],
   grabMode: false,
+  locked: false,
 
   setViewport: (w, h) => set({ viewport: { w, h } }),
   setMode: (m) => set({ mode: m }),
@@ -198,6 +204,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   setDragTarget: (id) => set({ dragTarget: id }),
   setGrabMode: (on) => set({ grabMode: on }),
+  toggleLock: () => set((s) => ({ locked: !s.locked })),
 
   // Add surfaces to an existing folder (drag-onto-folder). Skips folders; re-adding a
   // currently-peeked member just clears its peek so it hides back inside.
