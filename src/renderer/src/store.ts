@@ -142,7 +142,6 @@ interface DesktopState {
   // Phase 2: adopt a persisted workspace (restore surfaces + camera + mode from disk).
   hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas') => void
   moveSurface: (id: string, x: number, y: number) => void
-  resizeSurface: (id: string, w: number, h: number) => void
   closeSurface: (id: string) => void
   focusSurface: (id: string) => void
   setZoom: (id: string, zoom: number) => void
@@ -411,14 +410,6 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     })
   },
 
-  resizeSurface: (id, w, h) => {
-    get().snapshotLayout()
-    set((s) => ({
-      surfaces: s.surfaces.map((it) =>
-        it.id === id ? { ...it, w: Math.max(160, w), h: Math.max(120, h) } : it
-      )
-    }))
-  },
 
   setZoom: (id, zoom) =>
     set((s) => ({

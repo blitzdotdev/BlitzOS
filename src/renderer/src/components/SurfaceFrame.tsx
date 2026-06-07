@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop, snapTargetFor } from '../store'
+import { useDesktop, snapTargetFor, primaryRect } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
@@ -307,6 +307,24 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     if (nh < MINH) {
       if (r.dir.includes('n')) ny = r.origY + r.origH - MINH // keep the bottom edge anchored
       nh = MINH
+    }
+    // Keep the resized window inside the primary area in normal mode (mirrors the move clamp; a
+    // title bar must not slide under the top titlebar — the #29 invariant, for resize too).
+    const st0 = useDesktop.getState()
+    if (st0.mode === 'desktop') {
+      const pr = primaryRect(st0.viewport)
+      if (nx < pr.x) {
+        nw -= pr.x - nx
+        nx = pr.x
+      }
+      if (ny < pr.y) {
+        nh -= pr.y - ny
+        ny = pr.y
+      }
+      if (nx + nw > pr.x + pr.w) nw = pr.x + pr.w - nx
+      if (ny + nh > pr.y + pr.h) nh = pr.y + pr.h - ny
+      nw = Math.max(MINW, nw)
+      nh = Math.max(MINH, nh)
     }
     useDesktop.getState().updateSurface(surface.id, { x: Math.round(nx), y: Math.round(ny), w: Math.round(nw), h: Math.round(nh) })
   }
