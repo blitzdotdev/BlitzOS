@@ -249,3 +249,21 @@ export async function callProvider(descriptor, ctx = {}) {
   // Default-deny credential redaction on every read/write response.
   return { ok: true, status: res.status, data: json == null ? text : redact(json) }
 }
+
+/** Blocking convenience used by the interactive transports: run the call; if it needs a write approval,
+ *  ask the human via ctx.requestApproval(approvalRequest) -> Promise<token|null>, then retry with the
+ *  token (the engine re-binds + consumes it). Reads/denied/other results pass straight through. The
+ *  requestApproval impl (renderer card + IPC) lives in the transport; this orchestration is generic +
+ *  testable. ctx.requestApproval absent → approval_required surfaces to the caller unchanged. */
+export async function callProviderGated(descriptor, ctx = {}) {
+  const r = await callProvider(descriptor, ctx)
+  if (r.code !== 'approval_required' || !r.approvalRequest || typeof ctx.requestApproval !== 'function') return r
+  let token
+  try {
+    token = await ctx.requestApproval(r.approvalRequest)
+  } catch {
+    token = null
+  }
+  if (!token) return { ok: false, code: 'approval_denied', status: 403, error: 'the human did not approve this write' }
+  return callProvider({ ...descriptor, approvalToken: token }, ctx)
+}

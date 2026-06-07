@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval'
   [k: string]: unknown
 }
 
@@ -140,6 +140,17 @@ const api = {
   /** Drop all consent for a surface (its widget code changed → re-approval required). */
   revokeConsent(surfaceId: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('widget:consent:revoke', surfaceId)
+  },
+
+  // #51 provider-access: the renderer answers a write-approval card + grants sensitive-read consent.
+  approveProviderCall(id: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('os:provider-approve', id)
+  },
+  denyProviderCall(id: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('os:provider-deny', id)
+  },
+  grantProviderConsent(provider: string, allow: boolean): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('os:provider-consent', provider, allow)
   },
 
   // Workspaces (one feature, both modes). Electron thumbnails are captured main-side (capturePage)

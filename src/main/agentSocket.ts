@@ -19,6 +19,7 @@ import type { ControlAction } from './cdp'
 import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from './widget-catalog.mjs'
 import type { SaveWidgetInput } from './widget-catalog.mjs'
 import { integrationStatuses, connectedProviders } from './integrations'
+import { runProviderCall } from './provider-bridge'
 import { waitForEvents, latestSeq, isContentShared, redactMoment, EVENTS_REMINDER } from './events'
 // The single source of truth for the BlitzOS operating doc. Vite inlines the .md at
 // build (the main bundle has no runtime fs access to it); the server preview reads the
@@ -197,6 +198,34 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
           path: '/list_state',
           description: 'List the surfaces currently open on the canvas.',
           handler: () => osGetState()
+        },
+        {
+          path: '/provider_call',
+          description:
+            'Make an authenticated request to a CONNECTED integration (provider) and get the JSON back — ' +
+            'use it to build whatever the user needs (their unread mail, repos, issues, messages, …). The OS ' +
+            'injects the credential server-side; you NEVER see the token. Reads (GET) are broad — pass any path ' +
+            "under the provider's API. Writes (POST/PUT/PATCH/DELETE) pop a human approval card. A sensitive read " +
+            '(message bodies, file contents) returns code:"consent_required" until the human approves once. ' +
+            'Args: {provider, method?, path, query?, body?}. Connected providers are in list_integrations.',
+          input_schema: {
+            type: 'object',
+            required: ['provider', 'path'],
+            properties: {
+              provider: { type: 'string' },
+              method: { type: 'string' },
+              path: { type: 'string', description: 'provider-relative, e.g. /user/repos' },
+              query: { type: 'object' },
+              body: {}
+            }
+          },
+          handler: async ({ body }) => {
+            const a = parse(body)
+            return runProviderCall(
+              { provider: String(a.provider || ''), method: a.method ? String(a.method) : undefined, path: String(a.path || ''), query: a.query as Record<string, unknown> | undefined, body: a.body },
+              'relay'
+            )
+          }
         },
         {
           path: '/read_window',

@@ -1,7 +1,8 @@
-import { app, BrowserWindow, protocol } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain } from 'electron'
 import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
+import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent } from './provider-bridge'
 import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { initCdp } from './cdp'
@@ -144,6 +145,22 @@ app.whenReady().then(() => {
 
   // Widget data bridge: relays sandboxed widgets' integration-data requests (consented).
   registerWidgets()
+
+  // #51 general provider-access substrate: route write-approval cards to the renderer, and accept the
+  // human's approve/deny/consent back. Reads need none of this; only WRITES surface a card.
+  setProviderBroadcast((a) => mainWindow?.webContents.send('os:action', a))
+  ipcMain.handle('os:provider-approve', (_e, id: string) => {
+    resolveProviderApproval(String(id))
+    return { ok: true }
+  })
+  ipcMain.handle('os:provider-deny', (_e, id: string) => {
+    denyProviderApproval(String(id))
+    return { ok: true }
+  })
+  ipcMain.handle('os:provider-consent', (_e, provider: string, allow: boolean) => {
+    grantProviderConsent(String(provider), allow !== false)
+    return { ok: true }
+  })
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()

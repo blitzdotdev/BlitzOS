@@ -49,6 +49,8 @@ export default function App(): JSX.Element {
   const [showAi, setShowAi] = useState(false)
   const [showOverview, setShowOverview] = useState(false)
   const [activeWs, setActiveWs] = useState<string | null>(null)
+  // #51: a pending write-approval the agent requested (provider.call write) — the human OKs or denies.
+  const [providerApproval, setProviderApproval] = useState<{ id: string; summary: string; risk: string } | null>(null)
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
@@ -320,6 +322,11 @@ export default function App(): JSX.Element {
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
         if (surf && (surf.kind === 'web' || surf.kind === 'app')) surf.shared = true
         st.createSurface(surf)
+      }
+      else if (a.type === 'provider-approval') {
+        // The agent asked to perform a WRITE on a connected provider (#51) — show the human a card.
+        const req = a.request as { id?: string; summary?: string; risk?: string } | undefined
+        if (req && req.id) setProviderApproval({ id: String(req.id), summary: String(req.summary || 'a provider write'), risk: String(req.risk || 'write') })
       }
       else if (a.type === 'move') st.moveSurface(String(a.id), Number(a.x), Number(a.y))
       else if (a.type === 'update') st.updateSurface(String(a.id), (a.patch ?? {}) as Partial<Surface>)
@@ -760,6 +767,38 @@ export default function App(): JSX.Element {
 
       {openFolder && <FolderOverlay folder={openFolder} />}
       {openDirPath !== null && <DirOverlay path={openDirPath} />}
+
+      {/* #51: the agent asked to perform a WRITE on a connected account — the human must approve it
+          (per-call, request-bound). Reads never reach here. */}
+      {providerApproval && (
+        <div className="consent" onPointerDown={(e) => e.stopPropagation()}>
+          <div className="consent-card">
+            <h4>Allow the agent to {providerApproval.risk === 'destructive' ? <span style={{ color: 'var(--negative, #e5484d)' }}>make a destructive change</span> : 'make a change'} to your account?</h4>
+            <p><code>{providerApproval.summary}</code></p>
+            <p>This acts on your real connected account. It runs only if you allow it.</p>
+            <div className="consent-actions">
+              <button
+                className="btn ghost"
+                onClick={() => {
+                  window.agentOS?.denyProviderCall?.(providerApproval.id)
+                  setProviderApproval(null)
+                }}
+              >
+                Deny
+              </button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  window.agentOS?.approveProviderCall?.(providerApproval.id)
+                  setProviderApproval(null)
+                }}
+              >
+                Allow
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

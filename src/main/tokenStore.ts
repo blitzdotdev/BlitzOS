@@ -6,6 +6,8 @@ export interface StoredRecord {
   provider: string
   label: string
   secrets: Record<string, unknown>
+  /** #51: OAuth scopes granted at connect, recorded authoritatively (for the write scope-preflight). */
+  grantedScopes?: string[]
   connectedAt: number
 }
 

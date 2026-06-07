@@ -3,6 +3,7 @@ import { join } from 'path'
 import { readFileSync, existsSync } from 'fs'
 import { loadRecord, saveRecord, deleteRecord } from './tokenStore'
 import { loopbackAuthorize, REDIRECT_URI } from './oauth'
+import { capturedScopes } from './provider-specs.mjs'
 
 interface Def {
   id: string
@@ -277,7 +278,7 @@ export function registerIntegrations(getWindow: () => BrowserWindow | null): voi
     }
     try {
       const { label, secrets } = await connectProvider(id)
-      saveRecord({ provider: id, label, secrets, connectedAt: Date.now() })
+      saveRecord({ provider: id, label, secrets, grantedScopes: capturedScopes(secrets), connectedAt: Date.now() })
       emitUpdated()
       return { ok: true, label }
     } catch (e) {

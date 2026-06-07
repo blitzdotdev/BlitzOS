@@ -1,5 +1,5 @@
 // #51 — unit test for the callProvider ENGINE (mock fetch + injected clock). Pure Node.
-import { callProvider, createApprovalLedger, createRateLimiter } from '../src/main/provider-call.mjs'
+import { callProvider, callProviderGated, createApprovalLedger, createRateLimiter } from '../src/main/provider-call.mjs'
 
 let failures = 0
 const ok = (name, cond, extra) => {
@@ -131,6 +131,29 @@ console.log('\naudit hook fires for every call:')
   const entries = []
   await callProvider({ provider: 'github', method: 'GET', path: '/user', caller: { kind: 'agent', transport: 'relay' } }, { record: ghRec, fetchImpl: makeFetch(() => resp(200, {})), now, audit: (e) => entries.push(e) })
   ok('audit entry recorded with decision/status/provider', entries.length === 1 && entries[0].decision === 'ok' && entries[0].provider === 'github', entries)
+}
+
+console.log('\ncallProviderGated — blocking write-approval orchestration:')
+{
+  const ledger = createApprovalLedger()
+  const write = { provider: 'github', method: 'POST', path: '/repos/o/r/issues', body: { title: 'Z' }, caller: { kind: 'agent', transport: 'localhost' } }
+  // human APPROVES via the injected requestApproval (mirrors the renderer card → ledger.approve)
+  const fApprove = makeFetch(() => resp(201, { number: 9 }))
+  const rA = await callProviderGated(write, {
+    record: ghRec,
+    approvals: ledger,
+    fetchImpl: fApprove,
+    now,
+    requestApproval: async (req) => ledger.approve(req.id, now())
+  })
+  ok('approved write executes via gated wrapper', rA.ok && rA.status === 201 && fApprove.calls.length === 1, rA)
+  // human DENIES (requestApproval resolves null)
+  const fDeny = makeFetch(() => resp(201, {}))
+  const rD = await callProviderGated(write, { record: ghRec, approvals: createApprovalLedger(), fetchImpl: fDeny, now, requestApproval: async () => null })
+  ok('denied write → approval_denied, no fetch', rD.code === 'approval_denied' && fDeny.calls.length === 0, rD)
+  // no requestApproval handler → approval_required passes through unchanged
+  const rP = await callProviderGated(write, { record: ghRec, approvals: createApprovalLedger(), fetchImpl: makeFetch(() => resp(201, {})), now })
+  ok('no approval handler → approval_required surfaces unchanged', rP.code === 'approval_required', rP)
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)
