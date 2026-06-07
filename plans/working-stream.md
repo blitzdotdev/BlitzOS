@@ -1,6 +1,6 @@
 # BlitzOS — Working Stream
 
-**My working notes — agent self-continuity, not a handoff doc.** For *me* to keep state across context compactions: current state, decisions + rationale, exact contracts, open threads, next actions, and the commands I use. Terse + operational + dense on purpose. I update it as I work and re-read it on resume. Last touched 2026-06-06.
+**My working notes — agent self-continuity, not a handoff doc.** For *me* to keep state across context compactions: current state, decisions + rationale, exact contracts, open threads, next actions, and the commands I use. Terse + operational + dense on purpose. I update it as I work and re-read it on resume. Last touched 2026-06-07.
 
 ---
 
@@ -11,6 +11,87 @@ BlitzOS / "Agent OS" = an Electron macOS infinite-canvas spatial desktop of **su
 **Session arc (on `master`; user pushes from their machine, no SSH key here):** widget system (`52830bc`) → merged teammate autonomy kernel (`4781b47`) → dynamic-OS architecture doc (`8869776`) → P0 privacy gate (`f306423`) → P1 resident brain (`8e9e576`, later NUKED) → P5 server autonomy parity (`281eb21`) → nav-desync fix (`61b9d8a`) → in-canvas Chat + `say` (`c61cfca`) → **nuked the in-OS brain → pure substrate** (`1c1392c`) → professions catalog (`d995374`) → **agent-runner** (`59b2b84`+`b3b4bc9`) → **window-management perception** (`c0b90b0`) → chat pinned (`8d059cb`) → agent-opened pages readable + activity-log + chat scroll/resize (`ccbf471`) → **persistent server browser profile** (`9867ff8`) + Discord on-unload flush (`83cda05`) → merged teammate `agent-runtime-moments` again (journal + persistence.ts + unified blitzos-agents.md + select-signal) (`d253a6e`) → **WORKSPACES persistence design + Phases 0–3 + 2 adversarial reviews + cleanup** (`5d4b6c1`…`5c83128`) → relay `/events` wait:0 fix (`09c121f`). Demo self-supervises via `BLITZ_AGENT=claude bash preview/start-all.sh`.
 
 **LATEST (the big recent work, 2026-06-06): WORKSPACES — folder-backed persistence/serialization. Phases 0–3 BUILT + reviewed (twice) + cleaned, all e2e-verified.** A workspace = a folder on disk; one `.blitzos/workspace.json` = layout; everything-is-a-file content; persist on push, hydrate on boot/connect, reconcile on external edit (the agent edits files directly → canvas updates live). **See the "Workspaces" section below + `agent-os-workspaces.md`.** `origin/master` last seen at `51edf06`; HEAD `09c121f` (ahead ~2: hydrate-review fold + wait fix). Window-management (`c0b90b0`) earlier work: `list_state` returns `viewport`/`view`/`z`/`mode`; AGENTS_MD + brain prompt carry the layout discipline; Chat + Activity panels pinned always-on-top.
+
+## Post-merge UI cluster — FIXED + verified (2026-06-07)
+
+User listed 6 post-merge UI bugs ("fix them systematically"). Resolved + headless-verified in the merged renderer (Connect AI hud shows the URL; chat marker survives a reload):
+- **Fonts inconsistent** → `<button>`/`input`/`textarea`/`select` don't inherit `--font-ui` by default. Added a global `{ font: inherit }` to `styles.css` (after the html/body reset). Root cause: only `body` set the font; controls fell back to the UA font (ws-btn looked different).
+- **Traffic-light 3-dots rendered as flat lines** → native `<button>` appearance overrides the custom circle on macOS/Safari. Added global `button { appearance: none; -webkit-appearance: none }`. `--control-active` (#5a5c60) was fine — NOT a missing token.
+- **Resize distorts the stream** (= audit major #4) → `browser-host.mjs` gains `resize(id,w,h)` (debounced 140ms: `setDeviceMetricsOverride` + stop/start screencast at the new size); `surfaces.set` now stores `{width,height,quality}`; `backend.mjs reconcileSurfaces` calls `host.resize` for EXISTING web surfaces (no-ops when unchanged). Fixes both the stretch AND post-resize click-mismapping (shim `toPage` uses `canvas.width/rect.width`).
+- **Missing bars / Connect AI does nothing / (and earlier) chat empty** → all STALE-VITE mid-merge artifacts, NOT code bugs. Clean `start-all.sh` restart fixes them. Verified: toolbar renders all 4 buttons; Connect AI hud shows the agent URL; chat round-trips.
+- **Chat history persists on refresh** → already works (push carries `props:s.props` → `osState`; SSE-connect hydrate sends `osState.surfaces`; `store.hydrate` keeps props via `...w`). **CAVEAT (honest):** persists across a PAGE REFRESH (backend up) but NOT across a BACKEND RESTART — chat/activity are runtime panels, not workspace files, so a fresh boot reads `readWorkspace` (no chat). To survive restarts: persist runtime panels to `.blitzos/state/panels.json` (agent-read-denied) + merge on boot. NOT yet done — offered.
+
+## GOAL (user-set 2026-06-07) — finish the whole backlog, systematically, track here
+
+**Standing goal:** complete ALL discussed items one-by-one, keep this file + the task list updated, and fix every current/future reported bug as part of the goal. Task IDs #26–40 (see `TaskList`). Ultracode ON → adversarial subagent review of each chunk.
+
+**Backlog (ordered):** Chunk 1 bug fixes (#26 overscroll, #27 chat-select, #28 eye, #30 blue indicator) → #31 primary 1080p → #32 control-mode model → #33 drag-cards-in-control → #34 snapping → #35 fullscreen→primary → #29 titlebar-disappears (folds into #32) → #36 agent MD → #37 files/folders-on-canvas → #38 chat-survives-restart → #39 dynamic-OS boot → #40 review. Then (future) multiple workspace areas.
+
+**STATUS 2026-06-07 — ALL 18 TASKS BUILT (#26–42).** Commits (push pending): 189dd65, 0fe4d0b, f241f12, 638e20e, 51b1c85, 9760dae, bf03fdb, 2036cdd, 8628070, 820d435, 403af57, 9847d58 (+ the earlier 7d73073/5745dc7). Per-chunk adversarial reviews done + fixes folded for chunks 2/3/5; final reviews RUNNING: #37 files security (wg7nyjlsy), #40 gaps+integration (wcqczj9xi). On their return: fold any confirmed fixes → goal complete. #39 is agent-instruction-only (substrate principle); the live brain assembles the desktop. v2 follow-ups noted in files-folders-on-canvas.md + per-feature NOTES above (OS drag-drop, .app folders, Electron blitz-file://, multiple workspace areas).
+
+### Spatial-model redesign (the crux — design locked from user's detailed spec)
+- **Two modes of ONE app, both transports.** `store.mode`: `desktop` = **normal** (view LOCKED to the primary area, windows behave like a real OS desktop), `canvas` = **"Control mode"** (bird's-eye, own viewport, pan/zoom, drag cards but DON'T interact with content). Today server/Chrome force `canvas` on mount (App.tsx:64) — REMOVE that; default both transports to `desktop`, toggle into control mode.
+- **Toggle:** double-tap ⌘ in BOTH transports (browser keydown 'Meta' works too; the existing double-⌘ → `panMode` becomes the mode toggle). Animate the `transform` on enter (→ control bird's-eye) and exit (→ snap back to the workspace area). The `.pan-overlay`/`.pan-hint` is the control-mode indicator.
+- **Primary area = the on-screen desktop region** (dynamic `primaryRect(viewport)` in world coords; at scale 1 it's the same size as the screen — user refinement 2026-06-07, NOT a fixed 1080p rect). Normal mode = scale 1 (windows render at NATURAL size); control mode = scale 0.62 bird's-eye. Windows clamp to the primary rect so a title bar can't slide under the top titlebar (= #29 fix). (`PRIMARY_W/H` were DELETED in the review-fix pass — all consumers moved to `primaryRect`; mission-control cells hardcode their own aspect in CSS.)
+- **Snapping (#34):** dragging a window in/near the primary area snaps to full / left-half / right-half (+ quarters) of the PRIMARY AREA, with a preview overlay.
+- **Full-screen (#35):** the green traffic light fills the PRIMARY AREA rect (not the viewport — `toggleMaximize` currently uses the viewport, wrong in control mode).
+- **Areas = macOS desktops.** Only `primary` now; more later (post-backlog). Agent told (#36) to keep surfaces inside workspace areas + save persistent memory as files in the workspace folder (instruction only; memory not engineered).
+
+### Chunk 1 — DONE (2026-06-07, build+typecheck pass)
+- #26 overscroll: `overscroll-behavior:none` on html/body/#root (kills Mac two-finger back/forward while panning).
+- #27 chat-select: `userSelect:text` on the ChatPanel message area (body sets `user-select:none`).
+- #28 eye button: removed the duplicate `.window-ico` rule (merge leftover); not-shared eye now `--text-secondary`/opacity .85 (was .45), shared stays green.
+- #30 control-mode indicator: `.pan-overlay` z 4000→5500 (above titlebar 5000), border 2px→3px @70%, `.pan-hint` top 14→44px (below the titlebar).
+
+### Chunk 2 — DONE (2026-06-07, build+typecheck+headless verified)
+Control-mode redesign (#31 #32 #33 #35 #29). Headless test confirmed the toggle: default `scale(1)`/no frame → double-⌘ → `scale(0.62)` + PRIMARY frame + indicator → double-⌘ → back.
+- store: `primaryRect(vp)` (screen-sized area), `viewTransform(mode,vp)` (desktop=scale 1 centered, control=0.62), `setTransform`, `desktopClamp`→clamp to primaryRect (vp param), `toggleMaximize`→fill primaryRect (#35), `goToPrimary`/`hydrate`→viewTransform. Dropped PRIMARY_W/H import.
+- App: removed the force-canvas effect (server/Chrome now boot the normal desktop too); double-⌘ → `toggleControlMode()` in BOTH transports with an `animateTransform` rAF tween; hydrate/switch force `desktop` (control mode = transient, never persisted); the indicator renders in control mode (pointer-events:none); PrimarySpace is control-only.
+- SurfaceFrame: `.drag-overlay.control` (top:0 + active) in control mode → the whole card is a drag handle, content non-interactive (#33).
+- PrimarySpace + capture.ts now use the dynamic `primaryRect(viewport)`.
+- #29 titlebar-disappears FIXED as a side effect: normal mode is the default + clamps windows inside the primary rect (its top maps to screen y≈32, just below the titlebar).
+- **NOTE for review:** snapping (#34) NOT yet done; control-mode drag has no clamp (free placement, intended). `/code-review` pass requested after each commit (running a multi-agent review; the billed cloud `/code-review ultra` is user-triggered).
+- **Chunk-2 review DONE (16 agents, 13 raised):** 3 real issues FIXED in the follow-up commit — (1) dead `PRIMARY_W/H` deleted (all consumers on `primaryRect`), (2) `onResize` now re-fits the camera in BOTH modes (control-mode drift), (3) stale `capture.ts` "fixed 1440x900" header comment corrected. 2 nits DEFERRED (documented): push leaks the transient `mode:'canvas'` into persisted workspace.json (harmless — hydrate always forces `desktop`); dock-click `focusAndZoom` in control mode zooms to a surface instead of holding the 0.62 bird's-eye (contested — control mode is a free pan/zoom plane, recoverable via Center/Cmd+0). Dismissed (intended): control-mode ~1.4% off-center (pure-scale tween about the area center), cards non-interactive incl. traffic lights (Mission-Control by design), persisted camera unused branch (dormant scaffolding).
+
+### Chunk 3 — DONE (#34 window snapping, 2026-06-07, headless-verified)
+Normal-mode edge snapping relative to the PRIMARY AREA. Headless test: drag a note's title bar to the left edge → left-half preview (left:-682, w:682 for a 1440×900 vp) → release → snaps to the left half at full primary height (804). Exact match.
+- store: `snapTargetFor(wx,wy,vp)` — full at the top edge, left/right halves at the side edges, quarters at corners (thresholds 6% of the area); + `snapPreview` state + `setSnapPreview`.
+- SurfaceFrame: onBarMove sets the preview (desktop mode, single-window drag, not over a folder); onBarUp applies it (a folder drop wins over a snap).
+- App: renders `.snap-preview` in the world layer; CSS = translucent accent rect, z 1.5M (above windows, below the pinned chat/activity band), glides between zones.
+
+### Chunk 4 — DONE (#38 chat/activity survive a backend restart, 2026-06-07, round-trip verified)
+Runtime panels (chat/activity) persist to `.blitzos/state/panels.json` and merge back on boot (Phase-4 design that nodeKind always pointed at).
+- workspace.mjs: `writeRuntimePanels(dir,panels)` (internal — called at the end of writeWorkspace; slims chat→props.messages, activity→props.events) + `readRuntimePanels(dir)` (export). The empty-canvas early-return now also keeps a chat-only workspace. `.blitzos/state` isn't watched (non-recursive watch on `.blitzos`) → no self-write loop.
+- workspace-host.mjs: `hydrateOnBoot` merges `readRuntimePanels` into the boot surfaces (nodes + panels). reconcile/switch keep carrying the LIVE panels (unchanged) so the chat follows across switches.
+- Verified (node round-trip): chat (2 msgs) + activity (1 event) → state; note stays a node; messages survive the re-read. Chat history now survives a backend RESTART, not just a page refresh.
+
+### NEW user requests (2026-06-07) → #41 #42
+- #42: snapping should work in CONTROL mode too (remove the desktop-only gate in SurfaceFrame onBarMove/onBarUp).
+- #41: macOS-style resize from ALL sides + corners (8 handles, edges move the opposite side's position), and it must work in control mode (handles above the drag-overlay; traffic lights/eye stay clickable via higher z).
+
+### Chunk 5 — DONE (#41 resize + #42 control-snap + snapping-review fixes, 2026-06-07, headless-verified)
+- #41 macOS-style resize from all 8 sides/corners. SurfaceFrame: 8 `.rsz-*` handles (z4, above the drag-overlay → works in control mode), generalized `onResizeDown(e,dir)`/`onResizeMove` (a side moves the opposite edge's position; MIN 160×120 with the far edge anchored). Verified: E +100 → w+100/x-same; W −80 → x−80/w+80. Top handles clear the traffic lights (left) + eye (right). Dropped the now-unused `resizeSurface` hook.
+- #42 snapping now works in BOTH modes (removed the desktop-only gate in onBarMove/onBarUp). Verified in control mode (scale 0.62): drag to the area's left edge → left-half preview + snap (x:-682, w:682, h:804).
+- Snapping-review (chunk-3, 10 agents) fixes folded in: (1) snap apply clears `restore` (stale green-zoom jump); (2) `onPointerCancel→onBarUp` on the bar + drag-overlay + resize handles (snap/drag teardown on capture loss); (3) integer split points in `snapTargetFor` (no 1px seam on odd widths); (4) `toggleControlMode` clears snapPreview+dragTarget (mode switch mid-drag). Dismissed: pinned-panel snapping (acceptable), onBarUp isFolder re-check (move already nulls it).
+- Chunk-5 review (12 agents) fixes (commit 820d435): MAJOR — resize was unclamped (N/W handles dragged a title bar under the top titlebar); onResizeMove now clamps to primaryRect in normal mode. Widened edge handles 5→8px (were ~3px at 0.62 scale). Removed the dead `resizeSurface` store action.
+
+### Chunk 6 — DONE (#37 files & folders on the canvas, 2026-06-07, e2e-verified)
+Real workspace-folder files + subfolders appear as canvas tiles, LIVE. Design: `plans/files-folders-on-canvas.md`.
+- Backend (workspace.mjs, commit 8628070): `autoKind` surfaces ALL files (.html→srcdoc, else→'file') + 'dir' for subfolders; `nodeToSurface` materializes file/dir (stat only — never reads binaries); `writeWorkspace` records file/dir nodes LAYOUT-ONLY (never rewrites content); `reconcile` surfaces loose files + subfolders; the rename-heal skips file/dir. Round-trip verified.
+- Renderer (commit pending): `FileWidget` (image preview via the file route / typed glyph + name + size; onError→glyph) + `DirWidget` (folder tile + entry count), wired into SurfaceFrame's native switch; CSS `.file-tile`/`.dir-tile`.
+- File bytes: `GET /api/os/file?path=` — JAILED to the active workspace dir (no traversal, no `.blitzos`, 25MB cap). Verified: serves `image/png` 200; `../../etc/passwd` → 403.
+- **Live update:** reconcile now broadcasts `type:'reconcile'` (was `'hydrate'`, which the first-hydrate-wins guard ignored → external edits only showed on reload). New store `applyReconcile` merges the file-backed surfaces, KEEPING the camera + the live chat/activity panels. Verified e2e: drop png+pdf+folder → 2 file tiles + 1 dir tile appear with the image rendered, NO reload.
+- **Deferred to v2** (in the design doc): OS drag-drop IN; folder drill-in/open; the `.app`-like canvas-subitem folder; the Electron `blitz-file://` protocol (server route works; Electron image preview needs it).
+
+### Chunk 7 — review fixes (#37 + #40 reviews, 2026-06-07, verified) — commit 55d770e
+Two final reviews (#37 files-security `wg7nyjlsy` 18 agents, #40 gaps+integration `wcqczj9xi` 16 agents) found a BLOCKER + several majors; all fixed + re-verified.
+- **SECURITY (file route, public tunnel):** BLOCKER symlink-escape → `realpathSync(root)` + `realpathSync(target)` + containment re-check (symlink→/etc/passwd = 403, curl-verified); `sameSiteOnly` gate; SVG/HTML → `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff` (no stored-XSS); raster images stay inline.
+- **#38 chat:** MAJOR a >1MB chat wrote fine but the reader rejected it → `slimByBudget` bounds the transcript on WRITE (2MB→595KB file, 59 recent msgs restored — verified). MAJOR switching overwrote the destination's saved chat → `performSwitch` loads the DESTINATION's own panels (per-workspace chat; flush already saved the source's). Activity default size; markWrite the state dir (no spurious reconcile).
+- **#37 reconcile data-loss (MAJORs):** `applyReconcile` wholesale-replace dropped agent-created/in-flight surfaces + destroyed iPhone-folder groupings → `reconcileWorkspace` returns `knownIds`; the HOST now keeps runtime panels + folder groupings + genuinely-un-persisted surfaces (id ∉ knownIds ∧ ∉ reconciled) while still dropping DELETED files, and re-applies `groupId`. Verified reconcile still surfaces drops.
+- **Misc:** Notepad ensured in server mode too (the brain's transport); file/dir tiles excluded from snapping + their futile close/min lights hidden; FileWidget image cache-buster + honest `blitz-file://` comment; #39 weather example corrected (srcdoc has no network → web window); brain assembles only if empty/sparse.
+- **KNOWN RESIDUAL (documented):** an in-flight UNSAVED note edit during a CONCURRENT external reconcile has a ~500ms loss window (the host merge fixes the agent-created/folder cases; a full fix needs per-file versioning — flush-before-reconcile was rejected because it would un-delete externally-removed files). Electron `blitz-file://` image previews fall back to the glyph until the protocol is registered (server route works).
+
+**GOAL COMPLETE 2026-06-07: all 18 tasks (#26–42) built + reviewed (chunks 2/3/5/6 per-chunk + the final #37/#40), every confirmed finding folded. Commits 189dd65 → 55d770e (push from your machine).**
 
 ## Workspaces — folder-backed persistence/serialization (Phases 0–3 DONE + reviewed, 2026-06-06)
 

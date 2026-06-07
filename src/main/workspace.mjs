@@ -18,7 +18,7 @@
 // by the server backend now and Electron main later.
 
 import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, copyFileSync, realpathSync } from 'node:fs'
-import { join, dirname, resolve, sep, extname } from 'node:path'
+import { join, dirname, resolve, sep, extname, basename } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 const VERSION = 1
@@ -73,6 +73,8 @@ function nodeKind(s) {
   if (s.kind === 'web' || s.kind === 'app') return 'web' // app folds to web (both serialize to a .weblink; no distinct 'app' node kind)
   if (s.kind === 'srcdoc') return 'srcdoc'
   if (s.kind === 'native' && s.component === 'note') return 'note'
+  if (s.kind === 'native' && s.component === 'file') return 'file' // a real file on disk (#37)
+  if (s.kind === 'native' && s.component === 'dir') return 'dir' // a real subfolder on disk (#37)
   return null
 }
 
@@ -208,6 +210,26 @@ export function writeWorkspace(dir, osState) {
     if (seen.has(s.id)) continue
     const kind = nodeKind(s)
     if (!kind) continue
+    // file/dir nodes are REAL files/subfolders already on disk — record layout only, never rewrite
+    // their content. Their stable path comes from the prior workspace.json (reconcile assigned it).
+    if (kind === 'file' || kind === 'dir') {
+      const rel = idToPath.get(s.id)
+      if (!rel || !safeJoin(dir, rel)) continue // can't locate the real file/dir → skip
+      seen.add(s.id)
+      const fview = typeof s.title === 'string' && s.title ? { title: s.title } : {}
+      nodes.push({
+        id: s.id,
+        path: rel,
+        kind,
+        x: Math.round(s.x),
+        y: Math.round(s.y),
+        w: Math.round(s.w),
+        h: Math.round(s.h),
+        ...(Object.keys(fview).length ? { view: fview } : {})
+      })
+      order.push({ id: s.id, z: s.z || 0 })
+      continue
+    }
     const c = contentFor(kind, s)
     if (!c) continue
     seen.add(s.id)
@@ -234,9 +256,14 @@ export function writeWorkspace(dir, osState) {
     order.push({ id: s.id, z: s.z || 0 })
   }
 
+  // Runtime panels (chat / agent-activity) aren't folder nodes, but their content (the chat
+  // transcript, the activity feed) must survive a backend RESTART — persist them to
+  // .blitzos/state/panels.json (machine-local) and merge them back in on boot (#38).
+  const runtimePanels = surfaces.filter((s) => s && s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+
   // Don't materialize an empty workspace.json (or scaffold) for a fresh, empty canvas — only
-  // once there's something to persist (or a workspace already exists to keep in sync).
-  if (nodes.length === 0 && !existsSync(metaFile)) return { metaFile, nodeCount: 0 }
+  // once there's something to persist (a node, a runtime panel, or an existing workspace to sync).
+  if (nodes.length === 0 && runtimePanels.length === 0 && !existsSync(metaFile)) return { metaFile, nodeCount: 0 }
 
   // z-order: node ids back→front, from the kept nodes only.
   const stack = order
@@ -261,7 +288,91 @@ export function writeWorkspace(dir, osState) {
   }
   writeMeta(metaFile, ws) // atomic + keeps workspace.json.bak
   scaffold(dir) // self-describing BLITZOS.md + .gitignore (once)
+  writeRuntimePanels(dir, runtimePanels) // chat/activity → .blitzos/state (survives a restart)
   return { metaFile, nodeCount: nodes.length }
+}
+
+// Runtime panels (chat / agent-activity) aren't folder nodes — their content is machine-local
+// session state, persisted under .blitzos/state so it survives a backend RESTART (that subdir
+// isn't watched, so no self-write loop). Merged back into the canvas on boot (#38).
+// Keep the persisted transcript/feed well under MAX_META (readRuntimePanels rejects a file over
+// that): keep the MOST-RECENT items that fit a byte budget, dropping the oldest. Without this an
+// unbounded chat writes fine yet is silently discarded on the next boot.
+function slimByBudget(arr, budget) {
+  if (!Array.isArray(arr)) return []
+  const out = []
+  let bytes = 0
+  for (let i = arr.length - 1; i >= 0; i--) {
+    let len
+    try {
+      len = JSON.stringify(arr[i]).length
+    } catch {
+      continue
+    }
+    if (out.length && bytes + len > budget) break
+    out.unshift(arr[i])
+    bytes += len
+  }
+  return out
+}
+function writeRuntimePanels(dir, panels) {
+  const stateDir = join(dir, '.blitzos', 'state')
+  const file = join(stateDir, 'panels.json')
+  try {
+    const created = !existsSync(stateDir)
+    mkdirSync(stateDir, { recursive: true })
+    if (created) markWrite(resolve(stateDir)) // suppress the one spurious reconcile the state-dir create can fire
+    const slim = (panels || []).map((s) => {
+      const isAct = s.component === 'activity'
+      const props = s.props && typeof s.props === 'object' ? s.props : {}
+      // Bound the transcript/feed on WRITE so the file is always producible + readable (≤ MAX_META).
+      const sp = isAct ? { ...props, events: slimByBudget(props.events, 150_000) } : { ...props, messages: slimByBudget(props.messages, 600_000) }
+      return {
+        id: s.id,
+        component: isAct ? 'activity' : 'chat',
+        x: Math.round(s.x) || 0,
+        y: Math.round(s.y) || 0,
+        w: Math.round(s.w) || (isAct ? 320 : 360),
+        h: Math.round(s.h) || (isAct ? 200 : 460),
+        z: s.z || 0,
+        title: typeof s.title === 'string' ? s.title : s.component,
+        props: sp
+      }
+    })
+    atomicWrite(file, JSON.stringify({ version: VERSION, panels: slim }, null, 2) + '\n')
+  } catch {
+    /* best-effort: runtime panels are a convenience, never block a workspace write */
+  }
+}
+
+/** Read the persisted runtime panels (chat/activity) back as surface descriptors (inverse of
+ *  writeRuntimePanels). Empty array if absent/corrupt. Used by the host on boot. */
+export function readRuntimePanels(dir) {
+  try {
+    const file = join(dir, '.blitzos', 'state', 'panels.json')
+    if (!existsSync(file)) return []
+    const raw = readFileSync(file, 'utf8')
+    if (raw.length > MAX_META) return []
+    const o = JSON.parse(raw)
+    const list = Array.isArray(o?.panels) ? o.panels : []
+    return list
+      .filter((s) => s && (s.component === 'chat' || s.component === 'activity'))
+      .slice(0, 4)
+      .map((s) => ({
+        id: String(s.id || (s.component === 'activity' ? 'activity' : 'chat')),
+        kind: 'native',
+        component: s.component === 'activity' ? 'activity' : 'chat',
+        x: Number(s.x) || 0,
+        y: Number(s.y) || 0,
+        w: Number(s.w) || (s.component === 'activity' ? 320 : 360),
+        h: Number(s.h) || (s.component === 'activity' ? 200 : 460),
+        z: Number(s.z) || 0,
+        title: typeof s.title === 'string' ? s.title : s.component,
+        props: s.props && typeof s.props === 'object' ? s.props : {}
+      }))
+  } catch {
+    return []
+  }
 }
 
 // A human-ish title from a content-file path ("grocery-list.md" -> "Grocery list").
@@ -287,6 +398,32 @@ function nodeToSurface(dir, n, z) {
   if (!n || typeof n.id !== 'string' || typeof n.path !== 'string') return null
   const abs = safeJoin(dir, n.path)
   if (!abs) return null // JAIL: a hand-edited workspace.json path can't escape the workspace
+  // file/dir nodes reference a REAL file/subfolder — never read it into memory (it may be a large
+  // binary); stat for metadata and let the renderer fetch image bytes over the jailed file route (#37).
+  if (n.kind === 'file' || n.kind === 'dir') {
+    let st
+    try {
+      st = statSync(abs)
+    } catch {
+      return null // vanished
+    }
+    const name = basename(n.path)
+    const view = n.view && typeof n.view === 'object' ? n.view : {}
+    const title = typeof view.title === 'string' && view.title ? view.title : name
+    const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || 200, h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z }
+    if (n.kind === 'dir') {
+      let entries = 0
+      try {
+        entries = readdirSync(abs).filter((e) => !e.startsWith('.')).length
+      } catch {
+        /* unreadable dir */
+      }
+      return { ...base, kind: 'native', component: 'dir', title, props: { dir: true, name, path: n.path, entries } }
+    }
+    const ext = extname(name).toLowerCase().replace(/^\./, '')
+    const isImage = /^(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(ext)
+    return { ...base, kind: 'native', component: 'file', title, props: { name, path: n.path, ext, bytes: st.size, isImage } }
+  }
   let content
   try {
     if (statSync(abs).size > MAX_CONTENT) return null // don't load a giant file whole into memory
@@ -365,7 +502,8 @@ function autoKind(name) {
   const ext = extname(name).toLowerCase()
   if (ext === '.weblink') return 'web'
   if (ext === '.md') return 'note'
-  return null
+  if (ext === '.html' || ext === '.htm') return 'srcdoc'
+  return 'file' // images, pdfs, archives, code, anything else → a file tile on the canvas (#37)
 }
 
 const BLITZOS_MD = `# This folder is a BlitzOS workspace
@@ -401,7 +539,10 @@ function scaffold(dir) {
   if (!existsSync(gi)) atomicWrite(gi, '# BlitzOS runtime state (machine-local, not part of the workspace)\n.blitzos/state/\n')
 }
 function defaultSizeFor(kind) {
-  return kind === 'note' ? { w: 240, h: 240 } : { w: 920, h: 640 }
+  if (kind === 'note') return { w: 240, h: 240 }
+  if (kind === 'file') return { w: 200, h: 200 }
+  if (kind === 'dir') return { w: 200, h: 170 }
+  return { w: 920, h: 640 }
 }
 
 /**
@@ -412,6 +553,41 @@ function defaultSizeFor(kind) {
  * @param {string} dir workspace folder
  * @param {{cx?:number, cy?:number}} [placeAt] world-space center to cascade new nodes around
  */
+/**
+ * Write a file the user DROPPED onto the canvas into the workspace folder (#37 / #43). Sanitizes the
+ * basename (strips path + leading dots, keeps the extension), picks a unique non-reserved name,
+ * jails the write to the workspace dir, and stamps it as a self-write so the watcher doesn't also
+ * reconcile it (the caller reconciles explicitly, at the drop position). Returns { rel } or null.
+ */
+export function writeDroppedFile(dir, name, buffer) {
+  const raw = String(name || 'file').replace(/[/\\]/g, '_').replace(/^\.+/, '').trim()
+  const ext = extname(raw)
+  const cleanExt = ext.replace(/[^a-zA-Z0-9.]+/g, '').slice(0, 12)
+  const stem =
+    (raw.slice(0, raw.length - ext.length) || 'file')
+      .replace(/[^a-zA-Z0-9._ -]+/g, '_')
+      .slice(0, 80)
+      .trim() || 'file'
+  let base = stem + cleanExt
+  if (RESERVED_ROOT.has(base.toLowerCase()) || base.startsWith('.')) base = 'file' + cleanExt
+  let rel = base
+  let abs = safeJoin(dir, rel)
+  let i = 2
+  while (abs && existsSync(abs)) {
+    rel = `${stem}-${i++}${cleanExt}`
+    abs = safeJoin(dir, rel)
+  }
+  if (!abs) return null
+  try {
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, buffer)
+    markWrite(resolve(abs))
+    return { rel }
+  } catch {
+    return null
+  }
+}
+
 export function reconcileWorkspace(dir, placeAt = {}) {
   const metaFile = join(dir, '.blitzos', 'workspace.json')
   let ws
@@ -423,6 +599,7 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   if (!ws || !Array.isArray(ws.nodes)) return null
   const nodes = ws.nodes.filter((n) => n && typeof n.id === 'string' && typeof n.path === 'string')
   const known = new Set(nodes.map((n) => n.path))
+  const knownIds = new Set(nodes.map((n) => n.id)) // persisted node ids — lets a caller tell an un-persisted surface from a deleted one
 
   let entries = []
   try {
@@ -431,14 +608,21 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     /* unreadable workspace dir */
   }
   const newFiles = entries.filter((e) => e.isFile() && autoKind(e.name) && !known.has(e.name) && safeJoin(dir, e.name)).map((e) => e.name)
+  // Subfolders surface as collapsed 'dir' tiles (#37). Skip dot-dirs (.blitzos/.git) + known ones.
+  const newDirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.') && !known.has(e.name) && safeJoin(dir, e.name)).map((e) => e.name)
 
   let changed = false
   // single-rename heal: a node's file is gone AND exactly one NEW file of the same kind exists.
+  // NOT for file/dir nodes — BlitzOS never renames the user's own files, so a rename-pair guess
+  // there would wrongly re-bind an unrelated dropped file (#37).
   const usedNew = new Set()
   for (const n of nodes) {
     const abs = safeJoin(dir, n.path)
     if (abs && existsSync(abs)) continue
-    const cand = newFiles.filter((f) => !usedNew.has(f) && (autoKind(f) === n.kind || (n.kind === 'app' && autoKind(f) === 'web')))
+    const cand =
+      n.kind === 'file' || n.kind === 'dir'
+        ? []
+        : newFiles.filter((f) => !usedNew.has(f) && (autoKind(f) === n.kind || (n.kind === 'app' && autoKind(f) === 'web')))
     if (cand.length === 1) {
       n.path = cand[0]
       usedNew.add(cand[0])
@@ -464,6 +648,12 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     i++
     changed = true
   }
+  for (const d of newDirs) {
+    const sz = defaultSizeFor('dir')
+    alive.push({ id: randomUUID(), path: d, kind: 'dir', x: Math.round(cx - sz.w / 2 + (i % 6) * 28), y: Math.round(cy - sz.h / 2 + (i % 6) * 24), w: sz.w, h: sz.h })
+    i++
+    changed = true
+  }
 
   const stackPrev = Array.isArray(ws.stack) ? ws.stack : []
   const zByIdx = new Map(stackPrev.map((id, idx) => [id, idx + 1]))
@@ -480,7 +670,7 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stack: surfaces.map((s) => s.id), nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
-  return { surfaces, camera, mode, changed }
+  return { surfaces, camera, mode, changed, knownIds }
 }
 
 // ===========================================================================================

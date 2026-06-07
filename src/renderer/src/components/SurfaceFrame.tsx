@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop } from '../store'
+import { useDesktop, snapTargetFor, primaryRect } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
 import { IconEye } from './Icons'
 import { FolderWidget } from './FolderWidget'
+import { FileWidget, DirWidget } from './FileWidget'
 import { NOTE_PAPER } from '../paper'
 
 type BridgeReply = { ok: boolean; data?: unknown; error?: string }
@@ -21,7 +22,6 @@ interface WebviewMethods {
 
 export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
-  const resizeSurface = useDesktop((s) => s.resizeSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
   const toggleMaximize = useDesktop((s) => s.toggleMaximize)
@@ -33,10 +33,11 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const isDropTarget = useDesktop((s) => s.dragTarget === surface.id)
   const isAbsorbing = useDesktop((s) => s.absorbing.includes(surface.id))
   const grabMode = useDesktop((s) => s.grabMode)
+  const isControl = useDesktop((s) => s.mode === 'canvas') // control mode: drag cards, don't interact
   const [isDragging, setIsDragging] = useState(false)
 
   const drag = useRef<{ startX: number; startY: number; items: Array<{ id: string; ox: number; oy: number }> } | null>(null)
-  const resize = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null)
+  const resize = useRef<{ startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; dir: string } | null>(null)
   const webviewRef = useRef<HTMLWebViewElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -242,6 +243,9 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       (w) => w.component === 'folder' && !dragged.has(w.id) && wx >= w.x && wx <= w.x + w.w && wy >= w.y && wy <= w.y + w.h
     )
     st.setDragTarget(folder ? folder.id : null)
+    // Snap preview (BOTH modes, #42): dragging a single window near a primary-area edge shows where
+    // it will dock on release (full / left|right half / quarter). Suppressed over a folder target.
+    st.setSnapPreview(d.items.length === 1 && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport) : null)
   }
   function onBarUp(e: React.PointerEvent): void {
     try {
@@ -254,33 +258,90 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     drag.current = null
     const st = useDesktop.getState()
     const target = st.dragTarget
+    const snap = st.snapPreview
     st.setDragTarget(null)
+    st.setSnapPreview(null)
     if (d && target) st.dropIntoFolder(target, d.items.map((it) => it.id))
+    // Apply the snap; clear `restore` so a previously-maximized window's green-zoom isn't stale.
+    else if (d && snap && d.items.length === 1 && !isFileTile) st.updateSurface(d.items[0].id, { ...snap, restore: undefined })
   }
 
-  function onResizeDown(e: React.PointerEvent): void {
+  // macOS-style resize from any side/corner. `dir` is a combination of n/s/e/w; a side handle
+  // resizes that edge and moves the opposite edge's position. Works in control mode too (the
+  // handles sit above the drag-overlay).
+  function onResizeDown(e: React.PointerEvent, dir: string): void {
     e.stopPropagation()
     focusSurface(surface.id)
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-    resize.current = { startX: e.clientX, startY: e.clientY, origW: surface.w, origH: surface.h }
+    try {
+      ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      /* synthetic event */
+    }
+    resize.current = { startX: e.clientX, startY: e.clientY, origX: surface.x, origY: surface.y, origW: surface.w, origH: surface.h, dir }
   }
   function onResizeMove(e: React.PointerEvent): void {
-    if (!resize.current) return
+    const r = resize.current
+    if (!r) return
     const scale = useDesktop.getState().transform.scale
-    resizeSurface(
-      surface.id,
-      resize.current.origW + (e.clientX - resize.current.startX) / scale,
-      resize.current.origH + (e.clientY - resize.current.startY) / scale
-    )
+    const dxw = (e.clientX - r.startX) / scale
+    const dyw = (e.clientY - r.startY) / scale
+    const MINW = 160
+    const MINH = 120
+    let nx = r.origX
+    let ny = r.origY
+    let nw = r.origW
+    let nh = r.origH
+    if (r.dir.includes('e')) nw = r.origW + dxw
+    if (r.dir.includes('s')) nh = r.origH + dyw
+    if (r.dir.includes('w')) {
+      nw = r.origW - dxw
+      nx = r.origX + dxw
+    }
+    if (r.dir.includes('n')) {
+      nh = r.origH - dyw
+      ny = r.origY + dyw
+    }
+    if (nw < MINW) {
+      if (r.dir.includes('w')) nx = r.origX + r.origW - MINW // keep the right edge anchored
+      nw = MINW
+    }
+    if (nh < MINH) {
+      if (r.dir.includes('n')) ny = r.origY + r.origH - MINH // keep the bottom edge anchored
+      nh = MINH
+    }
+    // Keep the resized window inside the primary area in normal mode (mirrors the move clamp; a
+    // title bar must not slide under the top titlebar — the #29 invariant, for resize too).
+    const st0 = useDesktop.getState()
+    if (st0.mode === 'desktop') {
+      const pr = primaryRect(st0.viewport)
+      if (nx < pr.x) {
+        nw -= pr.x - nx
+        nx = pr.x
+      }
+      if (ny < pr.y) {
+        nh -= pr.y - ny
+        ny = pr.y
+      }
+      if (nx + nw > pr.x + pr.w) nw = pr.x + pr.w - nx
+      if (ny + nh > pr.y + pr.h) nh = pr.y + pr.h - ny
+      nw = Math.max(MINW, nw)
+      nh = Math.max(MINH, nh)
+    }
+    useDesktop.getState().updateSurface(surface.id, { x: Math.round(nx), y: Math.round(ny), w: Math.round(nw), h: Math.round(nh) })
   }
   function onResizeUp(e: React.PointerEvent): void {
-    ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+    try {
+      ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
     resize.current = null
   }
 
   const stop = (e: React.PointerEvent): void => e.stopPropagation()
   const isNote = surface.kind === 'native' && surface.component === 'note'
   const isFolder = surface.kind === 'native' && surface.component === 'folder'
+  const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
   const paper = isNote ? (NOTE_PAPER[(surface.props?.color as string) || 'coral'] ?? NOTE_PAPER.coral) : undefined
 
   function body(): JSX.Element {
@@ -333,6 +394,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         if (surface.component === 'note') return <NoteWidget surface={surface} />
         if (surface.component === 'chat') return <ChatPanel surface={surface} />
         if (surface.component === 'activity') return <ActivityPanel surface={surface} />
+        if (surface.component === 'file') return <FileWidget surface={surface} />
+        if (surface.component === 'dir') return <DirWidget surface={surface} />
         return <div className="native-fallback">unknown widget: {surface.component}</div>
     }
   }
@@ -374,11 +437,14 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         onPointerDown={onBarDown}
         onPointerMove={onBarMove}
         onPointerUp={onBarUp}
+        onPointerCancel={onBarUp}
       >
         {/* macOS traffic lights: red=close, yellow=minimize, green=zoom. Colored only when active. */}
         <div className="traffic" onPointerDown={stop}>
-          <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />
-          <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />
+          {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
+              reconcile (the file still exists), so only offer zoom; delete the file to remove it. */}
+          {!isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
+          {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />}
           <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
         </div>
         <div className="window-bar-fill" />
@@ -392,7 +458,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
               setShared(next)
               window.agentOS?.setContentShare?.(surface.id, next)
             }}
-            style={shared ? { color: 'var(--positive)' } : { opacity: 0.45 }}
+            style={shared ? { color: 'var(--positive)' } : { color: 'var(--text-secondary)', opacity: 0.85 }}
           >
             <IconEye />
           </button>
@@ -423,14 +489,26 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           </div>
         )}
       </div>
-      <div className="window-resize" onPointerDown={onResizeDown} onPointerMove={onResizeMove} onPointerUp={onResizeUp} />
+      {/* macOS-style resize from all sides + corners; above the drag-overlay so it works in control
+          mode too (#41). The handles avoid the title-bar controls (traffic lights / eye). */}
+      {(['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'] as const).map((dir) => (
+        <div
+          key={dir}
+          className={`rsz rsz-${dir}`}
+          onPointerDown={(e) => onResizeDown(e, dir)}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+        />
+      ))}
       {/* ⌥/Space grab-mode or selected → drag the surface from anywhere on its body. Always
           mounted (so an in-flight drag survives releasing the key); inert otherwise. */}
       <div
-        className={`drag-overlay${isSelected || grabMode || isDragging ? ' active' : ''}`}
+        className={`drag-overlay${isSelected || grabMode || isDragging || isControl ? ' active' : ''}${isControl ? ' control' : ''}`}
         onPointerDown={onBarDown}
         onPointerMove={onBarMove}
         onPointerUp={onBarUp}
+        onPointerCancel={onBarUp}
       />
     </div>
   )

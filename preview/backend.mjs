@@ -19,8 +19,8 @@ import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
 import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, watch } from 'node:fs'
-import { join, dirname, basename, resolve } from 'node:path'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync } from 'node:fs'
+import { join, dirname, basename, resolve, sep } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
 import {
@@ -212,6 +212,8 @@ async function exchangeProvider(id, clientId, clientSecret, code, codeVerifier) 
 // ---------- HTTP server ----------
 
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)) }
+const FILE_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', pdf: 'application/pdf', txt: 'text/plain; charset=utf-8', md: 'text/markdown; charset=utf-8', json: 'application/json', csv: 'text/csv', html: 'text/html; charset=utf-8', mp4: 'video/mp4', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav' }
+const fileContentType = (p) => FILE_MIME[(p.split('.').pop() || '').toLowerCase()] || 'application/octet-stream'
 const callbackPage = (title, sub) =>
   `<!doctype html><meta charset="utf-8"><body style="font-family:-apple-system,system-ui;background:#0e1116;color:#e6edf3;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center"><div><h2 style="margin:0 0 8px">${title}</h2><p style="color:#8b949e;margin:0">${sub}</p></div><script>try{window.opener&&window.opener.postMessage({type:'agentos:oauth'},'*')}catch(e){}setTimeout(function(){window.close()},1400)</script></body>`
 
@@ -350,12 +352,17 @@ function reconcileSurfaces(list) {
   const want = new Set(list.filter((x) => x && x.kind === 'web').map((x) => x.id))
   const ps = []
   for (const sfc of list) {
-    if (sfc.kind === 'web' && !host.has(sfc.id)) {
+    if (sfc.kind !== 'web') continue
+    if (!host.has(sfc.id)) {
       ps.push(
         host
           .createSurface(sfc.id, { url: sfc.url || 'about:blank', width: Math.round(sfc.w) || 1280, height: Math.round(sfc.h) || 800 })
           .catch((e) => console.error('[server mode] createSurface', sfc.id, e?.message || e))
       )
+    } else {
+      // Existing web surface — keep its render viewport + screencast matched to the window size so a
+      // resize doesn't stretch the stream (host.resize debounces + no-ops when the size is unchanged).
+      ps.push(Promise.resolve(host.resize(sfc.id, Math.round(sfc.w) || 1280, Math.round(sfc.h) || 800)).catch(() => {}))
     }
   }
   for (const id of host.ids()) {
@@ -916,6 +923,71 @@ const server = createServer(async (req, res) => {
     return
   }
   if (path === '/api/os/agent-url' && req.method === 'GET') return json(res, 200, { url: agentUrl })
+  // Serve a real workspace file as a canvas tile's content (#37) — JAILED to the active workspace
+  // dir, never .blitzos (runtime/secret state), size-capped. Read-only GET.
+  if (path === '/api/os/file' && req.method === 'GET') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    try {
+      const root = realpathSync(resolve(wsHost.activePath()))
+      // realpath the TARGET too, so a symlink inside the workspace can't escape the jail (blocker).
+      const real = realpathSync(resolve(root, url.searchParams.get('path') || ''))
+      if (real !== root && !real.startsWith(root + sep)) return json(res, 403, { error: 'forbidden' })
+      if (/(^|[/\\])\.blitzos([/\\]|$)/i.test(real.slice(root.length))) return json(res, 403, { error: 'forbidden' })
+      const st = statSync(real)
+      if (!st.isFile() || st.size > 25 * 1024 * 1024) return json(res, 404, { error: 'not a servable file' })
+      const ctype = fileContentType(real)
+      // raster images render inline; SVG + everything else is forced to download so it can never run
+      // as script on our origin (no stored-XSS via a .svg/.html dropped into the workspace).
+      const inlineOk = ctype.startsWith('image/') && ctype !== 'image/svg+xml'
+      const buf = readFileSync(real)
+      res.writeHead(200, {
+        'content-type': ctype,
+        'content-length': buf.length,
+        'cache-control': 'no-cache',
+        'x-content-type-options': 'nosniff',
+        'content-disposition': inlineOk ? 'inline' : `attachment; filename="${basename(real).replace(/["\\\r\n]/g, '')}"`
+      })
+      return res.end(buf)
+    } catch {
+      return json(res, 404, { error: 'not found' })
+    }
+  }
+  // Receive a file the user DROPPED onto the canvas (#43): raw body bytes → jailed write into the
+  // active workspace at the drop world-position → reconcile so the tile appears where it landed.
+  if (path === '/api/os/upload' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    const chunks = []
+    let size = 0
+    let aborted = false
+    req.on('data', (c) => {
+      size += c.length
+      if (size > 30 * 1024 * 1024) {
+        aborted = true
+        req.destroy()
+      } else chunks.push(c)
+    })
+    req.on('aborted', () => (aborted = true))
+    req.on('end', () => {
+      if (aborted) return json(res, 413, { error: 'file too large (30MB max)' })
+      try {
+        const name = url.searchParams.get('name') || 'file'
+        const x = Number(url.searchParams.get('x')) || 0
+        const y = Number(url.searchParams.get('y')) || 0
+        const r = wsHost.ingestFile(name, Buffer.concat(chunks), x, y)
+        return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+      } catch (e) {
+        return json(res, 500, { error: String((e && e.message) || e) })
+      }
+    })
+    req.on('error', () => {
+      try {
+        json(res, 400, { error: 'bad request' })
+      } catch {
+        /* response already sent */
+      }
+    })
+    return
+  }
 
   // POST /api/os/content-share { surfaceId, on } — the human toggled "let the agent
   // read this surface" (P0 consent; gates the relay /events snapshot + read_window).

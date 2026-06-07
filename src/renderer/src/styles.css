@@ -13,6 +13,7 @@ body,
   height: 100%;
   width: 100%;
   overflow: hidden;
+  overscroll-behavior: none; /* no Mac two-finger back/forward swipe-nav while panning the canvas */
   font-family: var(--font-ui);
   font-size: 14px;
   color: var(--text);
@@ -20,6 +21,20 @@ body,
   user-select: none;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Form controls don't inherit the UI font by default — make them match (fixes the toolbar/ws-btn
+   font mismatch). Strip native button appearance so custom-styled buttons (toolbar pills, the
+   round traffic lights) render as designed instead of OS-native pills/lines. */
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 #root-canvas {
@@ -74,6 +89,21 @@ body,
   height: 0;
   transform-origin: 0 0;
   z-index: 1;
+}
+
+/* Window-snap preview: where a dragged window will dock (full / half / quarter of the primary area). */
+.snap-preview {
+  position: absolute;
+  z-index: 1500000; /* above normal windows, below the pinned chat/activity band (2,000,000) */
+  border: 2px solid color-mix(in srgb, var(--accent) 80%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: var(--radius-window);
+  pointer-events: none;
+  transition:
+    left 0.09s var(--ease-out),
+    top 0.09s var(--ease-out),
+    width 0.09s var(--ease-out),
+    height 0.09s var(--ease-out);
 }
 
 /* Primary space rectangle at the origin (canvas mode). */
@@ -228,6 +258,87 @@ body,
 .drag-overlay.active:active {
   cursor: grabbing;
 }
+/* Control mode: the whole card is a drag handle (content not interactive — like Mission Control). */
+.drag-overlay.control {
+  top: 0;
+}
+
+/* File + folder tiles (#37): a real workspace file / subfolder shown on the canvas. */
+.file-tile,
+.dir-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  padding: 12px;
+  background: var(--surface);
+  color: var(--text);
+  user-select: none;
+}
+.file-icon {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.file-thumb {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.file-ext {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  background: var(--control);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 14px 18px;
+}
+.dir-icon {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 46px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 24%, var(--control));
+  border: 1px solid var(--hairline);
+  position: relative;
+}
+.dir-icon::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 8px;
+  width: 28px;
+  height: 8px;
+  border-radius: 5px 5px 0 0;
+  background: color-mix(in srgb, var(--accent) 24%, var(--control));
+}
+.file-name {
+  flex: 0 0 auto;
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--text);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-meta {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
 /* grab mode (⌥/Space held): signal it everywhere */
 #root-canvas.grab-mode {
   cursor: grab;
@@ -304,16 +415,70 @@ body,
 .window-url input:focus {
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 }
-.window-resize {
+/* macOS-style resize handles — 4 edges + 4 corners. z-index 4 sits above the drag-overlay (z2), so
+   resizing works in control mode too; the top handles clear the title-bar controls (traffic lights
+   on the left, the eye on the right) so those stay clickable in normal mode (#41). */
+.rsz {
   position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 18px;
-  height: 18px;
-  cursor: nwse-resize;
-  z-index: 3;
+  z-index: 4;
 }
-.window-resize::after {
+.rsz-n {
+  top: 0;
+  left: 74px;
+  right: 34px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.rsz-s {
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.rsz-w {
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.rsz-e {
+  right: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.rsz-nw {
+  top: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  cursor: nwse-resize;
+}
+.rsz-ne {
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  cursor: nesw-resize;
+}
+.rsz-sw {
+  bottom: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+.rsz-se {
+  bottom: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+.rsz-se::after {
   content: '';
   position: absolute;
   right: 4px;
@@ -956,25 +1121,28 @@ body,
   margin: 14px 0 0;
 }
 
-/* View-lock toggle (⌘⌘): freezes the infinite canvas at its current frame. */
-.lock-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  color: var(--text-secondary);
+/* Hold-⌘ pan overlay (canvas mode). */
+.pan-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5500; /* above the top titlebar (5000) so the control-mode border + hint aren't occluded */
+  background: transparent;
+  pointer-events: none; /* indicator only — pan via the void, drag cards directly */
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--accent) 70%, transparent);
 }
-.lock-btn.locked {
+.pan-hint {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
   background: var(--accent);
   color: var(--paper-coral-ink);
-  box-shadow:
-    inset 0 1px 0 var(--edge-highlight),
-    0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
-}
-.lock-btn.locked:hover {
-  background: color-mix(in srgb, var(--accent) 88%, black);
+  font-size: 12px;
+  font-weight: var(--fw-semibold);
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* Command HUD (the agent-connect / scratch-pad-style bar). */
@@ -1459,19 +1627,8 @@ body,
   white-space: nowrap;
 }
 
-.window-ico {
-  flex: 0 0 auto;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 15px;
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-.window-ico:hover {
-  color: var(--text);
-}
+/* (duplicate .window-ico removed in merge cleanup — consolidated into the
+   .window-ico/.icon-btn rule in the surface-frame section above) */
 
 /* "Connect AI" panel (agent-socket paste URL) — matches the frosted .panel chrome. */
 .ai-panel {

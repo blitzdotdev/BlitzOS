@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { useDesktop, type CreateSurfaceInput } from './store'
-import type { Surface } from './types'
+import { useDesktop, viewTransform, type CreateSurfaceInput } from './store'
+import type { Surface, CanvasTransform } from './types'
 import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
 import { Overview } from './components/Overview'
@@ -16,7 +16,8 @@ import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
 // The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
 // hydrate so a fresh workspace gets one (it then persists as a file); idempotent on a restored board.
 function ensureNotepad(): void {
-  if (window.agentOS?.serverMode) return // the default Notepad is Electron's; server mode is unchanged
+  // Both transports get a Notepad (it persists as a file in the workspace folder = the agent's
+  // memory; the manual + the dynamic-boot instruction both rely on it existing, incl. server mode).
   const st = useDesktop.getState()
   if (st.surfaces.some((s) => s.kind === 'native' && s.component === 'note' && s.title === 'Notepad')) return
   st.createSurface({
@@ -37,6 +38,7 @@ export default function App(): JSX.Element {
   const integrations = useDesktop((s) => s.integrations)
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
+  const snapPreview = useDesktop((s) => s.snapPreview)
   const createSurface = useDesktop((s) => s.createSurface)
   const setIntegrations = useDesktop((s) => s.setIntegrations)
 
@@ -46,7 +48,6 @@ export default function App(): JSX.Element {
   const [showOverview, setShowOverview] = useState(false)
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
-  const locked = useDesktop((s) => s.locked) // canvas frozen at current frame (⌘⌘); pan/zoom off
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
@@ -60,13 +61,37 @@ export default function App(): JSX.Element {
   // deps) reads the CURRENT value — each push is tagged with it so the backend can drop a stale
   // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
   const activeWsRef = useRef<string | null>(null)
+  const animRef = useRef<number | null>(null)
 
-  // BlitzOS runs on the infinite canvas in BOTH the Electron app and the browser/server
-  // preview. (Desktop mode — a fixed bounded screen — is dormant; see agent-os/CLAUDE.md.)
-  // The view starts unlocked (free pan/zoom); double-tap ⌘ to lock it to the current frame.
-  useEffect(() => {
-    useDesktop.getState().setMode('canvas')
-  }, [])
+  // Smoothly tween the camera (used when entering/leaving control mode).
+  function animateTransform(target: CanvasTransform, dur = 320): void {
+    const from = useDesktop.getState().transform
+    if (animRef.current) cancelAnimationFrame(animRef.current)
+    const t0 = performance.now()
+    const ease = (p: number): number => 1 - Math.pow(1 - p, 3) // cubic ease-out
+    const step = (now: number): void => {
+      const p = Math.min(1, (now - t0) / dur)
+      const k = ease(p)
+      useDesktop.getState().setTransform({
+        x: from.x + (target.x - from.x) * k,
+        y: from.y + (target.y - from.y) * k,
+        scale: from.scale + (target.scale - from.scale) * k
+      })
+      animRef.current = p < 1 ? requestAnimationFrame(step) : null
+    }
+    animRef.current = requestAnimationFrame(step)
+  }
+  // Double-tap ⌘ toggles "Control mode" (the zoomed-out bird's-eye): animate the camera to the
+  // control viewport on enter and back to the locked primary-area view on exit. Both modes exist in
+  // BOTH transports (Electron + server/Chrome); normal mode is the default everywhere.
+  function toggleControlMode(): void {
+    const st = useDesktop.getState()
+    st.setSnapPreview(null) // a mode switch cancels any in-flight drag UI
+    st.setDragTarget(null)
+    const next = st.mode === 'desktop' ? 'canvas' : 'desktop'
+    st.setMode(next)
+    animateTransform(viewTransform(next, st.viewport))
+  }
 
   useEffect(() => {
     const refresh = (): void => {
@@ -87,7 +112,7 @@ export default function App(): JSX.Element {
   useEffect(() => {
     const onResize = (): void => {
       useDesktop.getState().setViewport(window.innerWidth, window.innerHeight)
-      if (useDesktop.getState().mode === 'desktop') useDesktop.getState().goToPrimary()
+      useDesktop.getState().goToPrimary() // re-fit the camera to the new viewport in BOTH modes (control too)
     }
     onResize()
     useDesktop.getState().goToPrimary()
@@ -176,20 +201,17 @@ export default function App(): JSX.Element {
     }
   }, [])
 
-  // Double-tap ⌘ to LOCK/UNLOCK the view: locking freezes the infinite canvas at its current
-  // frame (pan/zoom off) so you can work inside surfaces without it drifting; double-tap again
-  // to unlock. A bare ⌘ tap from a focused webview arrives via onMetaTap (main).
+  // Double-tap ⌘ to toggle Control mode (the bird's-eye overview). A bare ⌘ tap from a focused
+  // webview arrives via onMetaTap (main); plain keydown/keyup covers the browser/server transport.
   useEffect(() => {
     let metaDown = false
     let sawOther = false
     let lastTap = 0
     const registerTap = (): void => {
-      // the lock only applies to the infinite canvas
-      if (useDesktop.getState().mode !== 'canvas') return
       const now = performance.now()
       if (now - lastTap < 450) {
         lastTap = 0
-        useDesktop.getState().toggleLock()
+        toggleControlMode()
       } else {
         lastTap = now
       }
@@ -231,10 +253,8 @@ export default function App(): JSX.Element {
         // Restore a persisted workspace from disk (Phase 2). Replaces the canvas wholesale.
         const surfs = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        // BlitzOS is canvas-first; desktop mode is dormant, so restore every workspace onto the
-        // infinite canvas regardless of the persisted mode (older boards may be saved as 'desktop').
-        // TODO: honor a.mode again once desktop mode becomes a user-selectable per-workspace option.
-        st.hydrate(surfs, cam, 'canvas')
+        // Control mode is a transient view toggle, never persisted — always boot the normal desktop.
+        st.hydrate(surfs, cam, 'desktop')
         ensureNotepad()
         hydrated.current = true
         if (typeof a.workspace === 'string') {
@@ -247,7 +267,7 @@ export default function App(): JSX.Element {
         // reconnect's hydrate still can't clobber the new board.
         const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        st.hydrate(sf, cm, 'canvas') // canvas-first; see the 'hydrate' branch above
+        st.hydrate(sf, cm, 'desktop')
         ensureNotepad()
         hydrated.current = true // a switch is also a valid first hydrate — don't depend on a prior 'hydrate'
         if (typeof a.workspace === 'string') {
@@ -255,6 +275,10 @@ export default function App(): JSX.Element {
           activeWsRef.current = a.workspace
         }
         setShowOverview(false)
+      } else if (a.type === 'reconcile') {
+        // External folder change (dropped/edited/removed files) — merge live, keeping the camera +
+        // the runtime chat/activity panels. Only once we already have a canvas (post first hydrate).
+        if (hydrated.current) st.applyReconcile(Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : [])
       } else if (a.type === 'create') {
         const surf = a.surface as CreateSurfaceInput
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
@@ -429,6 +453,35 @@ export default function App(): JSX.Element {
     return window.agentOS?.onAgentSocketUrl((url) => setAiUrl(url))
   }, [])
 
+  // Drag a file from the desktop onto the canvas → upload it into the workspace folder at the drop
+  // world-position (server mode; Electron drag-drop uses file paths — a separate path). The tile
+  // then appears via reconcile.
+  function onDragOver(e: React.DragEvent): void {
+    if (Array.from(e.dataTransfer?.types ?? []).includes('Files')) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+    }
+  }
+  function onDrop(e: React.DragEvent): void {
+    const files = Array.from(e.dataTransfer?.files ?? [])
+    if (!files.length) return
+    e.preventDefault()
+    if (!window.agentOS?.serverMode) return
+    const cx = e.clientX
+    const cy = e.clientY
+    const t = useDesktop.getState().transform
+    files.forEach(async (file, i) => {
+      const wx = Math.round((cx - t.x) / t.scale + i * 24)
+      const wy = Math.round((cy - t.y) / t.scale + i * 24)
+      try {
+        const buf = await file.arrayBuffer()
+        await fetch(`/api/os/upload?name=${encodeURIComponent(file.name)}&x=${wx}&y=${wy}`, { method: 'POST', body: buf })
+      } catch {
+        /* ignore a failed upload */
+      }
+    })
+  }
+
   function onBgDown(e: React.PointerEvent): void {
     const st = useDesktop.getState()
     if (st.mode === 'canvas' && !st.locked) {
@@ -548,7 +601,7 @@ export default function App(): JSX.Element {
   const openFolder = surfaces.find((s) => s.kind === 'native' && s.component === 'folder' && s.props?.open)
 
   return (
-    <div id="root-canvas" ref={rootRef} className={grabMode ? 'grab-mode' : undefined}>
+    <div id="root-canvas" ref={rootRef} className={grabMode ? 'grab-mode' : undefined} onDragOver={onDragOver} onDrop={onDrop}>
       {/* draggable native-window title bar (macOS move/resize) */}
       <div className="titlebar">
         <span className="titlebar-label">BlitzOS</span>
@@ -563,6 +616,12 @@ export default function App(): JSX.Element {
         style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
       >
         {mode === 'canvas' && <PrimarySpace />}
+        {snapPreview && (
+          <div
+            className="snap-preview"
+            style={{ left: snapPreview.x, top: snapPreview.y, width: snapPreview.w, height: snapPreview.h }}
+          />
+        )}
         {integrations.map((it) => (
           <IntegrationWidget key={it.id} integration={it} onConnect={setConnecting} />
         ))}
@@ -571,6 +630,12 @@ export default function App(): JSX.Element {
           s.groupId && !s.peek ? null : <SurfaceFrame key={s.id} surface={s} />
         )}
       </div>
+
+      {mode === 'canvas' && (
+        <div className="pan-overlay">
+          <span className="pan-hint">Control mode · drag cards to rearrange · scroll or drag the void to pan · double-tap ⌘ to exit</span>
+        </div>
+      )}
 
       {marqueeRect && (
         <div
@@ -601,7 +666,7 @@ export default function App(): JSX.Element {
         </button>
         {!isServer && (
           <span className="hint">
-            {locked ? 'locked · ⌘⌘ to unlock' : 'drag to pan · ⌘-scroll to zoom · ⌘⌘ to lock'}
+            double-tap ⌘ for control mode
           </span>
         )}
       </div>

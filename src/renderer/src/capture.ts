@@ -1,19 +1,16 @@
-import { useDesktop } from './store'
-import { PRIMARY_W, PRIMARY_H } from './types'
+import { useDesktop, primaryRect } from './store'
 import type { Surface } from './types'
 
-// Capture a "screenshot" of the PRIMARY AREA — the fixed 1440x900 board region centered on the
-// world origin — into a JPEG data URL. This is the last-seen snapshot shown in the Mission Control
+// Capture a "screenshot" of the PRIMARY AREA — the on-screen desktop region (screen-sized + dynamic,
+// see primaryRect) centered on the world origin — into a JPEG data URL. This is the last-seen snapshot shown in the Mission Control
 // overview (macOS-style). Since users are mostly locked to the primary space, this rectangle IS the
 // board. Web surfaces are drawn from their live streamed <canvas> (real pixels, same-origin via the
 // data:-URL frame draw, so readable); notes / panels / srcdoc draw as titled cards (their content
 // isn't compositable here). Returns null if there's nothing meaningful to capture.
 
+// The thumbnail captures the PRIMARY AREA (the on-screen desktop region). The area is screen-sized
+// (dynamic), so the exact rect + scale are computed per call from the live viewport.
 const THUMB_W = 480
-const THUMB_H = Math.round((THUMB_W * PRIMARY_H) / PRIMARY_W) // 16:10 → 300
-const SCALE = THUMB_W / PRIMARY_W // world px → thumb px
-const ORIGIN_X = -PRIMARY_W / 2 // primary rect left edge in world coords (-720)
-const ORIGIN_Y = -PRIMARY_H / 2 // top edge (-450)
 
 // Accent fill per kind for the card fallback (a hint of what the window is).
 const KIND_BG: Record<string, string> = {
@@ -42,8 +39,15 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 export function capturePrimaryThumb(): string | null {
-  const surfaces = useDesktop.getState().surfaces
+  const st = useDesktop.getState()
+  const surfaces = st.surfaces
   if (!surfaces.length) return null
+
+  const rect = primaryRect(st.viewport)
+  const THUMB_H = Math.round((THUMB_W * rect.h) / rect.w)
+  const SCALE = THUMB_W / rect.w // world px → thumb px
+  const ORIGIN_X = rect.x // primary rect left edge in world coords
+  const ORIGIN_Y = rect.y // top edge
 
   const canvas = document.createElement('canvas')
   canvas.width = THUMB_W

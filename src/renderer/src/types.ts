@@ -49,8 +49,6 @@ export interface Vec2 {
   y: number
 }
 
-export const PRIMARY_W = 1440
-export const PRIMARY_H = 900
 export const GRID = 20
 export const WIDGET_W = 240
 export const WIDGET_H = 168
