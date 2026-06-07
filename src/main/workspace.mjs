@@ -681,6 +681,66 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   return { surfaces, camera, mode, areaCount, changed, knownIds }
 }
 
+/**
+ * #52 — "group into a folder" is a REAL filesystem operation: make a subdirectory and MOVE the chosen
+ * members' content files into it. Not an in-memory membership list — the folder is a real directory, so
+ * it persists, drill-in browses its real contents, and a grouped 50-file set is ONE tile (the reconcile
+ * is non-recursive, so even a 10k-file repo grouped in stays one folder tile). Member content paths come
+ * from the current workspace.json (flush() first so every member has a file). Returns
+ * { ok, folder:<relpath>, moved }. The caller reconciles after so the new subdir surfaces as a folder
+ * tile and the moved files leave the canvas root.
+ */
+export function groupIntoFolder(dir, name, memberIds) {
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const { idToPath } = readPrior(metaFile)
+  const ids = Array.isArray(memberIds) ? memberIds : []
+  let existing = new Set()
+  try {
+    existing = new Set(readdirSync(dir, { withFileTypes: true }).map((e) => e.name.toLowerCase()))
+  } catch {
+    /* unreadable */
+  }
+  // a real, unique subdir name from the chosen folder title
+  const stem = slug(name, 'folder') || 'folder'
+  let folderName = stem
+  let i = 2
+  while (existing.has(folderName.toLowerCase()) || RESERVED_ROOT.has(folderName.toLowerCase())) folderName = `${stem}-${i++}`
+  const folderAbs = safeJoin(dir, folderName)
+  if (!folderAbs) return { ok: false, error: 'bad folder name' }
+  try {
+    mkdirSync(folderAbs, { recursive: true })
+  } catch {
+    return { ok: false, error: 'could not create folder' }
+  }
+  markWrite(resolve(folderAbs))
+  let moved = 0
+  for (const id of ids) {
+    const rel = idToPath.get(id)
+    if (!rel) continue // member has no content file (e.g. a runtime panel) — nothing to move
+    if (rel.includes('/') || rel.includes(sep)) continue // only ROOT-level items move (don't re-nest)
+    const srcAbs = safeJoin(dir, rel)
+    if (!srcAbs || !existsSync(srcAbs)) continue
+    const baseName = rel.split(/[\\/]/).pop()
+    let destRel = `${folderName}/${baseName}`
+    let dn = 2
+    while (existsSync(safeJoin(dir, destRel) || dir)) {
+      const dot = baseName.lastIndexOf('.')
+      destRel = dot > 0 ? `${folderName}/${baseName.slice(0, dot)}-${dn++}${baseName.slice(dot)}` : `${folderName}/${baseName}-${dn++}`
+    }
+    const destAbs = safeJoin(dir, destRel)
+    if (!destAbs) continue
+    try {
+      renameSync(srcAbs, destAbs) // a real mv — works for files AND subdirs (a grouped repo just nests)
+      markWrite(resolve(srcAbs))
+      markWrite(resolve(destAbs))
+      moved++
+    } catch {
+      /* skip a member we couldn't move */
+    }
+  }
+  return { ok: true, folder: folderName, moved }
+}
+
 // ===========================================================================================
 // Multi-workspace: a ROOT folder holds many workspace folders (the launcher lists/creates/
 // switches between them). Names are validated on RAW input with a strict allow-list BEFORE any

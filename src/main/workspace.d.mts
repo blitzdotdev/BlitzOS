@@ -22,6 +22,9 @@ export function readWorkspace(dir: string): HydratedWorkspace | null
 /** True if BlitzOS wrote this absolute path within the suppression window (Phase 3 watcher). */
 export function wasSelfWrite(absPath: string, windowMs?: number): boolean
 
+/** #52: real "group into folder" — mkdir a subdir + mv the members' content files into it. */
+export function groupIntoFolder(dir: string, name: string, memberIds: string[]): { ok: boolean; folder?: string; moved?: number; error?: string }
+
 /** Reconcile the canvas with the folder (auto-place new files, heal rename, drop missing). */
 export function reconcileWorkspace(
   dir: string,
