@@ -21,3 +21,6 @@ widgets/authored/
 
 # parked vision dump (ignore claude mono)
 claude-mono*.md
+
+# Spatial.app design-reference screenshots (third-party pixels — local only)
+design/spatial-reference/

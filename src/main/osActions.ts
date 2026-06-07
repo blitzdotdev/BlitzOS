@@ -57,6 +57,19 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   ipcMain.on('os:user-message', (_e, text: unknown) => {
     if (typeof text === 'string' && text.trim()) emitUserMessage(text)
   })
+  // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
+  ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {
+    const wcid = webviewIds.get(surfaceId)
+    if (wcid == null) return null
+    const wc = webContents.fromId(wcid)
+    if (!wc || wc.isDestroyed()) return null
+    try {
+      const img = await wc.capturePage()
+      return img.toDataURL()
+    } catch {
+      return null
+    }
+  })
 }
 
 // ---- perception (Electron): inject the shared in-page SENSORS (INJECT, from
@@ -151,6 +164,19 @@ export function osGoToPrimary(): void {
 /** Agent → user: post a chat message into the user's in-canvas Chat panel. */
 export function osSay(text: string): void {
   send('chat', { text })
+}
+/**
+ * Group surfaces into a named iPhone-style folder. The agent passes the ids of related
+ * surfaces it opened (more than 2), a name, and where to place the folder (top-left x,y).
+ * Returns the folder id, or '' if fewer than 2 of the ids are real surfaces. The renderer
+ * does the final validation (skips folders / already-grouped surfaces).
+ */
+export function osGroup(ids: string[], name?: string, x?: number, y?: number): string {
+  const existing = (Array.isArray(ids) ? ids : []).filter((id) => cached.surfaces.some((s) => s.id === id))
+  if (existing.length < 2) return ''
+  const folderId = `folder-${randomUUID()}`
+  send('group', { ids: existing, folderId, ...(name ? { name } : {}), ...(x != null ? { x } : {}), ...(y != null ? { y } : {}) })
+  return folderId
 }
 export function osGetState(): OsState {
   return cached

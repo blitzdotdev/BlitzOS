@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { IntegrationStatus } from '../types'
+import { IconClose } from './Icons'
 
 interface Props {
   integration: IntegrationStatus
@@ -31,7 +32,7 @@ export function ConnectPanel({ integration, onClose }: Props): JSX.Element {
           <span className="panel-dot" style={{ background: integration.color }} />
           <h3>Connect {integration.name}</h3>
           <button className="panel-x" onClick={onClose}>
-            ×
+            <IconClose size={15} />
           </button>
         </div>
 

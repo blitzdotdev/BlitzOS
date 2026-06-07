@@ -154,9 +154,9 @@ Bring up backend+vite (no tunnel): two background tasks running `node preview/ba
 
 - `agent-os-desktop-architecture.md` — Electron-mode plan/backlog.
 - `agent-os-server-mode.md` — server-mode architecture + capability matrix + verified decisions.
-- `issues/open/server-mode-deployment.md` — VPS deploy checklist (parked).
-- `preview/RUNNING.md` — how to run on the domain.
-- `CLAUDE.md` — BlitzOS guidance (teammate-authored).
+- `../issues/open/server-mode-deployment.md` — VPS deploy checklist (parked).
+- `../preview/RUNNING.md` — how to run on the domain.
+- `../CLAUDE.md` — BlitzOS guidance (teammate-authored).
 
 ## Gotchas / lessons
 

@@ -5,6 +5,9 @@ import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
+import { IconEye } from './Icons'
+import { FolderWidget } from './FolderWidget'
+import { NOTE_PAPER } from '../paper'
 
 type BridgeReply = { ok: boolean; data?: unknown; error?: string }
 type HeldReply = { provider: string; resource: string; win: Window; reply: (r: BridgeReply) => void }
@@ -16,30 +19,23 @@ interface WebviewMethods {
   getWebContentsId(): number
 }
 
-function normalizeUrl(input: string): string {
-  const s = input.trim()
-  if (!s) return 'about:blank'
-  if (/^https?:\/\//i.test(s)) return s
-  if (/^[\w-]+(\.[\w-]+)+/.test(s)) return `https://${s}`
-  return `https://www.google.com/search?q=${encodeURIComponent(s)}`
-}
-
-const NOTE_COLORS: Record<string, string> = {
-  yellow: '#f6d365',
-  pink: '#ffadad',
-  blue: '#a0c4ff',
-  green: '#caffbf'
-}
-
 export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
   const resizeSurface = useDesktop((s) => s.resizeSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
-  const setZoom = useDesktop((s) => s.setZoom)
   const toggleMaximize = useDesktop((s) => s.toggleMaximize)
+  const minimizeSurface = useDesktop((s) => s.minimizeSurface)
+  // macOS-style: the front-most (highest-z) surface is "active"; only its lights colorize.
+  const maxZ = useDesktop((s) => s.surfaces.reduce((m, w) => Math.max(m, w.z), -Infinity))
+  const isActive = surface.z === maxZ
+  const isSelected = useDesktop((s) => s.selection.includes(surface.id))
+  const isDropTarget = useDesktop((s) => s.dragTarget === surface.id)
+  const isAbsorbing = useDesktop((s) => s.absorbing.includes(surface.id))
+  const grabMode = useDesktop((s) => s.grabMode)
+  const [isDragging, setIsDragging] = useState(false)
 
-  const drag = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
+  const drag = useRef<{ startX: number; startY: number; items: Array<{ id: string; ox: number; oy: number }> } | null>(null)
   const resize = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null)
   const webviewRef = useRef<HTMLWebViewElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -48,7 +44,6 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const consented = useRef<Set<string>>(new Set()) // providers the human OK'd for THIS widget generation
   const prevHtml = useRef(surface.html)
   const serverMode = !!window.agentOS?.serverMode
-  const [draft, setDraft] = useState(surface.url ?? '')
   const [consentProvider, setConsentProvider] = useState<string | null>(null)
   const [shared, setShared] = useState(surface.shared ?? false) // P0: agent may read this surface over the relay (agent-opened web/app start shared)
   const zoom = surface.zoom ?? 1
@@ -58,10 +53,6 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     if (surface.kind !== 'web') return
     const el = webviewRef.current as (HTMLElement & WebviewMethods) | null
     if (!el) return
-    const onNav = (e: Event): void => {
-      const url = (e as Event & { url?: string }).url
-      if (url) setDraft(url)
-    }
     const onReady = (): void => {
       try {
         el.setZoomFactor(zoom)
@@ -74,13 +65,9 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         /* not ready */
       }
     }
-    el.addEventListener('did-navigate', onNav)
-    el.addEventListener('did-navigate-in-page', onNav)
     el.addEventListener('dom-ready', onReady)
     onReady()
     return () => {
-      el.removeEventListener('did-navigate', onNav)
-      el.removeEventListener('did-navigate-in-page', onNav)
       el.removeEventListener('dom-ready', onReady)
     }
   }, [surface.kind, zoom, surface.id])
@@ -214,47 +201,61 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     }
   }, [surface.kind, surface.id])
 
-  function go(e: React.FormEvent): void {
-    e.preventDefault()
-    const u = normalizeUrl(draft)
-    setDraft(u)
-    if (serverMode) {
-      window.agentOS?.serverNavigate?.(surface.id, u)
-      // Keep the OS's stored url/title in sync with the actual navigation. Otherwise
-      // list_state stays stale and surface reconciliation can snap the page back to
-      // the remembered (old) url. (Server-mode address-bar nav bypasses the store.)
-      let title = u
-      try {
-        title = new URL(u).hostname || u
-      } catch {
-        /* keep u */
-      }
-      useDesktop.getState().updateSurface(surface.id, { url: u, title })
-    } else (webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
-  }
-  function reload(): void {
-    if (serverMode) window.agentOS?.serverReload?.(surface.id)
-    else (webviewRef.current as unknown as WebviewMethods | null)?.reload()
-  }
-
   function onBarDown(e: React.PointerEvent): void {
     e.stopPropagation()
     focusSurface(surface.id)
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-    drag.current = { startX: e.clientX, startY: e.clientY, origX: surface.x, origY: surface.y }
+    try {
+      ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      /* ignore (synthetic events) */
+    }
+    setIsDragging(true)
+    const st = useDesktop.getState()
+    // drag the whole selection if this surface is part of a multi-selection; else just this one.
+    // A ⌥/Space "grab" of a single surface also selects it.
+    let ids: string[]
+    if (st.selection.includes(surface.id) && st.selection.length > 1) {
+      ids = st.selection
+    } else {
+      ids = [surface.id]
+      if (st.grabMode) st.setSelection([surface.id])
+    }
+    const items = ids
+      .map((id) => st.surfaces.find((w) => w.id === id))
+      .filter((w): w is Surface => !!w)
+      .map((w) => ({ id: w.id, ox: w.x, oy: w.y }))
+    drag.current = { startX: e.clientX, startY: e.clientY, items }
   }
   function onBarMove(e: React.PointerEvent): void {
-    if (!drag.current) return
-    const scale = useDesktop.getState().transform.scale
-    moveSurface(
-      surface.id,
-      drag.current.origX + (e.clientX - drag.current.startX) / scale,
-      drag.current.origY + (e.clientY - drag.current.startY) / scale
+    const d = drag.current
+    if (!d) return
+    const st = useDesktop.getState()
+    const t = st.transform
+    const dx = (e.clientX - d.startX) / t.scale
+    const dy = (e.clientY - d.startY) / t.scale
+    for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
+    // highlight a folder under the cursor as an add-to-folder drop target
+    const wx = (e.clientX - t.x) / t.scale
+    const wy = (e.clientY - t.y) / t.scale
+    const dragged = new Set(d.items.map((it) => it.id))
+    const folder = st.surfaces.find(
+      (w) => w.component === 'folder' && !dragged.has(w.id) && wx >= w.x && wx <= w.x + w.w && wy >= w.y && wy <= w.y + w.h
     )
+    st.setDragTarget(folder ? folder.id : null)
   }
   function onBarUp(e: React.PointerEvent): void {
-    ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+    try {
+      ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+    setIsDragging(false)
+    const d = drag.current
     drag.current = null
+    const st = useDesktop.getState()
+    const target = st.dragTarget
+    st.setDragTarget(null)
+    if (d && target) st.dropIntoFolder(target, d.items.map((it) => it.id))
   }
 
   function onResizeDown(e: React.PointerEvent): void {
@@ -279,7 +280,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
 
   const stop = (e: React.PointerEvent): void => e.stopPropagation()
   const isNote = surface.kind === 'native' && surface.component === 'note'
-  const noteColor = isNote ? NOTE_COLORS[(surface.props?.color as string) || 'yellow'] : undefined
+  const isFolder = surface.kind === 'native' && surface.component === 'folder'
+  const paper = isNote ? (NOTE_PAPER[(surface.props?.color as string) || 'coral'] ?? NOTE_PAPER.coral) : undefined
 
   function body(): JSX.Element {
     const fill = { width: '100%', height: '100%', border: 'none', display: 'block' } as const
@@ -335,14 +337,28 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     }
   }
 
+  if (isFolder) {
+    return (
+      <div
+        className={`window folder${isActive ? ' is-active' : ''}${isSelected ? ' is-selected' : ''}${isDropTarget ? ' drop-target' : ''}`}
+        style={{ left: surface.x, top: surface.y, width: surface.w, height: surface.h, zIndex: surface.z }}
+        onPointerDown={() => focusSurface(surface.id)}
+      >
+        <FolderWidget surface={surface} onDragDown={onBarDown} onDragMove={onBarMove} onDragUp={onBarUp} />
+      </div>
+    )
+  }
+
   return (
     <div
-      className={isNote ? 'window note' : 'window'}
+      className={`window${isNote ? ' note' : ''}${isActive ? ' is-active' : ''}${isSelected ? ' is-selected' : ''}${isAbsorbing ? ' absorbing' : ''}`}
       style={{
         left: surface.x,
         top: surface.y,
         width: surface.w,
         height: surface.h,
+        ...(surface.minimized ? { display: 'none' } : {}),
+        ...(paper ? { background: paper.bg, color: paper.ink } : {}),
         // The Chat + Agent-activity panels are pinned: a z-band far above any focus-raised
         // window, so the agent (or the user) can never bury the channel/feed they rely on.
         zIndex:
@@ -354,81 +370,51 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     >
       <div
         className="window-bar"
-        style={isNote ? { background: noteColor, color: '#3a2f00' } : undefined}
         onPointerDown={onBarDown}
         onPointerMove={onBarMove}
         onPointerUp={onBarUp}
       >
-        <span className="window-grip" />
-        {surface.kind === 'web' ? (
-          <>
-            <button className="window-ico" title="Reload" onPointerDown={stop} onClick={reload}>
-              ⟳
-            </button>
-            <form className="window-url" onSubmit={go} onPointerDown={stop}>
-              <input value={draft} spellCheck={false} onChange={(e) => setDraft(e.target.value)} />
-            </form>
-            <button
-              className="window-ico"
-              title={shared ? 'Agent can read this page — click to stop sharing' : 'Let the agent read this page (off by default)'}
-              onPointerDown={stop}
-              onClick={() => {
-                const next = !shared
-                setShared(next)
-                window.agentOS?.setContentShare?.(surface.id, next)
-              }}
-              style={shared ? { color: '#4ade80' } : { opacity: 0.45 }}
-            >
-              👁
-            </button>
-          </>
-        ) : (
-          <span className="window-title">{surface.title}</span>
+        {/* macOS traffic lights: red=close, yellow=minimize, green=zoom. Colored only when active. */}
+        <div className="traffic" onPointerDown={stop}>
+          <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />
+          <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />
+          <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
+        </div>
+        <div className="window-bar-fill" />
+        {surface.kind === 'web' && (
+          <button
+            className="window-ico"
+            title={shared ? 'Agent can read this page — click to stop sharing' : 'Let the agent read this page (off by default)'}
+            onPointerDown={stop}
+            onClick={() => {
+              const next = !shared
+              setShared(next)
+              window.agentOS?.setContentShare?.(surface.id, next)
+            }}
+            style={shared ? { color: 'var(--positive)' } : { opacity: 0.45 }}
+          >
+            <IconEye />
+          </button>
         )}
-        <button className="window-ico" title="Zoom out" onPointerDown={stop} onClick={() => setZoom(surface.id, zoom - 0.15)}>
-          −
-        </button>
-        <button className="window-ico zoom-label" title="Reset zoom" onPointerDown={stop} onClick={() => setZoom(surface.id, 1)}>
-          {Math.round(zoom * 100)}%
-        </button>
-        <button className="window-ico" title="Zoom in" onPointerDown={stop} onClick={() => setZoom(surface.id, zoom + 0.15)}>
-          +
-        </button>
-        <button className="window-ico" title="Maximize / restore" onPointerDown={stop} onClick={() => toggleMaximize(surface.id)}>
-          ⛶
-        </button>
-        <button className="window-close" onPointerDown={stop} onClick={() => closeSurface(surface.id)}>
-          ×
-        </button>
       </div>
       <div
         className="window-body"
-        style={{ position: 'relative', ...(isNote ? { background: noteColor } : {}) }}
+        style={{ position: 'relative', ...(isNote ? { background: 'transparent' } : {}) }}
       >
         {body()}
         {consentProvider && (
-          <div
-            onPointerDown={stop}
-            style={{
-              position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
-              background: 'rgba(8,10,14,.72)', backdropFilter: 'blur(2px)', zIndex: 5, padding: 16
-            }}
-          >
-            <div style={{ maxWidth: 280, textAlign: 'center', color: '#e6edf3', font: '13px/1.5 -apple-system,system-ui' }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                Allow this widget to read your <span style={{ textTransform: 'capitalize' }}>{consentProvider}</span>?
-              </div>
-              <div style={{ color: '#8b949e', marginBottom: 12 }}>
-                It receives only the data — never your account tokens.
-              </div>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-                <button onClick={() => resolveConsent(consentProvider, false)} style={{ padding: '5px 12px' }}>
+          <div className="consent" onPointerDown={stop}>
+            <div className="consent-card">
+              <h4>
+                Allow this widget to read your{' '}
+                <span style={{ textTransform: 'capitalize' }}>{consentProvider}</span>?
+              </h4>
+              <p>It receives only the data — never your account tokens.</p>
+              <div className="consent-actions">
+                <button className="btn ghost" onClick={() => resolveConsent(consentProvider, false)}>
                   Deny
                 </button>
-                <button
-                  onClick={() => resolveConsent(consentProvider, true)}
-                  style={{ padding: '5px 12px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6 }}
-                >
+                <button className="btn primary" onClick={() => resolveConsent(consentProvider, true)}>
                   Allow
                 </button>
               </div>
@@ -437,6 +423,14 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         )}
       </div>
       <div className="window-resize" onPointerDown={onResizeDown} onPointerMove={onResizeMove} onPointerUp={onResizeUp} />
+      {/* ⌥/Space grab-mode or selected → drag the surface from anywhere on its body. Always
+          mounted (so an in-flight drag survives releasing the key); inert otherwise. */}
+      <div
+        className={`drag-overlay${isSelected || grabMode || isDragging ? ' active' : ''}`}
+        onPointerDown={onBarDown}
+        onPointerMove={onBarMove}
+        onPointerUp={onBarUp}
+      />
     </div>
   )
 }

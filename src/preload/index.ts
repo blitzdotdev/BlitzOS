@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group'
   [k: string]: unknown
 }
 
@@ -74,6 +74,10 @@ const api = {
   /** Human consent: let the agent read this web surface's content over the relay (P0). */
   setContentShare(surfaceId: string, on: boolean): void {
     ipcRenderer.send('os:content-share', { surfaceId, on })
+  },
+  /** Capture a web surface's current frame as a data URL (for folder previews). */
+  captureSurface(surfaceId: string): Promise<string | null> {
+    return ipcRenderer.invoke('surface:capture', surfaceId)
   },
   /** The user typed a message to the agent in the in-canvas Chat. */
   sendMessage(text: string): void {

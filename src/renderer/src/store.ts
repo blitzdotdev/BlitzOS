@@ -66,6 +66,10 @@ interface DesktopState {
   positions: Record<string, Vec2>
   surfaces: Surface[]
   layoutHistory: Surface[][]
+  selection: string[]
+  dragTarget: string | null
+  absorbing: string[]
+  grabMode: boolean
 
   setViewport: (w: number, h: number) => void
   setMode: (m: 'desktop' | 'canvas') => void
@@ -73,6 +77,15 @@ interface DesktopState {
   zoomAt: (cursorX: number, cursorY: number, deltaY: number) => void
   goToPrimary: () => void
   focusAndZoom: (id: string) => void
+  setSelection: (ids: string[]) => void
+  clearSelection: () => void
+  groupSelection: () => void
+  group: (ids: string[], name?: string, x?: number, y?: number, folderId?: string) => string
+  ungroupOne: (memberId: string, pos?: { x: number; y: number }) => void
+  setDragTarget: (id: string | null) => void
+  addToFolder: (folderId: string, ids: string[]) => void
+  dropIntoFolder: (folderId: string, ids: string[]) => void
+  setGrabMode: (on: boolean) => void
 
   setIntegrations: (list: IntegrationStatus[]) => void
   setPos: (id: string, x: number, y: number) => void
@@ -85,6 +98,7 @@ interface DesktopState {
   focusSurface: (id: string) => void
   setZoom: (id: string, zoom: number) => void
   toggleMaximize: (id: string) => void
+  minimizeSurface: (id: string) => void
   updateSurface: (id: string, patch: Partial<Surface>) => void
   updateSurfaceProps: (id: string, props: Record<string, unknown>) => void
   // Layout undo: the agent auto-applies layouts; the human reverts with Cmd+Z.
@@ -106,9 +120,114 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   positions: {},
   surfaces: [],
   layoutHistory: [],
+  selection: [],
+  dragTarget: null,
+  absorbing: [],
+  grabMode: false,
 
   setViewport: (w, h) => set({ viewport: { w, h } }),
   setMode: (m) => set({ mode: m }),
+
+  setSelection: (ids) => set({ selection: ids }),
+  clearSelection: () => set({ selection: [] }),
+
+  // Pack surfaces into an iPhone-style folder. Two callers share this:
+  //  - groupSelection (Cmd+G): the human's multi-selection, centroid, default name.
+  //  - the agent's `group` tool: explicit ids, a chosen name, an optional top-left
+  //    position (x,y), and a main-minted folderId. Returns the folder id ('' if < 2 valid).
+  group: (ids, name, x, y, folderId) => {
+    const cur = get()
+    const valid = ids.filter((id) => {
+      const w = cur.surfaces.find((s) => s.id === id)
+      return !!w && !w.groupId && w.component !== 'folder'
+    })
+    if (valid.length < 2) return ''
+    cur.snapshotLayout()
+    const members = cur.surfaces.filter((w) => valid.includes(w.id))
+    const W = 232
+    const H = 248
+    const fx = x != null ? Math.round(x) : Math.round(members.reduce((a, m) => a + m.x + m.w / 2, 0) / members.length - W / 2)
+    const fy = y != null ? Math.round(y) : Math.round(members.reduce((a, m) => a + m.y + m.h / 2, 0) / members.length - H / 2)
+    const fid = folderId ?? `folder-${++zCounter}`
+    const folder: Surface = {
+      id: fid,
+      kind: 'native',
+      component: 'folder',
+      x: fx,
+      y: fy,
+      w: W,
+      h: H,
+      z: ++zCounter,
+      title: name && name.trim() ? name.trim() : 'Folder',
+      props: { members: valid, open: false }
+    }
+    set((st) => ({
+      surfaces: [...st.surfaces.map((w) => (valid.includes(w.id) ? { ...w, groupId: fid } : w)), folder],
+      selection: []
+    }))
+    return fid
+  },
+
+  // Cmd+G: pack the current multi-selection into an iPhone-style folder at their centroid.
+  groupSelection: () => {
+    get().group(get().selection)
+  },
+
+  // Pop one surface out of its folder back onto the canvas (cleaning up an emptied folder).
+  ungroupOne: (memberId, pos) =>
+    set((st) => {
+      const m = st.surfaces.find((w) => w.id === memberId)
+      if (!m || !m.groupId) return {}
+      const folderId = m.groupId
+      let surfaces = st.surfaces.map((w) =>
+        w.id === memberId ? { ...w, groupId: undefined, peek: false, z: ++zCounter, ...(pos ? { x: pos.x, y: pos.y } : {}) } : w
+      )
+      surfaces = surfaces.map((w) =>
+        w.id === folderId
+          ? { ...w, props: { ...w.props, members: ((w.props?.members as string[]) ?? []).filter((id) => id !== memberId) } }
+          : w
+      )
+      const folder = surfaces.find((w) => w.id === folderId)
+      if (folder && ((folder.props?.members as string[]) ?? []).length === 0) {
+        surfaces = surfaces.filter((w) => w.id !== folderId)
+      }
+      return { surfaces }
+    }),
+
+  setDragTarget: (id) => set({ dragTarget: id }),
+  setGrabMode: (on) => set({ grabMode: on }),
+
+  // Add surfaces to an existing folder (drag-onto-folder). Skips folders; re-adding a
+  // currently-peeked member just clears its peek so it hides back inside.
+  addToFolder: (folderId, ids) =>
+    set((st) => {
+      const folder = st.surfaces.find((w) => w.id === folderId && w.component === 'folder')
+      if (!folder) return {}
+      const targets = ids.filter((id) => {
+        const w = st.surfaces.find((s) => s.id === id)
+        return !!w && w.id !== folderId && w.component !== 'folder'
+      })
+      if (!targets.length) return {}
+      const existing = (folder.props?.members as string[]) ?? []
+      const members = [...existing, ...targets.filter((id) => !existing.includes(id))]
+      return {
+        surfaces: st.surfaces.map((w) => {
+          if (targets.includes(w.id)) return { ...w, groupId: folderId, peek: false }
+          if (w.id === folderId) return { ...w, props: { ...w.props, members } }
+          return w
+        }),
+        selection: []
+      }
+    }),
+
+  // Drop a selection onto a folder: brief "absorb" animation, then commit membership.
+  dropIntoFolder: (folderId, ids) => {
+    set({ absorbing: ids })
+    setTimeout(() => {
+      get().addToFolder(folderId, ids)
+      set({ absorbing: [], dragTarget: null })
+    }, 220)
+  },
 
   panBy: (dx, dy) =>
     set((s) => ({ transform: { ...s.transform, x: s.transform.x + dx, y: s.transform.y + dy } })),
@@ -270,6 +389,9 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     })
   },
 
+  minimizeSurface: (id) =>
+    set((s) => ({ surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, minimized: true } : w)) })),
+
   updateSurface: (id, patch) => {
     // Only a geometry change is "layout"; html/props updates are not undoable via Cmd+Z.
     if (patch.x !== undefined || patch.y !== undefined || patch.w !== undefined || patch.h !== undefined) get().snapshotLayout()
@@ -282,7 +404,17 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   closeSurface: (id) => {
     get().snapshotLayout()
-    set((s) => ({ surfaces: s.surfaces.filter((w) => w.id !== id) }))
+    set((s) => {
+      const surf = s.surfaces.find((w) => w.id === id)
+      // Closing a folder disbands it: members pop back onto the canvas where they were.
+      const members = surf?.component === 'folder' ? ((surf.props?.members as string[]) ?? []) : []
+      return {
+        surfaces: s.surfaces
+          .filter((w) => w.id !== id)
+          .map((w) => (members.includes(w.id) ? { ...w, groupId: undefined } : w)),
+        selection: s.selection.filter((x) => x !== id)
+      }
+    })
   },
 
   focusSurface: (id) =>

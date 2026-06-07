@@ -36,6 +36,12 @@ export interface Surface {
   restore?: { x: number; y: number; w: number; h: number }
   /** P0: agent may read this surface's content over the relay (default off; auto-on for agent-opened web/app). */
   shared?: boolean
+  /** macOS-style minimize: hidden from the canvas (kept alive), restored from the dock. */
+  minimized?: boolean
+  /** Member of an iPhone-style folder (the folder surface's id). Hidden from the main canvas. */
+  groupId?: string
+  /** A folder member temporarily "opened" onto the desktop (still a member; not ungrouped). */
+  peek?: boolean
 }
 
 export interface Vec2 {

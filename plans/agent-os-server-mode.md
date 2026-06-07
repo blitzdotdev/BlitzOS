@@ -1,7 +1,7 @@
 # BlitzOS Server Mode — Architecture & Build Plan
 
 **Status:** Planned (verified design, 2026-06-04). MVP build in progress.
-**Companion:** `agent-os-desktop-architecture.md` (Electron mode), `CLAUDE.md`.
+**Companion:** `agent-os-desktop-architecture.md` (Electron mode), `../CLAUDE.md`.
 
 A deployable **third run mode**: anyone runs BlitzOS on a VPS and uses it from a browser, recovering the two capabilities the plain browser preview cannot fake — **live third-party `web` surfaces** and **in-window agent control** — by moving the browser engine to the server.
 

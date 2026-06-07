@@ -6,6 +6,8 @@ import { ConnectPanel } from './components/ConnectPanel'
 import { SurfaceFrame } from './components/SurfaceFrame'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
+import { IconCrosshair, IconChat, IconSparkle } from './components/Icons'
+import { FolderOverlay } from './components/FolderOverlay'
 
 export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
@@ -13,6 +15,7 @@ export default function App(): JSX.Element {
   const mode = useDesktop((s) => s.mode)
   const integrations = useDesktop((s) => s.integrations)
   const surfaces = useDesktop((s) => s.surfaces)
+  const grabMode = useDesktop((s) => s.grabMode)
   const createSurface = useDesktop((s) => s.createSurface)
   const setIntegrations = useDesktop((s) => s.setIntegrations)
 
@@ -21,6 +24,8 @@ export default function App(): JSX.Element {
   const [showAi, setShowAi] = useState(false)
   const [panMode, setPanMode] = useState(false)
   const pan = useRef<{ x: number; y: number } | null>(null)
+  const marquee = useRef<{ x0: number; y0: number } | null>(null)
+  const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
 
   // The browser/server preview is an infinite canvas (pan/zoom), not the fixed
   // desktop the Electron app defaults to.
@@ -72,6 +77,10 @@ export default function App(): JSX.Element {
       if ((e.metaKey || e.ctrlKey) && e.key === '0') {
         e.preventDefault()
         useDesktop.getState().goToPrimary()
+      } else if ((e.metaKey || e.ctrlKey) && (e.key === 'g' || e.key === 'G')) {
+        // Cmd+G: pack the current selection into an iPhone-style folder.
+        e.preventDefault()
+        useDesktop.getState().groupSelection()
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
         // layout undo (Cmd+Z) when nothing editable is focused; else let the browser text-undo win
         const ae = document.activeElement as HTMLElement | null
@@ -80,10 +89,51 @@ export default function App(): JSX.Element {
           e.preventDefault()
           useDesktop.getState().undoLayout()
         }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Delete / ⌫ closes the selected surfaces (when not typing in a field).
+        const ae = document.activeElement as HTMLElement | null
+        const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
+        const st = useDesktop.getState()
+        if (!editable && st.selection.length) {
+          e.preventDefault()
+          const ids = [...st.selection]
+          ids.forEach((id) => st.closeSurface(id))
+          st.clearSelection()
+        }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Hold ⌥ (or Space, when not typing) → "grab mode": drag any surface from anywhere to
+  // move it (and select it); release to interact with content again.
+  // NOTE: a key held while a <webview> has keyboard focus is delivered to that guest, not
+  // here — so grab-mode may not engage until you click off a focused web page. A robust
+  // fix is to forward ⌥/Space from guests via main (like onMetaTap); deferred.
+  useEffect(() => {
+    const editable = (): boolean => {
+      const ae = document.activeElement as HTMLElement | null
+      return !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
+    }
+    const down = (e: KeyboardEvent): void => {
+      if (e.key === 'Alt' || (e.key === ' ' && !editable())) {
+        if (e.key === ' ') e.preventDefault()
+        useDesktop.getState().setGrabMode(true)
+      }
+    }
+    const up = (e: KeyboardEvent): void => {
+      if (e.key === 'Alt' || e.key === ' ') useDesktop.getState().setGrabMode(false)
+    }
+    const clear = (): void => useDesktop.getState().setGrabMode(false)
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', clear)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', clear)
+    }
   }, [])
 
   // Double-tap ⌘ to toggle pan-mode: a full-canvas overlay steals pointer focus
@@ -168,6 +218,15 @@ export default function App(): JSX.Element {
         } else {
           st.createSurface(activitySurfaceInput([evt]))
         }
+      } else if (a.type === 'group') {
+        // Agent packed related surfaces into a named iPhone-style folder.
+        st.group(
+          (a.ids as string[]) ?? [],
+          a.name != null ? String(a.name) : undefined,
+          a.x != null ? Number(a.x) : undefined,
+          a.y != null ? Number(a.y) : undefined,
+          a.folderId != null ? String(a.folderId) : undefined
+        )
       }
     })
   }, [])
@@ -275,18 +334,52 @@ export default function App(): JSX.Element {
   }, [])
 
   function onBgDown(e: React.PointerEvent): void {
-    if (useDesktop.getState().mode !== 'canvas') return
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    pan.current = { x: e.clientX, y: e.clientY }
+    const st = useDesktop.getState()
+    if (st.mode === 'canvas') {
+      pan.current = { x: e.clientX, y: e.clientY }
+    } else {
+      // desktop: rubber-band (marquee) selection. Shift adds to the current selection.
+      if (!e.shiftKey) st.clearSelection()
+      marquee.current = { x0: e.clientX, y0: e.clientY }
+      setMarqueeRect({ x: e.clientX, y: e.clientY, w: 0, h: 0 })
+    }
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      /* no pointer capture (e.g. synthetic events) — fine */
+    }
   }
   function onBgMove(e: React.PointerEvent): void {
-    if (!pan.current) return
-    useDesktop.getState().panBy(e.clientX - pan.current.x, e.clientY - pan.current.y)
-    pan.current = { x: e.clientX, y: e.clientY }
+    if (pan.current) {
+      useDesktop.getState().panBy(e.clientX - pan.current.x, e.clientY - pan.current.y)
+      pan.current = { x: e.clientX, y: e.clientY }
+      return
+    }
+    if (!marquee.current) return
+    const { x0, y0 } = marquee.current
+    const x = Math.min(x0, e.clientX)
+    const y = Math.min(y0, e.clientY)
+    const w = Math.abs(e.clientX - x0)
+    const h = Math.abs(e.clientY - y0)
+    setMarqueeRect({ x, y, w, h })
+    // screen rect -> world rect (screen = world*scale + t), then AABB-intersect surfaces
+    const st = useDesktop.getState()
+    const t = st.transform
+    const wr = { x: (x - t.x) / t.scale, y: (y - t.y) / t.scale, w: w / t.scale, h: h / t.scale }
+    const hit = st.surfaces
+      .filter((s) => wr.x < s.x + s.w && wr.x + wr.w > s.x && wr.y < s.y + s.h && wr.y + wr.h > s.y)
+      .map((s) => s.id)
+    st.setSelection(hit)
   }
   function onBgUp(e: React.PointerEvent): void {
-    ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+    try {
+      ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
     pan.current = null
+    marquee.current = null
+    setMarqueeRect(null)
   }
 
   // The Chat panel docks to the LEFT of whatever the user is currently looking at,
@@ -325,9 +418,10 @@ export default function App(): JSX.Element {
   }
 
   const active = integrations.find((i) => i.id === connecting) ?? null
+  const openFolder = surfaces.find((s) => s.kind === 'native' && s.component === 'folder' && s.props?.open)
 
   return (
-    <div id="root-canvas" ref={rootRef}>
+    <div id="root-canvas" ref={rootRef} className={grabMode ? 'grab-mode' : undefined}>
       {/* draggable native-window title bar (macOS move/resize) */}
       <div className="titlebar">
         <span className="titlebar-label">BlitzOS</span>
@@ -345,9 +439,10 @@ export default function App(): JSX.Element {
         {integrations.map((it) => (
           <IntegrationWidget key={it.id} integration={it} onConnect={setConnecting} />
         ))}
-        {surfaces.map((s) => (
-          <SurfaceFrame key={s.id} surface={s} />
-        ))}
+        {surfaces.map((s) =>
+          // folder members live only inside the folder — unless "peeked" open onto the desktop
+          s.groupId && !s.peek ? null : <SurfaceFrame key={s.id} surface={s} />
+        )}
       </div>
 
       {panMode && mode === 'canvas' && (
@@ -356,31 +451,51 @@ export default function App(): JSX.Element {
         </div>
       )}
 
+      {marqueeRect && (
+        <div
+          className="marquee"
+          style={{ left: marqueeRect.x, top: marqueeRect.y, width: marqueeRect.w, height: marqueeRect.h }}
+        />
+      )}
+
       <div className="toolbar">
-        <button onClick={() => useDesktop.getState().goToPrimary()}>Center</button>
-        <button onClick={openChat}>💬 Chat</button>
-        <button onClick={() => setShowAi((v) => !v)}>{aiUrl ? '🟢 Connect AI' : '○ Connect AI'}</button>
+        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => useDesktop.getState().goToPrimary()}>
+          <IconCrosshair size={15} /> Center
+        </button>
+        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={openChat}>
+          <IconChat size={15} /> Chat
+        </button>
+        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => setShowAi((v) => !v)}>
+          <span style={{ display: 'inline-flex', color: aiUrl ? 'var(--positive)' : 'var(--text-muted)' }}>
+            <IconSparkle size={15} />
+          </span>
+          Connect AI
+        </button>
         <span className="hint">fixed desktop · drag the top bar to move · click the dock to focus</span>
       </div>
 
       {showAi && (
-        <div className="ai-panel">
-          <div className="ai-head">Drive BlitzOS from an AI chat</div>
+        <div className="hud">
+          <div className="hud-head">Drive BlitzOS from an AI chat</div>
           {aiUrl ? (
             <>
-              <p className="ai-sub">Paste this URL into Claude / ChatGPT and ask it to open windows, post-its, etc.</p>
-              <input className="ai-url" readOnly value={aiUrl} onFocus={(e) => e.currentTarget.select()} />
-              <button className="primary" onClick={() => navigator.clipboard?.writeText(aiUrl)}>
-                Copy URL
-              </button>
+              <p className="hud-sub">Paste this URL into Claude / ChatGPT and ask it to open windows, post-its, etc.</p>
+              <div className="hud-row">
+                <input className="hud-input" readOnly value={aiUrl} onFocus={(e) => e.currentTarget.select()} />
+                <button className="btn primary" onClick={() => navigator.clipboard?.writeText(aiUrl)}>
+                  Copy
+                </button>
+              </div>
             </>
           ) : (
-            <p className="ai-sub">Connecting to the agent-socket relay…</p>
+            <p className="hud-sub">Connecting to the agent-socket relay…</p>
           )}
         </div>
       )}
 
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
+
+      {openFolder && <FolderOverlay folder={openFolder} />}
     </div>
   )
 }

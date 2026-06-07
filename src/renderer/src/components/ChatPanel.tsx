@@ -33,14 +33,14 @@ export function ChatPanel({ surface }: { surface: Surface }): JSX.Element {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0e1116', color: '#e6edf3' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface)', color: 'var(--text)' }}>
       <div
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}
         onPointerDown={(e) => e.stopPropagation()}
         onWheel={(e) => e.stopPropagation()}
       >
         {msgs.length === 0 && (
-          <div style={{ color: '#7d8590', fontSize: 12, lineHeight: 1.5 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5 }}>
             Message the OS — it sees your canvas and can open, arrange, and build things for you. Connect an AI first
             (toolbar → Connect AI) so something is listening.
           </div>
@@ -57,9 +57,9 @@ export function ChatPanel({ surface }: { surface: Surface }): JSX.Element {
               lineHeight: 1.45,
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
-              background: m.role === 'user' ? '#2563eb' : '#161b22',
-              color: m.role === 'user' ? '#fff' : '#e6edf3',
-              border: m.role === 'user' ? 'none' : '1px solid #21262d'
+              background: m.role === 'user' ? 'var(--accent)' : 'var(--surface-raised)',
+              color: m.role === 'user' ? 'var(--paper-coral-ink)' : 'var(--text)',
+              boxShadow: m.role === 'user' ? 'none' : 'inset 0 0 0 1px var(--hairline)'
             }}
           >
             {m.text}
@@ -72,9 +72,9 @@ export function ChatPanel({ surface }: { surface: Surface }): JSX.Element {
               padding: '7px 11px',
               borderRadius: 12,
               fontSize: 13,
-              background: '#161b22',
-              color: '#7d8590',
-              border: '1px solid #21262d'
+              background: 'var(--surface-raised)',
+              color: 'var(--text-muted)',
+              boxShadow: 'inset 0 0 0 1px var(--hairline)'
             }}
           >
             working… <span style={{ opacity: 0.7 }}>(see the Agent activity panel)</span>
@@ -85,7 +85,7 @@ export function ChatPanel({ surface }: { surface: Surface }): JSX.Element {
       <form
         onSubmit={send}
         onPointerDown={(e) => e.stopPropagation()}
-        style={{ display: 'flex', gap: 6, padding: 8, borderTop: '1px solid #21262d' }}
+        style={{ display: 'flex', gap: 6, padding: 8, borderTop: '1px solid var(--hairline)' }}
       >
         <input
           name="msg"
@@ -94,9 +94,9 @@ export function ChatPanel({ surface }: { surface: Surface }): JSX.Element {
           spellCheck={false}
           style={{
             flex: 1,
-            background: '#0d1117',
-            color: '#e6edf3',
-            border: '1px solid #30363d',
+            background: 'var(--canvas)',
+            color: 'var(--text)',
+            border: '1px solid var(--hairline)',
             borderRadius: 8,
             padding: '7px 10px',
             fontSize: 13,
@@ -105,7 +105,8 @@ export function ChatPanel({ surface }: { surface: Surface }): JSX.Element {
         />
         <button
           type="submit"
-          style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, padding: '0 14px', fontSize: 13, cursor: 'pointer' }}
+          className="btn primary"
+          style={{ borderRadius: 8, padding: '0 14px' }}
         >
           Send
         </button>
