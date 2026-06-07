@@ -91,6 +91,21 @@ button {
   z-index: 1;
 }
 
+/* Window-snap preview: where a dragged window will dock (full / half / quarter of the primary area). */
+.snap-preview {
+  position: absolute;
+  z-index: 1500000; /* above normal windows, below the pinned chat/activity band (2,000,000) */
+  border: 2px solid color-mix(in srgb, var(--accent) 80%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: var(--radius-window);
+  pointer-events: none;
+  transition:
+    left 0.09s var(--ease-out),
+    top 0.09s var(--ease-out),
+    width 0.09s var(--ease-out),
+    height 0.09s var(--ease-out);
+}
+
 /* Primary space rectangle at the origin (canvas mode). */
 .primary-space {
   position: absolute;

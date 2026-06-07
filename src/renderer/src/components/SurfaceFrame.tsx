@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop } from '../store'
+import { useDesktop, snapTargetFor } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
@@ -243,6 +243,11 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       (w) => w.component === 'folder' && !dragged.has(w.id) && wx >= w.x && wx <= w.x + w.w && wy >= w.y && wy <= w.y + w.h
     )
     st.setDragTarget(folder ? folder.id : null)
+    // Snap preview: in normal mode, dragging a single window near a primary-area edge shows where
+    // it will dock on release (full / left|right half / quarter). Suppressed over a folder target.
+    st.setSnapPreview(
+      st.mode === 'desktop' && d.items.length === 1 && !folder && !isFolder ? snapTargetFor(wx, wy, st.viewport) : null
+    )
   }
   function onBarUp(e: React.PointerEvent): void {
     try {
@@ -255,8 +260,11 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     drag.current = null
     const st = useDesktop.getState()
     const target = st.dragTarget
+    const snap = st.snapPreview
     st.setDragTarget(null)
+    st.setSnapPreview(null)
     if (d && target) st.dropIntoFolder(target, d.items.map((it) => it.id))
+    else if (d && snap && st.mode === 'desktop' && d.items.length === 1) st.updateSurface(d.items[0].id, snap)
   }
 
   function onResizeDown(e: React.PointerEvent): void {

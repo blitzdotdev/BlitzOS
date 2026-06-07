@@ -48,6 +48,38 @@ export function viewTransform(mode: 'desktop' | 'canvas', vp: { w: number; h: nu
   const cy = TITLEBAR + r.h / 2
   return { scale: mode === 'desktop' ? 1 : 0.62, x: cx, y: cy }
 }
+/** While dragging a window in normal mode, if the cursor (world coords) is near a primary-area edge,
+ *  return the snap-target rect: full (top edge), left/right half (side edges), or a quarter (corner).
+ *  Null = no snap. Mirrors macOS/Windows edge-snapping, but relative to the PRIMARY AREA. */
+export function snapTargetFor(
+  wx: number,
+  wy: number,
+  vp: { w: number; h: number }
+): { x: number; y: number; w: number; h: number } | null {
+  const r = primaryRect(vp)
+  const nx = (wx - r.x) / r.w
+  const ny = (wy - r.y) / r.h
+  if (nx < -0.08 || nx > 1.08 || ny < -0.08 || ny > 1.08) return null // cursor well outside the area
+  const E = 0.06
+  const nearL = nx < E
+  const nearR = nx > 1 - E
+  const nearT = ny < E
+  const nearB = ny > 1 - E
+  const cell = (fx: number, fy: number, fw: number, fh: number): { x: number; y: number; w: number; h: number } => ({
+    x: Math.round(r.x + r.w * fx),
+    y: Math.round(r.y + r.h * fy),
+    w: Math.round(r.w * fw),
+    h: Math.round(r.h * fh)
+  })
+  if (nearL && nearT) return cell(0, 0, 0.5, 0.5) // corners → quarters
+  if (nearL && nearB) return cell(0, 0.5, 0.5, 0.5)
+  if (nearR && nearT) return cell(0.5, 0, 0.5, 0.5)
+  if (nearR && nearB) return cell(0.5, 0.5, 0.5, 0.5)
+  if (nearT) return cell(0, 0, 1, 1) // top edge → full
+  if (nearL) return cell(0, 0, 0.5, 1) // left half
+  if (nearR) return cell(0.5, 0, 0.5, 1) // right half
+  return null
+}
 
 let zCounter = 10
 // Quiet-period boundary (ms): layout changes closer than this coalesce into ONE undo step.
@@ -79,6 +111,7 @@ interface DesktopState {
   layoutHistory: Surface[][]
   selection: string[]
   dragTarget: string | null
+  snapPreview: { x: number; y: number; w: number; h: number } | null
   absorbing: string[]
   grabMode: boolean
 
@@ -95,6 +128,7 @@ interface DesktopState {
   group: (ids: string[], name?: string, x?: number, y?: number, folderId?: string) => string
   ungroupOne: (memberId: string, pos?: { x: number; y: number }) => void
   setDragTarget: (id: string | null) => void
+  setSnapPreview: (r: { x: number; y: number; w: number; h: number } | null) => void
   addToFolder: (folderId: string, ids: string[]) => void
   dropIntoFolder: (folderId: string, ids: string[]) => void
   setGrabMode: (on: boolean) => void
@@ -136,6 +170,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   layoutHistory: [],
   selection: [],
   dragTarget: null,
+  snapPreview: null,
   absorbing: [],
   grabMode: false,
 
@@ -210,6 +245,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     }),
 
   setDragTarget: (id) => set({ dragTarget: id }),
+  setSnapPreview: (r) => set({ snapPreview: r }),
   setGrabMode: (on) => set({ grabMode: on }),
 
   // Add surfaces to an existing folder (drag-onto-folder). Skips folders; re-adding a

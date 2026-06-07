@@ -35,6 +35,7 @@ export default function App(): JSX.Element {
   const integrations = useDesktop((s) => s.integrations)
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
+  const snapPreview = useDesktop((s) => s.snapPreview)
   const createSurface = useDesktop((s) => s.createSurface)
   const setIntegrations = useDesktop((s) => s.setIntegrations)
 
@@ -573,6 +574,12 @@ export default function App(): JSX.Element {
         style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
       >
         {mode === 'canvas' && <PrimarySpace />}
+        {snapPreview && (
+          <div
+            className="snap-preview"
+            style={{ left: snapPreview.x, top: snapPreview.y, width: snapPreview.w, height: snapPreview.h }}
+          />
+        )}
         {integrations.map((it) => (
           <IntegrationWidget key={it.id} integration={it} onConnect={setConnecting} />
         ))}
