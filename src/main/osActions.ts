@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
 import { ingestSignals, emitSurfaceAction, emitUserMessage, setContentShare, dropContentShare, INJECT, DRAIN } from './events'
+import { workspaceOnState } from './workspaces'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -34,6 +35,7 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   getWin = getWindow
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) cached = state
+    workspaceOnState(state) // persist the canvas to the active workspace folder (Electron)
   })
   ipcMain.on('os:webview', (_e, m: { surfaceId: string; wcid: number }) => {
     if (m && m.surfaceId) {

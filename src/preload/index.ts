@@ -102,6 +102,22 @@ const api = {
   sendMessage(text: string): void {
     ipcRenderer.send('os:user-message', text)
   },
+  /** Workspace persistence (Electron): list / create / switch folder-backed boards. */
+  workspaces: {
+    list(): Promise<{ workspaces: Array<{ name: string; nodeCount: number; updatedAt: number; thumbTs: number }>; active: string }> {
+      return ipcRenderer.invoke('workspaces:list')
+    },
+    create(name: string): Promise<{ ok: boolean; name?: string; error?: string }> {
+      return ipcRenderer.invoke('workspaces:create', name)
+    },
+    switch(name: string): Promise<{ ok: boolean; active?: string; error?: string }> {
+      return ipcRenderer.invoke('workspaces:switch', name)
+    }
+  },
+  /** Ask main to (re)send the persisted canvas as a hydrate, once our onAction listener is up. */
+  requestHydrate(): void {
+    ipcRenderer.send('workspace:request-hydrate')
+  },
 
   /** Relay a sandboxed srcdoc widget's data request to main (consent-gated; token stays in main). */
   widgetRequest(req: {

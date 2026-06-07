@@ -9,6 +9,7 @@ import { registerWidgets } from './widgets'
 import { startAgentRunner } from './agent-runner.mjs'
 // Keep web surfaces logged in across quit/relaunch (cookie/localStorage flush + unload).
 import { startSessionPersistence } from './persistence'
+import { initWorkspaces, flushWorkspaceOnQuit } from './workspaces'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -98,6 +99,11 @@ app.whenReady().then(() => {
   // Wire the renderer<->main control channel (shared by control server + agent-socket).
   initOsActions(() => mainWindow)
 
+  // Folder-backed workspace persistence (Electron): restore the canvas on boot, project it to
+  // disk on change, watch for external edits, and switch between boards. The renderer requests
+  // its hydrate once its onAction listener is mounted.
+  initWorkspaces(() => mainWindow)
+
   // Register the IPC for web-surface CDP control (renderer reports guest ids).
   initCdp()
 
@@ -127,6 +133,9 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+// Persist any pending workspace write before the app exits (the on-change write is debounced).
+app.on('before-quit', () => flushWorkspaceOnQuit())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

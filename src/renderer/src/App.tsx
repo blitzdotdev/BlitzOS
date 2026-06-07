@@ -11,6 +11,23 @@ import { Sidebar } from './components/Sidebar'
 import { IconCrosshair, IconChat, IconSparkle } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
 
+// The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
+// hydrate so a fresh workspace gets one (it then persists as a file); idempotent on a restored board.
+function ensureNotepad(): void {
+  if (window.agentOS?.serverMode) return // the default Notepad is Electron's; server mode is unchanged
+  const st = useDesktop.getState()
+  if (st.surfaces.some((s) => s.kind === 'native' && s.component === 'note' && s.title === 'Notepad')) return
+  st.createSurface({
+    kind: 'native',
+    component: 'note',
+    title: 'Notepad',
+    props: {
+      text: '# Notepad\n\nShared working memory for you and BlitzOS. The agent keeps context and notes here; you can edit it too.\n',
+      color: 'yellow'
+    }
+  })
+}
+
 export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
@@ -28,6 +45,7 @@ export default function App(): JSX.Element {
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [panMode, setPanMode] = useState(false)
   const isServer = !!window.agentOS?.serverMode
+  const hasWorkspaces = !!window.agentOS?.workspaces
   const pan = useRef<{ x: number; y: number } | null>(null)
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
@@ -59,24 +77,8 @@ export default function App(): JSX.Element {
     }
   }, [setIntegrations])
 
-  // Default Notepad: BlitzOS keeps one shared note as working memory (human + agent r/w).
-  // Electron has no workspace hydrate yet, so create it once at launch if absent; the agent
-  // reads it via list_state (props.text) and writes via update_surface. Per-session until
-  // workspace persistence lands (then it becomes the persisted _context.md).
-  useEffect(() => {
-    if (window.agentOS?.serverMode) return
-    const st = useDesktop.getState()
-    if (st.surfaces.some((s) => s.kind === 'native' && s.component === 'note' && s.title === 'Notepad')) return
-    st.createSurface({
-      kind: 'native',
-      component: 'note',
-      title: 'Notepad',
-      props: {
-        text: '# Notepad\n\nShared working memory for you and BlitzOS. The agent keeps context and notes here; you can edit it too.\n',
-        color: 'yellow'
-      }
-    })
-  }, [])
+  // The default Notepad is ensured after each hydrate (see the 'hydrate'/'switch' handlers below),
+  // so it persists as a file in the active workspace instead of being recreated per session.
 
   useEffect(() => {
     const onResize = (): void => {
@@ -225,6 +227,7 @@ export default function App(): JSX.Element {
         const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
         const md = a.mode === 'desktop' ? 'desktop' : 'canvas'
         st.hydrate(surfs, cam, md)
+        ensureNotepad()
         hydrated.current = true
         if (typeof a.workspace === 'string') {
           setActiveWs(a.workspace)
@@ -237,6 +240,7 @@ export default function App(): JSX.Element {
         const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
         st.hydrate(sf, cm, a.mode === 'desktop' ? 'desktop' : 'canvas')
+        ensureNotepad()
         hydrated.current = true // a switch is also a valid first hydrate — don't depend on a prior 'hydrate'
         if (typeof a.workspace === 'string') {
           setActiveWs(a.workspace)
@@ -288,6 +292,12 @@ export default function App(): JSX.Element {
         )
       }
     })
+  }, [])
+
+  // Ask main for the persisted canvas once our onAction listener (above) is mounted; Electron
+  // replies with a 'hydrate' os:action. In server mode the SSE connect delivers it, so this no-ops.
+  useEffect(() => {
+    window.agentOS?.requestHydrate?.()
   }, [])
 
   // srcdoc surfaces (agent-authored UI) can fire actions back to the agent: a
@@ -560,7 +570,7 @@ export default function App(): JSX.Element {
       )}
 
       <div className="toolbar">
-        {isServer && (
+        {hasWorkspaces && (
           <button className="ws-btn" onClick={() => void openOverview()} title="Workspaces (Mission Control)">
             ▦ {activeWs ?? '…'} ▾
           </button>
