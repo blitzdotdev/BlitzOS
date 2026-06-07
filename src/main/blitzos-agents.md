@@ -17,6 +17,9 @@ You reach BlitzOS over plain HTTPS, no MCP, no SDK. Two paths:
 
 FIRST: `GET $BASE/tools.json` (or read session.json) for the exact tools + schemas. Then tell the user in one line what you can do, and start. Keep the URL so you can re-read these instructions if your context resets.
 
+## Memory: the Notepad note
+Your durable working memory is a `note` titled "Notepad" that BlitzOS keeps on the canvas (auto-created). It is shared: the human reads and edits it too. Recover context on connect by reading it (it appears in `list_state` with its text in `props.text`); as you work, write back with `update_surface { id, props:{ text } }`. Keep it legible; there is no separate journal store. (Cross-restart persistence is being wired via workspaces; treat the Notepad as your memory regardless.)
+
 ## Surface kinds (for create_surface)
 - web — a live website (any third-party URL); a real browsing context you can also control (server mode renders it server-side, no X-Frame-Options limits).
 - app — an iframe of a first-party blitz.dev app URL.
@@ -27,7 +30,7 @@ FIRST: `GET $BASE/tools.json` (or read session.json) for the exact tools + schem
 - open_window { url, x?, y?, w?, h?, title? } — open a website as a web surface; returns { id }.
 - create_surface { kind, x?, y?, w?, h?, title?, url?, html?, component?, props? }
 - move_surface { id, x, y } · close_surface { id } · go_to_primary
-- list_state — the full layout (read before arranging): { viewport:{w,h}, view:{x,y,w,h,cx,cy,scale}, mode, surfaces:[{id,kind,x,y,w,h,z,title,url,component,pinned}] }. See "Window management".
+- list_state — the full layout (read before arranging): { viewport:{w,h}, view:{x,y,w,h,cx,cy,scale}, mode, surfaces:[{id,kind,x,y,w,h,z,title,url,component,pinned, + props/html (a note's text is props.text)}] }. See "Window management".
 - update_surface { id, html?, props?, url?, title?, x?, y?, w?, h? } — patch in place (set a note's text, resize via w/h, change url/geometry).
 - group { ids, name, x?, y? }: pack MORE-THAN-2 related surfaces into one named iPhone-style folder (returns { id }), then place it inside `view` and label it with a `note`. See "Window management".
 - read_window { id, script? } — read INSIDE a web surface (url, title, focus, text); pass a JS expression as `script` to extract anything specific.

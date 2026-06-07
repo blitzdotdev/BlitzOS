@@ -50,6 +50,25 @@ export default function App(): JSX.Element {
     }
   }, [setIntegrations])
 
+  // Default Notepad: BlitzOS keeps one shared note as working memory (human + agent r/w).
+  // Electron has no workspace hydrate yet, so create it once at launch if absent; the agent
+  // reads it via list_state (props.text) and writes via update_surface. Per-session until
+  // workspace persistence lands (then it becomes the persisted _context.md).
+  useEffect(() => {
+    if (window.agentOS?.serverMode) return
+    const st = useDesktop.getState()
+    if (st.surfaces.some((s) => s.kind === 'native' && s.component === 'note' && s.title === 'Notepad')) return
+    st.createSurface({
+      kind: 'native',
+      component: 'note',
+      title: 'Notepad',
+      props: {
+        text: '# Notepad\n\nShared working memory for you and BlitzOS. The agent keeps context and notes here; you can edit it too.\n',
+        color: 'yellow'
+      }
+    })
+  }, [])
+
   useEffect(() => {
     const onResize = (): void => {
       useDesktop.getState().setViewport(window.innerWidth, window.innerHeight)
