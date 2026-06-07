@@ -14,6 +14,15 @@ declare global {
       mountServerSurface?: (canvas: HTMLCanvasElement, surfaceId: string, opts: { w: number; h: number }) => () => void
       serverNavigate?: (surfaceId: string, url: string) => void
       serverReload?: (surfaceId: string) => void
+      // Multi-workspace launcher (server-mode only; Electron wiring deferred — do NOT add stubs to
+      // preload, that would make these non-optional in AgentOSApi and remove the ?. safety net).
+      workspaces?: {
+        list(): Promise<{ workspaces: Array<{ name: string; nodeCount: number; updatedAt: number; thumbTs: number }>; active: string }>
+        create(name: string): Promise<{ ok: boolean; name?: string; error?: string }>
+        switch(name: string): Promise<{ ok: boolean; active?: string; error?: string }>
+        thumb(name: string, dataUrl: string): Promise<{ ok?: boolean; error?: string }>
+        thumbUrl(name: string, ts?: number): string
+      }
     }
   }
 }

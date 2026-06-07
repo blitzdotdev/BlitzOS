@@ -351,6 +351,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
 
   return (
     <div
+      data-sid={surface.id}
       className={`window${isNote ? ' note' : ''}${isActive ? ' is-active' : ''}${isSelected ? ' is-selected' : ''}${isAbsorbing ? ' absorbing' : ''}`}
       style={{
         left: surface.x,

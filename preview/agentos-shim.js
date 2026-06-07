@@ -137,6 +137,17 @@
     serverNavigate: function (id, url) { streamSend({ t: 'cdp', id: id, method: 'Page.navigate', params: { url: url } }) },
     serverReload: function (id) { streamSend({ t: 'cdp', id: id, method: 'Page.reload', params: {} }) },
 
+    // Multi-workspace launcher (server-mode only). list/create/switch hit the backend routes.
+    // Send raw names — the server's safeName is the one validator; render its error. (The active
+    // workspace name arrives via the normal onAction 'switch'/'hydrate' events, so no separate sub.)
+    workspaces: {
+      list: function () { return getJSON('/os/workspaces') },
+      create: function (name) { return getJSON('/os/workspaces', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) }) },
+      switch: function (name) { return getJSON('/os/workspace/switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) }) },
+      thumb: function (name, dataUrl) { return getJSON('/os/workspace/thumb', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspace: name, dataUrl: dataUrl }) }) },
+      thumbUrl: function (name, ts) { return API + '/os/workspace/thumb?name=' + encodeURIComponent(name) + (ts ? '&t=' + ts : '') }
+    },
+
     // srcdoc widget bridge: relay a widget's data request to the backend data route
     // (consent-gated). Token stays server-side; the widget only ever sees {items}.
     widgetRequest: function (reqObj) {

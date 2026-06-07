@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch'
   [k: string]: unknown
 }
 
@@ -47,6 +47,8 @@ export interface OsState {
   mode?: 'desktop' | 'canvas'
   /** Raw camera transform — persisted to workspace.json (Phase 1). */
   camera?: { x: number; y: number; scale: number }
+  /** Which workspace this state belongs to — lets the backend drop a stale push after a switch. */
+  workspace?: string
 }
 
 const api = {

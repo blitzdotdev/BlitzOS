@@ -20,7 +20,7 @@ import { randomBytes, createHash, randomUUID } from 'node:crypto'
 import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, watch } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename, resolve } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
 import {
@@ -46,7 +46,7 @@ import {
   DRAIN
 } from '../src/main/perception-core.mjs'
 import { startAgentRunner } from '../src/main/agent-runner.mjs'
-import { writeWorkspace, readWorkspace, reconcileWorkspace, wasSelfWrite } from '../src/main/workspace.mjs'
+import { writeWorkspace, readWorkspace, reconcileWorkspace, wasSelfWrite, listWorkspaces, createWorkspace, resolveWorkspace, safeName } from '../src/main/workspace.mjs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -57,10 +57,37 @@ const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${PORT
 const REDIRECT_URI = `${PUBLIC_BASE_URL}/api/oauth/callback`
 const UA = 'agent-os-preview/0.1'
 
-// Workspaces Phase 1 (write-only): the active workspace folder. Server-mode default is a
-// gitignored sandbox dir; override with BLITZ_WORKSPACE. As the canvas changes, we project
-// it to <dir>/.blitzos/workspace.json + content files (debounced, additive, never deletes).
-const WORKSPACE_DIR = process.env.BLITZ_WORKSPACE || join(ROOT, 'preview', '.workspace', 'Home')
+// Workspaces: a ROOT folder holds many workspace folders; `activeWorkspace` is the one the canvas
+// is currently projected to (MUTABLE — the launcher switches it at runtime). Default root is a
+// gitignored sandbox dir. Back-compat: BLITZ_WORKSPACE (a single folder) sets root = its parent +
+// active = its basename. BLITZ_WORKSPACES_ROOT overrides the root directly.
+const WORKSPACES_ROOT = process.env.BLITZ_WORKSPACES_ROOT
+  ? resolve(process.env.BLITZ_WORKSPACES_ROOT)
+  : process.env.BLITZ_WORKSPACE
+    ? dirname(resolve(process.env.BLITZ_WORKSPACE))
+    : join(ROOT, 'preview', '.workspace')
+let initialWs = process.env.BLITZ_WORKSPACE ? basename(resolve(process.env.BLITZ_WORKSPACE)) : 'Home'
+if (!safeName(initialWs)) {
+  console.error(`[workspace] BLITZ_WORKSPACE basename ${JSON.stringify(initialWs)} is not a valid workspace name — falling back to 'Home'`)
+  initialWs = 'Home'
+}
+mkdirSync(WORKSPACES_ROOT, { recursive: true })
+// First-run: an empty root gets a default workspace so the user always lands on a board.
+if (listWorkspaces(WORKSPACES_ROOT).length === 0) {
+  try {
+    createWorkspace(WORKSPACES_ROOT, initialWs)
+  } catch (e) {
+    console.error('[workspace] first-run create failed:', e?.message || e)
+  }
+}
+// As the canvas changes we project the active workspace to <dir>/.blitzos/workspace.json + content
+// files (debounced, additive, never deletes). Both branches yield a validated child of the root:
+// resolveWorkspace realpath-jails the happy path, and the fallback join uses the already-safeName'd
+// initialWs — so activeWorkspace is never an unvalidated path.
+let activeWorkspace = resolveWorkspace(WORKSPACES_ROOT, initialWs, { mustExist: true }) || join(WORKSPACES_ROOT, initialWs)
+// Single-flight lock: a workspace SWITCH must be atomic. While true, scheduleReconcile and the
+// /api/os/state write+reconcile branch stand down, so nothing writes mid-swap to the wrong folder.
+let switching = false
 let wsWriteTimer = null
 // Synchronous write (clears any pending timer). Used by the debounce + the shutdown flush.
 function flushWorkspace() {
@@ -69,7 +96,7 @@ function flushWorkspace() {
     wsWriteTimer = null
   }
   try {
-    writeWorkspace(WORKSPACE_DIR, osState)
+    writeWorkspace(activeWorkspace, osState)
   } catch (e) {
     console.error('[workspace] write failed:', e?.message || e)
   }
@@ -90,9 +117,10 @@ function scheduleReconcile() {
   if (wsReconcileTimer) return
   wsReconcileTimer = setTimeout(() => {
     wsReconcileTimer = null
+    if (switching) return // a switch is mid-flight — its teardown owns the folder, don't reconcile
     try {
       const v = osState.view
-      const r = reconcileWorkspace(WORKSPACE_DIR, v ? { cx: v.cx, cy: v.cy } : {})
+      const r = reconcileWorkspace(activeWorkspace, v ? { cx: v.cx, cy: v.cy } : {})
       if (!r) return
       // preserve runtime-only panels (chat/activity) — they're not files, so reconcile (which
       // reads from disk) doesn't know about them; without this an external edit would wipe them.
@@ -113,25 +141,38 @@ function scheduleReconcile() {
   }, 250)
 }
 
+let wsWatchers = [] // captured FSWatcher handles, so a switch can stop watching the OLD folder
 function startWorkspaceWatch() {
   try {
-    mkdirSync(join(WORKSPACE_DIR, '.blitzos'), { recursive: true })
+    mkdirSync(join(activeWorkspace, '.blitzos'), { recursive: true })
   } catch {
     /* ignore */
   }
   const onEvent = (sub) => (_evt, filename) => {
     if (!filename) return scheduleReconcile() // some platforms omit the name — reconcile anyway
     if (/(^\.tmp)|(\.tmp(-[0-9a-f]+)?$)/.test(filename)) return // our atomic temp files
-    if (wasSelfWrite(join(WORKSPACE_DIR, sub, filename))) return // BlitzOS's own write — ignore
+    if (wasSelfWrite(join(activeWorkspace, sub, filename))) return // BlitzOS's own write — ignore
     scheduleReconcile()
   }
   try {
-    watch(WORKSPACE_DIR, onEvent('')) // root content files
-    watch(join(WORKSPACE_DIR, '.blitzos'), onEvent('.blitzos')) // hand edits of workspace.json
-    console.log(`[workspace] watching ${WORKSPACE_DIR} for external edits`)
+    wsWatchers.push(watch(activeWorkspace, onEvent(''))) // root content files
+    wsWatchers.push(watch(join(activeWorkspace, '.blitzos'), onEvent('.blitzos'))) // hand edits of workspace.json
+    console.log(`[workspace] watching ${activeWorkspace} for external edits`)
   } catch (e) {
     console.error('[workspace] watch failed:', e?.message || e)
   }
+}
+// Stop watching the current folder (before a switch reassigns activeWorkspace, and on quit) so no
+// late fs event re-arms a reconcile against the new dir.
+function stopWorkspaceWatch() {
+  for (const w of wsWatchers) {
+    try {
+      w.close()
+    } catch {
+      /* already closed */
+    }
+  }
+  wsWatchers = []
 }
 
 // ---------- provider registry (ported from src/main/integrations.ts) ----------
@@ -287,10 +328,10 @@ let osState = { surfaces: [] }
 // Phase 2: hydrate the canvas from the persisted workspace on boot, so a restart restores
 // it. The renderer adopts this via a `hydrate` event on SSE connect (below).
 try {
-  const _h = readWorkspace(WORKSPACE_DIR)
+  const _h = readWorkspace(activeWorkspace)
   if (_h && _h.surfaces.length) {
     osState = { surfaces: _h.surfaces, camera: _h.camera, mode: _h.mode }
-    console.log(`[workspace] hydrated ${_h.surfaces.length} surface(s) from ${WORKSPACE_DIR}`)
+    console.log(`[workspace] hydrated ${_h.surfaces.length} surface(s) from ${activeWorkspace}`)
   }
 } catch (e) {
   console.error('[workspace] hydrate failed:', e?.message || e)
@@ -386,21 +427,89 @@ function startServerPerception() {
   }, 1000)
 }
 
+// The same-site gate for the mutating workspace routes. The server has no per-route auth and (in
+// the demo) is reachable on a PUBLIC tunnel, so reject cross-site requests: a drive-by page must
+// not switch/create the operator's workspaces. Same-origin (the renderer), localhost, and
+// non-browser callers (no Origin / Sec-Fetch-Site) pass.
+// NOTE: the localhost-origin allowance is closed by Sec-Fetch-Site on modern browsers (a cross-port
+// localhost page sends Sec-Fetch-Site: cross-site → rejected at the check below). On a browser that
+// omits Sec-Fetch-Site, a local page on another port could slip through; accepted for the prototype
+// (kept so local dev, where the page origin differs from PUBLIC_BASE_URL, still works). Tighten to
+// PUBLIC_BASE_URL-only before GA.
+function sameSiteOnly(req) {
+  const sfs = req.headers['sec-fetch-site']
+  if (sfs && sfs !== 'same-origin' && sfs !== 'none') return false
+  const o = req.headers.origin
+  if (o) {
+    try {
+      const og = new URL(o).origin
+      if (og !== new URL(PUBLIC_BASE_URL).origin && !/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(og)) return false
+    } catch {
+      return false
+    }
+  }
+  return true
+}
+
+// Atomic workspace SWITCH (the riskiest path). Tears down the OLD folder's writer/watchers/targets
+// and rebuilds against the NEW one, guarded by the `switching` single-flight lock so nothing writes
+// mid-swap to the wrong folder. Returns { status, body }. (Ordering is load-bearing — see comments.)
+async function performSwitch(rawName) {
+  if (switching) return { status: 409, body: { error: 'switch in progress' } }
+  const name = safeName(rawName)
+  if (!name) return { status: 400, body: { error: 'invalid workspace name' } }
+  const newPath = resolveWorkspace(WORKSPACES_ROOT, name, { mustExist: true })
+  if (!newPath) return { status: 404, body: { error: 'no such workspace' } }
+  if (newPath === activeWorkspace) return { status: 200, body: { ok: true, active: name } } // already here — no-op
+  switching = true
+  try {
+    flushWorkspace() // persist OLD osState → OLD activeWorkspace; clears wsWriteTimer
+    if (wsReconcileTimer) {
+      clearTimeout(wsReconcileTimer) // flush does NOT clear this — a queued reconcile would hit the new dir
+      wsReconcileTimer = null
+    }
+    stopWorkspaceWatch() // close the OLD folder's watchers — no late fs event can re-arm reconcile
+    // Capture runtime-only panels (chat/activity) BEFORE reassign — they aren't files, so the new
+    // workspace's readWorkspace won't know them; without this a switch drops the live transcript.
+    const runtime = (osState.surfaces || []).filter((s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+    activeWorkspace = newPath // ← load-bearing: MUST be after flushWorkspace (which wrote the old dir)
+    const next = readWorkspace(newPath) || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas' }
+    const surfaces = [...next.surfaces, ...runtime]
+    // seed `view` from the restored camera so a reconcile in the gap places new files around the
+    // restored center, not world origin.
+    osState = { surfaces, camera: next.camera, mode: next.mode, view: { cx: next.camera.x, cy: next.camera.y } }
+    if (SERVER_MODE) await reconcileSurfaces(surfaces) // awaited: no stranded targets on an overlapping switch
+    startWorkspaceWatch() // re-arm watch on the NEW activeWorkspace, after osState is fully assigned
+    broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, workspace: name })
+    console.log(`[workspace] switched → ${name}`)
+    return { status: 200, body: { ok: true, active: name } }
+  } finally {
+    switching = false
+  }
+}
+
 // Reconcile the host's live targets with the web surfaces the renderer reports
 // (covers both agent- and human-created surfaces, since both land in os:state).
+// Returns a promise resolving when all target spin-ups/tear-downs settle — the SWITCH awaits it so
+// an overlapping switch can't run teardown against a stale host.ids() snapshot (stranding a target).
+// The steady-state callers (reconcile, initServerMode, POST state) ignore the promise — fine.
 function reconcileSurfaces(list) {
-  if (!host) return
+  if (!host) return Promise.resolve()
   const want = new Set(list.filter((x) => x && x.kind === 'web').map((x) => x.id))
+  const ps = []
   for (const sfc of list) {
     if (sfc.kind === 'web' && !host.has(sfc.id)) {
-      host
-        .createSurface(sfc.id, { url: sfc.url || 'about:blank', width: Math.round(sfc.w) || 1280, height: Math.round(sfc.h) || 800 })
-        .catch((e) => console.error('[server mode] createSurface', sfc.id, e?.message || e))
+      ps.push(
+        host
+          .createSurface(sfc.id, { url: sfc.url || 'about:blank', width: Math.round(sfc.w) || 1280, height: Math.round(sfc.h) || 800 })
+          .catch((e) => console.error('[server mode] createSurface', sfc.id, e?.message || e))
+      )
     }
   }
   for (const id of host.ids()) {
-    if (!want.has(id)) host.closeSurface(id).catch(() => {})
+    if (!want.has(id)) ps.push(host.closeSurface(id).catch(() => {}))
   }
+  return Promise.all(ps)
 }
 function broadcast(obj) {
   const data = `data: ${JSON.stringify(obj)}\n\n`
@@ -918,7 +1027,7 @@ const server = createServer(async (req, res) => {
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
     res.write(
-      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas' })}\n\n`
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', workspace: basename(activeWorkspace) })}\n\n`
     )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))
@@ -933,9 +1042,18 @@ const server = createServer(async (req, res) => {
     req.on('end', () => {
       const s = toolBody(body)
       if (s && Array.isArray(s.surfaces)) {
-        osState = s
-        if (SERVER_MODE) reconcileSurfaces(s.surfaces) // spin up / tear down server targets
-        scheduleWorkspaceWrite() // Phase 1: project the canvas onto the workspace folder
+        // Drop a STALE push: one arriving while a switch is mid-flight, or one TAGGED with a
+        // workspace we've already switched away from (App.tsx stamps the active workspace name).
+        // Either would clobber osState and persist the OLD board into the NEW folder — and the
+        // `switching` lock alone can't catch a push that lands just AFTER the switch finalizes,
+        // because the push is async + untagged-by-the-lock. Untagged pushes (older renderer with
+        // no `workspace` field) skip the name check, preserving prior behavior.
+        const stale = switching || (typeof s.workspace === 'string' && s.workspace !== basename(activeWorkspace))
+        if (!stale) {
+          osState = s
+          if (SERVER_MODE) reconcileSurfaces(s.surfaces) // spin up / tear down server targets
+          scheduleWorkspaceWrite() // project the canvas onto the active workspace folder
+        }
       }
       json(res, 200, { ok: true })
     })
@@ -966,6 +1084,86 @@ const server = createServer(async (req, res) => {
       json(res, 200, { ok: true })
     })
     return
+  }
+
+  // ---- Workspaces (the launcher: list / create / switch). Human-UI only — deliberately NOT
+  // agent-socket tools (spec §9.9: opening a workspace by name from an agent path is denied).
+  // Same-site gated because the server has no per-route auth and runs on a public tunnel.
+  if (path === '/api/os/workspaces' && req.method === 'GET') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    // strip the absolute host path — the renderer switches by name; don't leak the on-disk layout.
+    const workspaces = listWorkspaces(WORKSPACES_ROOT).map(({ name, nodeCount, updatedAt, thumbTs }) => ({ name, nodeCount, updatedAt, thumbTs }))
+    return json(res, 200, { workspaces, active: basename(activeWorkspace) })
+  }
+  if (path === '/api/os/workspaces' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let cbody = ''
+    req.on('data', (c) => { cbody += c; if (cbody.length > 4096) req.destroy() })
+    req.on('end', () => {
+      try {
+        const created = createWorkspace(WORKSPACES_ROOT, toolBody(cbody).name)
+        json(res, 200, { ok: true, name: created.name })
+      } catch (e) {
+        const status = e && e.code === 'EEXIST' ? 409 : 400
+        json(res, status, { ok: false, error: e?.message || 'create failed' })
+      }
+    })
+    return
+  }
+  if (path === '/api/os/workspace/switch' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let cbody = ''
+    req.on('data', (c) => { cbody += c; if (cbody.length > 4096) req.destroy() })
+    req.on('end', async () => {
+      try {
+        const r = await performSwitch(toolBody(cbody).name)
+        json(res, r.status, r.body)
+      } catch (e) {
+        console.error('[workspace] switch failed:', e?.message || e)
+        json(res, 500, { error: 'switch failed' })
+      }
+    })
+    return
+  }
+
+  // POST /api/os/workspace/thumb { workspace, dataUrl } — the renderer uploads a captured snapshot of
+  // the primary area (a data:image/jpeg) as that workspace's thumbnail (last-seen, Mission-Control
+  // style). Stored at .blitzos/state/thumb.jpg (gitignored, agent-read-denied), overwritten each time.
+  if (path === '/api/os/workspace/thumb' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let tbody = ''
+    req.on('data', (c) => { tbody += c; if (tbody.length > 4_000_000) req.destroy() }) // ~4MB data-URL cap
+    req.on('end', () => {
+      try {
+        const b = toolBody(tbody)
+        const dir = resolveWorkspace(WORKSPACES_ROOT, b.workspace, { mustExist: true })
+        if (!dir) return json(res, 404, { error: 'no such workspace' })
+        const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(b.dataUrl || ''))
+        if (!m) return json(res, 400, { error: 'expected a data:image/jpeg;base64 URL' })
+        const buf = Buffer.from(m[1], 'base64')
+        if (buf.length > 3_000_000) return json(res, 413, { error: 'thumbnail too large' })
+        const stateDir = join(dir, '.blitzos', 'state')
+        mkdirSync(stateDir, { recursive: true })
+        writeFileSync(join(stateDir, 'thumb.jpg'), buf)
+        json(res, 200, { ok: true })
+      } catch (e) {
+        json(res, 500, { error: e?.message || 'thumb write failed' })
+      }
+    })
+    return
+  }
+  // GET /api/os/workspace/thumb?name=X — serve the cached primary-area thumbnail (404 if none yet).
+  if (path === '/api/os/workspace/thumb' && req.method === 'GET') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    const dir = resolveWorkspace(WORKSPACES_ROOT, url.searchParams.get('name'), { mustExist: true })
+    if (!dir) return json(res, 404, { error: 'no such workspace' })
+    try {
+      const buf = readFileSync(join(dir, '.blitzos', 'state', 'thumb.jpg'))
+      res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-cache' })
+      return res.end(buf)
+    } catch {
+      return json(res, 404, { error: 'no thumbnail' })
+    }
   }
 
   json(res, 404, { error: 'not found' })
@@ -1055,6 +1253,7 @@ async function gracefulExit() {
   // Flush a pending workspace write FIRST (before the possibly-slow host.stop), so a surface
   // created/moved right before quit lands on disk — otherwise hydrate restores the stale state.
   flushWorkspace()
+  stopWorkspaceWatch() // close fs watchers (handle hygiene)
   try {
     if (host) await host.stop()
   } catch {

@@ -3,6 +3,8 @@ import { useDesktop, type CreateSurfaceInput } from './store'
 import type { Surface } from './types'
 import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
+import { Overview } from './components/Overview'
+import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame } from './components/SurfaceFrame'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
@@ -22,7 +24,10 @@ export default function App(): JSX.Element {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [aiUrl, setAiUrl] = useState<string | null>(null)
   const [showAi, setShowAi] = useState(false)
+  const [showOverview, setShowOverview] = useState(false)
+  const [activeWs, setActiveWs] = useState<string | null>(null)
   const [panMode, setPanMode] = useState(false)
+  const isServer = !!window.agentOS?.serverMode
   const pan = useRef<{ x: number; y: number } | null>(null)
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
@@ -30,6 +35,10 @@ export default function App(): JSX.Element {
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
   // restored canvas before hydration arrives.
   const hydrated = useRef(false)
+  // The active workspace name, mirrored into a ref so the state-push closure (an effect with []
+  // deps) reads the CURRENT value — each push is tagged with it so the backend can drop a stale
+  // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
+  const activeWsRef = useRef<string | null>(null)
 
   // The browser/server preview is an infinite canvas (pan/zoom), not the fixed
   // desktop the Electron app defaults to.
@@ -217,6 +226,23 @@ export default function App(): JSX.Element {
         const md = a.mode === 'desktop' ? 'desktop' : 'canvas'
         st.hydrate(surfs, cam, md)
         hydrated.current = true
+        if (typeof a.workspace === 'string') {
+          setActiveWs(a.workspace)
+          activeWsRef.current = a.workspace
+        }
+      } else if (a.type === 'switch') {
+        // FORCED re-hydrate on a workspace switch — wholesale swap the canvas. Bypasses the
+        // first-hydrate-wins guard, but keeps hydrated.current true (never reset) so a racing SSE
+        // reconnect's hydrate still can't clobber the new board.
+        const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
+        const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
+        st.hydrate(sf, cm, a.mode === 'desktop' ? 'desktop' : 'canvas')
+        hydrated.current = true // a switch is also a valid first hydrate — don't depend on a prior 'hydrate'
+        if (typeof a.workspace === 'string') {
+          setActiveWs(a.workspace)
+          activeWsRef.current = a.workspace
+        }
+        setShowOverview(false)
       } else if (a.type === 'create') {
         const surf = a.surface as CreateSurfaceInput
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
@@ -337,14 +363,13 @@ export default function App(): JSX.Element {
       }
       // camera = the WORLD point at screen center + scale (viewport-independent, so it restores
       // correctly on a different screen size — view.cx/cy are exactly that world point).
-      window.agentOS?.sendState({ surfaces, viewport: { w: vw, h: vh }, view, mode: st.mode, camera: { x: view.cx, y: view.cy, scale } })
+      window.agentOS?.sendState({ workspace: activeWsRef.current ?? undefined, surfaces, viewport: { w: vw, h: vh }, view, mode: st.mode, camera: { x: view.cx, y: view.cy, scale } })
     }
     push()
     // SERVER mode always delivers a hydrate on SSE connect, so we wait for it (no fallback) —
     // a fallback there could fire before a slow hydrate, which the first-hydrate-wins guard
     // would then ignore, never restoring. Electron has no server hydrate, so it gets a grace
     // timer to start pushing (and only if it actually has surfaces, to never push an empty store).
-    const isServer = !!window.agentOS?.serverMode
     const hydrateFallback = isServer
       ? null
       : setTimeout(() => {
@@ -463,6 +488,29 @@ export default function App(): JSX.Element {
     createSurface({ kind: 'web', url: 'https://news.ycombinator.com', title: 'Hacker News' })
   }
 
+  // Capture the CURRENT board's primary-area snapshot and upload it as its workspace thumbnail
+  // (best-effort, last-seen). Done before opening the overview and before switching away (while the
+  // board we're leaving still has live streamed frames — they're torn down by the switch).
+  async function captureCurrent(): Promise<void> {
+    const name = activeWsRef.current
+    if (!name) return
+    try {
+      const dataUrl = capturePrimaryThumb()
+      if (dataUrl) await window.agentOS?.workspaces?.thumb(name, dataUrl)
+    } catch {
+      /* best-effort snapshot */
+    }
+  }
+  async function openOverview(): Promise<void> {
+    await captureCurrent() // refresh the active board's tile first
+    setShowOverview(true)
+  }
+  async function switchWorkspace(name: string): Promise<void> {
+    await captureCurrent() // snapshot the board we're leaving BEFORE its targets are torn down
+    await window.agentOS?.workspaces?.switch(name)
+    // backend broadcasts {type:'switch'} → onAction swaps the canvas + closes the overview
+  }
+
   function openChat(): void {
     const st = useDesktop.getState()
     const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'chat')
@@ -512,6 +560,11 @@ export default function App(): JSX.Element {
       )}
 
       <div className="toolbar">
+        {isServer && (
+          <button className="ws-btn" onClick={() => void openOverview()} title="Workspaces (Mission Control)">
+            ▦ {activeWs ?? '…'} ▾
+          </button>
+        )}
         <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => useDesktop.getState().goToPrimary()}>
           <IconCrosshair size={15} /> Center
         </button>
@@ -524,7 +577,7 @@ export default function App(): JSX.Element {
           </span>
           Connect AI
         </button>
-        <span className="hint">fixed desktop · drag the top bar to move · click the dock to focus</span>
+        {!isServer && <span className="hint">fixed desktop · drag the top bar to move · click the dock to focus</span>}
       </div>
 
       {showAi && (
@@ -546,6 +599,7 @@ export default function App(): JSX.Element {
         </div>
       )}
 
+      {isServer && showOverview && <Overview onClose={() => setShowOverview(false)} onSwitch={switchWorkspace} />}
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
 
       {openFolder && <FolderOverlay folder={openFolder} />}

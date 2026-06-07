@@ -79,7 +79,9 @@ cmd_start() {
 
   # BLITZ_AGENT (optional): if set (e.g. =claude), the backend boots + auto-restarts the
   # agent/brain so a brain is always watching. Unset = no auto-agent.
-  export BLITZ_SERVER_MODE="$SERVER_MODE" BACKEND_PORT="$BACKEND_PORT" CHROMIUM="$CHROMIUM" PUBLIC_BASE_URL="$PUBLIC_BASE_URL" BLITZ_AGENT="${BLITZ_AGENT:-}"
+  # BLITZ_WORKSPACES_ROOT (optional): the folder that holds all workspace folders (default
+  # preview/.workspace). BLITZ_WORKSPACE (optional, back-compat): a single explicit workspace folder.
+  export BLITZ_SERVER_MODE="$SERVER_MODE" BACKEND_PORT="$BACKEND_PORT" CHROMIUM="$CHROMIUM" PUBLIC_BASE_URL="$PUBLIC_BASE_URL" BLITZ_AGENT="${BLITZ_AGENT:-}" BLITZ_WORKSPACES_ROOT="${BLITZ_WORKSPACES_ROOT:-}" BLITZ_WORKSPACE="${BLITZ_WORKSPACE:-}"
 
   say "starting vite (:$RENDERER_PORT, server mode=$SERVER_MODE)…"
   start_svc vite npx vite --config vite.renderer.preview.mjs
