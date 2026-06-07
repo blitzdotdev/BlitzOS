@@ -392,7 +392,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
               setShared(next)
               window.agentOS?.setContentShare?.(surface.id, next)
             }}
-            style={shared ? { color: 'var(--positive)' } : { opacity: 0.45 }}
+            style={shared ? { color: 'var(--positive)' } : { color: 'var(--text-secondary)', opacity: 0.85 }}
           >
             <IconEye />
           </button>

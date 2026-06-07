@@ -13,6 +13,7 @@ body,
   height: 100%;
   width: 100%;
   overflow: hidden;
+  overscroll-behavior: none; /* no Mac two-finger back/forward swipe-nav while panning the canvas */
   font-family: var(--font-ui);
   font-size: 14px;
   color: var(--text);
@@ -969,17 +970,17 @@ button {
 .pan-overlay {
   position: fixed;
   inset: 0;
-  z-index: 4000;
+  z-index: 5500; /* above the top titlebar (5000) so the control-mode border + hint aren't occluded */
   background: transparent;
   cursor: grab;
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 .pan-overlay:active {
   cursor: grabbing;
 }
 .pan-hint {
   position: absolute;
-  top: 14px;
+  top: 44px;
   left: 50%;
   transform: translateX(-50%);
   background: var(--accent);
@@ -1468,19 +1469,8 @@ button {
   white-space: nowrap;
 }
 
-.window-ico {
-  flex: 0 0 auto;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 15px;
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-.window-ico:hover {
-  color: var(--text);
-}
+/* (duplicate .window-ico removed in merge cleanup — consolidated into the
+   .window-ico/.icon-btn rule in the surface-frame section above) */
 
 /* "Connect AI" panel (agent-socket paste URL) — matches the frosted .panel chrome. */
 .ai-panel {

@@ -21,6 +21,26 @@ User listed 6 post-merge UI bugs ("fix them systematically"). Resolved + headles
 - **Missing bars / Connect AI does nothing / (and earlier) chat empty** → all STALE-VITE mid-merge artifacts, NOT code bugs. Clean `start-all.sh` restart fixes them. Verified: toolbar renders all 4 buttons; Connect AI hud shows the agent URL; chat round-trips.
 - **Chat history persists on refresh** → already works (push carries `props:s.props` → `osState`; SSE-connect hydrate sends `osState.surfaces`; `store.hydrate` keeps props via `...w`). **CAVEAT (honest):** persists across a PAGE REFRESH (backend up) but NOT across a BACKEND RESTART — chat/activity are runtime panels, not workspace files, so a fresh boot reads `readWorkspace` (no chat). To survive restarts: persist runtime panels to `.blitzos/state/panels.json` (agent-read-denied) + merge on boot. NOT yet done — offered.
 
+## GOAL (user-set 2026-06-07) — finish the whole backlog, systematically, track here
+
+**Standing goal:** complete ALL discussed items one-by-one, keep this file + the task list updated, and fix every current/future reported bug as part of the goal. Task IDs #26–40 (see `TaskList`). Ultracode ON → adversarial subagent review of each chunk.
+
+**Backlog (ordered):** Chunk 1 bug fixes (#26 overscroll, #27 chat-select, #28 eye, #30 blue indicator) → #31 primary 1080p → #32 control-mode model → #33 drag-cards-in-control → #34 snapping → #35 fullscreen→primary → #29 titlebar-disappears (folds into #32) → #36 agent MD → #37 files/folders-on-canvas → #38 chat-survives-restart → #39 dynamic-OS boot → #40 review. Then (future) multiple workspace areas.
+
+### Spatial-model redesign (the crux — design locked from user's detailed spec)
+- **Two modes of ONE app, both transports.** `store.mode`: `desktop` = **normal** (view LOCKED to the primary area, windows behave like a real OS desktop), `canvas` = **"Control mode"** (bird's-eye, own viewport, pan/zoom, drag cards but DON'T interact with content). Today server/Chrome force `canvas` on mount (App.tsx:64) — REMOVE that; default both transports to `desktop`, toggle into control mode.
+- **Toggle:** double-tap ⌘ in BOTH transports (browser keydown 'Meta' works too; the existing double-⌘ → `panMode` becomes the mode toggle). Animate the `transform` on enter (→ control bird's-eye) and exit (→ snap back to the workspace area). The `.pan-overlay`/`.pan-hint` is the control-mode indicator.
+- **Primary area** = a `PRIMARY_W×PRIMARY_H` world rect centered at origin → **1920×1080** (#31). Normal mode fits this rect to the viewport (inset below the 32px titlebar) so windows never slide under the top bar (= the #29 titlebar-disappears root cause).
+- **Snapping (#34):** dragging a window in/near the primary area snaps to full / left-half / right-half (+ quarters) of the PRIMARY AREA, with a preview overlay.
+- **Full-screen (#35):** the green traffic light fills the PRIMARY AREA rect (not the viewport — `toggleMaximize` currently uses the viewport, wrong in control mode).
+- **Areas = macOS desktops.** Only `primary` now; more later (post-backlog). Agent told (#36) to keep surfaces inside workspace areas + save persistent memory as files in the workspace folder (instruction only; memory not engineered).
+
+### Chunk 1 — DONE (2026-06-07, build+typecheck pass)
+- #26 overscroll: `overscroll-behavior:none` on html/body/#root (kills Mac two-finger back/forward while panning).
+- #27 chat-select: `userSelect:text` on the ChatPanel message area (body sets `user-select:none`).
+- #28 eye button: removed the duplicate `.window-ico` rule (merge leftover); not-shared eye now `--text-secondary`/opacity .85 (was .45), shared stays green.
+- #30 control-mode indicator: `.pan-overlay` z 4000→5500 (above titlebar 5000), border 2px→3px @70%, `.pan-hint` top 14→44px (below the titlebar).
+
 ## Workspaces — folder-backed persistence/serialization (Phases 0–3 DONE + reviewed, 2026-06-06)
 
 **Spec:** `agent-os-workspaces.md` (synthesized from a 14-agent brainstorm; §10 KEEP/REWRITE/REMOVE, §11 build order, §12 open decisions). **Model:** a workspace = a FOLDER on disk; ONE `.blitzos/workspace.json` holds layout `{version,id,kind,camera,mode,stack,nodes[]}`; everything-is-a-file content (note→`.md`, web/app→`.weblink {url}`, srcdoc→`.html`); BlitzOS owns layout, content files own content. **Two big reversals from the chat's earlier ideas (the brainstorm overruled, user OK'd):** ONE central workspace.json (NOT per-item sidecar metas) + one-way layout authority with editor-style content reload (NOT three-way merge). `.group` cut from v1; secrets NEVER in the folder. Consent-persist = YES (decided), lands Phase 4 in agent-read-denied `.blitzos/state/consent.json`.
