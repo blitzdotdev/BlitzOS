@@ -607,387 +607,6 @@ body,
 }
 
 /* Left dock. */
-/* Integration widgets (ground plane). */
-.iwidget {
-  position: absolute;
-  z-index: 5;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--panel);
-  overflow: hidden;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  display: flex;
-  flex-direction: column;
-}
-.iwidget-bar {
-  height: 40px;
-  flex: 0 0 40px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px;
-  color: #fff;
-  font-weight: 600;
-  font-size: 14px;
-  cursor: grab;
-}
-.iwidget-bar:active {
-  cursor: grabbing;
-}
-.dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-}
-.dot-on {
-  background: #3fb950;
-  box-shadow: 0 0 8px #3fb950;
-}
-.dot-off {
-  background: rgba(255, 255, 255, 0.4);
-}
-.iwidget-body {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px;
-}
-.iwidget-status {
-  font-size: 12px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-.iwidget-status.connected {
-  color: #3fb950;
-}
-.iwidget-label {
-  font-size: 13px;
-  color: var(--ink);
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.iwidget-btn {
-  border: 1px solid var(--line);
-  background: #21262d;
-  color: var(--ink);
-  border-radius: 8px;
-  padding: 7px 18px;
-  font-size: 13px;
-  cursor: pointer;
-}
-.iwidget-btn:hover {
-  background: #2c333d;
-}
-.iwidget-btn.ghost {
-  background: transparent;
-  color: var(--muted);
-  padding: 4px 10px;
-  font-size: 12px;
-}
-
-/* Connect panel (screen-space modal). */
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.panel {
-  width: 420px;
-  max-width: 90vw;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 20px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-}
-.panel-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
-}
-.panel-head h3 {
-  margin: 0;
-  font-size: 16px;
-  flex: 1;
-}
-.panel-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 4px;
-}
-.panel-x {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-size: 20px;
-  cursor: pointer;
-}
-.panel-help {
-  font-size: 12.5px;
-  color: var(--muted);
-  line-height: 1.5;
-  margin: 4px 0 14px;
-}
-.panel-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.field input {
-  background: #0e1116;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 9px 11px;
-  color: var(--ink);
-  font-size: 13px;
-}
-.field input:focus {
-  outline: none;
-  border-color: #1f6feb;
-}
-.device-box {
-  background: #0e1116;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 14px;
-  text-align: center;
-  margin: 4px 0;
-}
-.device-label {
-  font-size: 12px;
-  color: var(--muted);
-}
-.device-code {
-  font-size: 26px;
-  letter-spacing: 4px;
-  font-weight: 700;
-  margin: 8px 0;
-  color: var(--ink);
-}
-.panel-error {
-  margin-top: 12px;
-  color: #f85149;
-  font-size: 12.5px;
-}
-.panel-error-hint {
-  color: var(--muted);
-  margin-top: 6px;
-}
-.panel-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 18px;
-}
-.panel .primary {
-  background: #1f6feb;
-  border: none;
-  color: #fff;
-  border-radius: 8px;
-  padding: 9px 20px;
-  font-size: 13px;
-  cursor: pointer;
-}
-.panel .primary:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.panel .link {
-  background: none;
-  border: none;
-  color: #58a6ff;
-  font-size: 12.5px;
-  cursor: pointer;
-  padding: 0;
-}
-.panel-soon {
-  font-size: 11px;
-  color: var(--muted);
-  margin: 14px 0 0;
-  font-style: italic;
-}
-
-/* Workspace switcher: the toolbar pill + the shared name input (reused by the overview). */
-.ws-btn {
-  font-weight: 600;
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ws-input {
-  background: #0e1116;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 9px 12px;
-  color: var(--ink);
-  font-size: 13px;
-}
-.ws-input:focus {
-  outline: none;
-  border-color: #1f6feb;
-}
-
-/* Mission Control overview — full-screen splay of workspace tiles (16:10), responsive grid. */
-.ovr {
-  position: fixed;
-  inset: 0;
-  z-index: 3000;
-  background: rgba(8, 10, 14, 0.86);
-  backdrop-filter: blur(10px);
-}
-.ovr-scroll {
-  position: absolute;
-  inset: 0;
-  max-width: 1600px;
-  margin-inline: auto;
-  padding: 0 20px 40px;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-.ovr-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 22px 4px 16px;
-  background: linear-gradient(rgba(8, 10, 14, 0.96), rgba(8, 10, 14, 0.72));
-}
-.ovr-head h2 {
-  margin: 0;
-  font-size: 19px;
-  font-weight: 650;
-  color: var(--ink);
-}
-.ovr-new {
-  display: flex;
-  gap: 8px;
-  margin-left: auto;
-}
-.ovr-x {
-  font-size: 22px;
-}
-.ovr-error {
-  margin: 0 4px 10px;
-}
-.ovr-grid {
-  display: grid;
-  gap: 20px;
-  /* JS sets --cols (exact integer); this auto-fill rule is the no-JS fallback, capped at 5. */
-  grid-template-columns: repeat(auto-fill, minmax(max(min(220px, 100%), calc((100% - 4 * 20px) / 5)), 1fr));
-}
-.ovr-grid[style*='--cols'] {
-  grid-template-columns: repeat(var(--cols), 1fr);
-}
-.ovr-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 0;
-  background: none;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  min-width: 0;
-}
-.ovr-tile:disabled {
-  cursor: default;
-}
-.ovr-thumb {
-  position: relative;
-  aspect-ratio: 16 / 10;
-  width: 100%;
-  border-radius: 12px;
-  overflow: hidden;
-  background: #0e1116;
-  border: 2px solid var(--line);
-  transition: border-color 0.12s, transform 0.12s;
-}
-.ovr-tile:hover:not(:disabled) .ovr-thumb {
-  border-color: #5a6675;
-  transform: translateY(-2px);
-}
-.ovr-tile.on .ovr-thumb {
-  border-color: #2ea043;
-}
-.ovr-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.ovr-thumb-empty {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  font-size: 12px;
-}
-.ovr-thumb-busy {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: rgba(8, 10, 14, 0.6);
-  color: #e6edf3;
-  font-size: 12px;
-}
-.ovr-meta {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 2px;
-}
-.ovr-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #6e7681;
-  flex: 0 0 8px;
-}
-.ovr-tile.on .ovr-dot {
-  background: #2ea043;
-}
-.ovr-name {
-  font-weight: 600;
-  font-size: 13.5px;
-  color: var(--ink);
-  flex: 0 0 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 55%;
-}
-.ovr-sub {
-  font-size: 11.5px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Left sidebar (screen-space). For now just a + to add a browser window. */
 .sidebar {
   position: fixed;
   top: 32px;
@@ -1622,4 +1241,273 @@ body,
   transition:
     transform 220ms var(--ease-out),
     opacity 220ms var(--ease-out);
+}
+
+/* ===== merged from master: Mission Control overview + workspaces launcher + chrome our side lacked ===== */
+
+.window-close {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.panel .link {
+  background: none;
+  border: none;
+  color: #58a6ff;
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Workspace switcher: the toolbar pill + the shared name input (reused by the overview). */
+.ws-btn {
+  font-weight: 600;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-input {
+  background: #0e1116;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.ws-input:focus {
+  outline: none;
+  border-color: #1f6feb;
+}
+
+/* Mission Control overview — full-screen splay of workspace tiles (16:10), responsive grid. */
+.ovr {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(8, 10, 14, 0.86);
+  backdrop-filter: blur(10px);
+}
+
+.ovr-scroll {
+  position: absolute;
+  inset: 0;
+  max-width: 1600px;
+  margin-inline: auto;
+  padding: 0 20px 40px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.ovr-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 4px 16px;
+  background: linear-gradient(rgba(8, 10, 14, 0.96), rgba(8, 10, 14, 0.72));
+}
+
+.ovr-head h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.ovr-new {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.ovr-x {
+  font-size: 22px;
+}
+
+.ovr-error {
+  margin: 0 4px 10px;
+}
+
+.ovr-grid {
+  display: grid;
+  gap: 20px;
+  /* JS sets --cols (exact integer); this auto-fill rule is the no-JS fallback, capped at 5. */
+  grid-template-columns: repeat(auto-fill, minmax(max(min(220px, 100%), calc((100% - 4 * 20px) / 5)), 1fr));
+}
+
+.ovr-grid[style*='--cols'] {
+  grid-template-columns: repeat(var(--cols), 1fr);
+}
+
+.ovr-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+
+.ovr-tile:disabled {
+  cursor: default;
+}
+
+.ovr-thumb {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0e1116;
+  border: 2px solid var(--line);
+  transition: border-color 0.12s, transform 0.12s;
+}
+
+.ovr-tile:hover:not(:disabled) .ovr-thumb {
+  border-color: #5a6675;
+  transform: translateY(-2px);
+}
+
+.ovr-tile.on .ovr-thumb {
+  border-color: #2ea043;
+}
+
+.ovr-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ovr-thumb-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ovr-thumb-busy {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 10, 14, 0.6);
+  color: #e6edf3;
+  font-size: 12px;
+}
+
+.ovr-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 2px;
+}
+
+.ovr-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6e7681;
+  flex: 0 0 8px;
+}
+
+.ovr-tile.on .ovr-dot {
+  background: #2ea043;
+}
+
+.ovr-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink);
+  flex: 0 0 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+
+.ovr-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.window-ico {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.window-ico:hover {
+  color: var(--ink);
+}
+
+/* "Connect AI" panel (agent-socket paste URL). */
+.ai-panel {
+  position: fixed;
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1600;
+  width: 460px;
+  max-width: 92vw;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6);
+}
+
+.ai-head {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.ai-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 10px;
+}
+
+.ai-url {
+  width: 100%;
+  background: #0e1116;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.ai-panel .primary {
+  background: #1f6feb;
+  border: none;
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
 }
