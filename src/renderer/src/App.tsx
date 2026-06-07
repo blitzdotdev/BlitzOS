@@ -105,7 +105,7 @@ export default function App(): JSX.Element {
   useEffect(() => {
     const onResize = (): void => {
       useDesktop.getState().setViewport(window.innerWidth, window.innerHeight)
-      if (useDesktop.getState().mode === 'desktop') useDesktop.getState().goToPrimary()
+      useDesktop.getState().goToPrimary() // re-fit the camera to the new viewport in BOTH modes (control too)
     }
     onResize()
     useDesktop.getState().goToPrimary()

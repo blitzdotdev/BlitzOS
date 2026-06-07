@@ -1,8 +1,8 @@
 import { useDesktop, primaryRect } from './store'
 import type { Surface } from './types'
 
-// Capture a "screenshot" of the PRIMARY AREA — the fixed 1440x900 board region centered on the
-// world origin — into a JPEG data URL. This is the last-seen snapshot shown in the Mission Control
+// Capture a "screenshot" of the PRIMARY AREA — the on-screen desktop region (screen-sized + dynamic,
+// see primaryRect) centered on the world origin — into a JPEG data URL. This is the last-seen snapshot shown in the Mission Control
 // overview (macOS-style). Since users are mostly locked to the primary space, this rectangle IS the
 // board. Web surfaces are drawn from their live streamed <canvas> (real pixels, same-origin via the
 // data:-URL frame draw, so readable); notes / panels / srcdoc draw as titled cards (their content
