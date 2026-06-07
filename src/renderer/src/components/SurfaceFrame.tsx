@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop, snapTargetFor, primaryRect, areaRect } from '../store'
+import { useDesktop, snapTargetFor, primaryRect } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
@@ -402,22 +402,17 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       if (r.dir.includes('n')) ny = r.origY + r.origH - MINH // keep the bottom edge anchored
       nh = MINH
     }
-    // Keep the resized window inside the primary area in normal mode (mirrors the move clamp; a
-    // title bar must not slide under the top titlebar — the #29 invariant, for resize too).
+    // macOS-faithful resize: a window may extend freely BEYOND the area (off the sides/bottom), just
+    // like free dragging — the ONLY constraint in normal mode is that a top-edge (n/nw/ne) resize can't
+    // push the title bar above the area's top (so it stays grabbable — the #29 invariant). All areas
+    // share the same top, so it's area-independent.
     const st0 = useDesktop.getState()
     if (st0.mode === 'desktop') {
-      const pr = st0.currentArea === 0 ? primaryRect(st0.viewport) : areaRect(st0.currentArea, st0.viewport)
-      if (nx < pr.x) {
-        nw -= pr.x - nx
-        nx = pr.x
+      const topY = primaryRect(st0.viewport).y
+      if (ny < topY) {
+        nh -= topY - ny
+        ny = topY
       }
-      if (ny < pr.y) {
-        nh -= pr.y - ny
-        ny = pr.y
-      }
-      if (nx + nw > pr.x + pr.w) nw = pr.x + pr.w - nx
-      if (ny + nh > pr.y + pr.h) nh = pr.y + pr.h - ny
-      nw = Math.max(MINW, nw)
       nh = Math.max(MINH, nh)
     }
     // A manual resize takes the window out of any tiled state (so it won't pop to a stale floating size).

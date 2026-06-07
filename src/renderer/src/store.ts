@@ -549,7 +549,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => {
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
-      const p = s.mode === 'desktop' ? desktopClamp(x, y, surf.w, surf.h, s.viewport, s.currentArea) : { x, y }
+      // macOS-faithful free drag: a window may move freely OUTSIDE the area (off the left/right/bottom),
+      // exactly like macOS — the ONLY constraint is the title bar can't slide above the area's top edge
+      // (so it stays grabbable; the #29 invariant). All areas share the same top, so it's area-independent.
+      // (Off-screen windows are recovered via the dock-click focus or control mode, which DO re-clamp.)
+      const p = s.mode === 'desktop' ? { x, y: Math.max(primaryRect(s.viewport).y, y) } : { x, y }
       return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y } : w)) }
     })
   },

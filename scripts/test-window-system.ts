@@ -195,15 +195,17 @@ console.log('\n#45 workspace areas — step 1: area-aware spatial fns, byte-iden
   const unionCenterScreenX = (((2 - 1) * stride) / 2) * vtC2.scale + vtC2.x
   ok('canvas: the tiled-row center maps to the area anchor screen x', Math.abs(unionCenterScreenX - vtC.x) < 0.001, { unionCenterScreenX, anchor: vtC.x })
 
-  // moveSurface clamps to the CURRENT area's rect (regression-guard: byte-identical at area 0)
+  // macOS free drag: moveSurface lets a window move FREELY outside the area (off left/right/bottom);
+  // the ONLY constraint is the title bar can't go above the area top (y >= primaryRect.y).
   const surf: Surface = { id: 's', kind: 'native', component: 'note', x: 0, y: 0, w: 300, h: 200, z: 5, title: 's', props: {} }
   useDesktop.getState().hydrate([surf], { x: 0, y: 0, scale: 1 }, 'desktop', 2)
-  useDesktop.getState().setCurrentArea(1)
-  useDesktop.getState().moveSurface('s', areaRect(1, vp).x - 500, 0) // far left of area 1
-  ok('moveSurface clamps to areaRect(1).x when currentArea=1', useDesktop.getState().surfaces.find((q) => q.id === 's')!.x === Math.round(areaRect(1, vp).x) || useDesktop.getState().surfaces.find((q) => q.id === 's')!.x === areaRect(1, vp).x, useDesktop.getState().surfaces.find((q) => q.id === 's')!.x)
-  useDesktop.getState().setCurrentArea(0)
-  useDesktop.getState().moveSurface('s', primaryRect(vp).x - 500, 0)
-  ok('REGRESSION: moveSurface clamps to primaryRect.x when currentArea=0 (byte-identical)', useDesktop.getState().surfaces.find((q) => q.id === 's')!.x === primaryRect(vp).x, useDesktop.getState().surfaces.find((q) => q.id === 's')!.x)
+  useDesktop.getState().moveSurface('s', 99999, 50) // far off the right edge — must be ALLOWED, not clamped
+  ok('moveSurface allows free x far outside the area (no horizontal clamp)', useDesktop.getState().surfaces.find((q) => q.id === 's')!.x === 99999, useDesktop.getState().surfaces.find((q) => q.id === 's')!.x)
+  useDesktop.getState().moveSurface('s', -99999, 99999) // far off the left + bottom — x free, y free downward
+  const sm = useDesktop.getState().surfaces.find((q) => q.id === 's')!
+  ok('moveSurface allows free x off the left + free y downward (off-bottom)', sm.x === -99999 && sm.y === 99999, { x: sm.x, y: sm.y })
+  useDesktop.getState().moveSurface('s', 10, primaryRect(vp).y - 500) // try to push the title bar ABOVE the top
+  ok('moveSurface clamps the title bar to the area top (y >= primaryRect.y) — #29 preserved', useDesktop.getState().surfaces.find((q) => q.id === 's')!.y === primaryRect(vp).y, useDesktop.getState().surfaces.find((q) => q.id === 's')!.y)
 
   // toggleMaximize fills the CURRENT area
   useDesktop.getState().hydrate([surf], { x: 0, y: 0, scale: 1 }, 'desktop', 2)
