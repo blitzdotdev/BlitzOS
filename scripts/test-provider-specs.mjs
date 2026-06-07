@@ -25,7 +25,6 @@ const bad = [
   '//evil.com/x', // protocol-relative
   '/..%2f..%2fadmin', // encoded traversal
   '/../../etc', // raw traversal
-  '/foo@evil.com', // userinfo
   '/foo\\bar', // backslash
   '/foo?x=1', // query in path
   '/foo#frag', // fragment
@@ -35,9 +34,11 @@ const bad = [
 ]
 for (const p of bad) ok(`rejects ${JSON.stringify(p)}`, validatePath(p) !== null, validatePath(p))
 console.log('validatePath — accepts legit paths:')
-for (const p of ['/user', '/user/repos', '/repos/my-org/my-repo', '/repos/o/r/issues/1/comments', '/rest/api/3/issue/PROJ-1', '/conversations.history']) {
+for (const p of ['/user', '/user/repos', '/repos/my-org/my-repo', '/repos/o/r/issues/1/comments', '/rest/api/3/issue/PROJ-1', '/conversations.history', '/users/@me/guilds']) {
   ok(`accepts ${p}`, validatePath(p) === null, validatePath(p))
 }
+// '@' in a path is allowed (Discord /users/@me) but CANNOT escape the host — buildUrl stays on-allowlist.
+ok("buildUrl('/users/@me/guilds') stays on discord.com", buildUrl(PROVIDER_SPECS.discord, '/users/@me/guilds', null, { secrets: { access_token: 't' } }).host === 'discord.com', buildUrl(PROVIDER_SPECS.discord, '/users/@me/guilds', null, { secrets: { access_token: 't' } }))
 
 console.log('\nbuildUrl — host confinement (the SSRF gate):')
 const gh = PROVIDER_SPECS.github

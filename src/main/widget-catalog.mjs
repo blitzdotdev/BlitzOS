@@ -20,6 +20,8 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { callProvider } from './provider-call.mjs'
+import { resourceRoute } from './provider-specs.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -176,37 +178,21 @@ export function listProviderResources() {
  * own store; this module never reads tokens. Errors carry a numeric `.code`.
  */
 export async function fetchProviderResource(provider, resource, token) {
-  const has = Object.prototype.hasOwnProperty
-  const def = has.call(PROVIDER_DATA, provider) && has.call(PROVIDER_DATA[provider], resource) ? PROVIDER_DATA[provider][resource] : null
-  if (!def) throw Object.assign(new Error(`unknown data resource "${provider}/${resource}"`), { code: 404 })
+  // Back-compat shim: the simple (provider,resource) data bridge now rides the general engine
+  // (server-side token injection, SSRF gate, default-deny redaction). Same { items } output, so the
+  // widget data path (widgets.ts / backend.mjs) is unchanged. The 2 seed resources use access_token.
+  const route = resourceRoute(provider, resource)
+  if (!route) throw Object.assign(new Error(`unknown data resource "${provider}/${resource}"`), { code: 404 })
   if (!token) throw Object.assign(new Error(`${provider} is not connected`), { code: 401 })
-  const MAX = 5_000_000 // cap the upstream body so a hostile/huge response can't OOM us
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 10_000)
-  let res, text
-  try {
-    res = await fetch(def.url, {
-      signal: ctrl.signal,
-      headers: { authorization: `Bearer ${token}`, accept: 'application/json', 'user-agent': 'agent-os/0.1' }
-    })
-    if (Number(res.headers.get('content-length') || 0) > MAX) throw Object.assign(new Error('response too large'), { code: 502 })
-    text = await res.text()
-  } catch (e) {
-    if (e?.code) throw e
-    throw Object.assign(new Error(`${provider} request failed: ${e?.name === 'AbortError' ? 'timed out' : e?.message || e}`), { code: 502 })
-  } finally {
-    clearTimeout(timer)
+  const r = await callProvider(
+    { provider, method: 'GET', path: route.path, query: route.query, caller: { kind: 'widget' } },
+    { record: { secrets: { access_token: token } } }
+  )
+  if (!r.ok) {
+    const code = r.status === 401 || r.status === 403 ? 401 : 502
+    throw Object.assign(new Error(r.error || `${provider}/${resource} request failed`), { code })
   }
-  if (text.length > MAX) throw Object.assign(new Error(`${provider}/${resource} response too large`), { code: 502 })
-  let json = null
-  try { json = JSON.parse(text) } catch { /* non-JSON */ }
-  if (!res.ok) {
-    const detail = json && (json.message || json.error_description || json.error)
-    throw Object.assign(new Error(`${provider}/${resource} HTTP ${res.status}${detail ? ` — ${detail}` : ''}`), {
-      code: res.status === 401 || res.status === 403 ? 401 : 502
-    })
-  }
-  const items = def.normalize(json)
+  const items = route.normalize ? route.normalize(r.data) : r.data
   if (!Array.isArray(items)) {
     throw Object.assign(new Error(`${provider}/${resource} returned an unexpected shape (token expired?)`), { code: 502 })
   }

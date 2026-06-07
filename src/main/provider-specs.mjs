@@ -133,7 +133,10 @@ export function validatePath(path) {
   if (!path.startsWith('/')) return 'path must start with "/"'
   if (path.startsWith('//')) return 'protocol-relative path not allowed'
   if (path.includes('?') || path.includes('#')) return 'pass query via the query object, not in the path'
-  if (path.includes('@') || path.includes('\\')) return 'illegal character in path'
+  // NB: '@' is ALLOWED in a path (e.g. Discord's /users/@me/...) — userinfo can only appear in a URL's
+  // AUTHORITY, and we build via base-concatenation + a host re-assertion (buildUrl), so a '@' in the
+  // path can never introduce a new host. Backslash IS rejected (some parsers fold it to '/').
+  if (path.includes('\\')) return 'illegal character in path'
   for (let i = 0; i < path.length; i++) {
     const c = path.charCodeAt(i)
     if (c < 0x20 || c === 0x7f) return 'control character in path'
@@ -144,7 +147,7 @@ export function validatePath(path) {
   } catch {
     return 'malformed percent-encoding'
   }
-  if (path.includes('..') || dec.includes('..') || dec.includes('//') || dec.includes('@') || dec.includes('\\')) return 'path traversal not allowed'
+  if (path.includes('..') || dec.includes('..') || dec.includes('//') || dec.includes('\\')) return 'path traversal not allowed'
   return null
 }
 
