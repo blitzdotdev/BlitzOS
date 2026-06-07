@@ -49,8 +49,9 @@ export interface Vec2 {
   y: number
 }
 
-export const PRIMARY_W = 1440
-export const PRIMARY_H = 900
+// The primary workspace area (a "desktop"): a 1080p world rectangle centered at the origin.
+export const PRIMARY_W = 1920
+export const PRIMARY_H = 1080
 export const GRID = 20
 export const WIDGET_W = 240
 export const WIDGET_H = 168

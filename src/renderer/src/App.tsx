@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { useDesktop, type CreateSurfaceInput } from './store'
-import type { Surface } from './types'
+import { useDesktop, viewTransform, type CreateSurfaceInput } from './store'
+import type { Surface, CanvasTransform } from './types'
 import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
 import { Overview } from './components/Overview'
@@ -43,7 +43,6 @@ export default function App(): JSX.Element {
   const [showAi, setShowAi] = useState(false)
   const [showOverview, setShowOverview] = useState(false)
   const [activeWs, setActiveWs] = useState<string | null>(null)
-  const [panMode, setPanMode] = useState(false)
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
@@ -57,12 +56,35 @@ export default function App(): JSX.Element {
   // deps) reads the CURRENT value — each push is tagged with it so the backend can drop a stale
   // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
   const activeWsRef = useRef<string | null>(null)
+  const animRef = useRef<number | null>(null)
 
-  // The browser/server preview is an infinite canvas (pan/zoom), not the fixed
-  // desktop the Electron app defaults to.
-  useEffect(() => {
-    if (window.agentOS?.serverMode) useDesktop.getState().setMode('canvas')
-  }, [])
+  // Smoothly tween the camera (used when entering/leaving control mode).
+  function animateTransform(target: CanvasTransform, dur = 320): void {
+    const from = useDesktop.getState().transform
+    if (animRef.current) cancelAnimationFrame(animRef.current)
+    const t0 = performance.now()
+    const ease = (p: number): number => 1 - Math.pow(1 - p, 3) // cubic ease-out
+    const step = (now: number): void => {
+      const p = Math.min(1, (now - t0) / dur)
+      const k = ease(p)
+      useDesktop.getState().setTransform({
+        x: from.x + (target.x - from.x) * k,
+        y: from.y + (target.y - from.y) * k,
+        scale: from.scale + (target.scale - from.scale) * k
+      })
+      animRef.current = p < 1 ? requestAnimationFrame(step) : null
+    }
+    animRef.current = requestAnimationFrame(step)
+  }
+  // Double-tap ⌘ toggles "Control mode" (the zoomed-out bird's-eye): animate the camera to the
+  // control viewport on enter and back to the locked primary-area view on exit. Both modes exist in
+  // BOTH transports (Electron + server/Chrome); normal mode is the default everywhere.
+  function toggleControlMode(): void {
+    const st = useDesktop.getState()
+    const next = st.mode === 'desktop' ? 'canvas' : 'desktop'
+    st.setMode(next)
+    animateTransform(viewTransform(next, st.viewport))
+  }
 
   useEffect(() => {
     const refresh = (): void => {
@@ -170,20 +192,17 @@ export default function App(): JSX.Element {
     }
   }, [])
 
-  // Double-tap ⌘ to toggle pan-mode: a full-canvas overlay steals pointer focus
-  // from every webview/iframe so you can pan anywhere. A bare ⌘ tap from a focused
-  // webview arrives via onMetaTap (main).
+  // Double-tap ⌘ to toggle Control mode (the bird's-eye overview). A bare ⌘ tap from a focused
+  // webview arrives via onMetaTap (main); plain keydown/keyup covers the browser/server transport.
   useEffect(() => {
     let metaDown = false
     let sawOther = false
     let lastTap = 0
     const registerTap = (): void => {
-      // ⌘-pan only exists in canvas mode
-      if (useDesktop.getState().mode !== 'canvas') return
       const now = performance.now()
       if (now - lastTap < 450) {
         lastTap = 0
-        setPanMode((v) => !v)
+        toggleControlMode()
       } else {
         lastTap = now
       }
@@ -225,8 +244,8 @@ export default function App(): JSX.Element {
         // Restore a persisted workspace from disk (Phase 2). Replaces the canvas wholesale.
         const surfs = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        const md = a.mode === 'desktop' ? 'desktop' : 'canvas'
-        st.hydrate(surfs, cam, md)
+        // Control mode is a transient view toggle, never persisted — always boot the normal desktop.
+        st.hydrate(surfs, cam, 'desktop')
         ensureNotepad()
         hydrated.current = true
         if (typeof a.workspace === 'string') {
@@ -239,7 +258,7 @@ export default function App(): JSX.Element {
         // reconnect's hydrate still can't clobber the new board.
         const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        st.hydrate(sf, cm, a.mode === 'desktop' ? 'desktop' : 'canvas')
+        st.hydrate(sf, cm, 'desktop')
         ensureNotepad()
         hydrated.current = true // a switch is also a valid first hydrate — don't depend on a prior 'hydrate'
         if (typeof a.workspace === 'string') {
@@ -563,9 +582,9 @@ export default function App(): JSX.Element {
         )}
       </div>
 
-      {panMode && mode === 'canvas' && (
-        <div className="pan-overlay" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp}>
-          <span className="pan-hint">⌘⌘ pan mode · drag anywhere · double-tap ⌘ to exit</span>
+      {mode === 'canvas' && (
+        <div className="pan-overlay">
+          <span className="pan-hint">Control mode · drag cards to rearrange · scroll or drag the void to pan · double-tap ⌘ to exit</span>
         </div>
       )}
 

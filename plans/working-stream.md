@@ -30,7 +30,7 @@ User listed 6 post-merge UI bugs ("fix them systematically"). Resolved + headles
 ### Spatial-model redesign (the crux — design locked from user's detailed spec)
 - **Two modes of ONE app, both transports.** `store.mode`: `desktop` = **normal** (view LOCKED to the primary area, windows behave like a real OS desktop), `canvas` = **"Control mode"** (bird's-eye, own viewport, pan/zoom, drag cards but DON'T interact with content). Today server/Chrome force `canvas` on mount (App.tsx:64) — REMOVE that; default both transports to `desktop`, toggle into control mode.
 - **Toggle:** double-tap ⌘ in BOTH transports (browser keydown 'Meta' works too; the existing double-⌘ → `panMode` becomes the mode toggle). Animate the `transform` on enter (→ control bird's-eye) and exit (→ snap back to the workspace area). The `.pan-overlay`/`.pan-hint` is the control-mode indicator.
-- **Primary area** = a `PRIMARY_W×PRIMARY_H` world rect centered at origin → **1920×1080** (#31). Normal mode fits this rect to the viewport (inset below the 32px titlebar) so windows never slide under the top bar (= the #29 titlebar-disappears root cause).
+- **Primary area = the on-screen desktop region** (dynamic `primaryRect(viewport)` in world coords; at scale 1 it's the same size as the screen — user refinement 2026-06-07, NOT a fixed 1080p rect). Normal mode = scale 1 (windows render at NATURAL size); control mode = scale 0.62 bird's-eye. Windows clamp to the primary rect so a title bar can't slide under the top titlebar (= #29 fix). `PRIMARY_W/H` (1920×1080) is now only the mission-control cell-aspect default.
 - **Snapping (#34):** dragging a window in/near the primary area snaps to full / left-half / right-half (+ quarters) of the PRIMARY AREA, with a preview overlay.
 - **Full-screen (#35):** the green traffic light fills the PRIMARY AREA rect (not the viewport — `toggleMaximize` currently uses the viewport, wrong in control mode).
 - **Areas = macOS desktops.** Only `primary` now; more later (post-backlog). Agent told (#36) to keep surfaces inside workspace areas + save persistent memory as files in the workspace folder (instruction only; memory not engineered).
@@ -40,6 +40,15 @@ User listed 6 post-merge UI bugs ("fix them systematically"). Resolved + headles
 - #27 chat-select: `userSelect:text` on the ChatPanel message area (body sets `user-select:none`).
 - #28 eye button: removed the duplicate `.window-ico` rule (merge leftover); not-shared eye now `--text-secondary`/opacity .85 (was .45), shared stays green.
 - #30 control-mode indicator: `.pan-overlay` z 4000→5500 (above titlebar 5000), border 2px→3px @70%, `.pan-hint` top 14→44px (below the titlebar).
+
+### Chunk 2 — DONE (2026-06-07, build+typecheck+headless verified)
+Control-mode redesign (#31 #32 #33 #35 #29). Headless test confirmed the toggle: default `scale(1)`/no frame → double-⌘ → `scale(0.62)` + PRIMARY frame + indicator → double-⌘ → back.
+- store: `primaryRect(vp)` (screen-sized area), `viewTransform(mode,vp)` (desktop=scale 1 centered, control=0.62), `setTransform`, `desktopClamp`→clamp to primaryRect (vp param), `toggleMaximize`→fill primaryRect (#35), `goToPrimary`/`hydrate`→viewTransform. Dropped PRIMARY_W/H import.
+- App: removed the force-canvas effect (server/Chrome now boot the normal desktop too); double-⌘ → `toggleControlMode()` in BOTH transports with an `animateTransform` rAF tween; hydrate/switch force `desktop` (control mode = transient, never persisted); the indicator renders in control mode (pointer-events:none); PrimarySpace is control-only.
+- SurfaceFrame: `.drag-overlay.control` (top:0 + active) in control mode → the whole card is a drag handle, content non-interactive (#33).
+- PrimarySpace + capture.ts now use the dynamic `primaryRect(viewport)`.
+- #29 titlebar-disappears FIXED as a side effect: normal mode is the default + clamps windows inside the primary rect (its top maps to screen y≈32, just below the titlebar).
+- **NOTE for review:** snapping (#34) NOT yet done; control-mode drag has no clamp (free placement, intended). `/code-review` pass requested after each commit (running a multi-agent review; the billed cloud `/code-review ultra` is user-triggered).
 
 ## Workspaces — folder-backed persistence/serialization (Phases 0–3 DONE + reviewed, 2026-06-06)
 

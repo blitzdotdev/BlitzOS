@@ -243,6 +243,10 @@ button {
 .drag-overlay.active:active {
   cursor: grabbing;
 }
+/* Control mode: the whole card is a drag handle (content not interactive — like Mission Control). */
+.drag-overlay.control {
+  top: 0;
+}
 /* grab mode (⌥/Space held): signal it everywhere */
 #root-canvas.grab-mode {
   cursor: grab;
@@ -972,11 +976,8 @@ button {
   inset: 0;
   z-index: 5500; /* above the top titlebar (5000) so the control-mode border + hint aren't occluded */
   background: transparent;
-  cursor: grab;
+  pointer-events: none; /* indicator only — pan via the void, drag cards directly */
   box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--accent) 70%, transparent);
-}
-.pan-overlay:active {
-  cursor: grabbing;
 }
 .pan-hint {
   position: absolute;

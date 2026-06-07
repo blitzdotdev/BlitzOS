@@ -33,6 +33,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const isDropTarget = useDesktop((s) => s.dragTarget === surface.id)
   const isAbsorbing = useDesktop((s) => s.absorbing.includes(surface.id))
   const grabMode = useDesktop((s) => s.grabMode)
+  const isControl = useDesktop((s) => s.mode === 'canvas') // control mode: drag cards, don't interact
   const [isDragging, setIsDragging] = useState(false)
 
   const drag = useRef<{ startX: number; startY: number; items: Array<{ id: string; ox: number; oy: number }> } | null>(null)
@@ -427,7 +428,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       {/* ⌥/Space grab-mode or selected → drag the surface from anywhere on its body. Always
           mounted (so an in-flight drag survives releasing the key); inert otherwise. */}
       <div
-        className={`drag-overlay${isSelected || grabMode || isDragging ? ' active' : ''}`}
+        className={`drag-overlay${isSelected || grabMode || isDragging || isControl ? ' active' : ''}${isControl ? ' control' : ''}`}
         onPointerDown={onBarDown}
         onPointerMove={onBarMove}
         onPointerUp={onBarUp}

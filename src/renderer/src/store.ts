@@ -5,8 +5,6 @@ import {
   SurfaceKind,
   Vec2,
   IntegrationStatus,
-  PRIMARY_W,
-  PRIMARY_H,
   GRID,
   WIDGET_W,
   WIDGET_H
@@ -22,20 +20,33 @@ function overlaps(a: Vec2, b: Vec2): boolean {
   return a.x < b.x + WIDGET_W && a.x + WIDGET_W > b.x && a.y < b.y + WIDGET_H && a.y + WIDGET_H > b.y
 }
 
-// Fixed-desktop chrome insets (px) + how much of a window's title bar must stay reachable.
+// Fixed-desktop chrome insets (px): the top titlebar, the left dock, the bottom toolbar, right pad.
 const SIDEBAR = 52
 const TITLEBAR = 32
 const TOOLBAR = 64
-const KEEP = 120
-const TITLE_H = 34
+const RIGHTPAD = 24
 
-/** Clamp a window (world coords, scale 1, origin centered) so its title bar stays grabbable. */
-function desktopClamp(x: number, y: number, w: number, vp: { w: number; h: number }): Vec2 {
-  const left = -vp.w / 2 + SIDEBAR
-  const right = vp.w / 2
-  const top = -vp.h / 2 + TITLEBAR
-  const bottom = vp.h / 2 - TOOLBAR
-  return { x: clamp(x, left + KEEP - w, right - KEEP), y: clamp(y, top, bottom - TITLE_H) }
+/** The primary workspace area in WORLD coords = the on-screen desktop region (below the titlebar,
+ *  right of the dock, above the toolbar). At scale 1 it maps 1:1 to that region — so the area is
+ *  "the same size as the screen" by default and windows render at natural size. */
+export function primaryRect(vp: { w: number; h: number }): { x: number; y: number; w: number; h: number } {
+  const w = Math.max(320, vp.w - SIDEBAR - RIGHTPAD)
+  const h = Math.max(240, vp.h - TITLEBAR - TOOLBAR)
+  return { x: -w / 2, y: -h / 2, w, h }
+}
+/** Clamp a window so it stays inside the primary area (its title bar therefore can't slide under
+ *  the top titlebar in normal mode — #29). */
+function desktopClamp(x: number, y: number, w: number, h: number, vp: { w: number; h: number }): Vec2 {
+  const r = primaryRect(vp)
+  return { x: clamp(x, r.x, Math.max(r.x, r.x + r.w - w)), y: clamp(y, r.y, Math.max(r.y, r.y + r.h - h)) }
+}
+/** Camera per mode. Normal = scale 1 centered on the area (screen-sized, natural windows). Control =
+ *  zoomed out so the whole area sits in the middle with margin (the bird's-eye overview). */
+export function viewTransform(mode: 'desktop' | 'canvas', vp: { w: number; h: number }): CanvasTransform {
+  const r = primaryRect(vp)
+  const cx = SIDEBAR + r.w / 2 // screen point of the area center (world origin)
+  const cy = TITLEBAR + r.h / 2
+  return { scale: mode === 'desktop' ? 1 : 0.62, x: cx, y: cy }
 }
 
 let zCounter = 10
@@ -73,6 +84,7 @@ interface DesktopState {
 
   setViewport: (w: number, h: number) => void
   setMode: (m: 'desktop' | 'canvas') => void
+  setTransform: (t: CanvasTransform) => void
   panBy: (dx: number, dy: number) => void
   zoomAt: (cursorX: number, cursorY: number, deltaY: number) => void
   goToPrimary: () => void
@@ -129,6 +141,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   setViewport: (w, h) => set({ viewport: { w, h } }),
   setMode: (m) => set({ mode: m }),
+  setTransform: (t) => set({ transform: t }),
 
   setSelection: (ids) => set({ selection: ids }),
   clearSelection: () => set({ selection: [] }),
@@ -244,18 +257,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       return { transform: { scale: newScale, x: cursorX - wx * newScale, y: cursorY - wy * newScale } }
     }),
 
-  goToPrimary: () =>
-    set((s) => {
-      // desktop mode: real 1:1, origin centered (the fixed screen)
-      if (s.mode === 'desktop') {
-        return { transform: { scale: 1, x: s.viewport.w / 2, y: s.viewport.h / 2 } }
-      }
-      const pad = 80
-      const sx = (s.viewport.w - pad * 2) / PRIMARY_W
-      const sy = (s.viewport.h - pad * 2) / PRIMARY_H
-      const scale = clamp(Math.min(sx, sy, 1), 0.2, 3)
-      return { transform: { scale, x: s.viewport.w / 2, y: s.viewport.h / 2 } }
-    }),
+  goToPrimary: () => set((s) => ({ transform: viewTransform(s.mode, s.viewport) })),
 
   // Bring a surface to the front. Desktop: raise z + clamp on-screen. Canvas: center at 1:1.
   focusAndZoom: (id) =>
@@ -263,7 +265,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
       if (s.mode === 'desktop') {
-        const p = desktopClamp(surf.x, surf.y, surf.w, s.viewport)
+        const p = desktopClamp(surf.x, surf.y, surf.w, surf.h, s.viewport)
         return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y, z: ++zCounter } : w)) }
       }
       const m = 56
@@ -315,7 +317,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     let x = input.x ?? -w / 2 + n * 34 - 100
     let y = input.y ?? -h / 2 + n * 30 - 70
     if (st.mode === 'desktop') {
-      const p = desktopClamp(x, y, w, st.viewport)
+      const p = desktopClamp(x, y, w, h, st.viewport)
       x = p.x
       y = p.y
     }
@@ -354,12 +356,12 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       // camera is the WORLD point at screen center + scale -> compute the transform that puts
       // that world point at the current viewport's center (viewport-independent restore).
       const sc = clamp(Number(camera.scale) || 1, 0.2, 3) // never a 0/Infinity/NaN scale (would wedge the canvas)
-      return {
-        surfaces: restored,
-        transform: { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc },
-        mode,
-        layoutHistory: []
-      }
+      // Normal mode always fits the primary area (view-locked); control mode restores the saved camera.
+      const transform =
+        mode === 'desktop'
+          ? viewTransform('desktop', s.viewport)
+          : { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc }
+      return { surfaces: restored, transform, mode, layoutHistory: [] }
     }),
 
   moveSurface: (id, x, y) => {
@@ -367,7 +369,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => {
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
-      const p = s.mode === 'desktop' ? desktopClamp(x, y, surf.w, s.viewport) : { x, y }
+      const p = s.mode === 'desktop' ? desktopClamp(x, y, surf.w, surf.h, s.viewport) : { x, y }
       return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y } : w)) }
     })
   },
@@ -399,15 +401,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
           )
         }
       }
-      // fill the current viewport (in world coords) with a small margin
-      const m = 22
-      const { transform: t, viewport: vp } = s
-      const fill = {
-        x: (m - t.x) / t.scale,
-        y: (m - t.y) / t.scale,
-        w: (vp.w - 2 * m) / t.scale,
-        h: (vp.h - 2 * m) / t.scale
-      }
+      // fill the PRIMARY AREA (with a small inset), not the viewport — so 'zoom' means full-screen
+      // inside the workspace area, consistent in both normal and control mode (#35).
+      const r = primaryRect(s.viewport)
+      const inset = 8
+      const fill = { x: r.x + inset, y: r.y + inset, w: r.w - inset * 2, h: r.h - inset * 2 }
       return {
         surfaces: s.surfaces.map((w) =>
           w.id === id
