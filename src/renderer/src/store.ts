@@ -46,7 +46,10 @@ export function viewTransform(mode: 'desktop' | 'canvas', vp: { w: number; h: nu
   const r = primaryRect(vp)
   const cx = SIDEBAR + r.w / 2 // screen point of the area center (world origin)
   const cy = TITLEBAR + r.h / 2
-  return { scale: mode === 'desktop' ? 1 : 0.31, x: cx, y: cy } // control = a wide bird's-eye (zoomed out)
+  // Control mode = a GENTLE zoom-out: much less than the old 0.31 wide bird's-eye (which was too
+  // much), but still some overview. Tune controlScale — 1 = no zoom-out, 0.31 = old wide bird's-eye.
+  const controlScale = 0.7
+  return { scale: mode === 'desktop' ? 1 : controlScale, x: cx, y: cy }
 }
 /** While dragging a window in normal mode, if the cursor (world coords) is near a primary-area edge,
  *  return the snap-target rect: full (top edge), left/right half (side edges), or a quarter (corner).

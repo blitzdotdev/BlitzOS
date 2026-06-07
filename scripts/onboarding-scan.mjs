@@ -24,6 +24,7 @@ import { join, basename, dirname } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
+import { gunzipSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 
 const HOME = homedir()
@@ -93,7 +94,7 @@ const TRIVIAL_RE = /^(y|n|yes|no|ok(ay)?|go( on)?|cont(inue)?|next|fix( it)?|do 
 const PREF_RE = /\b(always|never|from now on|going forward|in (the )?future|prefer|i (really )?(like|want|need|hate|don'?t (like|want))|make sure|ensure|by default|remember to|avoid|instead of|stick to|do not ever|don'?t ever)\b/i
 const CORRECTION_RE = /\b(no[,.]|nope|don'?t|do not|stop|that'?s (wrong|not)|incorrect|actually|instead|revert|undo|not what i|i (said|told you|asked)|you (keep|always|still)|why (did|are) you|that broke|messed up|you forgot)\b/i
 const DOMAIN_KW = ['react', 'vue', 'svelte', 'next.js', 'nextjs', 'typescript', 'javascript', 'python', 'rust', 'golang', ' go ', 'swift', 'kotlin', 'java', 'c++', 'cloudflare', 'workers', 'd1', 'r2', 'kv', 'sqlite', 'postgres', 'supabase', 'electron', 'three.js', 'threepipe', 'webgl', 'shader', 'ios', 'android', 'tailwind', 'docker', 'kubernetes', 'terraform', 'llm', 'agent', 'rag', 'embedding', 'fine-tun', 'pytorch', 'tensorflow', 'cuda', 'poker', 'trading', 'crypto', 'stripe', 'oauth', 'auth', 'api', 'sql', 'graphql', 'redis', 'kafka', 'wasm']
-const STOPWORDS = new Set(('the a an and or but if then this that these those i you it we they he she of to in on at for with from by as is are was were be been being do does did done have has had can could would should will shall may might must not no yes so just like get got make made use used add fix run try want need also into out up down over under more most some any all what which who when where why how please thanks ok now new old file code function const let var class import export return null true false error test app data text line type value name id url http https com www localhost build work works working project projects hello hi hey greet greeting today opened show shows check create created still there your help thing things change update message prompt pasted using based way good great nice okay really first next last let lets going actually able sure org net html www2 read right only same about after phone email redacted contact send pull push branch master commit merge').split(' '))
+const STOPWORDS = new Set(('the a an and or but if then this that these those i you it we they he she of to in on at for with from by as is are was were be been being do does did done have has had can could would should will shall may might must not no yes so just like get got make made use used add fix run try want need also into out up down over under more most some any all what which who when where why how please thanks ok now new old file code function const let var class import export return null true false error test app data text line type value name id url http https com www localhost build work works working project projects hello hi hey greet greeting today opened show shows check create created still there your help thing things change update message prompt pasted using based way good great nice okay really first next last let lets going actually able sure org net html www2 read right only same about after phone email redacted contact send pull push branch master commit merge user users write issue open store them screen plan page chat search again changes other link running thing stuff find show give move keep start build done set').split(' '))
 
 // ---- text utilities ------------------------------------------------------------------
 function redact(s) { let t = String(s ?? ''); for (const [re, rep] of REDACTORS) t = t.replace(re, rep); return t }
@@ -156,6 +157,18 @@ function searchQuery(u) {
       const q = url.searchParams.get('q'); if (q && q.trim().length > 2) return clean(q)
     }
   } catch {} return null
+}
+// Apple Notes bodies are gzipped protobuf — gunzip (zero-dep) + pull printable text runs.
+function gunzipText(hex) {
+  try { const out = gunzipSync(Buffer.from(String(hex), 'hex')).toString('utf8'); return (out.match(/[\x20-\x7e]{4,}/g) || []).join(' ') } catch { return '' }
+}
+// Push a descriptive page title as an aggregate topic signal (deduped, noise-filtered, capped).
+function addTitle(ctx, seen, title, ms) {
+  const t = String(title || '').trim()
+  // skip short, notification-count, and search-result-page titles (the query is captured separately)
+  if (t.length < 10 || /^\(?\d[\d,]*\)?[\s—:_-]/.test(t) || /(google search|at duckduckgo|[-–] search|bing|yahoo search)\s*$/i.test(t)) return
+  const k = t.toLowerCase(); if (seen.has(k) || seen.size >= 1500) return
+  seen.add(k); pushText(ctx, 'web', ms, t, { agg: true })  // agg → feeds topics/entities, never verbatim
 }
 const SALT = randomBytes(8).toString('hex')
 function hashContact(id) { return '[contact-' + createHash('sha256').update(SALT + String(id || '')).digest('hex').slice(0, 6) + ']' }
@@ -250,7 +263,7 @@ function claudeTitle(path) {
 // ====================================================================================
 const CHROMIUM_BROWSERS = { 'Google/Chrome': 'chrome', 'BraveSoftware/Brave-Browser': 'brave', 'Microsoft Edge': 'edge', 'Arc': 'arc', 'Vivaldi': 'vivaldi', 'Chromium': 'chromium' }
 function srcChromium(ctx) {
-  let visits = 0, queries = 0
+  let visits = 0, queries = 0; const seenTitles = new Set()
   for (const [rel, name] of Object.entries(CHROMIUM_BROWSERS)) {
     const base = join(HOME, 'Library/Application Support', rel); if (!existsSync(base)) continue
     let profs; try { profs = readdirSync(base, { withFileTypes: true }).filter((d) => d.isDirectory() && (d.name === 'Default' || /^Profile /.test(d.name))).map((d) => d.name) } catch { continue }
@@ -261,6 +274,7 @@ function srcChromium(ctx) {
         const ms = chromeTime(r.lvt); if (!ms) continue
         const host = hostOf(r.url); if (host) { pushEvent(ctx, name, ms, 'visit', host); visits++ }
         const q = searchQuery(r.url); if (q) { pushText(ctx, name + '-search', ms, q); queries++ }
+        addTitle(ctx, seenTitles, r.title, ms)
       }
       const bm = readJson(join(base, prof, 'Bookmarks'))
       if (bm && bm.roots) { const walk = (node) => { if (!node) return; if (Array.isArray(node.children)) node.children.forEach(walk); else if (node.type === 'url' && node.url) { const h = hostOf(node.url); if (h) pushEvent(ctx, name, Date.now() - 30 * DAY, 'bookmark', h) } }; Object.values(bm.roots).forEach(walk) }
@@ -271,10 +285,10 @@ function srcChromium(ctx) {
 function srcFirefox(ctx) {
   const root = join(HOME, 'Library/Application Support/Firefox/Profiles'); if (!existsSync(root)) return
   let profs; try { profs = readdirSync(root) } catch { return }
-  let visits = 0
+  let visits = 0; const seenTitles = new Set()
   for (const prof of profs) {
     const rows = sqliteQuery(join(root, prof, 'places.sqlite'), 'SELECT p.url url,p.title title,p.last_visit_date lvd FROM moz_places p WHERE p.last_visit_date IS NOT NULL ORDER BY p.last_visit_date DESC LIMIT 4000')
-    for (const r of rows) { const ms = firefoxTime(r.lvd); if (!ms) continue; const host = hostOf(r.url); if (host) { pushEvent(ctx, 'firefox', ms, 'visit', host); visits++ }; const q = searchQuery(r.url); if (q) pushText(ctx, 'firefox-search', ms, q) }
+    for (const r of rows) { const ms = firefoxTime(r.lvd); if (!ms) continue; const host = hostOf(r.url); if (host) { pushEvent(ctx, 'firefox', ms, 'visit', host); visits++ }; const q = searchQuery(r.url); if (q) pushText(ctx, 'firefox-search', ms, q); addTitle(ctx, seenTitles, r.title, ms) }
   }
   if (visits) log(`· browsers(firefox): ${visits} visits`)
 }
@@ -420,8 +434,8 @@ function srcKnowledgeC(ctx) {
   log(`· knowledgeC: ${rows.length} apps`)
 }
 function srcSafari(ctx) {
-  const rows = sqliteQuery(join(HOME, 'Library/Safari/History.db'), 'SELECT i.url url,i.visit_count vc,v.visit_time vt FROM history_visits v JOIN history_items i ON i.id=v.history_item WHERE v.visit_time>0 ORDER BY v.visit_time DESC LIMIT 4000')
-  let n = 0; for (const r of rows) { const ms = cf2001(r.vt); if (!ms) continue; const host = hostOf(r.url); if (host) { pushEvent(ctx, 'safari', ms, 'visit', host); n++ }; const q = searchQuery(r.url); if (q) pushText(ctx, 'safari-search', ms, q) }
+  const rows = sqliteQuery(join(HOME, 'Library/Safari/History.db'), 'SELECT i.url url,i.visit_count vc,v.visit_time vt,v.title title FROM history_visits v JOIN history_items i ON i.id=v.history_item WHERE v.visit_time>0 ORDER BY v.visit_time DESC LIMIT 4000')
+  let n = 0; const seenTitles = new Set(); for (const r of rows) { const ms = cf2001(r.vt); if (!ms) continue; const host = hostOf(r.url); if (host) { pushEvent(ctx, 'safari', ms, 'visit', host); n++ }; const q = searchQuery(r.url); if (q) pushText(ctx, 'safari-search', ms, q); addTitle(ctx, seenTitles, r.title, ms) }
   log(`· safari: ${n} visits`)
 }
 function srcMessages(ctx) {
@@ -456,9 +470,16 @@ function srcMail(ctx) {
   log(`· mail: ${corr.length} correspondents, ${n} subjects → topics${CFG.commsContent ? ' (verbatim too)' : ' (aggregated only)'}`)
 }
 function srcNotes(ctx) {
-  const rows = sqliteQuery(join(HOME, 'Library/Group Containers/group.com.apple.notes/NoteStore.sqlite'), 'SELECT ZTITLE1 title, ZMODIFICATIONDATE1 mod FROM ZICCLOUDSYNCINGOBJECT WHERE ZTITLE1 IS NOT NULL ORDER BY ZMODIFICATIONDATE1 DESC LIMIT 200')
-  let n = 0; for (const r of rows) { const ms = cf2001(r.mod); if (r.title) { pushText(ctx, 'note', ms, r.title); pushEvent(ctx, 'note', ms || Date.now(), 'note', 'edit'); n++ } }
-  log(`· notes: ${n} titles`)
+  // body lives in ZICNOTEDATA.ZDATA (gzipped protobuf); LEFT JOIN + skip encrypted (ZCRYPTOTAG)
+  const rows = sqliteQuery(join(HOME, 'Library/Group Containers/group.com.apple.notes/NoteStore.sqlite'),
+    'SELECT n.ZTITLE1 title, n.ZMODIFICATIONDATE1 mod, hex(d.ZDATA) body FROM ZICCLOUDSYNCINGOBJECT n LEFT JOIN ZICNOTEDATA d ON d.ZNOTE = n.Z_PK AND d.ZCRYPTOTAG IS NULL WHERE n.ZTITLE1 IS NOT NULL ORDER BY n.ZMODIFICATIONDATE1 DESC LIMIT 200')
+  let n = 0, bodies = 0
+  for (const r of rows) {
+    const ms = cf2001(r.mod)
+    if (r.title) { pushText(ctx, 'note', ms, r.title); pushEvent(ctx, 'note', ms || Date.now(), 'note', 'edit'); n++ }
+    if (r.body) { const text = gunzipText(r.body); if (text && text.length > 8) { pushText(ctx, CFG.notesBodies ? 'note-body' : 'note', ms, text, CFG.notesBodies ? {} : { agg: true }); bodies++ } }
+  }
+  log(`· notes: ${n} titles, ${bodies} bodies → topics${CFG.notesBodies ? ' (verbatim)' : ' (aggregated)'}`)
 }
 function srcAccounts(ctx) {
   let files; try { files = readdirSync(join(HOME, 'Library/Accounts')).filter((f) => /^Accounts\d*\.sqlite$/.test(f)).map((f) => join(HOME, 'Library/Accounts', f)) } catch { return }
@@ -527,9 +548,13 @@ function analyze(ctx, now) {
     else if (e.kind === 'file') files.push(e)
   }
   // text → mining
+  let docId = 0
   for (const r of text) {
     stamp(r.ts)
-    const sid = r.source + ':' + (r.sessionId || '∅'); sessSet.add(sid)
+    // per-record doc id for TF-IDF: agent prompts group by their real session; agg records
+    // (page titles, note bodies, mail subjects) each count as their own document, so a term's
+    // document-frequency reflects how widespread (= generic) it is
+    const sid = r.sessionId ? (r.source + ':' + r.sessionId) : (r.source + ':#' + (docId++)); sessSet.add(sid)
     if (r.project) bump(projects, basename(r.project))
     const low = ' ' + r.text.toLowerCase() + ' '
     for (const kw of DOMAIN_KW) if (low.includes(kw)) bump(domains, kw.trim())
@@ -546,7 +571,14 @@ function analyze(ctx, now) {
   // entities also from domains (browser hosts) + tooling
   for (const [host, w] of topDomains) { const label = host.split('.').slice(-2)[0]; if (label && label.length > 2 && !STOPWORDS.has(label)) bump(entities, label, Math.round(w)) }
   const totalSess = sessSet.size || 1
-  const entityRanked = [...entities.entries()].filter(([t, c]) => c >= 3 && (entSess.get(t)?.size || 1) / totalSess <= 0.35).sort((a, b) => b[1] - a[1])
+  // TF-IDF-ish: rank by count × idf so distinctive topics (gwern, slumbot, glymphatic) beat
+  // ubiquitous verbs (write, open, time). Drop terms in >50% of docs and rare noise (<3 hits).
+  const entityRanked = [...entities.entries()]
+    .filter(([t, c]) => c >= 3)
+    .map(([t, c]) => { const df = entSess.get(t)?.size || 1; return { t, c, score: c * Math.log(1 + totalSess / df), df } })
+    .filter((e) => e.df / totalSess <= 0.5)
+    .sort((a, b) => b.score - a.score)
+    .map((e) => [e.t, e.c])
   const topFiles = files.sort((a, b) => (b.meta?.useCount || 0) - (a.meta?.useCount || 0) || b.ts - a.ts).slice(0, CFG.maxFiles)
   const byW = (a, b) => b.w - a.w
   return {
