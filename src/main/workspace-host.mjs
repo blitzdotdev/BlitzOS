@@ -4,8 +4,8 @@
 // is ONE implementation, no second copy to drift. The serializer (workspace.mjs) does disk I/O; the
 // per-transport bits (reaching renderers, realizing web surfaces) are adapter callbacks. This is the
 // control-core.mjs / perception-core.mjs pattern: one feature, both modes.
-import { mkdirSync, writeFileSync, readFileSync, watch } from 'node:fs'
-import { join, basename, resolve } from 'node:path'
+import { mkdirSync, writeFileSync, readFileSync, watch, statSync, realpathSync } from 'node:fs'
+import { join, basename, resolve, sep } from 'node:path'
 import {
   writeWorkspace,
   readWorkspace,
@@ -222,6 +222,26 @@ export function createWorkspaceHost(a) {
     writeFileSync(join(dir, 'thumb.jpg'), buf)
     return true
   }
+  // Read a real file from the ACTIVE workspace for an image preview (#46, the Electron blitz-file://
+  // counterpart of the server /api/os/file route) — same jail: realpath both, reject escapes +
+  // .blitzos, cap size. Returns { buf, contentType } or null.
+  function readWorkspaceFile(rel) {
+    try {
+      const root = realpathSync(resolve(activeWorkspace))
+      const real = realpathSync(resolve(root, rel || ''))
+      if (real !== root && !real.startsWith(root + sep)) return null
+      if (/(^|[/\\])\.blitzos([/\\]|$)/i.test(real.slice(root.length))) return null
+      const st = statSync(real)
+      if (!st.isFile() || st.size > 25 * 1024 * 1024) return null
+      const ext = (real.split('.').pop() || '').toLowerCase()
+      const mime =
+        { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', avif: 'image/avif', bmp: 'image/bmp' }[ext] ||
+        'application/octet-stream'
+      return { buf: readFileSync(real), contentType: mime }
+    } catch {
+      return null
+    }
+  }
   function readThumb(name) {
     const dir = thumbStateDir(name)
     if (!dir) return null
@@ -246,6 +266,7 @@ export function createWorkspaceHost(a) {
     list: () => listWorkspaces(root),
     create: (name) => createWorkspace(root, name),
     writeThumb,
-    readThumb
+    readThumb,
+    readWorkspaceFile
   }
 }

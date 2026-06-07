@@ -2,7 +2,7 @@ import { app, BrowserWindow, protocol } from 'electron'
 import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
-import { initOsActions, osReadThumb, osFlushWorkspace } from './osActions'
+import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -16,7 +16,10 @@ process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getApp
 
 // Serve workspace thumbnails (rendered board snapshots, written by capturePage) to the renderer's
 // <img> over a custom protocol — main owns the bytes; the renderer just references blitz-thumb://…
-protocol.registerSchemesAsPrivileged([{ scheme: 'blitz-thumb', privileges: { standard: true, supportFetchAPI: true, bypassCSP: true } }])
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'blitz-thumb', privileges: { standard: true, supportFetchAPI: true, bypassCSP: true } },
+  { scheme: 'blitz-file', privileges: { standard: true, supportFetchAPI: true, bypassCSP: true } }
+])
 
 let mainWindow: BrowserWindow | null = null
 
@@ -115,6 +118,18 @@ app.whenReady().then(() => {
       const buf = osReadThumb(new URL(request.url).searchParams.get('name') || '')
       return buf
         ? new Response(new Uint8Array(buf), { headers: { 'content-type': 'image/jpeg', 'cache-control': 'no-cache' } })
+        : new Response('', { status: 404 })
+    } catch {
+      return new Response('', { status: 400 })
+    }
+  })
+  // Image previews for real workspace files in the desktop app (#46): blitz-file://w/<encoded relpath>.
+  protocol.handle('blitz-file', (request) => {
+    try {
+      const rel = decodeURIComponent(new URL(request.url).pathname.replace(/^\//, ''))
+      const r = osReadWorkspaceFile(rel)
+      return r
+        ? new Response(new Uint8Array(r.buf), { headers: { 'content-type': r.contentType, 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' } })
         : new Response('', { status: 404 })
     } catch {
       return new Response('', { status: 400 })

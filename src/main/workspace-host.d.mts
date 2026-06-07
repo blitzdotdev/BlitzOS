@@ -25,6 +25,8 @@ export interface WorkspaceHost {
   create(name: string): { name: string; path: string }
   writeThumb(name: string, buf: Buffer): boolean
   readThumb(name: string): Buffer | null
+  readWorkspaceFile(rel: string): { buf: Buffer; contentType: string } | null
+  ingestFile(name: string, buffer: Buffer, x: number, y: number): { ok: true; name: string } | { error: string }
 }
 
 export function createWorkspaceHost(a: WorkspaceHostAdapter): WorkspaceHost

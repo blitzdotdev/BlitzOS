@@ -17,9 +17,8 @@ function fileUrl(path: string): string | null {
   if (!path) return null
   const api = window.agentOS as { serverMode?: boolean } | undefined
   if (api?.serverMode) return `/api/os/file?path=${encodeURIComponent(path)}`
-  // Electron: the desktop build will serve these via a blitz-file:// protocol (v2 follow-up — see
-  // files-folders-on-canvas.md). Until it's registered the <img> fails and the tile falls back to the
-  // typed glyph via onError, so non-image tiles and the rest of #37 are unaffected.
+  // Electron: served by the registered blitz-file:// protocol (jailed to the active workspace — see
+  // index.ts + osReadWorkspaceFile). If it ever fails, the tile falls back to the typed glyph via onError.
   return `blitz-file://w/${encodeURIComponent(path)}`
 }
 

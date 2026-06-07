@@ -267,6 +267,10 @@ export function osSendHydrate(): void {
 export function osReadThumb(name: string): Buffer | null {
   return wsHost ? wsHost.readThumb(name) : null
 }
+/** Read a real workspace file for an image preview (blitz-file:// → the active workspace, jailed). */
+export function osReadWorkspaceFile(rel: string): { buf: Buffer; contentType: string } | null {
+  return wsHost ? wsHost.readWorkspaceFile(rel) : null
+}
 /** Flush a pending workspace write + stop the folder watchers on quit. */
 export function osFlushWorkspace(): void {
   wsHost?.flush()
