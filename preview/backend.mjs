@@ -414,6 +414,20 @@ const wsHost = createWorkspaceHost({
 })
 wsHost.hydrateOnBoot()
 
+// #53: restore the human's persisted consent for the active workspace (so grants survive a restart).
+// Re-run after a switch (loadConsent) to swap to the new workspace's grants.
+function loadConsent() {
+  consentGranted.clear()
+  providerConsent.clear()
+  const c = wsHost.consent()
+  for (const s of c.surfaces) consentGranted.add(s)
+  for (const p of c.providers) providerConsent.add(p)
+}
+function saveConsent() {
+  wsHost.persistConsent({ surfaces: [...consentGranted], providers: [...providerConsent] })
+}
+loadConsent()
+
 function toolBody(body) {
   try {
     return body ? JSON.parse(body) : {}
@@ -917,7 +931,10 @@ const server = createServer(async (req, res) => {
     req.on('data', (c) => { cbody += c; if (cbody.length > 10_000) req.destroy() })
     req.on('end', () => {
       const b = toolBody(cbody)
-      if (b && b.surfaceId && b.provider) consentGranted.add(`${String(b.surfaceId)}:${String(b.provider)}`)
+      if (b && b.surfaceId && b.provider) {
+        consentGranted.add(`${String(b.surfaceId)}:${String(b.provider)}`)
+        saveConsent() // #53: persist so the grant survives a restart
+      }
       json(res, 200, { ok: true })
     })
     return
@@ -937,6 +954,7 @@ const server = createServer(async (req, res) => {
       if (provider) {
         if (b.allow === false) providerConsent.delete(provider)
         else providerConsent.add(provider)
+        saveConsent() // #53: persist
       }
       json(res, 200, { ok: true, provider, allowed: providerConsent.has(provider) })
     })
@@ -950,7 +968,10 @@ const server = createServer(async (req, res) => {
     req.on('data', (c) => { cbody += c; if (cbody.length > 10_000) req.destroy() })
     req.on('end', () => {
       const sid = String(toolBody(cbody).surfaceId || '')
-      if (sid) for (const k of consentGranted) if (k.startsWith(`${sid}:`)) consentGranted.delete(k)
+      if (sid) {
+        for (const k of consentGranted) if (k.startsWith(`${sid}:`)) consentGranted.delete(k)
+        saveConsent() // #53: persist the revoke
+      }
       json(res, 200, { ok: true })
     })
     return
@@ -1196,6 +1217,7 @@ const server = createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const r = await wsHost.performSwitch(toolBody(cbody).name)
+        if (r.status === 200) loadConsent() // #53: swap to the new workspace's persisted consent
         json(res, r.status, r.body)
       } catch (e) {
         console.error('[workspace] switch failed:', e?.message || e)

@@ -382,6 +382,40 @@ export function readRuntimePanels(dir) {
   }
 }
 
+// #53 — per-workspace CONSENT, persisted to .blitzos/state/consent.json so the human's grants survive a
+// restart instead of needing re-approval every session. Under .blitzos (which the file route + reconcile
+// never expose), so it's agent-read-denied. `surfaces` = ["surfaceId:provider"] widget grants;
+// `providers` = providers the human approved for the agent's SENSITIVE reads.
+export function writeConsent(dir, consent) {
+  const stateDir = join(dir, '.blitzos', 'state')
+  const file = join(stateDir, 'consent.json')
+  try {
+    const created = !existsSync(stateDir)
+    mkdirSync(stateDir, { recursive: true })
+    if (created) markWrite(resolve(stateDir))
+    const surfaces = Array.isArray(consent?.surfaces) ? [...new Set(consent.surfaces.filter((s) => typeof s === 'string'))].slice(0, 500) : []
+    const providers = Array.isArray(consent?.providers) ? [...new Set(consent.providers.filter((s) => typeof s === 'string'))].slice(0, 100) : []
+    atomicWrite(file, JSON.stringify({ version: VERSION, surfaces, providers }, null, 2) + '\n')
+  } catch {
+    /* best-effort: consent persistence is a convenience, never block a workspace write */
+  }
+}
+export function readConsent(dir) {
+  try {
+    const file = join(dir, '.blitzos', 'state', 'consent.json')
+    if (!existsSync(file)) return { surfaces: [], providers: [] }
+    const raw = readFileSync(file, 'utf8')
+    if (raw.length > MAX_META) return { surfaces: [], providers: [] }
+    const o = JSON.parse(raw)
+    return {
+      surfaces: Array.isArray(o?.surfaces) ? o.surfaces.filter((s) => typeof s === 'string') : [],
+      providers: Array.isArray(o?.providers) ? o.providers.filter((s) => typeof s === 'string') : []
+    }
+  } catch {
+    return { surfaces: [], providers: [] }
+  }
+}
+
 // A human-ish title from a content-file path ("grocery-list.md" -> "Grocery list").
 function titleFromPath(p) {
   const base = String(p)

@@ -28,6 +28,8 @@ export interface WorkspaceHost {
   readWorkspaceFile(rel: string): { buf: Buffer; contentType: string } | null
   ingestFile(name: string, buffer: Buffer, x: number, y: number): { ok: true; name: string } | { error: string }
   group(name: string, memberIds: string[], x?: number, y?: number): { ok: true; folder: string; moved: number } | { error: string }
+  consent(): { surfaces: string[]; providers: string[] }
+  persistConsent(c: { surfaces: string[]; providers: string[] }): void
 }
 
 export function createWorkspaceHost(a: WorkspaceHostAdapter): WorkspaceHost

@@ -13,6 +13,8 @@ import {
   reconcileWorkspace,
   writeDroppedFile,
   groupIntoFolder,
+  readConsent,
+  writeConsent,
   wasSelfWrite,
   listWorkspaces,
   createWorkspace,
@@ -269,6 +271,17 @@ export function createWorkspaceHost(a) {
     activePath: () => activeWorkspace,
     ingestFile,
     group,
+    // #53: per-workspace consent persistence (read on boot/switch, write on a human grant). The write
+    // MERGES (a caller may update just `surfaces` or just `providers` — e.g. the widget bridge vs the
+    // sensitive-read gate — without clobbering the other).
+    consent: () => readConsent(activeWorkspace),
+    persistConsent: (c) => {
+      const cur = readConsent(activeWorkspace)
+      writeConsent(activeWorkspace, {
+        surfaces: c && c.surfaces !== undefined ? c.surfaces : cur.surfaces,
+        providers: c && c.providers !== undefined ? c.providers : cur.providers
+      })
+    },
     isSwitching: () => switching,
     hydrateOnBoot,
     onStatePush,

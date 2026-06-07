@@ -25,6 +25,10 @@ export function wasSelfWrite(absPath: string, windowMs?: number): boolean
 /** #52: real "group into folder" — mkdir a subdir + mv the members' content files into it. */
 export function groupIntoFolder(dir: string, name: string, memberIds: string[]): { ok: boolean; folder?: string; moved?: number; error?: string }
 
+/** #53: per-workspace consent persisted under .blitzos/state/consent.json (agent-read-denied). */
+export function writeConsent(dir: string, consent: { surfaces?: string[]; providers?: string[] }): void
+export function readConsent(dir: string): { surfaces: string[]; providers: string[] }
+
 /** Reconcile the canvas with the folder (auto-place new files, heal rename, drop missing). */
 export function reconcileWorkspace(
   dir: string,
