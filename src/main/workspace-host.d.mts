@@ -27,6 +27,12 @@ export interface WorkspaceHost {
   readThumb(name: string): Buffer | null
   readWorkspaceFile(rel: string): { buf: Buffer; contentType: string } | null
   ingestFile(name: string, buffer: Buffer, x: number, y: number): { ok: true; name: string } | { error: string }
+  ingestPaths(paths: string[], x: number, y: number): { ok: true; copied: number } | { error: string }
+  ingestUpload(relPath: string, buffer: Buffer, x: number, y: number, reconcile?: boolean): { ok: true; name: string } | { error: string }
+  reconcileAt(x: number, y: number): { ok: true } | { error: string }
+  newFolder(name: string, kind: 'board' | 'folder' | undefined, x: number, y: number): { ok: true; folder: string } | { error: string }
+  listDir(rel: string): { path: string; entries: Array<{ name: string; dir: boolean; ext: string; size: number; isImage: boolean; path: string }>; total: number; truncated: boolean } | null
+  closeSurfaceFile(id: string): { ok: boolean; removed?: string; error?: string; skipped?: string }
   group(name: string, memberIds: string[], x?: number, y?: number, kind?: 'board' | 'folder'): { ok: true; folder: string; moved: number } | { error: string }
   consent(): { surfaces: string[]; providers: string[] }
   persistConsent(c: { surfaces?: string[]; providers?: string[] }): void

@@ -2,7 +2,7 @@
 // reconcile, with the new folder broadcast to renderers. Drives the real host with a fake adapter +
 // a real temp dir (the host is transport-agnostic; this is exactly what backend.mjs / osActions call).
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
-import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -50,9 +50,43 @@ const looseNotes = (last?.surfaces || []).filter((s) => s.component === 'note')
 ok('the broadcast carries ONE folder tile', dirTiles.length === 1, dirTiles.map((t) => t.title))
 ok('the broadcast no longer carries the 2 grouped notes (only the loose one)', looseNotes.length === 1, looseNotes.map((t) => t.title))
 
+console.log('\nworkspace-host.newFolder — "New Folder" / "New Board" from the right-click menu:')
+const nf = host.newFolder('Documents', 'folder', 0, 0)
+ok('newFolder ok (normal file folder)', nf && nf.ok && existsSync(join(ws, nf.folder)) && !nf.folder.endsWith('.board'), nf)
+const nb = host.newFolder('Stage', 'board', 0, 0)
+ok('newBoard ok (.board suffix → on-canvas folder)', nb && nb.ok && nb.folder.endsWith('.board') && existsSync(join(ws, nb.folder)), nb)
+const afterNew = broadcasts.filter((b) => b && b.type === 'reconcile').pop()
+ok('New Folder broadcasts a reconcile carrying the normal folder as a dir tile', (afterNew?.surfaces || []).some((s) => s.component === 'dir' && s.props?.path === nf.folder))
+
+console.log('\nworkspace-host.ingestPaths — drop real files/folders (Electron path):')
+const ext = mkdtempSync(join(tmpdir(), 'aos-ext-'))
+mkdirSync(join(ext, 'repo', 'src'), { recursive: true })
+writeFileSync(join(ext, 'repo', 'index.js'), 'x')
+writeFileSync(join(ext, 'repo', 'src', 'a.js'), 'y')
+writeFileSync(join(ext, 'pic.png'), Buffer.from([1, 2, 3]))
+const ip = host.ingestPaths([join(ext, 'repo'), join(ext, 'pic.png')], 100, 100)
+ok('ingestPaths copied 2 entries', ip && ip.ok && ip.copied === 2, ip)
+ok('the repo landed as a real recursive subdir', existsSync(join(ws, 'repo', 'src', 'a.js')))
+ok('the file landed in the workspace root', existsSync(join(ws, 'pic.png')))
+const afterIngest = broadcasts.filter((b) => b && b.type === 'reconcile').pop()
+ok('dropped repo broadcasts as ONE collapsed dir tile (not its files)', (afterIngest?.surfaces || []).some((s) => s.component === 'dir' && s.props?.path === 'repo') && !(afterIngest?.surfaces || []).some((s) => s.props?.path === 'repo/index.js'))
+
+console.log('\nworkspace-host.ingestUpload — server folder upload (subpath, deferred reconcile):')
+host.ingestUpload('dropped/sub/a.txt', Buffer.from('A'), 0, 0, false)
+host.ingestUpload('dropped/b.txt', Buffer.from('B'), 0, 0, false)
+ok('subpath uploads wrote a nested real tree', existsSync(join(ws, 'dropped', 'sub', 'a.txt')) && existsSync(join(ws, 'dropped', 'b.txt')))
+const beforeRec = broadcasts.filter((b) => b && b.type === 'reconcile').length
+host.reconcileAt(200, 200)
+ok('the trailing reconcileAt broadcasts once', broadcasts.filter((b) => b && b.type === 'reconcile').length === beforeRec + 1)
+
+console.log('\nworkspace-host.listDir — the file-manager listing (jailed):')
+const ld = host.listDir('repo')
+ok('lists the dropped repo contents', !!ld && ld.entries.some((e) => e.name === 'index.js') && ld.entries.some((e) => e.dir && e.name === 'src'))
+ok('listDir jails ".." → null', host.listDir('..') === null)
+
 // and it persists: a fresh read of the folder shows the folder tile (real directory on disk)
-osState = host && undefined // not needed
 host.stopWatch?.()
+rmSync(ext, { recursive: true, force: true })
 rmSync(root, { recursive: true, force: true })
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)

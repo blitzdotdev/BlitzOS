@@ -17,7 +17,7 @@
 // Shared module (the control-core.mjs / perception-core.mjs pattern): plain Node, importable
 // by the server backend now and Electron main later.
 
-import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, copyFileSync, realpathSync } from 'node:fs'
+import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, lstatSync, copyFileSync, cpSync, unlinkSync, realpathSync } from 'node:fs'
 import { join, dirname, resolve, sep, extname, basename } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -84,6 +84,10 @@ function nodeKind(s) {
 
 // Generated root basenames that must never be reused for a content file.
 const RESERVED_ROOT = new Set(['blitzos.md', '.gitignore'])
+
+// The extensions of BlitzOS-OWNED content files (note→.md, web→.weblink, srcdoc→.html). Only these are
+// deleted when their surface is closed — a real dropped file/dir/repo is never auto-removed.
+const CONTENT_EXTS = new Set(['.md', '.weblink', '.html'])
 
 // #54 — a SPECIAL on-canvas folder is a real subdir whose name ends in `.board` (the macOS .app-bundle
 // analogy: the kind is encoded in the name, so it survives copy/move + is greppable). Its direct children
@@ -638,6 +642,96 @@ export function writeDroppedFile(dir, name, buffer) {
   }
 }
 
+/**
+ * Copy a real file OR directory the user DROPPED (by absolute OS path — the Electron path; the browser
+ * has no FS path so server mode uploads bytes instead) into the workspace root. A file copies 1:1; a
+ * directory copies RECURSIVELY, so a dropped repo lands as ONE real subdir → one collapsed tile (the
+ * reconcile is non-recursive, so even a 10k-file repo stays a single folder tile). Picks a unique,
+ * non-reserved basename, jails the dest inside the workspace, and REFUSES to copy the workspace into
+ * itself (src == root or src inside root → would recurse / dup-storm). Returns { rel, isDir } or null.
+ */
+export function copyDroppedEntry(dir, srcPath) {
+  if (typeof srcPath !== 'string' || !srcPath) return null
+  let srcReal, st
+  try {
+    srcReal = realpathSync(srcPath) // resolve symlinks up front so the self-copy guard can't be fooled
+    st = lstatSync(srcReal)
+  } catch {
+    return null // vanished / unreadable
+  }
+  const root = (() => {
+    try {
+      return realpathSync(dir)
+    } catch {
+      return resolve(dir)
+    }
+  })()
+  if (srcReal === root || srcReal.startsWith(root + sep)) return null // never copy the workspace into itself
+  const isDir = st.isDirectory()
+  const raw = basename(srcReal).replace(/^\.+/, '').trim() || (isDir ? 'folder' : 'file')
+  const ext = isDir ? '' : extname(raw)
+  const cleanExt = ext.replace(/[^a-zA-Z0-9.]+/g, '').slice(0, 12)
+  const stem =
+    (raw.slice(0, raw.length - ext.length) || (isDir ? 'folder' : 'file'))
+      .replace(/[^a-zA-Z0-9._ -]+/g, '_')
+      .slice(0, 80)
+      .trim() || (isDir ? 'folder' : 'file')
+  let base = stem + cleanExt
+  if (RESERVED_ROOT.has(base.toLowerCase()) || base.startsWith('.')) base = (isDir ? 'folder' : 'file') + cleanExt
+  let rel = base
+  let abs = safeJoin(dir, rel)
+  let i = 2
+  while (abs && existsSync(abs)) {
+    rel = isDir ? `${stem}-${i++}` : `${stem}-${i++}${cleanExt}`
+    abs = safeJoin(dir, rel)
+  }
+  if (!abs) return null
+  try {
+    if (isDir) cpSync(srcReal, abs, { recursive: true, errorOnExist: false, dereference: false })
+    else {
+      mkdirSync(dirname(abs), { recursive: true })
+      copyFileSync(srcReal, abs)
+    }
+    markWrite(resolve(abs))
+    return { rel, isDir }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Write a dropped file at a RELATIVE subpath under the workspace (server folder-drop: the browser
+ * recurses the dropped directory's entries via webkitGetAsEntry and uploads each file with its
+ * in-folder path, e.g. "myrepo/src/app.js"). Sanitizes EVERY segment — strips leading dots (so a
+ * segment can never become `.blitzos`/`.git`) and separators, drops ''/'.'/'..' — then jails the
+ * final path and mkdir -p's the parents. Returns { rel } or null.
+ */
+export function writeDroppedFileAt(dir, relPath, buffer) {
+  const parts = String(relPath || '')
+    .split(/[\\/]+/)
+    .map((p) =>
+      p
+        .replace(/^\.+/, '')
+        .replace(/[^a-zA-Z0-9._ -]+/g, '_')
+        .slice(0, 80)
+        .trim()
+    )
+    .filter((p) => p && p !== '.' && p !== '..')
+  if (!parts.length) return null
+  const rel = parts.join('/')
+  if (RESERVED_ROOT.has(rel.toLowerCase())) return null // a single-segment drop can't clobber BLITZOS.md/.gitignore
+  const abs = safeJoin(dir, rel)
+  if (!abs) return null
+  try {
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, buffer)
+    markWrite(resolve(abs))
+    return { rel }
+  } catch {
+    return null
+  }
+}
+
 export function reconcileWorkspace(dir, placeAt = {}) {
   const metaFile = join(dir, '.blitzos', 'workspace.json')
   let ws
@@ -823,6 +917,114 @@ export function groupIntoFolder(dir, name, memberIds, kind) {
     }
   }
   return { ok: true, folder: folderName, moved }
+}
+
+/**
+ * Make an EMPTY real folder in the workspace root — the "New Folder" / "New Board" desktop action
+ * (the user-facing counterpart to the agent's /group). kind:'board' → a '.board' on-canvas folder
+ * (#54) whose children splay; otherwise a normal collapsed folder (#52). Unique, non-reserved,
+ * jailed name. Returns { ok, folder } or { ok:false, error }. The caller reconciles after so a
+ * normal folder surfaces as one tile (an empty board has no children to splay yet).
+ */
+export function createFolder(dir, name, kind) {
+  let existing = new Set()
+  try {
+    existing = new Set(readdirSync(dir, { withFileTypes: true }).map((e) => e.name.toLowerCase()))
+  } catch {
+    /* unreadable */
+  }
+  const sfx = kind === 'board' ? BOARD_SUFFIX : ''
+  const stem = slug(name, kind === 'board' ? 'board' : 'folder') || 'folder'
+  let folderName = stem + sfx
+  let i = 2
+  while (existing.has(folderName.toLowerCase()) || RESERVED_ROOT.has(folderName.toLowerCase())) folderName = `${stem}-${i++}${sfx}`
+  const abs = safeJoin(dir, folderName)
+  if (!abs) return { ok: false, error: 'bad folder name' }
+  try {
+    mkdirSync(abs, { recursive: true })
+    markWrite(resolve(abs))
+    return { ok: true, folder: folderName }
+  } catch {
+    return { ok: false, error: 'could not create folder' }
+  }
+}
+
+/**
+ * CLOSE a surface = delete its backing content file, EXPLICITLY by id (never inferred from a push — so a
+ * partial or empty state push can NEVER mass-delete the folder). Without this a closed note/web/srcdoc
+ * leaves its file on disk and the next reconcile re-materializes it ("I closed the window and it popped
+ * right back up"). Only a BlitzOS-owned content file (.md/.weblink/.html) is removed — NEVER a real
+ * dropped file/dir/repo. Jailed + self-write-stamped so the watcher ignores the unlink. Returns
+ * { ok, removed } or { ok:false }.
+ */
+export function removeSurfaceFile(dir, id) {
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const { idToPath } = readPrior(metaFile)
+  const rel = idToPath.get(String(id))
+  if (!rel) return { ok: false } // no backing file (a runtime panel, or already gone)
+  if (!CONTENT_EXTS.has(extname(rel).toLowerCase())) return { ok: false, skipped: 'not-content' } // never a real file/dir
+  const abs = safeJoin(dir, rel)
+  if (!abs || !existsSync(abs)) return { ok: false }
+  try {
+    markWrite(resolve(abs))
+    unlinkSync(abs)
+    return { ok: true, removed: rel }
+  } catch {
+    return { ok: false }
+  }
+}
+
+const LISTDIR_CAP = 1000
+const IMAGE_EXT = /^(png|jpe?g|gif|webp|svg|bmp|avif)$/
+/**
+ * List a normal folder's contents for the file-manager overlay (#44) — the SAME jailed, capped,
+ * sorted listing for BOTH transports (server /api/os/dir + Electron os:dir IPC route here, one impl).
+ * realpath-jailed to the workspace, never .blitzos, dotfiles hidden, capped at LISTDIR_CAP with an
+ * honest { total, truncated } so the UI can say "showing first 1000 of N" (a normal folder can hold
+ * thousands of files — it stays ONE collapsed tile and you browse it here, never splayed). Returns
+ * { path, entries[], total, truncated } or null.
+ */
+export function listDir(dir, rel) {
+  let root, real
+  try {
+    root = realpathSync(resolve(dir))
+    real = realpathSync(resolve(root, String(rel || '')))
+  } catch {
+    return null
+  }
+  if (real !== root && !real.startsWith(root + sep)) return null // jail
+  if (/(^|[/\\])\.blitzos([/\\]|$)/i.test(real.slice(root.length))) return null // never the metadata dir
+  try {
+    if (!statSync(real).isDirectory()) return null
+  } catch {
+    return null
+  }
+  const relBase = real
+    .slice(root.length)
+    .replace(/^[/\\]+/, '')
+    .split(sep)
+    .join('/')
+  let all = []
+  try {
+    all = readdirSync(real, { withFileTypes: true }).filter((e) => !e.name.startsWith('.'))
+  } catch {
+    return null
+  }
+  const total = all.length
+  const entries = all
+    .slice(0, LISTDIR_CAP)
+    .map((e) => {
+      let size = 0
+      try {
+        if (e.isFile()) size = statSync(join(real, e.name)).size
+      } catch {
+        /* unreadable entry */
+      }
+      const ext = e.isFile() ? (e.name.split('.').pop() || '').toLowerCase() : ''
+      return { name: e.name, dir: e.isDirectory(), ext, size, isImage: IMAGE_EXT.test(ext), path: relBase ? `${relBase}/${e.name}` : e.name }
+    })
+    .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
+  return { path: String(rel || ''), entries, total, truncated: total > entries.length }
 }
 
 // ===========================================================================================

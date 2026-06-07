@@ -13,6 +13,7 @@ import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
 import { DirOverlay } from './components/DirOverlay'
+import { ContextMenu } from './components/ContextMenu'
 
 // The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
 // hydrate so a fresh workspace gets one (it then persists as a file); idempotent on a restored board.
@@ -32,6 +33,46 @@ function ensureNotepad(): void {
   })
 }
 
+// Server-mode FOLDER drop: the browser exposes the dropped tree via webkitGetAsEntry(). Recurse it,
+// upload each file with its in-folder subpath (reconcile deferred), then reconcile ONCE so the whole
+// folder surfaces as a single tile. (Electron drops carry real OS paths and use a recursive copy instead.)
+async function readAllEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
+  const out: FileSystemEntry[] = []
+  for (;;) {
+    const batch = await new Promise<FileSystemEntry[]>((res, rej) => reader.readEntries(res, rej))
+    if (!batch.length) break
+    out.push(...batch)
+  }
+  return out
+}
+async function uploadDroppedEntries(entries: FileSystemEntry[], wx: number, wy: number): Promise<void> {
+  const uploads: Array<{ rel: string; getFile: () => Promise<File> }> = []
+  async function walk(entry: FileSystemEntry, prefix: string): Promise<void> {
+    if (entry.isFile) {
+      const fe = entry as FileSystemFileEntry
+      uploads.push({ rel: prefix + entry.name, getFile: () => new Promise<File>((res, rej) => fe.file(res, rej)) })
+    } else if (entry.isDirectory) {
+      const kids = await readAllEntries((entry as FileSystemDirectoryEntry).createReader())
+      for (const k of kids) await walk(k, prefix + entry.name + '/')
+    }
+  }
+  for (const en of entries) if (en) await walk(en, '')
+  const capped = uploads.slice(0, 2000) // safety cap — a drop this large is unusual
+  for (const u of capped) {
+    try {
+      const buf = await (await u.getFile()).arrayBuffer()
+      await fetch(`/api/os/upload?name=${encodeURIComponent(u.rel)}&reconcile=0`, { method: 'POST', body: buf })
+    } catch {
+      /* skip a file we couldn't read/upload */
+    }
+  }
+  try {
+    await fetch('/api/os/reconcile', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ x: wx, y: wy }) })
+  } catch {
+    /* the watcher reconcile will still pick the files up shortly */
+  }
+}
+
 export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
@@ -43,6 +84,7 @@ export default function App(): JSX.Element {
   const grabMode = useDesktop((s) => s.grabMode)
   const snapPreview = useDesktop((s) => s.snapPreview)
   const openDirPath = useDesktop((s) => s.openDirPath)
+  const selection = useDesktop((s) => s.selection)
   const createSurface = useDesktop((s) => s.createSurface)
   const setIntegrations = useDesktop((s) => s.setIntegrations)
 
@@ -56,6 +98,8 @@ export default function App(): JSX.Element {
   // A QUEUE (not a single slot) so concurrent writes don't overwrite each other's card (review fix); we
   // show the oldest and pop it on answer. Keyed by id, matching provider-bridge's pending Map.
   const [providerApprovals, setProviderApprovals] = useState<Array<{ id: string; summary: string; risk: string }>>([])
+  // Right-click desktop menu (New Folder / New Board). wx/wy = the world position to place the new folder.
+  const [menu, setMenu] = useState<{ x: number; y: number; wx: number; wy: number } | null>(null)
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
@@ -180,13 +224,18 @@ export default function App(): JSX.Element {
         useDesktop.getState().goToPrimary()
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'g' || e.key === 'G')) {
         // Cmd+G: group the selection into a REAL folder on disk (mkdir + mv); the reconcile that follows
-        // replaces the loose tiles with one folder tile (#52). Falls back to in-memory grouping only if
-        // no host is wired (e.g. a bare preview with no backend).
+        // replaces the loose tiles with one tile (#52). The KIND is inferred: a selection of only file/dir
+        // tiles → a normal FILE folder (collapses to a file-manager); anything with a window/widget → a
+        // BOARD (.board) so those surfaces stay LIVE and splay on the canvas. Falls back to in-memory
+        // grouping only if no host is wired (e.g. a bare preview with no backend).
         e.preventDefault()
         const st = useDesktop.getState()
         const ids = [...st.selection]
         if (ids.length >= 2 && window.agentOS?.groupIntoFolder) {
-          void window.agentOS.groupIntoFolder('Folder', ids)
+          const sel = st.surfaces.filter((s) => ids.includes(s.id))
+          const allFiles = sel.length > 0 && sel.every((s) => s.kind === 'native' && (s.component === 'file' || s.component === 'dir'))
+          const kind = allFiles ? 'folder' : 'board'
+          void window.agentOS.groupIntoFolder(allFiles ? 'Folder' : 'Board', ids, kind)
           st.clearSelection()
         } else {
           st.groupSelection()
@@ -555,22 +604,56 @@ export default function App(): JSX.Element {
   }
   function onDrop(e: React.DragEvent): void {
     const files = Array.from(e.dataTransfer?.files ?? [])
-    if (!files.length) return
+    const items = Array.from(e.dataTransfer?.items ?? [])
+    if (!files.length && !items.length) return
     e.preventDefault()
-    if (!window.agentOS?.serverMode) return
-    const cx = e.clientX
-    const cy = e.clientY
     const t = useDesktop.getState().transform
+    const wx = Math.round((e.clientX - t.x) / t.scale)
+    const wy = Math.round((e.clientY - t.y) / t.scale)
+    const api = window.agentOS
+    // Electron: dropped files AND folders carry real OS paths → copy them into the workspace (a folder
+    // copies recursively → ONE collapsed tile). This is the desktop-app path the old code skipped (bug).
+    if (api && !api.serverMode && api.dropPaths && api.ingestPaths) {
+      const paths = api.dropPaths(files)
+      if (paths.length) {
+        void api.ingestPaths(paths, wx, wy)
+        return
+      }
+    }
+    // Server: the browser has no FS path → upload bytes. A dropped FOLDER is recursed via webkitGetAsEntry
+    // (each file uploaded with its in-folder subpath, then one reconcile) so it lands as a real subfolder.
+    const entries = items.map((it) => (typeof it.webkitGetAsEntry === 'function' ? it.webkitGetAsEntry() : null)).filter((en): en is FileSystemEntry => !!en)
+    if (entries.some((en) => en.isDirectory)) {
+      void uploadDroppedEntries(entries, wx, wy)
+      return
+    }
+    if (!files.length) return
     files.forEach(async (file, i) => {
-      const wx = Math.round((cx - t.x) / t.scale + i * 24)
-      const wy = Math.round((cy - t.y) / t.scale + i * 24)
       try {
         const buf = await file.arrayBuffer()
-        await fetch(`/api/os/upload?name=${encodeURIComponent(file.name)}&x=${wx}&y=${wy}`, { method: 'POST', body: buf })
+        await fetch(`/api/os/upload?name=${encodeURIComponent(file.name)}&x=${wx + i * 24}&y=${wy + i * 24}`, { method: 'POST', body: buf })
       } catch {
         /* ignore a failed upload */
       }
     })
+  }
+
+  // Right-click empty canvas → New Folder / New Board menu (the discoverable counterpart of Cmd+G).
+  function onBgContextMenu(e: React.MouseEvent): void {
+    e.preventDefault()
+    const t = useDesktop.getState().transform
+    setMenu({ x: e.clientX, y: e.clientY, wx: Math.round((e.clientX - t.x) / t.scale), wy: Math.round((e.clientY - t.y) / t.scale) })
+  }
+  // New EMPTY folder (files) or board (windows+widgets) at the click point.
+  function makeFolder(kind: 'folder' | 'board', wx: number, wy: number): void {
+    void window.agentOS?.newFolder?.(kind === 'board' ? 'Board' : 'Folder', kind, wx, wy)
+  }
+  // Group the current selection into a real folder (files) or board (windows/widgets stay live + splay).
+  function groupSelectionInto(kind: 'folder' | 'board'): void {
+    const ids = [...useDesktop.getState().selection]
+    if (!ids.length) return
+    void window.agentOS?.groupIntoFolder?.(kind === 'board' ? 'Board' : 'Folder', ids, kind)
+    useDesktop.getState().clearSelection()
   }
 
   function onBgDown(e: React.PointerEvent): void {
@@ -698,7 +781,7 @@ export default function App(): JSX.Element {
         <span className="titlebar-label">BlitzOS</span>
       </div>
 
-      <div className="bg" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} />
+      <div className="bg" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onContextMenu={onBgContextMenu} />
 
       <Sidebar onAddBrowser={addBrowser} />
 
@@ -805,6 +888,24 @@ export default function App(): JSX.Element {
         />
       )}
       {openDirPath !== null && <DirOverlay path={openDirPath} />}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: 'New Folder', onClick: () => makeFolder('folder', menu.wx, menu.wy) },
+            { label: 'New Board', onClick: () => makeFolder('board', menu.wx, menu.wy) },
+            ...(selection.length
+              ? [
+                  { label: `New Folder with Selection (${selection.length})`, onClick: () => groupSelectionInto('folder') },
+                  { label: `New Board with Selection (${selection.length})`, onClick: () => groupSelectionInto('board') }
+                ]
+              : [])
+          ]}
+        />
+      )}
 
       {/* #51: the agent asked to perform a WRITE on a connected account — the human must approve it
           (per-call, request-bound). Reads never reach here. The OLDEST pending card shows; answering it

@@ -618,6 +618,14 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   closeSurface: (id) => {
     get().snapshotLayout()
+    // Close = delete the backing content file (note/web/srcdoc) so it doesn't pop back up on the next
+    // reconcile. Explicit per-id (never inferred from a push), and a no-op for runtime panels / real
+    // file tiles (the host skips anything that isn't a BlitzOS content file). Both transports.
+    try {
+      ;(window.agentOS as { closeSurfaceFile?: (id: string) => void } | undefined)?.closeSurfaceFile?.(id)
+    } catch {
+      /* best-effort */
+    }
     set((s) => {
       const surf = s.surfaces.find((w) => w.id === id)
       // Closing a folder disbands it: members pop back onto the canvas where they were.
