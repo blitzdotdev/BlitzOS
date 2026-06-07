@@ -65,19 +65,20 @@ export function snapTargetFor(
   const nearR = nx > 1 - E
   const nearT = ny < E
   const nearB = ny > 1 - E
-  const cell = (fx: number, fy: number, fw: number, fh: number): { x: number; y: number; w: number; h: number } => ({
-    x: Math.round(r.x + r.w * fx),
-    y: Math.round(r.y + r.h * fy),
-    w: Math.round(r.w * fw),
-    h: Math.round(r.h * fh)
-  })
-  if (nearL && nearT) return cell(0, 0, 0.5, 0.5) // corners → quarters
-  if (nearL && nearB) return cell(0, 0.5, 0.5, 0.5)
-  if (nearR && nearT) return cell(0.5, 0, 0.5, 0.5)
-  if (nearR && nearB) return cell(0.5, 0.5, 0.5, 0.5)
-  if (nearT) return cell(0, 0, 1, 1) // top edge → full
-  if (nearL) return cell(0, 0, 0.5, 1) // left half
-  if (nearR) return cell(0.5, 0, 0.5, 1) // right half
+  // integer split points so adjacent halves/quarters tile with NO 1px seam on odd-width areas
+  const x0 = Math.round(r.x)
+  const y0 = Math.round(r.y)
+  const W = Math.round(r.w)
+  const H = Math.round(r.h)
+  const halfW = Math.round(W / 2)
+  const halfH = Math.round(H / 2)
+  if (nearL && nearT) return { x: x0, y: y0, w: halfW, h: halfH } // corners → quarters
+  if (nearL && nearB) return { x: x0, y: y0 + halfH, w: halfW, h: H - halfH }
+  if (nearR && nearT) return { x: x0 + halfW, y: y0, w: W - halfW, h: halfH }
+  if (nearR && nearB) return { x: x0 + halfW, y: y0 + halfH, w: W - halfW, h: H - halfH }
+  if (nearT) return { x: x0, y: y0, w: W, h: H } // top edge → full
+  if (nearL) return { x: x0, y: y0, w: halfW, h: H } // left half
+  if (nearR) return { x: x0 + halfW, y: y0, w: W - halfW, h: H } // right half
   return null
 }
 

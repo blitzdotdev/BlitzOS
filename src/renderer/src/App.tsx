@@ -82,6 +82,8 @@ export default function App(): JSX.Element {
   // BOTH transports (Electron + server/Chrome); normal mode is the default everywhere.
   function toggleControlMode(): void {
     const st = useDesktop.getState()
+    st.setSnapPreview(null) // a mode switch cancels any in-flight drag UI
+    st.setDragTarget(null)
     const next = st.mode === 'desktop' ? 'canvas' : 'desktop'
     st.setMode(next)
     animateTransform(viewTransform(next, st.viewport))

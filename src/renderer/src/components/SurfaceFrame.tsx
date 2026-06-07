@@ -21,7 +21,6 @@ interface WebviewMethods {
 
 export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
-  const resizeSurface = useDesktop((s) => s.resizeSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
   const toggleMaximize = useDesktop((s) => s.toggleMaximize)
@@ -37,7 +36,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const [isDragging, setIsDragging] = useState(false)
 
   const drag = useRef<{ startX: number; startY: number; items: Array<{ id: string; ox: number; oy: number }> } | null>(null)
-  const resize = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null)
+  const resize = useRef<{ startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; dir: string } | null>(null)
   const webviewRef = useRef<HTMLWebViewElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -243,11 +242,9 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       (w) => w.component === 'folder' && !dragged.has(w.id) && wx >= w.x && wx <= w.x + w.w && wy >= w.y && wy <= w.y + w.h
     )
     st.setDragTarget(folder ? folder.id : null)
-    // Snap preview: in normal mode, dragging a single window near a primary-area edge shows where
+    // Snap preview (BOTH modes, #42): dragging a single window near a primary-area edge shows where
     // it will dock on release (full / left|right half / quarter). Suppressed over a folder target.
-    st.setSnapPreview(
-      st.mode === 'desktop' && d.items.length === 1 && !folder && !isFolder ? snapTargetFor(wx, wy, st.viewport) : null
-    )
+    st.setSnapPreview(d.items.length === 1 && !folder && !isFolder ? snapTargetFor(wx, wy, st.viewport) : null)
   }
   function onBarUp(e: React.PointerEvent): void {
     try {
@@ -264,26 +261,61 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     st.setDragTarget(null)
     st.setSnapPreview(null)
     if (d && target) st.dropIntoFolder(target, d.items.map((it) => it.id))
-    else if (d && snap && st.mode === 'desktop' && d.items.length === 1) st.updateSurface(d.items[0].id, snap)
+    // Apply the snap; clear `restore` so a previously-maximized window's green-zoom isn't stale.
+    else if (d && snap && d.items.length === 1) st.updateSurface(d.items[0].id, { ...snap, restore: undefined })
   }
 
-  function onResizeDown(e: React.PointerEvent): void {
+  // macOS-style resize from any side/corner. `dir` is a combination of n/s/e/w; a side handle
+  // resizes that edge and moves the opposite edge's position. Works in control mode too (the
+  // handles sit above the drag-overlay).
+  function onResizeDown(e: React.PointerEvent, dir: string): void {
     e.stopPropagation()
     focusSurface(surface.id)
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-    resize.current = { startX: e.clientX, startY: e.clientY, origW: surface.w, origH: surface.h }
+    try {
+      ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      /* synthetic event */
+    }
+    resize.current = { startX: e.clientX, startY: e.clientY, origX: surface.x, origY: surface.y, origW: surface.w, origH: surface.h, dir }
   }
   function onResizeMove(e: React.PointerEvent): void {
-    if (!resize.current) return
+    const r = resize.current
+    if (!r) return
     const scale = useDesktop.getState().transform.scale
-    resizeSurface(
-      surface.id,
-      resize.current.origW + (e.clientX - resize.current.startX) / scale,
-      resize.current.origH + (e.clientY - resize.current.startY) / scale
-    )
+    const dxw = (e.clientX - r.startX) / scale
+    const dyw = (e.clientY - r.startY) / scale
+    const MINW = 160
+    const MINH = 120
+    let nx = r.origX
+    let ny = r.origY
+    let nw = r.origW
+    let nh = r.origH
+    if (r.dir.includes('e')) nw = r.origW + dxw
+    if (r.dir.includes('s')) nh = r.origH + dyw
+    if (r.dir.includes('w')) {
+      nw = r.origW - dxw
+      nx = r.origX + dxw
+    }
+    if (r.dir.includes('n')) {
+      nh = r.origH - dyw
+      ny = r.origY + dyw
+    }
+    if (nw < MINW) {
+      if (r.dir.includes('w')) nx = r.origX + r.origW - MINW // keep the right edge anchored
+      nw = MINW
+    }
+    if (nh < MINH) {
+      if (r.dir.includes('n')) ny = r.origY + r.origH - MINH // keep the bottom edge anchored
+      nh = MINH
+    }
+    useDesktop.getState().updateSurface(surface.id, { x: Math.round(nx), y: Math.round(ny), w: Math.round(nw), h: Math.round(nh) })
   }
   function onResizeUp(e: React.PointerEvent): void {
-    ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+    try {
+      ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
     resize.current = null
   }
 
@@ -383,6 +415,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         onPointerDown={onBarDown}
         onPointerMove={onBarMove}
         onPointerUp={onBarUp}
+        onPointerCancel={onBarUp}
       >
         {/* macOS traffic lights: red=close, yellow=minimize, green=zoom. Colored only when active. */}
         <div className="traffic" onPointerDown={stop}>
@@ -432,7 +465,18 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           </div>
         )}
       </div>
-      <div className="window-resize" onPointerDown={onResizeDown} onPointerMove={onResizeMove} onPointerUp={onResizeUp} />
+      {/* macOS-style resize from all sides + corners; above the drag-overlay so it works in control
+          mode too (#41). The handles avoid the title-bar controls (traffic lights / eye). */}
+      {(['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'] as const).map((dir) => (
+        <div
+          key={dir}
+          className={`rsz rsz-${dir}`}
+          onPointerDown={(e) => onResizeDown(e, dir)}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+        />
+      ))}
       {/* ⌥/Space grab-mode or selected → drag the surface from anywhere on its body. Always
           mounted (so an in-flight drag survives releasing the key); inert otherwise. */}
       <div
@@ -440,6 +484,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         onPointerDown={onBarDown}
         onPointerMove={onBarMove}
         onPointerUp={onBarUp}
+        onPointerCancel={onBarUp}
       />
     </div>
   )

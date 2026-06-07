@@ -338,16 +338,70 @@ button {
 .window-url input:focus {
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 }
-.window-resize {
+/* macOS-style resize handles — 4 edges + 4 corners. z-index 4 sits above the drag-overlay (z2), so
+   resizing works in control mode too; the top handles clear the title-bar controls (traffic lights
+   on the left, the eye on the right) so those stay clickable in normal mode (#41). */
+.rsz {
   position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 18px;
-  height: 18px;
-  cursor: nwse-resize;
-  z-index: 3;
+  z-index: 4;
 }
-.window-resize::after {
+.rsz-n {
+  top: 0;
+  left: 74px;
+  right: 34px;
+  height: 5px;
+  cursor: ns-resize;
+}
+.rsz-s {
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 5px;
+  cursor: ns-resize;
+}
+.rsz-w {
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 5px;
+  cursor: ew-resize;
+}
+.rsz-e {
+  right: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 5px;
+  cursor: ew-resize;
+}
+.rsz-nw {
+  top: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  cursor: nwse-resize;
+}
+.rsz-ne {
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  cursor: nesw-resize;
+}
+.rsz-sw {
+  bottom: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+.rsz-se {
+  bottom: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+.rsz-se::after {
   content: '';
   position: absolute;
   right: 4px;
