@@ -1243,22 +1243,25 @@ body,
     opacity 220ms var(--ease-out);
 }
 
-/* ===== merged from master: Mission Control overview + workspaces launcher + chrome our side lacked ===== */
+/* ===== merged from master, restyled to our design tokens: Mission Control overview + workspaces launcher + chrome ===== */
 
 .window-close {
   border: none;
   background: transparent;
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
   padding: 0 4px;
 }
+.window-close:hover {
+  color: var(--text);
+}
 
 .panel .link {
   background: none;
   border: none;
-  color: #58a6ff;
+  color: var(--accent);
   font-size: 12.5px;
   cursor: pointer;
   padding: 0;
@@ -1266,7 +1269,7 @@ body,
 
 /* Workspace switcher: the toolbar pill + the shared name input (reused by the overview). */
 .ws-btn {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1274,17 +1277,17 @@ body,
 }
 
 .ws-input {
-  background: #0e1116;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
   padding: 9px 12px;
-  color: var(--ink);
+  color: var(--text);
   font-size: 13px;
+  outline: none;
 }
 
 .ws-input:focus {
-  outline: none;
-  border-color: #1f6feb;
+  border-color: var(--accent);
 }
 
 /* Mission Control overview — full-screen splay of workspace tiles (16:10), responsive grid. */
@@ -1292,8 +1295,9 @@ body,
   position: fixed;
   inset: 0;
   z-index: 3000;
-  background: rgba(8, 10, 14, 0.86);
-  backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--canvas) 72%, transparent);
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
 }
 
 .ovr-scroll {
@@ -1314,14 +1318,14 @@ body,
   align-items: center;
   gap: 16px;
   padding: 22px 4px 16px;
-  background: linear-gradient(rgba(8, 10, 14, 0.96), rgba(8, 10, 14, 0.72));
+  background: linear-gradient(color-mix(in srgb, var(--canvas) 92%, transparent), color-mix(in srgb, var(--canvas) 60%, transparent));
 }
 
 .ovr-head h2 {
   margin: 0;
   font-size: 19px;
-  font-weight: 650;
-  color: var(--ink);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
 }
 
 .ovr-new {
@@ -1341,7 +1345,6 @@ body,
 .ovr-grid {
   display: grid;
   gap: 20px;
-  /* JS sets --cols (exact integer); this auto-fill rule is the no-JS fallback, capped at 5. */
   grid-template-columns: repeat(auto-fill, minmax(max(min(220px, 100%), calc((100% - 4 * 20px) / 5)), 1fr));
 }
 
@@ -1369,20 +1372,20 @@ body,
   position: relative;
   aspect-ratio: 16 / 10;
   width: 100%;
-  border-radius: 12px;
+  border-radius: var(--radius-button);
   overflow: hidden;
-  background: #0e1116;
-  border: 2px solid var(--line);
-  transition: border-color 0.12s, transform 0.12s;
+  background: var(--canvas);
+  border: 2px solid var(--divider);
+  transition: border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 
 .ovr-tile:hover:not(:disabled) .ovr-thumb {
-  border-color: #5a6675;
+  border-color: var(--control-hover);
   transform: translateY(-2px);
 }
 
 .ovr-tile.on .ovr-thumb {
-  border-color: #2ea043;
+  border-color: var(--positive);
 }
 
 .ovr-thumb img {
@@ -1397,7 +1400,7 @@ body,
   inset: 0;
   display: grid;
   place-items: center;
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -1406,8 +1409,8 @@ body,
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(8, 10, 14, 0.6);
-  color: #e6edf3;
+  background: var(--scrim);
+  color: var(--text);
   font-size: 12px;
 }
 
@@ -1422,18 +1425,18 @@ body,
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #6e7681;
+  background: var(--text-tertiary);
   flex: 0 0 8px;
 }
 
 .ovr-tile.on .ovr-dot {
-  background: #2ea043;
+  background: var(--positive);
 }
 
 .ovr-name {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   font-size: 13.5px;
-  color: var(--ink);
+  color: var(--text);
   flex: 0 0 auto;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1443,7 +1446,7 @@ body,
 
 .ovr-sub {
   font-size: 11.5px;
-  color: var(--muted);
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1453,17 +1456,17 @@ body,
   flex: 0 0 auto;
   border: none;
   background: transparent;
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 15px;
   cursor: pointer;
   padding: 0 4px;
 }
 
 .window-ico:hover {
-  color: var(--ink);
+  color: var(--text);
 }
 
-/* "Connect AI" panel (agent-socket paste URL). */
+/* "Connect AI" panel (agent-socket paste URL) — matches the frosted .panel chrome. */
 .ai-panel {
   position: fixed;
   bottom: 70px;
@@ -1472,42 +1475,47 @@ body,
   z-index: 1600;
   width: 460px;
   max-width: 92vw;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border-radius: var(--radius-panel);
   padding: 16px;
-  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-lg);
 }
 
 .ai-head {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   margin-bottom: 4px;
 }
 
 .ai-sub {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-muted);
   margin: 4px 0 10px;
 }
 
 .ai-url {
   width: 100%;
-  background: #0e1116;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--ink);
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  color: var(--text);
   font-size: 12px;
   padding: 8px 10px;
   margin-bottom: 10px;
 }
 
 .ai-panel .primary {
-  background: #1f6feb;
+  background: var(--accent);
   border: none;
-  color: #fff;
-  border-radius: 8px;
+  color: var(--paper-coral-ink);
+  border-radius: var(--radius-button);
   padding: 8px 16px;
   font-size: 13px;
+  font-weight: var(--fw-medium);
   cursor: pointer;
 }
