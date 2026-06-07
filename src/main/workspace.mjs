@@ -17,8 +17,9 @@
 // Shared module (the control-core.mjs / perception-core.mjs pattern): plain Node, importable
 // by the server backend now and Electron main later.
 
-import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, lstatSync, copyFileSync, cpSync, unlinkSync, realpathSync } from 'node:fs'
+import { mkdirSync, writeFileSync, appendFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, lstatSync, copyFileSync, cpSync, unlinkSync, realpathSync } from 'node:fs'
 import { join, dirname, resolve, sep, extname, basename } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 
 const VERSION = 1
@@ -972,6 +973,105 @@ export function removeSurfaceFile(dir, id) {
   } catch {
     return { ok: false }
   }
+}
+
+// ===========================================================================================
+// System widgets — the OS UI as workspace files. A built-in renderer (the chat UI) lives in a
+// VISIBLE workspace file `blitz-<role>.html` (a shipped default, copied in if missing — recreated
+// after a delete — and freely editable to customize). The chat TRANSCRIPT is its own file `chat.md`
+// (structured + human-readable): the OS appends each message, the widget just renders what's there.
+// ===========================================================================================
+const SYS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'widgets', 'system')
+const SYSTEM_RENDERERS = ['chat'] // roles that ship a default renderer (blitz-<role>.html)
+const SYSTEM_PREFIX = 'blitz-'
+const CHAT_FILE = 'chat.md'
+
+/** The recognized system files (the chat renderer + its transcript) — never auto-surfaced as plain tiles. */
+export function isSystemFile(name) {
+  const n = String(name || '').toLowerCase()
+  if (n === CHAT_FILE) return true
+  return n.startsWith(SYSTEM_PREFIX) && n.endsWith('.html') && SYSTEM_RENDERERS.indexOf(n.slice(SYSTEM_PREFIX.length, -5)) !== -1
+}
+/** If a workspace `.html` is a recognized system renderer, return its role (chat | …), else null. */
+export function systemRoleOf(name) {
+  const n = String(name || '').toLowerCase()
+  if (!n.startsWith(SYSTEM_PREFIX) || !n.endsWith('.html')) return null
+  const role = n.slice(SYSTEM_PREFIX.length, -5)
+  return SYSTEM_RENDERERS.indexOf(role) !== -1 ? role : null
+}
+
+/** Ensure `blitz-<role>.html` exists in the workspace — copy the shipped default if MISSING (so a
+ *  deleted renderer is recreated). Never overwrites an existing (possibly customized) file. */
+export function ensureSystemRenderer(dir, role) {
+  if (SYSTEM_RENDERERS.indexOf(role) === -1) return null
+  const dest = safeJoin(dir, `${SYSTEM_PREFIX}${role}.html`)
+  if (!dest) return null
+  if (existsSync(dest)) return { rel: `${SYSTEM_PREFIX}${role}.html`, created: false }
+  try {
+    atomicWrite(dest, readFileSync(join(SYS_DIR, `${role}.html`), 'utf8'))
+    return { rel: `${SYSTEM_PREFIX}${role}.html`, created: true }
+  } catch {
+    return null
+  }
+}
+/** Resolve a system renderer's HTML: the workspace file (customized) if present, else the shipped default. */
+export function readSystemRenderer(dir, role) {
+  const abs = safeJoin(dir, `${SYSTEM_PREFIX}${role}.html`)
+  if (abs && existsSync(abs)) {
+    try {
+      return readFileSync(abs, 'utf8')
+    } catch {
+      /* fall through to the default */
+    }
+  }
+  try {
+    return readFileSync(join(SYS_DIR, `${role}.html`), 'utf8')
+  } catch {
+    return null
+  }
+}
+
+// ---- chat transcript file (chat.md) — the OS owns the serialization; the widget just renders it.
+// Format: a readable markdown log, one block per message: `### <role> · <ts>` then the text. Parseable
+// + human-readable + the agent can read it as plain markdown. Append-only (O(1) per message).
+function chatAbs(dir) {
+  return safeJoin(dir, CHAT_FILE)
+}
+/** Append a chat message to chat.md (recreating the file if missing). role: 'user' | 'agent'. */
+export function appendChatMessage(dir, role, text) {
+  const abs = chatAbs(dir)
+  if (!abs) return { ok: false }
+  try {
+    if (!existsSync(abs)) atomicWrite(abs, '# Chat\n')
+    const block = `\n### ${role === 'user' ? 'user' : 'agent'} · ${Date.now()}\n${String(text == null ? '' : text)}\n`
+    appendFileSync(abs, block)
+    markWrite(resolve(abs))
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+}
+/** Parse chat.md into [{role,text,ts}] (last `cap`). Inverse of appendChatMessage; tolerant of edits. */
+export function readChatMessages(dir, cap = 400) {
+  const abs = chatAbs(dir)
+  if (!abs || !existsSync(abs)) return []
+  let raw = ''
+  try {
+    if (statSync(abs).size > MAX_CONTENT) return []
+    raw = readFileSync(abs, 'utf8')
+  } catch {
+    return []
+  }
+  const marks = []
+  const re = /^### (user|agent)(?: · (\d+))?[ \t]*$/gm
+  let m
+  while ((m = re.exec(raw))) marks.push({ role: m[1], ts: Number(m[2]) || 0, start: m.index, end: re.lastIndex })
+  const msgs = []
+  for (let i = 0; i < marks.length; i++) {
+    const body = raw.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].start : raw.length).replace(/^\n+|\n+$/g, '')
+    msgs.push({ role: marks[i].role, text: body, ts: marks[i].ts })
+  }
+  return msgs.slice(-cap)
 }
 
 const LISTDIR_CAP = 1000
