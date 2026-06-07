@@ -952,6 +952,42 @@ const server = createServer(async (req, res) => {
       return json(res, 404, { error: 'not found' })
     }
   }
+  // Receive a file the user DROPPED onto the canvas (#43): raw body bytes → jailed write into the
+  // active workspace at the drop world-position → reconcile so the tile appears where it landed.
+  if (path === '/api/os/upload' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    const chunks = []
+    let size = 0
+    let aborted = false
+    req.on('data', (c) => {
+      size += c.length
+      if (size > 30 * 1024 * 1024) {
+        aborted = true
+        req.destroy()
+      } else chunks.push(c)
+    })
+    req.on('aborted', () => (aborted = true))
+    req.on('end', () => {
+      if (aborted) return json(res, 413, { error: 'file too large (30MB max)' })
+      try {
+        const name = url.searchParams.get('name') || 'file'
+        const x = Number(url.searchParams.get('x')) || 0
+        const y = Number(url.searchParams.get('y')) || 0
+        const r = wsHost.ingestFile(name, Buffer.concat(chunks), x, y)
+        return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+      } catch (e) {
+        return json(res, 500, { error: String((e && e.message) || e) })
+      }
+    })
+    req.on('error', () => {
+      try {
+        json(res, 400, { error: 'bad request' })
+      } catch {
+        /* response already sent */
+      }
+    })
+    return
+  }
 
   // POST /api/os/content-share { surfaceId, on } — the human toggled "let the agent
   // read this surface" (P0 consent; gates the relay /events snapshot + read_window).

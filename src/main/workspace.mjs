@@ -553,6 +553,41 @@ function defaultSizeFor(kind) {
  * @param {string} dir workspace folder
  * @param {{cx?:number, cy?:number}} [placeAt] world-space center to cascade new nodes around
  */
+/**
+ * Write a file the user DROPPED onto the canvas into the workspace folder (#37 / #43). Sanitizes the
+ * basename (strips path + leading dots, keeps the extension), picks a unique non-reserved name,
+ * jails the write to the workspace dir, and stamps it as a self-write so the watcher doesn't also
+ * reconcile it (the caller reconciles explicitly, at the drop position). Returns { rel } or null.
+ */
+export function writeDroppedFile(dir, name, buffer) {
+  const raw = String(name || 'file').replace(/[/\\]/g, '_').replace(/^\.+/, '').trim()
+  const ext = extname(raw)
+  const cleanExt = ext.replace(/[^a-zA-Z0-9.]+/g, '').slice(0, 12)
+  const stem =
+    (raw.slice(0, raw.length - ext.length) || 'file')
+      .replace(/[^a-zA-Z0-9._ -]+/g, '_')
+      .slice(0, 80)
+      .trim() || 'file'
+  let base = stem + cleanExt
+  if (RESERVED_ROOT.has(base.toLowerCase()) || base.startsWith('.')) base = 'file' + cleanExt
+  let rel = base
+  let abs = safeJoin(dir, rel)
+  let i = 2
+  while (abs && existsSync(abs)) {
+    rel = `${stem}-${i++}${cleanExt}`
+    abs = safeJoin(dir, rel)
+  }
+  if (!abs) return null
+  try {
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, buffer)
+    markWrite(resolve(abs))
+    return { rel }
+  } catch {
+    return null
+  }
+}
+
 export function reconcileWorkspace(dir, placeAt = {}) {
   const metaFile = join(dir, '.blitzos', 'workspace.json')
   let ws

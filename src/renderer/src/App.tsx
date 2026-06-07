@@ -448,6 +448,35 @@ export default function App(): JSX.Element {
     return window.agentOS?.onAgentSocketUrl((url) => setAiUrl(url))
   }, [])
 
+  // Drag a file from the desktop onto the canvas → upload it into the workspace folder at the drop
+  // world-position (server mode; Electron drag-drop uses file paths — a separate path). The tile
+  // then appears via reconcile.
+  function onDragOver(e: React.DragEvent): void {
+    if (Array.from(e.dataTransfer?.types ?? []).includes('Files')) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+    }
+  }
+  function onDrop(e: React.DragEvent): void {
+    const files = Array.from(e.dataTransfer?.files ?? [])
+    if (!files.length) return
+    e.preventDefault()
+    if (!window.agentOS?.serverMode) return
+    const cx = e.clientX
+    const cy = e.clientY
+    const t = useDesktop.getState().transform
+    files.forEach(async (file, i) => {
+      const wx = Math.round((cx - t.x) / t.scale + i * 24)
+      const wy = Math.round((cy - t.y) / t.scale + i * 24)
+      try {
+        const buf = await file.arrayBuffer()
+        await fetch(`/api/os/upload?name=${encodeURIComponent(file.name)}&x=${wx}&y=${wy}`, { method: 'POST', body: buf })
+      } catch {
+        /* ignore a failed upload */
+      }
+    })
+  }
+
   function onBgDown(e: React.PointerEvent): void {
     const st = useDesktop.getState()
     if (st.mode === 'canvas') {
@@ -566,7 +595,7 @@ export default function App(): JSX.Element {
   const openFolder = surfaces.find((s) => s.kind === 'native' && s.component === 'folder' && s.props?.open)
 
   return (
-    <div id="root-canvas" ref={rootRef} className={grabMode ? 'grab-mode' : undefined}>
+    <div id="root-canvas" ref={rootRef} className={grabMode ? 'grab-mode' : undefined} onDragOver={onDragOver} onDrop={onDrop}>
       {/* draggable native-window title bar (macOS move/resize) */}
       <div className="titlebar">
         <span className="titlebar-label">BlitzOS</span>

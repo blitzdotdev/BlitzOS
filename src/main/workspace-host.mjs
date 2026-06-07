@@ -11,6 +11,7 @@ import {
   readWorkspace,
   readRuntimePanels,
   reconcileWorkspace,
+  writeDroppedFile,
   wasSelfWrite,
   listWorkspaces,
   createWorkspace,
@@ -72,34 +73,48 @@ export function createWorkspaceHost(a) {
     if (writeTimer) clearTimeout(writeTimer)
     writeTimer = setTimeout(flush, 500) // trailing debounce
   }
+  // The reconcile body: re-scan the folder, merge with LIVE state, broadcast. `placeAt` is the world
+  // point new files cascade around (the view center for a watch event, the drop point for an ingest).
+  function doReconcile(placeAt) {
+    if (switching) return // a switch owns the folder mid-flight
+    try {
+      const st = a.getState()
+      const r = reconcileWorkspace(activeWorkspace, placeAt || {})
+      if (!r) return
+      // Preserve LIVE state that disk doesn't represent, so a reconcile never destroys it:
+      //  - runtime chat/activity panels + iPhone-style folder groupings (never persisted as nodes)
+      //  - surfaces that exist in osState but aren't a workspace.json node yet (agent-created /
+      //    in-flight). `r.knownIds` ARE the persisted node ids: an osState id NOT in knownIds and
+      //    NOT in the reconciled set is genuinely un-persisted → keep it (a DELETED file's id IS a
+      //    known node → it correctly drops). Re-apply group memberships to the disk surfaces too.
+      const isRuntimeLike = (s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder')
+      const reconciledIds = new Set(r.surfaces.map((s) => s.id))
+      const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
+      const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))
+      const merged = [...r.surfaces.map((s) => { const g = groupOf.get(s.id); return g ? { ...s, groupId: g.groupId, peek: g.peek } : s }), ...keep]
+      a.setState({ ...st, surfaces: merged, camera: r.camera, mode: r.mode })
+      Promise.resolve(onSurfaces(merged)).catch(() => {})
+      a.broadcast({ type: 'reconcile', surfaces: merged, camera: r.camera, mode: r.mode, workspace: active() })
+    } catch (e) {
+      console.error('[workspace] reconcile failed:', e?.message || e)
+    }
+  }
   function scheduleReconcile() {
     if (reconcileTimer) return
     reconcileTimer = setTimeout(() => {
       reconcileTimer = null
-      if (switching) return // a switch owns the folder mid-flight
-      try {
-        const st = a.getState()
-        const v = st.view
-        const r = reconcileWorkspace(activeWorkspace, v ? { cx: v.cx, cy: v.cy } : {})
-        if (!r) return
-        // Preserve LIVE state that disk doesn't represent, so a reconcile never destroys it:
-        //  - runtime chat/activity panels + iPhone-style folder groupings (never persisted as nodes)
-        //  - surfaces that exist in osState but aren't a workspace.json node yet (agent-created /
-        //    in-flight). `r.knownIds` ARE the persisted node ids: an osState id NOT in knownIds and
-        //    NOT in the reconciled set is genuinely un-persisted → keep it (a DELETED file's id IS a
-        //    known node → it correctly drops). Re-apply group memberships to the disk surfaces too.
-        const isRuntimeLike = (s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder')
-        const reconciledIds = new Set(r.surfaces.map((s) => s.id))
-        const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
-        const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))
-        const merged = [...r.surfaces.map((s) => { const g = groupOf.get(s.id); return g ? { ...s, groupId: g.groupId, peek: g.peek } : s }), ...keep]
-        a.setState({ ...st, surfaces: merged, camera: r.camera, mode: r.mode })
-        Promise.resolve(onSurfaces(merged)).catch(() => {})
-        a.broadcast({ type: 'reconcile', surfaces: merged, camera: r.camera, mode: r.mode, workspace: active() })
-      } catch (e) {
-        console.error('[workspace] reconcile failed:', e?.message || e)
-      }
+      const v = a.getState().view
+      doReconcile(v ? { cx: v.cx, cy: v.cy } : {})
     }, 250)
+  }
+  /** Ingest a file the user DROPPED onto the canvas: write it into the active workspace, then
+   *  reconcile AT the drop position so the tile appears where it was dropped (#43). */
+  function ingestFile(name, buffer, x, y) {
+    if (switching) return { error: 'switch in progress' }
+    const w = writeDroppedFile(activeWorkspace, name, buffer)
+    if (!w) return { error: 'could not write the file' }
+    doReconcile({ cx: Number(x) || 0, cy: Number(y) || 0 })
+    return { ok: true, name: w.rel }
   }
   function startWatch() {
     try {
@@ -220,6 +235,7 @@ export function createWorkspaceHost(a) {
   return {
     active,
     activePath: () => activeWorkspace,
+    ingestFile,
     isSwitching: () => switching,
     hydrateOnBoot,
     onStatePush,
