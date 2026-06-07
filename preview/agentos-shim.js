@@ -174,12 +174,35 @@
       }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
     },
     // #52: group surfaces into a REAL folder on disk (mkdir + mv their files into a subdir).
-    groupIntoFolder: function (name, ids) {
+    groupIntoFolder: function (name, ids, kind) {
       return fetch(API + '/os/group', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: name, ids: ids })
+        body: JSON.stringify({ name: name, ids: ids, kind: kind })
       }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
     },
+    // "New Folder" (files) / "New Board" (windows+widgets) — the right-click desktop action.
+    newFolder: function (name, kind, x, y) {
+      return fetch(API + '/os/new-folder', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: name, kind: kind, x: x, y: y })
+      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+    },
+    // List a normal folder's contents for the file-manager overlay (Electron uses the os:dir IPC).
+    listDir: function (p) {
+      return getJSON('/os/dir?path=' + encodeURIComponent(p || '')).catch(function () { return null })
+    },
+    // A sandboxed srcdoc widget fired an action back to the agent (server parity with Electron IPC).
+    surfaceAction: function (payload) {
+      fetch(API + '/os/surface-action', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload || {})
+      }).catch(function () {})
+    },
+    // Drag-drop: the browser has no FS path, so onDrop uploads bytes (files) / recurses entries (folders)
+    // via /os/upload instead. dropPaths returns [] so the renderer takes the upload branch; ingestPaths is
+    // the Electron path-copy and is inert here.
+    dropPaths: function () { return [] },
+    ingestPaths: function () { return Promise.resolve({ ok: false }) },
     // P0 consent: let the agent read this web surface's content over the relay.
     setContentShare: function (surfaceId, on) {
       return fetch(API + '/os/content-share', {

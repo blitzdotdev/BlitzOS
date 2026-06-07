@@ -12,7 +12,11 @@ import {
   readRuntimePanels,
   reconcileWorkspace,
   writeDroppedFile,
+  writeDroppedFileAt,
+  copyDroppedEntry,
   groupIntoFolder,
+  createFolder,
+  listDir,
   readConsent,
   writeConsent,
   wasSelfWrite,
@@ -129,6 +133,49 @@ export function createWorkspaceHost(a) {
     if (!r || !r.ok) return { error: (r && r.error) || 'could not group' }
     doReconcile({ cx: Number(x) || 0, cy: Number(y) || 0 })
     return { ok: true, folder: r.folder, moved: r.moved }
+  }
+  /** Ingest real OS paths the user DROPPED (Electron: files AND folders, copied recursively into the
+   *  workspace), then reconcile ONCE at the drop position so the tiles land where dropped (#43/#52). */
+  function ingestPaths(paths, x, y) {
+    if (switching) return { error: 'switch in progress' }
+    const list = Array.isArray(paths) ? paths : []
+    let copied = 0
+    for (const p of list) {
+      const r = copyDroppedEntry(activeWorkspace, p)
+      if (r) copied++
+    }
+    if (!copied) return { error: 'nothing ingestable' }
+    doReconcile({ cx: Number(x) || 0, cy: Number(y) || 0 })
+    return { ok: true, copied }
+  }
+  /** Server folder-drop: write ONE uploaded file at a relative in-folder subpath (jailed, mkdir -p).
+   *  `reconcile:false` lets a multi-file folder upload defer to a single trailing reconcile (the client
+   *  posts the files, then calls reconcileAt). A bare file upload reconciles immediately. */
+  function ingestUpload(relPath, buffer, x, y, reconcile = true) {
+    if (switching) return { error: 'switch in progress' }
+    const w = String(relPath || '').match(/[\\/]/) ? writeDroppedFileAt(activeWorkspace, relPath, buffer) : writeDroppedFile(activeWorkspace, String(relPath || 'file'), buffer)
+    if (!w) return { error: 'could not write the file' }
+    if (reconcile) doReconcile({ cx: Number(x) || 0, cy: Number(y) || 0 })
+    return { ok: true, name: w.rel }
+  }
+  /** Reconcile at a point — used by the server folder-drop to surface the new folder after a deferred batch. */
+  function reconcileAt(x, y) {
+    if (switching) return { error: 'switch in progress' }
+    doReconcile({ cx: Number(x) || 0, cy: Number(y) || 0 })
+    return { ok: true }
+  }
+  /** List a normal folder's contents for the file-manager overlay (jailed to the active workspace). */
+  function listDirInWorkspace(rel) {
+    return listDir(activeWorkspace, rel)
+  }
+  /** Make an EMPTY real folder ('New Folder') or '.board' on-canvas folder ('New Board'), then reconcile
+   *  at (x,y) so a normal folder shows as one tile (an empty board has no children to splay yet). */
+  function newFolder(name, kind, x, y) {
+    if (switching) return { error: 'switch in progress' }
+    const r = createFolder(activeWorkspace, name, kind)
+    if (!r || !r.ok) return { error: (r && r.error) || 'could not create folder' }
+    doReconcile({ cx: Number(x) || 0, cy: Number(y) || 0 })
+    return { ok: true, folder: r.folder }
   }
   function startWatch() {
     try {
@@ -270,6 +317,11 @@ export function createWorkspaceHost(a) {
     active,
     activePath: () => activeWorkspace,
     ingestFile,
+    ingestPaths,
+    ingestUpload,
+    reconcileAt,
+    newFolder,
+    listDir: listDirInWorkspace,
     group,
     // #53: per-workspace consent persistence (read on boot/switch, write on a human grant). The write
     // MERGES (a caller may update just `surfaces` or just `providers` — e.g. the widget bridge vs the

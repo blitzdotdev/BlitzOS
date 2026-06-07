@@ -13,7 +13,7 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function fileUrl(path: string): string | null {
+export function fileUrl(path: string): string | null {
   if (!path) return null
   const api = window.agentOS as { serverMode?: boolean } | undefined
   if (api?.serverMode) return `/api/os/file?path=${encodeURIComponent(path)}`

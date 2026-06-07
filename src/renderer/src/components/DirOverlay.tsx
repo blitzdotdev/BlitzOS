@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useDesktop } from '../store'
+import { fileUrl } from './FileWidget'
 
-// Browse a real subfolder's contents (#44): opened by double-clicking a `dir` tile. Lists the
-// folder's entries (image thumbs / typed glyphs), drills into subfolders, closes on backdrop click.
-// Plain folders stay collapsed on the canvas (so a cloned repo is one tile, not thousands of nodes);
-// this overlay is how you look inside.
+// The file manager for a NORMAL folder (#44): opened by double-clicking a `dir` tile. A normal folder
+// holds FILES (it can hold thousands — it stays ONE collapsed tile on the canvas, never splayed; this
+// overlay is how you look inside). Lists entries (image thumbs / typed glyphs), drills into subfolders.
+// Works in BOTH modes via window.agentOS.listDir (Electron os:dir IPC / server /api/os/dir) — same
+// jailed, 1000-capped listing. (A `.board` folder is the OTHER kind — its windows/widgets splay onto
+// the canvas instead of opening here.)
 
 interface Entry {
   name: string
@@ -13,6 +16,10 @@ interface Entry {
   size: number
   isImage: boolean
   path: string
+}
+
+interface AgentOSFiles {
+  listDir?: (path: string) => Promise<{ entries: Entry[]; total: number; truncated: boolean } | null>
 }
 
 function fmtBytes(n: number): string {
@@ -25,6 +32,8 @@ function fmtBytes(n: number): string {
 export function DirOverlay({ path }: { path: string }): JSX.Element {
   const setOpenDirPath = useDesktop((s) => s.setOpenDirPath)
   const [entries, setEntries] = useState<Entry[]>([])
+  const [truncated, setTruncated] = useState(false)
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
@@ -32,12 +41,20 @@ export function DirOverlay({ path }: { path: string }): JSX.Element {
     let alive = true
     setLoading(true)
     setError(false)
-    fetch(`/api/os/dir?path=${encodeURIComponent(path)}`)
-      .then((r) => r.json())
+    const api = window.agentOS as AgentOSFiles | undefined
+    // ONE listing path for both modes: Electron resolves os:dir over IPC; the server shim fetches
+    // /api/os/dir. (No raw fetch here — that only worked in server mode and broke the Electron app.)
+    const p = api?.listDir
+      ? api.listDir(path)
+      : fetch(`/api/os/dir?path=${encodeURIComponent(path)}`).then((r) => r.json())
+    Promise.resolve(p)
       .then((d) => {
         if (!alive) return
-        if (Array.isArray(d.entries)) setEntries(d.entries)
-        else setError(true)
+        if (d && Array.isArray(d.entries)) {
+          setEntries(d.entries)
+          setTruncated(!!d.truncated)
+          setTotal(Number(d.total) || d.entries.length)
+        } else setError(true)
         setLoading(false)
       })
       .catch(() => {
@@ -65,7 +82,7 @@ export function DirOverlay({ path }: { path: string }): JSX.Element {
           )}
           <span className="dir-overlay-title">{name}</span>
           <span className="dir-overlay-count">
-            {entries.length} item{entries.length === 1 ? '' : 's'}
+            {truncated ? `${entries.length} of ${total}` : `${entries.length} item${entries.length === 1 ? '' : 's'}`}
           </span>
           <button className="btn ghost" onClick={() => setOpenDirPath(null)}>
             Close
@@ -87,8 +104,8 @@ export function DirOverlay({ path }: { path: string }): JSX.Element {
               <div className="dir-entry-icon">
                 {e.dir ? (
                   <div className="dir-entry-folder" />
-                ) : e.isImage ? (
-                  <img src={`/api/os/file?path=${encodeURIComponent(e.path)}&v=${e.size}`} alt={e.name} draggable={false} />
+                ) : e.isImage && fileUrl(e.path) ? (
+                  <img src={`${fileUrl(e.path)}${fileUrl(e.path)!.includes('?') ? '&' : '?'}v=${e.size}`} alt={e.name} draggable={false} />
                 ) : (
                   <span className="dir-entry-ext">{(e.ext || 'file').toUpperCase()}</span>
                 )}
@@ -97,6 +114,7 @@ export function DirOverlay({ path }: { path: string }): JSX.Element {
               <div className="dir-entry-meta">{e.dir ? 'Folder' : fmtBytes(e.size)}</div>
             </div>
           ))}
+          {truncated && <div className="dir-overlay-empty">Showing the first {entries.length} of {total} items.</div>}
         </div>
       </div>
     </div>

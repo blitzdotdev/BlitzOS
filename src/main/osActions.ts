@@ -248,6 +248,27 @@ export function osGroupIntoFolder(name: string, ids: string[], x?: number, y?: n
   const r = wsHost.group(String(name || 'Folder'), Array.isArray(ids) ? ids.map(String) : [], Number(x) || 0, Number(y) || 0, kind === 'board' ? 'board' : 'folder')
   return 'ok' in r ? r : { ok: false, error: r.error }
 }
+/** Drop real OS paths (files AND folders) onto the canvas — the Electron drag-drop path. Copies each
+ *  into the active workspace folder (a folder copies RECURSIVELY → one collapsed tile) and reconciles
+ *  at the drop point so the tiles land where dropped. The browser has no FS path, so server mode uploads
+ *  bytes via /api/os/upload instead. */
+export function osIngestPaths(paths: string[], x: number, y: number): { ok: boolean; copied?: number; error?: string } {
+  if (!wsHost) return { ok: false, error: 'no workspace host' }
+  const r = wsHost.ingestPaths(Array.isArray(paths) ? paths.map(String) : [], Number(x) || 0, Number(y) || 0)
+  return 'ok' in r ? r : { ok: false, error: r.error }
+}
+/** "New Folder" / "New Board" (the right-click desktop action): make an EMPTY real folder in the active
+ *  workspace and reconcile at (x,y). kind:'board' → a '.board' on-canvas folder (#54). */
+export function osNewFolder(name: string, kind: 'board' | 'folder' | undefined, x: number, y: number): { ok: boolean; folder?: string; error?: string } {
+  if (!wsHost) return { ok: false, error: 'no workspace host' }
+  const r = wsHost.newFolder(String(name || 'Folder'), kind === 'board' ? 'board' : 'folder', Number(x) || 0, Number(y) || 0)
+  return 'ok' in r ? r : { ok: false, error: r.error }
+}
+/** List a normal folder's contents for the file-manager overlay (the Electron counterpart of the server
+ *  /api/os/dir route — same shared host.listDir, jailed to the active workspace). */
+export function osListDir(rel: string): { path: string; entries: unknown[]; total: number; truncated: boolean } | null {
+  return wsHost ? wsHost.listDir(String(rel || '')) : null
+}
 /** #53: per-workspace consent persistence for the Electron transports (widget grants + sensitive-read
  *  providers), via the shared host. Load on boot, persist (merge) on each grant. */
 export function osLoadConsent(): { surfaces: string[]; providers: string[] } {

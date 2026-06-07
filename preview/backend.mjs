@@ -44,6 +44,7 @@ import {
   isContentShared,
   redactMoment,
   emitUserMessage,
+  emitSurfaceAction,
   EVENTS_REMINDER,
   INJECT,
   DRAIN
@@ -1074,39 +1075,10 @@ const server = createServer(async (req, res) => {
   // never .blitzos, capped. Read-only.
   if (path === '/api/os/dir' && req.method === 'GET') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
-    try {
-      const root = realpathSync(resolve(wsHost.activePath()))
-      const rel = url.searchParams.get('path') || ''
-      const real = realpathSync(resolve(root, rel))
-      if (real !== root && !real.startsWith(root + sep)) return json(res, 403, { error: 'forbidden' })
-      if (/(^|[/\\])\.blitzos([/\\]|$)/i.test(real.slice(root.length))) return json(res, 403, { error: 'forbidden' })
-      if (!statSync(real).isDirectory()) return json(res, 404, { error: 'not a directory' })
-      const relBase = real.slice(root.length).replace(/^[/\\]/, '')
-      const entries = readdirSync(real, { withFileTypes: true })
-        .filter((e) => !e.name.startsWith('.'))
-        .slice(0, 1000)
-        .map((e) => {
-          let size = 0
-          try {
-            if (e.isFile()) size = statSync(join(real, e.name)).size
-          } catch {
-            /* unreadable */
-          }
-          const ext = e.isFile() ? (e.name.split('.').pop() || '').toLowerCase() : ''
-          return {
-            name: e.name,
-            dir: e.isDirectory(),
-            ext,
-            size,
-            isImage: /^(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(ext),
-            path: relBase ? `${relBase}/${e.name}` : e.name
-          }
-        })
-        .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
-      return json(res, 200, { path: rel, entries })
-    } catch {
-      return json(res, 404, { error: 'not found' })
-    }
+    // SHARED listing (workspace.mjs listDir → host.listDir): jailed, dotfiles hidden, capped at 1000 with
+    // an honest {total,truncated}. Same impl as the Electron os:dir route, so the file manager matches.
+    const r = wsHost.listDir(url.searchParams.get('path') || '')
+    return r ? json(res, 200, r) : json(res, 404, { error: 'not found' })
   }
   // Receive a file the user DROPPED onto the canvas (#43): raw body bytes → jailed write into the
   // active workspace at the drop world-position → reconcile so the tile appears where it landed.
@@ -1146,7 +1118,10 @@ const server = createServer(async (req, res) => {
         const name = url.searchParams.get('name') || 'file'
         const x = Number(url.searchParams.get('x')) || 0
         const y = Number(url.searchParams.get('y')) || 0
-        const r = wsHost.ingestFile(name, Buffer.concat(chunks), x, y)
+        // A folder DROP uploads each file with its in-folder subpath (name has a '/') and passes
+        // reconcile=0 so the canvas reconciles ONCE after the whole batch (a trailing /api/os/reconcile).
+        const doReconcile = url.searchParams.get('reconcile') !== '0'
+        const r = wsHost.ingestUpload(name, Buffer.concat(chunks), x, y, doReconcile)
         return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
       } catch (e) {
         return json(res, 500, { error: String((e && e.message) || e) })
@@ -1158,6 +1133,58 @@ const server = createServer(async (req, res) => {
       } catch {
         /* response already sent */
       }
+    })
+    return
+  }
+
+  // POST /api/os/reconcile { x, y } — surface the canvas after a DEFERRED folder upload (the client
+  // posts each folder file with reconcile=0, then calls this once so the new folder tile appears).
+  if (path === '/api/os/reconcile' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let rbody = ''
+    req.on('data', (c) => {
+      rbody += c
+      if (rbody.length > 10_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(rbody)
+      const r = wsHost.reconcileAt(Number(b.x) || 0, Number(b.y) || 0)
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
+  // POST /api/os/new-folder { name, kind, x, y } — "New Folder" (files) / "New Board" (windows+widgets).
+  if (path === '/api/os/new-folder' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let nbody = ''
+    req.on('data', (c) => {
+      nbody += c
+      if (nbody.length > 10_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(nbody)
+      const r = wsHost.newFolder(String(b.name || 'Folder'), b.kind === 'board' ? 'board' : 'folder', Number(b.x) || 0, Number(b.y) || 0)
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
+  // POST /api/os/surface-action — a sandboxed srcdoc widget fired an action back to the agent (server-mode
+  // parity with the Electron os:surface-action IPC; mirrors /api/os/user-message → the moment stream).
+  if (path === '/api/os/surface-action' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let sbody = ''
+    req.on('data', (c) => {
+      sbody += c
+      if (sbody.length > 200_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(sbody)
+      if (b && typeof b === 'object') {
+        const { surfaceId, __blitz, ...action } = b
+        void __blitz
+        emitSurfaceAction(typeof surfaceId === 'string' ? surfaceId : 'unknown', action)
+      }
+      return json(res, 200, { ok: true })
     })
     return
   }

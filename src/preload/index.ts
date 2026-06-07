@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 export interface IntegrationStatus {
   id: string
@@ -153,8 +153,34 @@ const api = {
     return ipcRenderer.invoke('os:provider-consent', provider, allow)
   },
   // #52: group surfaces into a REAL folder on disk (mkdir + mv). Server mode overrides this in the shim.
-  groupIntoFolder(name: string, ids: string[]): Promise<{ ok: boolean; folder?: string; moved?: number; error?: string }> {
-    return ipcRenderer.invoke('os:group', name, ids)
+  // kind:'board' → a '.board' on-canvas folder (windows/widgets splay live); else a normal file folder.
+  groupIntoFolder(name: string, ids: string[], kind?: 'board' | 'folder'): Promise<{ ok: boolean; folder?: string; moved?: number; error?: string }> {
+    return ipcRenderer.invoke('os:group', name, ids, kind)
+  },
+  // Drag-drop: resolve dropped File objects to absolute OS paths (Electron only — the browser has none),
+  // then copy them into the workspace (folders recursively). Server mode uploads bytes instead.
+  dropPaths(files: File[]): string[] {
+    const out: string[] = []
+    for (const f of files) {
+      try {
+        const p = webUtils.getPathForFile(f)
+        if (p) out.push(p)
+      } catch {
+        /* not a real OS file (e.g. a synthetic drag) */
+      }
+    }
+    return out
+  },
+  ingestPaths(paths: string[], x: number, y: number): Promise<{ ok: boolean; copied?: number; error?: string }> {
+    return ipcRenderer.invoke('os:ingest-paths', paths, x, y)
+  },
+  // "New Folder" (files) / "New Board" (windows+widgets) — the right-click desktop action.
+  newFolder(name: string, kind: 'board' | 'folder', x: number, y: number): Promise<{ ok: boolean; folder?: string; error?: string }> {
+    return ipcRenderer.invoke('os:new-folder', name, kind, x, y)
+  },
+  // List a normal folder's contents for the file-manager overlay (server shim fetches /api/os/dir instead).
+  listDir(path: string): Promise<{ path: string; entries: unknown[]; total: number; truncated: boolean } | null> {
+    return ipcRenderer.invoke('os:dir', path)
   },
 
   // Workspaces (one feature, both modes). Electron thumbnails are captured main-side (capturePage)
