@@ -51,6 +51,7 @@ export function wasSelfWrite(absPath, windowMs = 900) {
 // Hardening helpers for the read/hydrate path — a workspace.json or content file can be
 // hand-edited, corrupt, copied from elsewhere, or malicious; never trust it blindly.
 const MAX_CONTENT = 2_000_000 // cap a content file we load whole into memory + ship to renderers
+const MAX_META = 1_000_000 // cap workspace.json before reading it whole (a planted giant must not OOM the lister)
 function clampScale(v) {
   const n = Number(v)
   return Number.isFinite(n) ? Math.min(Math.max(n, 0.2), 3) : 1
@@ -573,7 +574,12 @@ export function listWorkspaces(root) {
     let nodeCount = 0
     let updatedAt = 0
     try {
-      updatedAt = statSync(metaFile).mtimeMs
+      const ms = statSync(metaFile)
+      updatedAt = ms.mtimeMs
+      if (ms.size <= MAX_META) {
+        const m = JSON.parse(readFileSync(metaFile, 'utf8')) // size-capped: never read a planted giant meta whole
+        if (Array.isArray(m.nodes)) nodeCount = m.nodes.length
+      }
     } catch {
       try {
         updatedAt = statSync(p).mtimeMs
@@ -581,16 +587,9 @@ export function listWorkspaces(root) {
         /* unreadable — leave 0 */
       }
     }
-    try {
-      const m = JSON.parse(readFileSync(metaFile, 'utf8'))
-      if (Array.isArray(m.nodes)) nodeCount = m.nodes.length
-    } catch {
-      /* no/blank workspace.json — nodeCount stays 0 */
-    }
     out.push({ name: e.name, path: p, nodeCount, updatedAt })
-    if (out.length >= 200) break // cap a pathological root
   }
-  return out.sort((a, b) => b.updatedAt - a.updatedAt)
+  return out.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 200) // newest-first, THEN cap (never drop the newest)
 }
 
 /** Create a new workspace folder under `root` + scaffold it. Throws Error with .code

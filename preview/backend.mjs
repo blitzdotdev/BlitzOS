@@ -66,19 +66,25 @@ const WORKSPACES_ROOT = process.env.BLITZ_WORKSPACES_ROOT
   : process.env.BLITZ_WORKSPACE
     ? dirname(resolve(process.env.BLITZ_WORKSPACE))
     : join(ROOT, 'preview', '.workspace')
-const _initialName = process.env.BLITZ_WORKSPACE ? basename(resolve(process.env.BLITZ_WORKSPACE)) : 'Home'
+let initialWs = process.env.BLITZ_WORKSPACE ? basename(resolve(process.env.BLITZ_WORKSPACE)) : 'Home'
+if (!safeName(initialWs)) {
+  console.error(`[workspace] BLITZ_WORKSPACE basename ${JSON.stringify(initialWs)} is not a valid workspace name — falling back to 'Home'`)
+  initialWs = 'Home'
+}
 mkdirSync(WORKSPACES_ROOT, { recursive: true })
 // First-run: an empty root gets a default workspace so the user always lands on a board.
 if (listWorkspaces(WORKSPACES_ROOT).length === 0) {
   try {
-    createWorkspace(WORKSPACES_ROOT, _initialName)
+    createWorkspace(WORKSPACES_ROOT, initialWs)
   } catch (e) {
     console.error('[workspace] first-run create failed:', e?.message || e)
   }
 }
-// As the canvas changes we project the active workspace to <dir>/.blitzos/workspace.json +
-// content files (debounced, additive, never deletes).
-let activeWorkspace = resolveWorkspace(WORKSPACES_ROOT, _initialName, { mustExist: true }) || join(WORKSPACES_ROOT, _initialName)
+// As the canvas changes we project the active workspace to <dir>/.blitzos/workspace.json + content
+// files (debounced, additive, never deletes). Both branches yield a validated child of the root:
+// resolveWorkspace realpath-jails the happy path, and the fallback join uses the already-safeName'd
+// initialWs — so activeWorkspace is never an unvalidated path.
+let activeWorkspace = resolveWorkspace(WORKSPACES_ROOT, initialWs, { mustExist: true }) || join(WORKSPACES_ROOT, initialWs)
 // Single-flight lock: a workspace SWITCH must be atomic. While true, scheduleReconcile and the
 // /api/os/state write+reconcile branch stand down, so nothing writes mid-swap to the wrong folder.
 let switching = false
@@ -425,6 +431,11 @@ function startServerPerception() {
 // the demo) is reachable on a PUBLIC tunnel, so reject cross-site requests: a drive-by page must
 // not switch/create the operator's workspaces. Same-origin (the renderer), localhost, and
 // non-browser callers (no Origin / Sec-Fetch-Site) pass.
+// NOTE: the localhost-origin allowance is closed by Sec-Fetch-Site on modern browsers (a cross-port
+// localhost page sends Sec-Fetch-Site: cross-site → rejected at the check below). On a browser that
+// omits Sec-Fetch-Site, a local page on another port could slip through; accepted for the prototype
+// (kept so local dev, where the page origin differs from PUBLIC_BASE_URL, still works). Tighten to
+// PUBLIC_BASE_URL-only before GA.
 function sameSiteOnly(req) {
   const sfs = req.headers['sec-fetch-site']
   if (sfs && sfs !== 'same-origin' && sfs !== 'none') return false
@@ -1031,10 +1042,15 @@ const server = createServer(async (req, res) => {
     req.on('end', () => {
       const s = toolBody(body)
       if (s && Array.isArray(s.surfaces)) {
-        osState = s
-        // While a switch is mid-flight its teardown owns the host + folder; absorb the renderer's
-        // echo-push (keep osState current) but don't reconcile/write to the wrong workspace.
-        if (!switching) {
+        // Drop a STALE push: one arriving while a switch is mid-flight, or one TAGGED with a
+        // workspace we've already switched away from (App.tsx stamps the active workspace name).
+        // Either would clobber osState and persist the OLD board into the NEW folder — and the
+        // `switching` lock alone can't catch a push that lands just AFTER the switch finalizes,
+        // because the push is async + untagged-by-the-lock. Untagged pushes (older renderer with
+        // no `workspace` field) skip the name check, preserving prior behavior.
+        const stale = switching || (typeof s.workspace === 'string' && s.workspace !== basename(activeWorkspace))
+        if (!stale) {
+          osState = s
           if (SERVER_MODE) reconcileSurfaces(s.surfaces) // spin up / tear down server targets
           scheduleWorkspaceWrite() // project the canvas onto the active workspace folder
         }
@@ -1075,7 +1091,9 @@ const server = createServer(async (req, res) => {
   // Same-site gated because the server has no per-route auth and runs on a public tunnel.
   if (path === '/api/os/workspaces' && req.method === 'GET') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
-    return json(res, 200, { workspaces: listWorkspaces(WORKSPACES_ROOT), active: basename(activeWorkspace) })
+    // strip the absolute host path — the renderer switches by name; don't leak the on-disk layout.
+    const workspaces = listWorkspaces(WORKSPACES_ROOT).map(({ name, nodeCount, updatedAt }) => ({ name, nodeCount, updatedAt }))
+    return json(res, 200, { workspaces, active: basename(activeWorkspace) })
   }
   if (path === '/api/os/workspaces' && req.method === 'POST') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })

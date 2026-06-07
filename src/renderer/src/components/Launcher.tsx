@@ -7,7 +7,6 @@ import { useEffect, useRef, useState } from 'react'
 
 interface WorkspaceEntry {
   name: string
-  path: string
   nodeCount: number
   updatedAt: number
 }
@@ -37,9 +36,12 @@ export function Launcher({ onClose }: Props): JSX.Element {
 
   useEffect(() => {
     window.agentOS?.workspaces?.list().then((r) => {
-      if (r) {
+      if (r && Array.isArray(r.workspaces)) {
         setList(r.workspaces)
         setActive(r.active)
+      } else {
+        setList([]) // a 403/error body is truthy but has no workspaces[] — don't crash on .length
+        setError((r as { error?: string })?.error || 'could not load workspaces')
       }
     })
     const onKey = (e: KeyboardEvent): void => {
