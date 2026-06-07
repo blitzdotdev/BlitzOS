@@ -106,6 +106,30 @@ ok('caps the listing at 1000', !!bigList && bigList.entries.length === 1000)
 ok('reports the true total (1005)', !!bigList && bigList.total === 1005)
 ok('flags truncated:true (UI shows "1000 of 1005")', !!bigList && bigList.truncated === true)
 
+console.log('\n# close = delete the file (the "window pops back up" bug)')
+const cdir = join(tmp, 'closews')
+mkdirSync(cdir, { recursive: true })
+const noteA = { id: 'A', kind: 'native', component: 'note', title: 'A', x: 0, y: 0, w: 200, h: 200, z: 1, props: { text: 'aaa' } }
+const noteB = { id: 'B', kind: 'native', component: 'note', title: 'B', x: 0, y: 0, w: 200, h: 200, z: 2, props: { text: 'bbb' } }
+const webC = { id: 'C', kind: 'web', title: 'C', url: 'https://example.com', x: 0, y: 0, w: 200, h: 200, z: 3, props: {} }
+const contentFiles = () => readdirSync(cdir).filter((f) => /\.(md|weblink|html)$/.test(f) && f !== 'BLITZOS.md')
+writeWorkspace(cdir, { surfaces: [noteA, noteB, webC], camera: { x: 0, y: 0, scale: 1 } })
+ok('3 content files written (2 notes + 1 weblink)', contentFiles().length === 3)
+// the user closes B and C → the renderer pushes a state without them
+writeWorkspace(cdir, { surfaces: [noteA], camera: { x: 0, y: 0, scale: 1 } })
+ok('closed surfaces deleted their files (1 content file left)', contentFiles().length === 1)
+const recAfterClose = reconcileWorkspace(cdir, {})
+ok('reconcile does NOT resurrect the closed surfaces', (recAfterClose?.surfaces || []).filter((s) => s.component === 'note' || s.kind === 'web').length === 1)
+
+console.log('\n# close NEVER deletes a real dropped file (only BlitzOS content files)')
+writeFileSync(join(ext, 'keep.png'), Buffer.from([1, 2, 3, 4]))
+copyDroppedEntry(cdir, join(ext, 'keep.png'))
+reconcileWorkspace(cdir, {}) // registers keep.png as a file node
+ok('dropped png present after reconcile', existsSync(join(cdir, 'keep.png')))
+// a push that omits the file surface must NOT delete the real file (it has no close button anyway)
+writeWorkspace(cdir, { surfaces: [noteA], camera: { x: 0, y: 0, scale: 1 } })
+ok('real dropped file survives a push that omits it', existsSync(join(cdir, 'keep.png')))
+
 rmSync(tmp, { recursive: true, force: true })
 console.log(`\n${fail === 0 ? 'ALL PASS' : 'FAIL'} — ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
