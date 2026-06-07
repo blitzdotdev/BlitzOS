@@ -74,5 +74,37 @@ console.log('\nedge: grouping a member that is itself a subdir nests it (real mv
   rmSync(d, { recursive: true, force: true })
 }
 
+console.log('\n#54: a .board folder SPLAYS its children onto the canvas (normal folder stays collapsed):')
+{
+  const d = fresh()
+  writeWorkspace(d, { surfaces: [note('a', '# A'), note('b', '# B'), note('c', '# C')], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' })
+  // group a+b into a NORMAL folder, and (separately) make a board from c by grouping with kind:'board'
+  const norm = groupIntoFolder(d, 'Normal', ['a', 'b'], 'folder')
+  ok('normal group → a plain subdir (no .board suffix)', norm.ok && !norm.folder.endsWith('.board'), norm.folder)
+  const board = groupIntoFolder(d, 'My Board', ['c'], 'board')
+  ok('board group → a ".board" subdir on disk', board.ok && board.folder.endsWith('.board') && existsSync(join(d, board.folder)), board.folder)
+
+  const rec = reconcileWorkspace(d, { cx: 0, cy: 0 })
+  const dirTiles = rec.surfaces.filter((s) => s.component === 'dir')
+  const noteTiles = rec.surfaces.filter((s) => s.component === 'note')
+  // the NORMAL folder is one collapsed dir tile (no .board path); the BOARD produced NO dir tile — its
+  // child note was SPLAYED onto the canvas instead (a separate note surface carrying the child's content).
+  ok('the normal folder is ONE collapsed dir tile (board did NOT add a tile)', dirTiles.length === 1 && !String(dirTiles[0].props?.path || '').endsWith('.board'), dirTiles.map((t) => t.props?.path))
+  ok("the board's child note is splayed as a canvas tile (not collapsed)", noteTiles.length === 1 && String(noteTiles[0].props?.text || '').includes('C'), noteTiles.map((s) => s.props?.text))
+  rmSync(d, { recursive: true, force: true })
+}
+
+console.log('\n#54 scale guard: an over-full .board falls back to ONE collapsed tile (never explodes):')
+{
+  const d = fresh()
+  writeWorkspace(d, { surfaces: [note('keep', '# keep')], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' })
+  mkdirSync(join(d, 'huge.board'), { recursive: true })
+  for (let i = 0; i < 40; i++) writeFileSync(join(d, 'huge.board', `n${i}.md`), `# ${i}`) // > BOARD_CAP (24)
+  const rec = reconcileWorkspace(d, { cx: 0, cy: 0 })
+  const fromBoard = rec.surfaces.filter((s) => String(s.props?.path || s.props?.name || '').includes('huge'))
+  ok('an over-cap board does NOT splay 40 tiles (stays one collapsed tile)', fromBoard.length === 1 && fromBoard[0].component === 'dir', fromBoard.length)
+  rmSync(d, { recursive: true, force: true })
+}
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)
 process.exit(failures === 0 ? 0 : 1)

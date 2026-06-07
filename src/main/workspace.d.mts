@@ -23,7 +23,7 @@ export function readWorkspace(dir: string): HydratedWorkspace | null
 export function wasSelfWrite(absPath: string, windowMs?: number): boolean
 
 /** #52: real "group into folder" — mkdir a subdir + mv the members' content files into it. */
-export function groupIntoFolder(dir: string, name: string, memberIds: string[]): { ok: boolean; folder?: string; moved?: number; error?: string }
+export function groupIntoFolder(dir: string, name: string, memberIds: string[], kind?: 'board' | 'folder'): { ok: boolean; folder?: string; moved?: number; error?: string }
 
 /** #53: per-workspace consent persisted under .blitzos/state/consent.json (agent-read-denied). */
 export function writeConsent(dir: string, consent: { surfaces?: string[]; providers?: string[] }): void

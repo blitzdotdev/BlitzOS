@@ -169,13 +169,14 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
         {
           path: '/group',
           description:
-            'Group related surfaces into ONE REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' files into it. They collapse to one folder tile (drill in to browse) — a real filesystem folder that persists, and a many-file group stays one tile. Pass the ids of 2+ surfaces that share a purpose + a folder name.',
+            'Group related surfaces into ONE REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' files into it. kind:"folder" (default) → one collapsed tile (drill in to browse), best for many items / a repo. kind:"board" → the items stay SPLAYED on the canvas as a sub-board (best for a small curated set you want visible). A real filesystem folder either way, so it persists. Pass 2+ ids + a name.',
           input_schema: {
             type: 'object',
             required: ['ids', 'name'],
             properties: {
               ids: { type: 'array', items: { type: 'string' } },
               name: { type: 'string' },
+              kind: { type: 'string', enum: ['folder', 'board'] },
               x: { type: 'number' },
               y: { type: 'number' }
             }
@@ -184,7 +185,7 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
             const a = parse(body)
             const ids = Array.isArray(a.ids) ? (a.ids as unknown[]).map(String) : []
             if (!ids.length) return { status: 400, body: { error: 'group needs surface ids' } }
-            return osGroupIntoFolder(a.name != null ? String(a.name) : 'Folder', ids, a.x != null ? Number(a.x) : undefined, a.y != null ? Number(a.y) : undefined)
+            return osGroupIntoFolder(a.name != null ? String(a.name) : 'Folder', ids, a.x != null ? Number(a.x) : undefined, a.y != null ? Number(a.y) : undefined, a.kind === 'board' ? 'board' : 'folder')
           }
         },
         {

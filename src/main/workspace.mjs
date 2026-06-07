@@ -85,6 +85,15 @@ function nodeKind(s) {
 // Generated root basenames that must never be reused for a content file.
 const RESERVED_ROOT = new Set(['blitzos.md', '.gitignore'])
 
+// #54 — a SPECIAL on-canvas folder is a real subdir whose name ends in `.board` (the macOS .app-bundle
+// analogy: the kind is encoded in the name, so it survives copy/move + is greppable). Its direct children
+// splay onto the canvas; capped so it can never explode (an over-full board falls back to a collapsed tile).
+const BOARD_SUFFIX = '.board'
+const BOARD_CAP = 24
+function isBoard(name) {
+  return typeof name === 'string' && name.toLowerCase().endsWith(BOARD_SUFFIX)
+}
+
 function slug(str, fallback) {
   const base = String(str || '')
     .normalize('NFKD')
@@ -649,8 +658,12 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     /* unreadable workspace dir */
   }
   const newFiles = entries.filter((e) => e.isFile() && autoKind(e.name) && !known.has(e.name) && safeJoin(dir, e.name)).map((e) => e.name)
-  // Subfolders surface as collapsed 'dir' tiles (#37). Skip dot-dirs (.blitzos/.git) + known ones.
-  const newDirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.') && !known.has(e.name) && safeJoin(dir, e.name)).map((e) => e.name)
+  // A NORMAL subfolder surfaces as ONE collapsed 'dir' tile (#37). A SPECIAL '.board' folder (#54 — the
+  // macOS .app-bundle analogy) instead splays its DIRECT children onto the canvas as a sub-board. Skip
+  // dot-dirs (.blitzos/.git).
+  const topDirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.') && safeJoin(dir, e.name)).map((e) => e.name)
+  const newDirs = topDirs.filter((n) => !isBoard(n) && !known.has(n))
+  const boards = topDirs.filter(isBoard)
 
   let changed = false
   // single-rename heal: a node's file is gone AND exactly one NEW file of the same kind exists.
@@ -695,6 +708,41 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     i++
     changed = true
   }
+  // #54: a '.board' folder splays its DIRECT children onto the canvas (one level only — a child subdir is
+  // itself one collapsed tile, so a board can't recurse-explode). Over BOARD_CAP children → fall back to a
+  // single collapsed tile (scale guard, like a repo). Children persist their own layout as nested nodes.
+  for (const b of boards) {
+    const babs = safeJoin(dir, b)
+    let kids = []
+    try {
+      kids = readdirSync(babs, { withFileTypes: true })
+    } catch {
+      /* unreadable board */
+    }
+    const children = kids
+      .filter((e) => !e.name.startsWith('.') && (e.isDirectory() || autoKind(e.name)))
+      .map((e) => ({ rel: `${b}/${e.name}`, kind: e.isDirectory() ? 'dir' : autoKind(e.name) }))
+    if (children.length > BOARD_CAP) {
+      if (!known.has(b)) {
+        const sz = defaultSizeFor('dir')
+        alive.push({ id: randomUUID(), path: b, kind: 'dir', x: Math.round(cx - sz.w / 2 + (i % 6) * 28), y: Math.round(cy - sz.h / 2 + (i % 6) * 24), w: sz.w, h: sz.h })
+        i++
+        changed = true
+      }
+      continue
+    }
+    let j = 0
+    for (const c of children) {
+      if (!c.kind || known.has(c.rel)) {
+        j++
+        continue
+      }
+      const sz = defaultSizeFor(c.kind)
+      alive.push({ id: randomUUID(), path: c.rel, kind: c.kind, x: Math.round(cx - sz.w / 2 + (j % 4) * (sz.w + 16)), y: Math.round(cy - sz.h / 2 + Math.floor(j / 4) * (sz.h + 16)), w: sz.w, h: sz.h })
+      j++
+      changed = true
+    }
+  }
 
   const stackPrev = Array.isArray(ws.stack) ? ws.stack : []
   const zByIdx = new Map(stackPrev.map((id, idx) => [id, idx + 1]))
@@ -724,7 +772,7 @@ export function reconcileWorkspace(dir, placeAt = {}) {
  * { ok, folder:<relpath>, moved }. The caller reconciles after so the new subdir surfaces as a folder
  * tile and the moved files leave the canvas root.
  */
-export function groupIntoFolder(dir, name, memberIds) {
+export function groupIntoFolder(dir, name, memberIds, kind) {
   const metaFile = join(dir, '.blitzos', 'workspace.json')
   const { idToPath } = readPrior(metaFile)
   const ids = Array.isArray(memberIds) ? memberIds : []
@@ -734,11 +782,13 @@ export function groupIntoFolder(dir, name, memberIds) {
   } catch {
     /* unreadable */
   }
-  // a real, unique subdir name from the chosen folder title
+  // a real, unique subdir name from the chosen title. kind:'board' → a '.board' on-canvas folder (#54)
+  // whose children splay; otherwise a normal collapsed folder (#52).
+  const sfx = kind === 'board' ? BOARD_SUFFIX : ''
   const stem = slug(name, 'folder') || 'folder'
-  let folderName = stem
+  let folderName = stem + sfx
   let i = 2
-  while (existing.has(folderName.toLowerCase()) || RESERVED_ROOT.has(folderName.toLowerCase())) folderName = `${stem}-${i++}`
+  while (existing.has(folderName.toLowerCase()) || RESERVED_ROOT.has(folderName.toLowerCase())) folderName = `${stem}-${i++}${sfx}`
   const folderAbs = safeJoin(dir, folderName)
   if (!folderAbs) return { ok: false, error: 'bad folder name' }
   try {

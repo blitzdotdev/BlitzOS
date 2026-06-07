@@ -636,18 +636,19 @@ async function startOsAgentSocket() {
           path: '/group',
           description:
             'Group surfaces into a REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' ' +
-            'files into it. They become ONE collapsed folder tile (drill in to see contents) — a real ' +
-            'filesystem folder, so it persists and a many-file group stays one tile. Args: {name, ids:[surfaceId]}.',
+            'files into it. kind:"folder" (default) → ONE collapsed tile (drill in to browse), best for many ' +
+            'items / a repo. kind:"board" → the items stay SPLAYED on the canvas as a sub-board (small curated ' +
+            'set). A real filesystem folder either way, so it persists. Args: {name, ids:[surfaceId], kind?}.',
           input_schema: {
             type: 'object',
             required: ['ids'],
-            properties: { name: { type: 'string' }, ids: { type: 'array', items: { type: 'string' } } }
+            properties: { name: { type: 'string' }, ids: { type: 'array', items: { type: 'string' } }, kind: { type: 'string', enum: ['folder', 'board'] } }
           },
           handler: ({ body }) => {
             const b = toolBody(body)
             const ids = Array.isArray(b.ids) ? b.ids.map(String) : []
             if (!ids.length) return { ok: false, error: 'no members to group' }
-            return wsHost.group(String(b.name || 'Folder'), ids, 0, 0)
+            return wsHost.group(String(b.name || 'Folder'), ids, 0, 0, b.kind === 'board' ? 'board' : 'folder')
           }
         },
         {
@@ -1121,7 +1122,7 @@ const server = createServer(async (req, res) => {
       const b = toolBody(gbody)
       const ids = Array.isArray(b.ids) ? b.ids.map(String) : []
       if (!ids.length) return json(res, 400, { error: 'no members to group' })
-      const r = wsHost.group(String(b.name || 'Folder'), ids, Number(b.x) || 0, Number(b.y) || 0)
+      const r = wsHost.group(String(b.name || 'Folder'), ids, Number(b.x) || 0, Number(b.y) || 0, b.kind === 'board' ? 'board' : 'folder')
       return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
     })
     return
