@@ -34,19 +34,54 @@ export function primaryRect(vp: { w: number; h: number }): { x: number; y: numbe
   const h = Math.max(240, vp.h - TITLEBAR - TOOLBAR)
   return { x: -w / 2, y: -h / 2, w, h }
 }
-/** Clamp a window so it stays inside the primary area (its title bar therefore can't slide under
- *  the top titlebar in normal mode — #29). */
-function desktopClamp(x: number, y: number, w: number, h: number, vp: { w: number; h: number }): Vec2 {
+
+// Workspace areas (#45) are screen-sized desktops tiled left→right in WORLD space. AREA_GAP is the
+// world gap between adjacent areas (only ever visible once areaCount > 1). Area i is centered at
+// i*stride; area 0 is centered at the world origin, so areaRect(0, vp) is field-for-field identical to
+// primaryRect(vp) — the invariant that keeps single-area behavior byte-identical. primaryRect itself is
+// left UNCHANGED (areaRect references it) so there's zero risk of order-of-ops/rounding drift.
+const AREA_GAP = 1200
+export function areaStride(vp: { w: number; h: number }): number {
+  return primaryRect(vp).w + AREA_GAP
+}
+export function areaRect(i: number, vp: { w: number; h: number }): { x: number; y: number; w: number; h: number } {
   const r = primaryRect(vp)
+  return { x: i * areaStride(vp) - r.w / 2, y: -r.h / 2, w: r.w, h: r.h }
+}
+/** Clamp a window so it stays inside its workspace area (its title bar therefore can't slide under
+ *  the top titlebar in normal mode — #29). `area` defaults to 0, whose rect IS primaryRect, so the
+ *  single-area path is byte-identical to before. */
+function desktopClamp(x: number, y: number, w: number, h: number, vp: { w: number; h: number }, area = 0): Vec2 {
+  const r = area === 0 ? primaryRect(vp) : areaRect(area, vp)
   return { x: clamp(x, r.x, Math.max(r.x, r.x + r.w - w)), y: clamp(y, r.y, Math.max(r.y, r.y + r.h - h)) }
 }
-/** Camera per mode. Normal = scale 1 centered on the area (screen-sized, natural windows). Control =
- *  zoomed out so the whole area sits in the middle with margin (the bird's-eye overview). */
-export function viewTransform(mode: 'desktop' | 'canvas', vp: { w: number; h: number }): CanvasTransform {
+/** Camera per mode. Normal = scale 1 locked to the CURRENT area (its center maps to a fixed screen
+ *  point, so every area lands in the same on-screen desktop region). Control = zoomed out: a single
+ *  area uses the exact today constant (0.31); multiple areas fit the whole tiled row in the same
+ *  on-screen span (so n===1 collapses to today's bird's-eye byte-identically). */
+export function viewTransform(
+  mode: 'desktop' | 'canvas',
+  vp: { w: number; h: number },
+  area = 0,
+  areaCount = 1
+): CanvasTransform {
   const r = primaryRect(vp)
-  const cx = SIDEBAR + r.w / 2 // screen point of the area center (world origin)
+  const cx = SIDEBAR + r.w / 2 // screen point of area 0's center (world origin) — today's anchor
   const cy = TITLEBAR + r.h / 2
-  return { scale: mode === 'desktop' ? 1 : 0.31, x: cx, y: cy } // control = a wide bird's-eye (zoomed out)
+  if (mode === 'desktop') {
+    // lock to the current area: put its center at the same (cx,cy) screen anchor. area 0's center is
+    // the world origin, so t = (cx,cy) — byte-identical to today; area i shifts the camera by i*stride.
+    const acx = area === 0 ? 0 : area * areaStride(vp)
+    return { scale: 1, x: cx - acx, y: cy }
+  }
+  // CONTROL bird's-eye. Single area → the literal 0.31 (unchanged). Multiple areas → scale so the union
+  // of all areas spans the same screen width one area did at 0.31, union center kept at the (cx,cy) anchor.
+  if (areaCount <= 1) return { scale: 0.31, x: cx, y: cy }
+  const stride = areaStride(vp)
+  const unionW = (areaCount - 1) * stride + r.w
+  const scale = (0.31 * r.w) / unionW // == 0.31 when areaCount === 1 (unionW === r.w)
+  const ucx = ((areaCount - 1) * stride) / 2 // world x of the tiled row's center
+  return { scale, x: cx - ucx * scale, y: cy }
 }
 /** While dragging a window, if the CURSOR (world coords) reaches a primary-area edge, return the
  *  macOS tiling target: left/right half (a side edge) or a quarter (a corner). There is intentionally
@@ -56,9 +91,10 @@ export function viewTransform(mode: 'desktop' | 'canvas', vp: { w: number; h: nu
 export function snapTargetFor(
   wx: number,
   wy: number,
-  vp: { w: number; h: number }
+  vp: { w: number; h: number },
+  area = 0
 ): { x: number; y: number; w: number; h: number } | null {
-  const r = primaryRect(vp)
+  const r = area === 0 ? primaryRect(vp) : areaRect(area, vp)
   const nx = (wx - r.x) / r.w
   const ny = (wy - r.y) / r.h
   if (nx < -0.05 || nx > 1.05 || ny < -0.05 || ny > 1.05) return null // cursor well outside the area
@@ -112,6 +148,12 @@ interface DesktopState {
   controlTransform: CanvasTransform | null
   viewport: { w: number; h: number }
   mode: 'desktop' | 'canvas'
+  // Workspace areas (#45): bounded desktops tiled left→right. `areaCount` = how many (1 today),
+  // `currentArea` = the active one (0 today). A surface's area is DERIVED from its world x; these two
+  // fields drive which area's rect clamp/snap/maximize/camera operate on. At areaCount===1 everything
+  // is byte-identical to the single-area model.
+  areaCount: number
+  currentArea: number
   integrations: IntegrationStatus[]
   positions: Record<string, Vec2>
   surfaces: Surface[]
@@ -128,6 +170,9 @@ interface DesktopState {
   setMode: (m: 'desktop' | 'canvas') => void
   setTransform: (t: CanvasTransform) => void
   setControlTransform: (t: CanvasTransform | null) => void
+  setCurrentArea: (i: number) => void
+  setAreaCount: (n: number) => void
+  addArea: () => void
   panBy: (dx: number, dy: number) => void
   zoomAt: (cursorX: number, cursorY: number, deltaY: number) => void
   goToPrimary: () => void
@@ -150,8 +195,8 @@ interface DesktopState {
   commitPos: (id: string, prevX: number, prevY: number) => void
 
   createSurface: (input: CreateSurfaceInput) => string
-  // Phase 2: adopt a persisted workspace (restore surfaces + camera + mode from disk).
-  hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas') => void
+  // Phase 2: adopt a persisted workspace (restore surfaces + camera + mode + area count from disk).
+  hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas', areaCount?: number) => void
   applyReconcile: (surfaces: Surface[]) => void
   moveSurface: (id: string, x: number, y: number) => void
   closeSurface: (id: string) => void
@@ -177,6 +222,8 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   controlTransform: null,
   viewport: { w: window.innerWidth, h: window.innerHeight },
   mode: 'desktop',
+  areaCount: 1,
+  currentArea: 0,
   integrations: [],
   positions: {},
   surfaces: [],
@@ -193,6 +240,10 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   setMode: (m) => set({ mode: m }),
   setTransform: (t) => set({ transform: t }),
   setControlTransform: (t) => set({ controlTransform: t }),
+  // Pure state mutations (the camera animation on switch is wired by the caller in App.tsx).
+  setCurrentArea: (i) => set((s) => ({ currentArea: clamp(Math.round(i), 0, s.areaCount - 1) })),
+  setAreaCount: (n) => set((s) => ({ areaCount: Math.max(1, Math.round(n)), currentArea: clamp(s.currentArea, 0, Math.max(0, Math.round(n) - 1)) })),
+  addArea: () => set((s) => ({ areaCount: s.areaCount + 1, currentArea: s.areaCount })),
 
   setSelection: (ids) => set({ selection: ids }),
   clearSelection: () => set({ selection: [] }),
@@ -320,7 +371,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   goToPrimary: () =>
     set((s) => {
-      const transform = viewTransform(s.mode, s.viewport)
+      const transform = viewTransform(s.mode, s.viewport, s.currentArea, s.areaCount)
       return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
     }),
 
@@ -330,7 +381,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
       if (s.mode === 'desktop') {
-        const p = desktopClamp(surf.x, surf.y, surf.w, surf.h, s.viewport)
+        const p = desktopClamp(surf.x, surf.y, surf.w, surf.h, s.viewport, s.currentArea)
         return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y, z: ++zCounter } : w)) }
       }
       const m = 56
@@ -379,12 +430,14 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     const w = input.w ?? size.w
     const h = input.h ?? size.h
     const st = get()
-    // cascade if no explicit position (macOS-style stagger)
+    // cascade if no explicit position (macOS-style stagger), centered on the CURRENT area (area 0 ⇒
+    // the world origin ⇒ byte-identical to before; a later area shifts the cascade by its world offset).
     const n = st.surfaces.length % 7
-    let x = input.x ?? -w / 2 + n * 34 - 100
+    const ax = st.currentArea === 0 ? 0 : st.currentArea * areaStride(st.viewport)
+    let x = input.x ?? ax - w / 2 + n * 34 - 100
     let y = input.y ?? -h / 2 + n * 30 - 70
     if (st.mode === 'desktop') {
-      const p = desktopClamp(x, y, w, h, st.viewport)
+      const p = desktopClamp(x, y, w, h, st.viewport, st.currentArea)
       x = p.x
       y = p.y
     }
@@ -407,7 +460,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     return id
   },
 
-  hydrate: (surfaces, camera, mode) =>
+  hydrate: (surfaces, camera, mode, areaCount) =>
     set((s) => {
       // Normalize incoming descriptors to full Surface objects (defaults for anything the
       // persisted node didn't carry), and lift the z-allocator above the restored max so
@@ -420,16 +473,17 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       })) as Surface[]
       const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
       zCounter = Math.max(zCounter, maxZ + 1)
-      // camera is the WORLD point at screen center + scale -> compute the transform that puts
-      // that world point at the current viewport's center (viewport-independent restore).
+      // Restore the persisted area count (default 1 for old folders / when omitted); currentArea always
+      // boots to 0 (control mode + which area you're on are transient, never persisted).
+      const nAreas = Number.isInteger(areaCount) && (areaCount as number) > 0 ? (areaCount as number) : 1
       const sc = clamp(Number(camera.scale) || 1, 0.2, 3) // never a 0/Infinity/NaN scale (would wedge the canvas)
-      // Normal mode always fits the primary area (view-locked); control mode restores the saved camera.
+      // Normal mode always fits the current (area 0 on boot) area, view-locked; control mode restores the saved camera.
       const transform =
         mode === 'desktop'
-          ? viewTransform('desktop', s.viewport)
+          ? viewTransform('desktop', s.viewport, 0, nAreas)
           : { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc }
       // A fresh board starts control mode from the default bird's-eye (no stale camera from a prior workspace).
-      return { surfaces: restored, transform, mode, layoutHistory: [], controlTransform: null }
+      return { surfaces: restored, transform, mode, areaCount: nAreas, currentArea: 0, layoutHistory: [], controlTransform: null }
     }),
 
   // Apply an external folder reconcile (dropped/edited/removed files) to a LIVE canvas WITHOUT
@@ -490,7 +544,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => {
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
-      const p = s.mode === 'desktop' ? desktopClamp(x, y, surf.w, surf.h, s.viewport) : { x, y }
+      const p = s.mode === 'desktop' ? desktopClamp(x, y, surf.w, surf.h, s.viewport, s.currentArea) : { x, y }
       return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y } : w)) }
     })
   },
@@ -514,9 +568,9 @@ export const useDesktop = create<DesktopState>((set, get) => ({
           )
         }
       }
-      // fill the PRIMARY AREA (with a small inset), not the viewport — so 'zoom' means full-screen
-      // inside the workspace area, consistent in both normal and control mode (#35).
-      const r = primaryRect(s.viewport)
+      // fill the CURRENT AREA (with a small inset), not the viewport — so 'zoom' means full-screen
+      // inside the workspace area, consistent in both normal and control mode (#35). Area 0 ⇒ primaryRect.
+      const r = s.currentArea === 0 ? primaryRect(s.viewport) : areaRect(s.currentArea, s.viewport)
       const inset = 8
       const fill = { x: r.x + inset, y: r.y + inset, w: r.w - inset * 2, h: r.h - inset * 2 }
       return {
