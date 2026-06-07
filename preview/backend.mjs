@@ -19,7 +19,7 @@ import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
 import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync, readdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync, readdirSync, appendFileSync } from 'node:fs'
 import { join, dirname, basename, resolve, sep } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
@@ -31,6 +31,9 @@ import {
   PROVIDER_DATA,
   WIDGET_AUTHORING_MD
 } from '../src/main/widget-catalog.mjs'
+// #51 general provider-access substrate (the agent makes whatever request it needs; token stays here).
+import { callProvider, createApprovalLedger, createRateLimiter } from '../src/main/provider-call.mjs'
+import { capturedScopes } from '../src/main/provider-specs.mjs'
 // Shared perception kernel + resident brain — the SAME modules the Electron main runs,
 // so server mode gets the autonomy loop with no duplicated code.
 import {
@@ -233,6 +236,19 @@ const consentGranted = new Set()
 // Coarse per-(surface,provider,resource) min-interval, so a runaway widget can't
 // hammer a provider API (burning the user's rate limit). Best-effort, in-memory.
 const lastFetch = new Map()
+// #51: shared state for the general /provider_call substrate. providerConsent gates SENSITIVE agent
+// reads (message bodies, repo contents) per provider — the human grants once via /api/os/provider-consent.
+const providerConsent = new Set()
+const providerApprovals = createApprovalLedger() // writes are refused in server mode, but the ledger is shared for parity
+const providerRate = createRateLimiter()
+const PROVIDER_AUDIT_LOG = join(__dirname, 'provider-audit.log')
+const providerAudit = (e) => {
+  try {
+    appendFileSync(PROVIDER_AUDIT_LOG, JSON.stringify(e) + '\n')
+  } catch {
+    /* best-effort audit */
+  }
+}
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
 
 // ---------- SERVER MODE: live web surfaces via a headless browser ----------
@@ -562,6 +578,47 @@ async function startOsAgentSocket() {
           })
         },
         {
+          path: '/provider_call',
+          description:
+            'Make an authenticated request to a CONNECTED integration (provider) and get the JSON back — ' +
+            'use this to build whatever the user needs (their unread mail, repos, issues, messages, …). ' +
+            'The OS injects the credential server-side; you NEVER see the token. Reads (GET) are broad: ' +
+            'pass any path under the provider\'s API. Writes (POST/PUT/PATCH/DELETE) need a human approval ' +
+            'and are unavailable in server mode. Args: {provider, method?, path, query?, body?}. ' +
+            'Connected providers + scopes are in list_integrations. A sensitive read (message bodies, file ' +
+            'contents) returns code:"consent_required" until the human approves that provider once.',
+          input_schema: {
+            type: 'object',
+            required: ['provider', 'path'],
+            properties: {
+              provider: { type: 'string' },
+              method: { type: 'string' },
+              path: { type: 'string', description: 'provider-relative, e.g. /user/repos or /gmail/v1/users/me/messages?…via query' },
+              query: { type: 'object' },
+              body: {},
+              approvalToken: { type: 'string' }
+            }
+          },
+          handler: async ({ body }) => {
+            const b = toolBody(body)
+            const toks = readTokens()
+            const t = toks[b.provider]
+            const record = t ? { secrets: t.secrets, grantedScopes: t.grantedScopes } : null
+            return callProvider(
+              {
+                provider: String(b.provider || ''),
+                method: b.method,
+                path: String(b.path || ''),
+                query: b.query,
+                body: b.body,
+                approvalToken: b.approvalToken,
+                caller: { kind: 'agent', transport: 'server' }
+              },
+              { record, approvals: providerApprovals, rate: providerRate, consented: (p) => providerConsent.has(p), audit: providerAudit }
+            )
+          }
+        },
+        {
           path: '/read_window',
           description: 'Read what is INSIDE a web surface (its DOM): url, title, and visible text. Only kind "web" (server mode).',
           input_schema: {
@@ -848,6 +905,26 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // POST /api/os/provider-consent { provider, allow } — the human grants/revokes the agent's SENSITIVE
+  // reads (message bodies, file contents) for a provider (#51). Non-sensitive reads never need this.
+  if (path === '/api/os/provider-consent' && req.method === 'POST') {
+    let cbody = ''
+    req.on('data', (c) => {
+      cbody += c
+      if (cbody.length > 10_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(cbody)
+      const provider = String(b.provider || '')
+      if (provider) {
+        if (b.allow === false) providerConsent.delete(provider)
+        else providerConsent.add(provider)
+      }
+      json(res, 200, { ok: true, provider, allowed: providerConsent.has(provider) })
+    })
+    return
+  }
+
   // POST /api/os/consent/revoke { surfaceId } — drop every grant for a surface
   // (its widget code changed, or it closed). Forces re-approval of the new code.
   if (path === '/api/os/consent/revoke' && req.method === 'POST') {
@@ -881,7 +958,8 @@ const server = createServer(async (req, res) => {
       const c = credsFor(pend.id)
       const { label, secrets } = await exchangeProvider(pend.id, c.clientId, c.clientSecret, code, pend.codeVerifier)
       const toks = readTokens()
-      toks[pend.id] = { provider: pend.id, label, secrets, connectedAt: Date.now() }
+      // Record the granted scopes authoritatively at connect (#51) — the write scope-preflight checks these.
+      toks[pend.id] = { provider: pend.id, label, secrets, grantedScopes: capturedScopes(secrets), connectedAt: Date.now() }
       writeTokens(toks)
       console.log(`[agent-os backend] connected ${pend.id} as ${label}`)
       return res.end(callbackPage('Connected ✓', 'You can close this tab and return to Agent OS.'))

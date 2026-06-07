@@ -235,6 +235,19 @@ export function resourceRoute(provider, resourceName) {
   return (spec.routes || []).find((r) => r.resource && r.name === resourceName) || null
 }
 
+/** Normalize the granted OAuth scopes from a stored secrets blob, recorded authoritatively at connect
+ *  time (NOT inferred later). GitHub/Google/Discord/Jira echo `scope`; Slack buries the user scopes in
+ *  `authed_user.scope`. Returns a deduped string[] the write scope-preflight checks against. */
+export function capturedScopes(secrets) {
+  const out = new Set()
+  const add = (s) => {
+    if (typeof s === 'string') for (const x of s.split(/[ ,]+/).filter(Boolean)) out.add(x)
+  }
+  add(secrets?.scope)
+  add(secrets?.authed_user?.scope)
+  return [...out]
+}
+
 /** "provider/resource" strings still servable as the simple data resources (for docs + the shim). */
 export function listResourceNames() {
   const out = []

@@ -7,7 +7,8 @@ import {
   redact,
   safeHeaders,
   resourceRoute,
-  listResourceNames
+  listResourceNames,
+  capturedScopes
 } from '../src/main/provider-specs.mjs'
 
 let failures = 0
@@ -83,6 +84,12 @@ console.log('\nshim lookups (PROVIDER_DATA replacement):')
 ok('resourceRoute github/repos exists + carries normalize', typeof resourceRoute('github', 'repos')?.normalize === 'function')
 ok('resourceRoute discord/guilds exists', !!resourceRoute('discord', 'guilds'))
 ok('listResourceNames includes the 2 seed resources', listResourceNames().includes('github/repos') && listResourceNames().includes('discord/guilds'))
+
+console.log('\ncapturedScopes — granted scopes recorded at connect:')
+ok('github "repo, read:user" → ["read:user","repo"]', JSON.stringify(capturedScopes({ scope: 'repo, read:user' }).sort()) === JSON.stringify(['read:user', 'repo']))
+ok('slack authed_user.scope captured', capturedScopes({ authed_user: { scope: 'channels:history,users:read' } }).includes('channels:history'))
+ok('google space-separated scope', capturedScopes({ scope: 'openid https://www.googleapis.com/auth/gmail.readonly' }).includes('https://www.googleapis.com/auth/gmail.readonly'))
+ok('empty secrets → []', capturedScopes({}).length === 0)
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)
 process.exit(failures === 0 ? 0 : 1)
