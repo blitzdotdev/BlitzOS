@@ -19,8 +19,8 @@ import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
 import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, watch } from 'node:fs'
-import { join, dirname, basename, resolve } from 'node:path'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync } from 'node:fs'
+import { join, dirname, basename, resolve, sep } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
 import {
@@ -212,6 +212,8 @@ async function exchangeProvider(id, clientId, clientSecret, code, codeVerifier) 
 // ---------- HTTP server ----------
 
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)) }
+const FILE_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', pdf: 'application/pdf', txt: 'text/plain; charset=utf-8', md: 'text/markdown; charset=utf-8', json: 'application/json', csv: 'text/csv', html: 'text/html; charset=utf-8', mp4: 'video/mp4', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav' }
+const fileContentType = (p) => FILE_MIME[(p.split('.').pop() || '').toLowerCase()] || 'application/octet-stream'
 const callbackPage = (title, sub) =>
   `<!doctype html><meta charset="utf-8"><body style="font-family:-apple-system,system-ui;background:#0e1116;color:#e6edf3;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center"><div><h2 style="margin:0 0 8px">${title}</h2><p style="color:#8b949e;margin:0">${sub}</p></div><script>try{window.opener&&window.opener.postMessage({type:'agentos:oauth'},'*')}catch(e){}setTimeout(function(){window.close()},1400)</script></body>`
 
@@ -921,6 +923,23 @@ const server = createServer(async (req, res) => {
     return
   }
   if (path === '/api/os/agent-url' && req.method === 'GET') return json(res, 200, { url: agentUrl })
+  // Serve a real workspace file as a canvas tile's content (#37) — JAILED to the active workspace
+  // dir, never .blitzos (runtime/secret state), size-capped. Read-only GET.
+  if (path === '/api/os/file' && req.method === 'GET') {
+    try {
+      const root = resolve(wsHost.activePath())
+      const abs = resolve(root, url.searchParams.get('path') || '')
+      if (abs !== root && !abs.startsWith(root + sep)) return json(res, 403, { error: 'forbidden' })
+      if (/(^|[\\/])\.blitzos([\\/]|$)/.test(abs.slice(root.length))) return json(res, 403, { error: 'forbidden' })
+      const st = statSync(abs)
+      if (!st.isFile() || st.size > 25 * 1024 * 1024) return json(res, 404, { error: 'not a servable file' })
+      const buf = readFileSync(abs)
+      res.writeHead(200, { 'content-type': fileContentType(abs), 'content-length': buf.length, 'cache-control': 'no-cache' })
+      return res.end(buf)
+    } catch {
+      return json(res, 404, { error: 'not found' })
+    }
+  }
 
   // POST /api/os/content-share { surfaceId, on } — the human toggled "let the agent
   // read this surface" (P0 consent; gates the relay /events snapshot + read_window).

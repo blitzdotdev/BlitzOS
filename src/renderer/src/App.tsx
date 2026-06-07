@@ -269,6 +269,10 @@ export default function App(): JSX.Element {
           activeWsRef.current = a.workspace
         }
         setShowOverview(false)
+      } else if (a.type === 'reconcile') {
+        // External folder change (dropped/edited/removed files) — merge live, keeping the camera +
+        // the runtime chat/activity panels. Only once we already have a canvas (post first hydrate).
+        if (hydrated.current) st.applyReconcile(Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : [])
       } else if (a.type === 'create') {
         const surf = a.surface as CreateSurfaceInput
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on

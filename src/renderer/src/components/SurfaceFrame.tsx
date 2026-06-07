@@ -7,6 +7,7 @@ import { ChatPanel } from './ChatPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
 import { IconEye } from './Icons'
 import { FolderWidget } from './FolderWidget'
+import { FileWidget, DirWidget } from './FileWidget'
 import { NOTE_PAPER } from '../paper'
 
 type BridgeReply = { ok: boolean; data?: unknown; error?: string }
@@ -392,6 +393,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         if (surface.component === 'note') return <NoteWidget surface={surface} />
         if (surface.component === 'chat') return <ChatPanel surface={surface} />
         if (surface.component === 'activity') return <ActivityPanel surface={surface} />
+        if (surface.component === 'file') return <FileWidget surface={surface} />
+        if (surface.component === 'dir') return <DirWidget surface={surface} />
         return <div className="native-fallback">unknown widget: {surface.component}</div>
     }
   }

@@ -87,7 +87,7 @@ export function createWorkspaceHost(a) {
         const merged = [...r.surfaces, ...runtime]
         a.setState({ ...st, surfaces: merged, camera: r.camera, mode: r.mode })
         Promise.resolve(onSurfaces(merged)).catch(() => {})
-        a.broadcast({ type: 'hydrate', surfaces: merged, camera: r.camera, mode: r.mode, workspace: active() })
+        a.broadcast({ type: 'reconcile', surfaces: merged, camera: r.camera, mode: r.mode, workspace: active() })
       } catch (e) {
         console.error('[workspace] reconcile failed:', e?.message || e)
       }

@@ -141,6 +141,7 @@ interface DesktopState {
   createSurface: (input: CreateSurfaceInput) => string
   // Phase 2: adopt a persisted workspace (restore surfaces + camera + mode from disk).
   hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas') => void
+  applyReconcile: (surfaces: Surface[]) => void
   moveSurface: (id: string, x: number, y: number) => void
   closeSurface: (id: string) => void
   focusSurface: (id: string) => void
@@ -398,6 +399,20 @@ export const useDesktop = create<DesktopState>((set, get) => ({
           ? viewTransform('desktop', s.viewport)
           : { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc }
       return { surfaces: restored, transform, mode, layoutHistory: [] }
+    }),
+
+  // Apply an external folder reconcile (dropped/edited/removed files) to a LIVE canvas WITHOUT
+  // resetting the camera or clobbering the runtime chat/activity panels (newer here than the
+  // backend's osState). Replaces only the file-backed surfaces with the reconciled set.
+  applyReconcile: (incoming) =>
+    set((s) => {
+      const isRuntime = (w: Surface): boolean => w.kind === 'native' && (w.component === 'chat' || w.component === 'activity')
+      const keepRuntime = s.surfaces.filter(isRuntime)
+      const fileBacked = incoming.filter((w) => !isRuntime(w)).map((w) => ({ zoom: 1, props: {}, ...w, z: w.z ?? ++zCounter })) as Surface[]
+      const restored = [...fileBacked, ...keepRuntime]
+      const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
+      zCounter = Math.max(zCounter, maxZ + 1)
+      return { surfaces: restored }
     }),
 
   moveSurface: (id, x, y) => {
