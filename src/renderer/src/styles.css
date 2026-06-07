@@ -114,6 +114,12 @@ button {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
   z-index: 1;
 }
+/* The active area among several (#45) — solid, brighter frame so you can see which desktop you're on. */
+.primary-space.is-current {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 75%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
 .primary-label {
   position: absolute;
   top: 10px;
@@ -895,6 +901,28 @@ button {
   font-size: 11px;
   color: var(--text-muted);
   padding: 0 6px;
+}
+/* Workspace-area control (#45): prev/next arrows + indicator + add. Compact, inline in the toolbar. */
+.area-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.area-ctl .area-ind {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.area-ctl .area-arrow,
+.area-ctl .area-add {
+  padding: 5px 9px;
+  line-height: 1;
+  font-size: 14px;
+}
+.area-ctl button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* Left dock. */

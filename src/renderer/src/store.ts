@@ -465,17 +465,22 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       // Normalize incoming descriptors to full Surface objects (defaults for anything the
       // persisted node didn't carry), and lift the z-allocator above the restored max so
       // surfaces created after a restore land on top.
-      const restored: Surface[] = surfaces.map((w) => ({
-        zoom: 1,
-        props: {},
-        ...w,
-        z: w.z ?? ++zCounter
-      })) as Surface[]
-      const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
-      zCounter = Math.max(zCounter, maxZ + 1)
       // Restore the persisted area count (default 1 for old folders / when omitted); currentArea always
       // boots to 0 (control mode + which area you're on are transient, never persisted).
       const nAreas = Number.isInteger(areaCount) && (areaCount as number) > 0 ? (areaCount as number) : 1
+      const restored: Surface[] = surfaces.map((w) => {
+        const base = { zoom: 1, props: {}, ...w, z: w.z ?? ++zCounter } as Surface
+        // Runtime chat/activity panels persist absolute x/y. Boot is always area 0, so a panel last left
+        // in another area would restore off-screen — pull it back into area 0 so the agent conversation
+        // is always reachable on boot (a no-op in the single-area case; content surfaces keep their area).
+        if (base.kind === 'native' && (base.component === 'chat' || base.component === 'activity')) {
+          const p = desktopClamp(base.x, base.y, base.w, base.h, s.viewport, 0)
+          return { ...base, x: p.x, y: p.y }
+        }
+        return base
+      })
+      const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
+      zCounter = Math.max(zCounter, maxZ + 1)
       const sc = clamp(Number(camera.scale) || 1, 0.2, 3) // never a 0/Infinity/NaN scale (would wedge the canvas)
       // Normal mode always fits the current (area 0 on boot) area, view-locked; control mode restores the saved camera.
       const transform =

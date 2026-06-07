@@ -56,7 +56,7 @@ export function createWorkspaceHost(a) {
   let watchers = []
 
   const active = () => basename(activeWorkspace)
-  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode })
+  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode, areaCount: 1 })
 
   function flush() {
     if (writeTimer) {
@@ -154,12 +154,12 @@ export function createWorkspaceHost(a) {
       // Runtime panels (chat/activity) live in .blitzos/state, not as nodes — merge them back so the
       // chat transcript + activity feed survive a backend RESTART (#38), not just a page refresh.
       const panels = readRuntimePanels(activeWorkspace)
-      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas' }
+      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', areaCount: 1 }
       const surfaces = [...base.surfaces, ...panels]
-      if (surfaces.length) {
-        a.setState({ surfaces, camera: base.camera, mode: base.mode })
-        console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
-      }
+      // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted areaCount > 1 isn't lost on an
+      // empty workspace — the hydrate senders read cached.areaCount, which would otherwise stay undefined→1.
+      a.setState({ surfaces, camera: base.camera, mode: base.mode, areaCount: base.areaCount ?? 1 })
+      if (surfaces.length) console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
     } catch (e) {
       console.error('[workspace] hydrate failed:', e?.message || e)
     }
@@ -198,10 +198,10 @@ export function createWorkspaceHost(a) {
       // previous workspace's live chat over (that would overwrite B's saved chat with A's on the next
       // push, destroying B's history). flush() above already saved A's panels into A.
       const surfaces = [...next.surfaces, ...readRuntimePanels(newPath)]
-      a.setState({ surfaces, camera: next.camera, mode: next.mode, view: { cx: next.camera.x, cy: next.camera.y } })
+      a.setState({ surfaces, camera: next.camera, mode: next.mode, areaCount: next.areaCount ?? 1, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
-      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, workspace: name })
+      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, areaCount: next.areaCount ?? 1, workspace: name })
       console.log(`[workspace] switched → ${name}`)
       return { status: 200, body: { ok: true, active: name } }
     } finally {

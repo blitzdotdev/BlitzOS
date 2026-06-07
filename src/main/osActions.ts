@@ -28,6 +28,11 @@ export interface OsState {
   camera?: { x: number; y: number; scale: number }
   view?: { cx: number; cy: number }
   mode?: string
+  // #45 workspace areas: how many tiled desktops + which is active + the current one's world rect (so
+  // the agent places surfaces in the area the human is looking at, not blindly at the origin).
+  areaCount?: number
+  currentArea?: number
+  currentAreaRect?: { x: number; y: number; w: number; h: number }
   workspace?: string
 }
 
@@ -261,7 +266,7 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
 /** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
 export function osSendHydrate(): void {
   if (!wsHost) return
-  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', workspace: wsHost.active() })
+  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', areaCount: cached.areaCount || 1, workspace: wsHost.active() })
 }
 /** Serve a workspace thumbnail by name (the blitz-thumb:// protocol handler in index.ts calls this). */
 export function osReadThumb(name: string): Buffer | null {

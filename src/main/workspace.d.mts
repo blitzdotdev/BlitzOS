@@ -12,6 +12,8 @@ export interface HydratedWorkspace {
   surfaces: Array<Record<string, unknown>>
   camera: { x: number; y: number; scale: number }
   mode: 'desktop' | 'canvas'
+  /** #45: number of tiled workspace areas (1 for old folders / missing / invalid). */
+  areaCount: number
 }
 
 /** Reconstruct surface descriptors from a workspace folder (inverse of writeWorkspace). */

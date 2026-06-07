@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop, snapTargetFor, primaryRect } from '../store'
+import { useDesktop, snapTargetFor, primaryRect, areaRect } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
@@ -334,7 +334,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     // Snap preview (BOTH modes, #42): dragging a single window so the cursor reaches a primary-area
     // side/corner shows where it will tile on release (left|right half / quarter — never full-screen).
     // Suppressed over a folder target and for file/dir tiles (they aren't windows).
-    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport) : null)
+    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport, st.currentArea) : null)
   }
   function onBarUp(e: React.PointerEvent): void {
     try {
@@ -406,7 +406,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     // title bar must not slide under the top titlebar — the #29 invariant, for resize too).
     const st0 = useDesktop.getState()
     if (st0.mode === 'desktop') {
-      const pr = primaryRect(st0.viewport)
+      const pr = st0.currentArea === 0 ? primaryRect(st0.viewport) : areaRect(st0.currentArea, st0.viewport)
       if (nx < pr.x) {
         nw -= pr.x - nx
         nx = pr.x

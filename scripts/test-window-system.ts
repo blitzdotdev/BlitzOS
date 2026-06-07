@@ -222,6 +222,17 @@ console.log('\n#45 workspace areas — step 1: area-aware spatial fns, byte-iden
   ok('hydrate areaCount omitted → defaults to 1', useDesktop.getState().areaCount === 1)
   useDesktop.getState().hydrate([], { x: 0, y: 0, scale: 1 }, 'desktop', 0)
   ok('hydrate areaCount=0 (invalid) → floors to 1', useDesktop.getState().areaCount === 1)
+
+  // review fix: a runtime chat/activity panel left in another area is pulled back into area 0 on boot
+  // (the agent conversation must be reachable); a CONTENT surface in another area is NOT moved.
+  const chatPanel: Surface = { id: 'chat', kind: 'native', component: 'chat', x: areaRect(1, vp).x + 40, y: 0, w: 360, h: 460, z: 3, title: 'Chat', props: {} }
+  useDesktop.getState().hydrate([chatPanel], { x: 0, y: 0, scale: 1 }, 'desktop', 2)
+  const ch = useDesktop.getState().surfaces.find((q) => q.id === 'chat')!
+  ok('hydrate pulls a runtime panel from area 1 back inside area 0', ch.x >= primaryRect(vp).x && ch.x <= primaryRect(vp).x + primaryRect(vp).w - 360, ch.x)
+  const note2: Surface = { id: 'nn', kind: 'native', component: 'note', x: areaRect(1, vp).x + 40, y: 0, w: 300, h: 200, z: 2, title: 'n', props: {} }
+  useDesktop.getState().hydrate([note2], { x: 0, y: 0, scale: 1 }, 'desktop', 2)
+  const nn = useDesktop.getState().surfaces.find((q) => q.id === 'nn')!
+  ok('hydrate does NOT move a content surface out of its area', nn.x === areaRect(1, vp).x + 40, nn.x)
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)

@@ -66,6 +66,10 @@ function safeUrl(u) {
   const s = String(u || '')
   return /^https?:\/\//i.test(s) ? s : '' // never hydrate javascript:/data:/file: into a web surface
 }
+// Number of workspace areas (#45). Default 1 for old folders / missing / invalid (NaN/0/negative).
+function safeAreaCount(n) {
+  return Number.isInteger(n) && n > 0 ? n : 1
+}
 
 // Which surfaces become canvas NODES. The chat + agent-activity native panels are RUNTIME
 // (they belong in .blitzos/state/*.jsonl, Phase 4), never nodes. Unknown kinds are skipped.
@@ -277,12 +281,15 @@ export function writeWorkspace(dir, osState) {
       ? { x: Math.round(cam.x || 0), y: Math.round(cam.y || 0), scale: Math.round(cam.scale * 1000) / 1000 }
       : { x: 0, y: 0, scale: 1 }
 
+  // Number of workspace areas (#45 — bounded desktops tiled left→right). Default 1; floor invalid values.
+  const areaCount = Number.isInteger(osState?.areaCount) && osState.areaCount > 0 ? osState.areaCount : 1
   const ws = {
     version: VERSION,
     id: wsId || randomUUID(),
     kind: 'blitzos.workspace',
     camera,
     mode: osState?.mode === 'desktop' ? 'desktop' : 'canvas',
+    areaCount,
     stack,
     nodes
   }
@@ -488,7 +495,7 @@ export function readWorkspace(dir) {
     seq++
     if (s) surfaces.push(s)
   }
-  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas' }
+  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', areaCount: safeAreaCount(ws.areaCount) }
 }
 
 // Which loose root files auto-surface as new nodes on reconcile, and as what kind. Conservative
@@ -665,12 +672,13 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   }
   const camera = safeCamera(ws.camera)
   const mode = ws.mode === 'desktop' ? 'desktop' : 'canvas'
+  const areaCount = safeAreaCount(ws.areaCount) // preserve the area count across a reconcile (never collapse)
 
   if (changed) {
-    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stack: surfaces.map((s) => s.id), nodes: alive }
+    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, areaCount, stack: surfaces.map((s) => s.id), nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
-  return { surfaces, camera, mode, changed, knownIds }
+  return { surfaces, camera, mode, areaCount, changed, knownIds }
 }
 
 // ===========================================================================================
