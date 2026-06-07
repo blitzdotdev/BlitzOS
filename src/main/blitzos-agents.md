@@ -15,6 +15,8 @@ You reach BlitzOS over plain HTTPS, no MCP, no SDK. Two paths:
 - Relay (any agent, remote): you fetched this from a URL; `$BASE` = that URL minus the trailing `/agents.md`. Call tools at `POST $BASE/<tool>`.
 - Localhost (same machine, trusted, full power): read `~/.blitzos/session.json` -> `.local = {url, token}` (the loopback control server). Call `POST $url/<tool>` with `authorization: Bearer $token`. Prefer this when co-located: no relay flakiness, and the trusted-only raw `eval` action lives here.
 
+Driving BlitzOS requires you to make HTTP requests yourself (a Bash/`curl`, code-execution, or HTTP `fetch` tool). If you have NO such tool — e.g. a plain Claude.ai / ChatGPT web chat — you CANNOT act here: do not summarize this document. Instead reply in one line: "Open this link in a tool-capable agent (Claude Code, or `claude -p '<paste the URL> drive BlitzOS'`) — a plain chat can't call BlitzOS's HTTP tools." Then stop.
+
 FIRST: `GET $BASE/tools.json` (or read session.json) for the exact tools + schemas. Then tell the user in one line what you can do, and start. Keep the URL so you can re-read these instructions if your context resets.
 
 ## On connect: assemble the desktop (the dynamic OS)

@@ -110,6 +110,18 @@ console.log('\ntoggleMaximize clears preSnap (no stale pop-out size):')
   ok('restore captured for un-maximize', !!mx.restore)
 }
 
+console.log("\napplyReconcile — live web URL kept (no 'typing on Google → back to HN'):")
+{
+  const web: Surface = { id: 'w1', kind: 'web', x: 0, y: 0, w: 800, h: 600, z: 10, title: 'Hacker News', url: 'https://news.ycombinator.com' }
+  useDesktop.getState().hydrate([web], { x: 0, y: 0, scale: 1 }, 'desktop')
+  // user navigates the webview → the did-navigate sync folds the live location into the store
+  useDesktop.getState().updateSurface('w1', { url: 'https://www.google.com/search?q=x' })
+  // a reconcile fires carrying the STALE persisted url (HN)
+  useDesktop.getState().applyReconcile([{ ...web, url: 'https://news.ycombinator.com' }])
+  const after = useDesktop.getState().surfaces.find((s) => s.id === 'w1')!
+  ok('live (Google) url kept, NOT reverted to the disk HN url', after.url === 'https://www.google.com/search?q=x', after.url)
+}
+
 console.log('\ncontrol-mode viewport memory:')
 ok('controlTransform starts null after a fresh hydrate', useDesktop.getState().controlTransform === null)
 // Enter control mode + pan: controlTransform must track the live camera (so exit→enter restores it).

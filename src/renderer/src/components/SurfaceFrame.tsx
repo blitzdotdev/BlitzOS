@@ -18,6 +18,7 @@ interface WebviewMethods {
   reload(): void
   setZoomFactor(factor: number): void
   getWebContentsId(): number
+  getURL(): string
 }
 
 export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
@@ -53,6 +54,10 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const heldReplies = useRef<Map<string, HeldReply>>(new Map())
   const consented = useRef<Set<string>>(new Set()) // providers the human OK'd for THIS widget generation
   const prevHtml = useRef(surface.html)
+  // The webview's `src` is set ONCE (uncontrolled): React must never reload a <webview> just because
+  // surface.url changed in the store, or it would yank the user off the page they navigated to (the
+  // "typing on Google → back to HN" bug). Programmatic navigation goes through loadURL (see below).
+  const initialUrl = useRef(surface.url)
   const serverMode = !!window.agentOS?.serverMode
   const [consentProvider, setConsentProvider] = useState<string | null>(null)
   const [shared, setShared] = useState(surface.shared ?? false) // P0: agent may read this surface over the relay (agent-opened web/app start shared)
@@ -113,6 +118,41 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       window.agentOS?.unregisterWebview?.(surface.id)
     }
   }, [surface.kind, surface.id])
+
+  // web (Electron) only: keep surface.url in sync with the LIVE webview location. Without this, the
+  // store keeps the original url forever, it gets persisted, and a reconcile re-applies it — snapping
+  // the page back (the "I was typing on Google and it took me back to HN" bug). The live page is the
+  // source of truth for where this surface is.
+  useEffect(() => {
+    if (surface.kind !== 'web' || serverMode) return
+    const el = webviewRef.current as (HTMLElement & WebviewMethods) | null
+    if (!el) return
+    const onNav = (e: Event): void => {
+      const url = (e as unknown as { url?: string }).url || (el.getURL ? el.getURL() : '')
+      const cur = useDesktop.getState().surfaces.find((s) => s.id === surface.id)?.url
+      if (url && url !== cur) useDesktop.getState().updateSurface(surface.id, { url })
+    }
+    el.addEventListener('did-navigate', onNav)
+    el.addEventListener('did-navigate-in-page', onNav)
+    return () => {
+      el.removeEventListener('did-navigate', onNav)
+      el.removeEventListener('did-navigate-in-page', onNav)
+    }
+  }, [surface.kind, surface.id, serverMode])
+
+  // web (Electron) only: navigate IMPERATIVELY when the store url diverges from the live location —
+  // i.e. an agent/programmatic update_surface, not the user's own navigation (which the sync effect
+  // above already folded into the store, so getURL() already matches and we skip the reload).
+  useEffect(() => {
+    if (surface.kind !== 'web' || serverMode || !surface.url) return
+    const el = webviewRef.current as (HTMLElement & WebviewMethods) | null
+    if (!el || !el.getURL) return
+    try {
+      if (el.getURL() !== surface.url) void el.loadURL(surface.url)
+    } catch {
+      /* not ready — dom-ready will reconcile on the next store change */
+    }
+  }, [surface.kind, surface.id, surface.url, serverMode])
 
   // Server mode: mount the streamed <canvas> for this web surface (draws screencast
   // frames, forwards pointer/wheel/key to the server browser via the stream WS).
@@ -414,7 +454,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         return (
           <webview
             ref={webviewRef}
-            src={surface.url}
+            src={initialUrl.current}
             partition="persist:agentos"
             style={{ ...fill, display: 'inline-flex' }}
           />

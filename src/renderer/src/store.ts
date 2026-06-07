@@ -471,7 +471,10 @@ export const useDesktop = create<DesktopState>((set, get) => ({
             kind: w.kind,
             component: w.component,
             title: w.title,
-            url: w.url,
+            // For web/app the LIVE webview location is authoritative (the user/agent may have navigated
+            // it); never let a lagging disk .weblink snap it back — the "typing on Google → back to HN"
+            // race, when a reconcile fires before the new url is persisted.
+            url: w.kind === 'web' || w.kind === 'app' ? (live.url ?? w.url) : w.url,
             html: w.html,
             props: { ...live.props, ...(w.props ?? {}) }
           } as Surface

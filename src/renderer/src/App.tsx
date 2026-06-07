@@ -677,7 +677,11 @@ export default function App(): JSX.Element {
           <div className="hud-head">Drive BlitzOS from an AI chat</div>
           {aiUrl ? (
             <>
-              <p className="hud-sub">Paste this URL into Claude / ChatGPT and ask it to open windows, post-its, etc.</p>
+              <p className="hud-sub">
+                Paste this URL into a <strong>tool-capable</strong> AI agent — Claude Code, or <code>claude -p</code> — and ask
+                it to open windows, post-its, etc. (It needs to make HTTP calls, so a plain Claude.ai / ChatGPT chat can only
+                read the link, not drive BlitzOS.)
+              </p>
               <div className="hud-row">
                 <input className="hud-input" readOnly value={aiUrl} onFocus={(e) => e.currentTarget.select()} />
                 <button className="btn primary" onClick={() => navigator.clipboard?.writeText(aiUrl)}>
