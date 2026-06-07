@@ -565,6 +565,7 @@ async function startOsAgentSocket() {
             broadcast({ type: 'close', id })
             for (const k of consentGranted) if (k.startsWith(`${id}:`)) consentGranted.delete(k)
             if (SERVER_MODE && host) host.closeSurface(id).catch(() => {})
+            wsHost.closeSurfaceFile(id) // delete the backing content file so it doesn't resurrect (no-renderer agent close)
             return { ok: true }
           }
         },
@@ -1150,6 +1151,22 @@ const server = createServer(async (req, res) => {
       const b = toolBody(rbody)
       const r = wsHost.reconcileAt(Number(b.x) || 0, Number(b.y) || 0)
       return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
+  // POST /api/os/close-surface { id } — the renderer closed a window; delete its backing content file so
+  // it doesn't pop back up on the next reconcile. Explicit by id (a partial push can never mass-delete).
+  if (path === '/api/os/close-surface' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let xbody = ''
+    req.on('data', (c) => {
+      xbody += c
+      if (xbody.length > 10_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(xbody)
+      const r = wsHost.closeSurfaceFile(String(b.id || ''))
+      return json(res, 200, r || { ok: false })
     })
     return
   }

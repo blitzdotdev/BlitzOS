@@ -269,6 +269,11 @@ export function osNewFolder(name: string, kind: 'board' | 'folder' | undefined, 
 export function osListDir(rel: string): { path: string; entries: unknown[]; total: number; truncated: boolean } | null {
   return wsHost ? wsHost.listDir(String(rel || '')) : null
 }
+/** CLOSE a surface = delete its backing content file (explicit by id) so it doesn't resurrect on the next
+ *  reconcile. The renderer calls this from store.closeSurface for every close (user, agent, Delete key). */
+export function osCloseSurfaceFile(id: string): { ok: boolean; removed?: string } {
+  return wsHost ? wsHost.closeSurfaceFile(String(id)) : { ok: false }
+}
 /** #53: per-workspace consent persistence for the Electron transports (widget grants + sensitive-read
  *  providers), via the shared host. Load on boot, persist (merge) on each grant. */
 export function osLoadConsent(): { surfaces: string[]; providers: string[] } {

@@ -182,6 +182,10 @@ const api = {
   listDir(path: string): Promise<{ path: string; entries: unknown[]; total: number; truncated: boolean } | null> {
     return ipcRenderer.invoke('os:dir', path)
   },
+  // Close = delete the closed window's backing content file so it doesn't resurrect on the next reconcile.
+  closeSurfaceFile(id: string): Promise<{ ok: boolean; removed?: string }> {
+    return ipcRenderer.invoke('os:close-surface-file', id)
+  },
 
   // Workspaces (one feature, both modes). Electron thumbnails are captured main-side (capturePage)
   // and served over the blitz-thumb:// protocol; switching is the shared host's atomic switch.

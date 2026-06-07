@@ -34,6 +34,9 @@ export function writeDroppedFileAt(dir: string, relPath: string, buffer: Buffer 
 /** Make an EMPTY real folder ('New Folder') or '.board' on-canvas folder ('New Board') in the workspace root. */
 export function createFolder(dir: string, name: string, kind?: 'board' | 'folder'): { ok: boolean; folder?: string; error?: string }
 
+/** CLOSE a surface = explicitly delete its backing content file by id (jailed; never a real dropped file). */
+export function removeSurfaceFile(dir: string, id: string): { ok: boolean; removed?: string; skipped?: string }
+
 export interface DirEntry { name: string; dir: boolean; ext: string; size: number; isImage: boolean; path: string }
 /** List a normal folder's contents for the file-manager overlay — jailed, dotfiles hidden, capped at 1000. */
 export function listDir(dir: string, rel: string): { path: string; entries: DirEntry[]; total: number; truncated: boolean } | null

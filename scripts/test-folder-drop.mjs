@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, rmSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { copyDroppedEntry, writeDroppedFileAt, createFolder, listDir, writeWorkspace, reconcileWorkspace } from '../src/main/workspace.mjs'
+import { copyDroppedEntry, writeDroppedFileAt, createFolder, listDir, removeSurfaceFile, writeWorkspace, reconcileWorkspace } from '../src/main/workspace.mjs'
 
 let pass = 0
 let fail = 0
@@ -106,7 +106,7 @@ ok('caps the listing at 1000', !!bigList && bigList.entries.length === 1000)
 ok('reports the true total (1005)', !!bigList && bigList.total === 1005)
 ok('flags truncated:true (UI shows "1000 of 1005")', !!bigList && bigList.truncated === true)
 
-console.log('\n# close = delete the file (the "window pops back up" bug)')
+console.log('\n# close = delete the file, EXPLICITLY by id (the "window pops back up" bug)')
 const cdir = join(tmp, 'closews')
 mkdirSync(cdir, { recursive: true })
 const noteA = { id: 'A', kind: 'native', component: 'note', title: 'A', x: 0, y: 0, w: 200, h: 200, z: 1, props: { text: 'aaa' } }
@@ -115,20 +115,25 @@ const webC = { id: 'C', kind: 'web', title: 'C', url: 'https://example.com', x: 
 const contentFiles = () => readdirSync(cdir).filter((f) => /\.(md|weblink|html)$/.test(f) && f !== 'BLITZOS.md')
 writeWorkspace(cdir, { surfaces: [noteA, noteB, webC], camera: { x: 0, y: 0, scale: 1 } })
 ok('3 content files written (2 notes + 1 weblink)', contentFiles().length === 3)
-// the user closes B and C → the renderer pushes a state without them
-writeWorkspace(cdir, { surfaces: [noteA], camera: { x: 0, y: 0, scale: 1 } })
-ok('closed surfaces deleted their files (1 content file left)', contentFiles().length === 1)
+// the user closes note B → the renderer calls closeSurfaceFile('B') (explicit, by id)
+const rmB = removeSurfaceFile(cdir, 'B')
+ok('removeSurfaceFile reports the deleted file', rmB.ok && /\.md$/.test(rmB.removed))
+ok('only B was deleted (2 content files left)', contentFiles().length === 2)
 const recAfterClose = reconcileWorkspace(cdir, {})
-ok('reconcile does NOT resurrect the closed surfaces', (recAfterClose?.surfaces || []).filter((s) => s.component === 'note' || s.kind === 'web').length === 1)
+ok('reconcile does NOT resurrect closed B (A + C remain)', (recAfterClose?.surfaces || []).filter((s) => s.component === 'note' || s.kind === 'web').length === 2)
+ok('closing a non-existent id is a safe no-op', removeSurfaceFile(cdir, 'NOPE').ok === false)
+
+console.log('\n# SAFETY: an empty/partial state push must NEVER mass-delete (explicit-only)')
+writeWorkspace(cdir, { surfaces: [], camera: { x: 0, y: 0, scale: 1 } }) // e.g. a pre-hydrate or buggy push
+ok('writeWorkspace with [] does NOT delete the surviving files', contentFiles().length === 2)
 
 console.log('\n# close NEVER deletes a real dropped file (only BlitzOS content files)')
 writeFileSync(join(ext, 'keep.png'), Buffer.from([1, 2, 3, 4]))
 copyDroppedEntry(cdir, join(ext, 'keep.png'))
-reconcileWorkspace(cdir, {}) // registers keep.png as a file node
-ok('dropped png present after reconcile', existsSync(join(cdir, 'keep.png')))
-// a push that omits the file surface must NOT delete the real file (it has no close button anyway)
-writeWorkspace(cdir, { surfaces: [noteA], camera: { x: 0, y: 0, scale: 1 } })
-ok('real dropped file survives a push that omits it', existsSync(join(cdir, 'keep.png')))
+const recPng = reconcileWorkspace(cdir, {}) // registers keep.png as a file node with an id
+const pngSurface = (recPng?.surfaces || []).find((s) => s.props?.path === 'keep.png')
+ok('dropped png present + has a surface id', existsSync(join(cdir, 'keep.png')) && !!pngSurface)
+ok('closing the file tile does NOT delete the real file', removeSurfaceFile(cdir, pngSurface.id).ok === false && existsSync(join(cdir, 'keep.png')))
 
 rmSync(tmp, { recursive: true, force: true })
 console.log(`\n${fail === 0 ? 'ALL PASS' : 'FAIL'} — ${pass} passed, ${fail} failed`)

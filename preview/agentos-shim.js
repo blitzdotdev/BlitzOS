@@ -191,6 +191,13 @@
     listDir: function (p) {
       return getJSON('/os/dir?path=' + encodeURIComponent(p || '')).catch(function () { return null })
     },
+    // Close = delete the closed window's backing content file so it doesn't resurrect on reconcile.
+    closeSurfaceFile: function (id) {
+      return fetch(API + '/os/close-surface', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: id })
+      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+    },
     // A sandboxed srcdoc widget fired an action back to the agent (server parity with Electron IPC).
     surfaceAction: function (payload) {
       fetch(API + '/os/surface-action', {

@@ -3,7 +3,7 @@ import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osLoadConsent, osPersistConsent } from './osActions'
+import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -180,6 +180,8 @@ app.whenReady().then(() => {
   )
   // File-manager listing for a normal folder tile (the Electron counterpart of server /api/os/dir).
   ipcMain.handle('os:dir', (_e, rel: string) => osListDir(String(rel || '')))
+  // Close = delete the closed window's backing content file (so it doesn't pop back up on reconcile).
+  ipcMain.handle('os:close-surface-file', (_e, id: string) => osCloseSurfaceFile(String(id)))
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()

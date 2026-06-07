@@ -17,6 +17,7 @@ import {
   groupIntoFolder,
   createFolder,
   listDir,
+  removeSurfaceFile,
   readConsent,
   writeConsent,
   wasSelfWrite,
@@ -167,6 +168,12 @@ export function createWorkspaceHost(a) {
   /** List a normal folder's contents for the file-manager overlay (jailed to the active workspace). */
   function listDirInWorkspace(rel) {
     return listDir(activeWorkspace, rel)
+  }
+  /** CLOSE a surface = delete its backing content file (explicit by id; never inferred). The renderer
+   *  calls this when the user closes a window so it doesn't resurrect on the next reconcile. */
+  function closeSurfaceFile(id) {
+    if (switching) return { ok: false, error: 'switch in progress' }
+    return removeSurfaceFile(activeWorkspace, String(id))
   }
   /** Make an EMPTY real folder ('New Folder') or '.board' on-canvas folder ('New Board'), then reconcile
    *  at (x,y) so a normal folder shows as one tile (an empty board has no children to splay yet). */
@@ -322,6 +329,7 @@ export function createWorkspaceHost(a) {
     reconcileAt,
     newFolder,
     listDir: listDirInWorkspace,
+    closeSurfaceFile,
     group,
     // #53: per-workspace consent persistence (read on boot/switch, write on a human grant). The write
     // MERGES (a caller may update just `surfaces` or just `providers` — e.g. the widget bridge vs the

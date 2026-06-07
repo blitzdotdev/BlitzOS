@@ -215,9 +215,6 @@ export function writeWorkspace(dir, osState) {
   const metaDir = join(dir, '.blitzos')
   const metaFile = join(metaDir, 'workspace.json')
   const { idToPath, wsId } = readPrior(metaFile)
-  // Snapshot the PRIOR id→path BEFORE the loop mutates idToPath — used below to delete the content
-  // files of surfaces that were CLOSED (gone from this push).
-  const priorPaths = new Map(idToPath)
   // Seed `taken` with reserved generated basenames so a content file can never clobber them.
   const taken = new Set([...idToPath.values(), ...RESERVED_ROOT])
   const surfaces = Array.isArray(osState?.surfaces) ? osState.surfaces : []
@@ -274,24 +271,6 @@ export function writeWorkspace(dir, osState) {
       ...(Object.keys(view).length ? { view } : {})
     })
     order.push({ id: s.id, z: s.z || 0 })
-  }
-
-  // CLOSE = delete the file. A surface present in the PRIOR workspace.json but gone from this push was
-  // CLOSED, so remove its backing content file — otherwise the file lingers and the next reconcile
-  // re-materializes it ("I closed the window and it popped right back up"). Only BlitzOS-owned content
-  // files (.md/.weblink/.html) are removed, NEVER a real dropped file/dir/repo (those have no close
-  // button so they're always still present anyway). Jailed; stamped so the watcher ignores the unlink.
-  for (const [id, rel] of priorPaths) {
-    if (seen.has(id)) continue // still on the canvas
-    if (!CONTENT_EXTS.has(extname(rel).toLowerCase())) continue // never delete a real user file/dir
-    const abs = safeJoin(dir, rel)
-    if (!abs || !existsSync(abs)) continue
-    try {
-      markWrite(resolve(abs))
-      unlinkSync(abs)
-    } catch {
-      /* leave it if we can't remove it */
-    }
   }
 
   // Runtime panels (chat / agent-activity) aren't folder nodes, but their content (the chat
@@ -967,6 +946,31 @@ export function createFolder(dir, name, kind) {
     return { ok: true, folder: folderName }
   } catch {
     return { ok: false, error: 'could not create folder' }
+  }
+}
+
+/**
+ * CLOSE a surface = delete its backing content file, EXPLICITLY by id (never inferred from a push — so a
+ * partial or empty state push can NEVER mass-delete the folder). Without this a closed note/web/srcdoc
+ * leaves its file on disk and the next reconcile re-materializes it ("I closed the window and it popped
+ * right back up"). Only a BlitzOS-owned content file (.md/.weblink/.html) is removed — NEVER a real
+ * dropped file/dir/repo. Jailed + self-write-stamped so the watcher ignores the unlink. Returns
+ * { ok, removed } or { ok:false }.
+ */
+export function removeSurfaceFile(dir, id) {
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const { idToPath } = readPrior(metaFile)
+  const rel = idToPath.get(String(id))
+  if (!rel) return { ok: false } // no backing file (a runtime panel, or already gone)
+  if (!CONTENT_EXTS.has(extname(rel).toLowerCase())) return { ok: false, skipped: 'not-content' } // never a real file/dir
+  const abs = safeJoin(dir, rel)
+  if (!abs || !existsSync(abs)) return { ok: false }
+  try {
+    markWrite(resolve(abs))
+    unlinkSync(abs)
+    return { ok: true, removed: rel }
+  } catch {
+    return { ok: false }
   }
 }
 
