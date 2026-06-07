@@ -160,7 +160,7 @@ export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
       const { targetId } = await client.send('Target.createTarget', { url: url || 'about:blank' })
       const { sessionId } = await client.send('Target.attachToTarget', { targetId, flatten: true })
       sessionToSurface.set(sessionId, surfaceId)
-      surfaces.set(surfaceId, { targetId, sessionId })
+      surfaces.set(surfaceId, { targetId, sessionId, width, height, quality })
       await client.send('Page.enable', {}, sessionId)
       try {
         await client.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }, sessionId)
@@ -198,6 +198,32 @@ export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
       const s = surfaces.get(surfaceId)
       if (!s) throw new Error(`no server surface "${surfaceId}"`)
       return client.send('Page.navigate', { url }, s.sessionId)
+    },
+    /** Resize the render viewport + restart the screencast at the new size (debounced 140ms so a
+     *  drag-resize coalesces) — audit major #4: the viewport/screencast are pinned at create, so
+     *  without this the streamed frame stretches the old aspect ratio when the window is resized. */
+    async resize(surfaceId, width, height) {
+      const s = surfaces.get(surfaceId)
+      if (!s) return
+      s.pendingW = Math.max(1, Math.round(width))
+      s.pendingH = Math.max(1, Math.round(height))
+      if (s.pendingW === s.width && s.pendingH === s.height) return
+      if (s.resizeTimer) return // a debounce is already pending; it picks up the latest pendingW/H
+      s.resizeTimer = setTimeout(async () => {
+        s.resizeTimer = null
+        const w = s.pendingW
+        const h = s.pendingH
+        if (w === s.width && h === s.height) return
+        s.width = w
+        s.height = h
+        try {
+          await client.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false }, s.sessionId)
+          await client.send('Page.stopScreencast', {}, s.sessionId)
+          await client.send('Page.startScreencast', { format: 'jpeg', quality: s.quality || 70, maxWidth: w, maxHeight: h, everyNthFrame: 1 }, s.sessionId)
+        } catch {
+          /* surface gone */
+        }
+      }, 140)
     },
     async stop() {
       // Some apps (Discord) deliberately keep their auth token in memory while running and

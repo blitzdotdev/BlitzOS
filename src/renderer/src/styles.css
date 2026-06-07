@@ -22,6 +22,20 @@ body,
   text-rendering: optimizeLegibility;
 }
 
+/* Form controls don't inherit the UI font by default — make them match (fixes the toolbar/ws-btn
+   font mismatch). Strip native button appearance so custom-styled buttons (toolbar pills, the
+   round traffic lights) render as designed instead of OS-native pills/lines. */
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
 #root-canvas {
   position: fixed;
   inset: 0;

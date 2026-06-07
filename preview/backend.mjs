@@ -350,12 +350,17 @@ function reconcileSurfaces(list) {
   const want = new Set(list.filter((x) => x && x.kind === 'web').map((x) => x.id))
   const ps = []
   for (const sfc of list) {
-    if (sfc.kind === 'web' && !host.has(sfc.id)) {
+    if (sfc.kind !== 'web') continue
+    if (!host.has(sfc.id)) {
       ps.push(
         host
           .createSurface(sfc.id, { url: sfc.url || 'about:blank', width: Math.round(sfc.w) || 1280, height: Math.round(sfc.h) || 800 })
           .catch((e) => console.error('[server mode] createSurface', sfc.id, e?.message || e))
       )
+    } else {
+      // Existing web surface — keep its render viewport + screencast matched to the window size so a
+      // resize doesn't stretch the stream (host.resize debounces + no-ops when the size is unchanged).
+      ps.push(Promise.resolve(host.resize(sfc.id, Math.round(sfc.w) || 1280, Math.round(sfc.h) || 800)).catch(() => {}))
     }
   }
   for (const id of host.ids()) {
