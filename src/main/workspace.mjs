@@ -18,7 +18,7 @@
 // by the server backend now and Electron main later.
 
 import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, copyFileSync, realpathSync } from 'node:fs'
-import { join, dirname, resolve, sep, extname } from 'node:path'
+import { join, dirname, resolve, sep, extname, basename } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 const VERSION = 1
@@ -73,6 +73,8 @@ function nodeKind(s) {
   if (s.kind === 'web' || s.kind === 'app') return 'web' // app folds to web (both serialize to a .weblink; no distinct 'app' node kind)
   if (s.kind === 'srcdoc') return 'srcdoc'
   if (s.kind === 'native' && s.component === 'note') return 'note'
+  if (s.kind === 'native' && s.component === 'file') return 'file' // a real file on disk (#37)
+  if (s.kind === 'native' && s.component === 'dir') return 'dir' // a real subfolder on disk (#37)
   return null
 }
 
@@ -208,6 +210,26 @@ export function writeWorkspace(dir, osState) {
     if (seen.has(s.id)) continue
     const kind = nodeKind(s)
     if (!kind) continue
+    // file/dir nodes are REAL files/subfolders already on disk — record layout only, never rewrite
+    // their content. Their stable path comes from the prior workspace.json (reconcile assigned it).
+    if (kind === 'file' || kind === 'dir') {
+      const rel = idToPath.get(s.id)
+      if (!rel || !safeJoin(dir, rel)) continue // can't locate the real file/dir → skip
+      seen.add(s.id)
+      const fview = typeof s.title === 'string' && s.title ? { title: s.title } : {}
+      nodes.push({
+        id: s.id,
+        path: rel,
+        kind,
+        x: Math.round(s.x),
+        y: Math.round(s.y),
+        w: Math.round(s.w),
+        h: Math.round(s.h),
+        ...(Object.keys(fview).length ? { view: fview } : {})
+      })
+      order.push({ id: s.id, z: s.z || 0 })
+      continue
+    }
     const c = contentFor(kind, s)
     if (!c) continue
     seen.add(s.id)
@@ -348,6 +370,32 @@ function nodeToSurface(dir, n, z) {
   if (!n || typeof n.id !== 'string' || typeof n.path !== 'string') return null
   const abs = safeJoin(dir, n.path)
   if (!abs) return null // JAIL: a hand-edited workspace.json path can't escape the workspace
+  // file/dir nodes reference a REAL file/subfolder — never read it into memory (it may be a large
+  // binary); stat for metadata and let the renderer fetch image bytes over the jailed file route (#37).
+  if (n.kind === 'file' || n.kind === 'dir') {
+    let st
+    try {
+      st = statSync(abs)
+    } catch {
+      return null // vanished
+    }
+    const name = basename(n.path)
+    const view = n.view && typeof n.view === 'object' ? n.view : {}
+    const title = typeof view.title === 'string' && view.title ? view.title : name
+    const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || (n.kind === 'dir' ? 200 : 200), h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z }
+    if (n.kind === 'dir') {
+      let entries = 0
+      try {
+        entries = readdirSync(abs).filter((e) => !e.startsWith('.')).length
+      } catch {
+        /* unreadable dir */
+      }
+      return { ...base, kind: 'native', component: 'dir', title, props: { dir: true, name, path: n.path, entries } }
+    }
+    const ext = extname(name).toLowerCase().replace(/^\./, '')
+    const isImage = /^(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(ext)
+    return { ...base, kind: 'native', component: 'file', title, props: { name, path: n.path, ext, bytes: st.size, isImage } }
+  }
   let content
   try {
     if (statSync(abs).size > MAX_CONTENT) return null // don't load a giant file whole into memory
@@ -426,7 +474,8 @@ function autoKind(name) {
   const ext = extname(name).toLowerCase()
   if (ext === '.weblink') return 'web'
   if (ext === '.md') return 'note'
-  return null
+  if (ext === '.html' || ext === '.htm') return 'srcdoc'
+  return 'file' // images, pdfs, archives, code, anything else → a file tile on the canvas (#37)
 }
 
 const BLITZOS_MD = `# This folder is a BlitzOS workspace
@@ -462,7 +511,10 @@ function scaffold(dir) {
   if (!existsSync(gi)) atomicWrite(gi, '# BlitzOS runtime state (machine-local, not part of the workspace)\n.blitzos/state/\n')
 }
 function defaultSizeFor(kind) {
-  return kind === 'note' ? { w: 240, h: 240 } : { w: 920, h: 640 }
+  if (kind === 'note') return { w: 240, h: 240 }
+  if (kind === 'file') return { w: 200, h: 200 }
+  if (kind === 'dir') return { w: 200, h: 170 }
+  return { w: 920, h: 640 }
 }
 
 /**
@@ -492,14 +544,21 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     /* unreadable workspace dir */
   }
   const newFiles = entries.filter((e) => e.isFile() && autoKind(e.name) && !known.has(e.name) && safeJoin(dir, e.name)).map((e) => e.name)
+  // Subfolders surface as collapsed 'dir' tiles (#37). Skip dot-dirs (.blitzos/.git) + known ones.
+  const newDirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.') && !known.has(e.name) && safeJoin(dir, e.name)).map((e) => e.name)
 
   let changed = false
   // single-rename heal: a node's file is gone AND exactly one NEW file of the same kind exists.
+  // NOT for file/dir nodes — BlitzOS never renames the user's own files, so a rename-pair guess
+  // there would wrongly re-bind an unrelated dropped file (#37).
   const usedNew = new Set()
   for (const n of nodes) {
     const abs = safeJoin(dir, n.path)
     if (abs && existsSync(abs)) continue
-    const cand = newFiles.filter((f) => !usedNew.has(f) && (autoKind(f) === n.kind || (n.kind === 'app' && autoKind(f) === 'web')))
+    const cand =
+      n.kind === 'file' || n.kind === 'dir'
+        ? []
+        : newFiles.filter((f) => !usedNew.has(f) && (autoKind(f) === n.kind || (n.kind === 'app' && autoKind(f) === 'web')))
     if (cand.length === 1) {
       n.path = cand[0]
       usedNew.add(cand[0])
@@ -522,6 +581,12 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     const kind = autoKind(f)
     const sz = defaultSizeFor(kind)
     alive.push({ id: randomUUID(), path: f, kind, x: Math.round(cx - sz.w / 2 + (i % 6) * 28), y: Math.round(cy - sz.h / 2 + (i % 6) * 24), w: sz.w, h: sz.h })
+    i++
+    changed = true
+  }
+  for (const d of newDirs) {
+    const sz = defaultSizeFor('dir')
+    alive.push({ id: randomUUID(), path: d, kind: 'dir', x: Math.round(cx - sz.w / 2 + (i % 6) * 28), y: Math.round(cy - sz.h / 2 + (i % 6) * 24), w: sz.w, h: sz.h })
     i++
     changed = true
   }
