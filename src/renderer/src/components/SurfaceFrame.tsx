@@ -337,6 +337,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
 
   return (
     <div
+      data-sid={surface.id}
       className={isNote ? 'window note' : 'window'}
       style={{
         left: surface.x,

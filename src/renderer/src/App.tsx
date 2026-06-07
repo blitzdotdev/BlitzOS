@@ -3,7 +3,8 @@ import { useDesktop, type CreateSurfaceInput } from './store'
 import type { Surface } from './types'
 import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
-import { Launcher } from './components/Launcher'
+import { Overview } from './components/Overview'
+import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame } from './components/SurfaceFrame'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
@@ -20,7 +21,7 @@ export default function App(): JSX.Element {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [aiUrl, setAiUrl] = useState<string | null>(null)
   const [showAi, setShowAi] = useState(false)
-  const [showLauncher, setShowLauncher] = useState(false)
+  const [showOverview, setShowOverview] = useState(false)
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [panMode, setPanMode] = useState(false)
   const isServer = !!window.agentOS?.serverMode
@@ -172,7 +173,7 @@ export default function App(): JSX.Element {
           setActiveWs(a.workspace)
           activeWsRef.current = a.workspace
         }
-        setShowLauncher(false)
+        setShowOverview(false)
       } else if (a.type === 'create') {
         const surf = a.surface as CreateSurfaceInput
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
@@ -375,6 +376,29 @@ export default function App(): JSX.Element {
     createSurface({ kind: 'web', url: 'https://news.ycombinator.com', title: 'Hacker News' })
   }
 
+  // Capture the CURRENT board's primary-area snapshot and upload it as its workspace thumbnail
+  // (best-effort, last-seen). Done before opening the overview and before switching away (while the
+  // board we're leaving still has live streamed frames — they're torn down by the switch).
+  async function captureCurrent(): Promise<void> {
+    const name = activeWsRef.current
+    if (!name) return
+    try {
+      const dataUrl = capturePrimaryThumb()
+      if (dataUrl) await window.agentOS?.workspaces?.thumb(name, dataUrl)
+    } catch {
+      /* best-effort snapshot */
+    }
+  }
+  async function openOverview(): Promise<void> {
+    await captureCurrent() // refresh the active board's tile first
+    setShowOverview(true)
+  }
+  async function switchWorkspace(name: string): Promise<void> {
+    await captureCurrent() // snapshot the board we're leaving BEFORE its targets are torn down
+    await window.agentOS?.workspaces?.switch(name)
+    // backend broadcasts {type:'switch'} → onAction swaps the canvas + closes the overview
+  }
+
   function openChat(): void {
     const st = useDesktop.getState()
     const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'chat')
@@ -416,7 +440,7 @@ export default function App(): JSX.Element {
 
       <div className="toolbar">
         {isServer && (
-          <button className="ws-btn" onClick={() => setShowLauncher(true)} title="Switch workspace">
+          <button className="ws-btn" onClick={() => void openOverview()} title="Workspaces (Mission Control)">
             ▦ {activeWs ?? '…'} ▾
           </button>
         )}
@@ -443,7 +467,7 @@ export default function App(): JSX.Element {
         </div>
       )}
 
-      {isServer && showLauncher && <Launcher onClose={() => setShowLauncher(false)} />}
+      {isServer && showOverview && <Overview onClose={() => setShowOverview(false)} onSwitch={switchWorkspace} />}
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
     </div>
   )

@@ -1092,7 +1092,7 @@ const server = createServer(async (req, res) => {
   if (path === '/api/os/workspaces' && req.method === 'GET') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
     // strip the absolute host path — the renderer switches by name; don't leak the on-disk layout.
-    const workspaces = listWorkspaces(WORKSPACES_ROOT).map(({ name, nodeCount, updatedAt }) => ({ name, nodeCount, updatedAt }))
+    const workspaces = listWorkspaces(WORKSPACES_ROOT).map(({ name, nodeCount, updatedAt, thumbTs }) => ({ name, nodeCount, updatedAt, thumbTs }))
     return json(res, 200, { workspaces, active: basename(activeWorkspace) })
   }
   if (path === '/api/os/workspaces' && req.method === 'POST') {
@@ -1124,6 +1124,46 @@ const server = createServer(async (req, res) => {
       }
     })
     return
+  }
+
+  // POST /api/os/workspace/thumb { workspace, dataUrl } — the renderer uploads a captured snapshot of
+  // the primary area (a data:image/jpeg) as that workspace's thumbnail (last-seen, Mission-Control
+  // style). Stored at .blitzos/state/thumb.jpg (gitignored, agent-read-denied), overwritten each time.
+  if (path === '/api/os/workspace/thumb' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let tbody = ''
+    req.on('data', (c) => { tbody += c; if (tbody.length > 4_000_000) req.destroy() }) // ~4MB data-URL cap
+    req.on('end', () => {
+      try {
+        const b = toolBody(tbody)
+        const dir = resolveWorkspace(WORKSPACES_ROOT, b.workspace, { mustExist: true })
+        if (!dir) return json(res, 404, { error: 'no such workspace' })
+        const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(b.dataUrl || ''))
+        if (!m) return json(res, 400, { error: 'expected a data:image/jpeg;base64 URL' })
+        const buf = Buffer.from(m[1], 'base64')
+        if (buf.length > 3_000_000) return json(res, 413, { error: 'thumbnail too large' })
+        const stateDir = join(dir, '.blitzos', 'state')
+        mkdirSync(stateDir, { recursive: true })
+        writeFileSync(join(stateDir, 'thumb.jpg'), buf)
+        json(res, 200, { ok: true })
+      } catch (e) {
+        json(res, 500, { error: e?.message || 'thumb write failed' })
+      }
+    })
+    return
+  }
+  // GET /api/os/workspace/thumb?name=X — serve the cached primary-area thumbnail (404 if none yet).
+  if (path === '/api/os/workspace/thumb' && req.method === 'GET') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    const dir = resolveWorkspace(WORKSPACES_ROOT, url.searchParams.get('name'), { mustExist: true })
+    if (!dir) return json(res, 404, { error: 'no such workspace' })
+    try {
+      const buf = readFileSync(join(dir, '.blitzos', 'state', 'thumb.jpg'))
+      res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-cache' })
+      return res.end(buf)
+    } catch {
+      return json(res, 404, { error: 'no thumbnail' })
+    }
   }
 
   json(res, 404, { error: 'not found' })

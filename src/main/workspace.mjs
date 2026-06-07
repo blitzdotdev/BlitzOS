@@ -587,7 +587,13 @@ export function listWorkspaces(root) {
         /* unreadable — leave 0 */
       }
     }
-    out.push({ name: e.name, path: p, nodeCount, updatedAt })
+    let thumbTs = 0 // mtime of the cached primary-area thumbnail (0 = none) — used to cache-bust the tile
+    try {
+      thumbTs = statSync(join(p, '.blitzos', 'state', 'thumb.jpg')).mtimeMs
+    } catch {
+      /* no thumbnail captured yet */
+    }
+    out.push({ name: e.name, path: p, nodeCount, updatedAt, thumbTs })
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 200) // newest-first, THEN cap (never drop the newest)
 }

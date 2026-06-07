@@ -445,7 +445,7 @@ body,
   font-style: italic;
 }
 
-/* Workspace launcher (the project picker). Reuses .overlay/.panel; adds the list + new-row. */
+/* Workspace switcher: the toolbar pill + the shared name input (reused by the overview). */
 .ws-btn {
   font-weight: 600;
   max-width: 220px;
@@ -453,71 +453,7 @@ body,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ws-panel {
-  width: 460px;
-}
-.ws-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-  max-height: 46vh;
-  overflow-y: auto;
-}
-.ws-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  text-align: left;
-  background: #1b2027;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 10px 12px;
-  color: var(--ink);
-  font-size: 13.5px;
-  cursor: pointer;
-}
-.ws-row:hover:not(:disabled) {
-  background: #232a33;
-  border-color: #3d4651;
-}
-.ws-row:disabled {
-  cursor: default;
-}
-.ws-row-active {
-  border-color: #2ea043;
-  background: #182018;
-}
-.ws-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #6e7681;
-  flex: 0 0 8px;
-}
-.ws-dot.on {
-  background: #2ea043;
-}
-.ws-name {
-  font-weight: 600;
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ws-meta {
-  font-size: 11.5px;
-  color: var(--muted);
-  flex: 0 0 auto;
-}
-.ws-new {
-  display: flex;
-  gap: 8px;
-  margin-top: 14px;
-}
 .ws-input {
-  flex: 1 1 auto;
   background: #0e1116;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -528,6 +464,147 @@ body,
 .ws-input:focus {
   outline: none;
   border-color: #1f6feb;
+}
+
+/* Mission Control overview — full-screen splay of workspace tiles (16:10), responsive grid. */
+.ovr {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(8, 10, 14, 0.86);
+  backdrop-filter: blur(10px);
+}
+.ovr-scroll {
+  position: absolute;
+  inset: 0;
+  max-width: 1600px;
+  margin-inline: auto;
+  padding: 0 20px 40px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.ovr-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 4px 16px;
+  background: linear-gradient(rgba(8, 10, 14, 0.96), rgba(8, 10, 14, 0.72));
+}
+.ovr-head h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 650;
+  color: var(--ink);
+}
+.ovr-new {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.ovr-x {
+  font-size: 22px;
+}
+.ovr-error {
+  margin: 0 4px 10px;
+}
+.ovr-grid {
+  display: grid;
+  gap: 20px;
+  /* JS sets --cols (exact integer); this auto-fill rule is the no-JS fallback, capped at 5. */
+  grid-template-columns: repeat(auto-fill, minmax(max(min(220px, 100%), calc((100% - 4 * 20px) / 5)), 1fr));
+}
+.ovr-grid[style*='--cols'] {
+  grid-template-columns: repeat(var(--cols), 1fr);
+}
+.ovr-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.ovr-tile:disabled {
+  cursor: default;
+}
+.ovr-thumb {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0e1116;
+  border: 2px solid var(--line);
+  transition: border-color 0.12s, transform 0.12s;
+}
+.ovr-tile:hover:not(:disabled) .ovr-thumb {
+  border-color: #5a6675;
+  transform: translateY(-2px);
+}
+.ovr-tile.on .ovr-thumb {
+  border-color: #2ea043;
+}
+.ovr-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ovr-thumb-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.ovr-thumb-busy {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 10, 14, 0.6);
+  color: #e6edf3;
+  font-size: 12px;
+}
+.ovr-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 2px;
+}
+.ovr-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6e7681;
+  flex: 0 0 8px;
+}
+.ovr-tile.on .ovr-dot {
+  background: #2ea043;
+}
+.ovr-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink);
+  flex: 0 0 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+.ovr-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Left sidebar (screen-space). For now just a + to add a browser window. */

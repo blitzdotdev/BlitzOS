@@ -33,6 +33,8 @@ export interface WorkspaceEntry {
   path: string
   nodeCount: number
   updatedAt: number
+  /** mtime (ms) of the cached primary-area thumbnail, 0 if none (cache-busts the overview tile). */
+  thumbTs: number
 }
 
 /** Validate a RAW workspace name (strict allow-list). Returns the NFC name or null. */

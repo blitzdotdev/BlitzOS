@@ -143,7 +143,9 @@
     workspaces: {
       list: function () { return getJSON('/os/workspaces') },
       create: function (name) { return getJSON('/os/workspaces', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) }) },
-      switch: function (name) { return getJSON('/os/workspace/switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) }) }
+      switch: function (name) { return getJSON('/os/workspace/switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) }) },
+      thumb: function (name, dataUrl) { return getJSON('/os/workspace/thumb', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspace: name, dataUrl: dataUrl }) }) },
+      thumbUrl: function (name, ts) { return API + '/os/workspace/thumb?name=' + encodeURIComponent(name) + (ts ? '&t=' + ts : '') }
     },
 
     // srcdoc widget bridge: relay a widget's data request to the backend data route
