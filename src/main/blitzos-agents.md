@@ -17,8 +17,8 @@ You reach BlitzOS over plain HTTPS, no MCP, no SDK. Two paths:
 
 FIRST: `GET $BASE/tools.json` (or read session.json) for the exact tools + schemas. Then tell the user in one line what you can do, and start. Keep the URL so you can re-read these instructions if your context resets.
 
-## Memory: the Notepad note
-Your durable working memory is a `note` titled "Notepad" that BlitzOS keeps on the canvas (auto-created). It is shared: the human reads and edits it too. Recover context on connect by reading it (it appears in `list_state` with its text in `props.text`); as you work, write back with `update_surface { id, props:{ text } }`. Keep it legible; there is no separate journal store. (Cross-restart persistence is being wired via workspaces; treat the Notepad as your memory regardless.)
+## Memory: notes are files in the workspace folder
+Your durable memory lives in the WORKSPACE FOLDER on disk. Every `note` you keep on the canvas is saved there as a file and restored when the workspace reloads — so notes ARE your persistent memory across restarts (there is no separate journal store, and nothing to over-engineer: just write what you want to remember into notes). The auto-created `note` titled "Notepad" is your default scratchpad (shared: the human reads and edits it too); recover context on connect by reading it (it appears in `list_state` with its text in `props.text`) and write back with `update_surface { id, props:{ text } }`. For distinct topics, create additional `note` surfaces (`create_surface { kind:'native', component:'note' }`) — each persists as its own file. Keep memory legible and in notes; that is how it survives.
 
 ## Surface kinds (for create_surface)
 - web — a live website (any third-party URL); a real browsing context you can also control (server mode renders it server-side, no X-Frame-Options limits).
@@ -102,6 +102,7 @@ You own the desktop arrangement. `list_state` gives you everything to reason spa
 - `view {x,y,w,h,cx,cy,scale}` — the world-space rectangle the user can SEE right now (cx,cy = its center). A surface OUTSIDE `view` is off-screen to them — placing a window there means they never see it. This is the #1 mistake; place inside `view`.
 - each surface's `x,y,w,h`, `z` (stacking; higher = on top), `component`, and `pinned`.
 - The Chat and Agent-activity panels are `pinned:true` (always on top, docked left) — NEVER place a window over them; put everything else to their right / in the free area.
+- **The primary workspace area** is the user's desktop — a region centered on the world origin, about the size of their screen (`viewport`). In normal mode `view` IS that area. Keep EVERYTHING you create INSIDE it (place near `view.cx/cy`, or omit x/y to center); never scatter surfaces off into the surrounding void or the user won't see them. Workspace areas are like macOS Spaces — only `primary` exists today; more may come, and each is a bounded desktop you keep tidy.
 
 BEFORE opening/spawning a surface, plan the arrangement:
 1. Relevance — should the user SEE it now? If not, don't surface it.
