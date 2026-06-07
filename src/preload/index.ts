@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'hydrate' | 'switch'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch'
   [k: string]: unknown
 }
 
@@ -106,9 +106,17 @@ const api = {
   setContentShare(surfaceId: string, on: boolean): void {
     ipcRenderer.send('os:content-share', { surfaceId, on })
   },
+  /** Capture a web surface's current frame as a data URL (for folder previews). */
+  captureSurface(surfaceId: string): Promise<string | null> {
+    return ipcRenderer.invoke('surface:capture', surfaceId)
+  },
   /** The user typed a message to the agent in the in-canvas Chat. */
   sendMessage(text: string): void {
     ipcRenderer.send('os:user-message', text)
+  },
+  /** Ask main to (re)send the persisted canvas as a hydrate, once our onAction listener is up. */
+  requestHydrate(): void {
+    ipcRenderer.send('workspace:request-hydrate')
   },
 
   /** Relay a sandboxed srcdoc widget's data request to main (consent-gated; token stays in main). */

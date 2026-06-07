@@ -1,0 +1,152 @@
+/* ============================================================================
+   BlitzOS design tokens — "Spatial-grade" visual system
+   ----------------------------------------------------------------------------
+   Single source of truth for the BlitzOS look. Derived from a teardown of
+   Spatial.app (com.44x.spatial): exact colors sampled from screenshots, type
+   and geometry read from the bundle. See ../../../plans/agent-os-design-system.md
+   for rationale, provenance, and the component/motion spec.
+
+   STATUS: artifact only — NOT yet imported by the app. Adoption (wiring this in
+   + migrating styles.css off its hardcoded hexes) is the implement phase. Until
+   then this file changes nothing on screen. Dark theme only (light deferred).
+   ============================================================================ */
+
+@font-face {
+  font-family: 'Volkhov';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/Volkhov-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Volkhov';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/Volkhov-700.woff2') format('woff2');
+}
+
+:root {
+  /* ---- Neutral ramp (the void → chrome) ----------------------------------
+     A cool-charcoal ramp, NOT GitHub blue-black and NOT teal. Sampled exact. */
+  --canvas:           #1d2023;   /* the desktop "void" — darkest                */
+  --surface:          #2c3033;   /* panels, popovers, toolbars, window chrome   */
+  --surface-raised:   #34373c;   /* one step up: hovered rows, nested panels    */
+  --control:          #424445;   /* pill / button rest (on-canvas)              */
+  --control-hover:    #4c4f51;   /* pill / button hover (also in-panel control) */
+  --control-active:   #5a5c60;   /* pressed                                     */
+  --divider:          #3a3d41;   /* solid 1px dividers                          */
+
+  /* ---- Text ramp ---------------------------------------------------------- */
+  --text:             #f9fafb;   /* primary — titles, body                      */
+  --text-secondary:   #c8cacb;   /* icon glyphs, secondary text                 */
+  --text-muted:       #8e9192;   /* labels, captions                            */
+  --text-tertiary:    #5f6364;   /* placeholder, disabled, chevrons             */
+
+  /* ---- Hairlines & edges (the "frosted glass" material) ------------------- */
+  --hairline:         rgba(255, 255, 255, 0.06);  /* 1px inset border on chrome */
+  --edge-highlight:   rgba(255, 255, 255, 0.07);  /* top-edge inner light       */
+  --scrim:            rgba(12, 13, 14, 0.55);      /* dim behind popovers/focus  */
+
+  /* ---- Accents (signature warm + restrained semantics) -------------------
+     Spatial is muted/editorial — semantics are desaturated, NOT neon. */
+  --accent:           #ff8d61;   /* signature coral (applied paper / focus)     */
+  --accent-deep:      #924b2f;   /* terracotta (coral base / pressed)           */
+  --marker:           #ffe92e;   /* text-highlight yellow (ink stays dark)      */
+  --positive:         #7fa98c;   /* muted sage (was GitHub #3fb950)             */
+  --danger:           #e0786e;   /* muted coral-red (was GitHub #f85149)        */
+  --info:             #7fa0c8;   /* dusty blue (was GitHub #58a6ff)             */
+
+  /* ---- Paper palette (item / native-note colors) -------------------------
+     7 muted tones + the bright coral tint. No saturated primaries — this
+     restraint IS the "designed" feel. `*-ink` = legible text on that paper. */
+  --paper-ink:        #0d0d0d;   --paper-ink-ink:        #e8e8e8;
+  --paper-mauve:      #493839;   --paper-mauve-ink:      #ece3e1;
+  --paper-terracotta: #924b2f;   --paper-terracotta-ink: #1c0f09;
+  --paper-coral:      #ff8d61;   --paper-coral-ink:      #2a1206;  /* the hero  */
+  --paper-tan:        #a78b6a;   --paper-tan-ink:        #1f160c;
+  --paper-bone:       #d1cec2;   --paper-bone-ink:       #20211d;
+  --paper-blue-dust:  #7fa0c8;   --paper-blue-dust-ink:  #0b1422;
+  --paper-blue-slate: #5b78aa;   --paper-blue-slate-ink: #f3f6fb;
+
+  /* ---- Typography --------------------------------------------------------
+     Free / native substitutes for Spatial's commercial faces:
+       UI grotesque   ← Spatial's Unica77 LL   → SF Pro (native) / Geist
+       Serif (notes)  ← Spatial's Volkhov       → Volkhov (OFL, bundle it)
+       Mono (meta)    ← Spatial's mono          → SF Mono (native) / Geist Mono
+     See the design-system doc §4 for licensing + how to bundle Volkhov. */
+  --font-ui:    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Geist', 'Inter', system-ui, sans-serif;
+  --font-serif: 'Volkhov', Georgia, 'Times New Roman', serif;
+  --font-mono:  ui-monospace, 'SF Mono', 'Geist Mono', 'JetBrains Mono', Menlo, monospace;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+
+  /* type scale (px / role) */
+  --text-display: 28px;   /* hero / unboxing                                   */
+  --text-title:   18px;   /* panel labels, item titles                         */
+  --text-body:    15px;   /* sticky / note body                                */
+  --text-ui:      13px;   /* controls, list rows                               */
+  --text-label:   11px;   /* mono UPPERCASE counters / metadata / credits      */
+
+  --track-label: 0.12em;  /* letter-spacing for mono labels                    */
+  --track-tight: -0.01em; /* display / titles                                  */
+
+  /* ---- Geometry ----------------------------------------------------------
+     Spatial uses continuous-corner squircles. CSS border-radius is a plain
+     arc; these large radii approximate it. For true squircles on key objects
+     use an SVG/`paint()` mask (see doc §5). */
+  --radius-button: 12px;  /* icon buttons (squircle-ish)                       */
+  --radius-control: 10px; /* dropdowns / inputs                                */
+  --radius-pill: 999px;   /* stadium pills (counters, segmented controls)      */
+  --radius-panel: 16px;   /* popovers / settings panels                        */
+  --radius-window: 14px;  /* web/app surface frames                            */
+  --radius-card: 22px;    /* paper / stickies / native notes (large, soft)     */
+
+  /* ---- Elevation ---------------------------------------------------------- */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6);
+
+  /* ---- Spacing (4px base) ------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-8: 48px;
+
+  /* ---- Motion — the "focus flow" (the one borrowed feel) -----------------
+     Expo-out zoom for canvas↔focus transitions; quick eases for chrome. */
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 240ms;
+  --dur-slow: 420ms;
+  --dur-zoom: 520ms;   /* focusAndZoom transition                              */
+
+  /* ---- Legacy aliases ----------------------------------------------------
+     Map the existing styles.css variables onto the new ramp so adoption can
+     be incremental (import this first; old selectors keep resolving). */
+  --bg: var(--canvas);
+  --ink: var(--text);
+  --muted: var(--text-muted);
+  --panel: var(--surface);
+  --line: var(--divider);
+  --grid: transparent;   /* Spatial's canvas is a clean void — grid removed    */
+}
+
+/* Composite "frosted dark glass" surface — apply to chrome (toolbar, popover,
+   sidebar, scratch-pad HUD). Kept here as the canonical recipe.
+   Usage: add class="material-glass" to a chrome element. */
+.material-glass {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-md);
+}

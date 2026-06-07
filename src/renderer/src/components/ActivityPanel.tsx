@@ -24,20 +24,20 @@ export function ActivityPanel({ surface }: { surface: Surface }): JSX.Element {
   const working = last && Date.now() - last.at < 8000
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0e1116', color: '#e6edf3' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface)', color: 'var(--text)' }}>
       <div
         style={{
           padding: '6px 10px',
           fontSize: 11,
-          color: '#7d8590',
-          borderBottom: '1px solid #21262d',
+          color: 'var(--text-muted)',
+          borderBottom: '1px solid var(--hairline)',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center'
         }}
       >
         <span>
-          <span style={{ color: working ? '#4ade80' : '#7d8590' }}>●</span> Agent activity
+          <span style={{ color: working ? 'var(--positive)' : 'var(--text-muted)' }}>●</span> Agent activity
         </span>
         <span style={{ opacity: 0.6 }}>{events.length}</span>
       </div>
@@ -50,16 +50,16 @@ export function ActivityPanel({ surface }: { surface: Surface }): JSX.Element {
           display: 'flex',
           flexDirection: 'column',
           gap: 4,
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          fontFamily: 'var(--font-mono)',
           fontSize: 12
         }}
         onPointerDown={(e) => e.stopPropagation()}
         onWheel={(e) => e.stopPropagation()}
       >
-        {events.length === 0 && <div style={{ color: '#7d8590' }}>Waiting for the agent…</div>}
+        {events.length === 0 && <div style={{ color: 'var(--text-muted)' }}>Waiting for the agent…</div>}
         {events.map((e, i) => (
           <div key={i} style={{ display: 'flex', gap: 8, lineHeight: 1.4 }}>
-            <span style={{ color: '#7d8590', flex: '0 0 auto' }}>{new Date(e.at).toLocaleTimeString([], { hour12: false })}</span>
+            <span style={{ color: 'var(--text-tertiary)', flex: '0 0 auto' }}>{new Date(e.at).toLocaleTimeString([], { hour12: false })}</span>
             <span style={{ wordBreak: 'break-word' }}>{e.text}</span>
           </div>
         ))}

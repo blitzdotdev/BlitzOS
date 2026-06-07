@@ -59,7 +59,9 @@ export function capturePrimaryThumb(): string | null {
   const PIN_BAND = 2_000_000
   const effZ = (s: Surface): number =>
     (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity') ? PIN_BAND : 0) + (s.z || 0)
-  const ordered = [...surfaces].sort((a, b) => effZ(a) - effZ(b))
+  // Match what the board actually shows: folder members (grouped, not peeked) and minimized windows
+  // aren't rendered (App.tsx render gate + SurfaceFrame), so don't draw them into the snapshot either.
+  const ordered = [...surfaces].filter((s) => !(s.groupId && !s.peek) && !s.minimized).sort((a, b) => effZ(a) - effZ(b))
   let drewAny = 0
   for (const s of ordered) {
     const x = (s.x - ORIGIN_X) * SCALE

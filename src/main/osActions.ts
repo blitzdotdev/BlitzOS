@@ -1,10 +1,11 @@
 import { BrowserWindow, ipcMain, webContents, app } from 'electron'
 import { randomUUID } from 'crypto'
-import { join } from 'path'
+import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
 import { ingestSignals, emitSurfaceAction, emitUserMessage, setContentShare, dropContentShare, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
+import { safeName } from './workspace.mjs'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -43,9 +44,18 @@ const webviewIds = new Map<string, number>()
 export function initOsActions(getWindow: () => BrowserWindow | null): void {
   getWin = getWindow
 
-  // The shared workspace host, rooted at ~/Blitz (user-browseable folders). SAME module as the server.
+  // The shared workspace host. Root honors BLITZ_WORKSPACES_ROOT / BLITZ_WORKSPACE (parity with the
+  // server backend), defaulting to ~/Blitz (user-browseable folders). SAME module as the server.
+  const root = process.env.BLITZ_WORKSPACES_ROOT
+    ? resolve(process.env.BLITZ_WORKSPACES_ROOT)
+    : process.env.BLITZ_WORKSPACE
+      ? dirname(resolve(process.env.BLITZ_WORKSPACE))
+      : join(app.getPath('home'), 'Blitz')
+  let initialName = process.env.BLITZ_WORKSPACE ? basename(resolve(process.env.BLITZ_WORKSPACE)) : 'Home'
+  if (!safeName(initialName)) initialName = 'Home'
   wsHost = createWorkspaceHost({
-    root: join(app.getPath('home'), 'Blitz'),
+    root,
+    initialName,
     getState: () => cached,
     setState: (s) => {
       cached = s as OsState
@@ -74,6 +84,9 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     return r.status === 200 ? { ok: true, active: r.body.active } : { ok: false, error: r.body.error }
   })
   ipcMain.handle('workspace:capture', (_e, name: string) => osCaptureThumb(name))
+  // The renderer pulls its hydrate once its onAction listener is mounted (race-free; absorbs the
+  // teammate's request-hydrate, replacing the old main-push on did-finish-load).
+  ipcMain.on('workspace:request-hydrate', () => osSendHydrate())
 
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) wsHost?.onStatePush(state)
@@ -99,6 +112,19 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   // The human typed a message to the agent in the in-canvas Chat.
   ipcMain.on('os:user-message', (_e, text: unknown) => {
     if (typeof text === 'string' && text.trim()) emitUserMessage(text)
+  })
+  // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
+  ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {
+    const wcid = webviewIds.get(surfaceId)
+    if (wcid == null) return null
+    const wc = webContents.fromId(wcid)
+    if (!wc || wc.isDestroyed()) return null
+    try {
+      const img = await wc.capturePage()
+      return img.toDataURL()
+    } catch {
+      return null
+    }
   })
 }
 
@@ -196,6 +222,19 @@ export function osGoToPrimary(): void {
 /** Agent → user: post a chat message into the user's in-canvas Chat panel. */
 export function osSay(text: string): void {
   send('chat', { text })
+}
+/**
+ * Group surfaces into a named iPhone-style folder. The agent passes the ids of related
+ * surfaces it opened (more than 2), a name, and where to place the folder (top-left x,y).
+ * Returns the folder id, or '' if fewer than 2 of the ids are real surfaces. The renderer
+ * does the final validation (skips folders / already-grouped surfaces).
+ */
+export function osGroup(ids: string[], name?: string, x?: number, y?: number): string {
+  const existing = (Array.isArray(ids) ? ids : []).filter((id) => cached.surfaces.some((s) => s.id === id))
+  if (existing.length < 2) return ''
+  const folderId = `folder-${randomUUID()}`
+  send('group', { ids: existing, folderId, ...(name ? { name } : {}), ...(x != null ? { x } : {}), ...(y != null ? { y } : {}) })
+  return folderId
 }
 export function osGetState(): OsState {
   return cached

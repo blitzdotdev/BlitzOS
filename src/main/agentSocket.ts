@@ -12,6 +12,7 @@ import {
   osReadWindow,
   osControlSurface,
   osSay,
+  osGroup,
   type SurfaceDescriptor
 } from './osActions'
 import type { ControlAction } from './cdp'
@@ -162,6 +163,34 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
           handler: () => {
             osGoToPrimary()
             return { ok: true }
+          }
+        },
+        {
+          path: '/group',
+          description:
+            'Pack related surfaces into ONE named iPhone-style folder (returns { id }). Pass the ids of MORE THAN 2 surfaces you opened that share a purpose, a folder name, and the top-left x,y to place it inside the user view. Use this instead of leaving 3+ related windows loose; then drop a note next to it saying what it is.',
+          input_schema: {
+            type: 'object',
+            required: ['ids', 'name'],
+            properties: {
+              ids: { type: 'array', items: { type: 'string' } },
+              name: { type: 'string' },
+              x: { type: 'number' },
+              y: { type: 'number' }
+            }
+          },
+          handler: ({ body }) => {
+            const a = parse(body)
+            const ids = Array.isArray(a.ids) ? (a.ids as unknown[]).map(String) : []
+            if (ids.length < 2) return { status: 400, body: { error: 'group needs at least 2 surface ids' } }
+            const id = osGroup(
+              ids,
+              a.name != null ? String(a.name) : undefined,
+              a.x != null ? Number(a.x) : undefined,
+              a.y != null ? Number(a.y) : undefined
+            )
+            if (!id) return { status: 400, body: { error: 'group failed: fewer than 2 of the ids are real surfaces' } }
+            return { id }
           }
         },
         {

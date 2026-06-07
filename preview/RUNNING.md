@@ -54,4 +54,4 @@ BACKEND_PORT=8801 bash preview/start-all.sh                        # if 8799 is 
 
 - Server mode renders `web` surfaces as a `<canvas>` streamed from server Chromium (bypasses `X-Frame-Options`). ~4–12 fps (paint-gated) — great for forms/reading/agent-watching.
 - The CF hostname mapping persists on your account, so **next time it's just `bash preview/start-all.sh`**.
-- This is the dev/preview path — **not hardened**. For a real VPS deploy (static-serve, Docker, auth on the WS, encryption): see `issues/open/server-mode-deployment.md`. Architecture: `agent-os-server-mode.md`.
+- This is the dev/preview path — **not hardened**. For a real VPS deploy (static-serve, Docker, auth on the WS, encryption): see `../issues/open/server-mode-deployment.md`. Architecture: `../plans/agent-os-server-mode.md`.

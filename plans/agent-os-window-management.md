@@ -2,7 +2,7 @@
 
 **Status:** Proposed (for review). Not started.
 **Date:** 2026-06-06
-**Parent:** `plans/agent-os-desktop-architecture.md` (this operationalizes the unbuilt "Arrange modes" backlog in its §6 and the `POST /canvas/arrange {tile}` stub in §3.2).
+**Parent:** `agent-os-desktop-architecture.md` (this operationalizes the unbuilt "Arrange modes" backlog in its §6 and the `POST /canvas/arrange {tile}` stub in §3.2).
 **Code touched (proposed):** `src/renderer/src/store.ts`, a new `src/renderer/src/layout/`, `src/renderer/src/types.ts`, `src/main/osActions.ts`, `src/main/agentSocket.ts`, `src/main/control-server.ts`, `src/main/blitzos-agents.md`.
 
 ---
