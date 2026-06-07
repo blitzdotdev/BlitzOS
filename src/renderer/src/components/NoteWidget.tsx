@@ -4,6 +4,7 @@ import { useDesktop } from '../store'
 /** A usable post-it: type in it, the text persists in the surface's props. */
 export function NoteWidget({ surface }: { surface: Surface }): JSX.Element {
   const update = useDesktop((s) => s.updateSurfaceProps)
+  const setEditingId = useDesktop((s) => s.setEditingId)
   const text = (surface.props?.text as string) ?? ''
   return (
     <textarea
@@ -12,6 +13,10 @@ export function NoteWidget({ surface }: { surface: Surface }): JSX.Element {
       placeholder="type a note…"
       spellCheck={false}
       onPointerDown={(e) => e.stopPropagation()}
+      onFocus={() => setEditingId(surface.id)}
+      onBlur={() => {
+        if (useDesktop.getState().editingId === surface.id) setEditingId(null)
+      }}
       onChange={(e) => update(surface.id, { text: e.target.value })}
     />
   )

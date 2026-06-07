@@ -114,6 +114,7 @@ interface DesktopState {
   dragTarget: string | null
   snapPreview: { x: number; y: number; w: number; h: number } | null
   openDirPath: string | null // a real subfolder being browsed in the DirOverlay (#44)
+  editingId: string | null // surface the user is actively editing — its live content survives a reconcile (#47)
   absorbing: string[]
   grabMode: boolean
 
@@ -132,6 +133,7 @@ interface DesktopState {
   setDragTarget: (id: string | null) => void
   setSnapPreview: (r: { x: number; y: number; w: number; h: number } | null) => void
   setOpenDirPath: (p: string | null) => void
+  setEditingId: (id: string | null) => void
   addToFolder: (folderId: string, ids: string[]) => void
   dropIntoFolder: (folderId: string, ids: string[]) => void
   setGrabMode: (on: boolean) => void
@@ -175,6 +177,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   dragTarget: null,
   snapPreview: null,
   openDirPath: null,
+  editingId: null,
   absorbing: [],
   grabMode: false,
 
@@ -251,6 +254,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   setDragTarget: (id) => set({ dragTarget: id }),
   setSnapPreview: (r) => set({ snapPreview: r }),
   setOpenDirPath: (p) => set({ openDirPath: p }),
+  setEditingId: (id) => set({ editingId: id }),
   setGrabMode: (on) => set({ grabMode: on }),
 
   // Add surfaces to an existing folder (drag-onto-folder). Skips folders; re-adding a
@@ -412,7 +416,15 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => {
       const isRuntime = (w: Surface): boolean => w.kind === 'native' && (w.component === 'chat' || w.component === 'activity')
       const keepRuntime = s.surfaces.filter(isRuntime)
-      const fileBacked = incoming.filter((w) => !isRuntime(w)).map((w) => ({ zoom: 1, props: {}, ...w, z: w.z ?? ++zCounter })) as Surface[]
+      const localById = new Map(s.surfaces.map((w) => [w.id, w]))
+      const fileBacked = incoming
+        .filter((w) => !isRuntime(w))
+        .map((w) => {
+          // Don't clobber the surface the user is actively editing (unsaved note text not yet on disk).
+          const live = localById.get(w.id)
+          if (live && w.id === s.editingId) return live
+          return { zoom: 1, props: {}, ...w, z: w.z ?? ++zCounter } as Surface
+        })
       const restored = [...fileBacked, ...keepRuntime]
       const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
       zCounter = Math.max(zCounter, maxZ + 1)
