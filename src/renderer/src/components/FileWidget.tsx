@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Surface } from '../types'
 
 // A real file in the workspace folder, shown as a canvas tile (#37): image preview for images,
@@ -16,7 +16,10 @@ function fileUrl(path: string): string | null {
   if (!path) return null
   const api = window.agentOS as { serverMode?: boolean } | undefined
   if (api?.serverMode) return `/api/os/file?path=${encodeURIComponent(path)}`
-  return `blitz-file://w/${encodeURIComponent(path)}` // Electron protocol (registered in main)
+  // Electron: the desktop build will serve these via a blitz-file:// protocol (v2 follow-up — see
+  // files-folders-on-canvas.md). Until it's registered the <img> fails and the tile falls back to the
+  // typed glyph via onError, so non-image tiles and the rest of #37 are unaffected.
+  return `blitz-file://w/${encodeURIComponent(path)}`
 }
 
 // A short, uppercase label per file type for the glyph (the design system avoids emoji as chrome).
@@ -33,7 +36,12 @@ export function FileWidget({ surface }: { surface: Surface }): JSX.Element {
   const [imgErr, setImgErr] = useState(false)
   const name = String(p.name || surface.title || 'file')
   const ext = String(p.ext || '')
-  const src = p.isImage && !imgErr ? fileUrl(String(p.path || '')) : null
+  const path = String(p.path || '')
+  const bytes = Number(p.bytes || 0)
+  useEffect(() => setImgErr(false), [path, bytes]) // a changed file (new byte count) should retry the preview
+  const baseUrl = p.isImage ? fileUrl(path) : null
+  // cache-buster keyed on size so an edited-in-place image (same name) refreshes instead of showing stale bytes
+  const src = baseUrl && !imgErr ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}v=${bytes}` : null
   return (
     <div className="file-tile">
       <div className="file-icon">

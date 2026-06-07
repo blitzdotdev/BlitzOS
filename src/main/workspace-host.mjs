@@ -82,9 +82,17 @@ export function createWorkspaceHost(a) {
         const v = st.view
         const r = reconcileWorkspace(activeWorkspace, v ? { cx: v.cx, cy: v.cy } : {})
         if (!r) return
-        // runtime-only panels (chat/activity) aren't files — preserve them across a reconcile.
-        const runtime = (st.surfaces || []).filter((s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
-        const merged = [...r.surfaces, ...runtime]
+        // Preserve LIVE state that disk doesn't represent, so a reconcile never destroys it:
+        //  - runtime chat/activity panels + iPhone-style folder groupings (never persisted as nodes)
+        //  - surfaces that exist in osState but aren't a workspace.json node yet (agent-created /
+        //    in-flight). `r.knownIds` ARE the persisted node ids: an osState id NOT in knownIds and
+        //    NOT in the reconciled set is genuinely un-persisted → keep it (a DELETED file's id IS a
+        //    known node → it correctly drops). Re-apply group memberships to the disk surfaces too.
+        const isRuntimeLike = (s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder')
+        const reconciledIds = new Set(r.surfaces.map((s) => s.id))
+        const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
+        const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))
+        const merged = [...r.surfaces.map((s) => { const g = groupOf.get(s.id); return g ? { ...s, groupId: g.groupId, peek: g.peek } : s }), ...keep]
         a.setState({ ...st, surfaces: merged, camera: r.camera, mode: r.mode })
         Promise.resolve(onSurfaces(merged)).catch(() => {})
         a.broadcast({ type: 'reconcile', surfaces: merged, camera: r.camera, mode: r.mode, workspace: active() })
@@ -169,11 +177,12 @@ export function createWorkspaceHost(a) {
         reconcileTimer = null
       }
       stopWatch()
-      const st = a.getState()
-      const runtime = (st.surfaces || []).filter((s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
-      activeWorkspace = newPath // load-bearing: AFTER flush
+      activeWorkspace = newPath // load-bearing: AFTER flush (flush already persisted OLD's chat to OLD)
       const next = readWorkspace(newPath) || blank()
-      const surfaces = [...next.surfaces, ...runtime]
+      // Per-workspace chat/activity: load the DESTINATION's OWN persisted panels — do NOT carry the
+      // previous workspace's live chat over (that would overwrite B's saved chat with A's on the next
+      // push, destroying B's history). flush() above already saved A's panels into A.
+      const surfaces = [...next.surfaces, ...readRuntimePanels(newPath)]
       a.setState({ surfaces, camera: next.camera, mode: next.mode, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()

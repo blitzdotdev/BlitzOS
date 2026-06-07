@@ -19,7 +19,7 @@ import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
 import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync } from 'node:fs'
 import { join, dirname, basename, resolve, sep } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
@@ -926,15 +926,27 @@ const server = createServer(async (req, res) => {
   // Serve a real workspace file as a canvas tile's content (#37) — JAILED to the active workspace
   // dir, never .blitzos (runtime/secret state), size-capped. Read-only GET.
   if (path === '/api/os/file' && req.method === 'GET') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
     try {
-      const root = resolve(wsHost.activePath())
-      const abs = resolve(root, url.searchParams.get('path') || '')
-      if (abs !== root && !abs.startsWith(root + sep)) return json(res, 403, { error: 'forbidden' })
-      if (/(^|[\\/])\.blitzos([\\/]|$)/.test(abs.slice(root.length))) return json(res, 403, { error: 'forbidden' })
-      const st = statSync(abs)
+      const root = realpathSync(resolve(wsHost.activePath()))
+      // realpath the TARGET too, so a symlink inside the workspace can't escape the jail (blocker).
+      const real = realpathSync(resolve(root, url.searchParams.get('path') || ''))
+      if (real !== root && !real.startsWith(root + sep)) return json(res, 403, { error: 'forbidden' })
+      if (/(^|[/\\])\.blitzos([/\\]|$)/i.test(real.slice(root.length))) return json(res, 403, { error: 'forbidden' })
+      const st = statSync(real)
       if (!st.isFile() || st.size > 25 * 1024 * 1024) return json(res, 404, { error: 'not a servable file' })
-      const buf = readFileSync(abs)
-      res.writeHead(200, { 'content-type': fileContentType(abs), 'content-length': buf.length, 'cache-control': 'no-cache' })
+      const ctype = fileContentType(real)
+      // raster images render inline; SVG + everything else is forced to download so it can never run
+      // as script on our origin (no stored-XSS via a .svg/.html dropped into the workspace).
+      const inlineOk = ctype.startsWith('image/') && ctype !== 'image/svg+xml'
+      const buf = readFileSync(real)
+      res.writeHead(200, {
+        'content-type': ctype,
+        'content-length': buf.length,
+        'cache-control': 'no-cache',
+        'x-content-type-options': 'nosniff',
+        'content-disposition': inlineOk ? 'inline' : `attachment; filename="${basename(real).replace(/["\\\r\n]/g, '')}"`
+      })
       return res.end(buf)
     } catch {
       return json(res, 404, { error: 'not found' })

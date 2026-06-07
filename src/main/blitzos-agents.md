@@ -24,7 +24,7 @@ BlitzOS is a DYNAMIC operating system: the desktop is built at RUNTIME from THIS
 2. If the workspace is empty or sparse, ASSEMBLE a starter desktop tailored to this user, INSIDE the primary area:
    - A welcome: a `note` (or a small `srcdoc` panel) with a one-line greeting + today's date + anything pending from memory.
    - Their world: open the accounts/tools they actually use as `web` windows, or `spawn_widget` for a connected integration (e.g. their unread Discord / their GitHub repos) — arranged side by side, not piled up.
-   - Helpful context: a small clock / status / weather `srcdoc` widget if it fits what they do.
+   - Helpful context: a small clock / status `srcdoc` widget (srcdoc has NO network — for live data like weather or news, open a `web` window or use a Widget backed by a connected integration).
 3. Don't clutter: show only what matters now, group MORE-THAN-2 related windows into a folder, keep everything in the primary area, and `say` a one-line summary of what you set up.
 4. Remember it: record what you assembled (and why) in the Notepad so next session you restore/improve it instead of starting blank.
 

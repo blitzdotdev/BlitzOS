@@ -245,7 +245,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     st.setDragTarget(folder ? folder.id : null)
     // Snap preview (BOTH modes, #42): dragging a single window near a primary-area edge shows where
     // it will dock on release (full / left|right half / quarter). Suppressed over a folder target.
-    st.setSnapPreview(d.items.length === 1 && !folder && !isFolder ? snapTargetFor(wx, wy, st.viewport) : null)
+    st.setSnapPreview(d.items.length === 1 && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport) : null)
   }
   function onBarUp(e: React.PointerEvent): void {
     try {
@@ -263,7 +263,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     st.setSnapPreview(null)
     if (d && target) st.dropIntoFolder(target, d.items.map((it) => it.id))
     // Apply the snap; clear `restore` so a previously-maximized window's green-zoom isn't stale.
-    else if (d && snap && d.items.length === 1) st.updateSurface(d.items[0].id, { ...snap, restore: undefined })
+    else if (d && snap && d.items.length === 1 && !isFileTile) st.updateSurface(d.items[0].id, { ...snap, restore: undefined })
   }
 
   // macOS-style resize from any side/corner. `dir` is a combination of n/s/e/w; a side handle
@@ -341,6 +341,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const stop = (e: React.PointerEvent): void => e.stopPropagation()
   const isNote = surface.kind === 'native' && surface.component === 'note'
   const isFolder = surface.kind === 'native' && surface.component === 'folder'
+  const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
   const paper = isNote ? (NOTE_PAPER[(surface.props?.color as string) || 'coral'] ?? NOTE_PAPER.coral) : undefined
 
   function body(): JSX.Element {
@@ -440,8 +441,10 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       >
         {/* macOS traffic lights: red=close, yellow=minimize, green=zoom. Colored only when active. */}
         <div className="traffic" onPointerDown={stop}>
-          <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />
-          <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />
+          {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
+              reconcile (the file still exists), so only offer zoom; delete the file to remove it. */}
+          {!isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
+          {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />}
           <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
         </div>
         <div className="window-bar-fill" />

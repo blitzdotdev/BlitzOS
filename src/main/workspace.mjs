@@ -295,22 +295,50 @@ export function writeWorkspace(dir, osState) {
 // Runtime panels (chat / agent-activity) aren't folder nodes — their content is machine-local
 // session state, persisted under .blitzos/state so it survives a backend RESTART (that subdir
 // isn't watched, so no self-write loop). Merged back into the canvas on boot (#38).
+// Keep the persisted transcript/feed well under MAX_META (readRuntimePanels rejects a file over
+// that): keep the MOST-RECENT items that fit a byte budget, dropping the oldest. Without this an
+// unbounded chat writes fine yet is silently discarded on the next boot.
+function slimByBudget(arr, budget) {
+  if (!Array.isArray(arr)) return []
+  const out = []
+  let bytes = 0
+  for (let i = arr.length - 1; i >= 0; i--) {
+    let len
+    try {
+      len = JSON.stringify(arr[i]).length
+    } catch {
+      continue
+    }
+    if (out.length && bytes + len > budget) break
+    out.unshift(arr[i])
+    bytes += len
+  }
+  return out
+}
 function writeRuntimePanels(dir, panels) {
   const stateDir = join(dir, '.blitzos', 'state')
   const file = join(stateDir, 'panels.json')
   try {
+    const created = !existsSync(stateDir)
     mkdirSync(stateDir, { recursive: true })
-    const slim = (panels || []).map((s) => ({
-      id: s.id,
-      component: s.component === 'activity' ? 'activity' : 'chat',
-      x: Math.round(s.x) || 0,
-      y: Math.round(s.y) || 0,
-      w: Math.round(s.w) || 360,
-      h: Math.round(s.h) || 460,
-      z: s.z || 0,
-      title: typeof s.title === 'string' ? s.title : s.component,
-      props: s.props && typeof s.props === 'object' ? s.props : {}
-    }))
+    if (created) markWrite(resolve(stateDir)) // suppress the one spurious reconcile the state-dir create can fire
+    const slim = (panels || []).map((s) => {
+      const isAct = s.component === 'activity'
+      const props = s.props && typeof s.props === 'object' ? s.props : {}
+      // Bound the transcript/feed on WRITE so the file is always producible + readable (≤ MAX_META).
+      const sp = isAct ? { ...props, events: slimByBudget(props.events, 150_000) } : { ...props, messages: slimByBudget(props.messages, 600_000) }
+      return {
+        id: s.id,
+        component: isAct ? 'activity' : 'chat',
+        x: Math.round(s.x) || 0,
+        y: Math.round(s.y) || 0,
+        w: Math.round(s.w) || (isAct ? 320 : 360),
+        h: Math.round(s.h) || (isAct ? 200 : 460),
+        z: s.z || 0,
+        title: typeof s.title === 'string' ? s.title : s.component,
+        props: sp
+      }
+    })
     atomicWrite(file, JSON.stringify({ version: VERSION, panels: slim }, null, 2) + '\n')
   } catch {
     /* best-effort: runtime panels are a convenience, never block a workspace write */
@@ -336,8 +364,8 @@ export function readRuntimePanels(dir) {
         component: s.component === 'activity' ? 'activity' : 'chat',
         x: Number(s.x) || 0,
         y: Number(s.y) || 0,
-        w: Number(s.w) || 360,
-        h: Number(s.h) || 460,
+        w: Number(s.w) || (s.component === 'activity' ? 320 : 360),
+        h: Number(s.h) || (s.component === 'activity' ? 200 : 460),
         z: Number(s.z) || 0,
         title: typeof s.title === 'string' ? s.title : s.component,
         props: s.props && typeof s.props === 'object' ? s.props : {}
@@ -382,7 +410,7 @@ function nodeToSurface(dir, n, z) {
     const name = basename(n.path)
     const view = n.view && typeof n.view === 'object' ? n.view : {}
     const title = typeof view.title === 'string' && view.title ? view.title : name
-    const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || (n.kind === 'dir' ? 200 : 200), h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z }
+    const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || 200, h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z }
     if (n.kind === 'dir') {
       let entries = 0
       try {
@@ -536,6 +564,7 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   if (!ws || !Array.isArray(ws.nodes)) return null
   const nodes = ws.nodes.filter((n) => n && typeof n.id === 'string' && typeof n.path === 'string')
   const known = new Set(nodes.map((n) => n.path))
+  const knownIds = new Set(nodes.map((n) => n.id)) // persisted node ids — lets a caller tell an un-persisted surface from a deleted one
 
   let entries = []
   try {
@@ -606,7 +635,7 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stack: surfaces.map((s) => s.id), nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
-  return { surfaces, camera, mode, changed }
+  return { surfaces, camera, mode, changed, knownIds }
 }
 
 // ===========================================================================================

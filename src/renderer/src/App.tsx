@@ -14,7 +14,8 @@ import { FolderOverlay } from './components/FolderOverlay'
 // The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
 // hydrate so a fresh workspace gets one (it then persists as a file); idempotent on a restored board.
 function ensureNotepad(): void {
-  if (window.agentOS?.serverMode) return // the default Notepad is Electron's; server mode is unchanged
+  // Both transports get a Notepad (it persists as a file in the workspace folder = the agent's
+  // memory; the manual + the dynamic-boot instruction both rely on it existing, incl. server mode).
   const st = useDesktop.getState()
   if (st.surfaces.some((s) => s.kind === 'native' && s.component === 'note' && s.title === 'Notepad')) return
   st.createSurface({
