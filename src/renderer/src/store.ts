@@ -46,7 +46,7 @@ export function viewTransform(mode: 'desktop' | 'canvas', vp: { w: number; h: nu
   const r = primaryRect(vp)
   const cx = SIDEBAR + r.w / 2 // screen point of the area center (world origin)
   const cy = TITLEBAR + r.h / 2
-  return { scale: mode === 'desktop' ? 1 : 0.62, x: cx, y: cy }
+  return { scale: mode === 'desktop' ? 1 : 0.31, x: cx, y: cy } // control = a wide bird's-eye (zoomed out)
 }
 /** While dragging a window in normal mode, if the cursor (world coords) is near a primary-area edge,
  *  return the snap-target rect: full (top edge), left/right half (side edges), or a quarter (corner).
@@ -60,7 +60,7 @@ export function snapTargetFor(
   const nx = (wx - r.x) / r.w
   const ny = (wy - r.y) / r.h
   if (nx < -0.08 || nx > 1.08 || ny < -0.08 || ny > 1.08) return null // cursor well outside the area
-  const E = 0.06
+  const E = 0.09 // edge/quadrant snap-intent zone width (≈9% of the area on each side)
   const nearL = nx < E
   const nearR = nx > 1 - E
   const nearT = ny < E
