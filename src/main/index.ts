@@ -25,11 +25,18 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow: BrowserWindow | null = null
 
+// Fullscreen "video-game" mode: NATIVE macOS fullscreen (its own Space), opt-in via `BLITZ_FULLSCREEN=1`
+// (default windowed so a relaunch never traps you). Stays fully escapable — Ctrl+← / Ctrl+→ swap to your
+// real macOS desktops, plus four-finger swipe, ⌘Tab and ⌃⌘F all work. We deliberately do NOT use kiosk:
+// suppressing ⌘Tab is the same presentation lock that kills desktop-switching, which is what trapped you.
+const FULLSCREEN = process.env.BLITZ_FULLSCREEN === '1'
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900, // TODO make sure its close to windowless fullscreen
     show: false,
+    fullscreen: FULLSCREEN,
     backgroundColor: '#e9e9e7',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
