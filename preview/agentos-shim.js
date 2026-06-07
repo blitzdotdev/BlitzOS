@@ -198,6 +198,13 @@
         body: JSON.stringify({ id: id })
       }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
     },
+    // A sandboxed widget calls an OS tool via blitz.tool (gated by the `tools` capability; CLOSED allowlist).
+    widgetTool: function (surfaceId, name, args) {
+      return fetch(API + '/os/widget-tool', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ surfaceId: surfaceId, name: name, args: args })
+      }).then(function (r) { return r.json() }).catch(function () { return { ok: false, error: 'widget tool unavailable' } })
+    },
     // A sandboxed srcdoc widget fired an action back to the agent (server parity with Electron IPC).
     surfaceAction: function (payload) {
       fetch(API + '/os/surface-action', {

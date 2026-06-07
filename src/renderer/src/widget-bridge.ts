@@ -63,6 +63,8 @@ export const BRIDGE_SHIM = `<script>
   window.blitz = {
     data: function (provider, resource) { return request('data', { provider: provider, resource: resource }); },
     tool: function (tool, args) { return request('tool', { tool: tool, args: args || {} }); },
+    sendMessage: function (text) { return request('msg', { text: String(text == null ? '' : text) }); },
+    listDir: function (path) { return request('listdir', { path: String(path == null ? '' : path) }); },
     props: function () { return props; },
     onProps: function (cb) { propCbs.push(cb); if (ready) try { cb(props); } catch (x) {} },
     ready: function (cb) { if (ready) { try { cb(props); } catch (x) {} } else readyCbs.push(cb); }
