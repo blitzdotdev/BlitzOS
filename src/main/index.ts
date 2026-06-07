@@ -2,8 +2,8 @@ import { app, BrowserWindow, protocol, ipcMain } from 'electron'
 import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
-import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent } from './provider-bridge'
-import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder } from './osActions'
+import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
+import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osLoadConsent, osPersistConsent } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -161,6 +161,10 @@ app.whenReady().then(() => {
     grantProviderConsent(String(provider), allow !== false)
     return { ok: true }
   })
+  // #53: restore the active workspace's sensitive-read provider grants + persist future ones (the host
+  // exists now). The widget-grant slice is restored inside registerWidgets() above.
+  loadProviderConsent(osLoadConsent().providers)
+  setProviderConsentPersist((providers) => osPersistConsent({ providers }))
   // #52: group surfaces into a REAL folder (mkdir + mv) — the renderer's Cmd+G in the desktop app.
   ipcMain.handle('os:group', (_e, name: string, ids: string[]) => osGroupIntoFolder(String(name), Array.isArray(ids) ? ids : []))
 

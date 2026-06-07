@@ -34,11 +34,22 @@ function audit(entry: unknown): void {
   }
 }
 
+// #53: persist the sensitive-read provider grants (the `providers` slice). index.ts wires this to the
+// host (kept a callback to avoid an import cycle); load restores them on boot.
+let persistConsent: (providers: string[]) => void = () => {}
+export function setProviderConsentPersist(fn: (providers: string[]) => void): void {
+  persistConsent = fn
+}
+export function loadProviderConsent(providers: string[]): void {
+  for (const p of providers) if (typeof p === 'string') consent.add(p)
+}
+
 /** The human approved a sensitive-read provider (renderer → IPC). allow:false revokes. */
 export function grantProviderConsent(provider: string, allow: boolean): void {
   if (!provider) return
   if (allow === false) consent.delete(provider)
   else consent.add(provider)
+  persistConsent([...consent]) // #53: survives restart
 }
 
 /** The human approved a pending WRITE (renderer → IPC) — mints + hands back the request-bound token. */

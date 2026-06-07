@@ -248,6 +248,14 @@ export function osGroupIntoFolder(name: string, ids: string[], x?: number, y?: n
   const r = wsHost.group(String(name || 'Folder'), Array.isArray(ids) ? ids.map(String) : [], Number(x) || 0, Number(y) || 0)
   return 'ok' in r ? r : { ok: false, error: r.error }
 }
+/** #53: per-workspace consent persistence for the Electron transports (widget grants + sensitive-read
+ *  providers), via the shared host. Load on boot, persist (merge) on each grant. */
+export function osLoadConsent(): { surfaces: string[]; providers: string[] } {
+  return wsHost ? wsHost.consent() : { surfaces: [], providers: [] }
+}
+export function osPersistConsent(c: { surfaces?: string[]; providers?: string[] }): void {
+  wsHost?.persistConsent(c)
+}
 export function osGetState(): OsState {
   return cached
 }
