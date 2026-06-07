@@ -1131,11 +1131,12 @@ const server = createServer(async (req, res) => {
   // style). Stored at .blitzos/state/thumb.jpg (gitignored, agent-read-denied), overwritten each time.
   if (path === '/api/os/workspace/thumb' && req.method === 'POST') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
-    let tbody = ''
-    req.on('data', (c) => { tbody += c; if (tbody.length > 4_000_000) req.destroy() }) // ~4MB data-URL cap
+    const tchunks = []
+    let tlen = 0
+    req.on('data', (c) => { tlen += c.length; if (tlen > 4_000_000) return req.destroy(); tchunks.push(c) }) // 4MB BYTE cap (not UTF-16 units)
     req.on('end', () => {
       try {
-        const b = toolBody(tbody)
+        const b = toolBody(Buffer.concat(tchunks).toString('utf8'))
         const dir = resolveWorkspace(WORKSPACES_ROOT, b.workspace, { mustExist: true })
         if (!dir) return json(res, 404, { error: 'no such workspace' })
         const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(b.dataUrl || ''))
@@ -1153,6 +1154,9 @@ const server = createServer(async (req, res) => {
     return
   }
   // GET /api/os/workspace/thumb?name=X — serve the cached primary-area thumbnail (404 if none yet).
+  // NOTE: a thumbnail is RENDERED PIXELS of the board (can contain third-party page content), served
+  // under the same posture as the other /api/os routes — sameSiteOnly + the tunnel's CF Access gate,
+  // no per-route bearer. Tighten to a bearer before any GA / public (non-CF-Access) deploy.
   if (path === '/api/os/workspace/thumb' && req.method === 'GET') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
     const dir = resolveWorkspace(WORKSPACES_ROOT, url.searchParams.get('name'), { mustExist: true })

@@ -15,7 +15,9 @@ interface WorkspaceEntry {
 interface Props {
   onClose: () => void
   // App captures the CURRENT board's snapshot, then switches — so the board you leave gets a fresh tile.
-  onSwitch: (name: string) => void
+  // Resolves {ok:true} on success (the overview is then unmounted by the broadcast), or {ok:false,error}
+  // on failure (409 lock / 404 / 500) so we clear the busy state + show the error instead of hanging.
+  onSwitch: (name: string) => Promise<{ ok: boolean; error?: string }>
 }
 
 const IDEAL = 260
@@ -23,6 +25,7 @@ const GAP = 20
 const MIN_COLS = 2
 const MAX_COLS = 5
 const MAX_CONTENT = 1600
+const TILE = 360 // max tile width — keeps a lone workspace a normal card, not a full-screen tile
 
 function relTime(ms: number): string {
   if (!ms) return ''
@@ -41,6 +44,7 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
   const [newName, setNewName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null) // the name being switched to, or 'create'
+  const [failed, setFailed] = useState<Set<string>>(new Set()) // workspaces whose thumb img failed to load
   const gridRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -71,10 +75,14 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
     const scroller = scrollRef.current
     if (!grid || !scroller) return
     const apply = (W: number): void => {
-      const cw = Math.min(W, MAX_CONTENT) - 2 * GAP
+      const cw = Math.min(W, MAX_CONTENT) // box.inlineSize is already content-box (padding excluded)
       let cols = Math.max(MIN_COLS, Math.min(MAX_COLS, Math.round((cw + GAP) / (IDEAL + GAP))))
       cols = Math.min(cols, Math.max(1, list?.length ?? 1))
       if (grid.style.getPropertyValue('--cols') !== String(cols)) grid.style.setProperty('--cols', String(cols))
+      // cap the grid's own width to the columns it actually uses, so 1–2 workspaces show normal cards
+      // (centered) instead of one tile ballooning to fill the screen.
+      const gw = `${cols * TILE + (cols - 1) * GAP}px`
+      if (grid.style.getPropertyValue('--gridw') !== gw) grid.style.setProperty('--gridw', gw)
     }
     const ro = new ResizeObserver(([entry]) => {
       const box = entry.contentBoxSize?.[0]
@@ -82,7 +90,7 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
     })
     ro.observe(scroller)
     return () => ro.disconnect()
-  }, [list])
+  }, [list?.length])
 
   async function create(): Promise<void> {
     const name = newName.trim()
@@ -97,17 +105,28 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
     }
     setNewName('')
     setBusy(r.name || name)
-    onSwitch(r.name || name) // create-then-switch; App closes the overview on the switch broadcast
+    const sw = await onSwitch(r.name || name) // create-then-switch
+    if (!sw.ok) {
+      setError(sw.error || 'created it, but could not open it')
+      setBusy(null)
+    }
   }
 
-  function open(name: string): void {
+  async function open(name: string): Promise<void> {
     if (busy) return
     if (name === active) {
       onClose()
       return
     }
+    setError(null)
     setBusy(name)
-    onSwitch(name)
+    const r = await onSwitch(name)
+    // a successful switch unmounts this overview (via the broadcast) before we resume; only a failure
+    // returns here — clear busy + surface it so the UI never hangs on "opening…".
+    if (!r.ok) {
+      setError(r.error || 'could not open workspace')
+      setBusy(null)
+    }
   }
 
   const thumbUrl = window.agentOS?.workspaces?.thumbUrl
@@ -144,11 +163,12 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
               const isActive = w.name === active
               const isBusy = busy === w.name
               const src = w.thumbTs && thumbUrl ? thumbUrl(w.name, w.thumbTs) : null
+              const showImg = !!src && !failed.has(w.name)
               return (
-                <button key={w.name} className={`ovr-tile${isActive ? ' on' : ''}`} disabled={!!busy} onClick={() => open(w.name)} title={isActive ? `${w.name} (current)` : `Open ${w.name}`}>
+                <button key={w.name} className={`ovr-tile${isActive ? ' on' : ''}`} disabled={!!busy} onClick={() => void open(w.name)} title={isActive ? `${w.name} (current)` : `Open ${w.name}`}>
                   <div className="ovr-thumb">
-                    {src ? (
-                      <img src={src} alt="" loading="lazy" onError={(e) => (e.currentTarget.style.visibility = 'hidden')} />
+                    {showImg ? (
+                      <img src={src as string} alt="" loading="lazy" onError={() => setFailed((f) => new Set(f).add(w.name))} />
                     ) : (
                       <div className="ovr-thumb-empty">no preview yet</div>
                     )}

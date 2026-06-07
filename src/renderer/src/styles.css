@@ -470,7 +470,7 @@ body,
 .ovr {
   position: fixed;
   inset: 0;
-  z-index: 3000;
+  z-index: 6000; /* above the 32px app titlebar (z 5000) — a true full-screen overview, like Mission Control */
   background: rgba(8, 10, 14, 0.86);
   backdrop-filter: blur(10px);
 }
@@ -513,10 +513,12 @@ body,
 .ovr-grid {
   display: grid;
   gap: 20px;
-  /* JS sets --cols (exact integer); this auto-fill rule is the no-JS fallback, capped at 5. */
+  margin-inline: auto; /* center the (width-capped) grid so a few tiles don't stretch full-width */
+  /* JS sets --cols + --gridw (exact); this auto-fill rule is the no-JS fallback. */
   grid-template-columns: repeat(auto-fill, minmax(max(min(220px, 100%), calc((100% - 4 * 20px) / 5)), 1fr));
 }
 .ovr-grid[style*='--cols'] {
+  max-width: var(--gridw); /* only as wide as the columns in use → a lone tile stays card-sized */
   grid-template-columns: repeat(var(--cols), 1fr);
 }
 .ovr-tile {

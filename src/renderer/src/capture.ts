@@ -1,5 +1,6 @@
 import { useDesktop } from './store'
 import { PRIMARY_W, PRIMARY_H } from './types'
+import type { Surface } from './types'
 
 // Capture a "screenshot" of the PRIMARY AREA — the fixed 1440x900 board region centered on the
 // world origin — into a JPEG data URL. This is the last-seen snapshot shown in the Mission Control
@@ -53,14 +54,20 @@ export function capturePrimaryThumb(): string | null {
   ctx.fillStyle = '#0e1116'
   ctx.fillRect(0, 0, THUMB_W, THUMB_H)
 
-  // back-to-front by z so the stacking matches the board
-  const ordered = [...surfaces].sort((a, b) => (a.z || 0) - (b.z || 0))
+  // back-to-front by EFFECTIVE z so the stacking matches the board: chat/activity panels are pinned
+  // above everything (SurfaceFrame gives them a +2_000_000 z-band), so they must draw last here too.
+  const PIN_BAND = 2_000_000
+  const effZ = (s: Surface): number =>
+    (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity') ? PIN_BAND : 0) + (s.z || 0)
+  const ordered = [...surfaces].sort((a, b) => effZ(a) - effZ(b))
+  let drewAny = 0
   for (const s of ordered) {
     const x = (s.x - ORIGIN_X) * SCALE
     const y = (s.y - ORIGIN_Y) * SCALE
     const w = s.w * SCALE
     const h = s.h * SCALE
     if (x + w < 0 || y + h < 0 || x > THUMB_W || y > THUMB_H) continue // outside the primary rect
+    drewAny++
 
     let drew = false
     if (s.kind === 'web') {
@@ -94,6 +101,7 @@ export function capturePrimaryThumb(): string | null {
     }
   }
 
+  if (!drewAny) return null // every surface was off the primary rect — don't clobber a good thumb with a blank one
   try {
     return canvas.toDataURL('image/jpeg', 0.7)
   } catch {

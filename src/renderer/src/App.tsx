@@ -393,10 +393,12 @@ export default function App(): JSX.Element {
     await captureCurrent() // refresh the active board's tile first
     setShowOverview(true)
   }
-  async function switchWorkspace(name: string): Promise<void> {
+  async function switchWorkspace(name: string): Promise<{ ok: boolean; error?: string }> {
     await captureCurrent() // snapshot the board we're leaving BEFORE its targets are torn down
-    await window.agentOS?.workspaces?.switch(name)
-    // backend broadcasts {type:'switch'} → onAction swaps the canvas + closes the overview
+    const r = await window.agentOS?.workspaces?.switch(name)
+    // success → the {type:'switch'} broadcast swaps the canvas + closes the overview; a 409 (lock) /
+    // 404 / 500 resolves {error} (getJSON never throws) → signal it so the overview clears "opening…".
+    return r?.ok ? { ok: true } : { ok: false, error: (r as { error?: string })?.error || 'could not switch' }
   }
 
   function openChat(): void {
