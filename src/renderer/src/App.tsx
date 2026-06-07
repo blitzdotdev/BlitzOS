@@ -26,6 +26,10 @@ export default function App(): JSX.Element {
   const pan = useRef<{ x: number; y: number } | null>(null)
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  // Phase 2: true once the backend has sent (or declined) a hydrate. The state-push is
+  // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
+  // restored canvas before hydration arrives.
+  const hydrated = useRef(false)
 
   // The browser/server preview is an infinite canvas (pan/zoom), not the fixed
   // desktop the Electron app defaults to.
@@ -184,7 +188,17 @@ export default function App(): JSX.Element {
   useEffect(() => {
     return window.agentOS?.onAction((a) => {
       const st = useDesktop.getState()
-      if (a.type === 'create') {
+      if (a.type === 'hydrate') {
+        // FIRST hydrate wins: a live renderer is the source of truth mid-session, so an SSE
+        // RECONNECT re-sending hydrate must not wholesale-replace (and wipe undo/camera/canvas).
+        if (hydrated.current) return
+        // Restore a persisted workspace from disk (Phase 2). Replaces the canvas wholesale.
+        const surfs = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
+        const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
+        const md = a.mode === 'desktop' ? 'desktop' : 'canvas'
+        st.hydrate(surfs, cam, md)
+        hydrated.current = true
+      } else if (a.type === 'create') {
         const surf = a.surface as CreateSurfaceInput
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
         if (surf && (surf.kind === 'web' || surf.kind === 'app')) surf.shared = true
@@ -201,7 +215,7 @@ export default function App(): JSX.Element {
         const chat = st.surfaces.find((s) => s.kind === 'native' && s.component === 'chat')
         if (chat) {
           const msgs = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
-          st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }] })
+          st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }].slice(-200) })
         } else {
           st.createSurface(chatSurfaceInput([{ role: 'agent', text }]))
         }
@@ -270,6 +284,7 @@ export default function App(): JSX.Element {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null
     const push = (): void => {
+      if (!hydrated.current) return // don't clobber a restoring canvas with our empty store
       const st = useDesktop.getState()
       const { scale, x: tx, y: ty } = st.transform
       const vw = st.viewport.w
@@ -282,8 +297,11 @@ export default function App(): JSX.Element {
         w: s.w,
         h: s.h,
         z: s.z,
+        zoom: s.zoom,
         title: s.title,
         url: s.url,
+        html: s.html,
+        props: s.props,
         component: s.component,
         // Chat + Agent-activity panels are pinned always-on-top — the agent must not cover them
         pinned: s.kind === 'native' && (s.component === 'chat' || s.component === 'activity')
@@ -298,9 +316,24 @@ export default function App(): JSX.Element {
         cy: Math.round((vh / 2 - ty) / scale),
         scale: Math.round(scale * 100) / 100
       }
-      window.agentOS?.sendState({ surfaces, viewport: { w: vw, h: vh }, view, mode: st.mode })
+      // camera = the WORLD point at screen center + scale (viewport-independent, so it restores
+      // correctly on a different screen size — view.cx/cy are exactly that world point).
+      window.agentOS?.sendState({ surfaces, viewport: { w: vw, h: vh }, view, mode: st.mode, camera: { x: view.cx, y: view.cy, scale } })
     }
     push()
+    // SERVER mode always delivers a hydrate on SSE connect, so we wait for it (no fallback) —
+    // a fallback there could fire before a slow hydrate, which the first-hydrate-wins guard
+    // would then ignore, never restoring. Electron has no server hydrate, so it gets a grace
+    // timer to start pushing (and only if it actually has surfaces, to never push an empty store).
+    const isServer = !!window.agentOS?.serverMode
+    const hydrateFallback = isServer
+      ? null
+      : setTimeout(() => {
+          if (!hydrated.current) {
+            hydrated.current = true
+            if (useDesktop.getState().surfaces.length) push()
+          }
+        }, 1500)
     let lastS = useDesktop.getState().surfaces
     let lastT = useDesktop.getState().transform
     let lastVp = useDesktop.getState().viewport
@@ -324,6 +357,7 @@ export default function App(): JSX.Element {
       }
     })
     return () => {
+      if (hydrateFallback) clearTimeout(hydrateFallback)
       if (timer) clearTimeout(timer)
       unsub()
     }

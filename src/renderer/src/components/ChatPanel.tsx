@@ -28,7 +28,7 @@ export function ChatPanel({ surface }: { surface: Surface }): JSX.Element {
     const text = input.value.trim()
     if (!text) return
     input.value = ''
-    update(surface.id, { messages: [...msgs, { role: 'user', text }] })
+    update(surface.id, { messages: [...msgs, { role: 'user', text }].slice(-200) })
     window.agentOS?.sendMessage?.(text)
   }
 

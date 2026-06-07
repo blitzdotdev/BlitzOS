@@ -92,6 +92,8 @@ interface DesktopState {
   commitPos: (id: string, prevX: number, prevY: number) => void
 
   createSurface: (input: CreateSurfaceInput) => string
+  // Phase 2: adopt a persisted workspace (restore surfaces + camera + mode from disk).
+  hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas') => void
   moveSurface: (id: string, x: number, y: number) => void
   resizeSurface: (id: string, w: number, h: number) => void
   closeSurface: (id: string) => void
@@ -300,7 +302,10 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   createSurface: (input) => {
     get().snapshotLayout()
-    const id = input.id ?? `srf-${zCounter}`
+    // Stable, unique id (Phase 0 of the workspaces design): survives serialization +
+    // restart, so layout/consent can key off it. zCounter is now ONLY the session
+    // z-order allocator, never identity. (UUIDv4 here; ULID is a deferred sortable swap.)
+    const id = input.id ?? crypto.randomUUID()
     const size = defaultSize(input.kind)
     const w = input.w ?? size.w
     const h = input.h ?? size.h
@@ -332,6 +337,30 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => ({ surfaces: [...s.surfaces, surface] }))
     return id
   },
+
+  hydrate: (surfaces, camera, mode) =>
+    set((s) => {
+      // Normalize incoming descriptors to full Surface objects (defaults for anything the
+      // persisted node didn't carry), and lift the z-allocator above the restored max so
+      // surfaces created after a restore land on top.
+      const restored: Surface[] = surfaces.map((w) => ({
+        zoom: 1,
+        props: {},
+        ...w,
+        z: w.z ?? ++zCounter
+      })) as Surface[]
+      const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
+      zCounter = Math.max(zCounter, maxZ + 1)
+      // camera is the WORLD point at screen center + scale -> compute the transform that puts
+      // that world point at the current viewport's center (viewport-independent restore).
+      const sc = clamp(Number(camera.scale) || 1, 0.2, 3) // never a 0/Infinity/NaN scale (would wedge the canvas)
+      return {
+        surfaces: restored,
+        transform: { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc },
+        mode,
+        layoutHistory: []
+      }
+    }),
 
   moveSurface: (id, x, y) => {
     get().snapshotLayout()

@@ -19,7 +19,7 @@ import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
 import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, watch } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
@@ -46,6 +46,7 @@ import {
   DRAIN
 } from '../src/main/perception-core.mjs'
 import { startAgentRunner } from '../src/main/agent-runner.mjs'
+import { writeWorkspace, readWorkspace, reconcileWorkspace, wasSelfWrite } from '../src/main/workspace.mjs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -55,6 +56,83 @@ const PORT = Number(process.env.BACKEND_PORT || 8787)
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${PORT}`).replace(/\/$/, '')
 const REDIRECT_URI = `${PUBLIC_BASE_URL}/api/oauth/callback`
 const UA = 'agent-os-preview/0.1'
+
+// Workspaces Phase 1 (write-only): the active workspace folder. Server-mode default is a
+// gitignored sandbox dir; override with BLITZ_WORKSPACE. As the canvas changes, we project
+// it to <dir>/.blitzos/workspace.json + content files (debounced, additive, never deletes).
+const WORKSPACE_DIR = process.env.BLITZ_WORKSPACE || join(ROOT, 'preview', '.workspace', 'Home')
+let wsWriteTimer = null
+// Synchronous write (clears any pending timer). Used by the debounce + the shutdown flush.
+function flushWorkspace() {
+  if (wsWriteTimer) {
+    clearTimeout(wsWriteTimer)
+    wsWriteTimer = null
+  }
+  try {
+    writeWorkspace(WORKSPACE_DIR, osState)
+  } catch (e) {
+    console.error('[workspace] write failed:', e?.message || e)
+  }
+}
+function scheduleWorkspaceWrite() {
+  // Trailing debounce: fire once 500ms after activity STOPS, so a burst persists only the
+  // final state (not mid-burst snapshots). gracefulExit flushes any pending write on quit.
+  if (wsWriteTimer) clearTimeout(wsWriteTimer)
+  wsWriteTimer = setTimeout(flushWorkspace, 500)
+}
+
+// Phase 3: watch the workspace folder as a DOORBELL — an EXTERNAL file edit (the agent's own
+// file tools, Finder, git, VS Code) triggers a 250ms-coalesced idempotent reconcile. BlitzOS's
+// own writes are skipped via self-write suppression, so this fires only on outside changes. The
+// reconcile reloads content, auto-places new files, heals renames — then re-hydrates renderers.
+let wsReconcileTimer = null
+function scheduleReconcile() {
+  if (wsReconcileTimer) return
+  wsReconcileTimer = setTimeout(() => {
+    wsReconcileTimer = null
+    try {
+      const v = osState.view
+      const r = reconcileWorkspace(WORKSPACE_DIR, v ? { cx: v.cx, cy: v.cy } : {})
+      if (!r) return
+      // preserve runtime-only panels (chat/activity) — they're not files, so reconcile (which
+      // reads from disk) doesn't know about them; without this an external edit would wipe them.
+      const runtime = (osState.surfaces || []).filter((s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+      const merged = [...r.surfaces, ...runtime]
+      osState = { ...osState, surfaces: merged, camera: r.camera, mode: r.mode }
+      if (SERVER_MODE) {
+        try {
+          reconcileSurfaces(merged)
+        } catch {
+          /* best-effort */
+        }
+      }
+      broadcast({ type: 'hydrate', surfaces: merged, camera: r.camera, mode: r.mode })
+    } catch (e) {
+      console.error('[workspace] reconcile failed:', e?.message || e)
+    }
+  }, 250)
+}
+
+function startWorkspaceWatch() {
+  try {
+    mkdirSync(join(WORKSPACE_DIR, '.blitzos'), { recursive: true })
+  } catch {
+    /* ignore */
+  }
+  const onEvent = (sub) => (_evt, filename) => {
+    if (!filename) return scheduleReconcile() // some platforms omit the name — reconcile anyway
+    if (/(^\.tmp)|(\.tmp(-[0-9a-f]+)?$)/.test(filename)) return // our atomic temp files
+    if (wasSelfWrite(join(WORKSPACE_DIR, sub, filename))) return // BlitzOS's own write — ignore
+    scheduleReconcile()
+  }
+  try {
+    watch(WORKSPACE_DIR, onEvent('')) // root content files
+    watch(join(WORKSPACE_DIR, '.blitzos'), onEvent('.blitzos')) // hand edits of workspace.json
+    console.log(`[workspace] watching ${WORKSPACE_DIR} for external edits`)
+  } catch (e) {
+    console.error('[workspace] watch failed:', e?.message || e)
+  }
+}
 
 // ---------- provider registry (ported from src/main/integrations.ts) ----------
 
@@ -206,6 +284,17 @@ const callbackPage = (title, sub) =>
 // renderer over Server-Sent Events instead of Electron IPC. In-window control
 // (CDP) is NOT available here — that needs the real Electron app + a <webview>.
 let osState = { surfaces: [] }
+// Phase 2: hydrate the canvas from the persisted workspace on boot, so a restart restores
+// it. The renderer adopts this via a `hydrate` event on SSE connect (below).
+try {
+  const _h = readWorkspace(WORKSPACE_DIR)
+  if (_h && _h.surfaces.length) {
+    osState = { surfaces: _h.surfaces, camera: _h.camera, mode: _h.mode }
+    console.log(`[workspace] hydrated ${_h.surfaces.length} surface(s) from ${WORKSPACE_DIR}`)
+  }
+} catch (e) {
+  console.error('[workspace] hydrate failed:', e?.message || e)
+}
 let agentUrl = null
 const sseClients = new Set()
 // Widget data consent: `${surfaceId}:${provider}` the human approved (via the
@@ -248,6 +337,13 @@ async function initServerMode() {
     // mode produces the moment stream over /events. The connected agent is the brain;
     // BlitzOS ships NO in-process decision logic.
     startServerPerception()
+    // Phase 2: spin up server targets for any web surfaces restored from the workspace, so a
+    // hydrated canvas is live even before a renderer connects + pushes.
+    try {
+      reconcileSurfaces(osState.surfaces)
+    } catch {
+      /* best-effort */
+    }
   } catch (e) {
     console.error('[agent-os backend] SERVER MODE failed to start headless browser:', e?.message || e)
   }
@@ -398,7 +494,9 @@ async function startOsAgentSocket() {
             if (!a.kind) return { status: 400, body: { error: 'kind required' } }
             // srcdoc ids are server-minted: a consent grant is keyed by surface id, so
             // an untrusted caller must not be able to choose one and inherit a grant.
-            const id = a.kind === 'srcdoc' ? randomUUID() : a.id || randomUUID()
+            // Always OS-mint the id (the agent gets it back in the response). Honoring an
+            // agent-supplied id let two surfaces collide on one content-file path -> clobber.
+            const id = randomUUID()
             // The agent opened this surface itself (it chose the url), so reading it back
             // leaks nothing the agent didn't already pick — auto-share web/app so the agent
             // can read/control what it opened. (Surfaces the USER opens stay private until
@@ -454,7 +552,29 @@ async function startOsAgentSocket() {
           }
         },
         { path: '/go_to_primary', description: 'Recenter the view on the primary workspace.', handler: () => { broadcast({ type: 'goToPrimary' }); return { ok: true } } },
-        { path: '/list_state', description: 'List the surfaces currently open on the canvas.', handler: () => osState },
+        {
+          path: '/list_state',
+          description: 'List the surfaces currently open on the canvas.',
+          // Whitelist layout fields only — html + props ride the state push for serialization,
+          // but the agent's list_state view must not leak full srcdoc HTML or the chat transcript.
+          handler: () => ({
+            ...osState,
+            surfaces: (osState.surfaces || []).map((s) => ({
+              id: s.id,
+              kind: s.kind,
+              x: s.x,
+              y: s.y,
+              w: s.w,
+              h: s.h,
+              z: s.z,
+              zoom: s.zoom,
+              title: s.title,
+              url: s.url,
+              component: s.component,
+              pinned: s.pinned
+            }))
+          })
+        },
         {
           path: '/read_window',
           description: 'Read what is INSIDE a web surface (its DOM): url, title, and visible text. Only kind "web" (server mode).',
@@ -556,7 +676,7 @@ async function startOsAgentSocket() {
           handler: async ({ body }) => {
             const a = toolBody(body)
             const since = Number(a.since) || 0
-            const wait = Math.min(Math.max(Number(a.wait) || 25, 0), 25)
+            const wait = Math.min(Math.max(a.wait == null ? 25 : Number(a.wait) || 0, 0), 25) // default 25, but honor an explicit wait:0 (the startup latest-read)
             const raw = await waitForEvents(since, wait * 1000)
             // Relay is untrusted: page content only crosses for surfaces the user shared.
             const events = raw.map((m) => (isContentShared(m.surfaceId) ? m : redactMoment(m)))
@@ -795,6 +915,11 @@ const server = createServer(async (req, res) => {
     })
     res.write(': connected\n\n')
     if (agentUrl) res.write(`data: ${JSON.stringify({ __agentUrl: agentUrl })}\n\n`)
+    // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
+    // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
+    res.write(
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas' })}\n\n`
+    )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))
     return
@@ -810,6 +935,7 @@ const server = createServer(async (req, res) => {
       if (s && Array.isArray(s.surfaces)) {
         osState = s
         if (SERVER_MODE) reconcileSurfaces(s.surfaces) // spin up / tear down server targets
+        scheduleWorkspaceWrite() // Phase 1: project the canvas onto the workspace folder
       }
       json(res, 200, { ok: true })
     })
@@ -910,6 +1036,8 @@ server.listen(PORT, '127.0.0.1', () => {
   startOsAgentSocket()
   // Server mode: bring up the headless browser host for live web surfaces.
   initServerMode()
+  // Phase 3: watch the workspace folder so external file edits (agent/Finder/git) reflect live.
+  startWorkspaceWatch()
   // Boot + supervise the brain: spawn the agent against the live relay URL and keep it
   // alive (auto-restart on exit), so a brain is always watching. Opt-in via BLITZ_AGENT
   // (=claude or a custom command); off by default (continuous LLM use has a cost).
@@ -924,6 +1052,9 @@ let shuttingDown = false
 async function gracefulExit() {
   if (shuttingDown) return
   shuttingDown = true
+  // Flush a pending workspace write FIRST (before the possibly-slow host.stop), so a surface
+  // created/moved right before quit lands on disk — otherwise hydrate restores the stale state.
+  flushWorkspace()
   try {
     if (host) await host.stop()
   } catch {

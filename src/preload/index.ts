@@ -19,17 +19,34 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate'
   [k: string]: unknown
 }
 
 export interface OsState {
-  surfaces: Array<{ id: string; kind: string; x: number; y: number; w: number; h: number; z?: number; title: string; url?: string; component?: string; pinned?: boolean }>
+  surfaces: Array<{
+    id: string
+    kind: string
+    x: number
+    y: number
+    w: number
+    h: number
+    z?: number
+    zoom?: number
+    title: string
+    url?: string
+    html?: string
+    props?: Record<string, unknown>
+    component?: string
+    pinned?: boolean
+  }>
   /** Screen size in px (so the agent knows what fits). */
   viewport?: { w: number; h: number }
   /** World-space rectangle the user can currently see (so new surfaces land on-screen). */
   view?: { x: number; y: number; w: number; h: number; cx: number; cy: number; scale: number }
   mode?: 'desktop' | 'canvas'
+  /** Raw camera transform — persisted to workspace.json (Phase 1). */
+  camera?: { x: number; y: number; scale: number }
 }
 
 const api = {

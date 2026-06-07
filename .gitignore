@@ -16,6 +16,9 @@ preview/.cf-tunnel-token
 # persistent server-browser profile (the user's logged-in cookies/sessions) — never commit
 .blitz-chrome-profile/
 
+# workspaces Phase 1: the server-mode sandbox workspace folder (materialized canvas)
+preview/.workspace/
+
 # agent-authored widgets saved at runtime (the tracked widget library is widgets/*.html)
 widgets/authored/
 
