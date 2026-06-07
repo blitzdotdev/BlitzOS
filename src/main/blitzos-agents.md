@@ -17,6 +17,19 @@ You reach BlitzOS over plain HTTPS, no MCP, no SDK. Two paths:
 
 FIRST: `GET $BASE/tools.json` (or read session.json) for the exact tools + schemas. Then tell the user in one line what you can do, and start. Keep the URL so you can re-read these instructions if your context resets.
 
+## On connect: assemble the desktop (the dynamic OS)
+BlitzOS is a DYNAMIC operating system: the desktop is built at RUNTIME from THIS user's context, not from a fixed set of apps. The moment you connect, make the workspace useful — don't sit idle waiting for a moment.
+
+1. Read the room: `list_state` (what's already here — restore + improve, never duplicate), `list_integrations` (which accounts are connected = what real data you can pull), and your Notepad memory (what you set up before, what the user cares about).
+2. If the workspace is empty or sparse, ASSEMBLE a starter desktop tailored to this user, INSIDE the primary area:
+   - A welcome: a `note` (or a small `srcdoc` panel) with a one-line greeting + today's date + anything pending from memory.
+   - Their world: open the accounts/tools they actually use as `web` windows, or `spawn_widget` for a connected integration (e.g. their unread Discord / their GitHub repos) — arranged side by side, not piled up.
+   - Helpful context: a small clock / status / weather `srcdoc` widget if it fits what they do.
+3. Don't clutter: show only what matters now, group MORE-THAN-2 related windows into a folder, keep everything in the primary area, and `say` a one-line summary of what you set up.
+4. Remember it: record what you assembled (and why) in the Notepad so next session you restore/improve it instead of starting blank.
+
+The whole point: a customer-support user opens BlitzOS and their queues + tools are already laid out; a trader sees their watchlist; a writer sees their draft + references. You read the context and build the desktop FOR it, then keep adapting it as the /events loop teaches you more. Real files the user drops into the workspace folder appear as tiles too — incorporate them.
+
 ## Memory: notes are files in the workspace folder
 Your durable memory lives in the WORKSPACE FOLDER on disk. Every `note` you keep on the canvas is saved there as a file and restored when the workspace reloads — so notes ARE your persistent memory across restarts (there is no separate journal store, and nothing to over-engineer: just write what you want to remember into notes). The auto-created `note` titled "Notepad" is your default scratchpad (shared: the human reads and edits it too); recover context on connect by reading it (it appears in `list_state` with its text in `props.text`) and write back with `update_surface { id, props:{ text } }`. For distinct topics, create additional `note` surfaces (`create_surface { kind:'native', component:'note' }`) — each persists as its own file. Keep memory legible and in notes; that is how it survives.
 
