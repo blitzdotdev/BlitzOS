@@ -66,6 +66,10 @@ function safeUrl(u) {
   const s = String(u || '')
   return /^https?:\/\//i.test(s) ? s : '' // never hydrate javascript:/data:/file: into a web surface
 }
+// Number of workspace areas (#45). Default 1 for old folders / missing / invalid (NaN/0/negative).
+function safeAreaCount(n) {
+  return Number.isInteger(n) && n > 0 ? n : 1
+}
 
 // Which surfaces become canvas NODES. The chat + agent-activity native panels are RUNTIME
 // (they belong in .blitzos/state/*.jsonl, Phase 4), never nodes. Unknown kinds are skipped.
@@ -80,6 +84,15 @@ function nodeKind(s) {
 
 // Generated root basenames that must never be reused for a content file.
 const RESERVED_ROOT = new Set(['blitzos.md', '.gitignore'])
+
+// #54 — a SPECIAL on-canvas folder is a real subdir whose name ends in `.board` (the macOS .app-bundle
+// analogy: the kind is encoded in the name, so it survives copy/move + is greppable). Its direct children
+// splay onto the canvas; capped so it can never explode (an over-full board falls back to a collapsed tile).
+const BOARD_SUFFIX = '.board'
+const BOARD_CAP = 24
+function isBoard(name) {
+  return typeof name === 'string' && name.toLowerCase().endsWith(BOARD_SUFFIX)
+}
 
 function slug(str, fallback) {
   const base = String(str || '')
@@ -277,12 +290,15 @@ export function writeWorkspace(dir, osState) {
       ? { x: Math.round(cam.x || 0), y: Math.round(cam.y || 0), scale: Math.round(cam.scale * 1000) / 1000 }
       : { x: 0, y: 0, scale: 1 }
 
+  // Number of workspace areas (#45 — bounded desktops tiled left→right). Default 1; floor invalid values.
+  const areaCount = Number.isInteger(osState?.areaCount) && osState.areaCount > 0 ? osState.areaCount : 1
   const ws = {
     version: VERSION,
     id: wsId || randomUUID(),
     kind: 'blitzos.workspace',
     camera,
     mode: osState?.mode === 'desktop' ? 'desktop' : 'canvas',
+    areaCount,
     stack,
     nodes
   }
@@ -372,6 +388,40 @@ export function readRuntimePanels(dir) {
       }))
   } catch {
     return []
+  }
+}
+
+// #53 — per-workspace CONSENT, persisted to .blitzos/state/consent.json so the human's grants survive a
+// restart instead of needing re-approval every session. Under .blitzos (which the file route + reconcile
+// never expose), so it's agent-read-denied. `surfaces` = ["surfaceId:provider"] widget grants;
+// `providers` = providers the human approved for the agent's SENSITIVE reads.
+export function writeConsent(dir, consent) {
+  const stateDir = join(dir, '.blitzos', 'state')
+  const file = join(stateDir, 'consent.json')
+  try {
+    const created = !existsSync(stateDir)
+    mkdirSync(stateDir, { recursive: true })
+    if (created) markWrite(resolve(stateDir))
+    const surfaces = Array.isArray(consent?.surfaces) ? [...new Set(consent.surfaces.filter((s) => typeof s === 'string'))].slice(0, 500) : []
+    const providers = Array.isArray(consent?.providers) ? [...new Set(consent.providers.filter((s) => typeof s === 'string'))].slice(0, 100) : []
+    atomicWrite(file, JSON.stringify({ version: VERSION, surfaces, providers }, null, 2) + '\n')
+  } catch {
+    /* best-effort: consent persistence is a convenience, never block a workspace write */
+  }
+}
+export function readConsent(dir) {
+  try {
+    const file = join(dir, '.blitzos', 'state', 'consent.json')
+    if (!existsSync(file)) return { surfaces: [], providers: [] }
+    const raw = readFileSync(file, 'utf8')
+    if (raw.length > MAX_META) return { surfaces: [], providers: [] }
+    const o = JSON.parse(raw)
+    return {
+      surfaces: Array.isArray(o?.surfaces) ? o.surfaces.filter((s) => typeof s === 'string') : [],
+      providers: Array.isArray(o?.providers) ? o.providers.filter((s) => typeof s === 'string') : []
+    }
+  } catch {
+    return { surfaces: [], providers: [] }
   }
 }
 
@@ -488,7 +538,7 @@ export function readWorkspace(dir) {
     seq++
     if (s) surfaces.push(s)
   }
-  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas' }
+  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', areaCount: safeAreaCount(ws.areaCount) }
 }
 
 // Which loose root files auto-surface as new nodes on reconcile, and as what kind. Conservative
@@ -608,8 +658,12 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     /* unreadable workspace dir */
   }
   const newFiles = entries.filter((e) => e.isFile() && autoKind(e.name) && !known.has(e.name) && safeJoin(dir, e.name)).map((e) => e.name)
-  // Subfolders surface as collapsed 'dir' tiles (#37). Skip dot-dirs (.blitzos/.git) + known ones.
-  const newDirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.') && !known.has(e.name) && safeJoin(dir, e.name)).map((e) => e.name)
+  // A NORMAL subfolder surfaces as ONE collapsed 'dir' tile (#37). A SPECIAL '.board' folder (#54 — the
+  // macOS .app-bundle analogy) instead splays its DIRECT children onto the canvas as a sub-board. Skip
+  // dot-dirs (.blitzos/.git).
+  const topDirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.') && safeJoin(dir, e.name)).map((e) => e.name)
+  const newDirs = topDirs.filter((n) => !isBoard(n) && !known.has(n))
+  const boards = topDirs.filter(isBoard)
 
   let changed = false
   // single-rename heal: a node's file is gone AND exactly one NEW file of the same kind exists.
@@ -654,6 +708,41 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     i++
     changed = true
   }
+  // #54: a '.board' folder splays its DIRECT children onto the canvas (one level only — a child subdir is
+  // itself one collapsed tile, so a board can't recurse-explode). Over BOARD_CAP children → fall back to a
+  // single collapsed tile (scale guard, like a repo). Children persist their own layout as nested nodes.
+  for (const b of boards) {
+    const babs = safeJoin(dir, b)
+    let kids = []
+    try {
+      kids = readdirSync(babs, { withFileTypes: true })
+    } catch {
+      /* unreadable board */
+    }
+    const children = kids
+      .filter((e) => !e.name.startsWith('.') && (e.isDirectory() || autoKind(e.name)))
+      .map((e) => ({ rel: `${b}/${e.name}`, kind: e.isDirectory() ? 'dir' : autoKind(e.name) }))
+    if (children.length > BOARD_CAP) {
+      if (!known.has(b)) {
+        const sz = defaultSizeFor('dir')
+        alive.push({ id: randomUUID(), path: b, kind: 'dir', x: Math.round(cx - sz.w / 2 + (i % 6) * 28), y: Math.round(cy - sz.h / 2 + (i % 6) * 24), w: sz.w, h: sz.h })
+        i++
+        changed = true
+      }
+      continue
+    }
+    let j = 0
+    for (const c of children) {
+      if (!c.kind || known.has(c.rel)) {
+        j++
+        continue
+      }
+      const sz = defaultSizeFor(c.kind)
+      alive.push({ id: randomUUID(), path: c.rel, kind: c.kind, x: Math.round(cx - sz.w / 2 + (j % 4) * (sz.w + 16)), y: Math.round(cy - sz.h / 2 + Math.floor(j / 4) * (sz.h + 16)), w: sz.w, h: sz.h })
+      j++
+      changed = true
+    }
+  }
 
   const stackPrev = Array.isArray(ws.stack) ? ws.stack : []
   const zByIdx = new Map(stackPrev.map((id, idx) => [id, idx + 1]))
@@ -665,12 +754,75 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   }
   const camera = safeCamera(ws.camera)
   const mode = ws.mode === 'desktop' ? 'desktop' : 'canvas'
+  const areaCount = safeAreaCount(ws.areaCount) // preserve the area count across a reconcile (never collapse)
 
   if (changed) {
-    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stack: surfaces.map((s) => s.id), nodes: alive }
+    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, areaCount, stack: surfaces.map((s) => s.id), nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
-  return { surfaces, camera, mode, changed, knownIds }
+  return { surfaces, camera, mode, areaCount, changed, knownIds }
+}
+
+/**
+ * #52 — "group into a folder" is a REAL filesystem operation: make a subdirectory and MOVE the chosen
+ * members' content files into it. Not an in-memory membership list — the folder is a real directory, so
+ * it persists, drill-in browses its real contents, and a grouped 50-file set is ONE tile (the reconcile
+ * is non-recursive, so even a 10k-file repo grouped in stays one folder tile). Member content paths come
+ * from the current workspace.json (flush() first so every member has a file). Returns
+ * { ok, folder:<relpath>, moved }. The caller reconciles after so the new subdir surfaces as a folder
+ * tile and the moved files leave the canvas root.
+ */
+export function groupIntoFolder(dir, name, memberIds, kind) {
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const { idToPath } = readPrior(metaFile)
+  const ids = Array.isArray(memberIds) ? memberIds : []
+  let existing = new Set()
+  try {
+    existing = new Set(readdirSync(dir, { withFileTypes: true }).map((e) => e.name.toLowerCase()))
+  } catch {
+    /* unreadable */
+  }
+  // a real, unique subdir name from the chosen title. kind:'board' → a '.board' on-canvas folder (#54)
+  // whose children splay; otherwise a normal collapsed folder (#52).
+  const sfx = kind === 'board' ? BOARD_SUFFIX : ''
+  const stem = slug(name, 'folder') || 'folder'
+  let folderName = stem + sfx
+  let i = 2
+  while (existing.has(folderName.toLowerCase()) || RESERVED_ROOT.has(folderName.toLowerCase())) folderName = `${stem}-${i++}${sfx}`
+  const folderAbs = safeJoin(dir, folderName)
+  if (!folderAbs) return { ok: false, error: 'bad folder name' }
+  try {
+    mkdirSync(folderAbs, { recursive: true })
+  } catch {
+    return { ok: false, error: 'could not create folder' }
+  }
+  markWrite(resolve(folderAbs))
+  let moved = 0
+  for (const id of ids) {
+    const rel = idToPath.get(id)
+    if (!rel) continue // member has no content file (e.g. a runtime panel) — nothing to move
+    if (rel.includes('/') || rel.includes(sep)) continue // only ROOT-level items move (don't re-nest)
+    const srcAbs = safeJoin(dir, rel)
+    if (!srcAbs || !existsSync(srcAbs)) continue
+    const baseName = rel.split(/[\\/]/).pop()
+    let destRel = `${folderName}/${baseName}`
+    let dn = 2
+    while (existsSync(safeJoin(dir, destRel) || dir)) {
+      const dot = baseName.lastIndexOf('.')
+      destRel = dot > 0 ? `${folderName}/${baseName.slice(0, dot)}-${dn++}${baseName.slice(dot)}` : `${folderName}/${baseName}-${dn++}`
+    }
+    const destAbs = safeJoin(dir, destRel)
+    if (!destAbs) continue
+    try {
+      renameSync(srcAbs, destAbs) // a real mv — works for files AND subdirs (a grouped repo just nests)
+      markWrite(resolve(srcAbs))
+      markWrite(resolve(destAbs))
+      moved++
+    } catch {
+      /* skip a member we couldn't move */
+    }
+  }
+  return { ok: true, folder: folderName, moved }
 }
 
 // ===========================================================================================

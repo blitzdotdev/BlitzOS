@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useDesktop, viewTransform, type CreateSurfaceInput } from './store'
+import { useDesktop, viewTransform, areaRect, type CreateSurfaceInput } from './store'
 import type { Surface, CanvasTransform } from './types'
 import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
@@ -12,6 +12,7 @@ import { IconCrosshair, IconChat, IconSparkle, IconGrid, IconChevronDown } from 
 import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
+import { DirOverlay } from './components/DirOverlay'
 
 // The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
 // hydrate so a fresh workspace gets one (it then persists as a file); idempotent on a restored board.
@@ -35,10 +36,13 @@ export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
   const mode = useDesktop((s) => s.mode)
+  const areaCount = useDesktop((s) => s.areaCount)
+  const currentArea = useDesktop((s) => s.currentArea)
   const integrations = useDesktop((s) => s.integrations)
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
   const snapPreview = useDesktop((s) => s.snapPreview)
+  const openDirPath = useDesktop((s) => s.openDirPath)
   const createSurface = useDesktop((s) => s.createSurface)
   const setIntegrations = useDesktop((s) => s.setIntegrations)
 
@@ -48,6 +52,10 @@ export default function App(): JSX.Element {
   const [showOverview, setShowOverview] = useState(false)
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
+  // #51: pending write-approvals the agent requested (provider.call writes) — the human OKs or denies each.
+  // A QUEUE (not a single slot) so concurrent writes don't overwrite each other's card (review fix); we
+  // show the oldest and pop it on answer. Keyed by id, matching provider-bridge's pending Map.
+  const [providerApprovals, setProviderApprovals] = useState<Array<{ id: string; summary: string; risk: string }>>([])
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
@@ -89,8 +97,36 @@ export default function App(): JSX.Element {
     st.setSnapPreview(null) // a mode switch cancels any in-flight drag UI
     st.setDragTarget(null)
     const next = st.mode === 'desktop' ? 'canvas' : 'desktop'
-    st.setMode(next)
-    animateTransform(viewTransform(next, st.viewport))
+    if (next === 'canvas') {
+      // Entering control mode: restore the camera we left it at last time (so it "remembers" the
+      // panned/zoomed bird's-eye position), or the default wide view fitting ALL areas the first time.
+      const target = st.controlTransform ?? viewTransform('canvas', st.viewport, st.currentArea, st.areaCount)
+      st.setMode('canvas')
+      animateTransform(target)
+    } else {
+      // Leaving control mode: animate back to the view-locked CURRENT area. controlTransform was
+      // already kept current by every pan/zoom/center in canvas mode, so there's nothing to capture
+      // here (capturing st.transform now could grab a mid-animation frame — the ISSUE-3 trap).
+      st.setMode('desktop')
+      animateTransform(viewTransform('desktop', st.viewport, st.currentArea, st.areaCount))
+    }
+  }
+
+  // Switch to an adjacent workspace area (#45). In normal mode the camera animates to the new area
+  // (each area locks to the same on-screen desktop region); in control mode the bird's-eye already
+  // shows every area, so we only move the highlight. No-op past the ends.
+  function switchArea(delta: number): void {
+    const st = useDesktop.getState()
+    const next = Math.max(0, Math.min(st.areaCount - 1, st.currentArea + delta))
+    if (next === st.currentArea) return
+    st.setCurrentArea(next)
+    if (st.mode === 'desktop') animateTransform(viewTransform('desktop', st.viewport, next, st.areaCount))
+  }
+  // Add a new (empty) area to the right and go to it (re-fits the bird's-eye in control mode).
+  function addAreaAndGo(): void {
+    useDesktop.getState().addArea()
+    const now = useDesktop.getState()
+    animateTransform(viewTransform(now.mode, now.viewport, now.currentArea, now.areaCount))
   }
 
   useEffect(() => {
@@ -143,9 +179,18 @@ export default function App(): JSX.Element {
         e.preventDefault()
         useDesktop.getState().goToPrimary()
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'g' || e.key === 'G')) {
-        // Cmd+G: pack the current selection into an iPhone-style folder.
+        // Cmd+G: group the selection into a REAL folder on disk (mkdir + mv); the reconcile that follows
+        // replaces the loose tiles with one folder tile (#52). Falls back to in-memory grouping only if
+        // no host is wired (e.g. a bare preview with no backend).
         e.preventDefault()
-        useDesktop.getState().groupSelection()
+        const st = useDesktop.getState()
+        const ids = [...st.selection]
+        if (ids.length >= 2 && window.agentOS?.groupIntoFolder) {
+          void window.agentOS.groupIntoFolder('Folder', ids)
+          st.clearSelection()
+        } else {
+          st.groupSelection()
+        }
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
         // layout undo (Cmd+Z) when nothing editable is focused; else let the browser text-undo win
         const ae = document.activeElement as HTMLElement | null
@@ -153,6 +198,15 @@ export default function App(): JSX.Element {
         if (!editable) {
           e.preventDefault()
           useDesktop.getState().undoLayout()
+        }
+      } else if ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        // Cmd/Ctrl + ← / → : switch workspace area (#45). Skip when typing (so it stays caret nav) and
+        // when there's only one area (let the default behavior through).
+        const ae = document.activeElement as HTMLElement | null
+        const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
+        if (!editable && useDesktop.getState().areaCount > 1) {
+          e.preventDefault()
+          switchArea(e.key === 'ArrowLeft' ? -1 : 1)
         }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         // Delete / ⌫ closes the selected surfaces (when not typing in a field).
@@ -254,7 +308,7 @@ export default function App(): JSX.Element {
         const surfs = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
         // Control mode is a transient view toggle, never persisted — always boot the normal desktop.
-        st.hydrate(surfs, cam, 'desktop')
+        st.hydrate(surfs, cam, 'desktop', Number(a.areaCount) || 1)
         ensureNotepad()
         hydrated.current = true
         if (typeof a.workspace === 'string') {
@@ -267,7 +321,7 @@ export default function App(): JSX.Element {
         // reconnect's hydrate still can't clobber the new board.
         const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        st.hydrate(sf, cm, 'desktop')
+        st.hydrate(sf, cm, 'desktop', Number(a.areaCount) || 1)
         ensureNotepad()
         hydrated.current = true // a switch is also a valid first hydrate — don't depend on a prior 'hydrate'
         if (typeof a.workspace === 'string') {
@@ -284,6 +338,14 @@ export default function App(): JSX.Element {
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
         if (surf && (surf.kind === 'web' || surf.kind === 'app')) surf.shared = true
         st.createSurface(surf)
+      }
+      else if (a.type === 'provider-approval') {
+        // The agent asked to perform a WRITE on a connected provider (#51) — show the human a card.
+        const req = a.request as { id?: string; summary?: string; risk?: string } | undefined
+        if (req && req.id) {
+          const card = { id: String(req.id), summary: String(req.summary || 'a provider write'), risk: String(req.risk || 'write') }
+          setProviderApprovals((q) => (q.some((c) => c.id === card.id) ? q : [...q, card])) // enqueue (dedupe by id)
+        }
       }
       else if (a.type === 'move') st.moveSurface(String(a.id), Number(a.x), Number(a.y))
       else if (a.type === 'update') st.updateSurface(String(a.id), (a.patch ?? {}) as Partial<Surface>)
@@ -405,7 +467,20 @@ export default function App(): JSX.Element {
       }
       // camera = the WORLD point at screen center + scale (viewport-independent, so it restores
       // correctly on a different screen size — view.cx/cy are exactly that world point).
-      window.agentOS?.sendState({ workspace: activeWsRef.current ?? undefined, surfaces, viewport: { w: vw, h: vh }, view, mode: st.mode, camera: { x: view.cx, y: view.cy, scale } })
+      // #45: also push the area count + which area is active + the CURRENT area's world rect, so the
+      // agent (list_state) places surfaces in the area the human is looking at, not blindly at origin.
+      const currentAreaRect = areaRect(st.currentArea, st.viewport)
+      window.agentOS?.sendState({
+        workspace: activeWsRef.current ?? undefined,
+        surfaces,
+        viewport: { w: vw, h: vh },
+        view,
+        mode: st.mode,
+        camera: { x: view.cx, y: view.cy, scale },
+        areaCount: st.areaCount,
+        currentArea: st.currentArea,
+        currentAreaRect
+      })
     }
     push()
     // SERVER mode always delivers a hydrate on SSE connect, so we wait for it (no fallback) —
@@ -424,6 +499,8 @@ export default function App(): JSX.Element {
     let lastT = useDesktop.getState().transform
     let lastVp = useDesktop.getState().viewport
     let lastMode = useDesktop.getState().mode
+    let lastArea = useDesktop.getState().currentArea
+    let lastAreaCount = useDesktop.getState().areaCount
     const scheduleCamera = (): void => {
       if (timer) return
       timer = setTimeout(() => {
@@ -435,6 +512,11 @@ export default function App(): JSX.Element {
       if (state.surfaces !== lastS) {
         lastS = state.surfaces
         push() // surface set changed — reflect it at once
+      } else if (state.areaCount !== lastAreaCount || state.currentArea !== lastArea) {
+        // an area switch / add changes which area the agent should target — reflect it at once
+        lastArea = state.currentArea
+        lastAreaCount = state.areaCount
+        push()
       } else if (state.transform !== lastT || state.viewport !== lastVp || state.mode !== lastMode) {
         lastT = state.transform
         lastVp = state.viewport
@@ -655,6 +737,18 @@ export default function App(): JSX.Element {
         <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => useDesktop.getState().goToPrimary()}>
           <IconCrosshair size={15} /> Center
         </button>
+        {/* Workspace areas (#45): prev/next + indicator appear once there's more than one; "＋" always
+            adds a new area to the right. Switch also via Cmd/Ctrl + ← →. */}
+        <span className="area-ctl" title="Workspace areas — Cmd/Ctrl + ← →">
+          {areaCount > 1 && (
+            <>
+              <button className="area-arrow" disabled={currentArea <= 0} onClick={() => switchArea(-1)} title="Previous area">‹</button>
+              <span className="area-ind">Area {currentArea + 1}/{areaCount}</span>
+              <button className="area-arrow" disabled={currentArea >= areaCount - 1} onClick={() => switchArea(1)} title="Next area">›</button>
+            </>
+          )}
+          <button className="area-add" onClick={addAreaAndGo} title="Add a workspace area">＋</button>
+        </span>
         <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={openChat}>
           <IconChat size={15} /> Chat
         </button>
@@ -676,7 +770,11 @@ export default function App(): JSX.Element {
           <div className="hud-head">Drive BlitzOS from an AI chat</div>
           {aiUrl ? (
             <>
-              <p className="hud-sub">Paste this URL into Claude / ChatGPT and ask it to open windows, post-its, etc.</p>
+              <p className="hud-sub">
+                Paste this URL into a <strong>tool-capable</strong> AI agent — Claude Code, or <code>claude -p</code> — and ask
+                it to open windows, post-its, etc. (It needs to make HTTP calls, so a plain Claude.ai / ChatGPT chat can only
+                read the link, not drive BlitzOS.)
+              </p>
               <div className="hud-row">
                 <input className="hud-input" readOnly value={aiUrl} onFocus={(e) => e.currentTarget.select()} />
                 <button className="btn primary" onClick={() => navigator.clipboard?.writeText(aiUrl)}>
@@ -703,6 +801,28 @@ export default function App(): JSX.Element {
           }}
         />
       )}
+      {openDirPath !== null && <DirOverlay path={openDirPath} />}
+
+      {/* #51: the agent asked to perform a WRITE on a connected account — the human must approve it
+          (per-call, request-bound). Reads never reach here. The OLDEST pending card shows; answering it
+          pops it and reveals the next, so concurrent writes each get their own decision (review fix). */}
+      {providerApprovals.length > 0 && (() => {
+        const card = providerApprovals[0]
+        const pop = (): void => setProviderApprovals((q) => q.filter((c) => c.id !== card.id))
+        return (
+          <div className="consent" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="consent-card">
+              <h4>Allow the agent to {card.risk === 'destructive' ? <span style={{ color: 'var(--negative, #e5484d)' }}>make a destructive change</span> : 'make a change'} to your account?</h4>
+              <p><code>{card.summary}</code></p>
+              <p>This acts on your real connected account. It runs only if you allow it.{providerApprovals.length > 1 ? ` (${providerApprovals.length - 1} more pending)` : ''}</p>
+              <div className="consent-actions">
+                <button className="btn ghost" onClick={() => { window.agentOS?.denyProviderCall?.(card.id); pop() }}>Deny</button>
+                <button className="btn primary" onClick={() => { window.agentOS?.approveProviderCall?.(card.id); pop() }}>Allow</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

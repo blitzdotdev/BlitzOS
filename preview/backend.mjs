@@ -19,7 +19,7 @@ import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
 import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync, readdirSync, appendFileSync } from 'node:fs'
 import { join, dirname, basename, resolve, sep } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
@@ -31,6 +31,9 @@ import {
   PROVIDER_DATA,
   WIDGET_AUTHORING_MD
 } from '../src/main/widget-catalog.mjs'
+// #51 general provider-access substrate (the agent makes whatever request it needs; token stays here).
+import { callProvider, createApprovalLedger, createRateLimiter } from '../src/main/provider-call.mjs'
+import { capturedScopes } from '../src/main/provider-specs.mjs'
 // Shared perception kernel + resident brain — the SAME modules the Electron main runs,
 // so server mode gets the autonomy loop with no duplicated code.
 import {
@@ -233,6 +236,19 @@ const consentGranted = new Set()
 // Coarse per-(surface,provider,resource) min-interval, so a runaway widget can't
 // hammer a provider API (burning the user's rate limit). Best-effort, in-memory.
 const lastFetch = new Map()
+// #51: shared state for the general /provider_call substrate. providerConsent gates SENSITIVE agent
+// reads (message bodies, repo contents) per provider — the human grants once via /api/os/provider-consent.
+const providerConsent = new Set()
+const providerApprovals = createApprovalLedger() // writes are refused in server mode, but the ledger is shared for parity
+const providerRate = createRateLimiter()
+const PROVIDER_AUDIT_LOG = join(__dirname, 'provider-audit.log')
+const providerAudit = (e) => {
+  try {
+    appendFileSync(PROVIDER_AUDIT_LOG, JSON.stringify(e) + '\n')
+  } catch {
+    /* best-effort audit */
+  }
+}
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
 
 // ---------- SERVER MODE: live web surfaces via a headless browser ----------
@@ -398,6 +414,20 @@ const wsHost = createWorkspaceHost({
 })
 wsHost.hydrateOnBoot()
 
+// #53: restore the human's persisted consent for the active workspace (so grants survive a restart).
+// Re-run after a switch (loadConsent) to swap to the new workspace's grants.
+function loadConsent() {
+  consentGranted.clear()
+  providerConsent.clear()
+  const c = wsHost.consent()
+  for (const s of c.surfaces) consentGranted.add(s)
+  for (const p of c.providers) providerConsent.add(p)
+}
+function saveConsent() {
+  wsHost.persistConsent({ surfaces: [...consentGranted], providers: [...providerConsent] })
+}
+loadConsent()
+
 function toolBody(body) {
   try {
     return body ? JSON.parse(body) : {}
@@ -560,6 +590,66 @@ async function startOsAgentSocket() {
               pinned: s.pinned
             }))
           })
+        },
+        {
+          path: '/provider_call',
+          description:
+            'Make an authenticated request to a CONNECTED integration (provider) and get the JSON back — ' +
+            'use this to build whatever the user needs (their unread mail, repos, issues, messages, …). ' +
+            'The OS injects the credential server-side; you NEVER see the token. Reads (GET) are broad: ' +
+            'pass any path under the provider\'s API. Writes (POST/PUT/PATCH/DELETE) need a human approval ' +
+            'and are unavailable in server mode. Args: {provider, method?, path, query?, body?}. ' +
+            'Connected providers + scopes are in list_integrations. A sensitive read (message bodies, file ' +
+            'contents) returns code:"consent_required" until the human approves that provider once.',
+          input_schema: {
+            type: 'object',
+            required: ['provider', 'path'],
+            properties: {
+              provider: { type: 'string' },
+              method: { type: 'string' },
+              path: { type: 'string', description: 'provider-relative, e.g. /user/repos or /gmail/v1/users/me/messages?…via query' },
+              query: { type: 'object' },
+              body: {},
+              approvalToken: { type: 'string' }
+            }
+          },
+          handler: async ({ body }) => {
+            const b = toolBody(body)
+            const toks = readTokens()
+            const t = toks[b.provider]
+            const record = t ? { secrets: t.secrets, grantedScopes: t.grantedScopes } : null
+            return callProvider(
+              {
+                provider: String(b.provider || ''),
+                method: b.method,
+                path: String(b.path || ''),
+                query: b.query,
+                body: b.body,
+                approvalToken: b.approvalToken,
+                caller: { kind: 'agent', transport: 'server' }
+              },
+              { record, approvals: providerApprovals, rate: providerRate, consented: (p) => providerConsent.has(p), audit: providerAudit }
+            )
+          }
+        },
+        {
+          path: '/group',
+          description:
+            'Group surfaces into a REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' ' +
+            'files into it. kind:"folder" (default) → ONE collapsed tile (drill in to browse), best for many ' +
+            'items / a repo. kind:"board" → the items stay SPLAYED on the canvas as a sub-board (small curated ' +
+            'set). A real filesystem folder either way, so it persists. Args: {name, ids:[surfaceId], kind?}.',
+          input_schema: {
+            type: 'object',
+            required: ['ids'],
+            properties: { name: { type: 'string' }, ids: { type: 'array', items: { type: 'string' } }, kind: { type: 'string', enum: ['folder', 'board'] } }
+          },
+          handler: ({ body }) => {
+            const b = toolBody(body)
+            const ids = Array.isArray(b.ids) ? b.ids.map(String) : []
+            if (!ids.length) return { ok: false, error: 'no members to group' }
+            return wsHost.group(String(b.name || 'Folder'), ids, 0, 0, b.kind === 'board' ? 'board' : 'folder')
+          }
         },
         {
           path: '/read_window',
@@ -842,8 +932,32 @@ const server = createServer(async (req, res) => {
     req.on('data', (c) => { cbody += c; if (cbody.length > 10_000) req.destroy() })
     req.on('end', () => {
       const b = toolBody(cbody)
-      if (b && b.surfaceId && b.provider) consentGranted.add(`${String(b.surfaceId)}:${String(b.provider)}`)
+      if (b && b.surfaceId && b.provider) {
+        consentGranted.add(`${String(b.surfaceId)}:${String(b.provider)}`)
+        saveConsent() // #53: persist so the grant survives a restart
+      }
       json(res, 200, { ok: true })
+    })
+    return
+  }
+
+  // POST /api/os/provider-consent { provider, allow } — the human grants/revokes the agent's SENSITIVE
+  // reads (message bodies, file contents) for a provider (#51). Non-sensitive reads never need this.
+  if (path === '/api/os/provider-consent' && req.method === 'POST') {
+    let cbody = ''
+    req.on('data', (c) => {
+      cbody += c
+      if (cbody.length > 10_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(cbody)
+      const provider = String(b.provider || '')
+      if (provider) {
+        if (b.allow === false) providerConsent.delete(provider)
+        else providerConsent.add(provider)
+        saveConsent() // #53: persist
+      }
+      json(res, 200, { ok: true, provider, allowed: providerConsent.has(provider) })
     })
     return
   }
@@ -855,7 +969,10 @@ const server = createServer(async (req, res) => {
     req.on('data', (c) => { cbody += c; if (cbody.length > 10_000) req.destroy() })
     req.on('end', () => {
       const sid = String(toolBody(cbody).surfaceId || '')
-      if (sid) for (const k of consentGranted) if (k.startsWith(`${sid}:`)) consentGranted.delete(k)
+      if (sid) {
+        for (const k of consentGranted) if (k.startsWith(`${sid}:`)) consentGranted.delete(k)
+        saveConsent() // #53: persist the revoke
+      }
       json(res, 200, { ok: true })
     })
     return
@@ -881,7 +998,8 @@ const server = createServer(async (req, res) => {
       const c = credsFor(pend.id)
       const { label, secrets } = await exchangeProvider(pend.id, c.clientId, c.clientSecret, code, pend.codeVerifier)
       const toks = readTokens()
-      toks[pend.id] = { provider: pend.id, label, secrets, connectedAt: Date.now() }
+      // Record the granted scopes authoritatively at connect (#51) — the write scope-preflight checks these.
+      toks[pend.id] = { provider: pend.id, label, secrets, grantedScopes: capturedScopes(secrets), connectedAt: Date.now() }
       writeTokens(toks)
       console.log(`[agent-os backend] connected ${pend.id} as ${label}`)
       return res.end(callbackPage('Connected ✓', 'You can close this tab and return to Agent OS.'))
@@ -904,7 +1022,7 @@ const server = createServer(async (req, res) => {
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
     res.write(
-      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', workspace: wsHost.active() })}\n\n`
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', areaCount: osState.areaCount || 1, workspace: wsHost.active() })}\n\n`
     )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))
@@ -952,8 +1070,63 @@ const server = createServer(async (req, res) => {
       return json(res, 404, { error: 'not found' })
     }
   }
+  // List a subfolder's contents so a folder tile can OPEN (#44) — jailed to the active workspace,
+  // never .blitzos, capped. Read-only.
+  if (path === '/api/os/dir' && req.method === 'GET') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    try {
+      const root = realpathSync(resolve(wsHost.activePath()))
+      const rel = url.searchParams.get('path') || ''
+      const real = realpathSync(resolve(root, rel))
+      if (real !== root && !real.startsWith(root + sep)) return json(res, 403, { error: 'forbidden' })
+      if (/(^|[/\\])\.blitzos([/\\]|$)/i.test(real.slice(root.length))) return json(res, 403, { error: 'forbidden' })
+      if (!statSync(real).isDirectory()) return json(res, 404, { error: 'not a directory' })
+      const relBase = real.slice(root.length).replace(/^[/\\]/, '')
+      const entries = readdirSync(real, { withFileTypes: true })
+        .filter((e) => !e.name.startsWith('.'))
+        .slice(0, 1000)
+        .map((e) => {
+          let size = 0
+          try {
+            if (e.isFile()) size = statSync(join(real, e.name)).size
+          } catch {
+            /* unreadable */
+          }
+          const ext = e.isFile() ? (e.name.split('.').pop() || '').toLowerCase() : ''
+          return {
+            name: e.name,
+            dir: e.isDirectory(),
+            ext,
+            size,
+            isImage: /^(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(ext),
+            path: relBase ? `${relBase}/${e.name}` : e.name
+          }
+        })
+        .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
+      return json(res, 200, { path: rel, entries })
+    } catch {
+      return json(res, 404, { error: 'not found' })
+    }
+  }
   // Receive a file the user DROPPED onto the canvas (#43): raw body bytes → jailed write into the
   // active workspace at the drop world-position → reconcile so the tile appears where it landed.
+  // #52: group surfaces into a REAL folder (mkdir + mv their files into a subdir). Renderer Cmd+G posts here.
+  if (path === '/api/os/group' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let gbody = ''
+    req.on('data', (c) => {
+      gbody += c
+      if (gbody.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(gbody)
+      const ids = Array.isArray(b.ids) ? b.ids.map(String) : []
+      if (!ids.length) return json(res, 400, { error: 'no members to group' })
+      const r = wsHost.group(String(b.name || 'Folder'), ids, Number(b.x) || 0, Number(b.y) || 0, b.kind === 'board' ? 'board' : 'folder')
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
   if (path === '/api/os/upload' && req.method === 'POST') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
     const chunks = []
@@ -1045,6 +1218,7 @@ const server = createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const r = await wsHost.performSwitch(toolBody(cbody).name)
+        if (r.status === 200) loadConsent() // #53: swap to the new workspace's persisted consent
         json(res, r.status, r.body)
       } catch (e) {
         console.error('[workspace] switch failed:', e?.message || e)

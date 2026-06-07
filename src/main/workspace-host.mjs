@@ -4,14 +4,17 @@
 // is ONE implementation, no second copy to drift. The serializer (workspace.mjs) does disk I/O; the
 // per-transport bits (reaching renderers, realizing web surfaces) are adapter callbacks. This is the
 // control-core.mjs / perception-core.mjs pattern: one feature, both modes.
-import { mkdirSync, writeFileSync, readFileSync, watch } from 'node:fs'
-import { join, basename, resolve } from 'node:path'
+import { mkdirSync, writeFileSync, readFileSync, watch, statSync, realpathSync } from 'node:fs'
+import { join, basename, resolve, sep } from 'node:path'
 import {
   writeWorkspace,
   readWorkspace,
   readRuntimePanels,
   reconcileWorkspace,
   writeDroppedFile,
+  groupIntoFolder,
+  readConsent,
+  writeConsent,
   wasSelfWrite,
   listWorkspaces,
   createWorkspace,
@@ -56,7 +59,7 @@ export function createWorkspaceHost(a) {
   let watchers = []
 
   const active = () => basename(activeWorkspace)
-  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode })
+  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode, areaCount: 1 })
 
   function flush() {
     if (writeTimer) {
@@ -116,6 +119,17 @@ export function createWorkspaceHost(a) {
     doReconcile({ cx: Number(x) || 0, cy: Number(y) || 0 })
     return { ok: true, name: w.rel }
   }
+  /** #52: group the given member surfaces into a REAL subdirectory (mkdir + mv their content files in).
+   *  Flush first so every member has a content file on disk, then group, then reconcile so the new
+   *  folder surfaces as one tile and the moved files leave the canvas root. */
+  function group(name, memberIds, x, y, kind) {
+    if (switching) return { error: 'switch in progress' }
+    flush() // persist current state so every member's content file exists + workspace.json is current
+    const r = groupIntoFolder(activeWorkspace, name, memberIds, kind)
+    if (!r || !r.ok) return { error: (r && r.error) || 'could not group' }
+    doReconcile({ cx: Number(x) || 0, cy: Number(y) || 0 })
+    return { ok: true, folder: r.folder, moved: r.moved }
+  }
   function startWatch() {
     try {
       mkdirSync(join(activeWorkspace, '.blitzos'), { recursive: true })
@@ -154,12 +168,12 @@ export function createWorkspaceHost(a) {
       // Runtime panels (chat/activity) live in .blitzos/state, not as nodes — merge them back so the
       // chat transcript + activity feed survive a backend RESTART (#38), not just a page refresh.
       const panels = readRuntimePanels(activeWorkspace)
-      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas' }
+      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', areaCount: 1 }
       const surfaces = [...base.surfaces, ...panels]
-      if (surfaces.length) {
-        a.setState({ surfaces, camera: base.camera, mode: base.mode })
-        console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
-      }
+      // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted areaCount > 1 isn't lost on an
+      // empty workspace — the hydrate senders read cached.areaCount, which would otherwise stay undefined→1.
+      a.setState({ surfaces, camera: base.camera, mode: base.mode, areaCount: base.areaCount ?? 1 })
+      if (surfaces.length) console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
     } catch (e) {
       console.error('[workspace] hydrate failed:', e?.message || e)
     }
@@ -198,10 +212,10 @@ export function createWorkspaceHost(a) {
       // previous workspace's live chat over (that would overwrite B's saved chat with A's on the next
       // push, destroying B's history). flush() above already saved A's panels into A.
       const surfaces = [...next.surfaces, ...readRuntimePanels(newPath)]
-      a.setState({ surfaces, camera: next.camera, mode: next.mode, view: { cx: next.camera.x, cy: next.camera.y } })
+      a.setState({ surfaces, camera: next.camera, mode: next.mode, areaCount: next.areaCount ?? 1, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
-      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, workspace: name })
+      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, areaCount: next.areaCount ?? 1, workspace: name })
       console.log(`[workspace] switched → ${name}`)
       return { status: 200, body: { ok: true, active: name } }
     } finally {
@@ -222,6 +236,26 @@ export function createWorkspaceHost(a) {
     writeFileSync(join(dir, 'thumb.jpg'), buf)
     return true
   }
+  // Read a real file from the ACTIVE workspace for an image preview (#46, the Electron blitz-file://
+  // counterpart of the server /api/os/file route) — same jail: realpath both, reject escapes +
+  // .blitzos, cap size. Returns { buf, contentType } or null.
+  function readWorkspaceFile(rel) {
+    try {
+      const root = realpathSync(resolve(activeWorkspace))
+      const real = realpathSync(resolve(root, rel || ''))
+      if (real !== root && !real.startsWith(root + sep)) return null
+      if (/(^|[/\\])\.blitzos([/\\]|$)/i.test(real.slice(root.length))) return null
+      const st = statSync(real)
+      if (!st.isFile() || st.size > 25 * 1024 * 1024) return null
+      const ext = (real.split('.').pop() || '').toLowerCase()
+      const mime =
+        { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', avif: 'image/avif', bmp: 'image/bmp' }[ext] ||
+        'application/octet-stream'
+      return { buf: readFileSync(real), contentType: mime }
+    } catch {
+      return null
+    }
+  }
   function readThumb(name) {
     const dir = thumbStateDir(name)
     if (!dir) return null
@@ -236,6 +270,18 @@ export function createWorkspaceHost(a) {
     active,
     activePath: () => activeWorkspace,
     ingestFile,
+    group,
+    // #53: per-workspace consent persistence (read on boot/switch, write on a human grant). The write
+    // MERGES (a caller may update just `surfaces` or just `providers` — e.g. the widget bridge vs the
+    // sensitive-read gate — without clobbering the other).
+    consent: () => readConsent(activeWorkspace),
+    persistConsent: (c) => {
+      const cur = readConsent(activeWorkspace)
+      writeConsent(activeWorkspace, {
+        surfaces: c && c.surfaces !== undefined ? c.surfaces : cur.surfaces,
+        providers: c && c.providers !== undefined ? c.providers : cur.providers
+      })
+    },
     isSwitching: () => switching,
     hydrateOnBoot,
     onStatePush,
@@ -246,6 +292,7 @@ export function createWorkspaceHost(a) {
     list: () => listWorkspaces(root),
     create: (name) => createWorkspace(root, name),
     writeThumb,
-    readThumb
+    readThumb,
+    readWorkspaceFile
   }
 }

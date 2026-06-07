@@ -21,7 +21,7 @@ Four kinds, created by the human (left `+`) or the agent:
 
 ## Drive it with an AI
 
-Click **Connect AI**, paste the URL into Claude / ChatGPT, and ask it to open surfaces. It runs over the [agent-socket](https://agentsocket.dev) relay, no MCP needed.
+Click **Connect AI**, paste the URL into a **tool-capable** AI agent (Claude Code, or `claude -p`), and ask it to open surfaces. It runs over the [agent-socket](https://agentsocket.dev) relay, no MCP needed — the agent drives BlitzOS by making HTTP calls to the relay, so a plain Claude.ai / ChatGPT chat (no code/HTTP tool) can only read the link, not act on it.
 
 ## Integrations
 

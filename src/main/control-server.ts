@@ -1,6 +1,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { randomBytes } from 'crypto'
-import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, type SurfaceDescriptor } from './osActions'
+import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, osGroupIntoFolder, type SurfaceDescriptor } from './osActions'
+import { runProviderCall } from './provider-bridge'
 import type { ControlAction } from './cdp'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './events'
 import { setLocal } from './sessionFile'
@@ -29,6 +30,58 @@ export function startControlServer(): void {
     if (req.method === 'GET' && req.url === '/state') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify(osGetState()))
+      return
+    }
+
+    // POST /provider_call — authenticated request to a connected integration (#51). Localhost is trusted
+    // for eval/CDP, but provider WRITES still pop the same human-approval card (no localhost asymmetry).
+    if (req.method === 'POST' && req.url === '/provider_call') {
+      let body = ''
+      req.on('data', (chunk) => {
+        body += chunk
+        if (body.length > 2_000_000) req.destroy()
+      })
+      req.on('end', async () => {
+        let d: { provider?: string; method?: string; path?: string; query?: Record<string, unknown>; body?: unknown }
+        try {
+          d = body ? JSON.parse(body) : {}
+        } catch {
+          res.writeHead(400, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'invalid json' }))
+          return
+        }
+        const r = await runProviderCall(
+          { provider: String(d.provider || ''), method: d.method ? String(d.method) : undefined, path: String(d.path || ''), query: d.query, body: d.body },
+          'localhost'
+        )
+        res.writeHead(r.ok ? 200 : 400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(r))
+      })
+      return
+    }
+
+    // POST /group { name, ids, kind? } — group surfaces into a REAL folder (mkdir + mv); parity with the
+    // relay + server /group so the localhost agent can organize the workspace too (#52/#54).
+    if (req.method === 'POST' && req.url === '/group') {
+      let body = ''
+      req.on('data', (chunk) => {
+        body += chunk
+        if (body.length > 100_000) req.destroy()
+      })
+      req.on('end', () => {
+        let d: { name?: string; ids?: unknown[]; kind?: string }
+        try {
+          d = body ? JSON.parse(body) : {}
+        } catch {
+          res.writeHead(400, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'invalid json' }))
+          return
+        }
+        const ids = Array.isArray(d.ids) ? d.ids.map(String) : []
+        const r = osGroupIntoFolder(String(d.name || 'Folder'), ids, undefined, undefined, d.kind === 'board' ? 'board' : 'folder')
+        res.writeHead(r.ok ? 200 : 400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(r))
+      })
       return
     }
 

@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval'
   [k: string]: unknown
 }
 
@@ -47,6 +47,11 @@ export interface OsState {
   mode?: 'desktop' | 'canvas'
   /** Raw camera transform — persisted to workspace.json (Phase 1). */
   camera?: { x: number; y: number; scale: number }
+  /** #45 workspace areas: count of tiled desktops (persisted), the active one, and its world rect (so
+   *  the agent places surfaces in the area the human is on). currentArea/currentAreaRect are live-only. */
+  areaCount?: number
+  currentArea?: number
+  currentAreaRect?: { x: number; y: number; w: number; h: number }
   /** Which workspace this state belongs to — lets the backend drop a stale push after a switch. */
   workspace?: string
 }
@@ -139,6 +144,21 @@ const api = {
   /** Drop all consent for a surface (its widget code changed → re-approval required). */
   revokeConsent(surfaceId: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('widget:consent:revoke', surfaceId)
+  },
+
+  // #51 provider-access: the renderer answers a write-approval card + grants sensitive-read consent.
+  approveProviderCall(id: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('os:provider-approve', id)
+  },
+  denyProviderCall(id: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('os:provider-deny', id)
+  },
+  grantProviderConsent(provider: string, allow: boolean): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('os:provider-consent', provider, allow)
+  },
+  // #52: group surfaces into a REAL folder on disk (mkdir + mv). Server mode overrides this in the shim.
+  groupIntoFolder(name: string, ids: string[]): Promise<{ ok: boolean; folder?: string; moved?: number; error?: string }> {
+    return ipcRenderer.invoke('os:group', name, ids)
   },
 
   // Workspaces (one feature, both modes). Electron thumbnails are captured main-side (capturePage)

@@ -114,6 +114,12 @@ button {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
   z-index: 1;
 }
+/* The active area among several (#45) — solid, brighter frame so you can see which desktop you're on. */
+.primary-space.is-current {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 75%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
 .primary-label {
   position: absolute;
   top: 10px;
@@ -339,6 +345,142 @@ button {
   color: var(--text-muted);
   text-transform: uppercase;
 }
+.dir-tile {
+  cursor: pointer;
+}
+
+/* Folder-open overlay (#44): browse a real subfolder's contents. */
+.dir-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 6800; /* above windows + folder band, below the full-screen Mission Control (7000) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--canvas) 55%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.dir-overlay-card {
+  width: min(820px, 88vw);
+  height: min(560px, 82vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius-panel);
+  box-shadow:
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-lg);
+  overflow: hidden;
+}
+.dir-overlay-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.dir-overlay-title {
+  font-size: 14px;
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.dir-overlay-count {
+  flex: 1 1 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.dir-overlay-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 6px;
+  padding: 14px;
+  align-content: start;
+}
+.dir-overlay-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 40px 0;
+}
+.dir-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 6px;
+  border-radius: var(--radius-card);
+  cursor: default;
+}
+.dir-entry:hover {
+  background: var(--control);
+}
+.dir-entry-icon {
+  width: 100%;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.dir-entry-icon img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.dir-entry-folder {
+  width: 56px;
+  height: 42px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 24%, var(--control));
+  border: 1px solid var(--hairline);
+  position: relative;
+}
+.dir-entry-folder::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 7px;
+  width: 24px;
+  height: 7px;
+  border-radius: 4px 4px 0 0;
+  background: color-mix(in srgb, var(--accent) 24%, var(--control));
+}
+.dir-entry-ext {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  background: var(--control);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.dir-entry-name {
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--text);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dir-entry-meta {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
 /* grab mode (⌥/Space held): signal it everywhere */
 #root-canvas.grab-mode {
   cursor: grab;
@@ -478,17 +620,7 @@ button {
   height: 14px;
   cursor: nwse-resize;
 }
-.rsz-se::after {
-  content: '';
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid var(--text-tertiary);
-  border-bottom: 2px solid var(--text-tertiary);
-  opacity: 0.6;
-}
+/* No visible corner grip — macOS windows resize from every edge/corner with no drawn handle. */
 
 /* macOS traffic lights — red=close, yellow=minimize, green=zoom. Gray unless the
    surface is active (front-most) or the cluster is hovered (then glyphs appear). */
@@ -774,6 +906,28 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Workspace-area control (#45): prev/next arrows + indicator + add. Compact, inline in the toolbar. */
+.area-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.area-ctl .area-ind {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.area-ctl .area-arrow,
+.area-ctl .area-add {
+  padding: 5px 9px;
+  line-height: 1;
+  font-size: 14px;
+}
+.area-ctl button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* Left dock. */

@@ -173,6 +173,13 @@
         body: JSON.stringify({ surfaceId: surfaceId })
       }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
     },
+    // #52: group surfaces into a REAL folder on disk (mkdir + mv their files into a subdir).
+    groupIntoFolder: function (name, ids) {
+      return fetch(API + '/os/group', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: name, ids: ids })
+      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+    },
     // P0 consent: let the agent read this web surface's content over the relay.
     setContentShare: function (surfaceId, on) {
       return fetch(API + '/os/content-share', {

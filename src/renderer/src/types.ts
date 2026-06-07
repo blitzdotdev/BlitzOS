@@ -34,6 +34,8 @@ export interface Surface {
   zoom?: number
   /** saved geometry when maximized, for restore */
   restore?: { x: number; y: number; w: number; h: number }
+  /** macOS-style tiling: the floating size to pop back to when this window is dragged out of a snap. */
+  preSnap?: { w: number; h: number }
   /** P0: agent may read this surface's content over the relay (default off; auto-on for agent-opened web/app). */
   shared?: boolean
   /** macOS-style minimize: hidden from the canvas (kept alive), restored from the dock. */

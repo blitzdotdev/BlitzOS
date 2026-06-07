@@ -12,13 +12,14 @@ import {
   osReadWindow,
   osControlSurface,
   osSay,
-  osGroup,
+  osGroupIntoFolder,
   type SurfaceDescriptor
 } from './osActions'
 import type { ControlAction } from './cdp'
 import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from './widget-catalog.mjs'
 import type { SaveWidgetInput } from './widget-catalog.mjs'
 import { integrationStatuses, connectedProviders } from './integrations'
+import { runProviderCall } from './provider-bridge'
 import { waitForEvents, latestSeq, isContentShared, redactMoment, EVENTS_REMINDER } from './events'
 // The single source of truth for the BlitzOS operating doc. Vite inlines the .md at
 // build (the main bundle has no runtime fs access to it); the server preview reads the
@@ -168,13 +169,14 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
         {
           path: '/group',
           description:
-            'Pack related surfaces into ONE named iPhone-style folder (returns { id }). Pass the ids of MORE THAN 2 surfaces you opened that share a purpose, a folder name, and the top-left x,y to place it inside the user view. Use this instead of leaving 3+ related windows loose; then drop a note next to it saying what it is.',
+            'Group related surfaces into ONE REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' files into it. kind:"folder" (default) → one collapsed tile (drill in to browse), best for many items / a repo. kind:"board" → the items stay SPLAYED on the canvas as a sub-board (best for a small curated set you want visible). A real filesystem folder either way, so it persists. Pass 2+ ids + a name.',
           input_schema: {
             type: 'object',
             required: ['ids', 'name'],
             properties: {
               ids: { type: 'array', items: { type: 'string' } },
               name: { type: 'string' },
+              kind: { type: 'string', enum: ['folder', 'board'] },
               x: { type: 'number' },
               y: { type: 'number' }
             }
@@ -182,21 +184,42 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
           handler: ({ body }) => {
             const a = parse(body)
             const ids = Array.isArray(a.ids) ? (a.ids as unknown[]).map(String) : []
-            if (ids.length < 2) return { status: 400, body: { error: 'group needs at least 2 surface ids' } }
-            const id = osGroup(
-              ids,
-              a.name != null ? String(a.name) : undefined,
-              a.x != null ? Number(a.x) : undefined,
-              a.y != null ? Number(a.y) : undefined
-            )
-            if (!id) return { status: 400, body: { error: 'group failed: fewer than 2 of the ids are real surfaces' } }
-            return { id }
+            if (!ids.length) return { status: 400, body: { error: 'group needs surface ids' } }
+            return osGroupIntoFolder(a.name != null ? String(a.name) : 'Folder', ids, a.x != null ? Number(a.x) : undefined, a.y != null ? Number(a.y) : undefined, a.kind === 'board' ? 'board' : 'folder')
           }
         },
         {
           path: '/list_state',
           description: 'List the surfaces currently open on the canvas.',
           handler: () => osGetState()
+        },
+        {
+          path: '/provider_call',
+          description:
+            'Make an authenticated request to a CONNECTED integration (provider) and get the JSON back — ' +
+            'use it to build whatever the user needs (their unread mail, repos, issues, messages, …). The OS ' +
+            'injects the credential server-side; you NEVER see the token. Reads (GET) are broad — pass any path ' +
+            "under the provider's API. Writes (POST/PUT/PATCH/DELETE) pop a human approval card. A sensitive read " +
+            '(message bodies, file contents) returns code:"consent_required" until the human approves once. ' +
+            'Args: {provider, method?, path, query?, body?}. Connected providers are in list_integrations.',
+          input_schema: {
+            type: 'object',
+            required: ['provider', 'path'],
+            properties: {
+              provider: { type: 'string' },
+              method: { type: 'string' },
+              path: { type: 'string', description: 'provider-relative, e.g. /user/repos' },
+              query: { type: 'object' },
+              body: {}
+            }
+          },
+          handler: async ({ body }) => {
+            const a = parse(body)
+            return runProviderCall(
+              { provider: String(a.provider || ''), method: a.method ? String(a.method) : undefined, path: String(a.path || ''), query: a.query as Record<string, unknown> | undefined, body: a.body },
+              'relay'
+            )
+          }
         },
         {
           path: '/read_window',

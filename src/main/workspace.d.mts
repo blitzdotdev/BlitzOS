@@ -12,6 +12,8 @@ export interface HydratedWorkspace {
   surfaces: Array<Record<string, unknown>>
   camera: { x: number; y: number; scale: number }
   mode: 'desktop' | 'canvas'
+  /** #45: number of tiled workspace areas (1 for old folders / missing / invalid). */
+  areaCount: number
 }
 
 /** Reconstruct surface descriptors from a workspace folder (inverse of writeWorkspace). */
@@ -19,6 +21,13 @@ export function readWorkspace(dir: string): HydratedWorkspace | null
 
 /** True if BlitzOS wrote this absolute path within the suppression window (Phase 3 watcher). */
 export function wasSelfWrite(absPath: string, windowMs?: number): boolean
+
+/** #52: real "group into folder" — mkdir a subdir + mv the members' content files into it. */
+export function groupIntoFolder(dir: string, name: string, memberIds: string[], kind?: 'board' | 'folder'): { ok: boolean; folder?: string; moved?: number; error?: string }
+
+/** #53: per-workspace consent persisted under .blitzos/state/consent.json (agent-read-denied). */
+export function writeConsent(dir: string, consent: { surfaces?: string[]; providers?: string[] }): void
+export function readConsent(dir: string): { surfaces: string[]; providers: string[] }
 
 /** Reconcile the canvas with the folder (auto-place new files, heal rename, drop missing). */
 export function reconcileWorkspace(

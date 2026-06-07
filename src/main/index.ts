@@ -1,8 +1,9 @@
-import { app, BrowserWindow, protocol } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain } from 'electron'
 import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
-import { initOsActions, osReadThumb, osFlushWorkspace } from './osActions'
+import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
+import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osLoadConsent, osPersistConsent } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -17,7 +18,10 @@ process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getApp
 
 // Serve workspace thumbnails (rendered board snapshots, written by capturePage) to the renderer's
 // <img> over a custom protocol — main owns the bytes; the renderer just references blitz-thumb://…
-protocol.registerSchemesAsPrivileged([{ scheme: 'blitz-thumb', privileges: { standard: true, supportFetchAPI: true, bypassCSP: true } }])
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'blitz-thumb', privileges: { standard: true, supportFetchAPI: true, bypassCSP: true } },
+  { scheme: 'blitz-file', privileges: { standard: true, supportFetchAPI: true, bypassCSP: true } }
+])
 
 let mainWindow: BrowserWindow | null = null
 
@@ -121,6 +125,18 @@ app.whenReady().then(() => {
       return new Response('', { status: 400 })
     }
   })
+  // Image previews for real workspace files in the desktop app (#46): blitz-file://w/<encoded relpath>.
+  protocol.handle('blitz-file', (request) => {
+    try {
+      const rel = decodeURIComponent(new URL(request.url).pathname.replace(/^\//, ''))
+      const r = osReadWorkspaceFile(rel)
+      return r
+        ? new Response(new Uint8Array(r.buf), { headers: { 'content-type': r.contentType, 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' } })
+        : new Response('', { status: 404 })
+    } catch {
+      return new Response('', { status: 400 })
+    }
+  })
 
   // Register the IPC for web-surface CDP control (renderer reports guest ids).
   initCdp()
@@ -133,6 +149,28 @@ app.whenReady().then(() => {
 
   // Onboarding/boot frosted backdrop: serve the user's macOS wallpaper to the renderer.
   registerWallpaperIpc()
+
+  // #51 general provider-access substrate: route write-approval cards to the renderer, and accept the
+  // human's approve/deny/consent back. Reads need none of this; only WRITES surface a card.
+  setProviderBroadcast((a) => mainWindow?.webContents.send('os:action', a))
+  ipcMain.handle('os:provider-approve', (_e, id: string) => {
+    resolveProviderApproval(String(id))
+    return { ok: true }
+  })
+  ipcMain.handle('os:provider-deny', (_e, id: string) => {
+    denyProviderApproval(String(id))
+    return { ok: true }
+  })
+  ipcMain.handle('os:provider-consent', (_e, provider: string, allow: boolean) => {
+    grantProviderConsent(String(provider), allow !== false)
+    return { ok: true }
+  })
+  // #53: restore the active workspace's sensitive-read provider grants + persist future ones (the host
+  // exists now). The widget-grant slice is restored inside registerWidgets() above.
+  loadProviderConsent(osLoadConsent().providers)
+  setProviderConsentPersist((providers) => osPersistConsent({ providers }))
+  // #52: group surfaces into a REAL folder (mkdir + mv) — the renderer's Cmd+G in the desktop app.
+  ipcMain.handle('os:group', (_e, name: string, ids: string[]) => osGroupIntoFolder(String(name), Array.isArray(ids) ? ids : []))
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()
