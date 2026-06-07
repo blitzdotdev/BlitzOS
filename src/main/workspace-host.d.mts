@@ -1,0 +1,30 @@
+// Types for the shared workspace host (workspace-host.mjs).
+import type { WorkspaceEntry } from './workspace.mjs'
+
+export interface WorkspaceHostAdapter {
+  root: string
+  initialName?: string
+  getState(): { surfaces: unknown[]; camera?: { x: number; y: number; scale: number }; mode?: string; view?: { cx: number; cy: number } }
+  setState(s: unknown): void
+  broadcast(obj: unknown): void
+  onSurfaces?: (surfaces: unknown[]) => Promise<unknown> | void
+  defaultMode?: 'canvas' | 'desktop'
+}
+
+export interface WorkspaceHost {
+  active(): string
+  activePath(): string
+  isSwitching(): boolean
+  hydrateOnBoot(): void
+  onStatePush(s: unknown): void
+  performSwitch(name: unknown): Promise<{ status: number; body: Record<string, unknown> }>
+  flush(): void
+  startWatch(): void
+  stopWatch(): void
+  list(): WorkspaceEntry[]
+  create(name: string): { name: string; path: string }
+  writeThumb(name: string, buf: Buffer): boolean
+  readThumb(name: string): Buffer | null
+}
+
+export function createWorkspaceHost(a: WorkspaceHostAdapter): WorkspaceHost

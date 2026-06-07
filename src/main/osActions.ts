@@ -1,8 +1,10 @@
-import { BrowserWindow, ipcMain, webContents } from 'electron'
+import { BrowserWindow, ipcMain, webContents, app } from 'electron'
 import { randomUUID } from 'crypto'
+import { join } from 'path'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
 import { ingestSignals, emitSurfaceAction, emitUserMessage, setContentShare, dropContentShare, INJECT, DRAIN } from './events'
+import { createWorkspaceHost } from './workspace-host.mjs'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -21,19 +23,60 @@ export interface SurfaceDescriptor {
 }
 
 export interface OsState {
-  surfaces: Array<{ id: string; kind: string; x: number; y: number; w: number; h: number; title: string; url?: string }>
+  surfaces: Array<{ id: string; kind: string; x: number; y: number; w: number; h: number; title: string; url?: string; component?: string; z?: number; props?: Record<string, unknown> }>
+  camera?: { x: number; y: number; scale: number }
+  view?: { cx: number; cy: number }
+  mode?: string
+  workspace?: string
 }
 
 let getWin: () => BrowserWindow | null = () => null
 let cached: OsState = { surfaces: [] }
+// The SHARED workspace host (created in initOsActions, once app paths exist) — the SAME module the
+// server backend uses, so workspaces are ONE feature across both modes. Electron adapter: broadcast =
+// os:action IPC; web surfaces are <webview>s the renderer owns (onSurfaces no-op); mode 'desktop'.
+let wsHost: ReturnType<typeof createWorkspaceHost> | null = null
 // surfaceId -> the webview guest's WebContents id (so we can read its DOM)
 const webviewIds = new Map<string, number>()
 
 /** Wire the renderer<->main control channel. Renderer pushes state on change. */
 export function initOsActions(getWindow: () => BrowserWindow | null): void {
   getWin = getWindow
+
+  // The shared workspace host, rooted at ~/Blitz (user-browseable folders). SAME module as the server.
+  wsHost = createWorkspaceHost({
+    root: join(app.getPath('home'), 'Blitz'),
+    getState: () => cached,
+    setState: (s) => {
+      cached = s as OsState
+    },
+    broadcast: (obj) => getWin()?.webContents.send('os:action', obj),
+    onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
+    defaultMode: 'desktop'
+  })
+  wsHost.hydrateOnBoot()
+  wsHost.startWatch()
+
+  // Workspace launcher / Mission-Control IPC — mirrors the server's /api/os/workspace* routes.
+  ipcMain.handle('workspace:list', () => ({
+    workspaces: wsHost!.list().map(({ name, nodeCount, updatedAt, thumbTs }) => ({ name, nodeCount, updatedAt, thumbTs })),
+    active: wsHost!.active()
+  }))
+  ipcMain.handle('workspace:create', (_e, name: string) => {
+    try {
+      return { ok: true, name: wsHost!.create(name).name }
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message || 'create failed' }
+    }
+  })
+  ipcMain.handle('workspace:switch', async (_e, name: string) => {
+    const r = await wsHost!.performSwitch(name)
+    return r.status === 200 ? { ok: true, active: r.body.active } : { ok: false, error: r.body.error }
+  })
+  ipcMain.handle('workspace:capture', (_e, name: string) => osCaptureThumb(name))
+
   ipcMain.on('os:state', (_e, state: OsState) => {
-    if (state && Array.isArray(state.surfaces)) cached = state
+    if (state && Array.isArray(state.surfaces)) wsHost?.onStatePush(state)
   })
   ipcMain.on('os:webview', (_e, m: { surfaceId: string; wcid: number }) => {
     if (m && m.surfaceId) {
@@ -174,4 +217,35 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
   }
   // web, or state not yet synced — CDP (controlWindow errors if no guest is registered)
   return controlWindow(id, action)
+}
+
+/** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
+export function osSendHydrate(): void {
+  if (!wsHost) return
+  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', workspace: wsHost.active() })
+}
+/** Serve a workspace thumbnail by name (the blitz-thumb:// protocol handler in index.ts calls this). */
+export function osReadThumb(name: string): Buffer | null {
+  return wsHost ? wsHost.readThumb(name) : null
+}
+/** Flush a pending workspace write + stop the folder watchers on quit. */
+export function osFlushWorkspace(): void {
+  wsHost?.flush()
+  wsHost?.stopWatch()
+}
+/** Capture the primary area (1440x900, centered) of the current board → store as `name`'s thumbnail. */
+async function osCaptureThumb(name: string): Promise<{ ok: boolean; error?: string }> {
+  const win = getWin()
+  if (!win || !wsHost) return { ok: false }
+  try {
+    const [w, h] = win.getContentSize()
+    const pw = Math.min(1440, w)
+    const ph = Math.min(900, h)
+    const rect = { x: Math.round((w - pw) / 2), y: Math.round((h - ph) / 2), width: pw, height: ph }
+    const img = await win.webContents.capturePage(rect)
+    wsHost.writeThumb(name, img.resize({ width: 480, height: 300, quality: 'good' }).toJPEG(72))
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || 'capture failed' }
+  }
 }

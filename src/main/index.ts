@@ -1,8 +1,8 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, protocol } from 'electron'
 import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
-import { initOsActions } from './osActions'
+import { initOsActions, osSendHydrate, osReadThumb, osFlushWorkspace } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -13,6 +13,10 @@ import { startSessionPersistence } from './persistence'
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
 process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getAppPath(), 'widgets')
+
+// Serve workspace thumbnails (rendered board snapshots, written by capturePage) to the renderer's
+// <img> over a custom protocol — main owns the bytes; the renderer just references blitz-thumb://…
+protocol.registerSchemesAsPrivileged([{ scheme: 'blitz-thumb', privileges: { standard: true, supportFetchAPI: true, bypassCSP: true } }])
 
 let mainWindow: BrowserWindow | null = null
 
@@ -79,6 +83,10 @@ function createWindow(): void {
     console.error(`[renderer] render-process-gone ${JSON.stringify(details)}`)
   })
 
+  // Push the active workspace's canvas to the freshly-loaded renderer (it adopts the first hydrate).
+  // Small delay so the renderer's onAction listener is mounted before the hydrate arrives.
+  mainWindow.webContents.on('did-finish-load', () => setTimeout(() => osSendHydrate(), 200))
+
   // electron-vite injects ELECTRON_RENDERER_URL in dev; load the built file in prod.
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
@@ -95,8 +103,23 @@ app.whenReady().then(() => {
   // otherwise the freshest auth token is lost on quit and sites log you back out).
   startSessionPersistence()
 
-  // Wire the renderer<->main control channel (shared by control server + agent-socket).
+  // Wire the renderer<->main control channel (shared by control server + agent-socket). Also creates
+  // the shared workspace host (hydrate/persist/switch/list/create/thumb) — the SAME module the server
+  // backend uses, so workspaces are one feature across both modes.
   initOsActions(() => mainWindow)
+
+  // Workspace thumbnail protocol (blitz-thumb://t/?name=X&t=ts → the cached jpeg). After initOsActions
+  // so the host exists; osReadThumb null-guards anyway.
+  protocol.handle('blitz-thumb', (request) => {
+    try {
+      const buf = osReadThumb(new URL(request.url).searchParams.get('name') || '')
+      return buf
+        ? new Response(new Uint8Array(buf), { headers: { 'content-type': 'image/jpeg', 'cache-control': 'no-cache' } })
+        : new Response('', { status: 404 })
+    } catch {
+      return new Response('', { status: 400 })
+    }
+  })
 
   // Register the IPC for web-surface CDP control (renderer reports guest ids).
   initCdp()
@@ -127,6 +150,9 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+// Flush a pending workspace write + stop the folder watchers before quit (so the last edit persists).
+app.on('before-quit', () => osFlushWorkspace())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

@@ -51,6 +51,18 @@ export interface OsState {
   workspace?: string
 }
 
+// Workspace launcher / Mission-Control API. ONE shape for both transports: server (shim) provides
+// `thumb` (the renderer composites + uploads); Electron provides `captureThumb` (main capturePage) —
+// hence both are optional. list/create/switch/thumbUrl exist in both.
+export interface WorkspacesApi {
+  list(): Promise<{ workspaces: Array<{ name: string; nodeCount: number; updatedAt: number; thumbTs: number }>; active: string }>
+  create(name: string): Promise<{ ok: boolean; name?: string; error?: string }>
+  switch(name: string): Promise<{ ok: boolean; active?: string; error?: string }>
+  thumbUrl(name: string, ts?: number): string
+  thumb?(name: string, dataUrl: string): Promise<{ ok?: boolean; error?: string }>
+  captureThumb?(name: string): Promise<{ ok: boolean; error?: string }>
+}
+
 const api = {
   /** Control actions from main (local control server or agent-socket) -> renderer. */
   onAction(cb: (a: OsAction) => void): () => void {
@@ -116,6 +128,16 @@ const api = {
   revokeConsent(surfaceId: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('widget:consent:revoke', surfaceId)
   },
+
+  // Workspaces (one feature, both modes). Electron thumbnails are captured main-side (capturePage)
+  // and served over the blitz-thumb:// protocol; switching is the shared host's atomic switch.
+  workspaces: {
+    list: () => ipcRenderer.invoke('workspace:list'),
+    create: (name: string) => ipcRenderer.invoke('workspace:create', name),
+    switch: (name: string) => ipcRenderer.invoke('workspace:switch', name),
+    captureThumb: (name: string) => ipcRenderer.invoke('workspace:capture', name),
+    thumbUrl: (name: string, ts?: number) => `blitz-thumb://t/?name=${encodeURIComponent(name)}${ts ? `&t=${ts}` : ''}`
+  } as WorkspacesApi,
 
   integrations: {
     list(): Promise<IntegrationStatus[]> {

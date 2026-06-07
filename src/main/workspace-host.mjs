@@ -1,0 +1,220 @@
+// Shared workspace HOST — owns the active-workspace runtime: hydrate, persist (debounced), watch +
+// reconcile external edits, switch (atomic, single-flight), list/create, and the last-seen thumbnail
+// store. Used by BOTH preview/backend.mjs (server mode) AND src/main/osActions.ts (Electron) — there
+// is ONE implementation, no second copy to drift. The serializer (workspace.mjs) does disk I/O; the
+// per-transport bits (reaching renderers, realizing web surfaces) are adapter callbacks. This is the
+// control-core.mjs / perception-core.mjs pattern: one feature, both modes.
+import { mkdirSync, writeFileSync, readFileSync, watch } from 'node:fs'
+import { join, basename, resolve } from 'node:path'
+import {
+  writeWorkspace,
+  readWorkspace,
+  reconcileWorkspace,
+  wasSelfWrite,
+  listWorkspaces,
+  createWorkspace,
+  resolveWorkspace,
+  safeName
+} from './workspace.mjs'
+
+/**
+ * @param {object} a
+ * @param {string}   a.root         WORKSPACES_ROOT (holds many workspace folders)
+ * @param {string}  [a.initialName] 'Home' default, or the basename of an explicit override
+ * @param {() => any} a.getState    returns the current osState ({surfaces,camera,mode,view})
+ * @param {(s:any) => void} a.setState  sets osState (the host owns it on hydrate/switch/reconcile)
+ * @param {(obj:any) => void} a.broadcast  send a message to all connected renderers
+ * @param {(surfaces:any[]) => (Promise<any>|void)} [a.onSurfaces]  realize web surfaces (server: spin/tear
+ *        headless targets; Electron: no-op, the renderer owns <webview>s)
+ * @param {'canvas'|'desktop'} [a.defaultMode]  blank-workspace mode (server: canvas, Electron: desktop)
+ */
+export function createWorkspaceHost(a) {
+  const root = resolve(a.root)
+  const onSurfaces = a.onSurfaces || (() => {})
+  const defaultMode = a.defaultMode === 'desktop' ? 'desktop' : 'canvas'
+  mkdirSync(root, { recursive: true })
+
+  let initialName = a.initialName || 'Home'
+  if (!safeName(initialName)) {
+    console.error(`[workspace] initial name ${JSON.stringify(initialName)} invalid — using 'Home'`)
+    initialName = 'Home'
+  }
+  if (listWorkspaces(root).length === 0) {
+    try {
+      createWorkspace(root, initialName)
+    } catch (e) {
+      console.error('[workspace] first-run create failed:', e?.message || e)
+    }
+  }
+  let activeWorkspace = resolveWorkspace(root, initialName, { mustExist: true }) || join(root, initialName)
+
+  let switching = false
+  let writeTimer = null
+  let reconcileTimer = null
+  let watchers = []
+
+  const active = () => basename(activeWorkspace)
+  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode })
+
+  function flush() {
+    if (writeTimer) {
+      clearTimeout(writeTimer)
+      writeTimer = null
+    }
+    try {
+      writeWorkspace(activeWorkspace, a.getState())
+    } catch (e) {
+      console.error('[workspace] write failed:', e?.message || e)
+    }
+  }
+  function scheduleWrite() {
+    if (writeTimer) clearTimeout(writeTimer)
+    writeTimer = setTimeout(flush, 500) // trailing debounce
+  }
+  function scheduleReconcile() {
+    if (reconcileTimer) return
+    reconcileTimer = setTimeout(() => {
+      reconcileTimer = null
+      if (switching) return // a switch owns the folder mid-flight
+      try {
+        const st = a.getState()
+        const v = st.view
+        const r = reconcileWorkspace(activeWorkspace, v ? { cx: v.cx, cy: v.cy } : {})
+        if (!r) return
+        // runtime-only panels (chat/activity) aren't files — preserve them across a reconcile.
+        const runtime = (st.surfaces || []).filter((s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+        const merged = [...r.surfaces, ...runtime]
+        a.setState({ ...st, surfaces: merged, camera: r.camera, mode: r.mode })
+        Promise.resolve(onSurfaces(merged)).catch(() => {})
+        a.broadcast({ type: 'hydrate', surfaces: merged, camera: r.camera, mode: r.mode, workspace: active() })
+      } catch (e) {
+        console.error('[workspace] reconcile failed:', e?.message || e)
+      }
+    }, 250)
+  }
+  function startWatch() {
+    try {
+      mkdirSync(join(activeWorkspace, '.blitzos'), { recursive: true })
+    } catch {
+      /* ignore */
+    }
+    const onEvent = (sub) => (_evt, filename) => {
+      if (!filename) return scheduleReconcile()
+      if (/(^\.tmp)|(\.tmp(-[0-9a-f]+)?$)/.test(filename)) return // our atomic temp files
+      if (wasSelfWrite(join(activeWorkspace, sub, filename))) return // our own write
+      scheduleReconcile()
+    }
+    try {
+      watchers.push(watch(activeWorkspace, onEvent('')))
+      watchers.push(watch(join(activeWorkspace, '.blitzos'), onEvent('.blitzos')))
+      console.log(`[workspace] watching ${activeWorkspace} for external edits`)
+    } catch (e) {
+      console.error('[workspace] watch failed:', e?.message || e)
+    }
+  }
+  function stopWatch() {
+    for (const w of watchers) {
+      try {
+        w.close()
+      } catch {
+        /* already closed */
+      }
+    }
+    watchers = []
+  }
+
+  /** Boot: load the active workspace into osState (the caller broadcasts hydrate to renderers). */
+  function hydrateOnBoot() {
+    try {
+      const h = readWorkspace(activeWorkspace)
+      if (h && h.surfaces.length) {
+        a.setState({ surfaces: h.surfaces, camera: h.camera, mode: h.mode })
+        console.log(`[workspace] hydrated ${h.surfaces.length} surface(s) from ${activeWorkspace}`)
+      }
+    } catch (e) {
+      console.error('[workspace] hydrate failed:', e?.message || e)
+    }
+  }
+
+  /** The renderer pushed its state — persist it (with the stale-push guard) + realize surfaces. */
+  function onStatePush(s) {
+    if (!s || !Array.isArray(s.surfaces)) return
+    // Drop a stale push: mid-switch, or tagged with a workspace we've switched away from (else it
+    // clobbers osState and persists the OLD board into the NEW folder). Untagged pushes pass.
+    if (switching || (typeof s.workspace === 'string' && s.workspace !== active())) return
+    a.setState(s)
+    Promise.resolve(onSurfaces(s.surfaces)).catch(() => {})
+    scheduleWrite()
+  }
+
+  /** Atomic single-flight switch. Returns { status, body }. */
+  async function performSwitch(rawName) {
+    if (switching) return { status: 409, body: { error: 'switch in progress' } }
+    const name = safeName(rawName)
+    if (!name) return { status: 400, body: { error: 'invalid workspace name' } }
+    const newPath = resolveWorkspace(root, name, { mustExist: true })
+    if (!newPath) return { status: 404, body: { error: 'no such workspace' } }
+    if (newPath === activeWorkspace) return { status: 200, body: { ok: true, active: name } } // no-op
+    switching = true
+    try {
+      flush() // persist OLD → OLD; clears writeTimer
+      if (reconcileTimer) {
+        clearTimeout(reconcileTimer) // flush doesn't clear this — a queued reconcile would hit the new dir
+        reconcileTimer = null
+      }
+      stopWatch()
+      const st = a.getState()
+      const runtime = (st.surfaces || []).filter((s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+      activeWorkspace = newPath // load-bearing: AFTER flush
+      const next = readWorkspace(newPath) || blank()
+      const surfaces = [...next.surfaces, ...runtime]
+      a.setState({ surfaces, camera: next.camera, mode: next.mode, view: { cx: next.camera.x, cy: next.camera.y } })
+      await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
+      startWatch()
+      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, workspace: name })
+      console.log(`[workspace] switched → ${name}`)
+      return { status: 200, body: { ok: true, active: name } }
+    } finally {
+      switching = false
+    }
+  }
+
+  // Last-seen thumbnail per workspace (.blitzos/state/thumb.jpg) — shared store; the per-transport
+  // CAPTURE differs (server: renderer composites the streamed canvases; Electron: main capturePage).
+  function thumbStateDir(name) {
+    const dir = resolveWorkspace(root, name, { mustExist: true })
+    return dir ? join(dir, '.blitzos', 'state') : null
+  }
+  function writeThumb(name, buf) {
+    const dir = thumbStateDir(name)
+    if (!dir) return false
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'thumb.jpg'), buf)
+    return true
+  }
+  function readThumb(name) {
+    const dir = thumbStateDir(name)
+    if (!dir) return null
+    try {
+      return readFileSync(join(dir, 'thumb.jpg'))
+    } catch {
+      return null
+    }
+  }
+
+  return {
+    active,
+    activePath: () => activeWorkspace,
+    isSwitching: () => switching,
+    hydrateOnBoot,
+    onStatePush,
+    performSwitch,
+    flush,
+    startWatch,
+    stopWatch,
+    list: () => listWorkspaces(root),
+    create: (name) => createWorkspace(root, name),
+    writeThumb,
+    readThumb
+  }
+}

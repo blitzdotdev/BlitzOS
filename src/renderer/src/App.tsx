@@ -25,6 +25,7 @@ export default function App(): JSX.Element {
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [panMode, setPanMode] = useState(false)
   const isServer = !!window.agentOS?.serverMode
+  const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
   // Phase 2: true once the backend has sent (or declined) a hydrate. The state-push is
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
@@ -381,10 +382,15 @@ export default function App(): JSX.Element {
   // board we're leaving still has live streamed frames — they're torn down by the switch).
   async function captureCurrent(): Promise<void> {
     const name = activeWsRef.current
-    if (!name) return
+    const ws = window.agentOS?.workspaces
+    if (!name || !ws) return
     try {
-      const dataUrl = capturePrimaryThumb()
-      if (dataUrl) await window.agentOS?.workspaces?.thumb(name, dataUrl)
+      if (ws.captureThumb) {
+        await ws.captureThumb(name) // Electron: main-side capturePage (real pixels, incl. <webview>s)
+      } else if (ws.thumb) {
+        const dataUrl = capturePrimaryThumb() // server: composite the streamed canvases + upload
+        if (dataUrl) await ws.thumb(name, dataUrl)
+      }
     } catch {
       /* best-effort snapshot */
     }
@@ -441,7 +447,7 @@ export default function App(): JSX.Element {
       )}
 
       <div className="toolbar">
-        {isServer && (
+        {hasWorkspaces && (
           <button className="ws-btn" onClick={() => void openOverview()} title="Workspaces (Mission Control)">
             ▦ {activeWs ?? '…'} ▾
           </button>
@@ -469,7 +475,7 @@ export default function App(): JSX.Element {
         </div>
       )}
 
-      {isServer && showOverview && <Overview onClose={() => setShowOverview(false)} onSwitch={switchWorkspace} />}
+      {hasWorkspaces && showOverview && <Overview onClose={() => setShowOverview(false)} onSwitch={switchWorkspace} />}
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
     </div>
   )
