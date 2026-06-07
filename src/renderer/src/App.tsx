@@ -3,6 +3,7 @@ import { useDesktop, type CreateSurfaceInput } from './store'
 import type { Surface } from './types'
 import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
+import { Launcher } from './components/Launcher'
 import { SurfaceFrame } from './components/SurfaceFrame'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
@@ -19,7 +20,10 @@ export default function App(): JSX.Element {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [aiUrl, setAiUrl] = useState<string | null>(null)
   const [showAi, setShowAi] = useState(false)
+  const [showLauncher, setShowLauncher] = useState(false)
+  const [activeWs, setActiveWs] = useState<string | null>(null)
   const [panMode, setPanMode] = useState(false)
+  const isServer = !!window.agentOS?.serverMode
   const pan = useRef<{ x: number; y: number } | null>(null)
   // Phase 2: true once the backend has sent (or declined) a hydrate. The state-push is
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
@@ -148,6 +152,16 @@ export default function App(): JSX.Element {
         const md = a.mode === 'desktop' ? 'desktop' : 'canvas'
         st.hydrate(surfs, cam, md)
         hydrated.current = true
+        if (typeof a.workspace === 'string') setActiveWs(a.workspace)
+      } else if (a.type === 'switch') {
+        // FORCED re-hydrate on a workspace switch — wholesale swap the canvas. Bypasses the
+        // first-hydrate-wins guard, but keeps hydrated.current true (never reset) so a racing SSE
+        // reconnect's hydrate still can't clobber the new board.
+        const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
+        const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
+        st.hydrate(sf, cm, a.mode === 'desktop' ? 'desktop' : 'canvas')
+        if (typeof a.workspace === 'string') setActiveWs(a.workspace)
+        setShowLauncher(false)
       } else if (a.type === 'create') {
         const surf = a.surface as CreateSurfaceInput
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
@@ -266,7 +280,6 @@ export default function App(): JSX.Element {
     // a fallback there could fire before a slow hydrate, which the first-hydrate-wins guard
     // would then ignore, never restoring. Electron has no server hydrate, so it gets a grace
     // timer to start pushing (and only if it actually has surfaces, to never push an empty store).
-    const isServer = !!window.agentOS?.serverMode
     const hydrateFallback = isServer
       ? null
       : setTimeout(() => {
@@ -391,10 +404,15 @@ export default function App(): JSX.Element {
       )}
 
       <div className="toolbar">
+        {isServer && (
+          <button className="ws-btn" onClick={() => setShowLauncher(true)} title="Switch workspace">
+            ▦ {activeWs ?? '…'} ▾
+          </button>
+        )}
         <button onClick={() => useDesktop.getState().goToPrimary()}>Center</button>
         <button onClick={openChat}>💬 Chat</button>
         <button onClick={() => setShowAi((v) => !v)}>{aiUrl ? '🟢 Connect AI' : '○ Connect AI'}</button>
-        <span className="hint">fixed desktop · drag the top bar to move · click the dock to focus</span>
+        {!isServer && <span className="hint">fixed desktop · drag the top bar to move · click the dock to focus</span>}
       </div>
 
       {showAi && (
@@ -414,6 +432,7 @@ export default function App(): JSX.Element {
         </div>
       )}
 
+      {isServer && showLauncher && <Launcher onClose={() => setShowLauncher(false)} />}
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
     </div>
   )

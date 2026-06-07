@@ -137,6 +137,21 @@
     serverNavigate: function (id, url) { streamSend({ t: 'cdp', id: id, method: 'Page.navigate', params: { url: url } }) },
     serverReload: function (id) { streamSend({ t: 'cdp', id: id, method: 'Page.reload', params: {} }) },
 
+    // Multi-workspace launcher (server-mode only). list/create/switch hit the backend routes;
+    // onWorkspace reuses the single SSE stream (NO second EventSource) to learn the active name on
+    // a switch. Send raw names — the server's safeName is the one validator; render its error.
+    workspaces: {
+      list: function () { return getJSON('/os/workspaces') },
+      create: function (name) { return getJSON('/os/workspaces', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) }) },
+      switch: function (name) { return getJSON('/os/workspace/switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) }) }
+    },
+    onWorkspace: function (cb) {
+      ensureES()
+      var wrap = function (m) { if (m && m.type === 'switch') cb({ active: m.workspace }) }
+      actionL.push(wrap)
+      return function () { actionL = actionL.filter(function (x) { return x !== wrap }) }
+    },
+
     // srcdoc widget bridge: relay a widget's data request to the backend data route
     // (consent-gated). Token stays server-side; the widget only ever sees {items}.
     widgetRequest: function (reqObj) {

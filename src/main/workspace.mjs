@@ -17,7 +17,7 @@
 // Shared module (the control-core.mjs / perception-core.mjs pattern): plain Node, importable
 // by the server backend now and Electron main later.
 
-import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, copyFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, copyFileSync, realpathSync } from 'node:fs'
 import { join, dirname, resolve, sep, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -480,4 +480,143 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
   return { surfaces, camera, mode, changed }
+}
+
+// ===========================================================================================
+// Multi-workspace: a ROOT folder holds many workspace folders (the launcher lists/creates/
+// switches between them). Names are validated on RAW input with a strict allow-list BEFORE any
+// path join — safeJoin (above) is only a traversal backstop, it still passes '.blitzos', 'a/b',
+// and reserved device names like 'con'. The switch/list paths additionally realpath-jail under
+// the root so a symlinked workspace can't escape to e.g. the cookie profile or tokens.
+// ===========================================================================================
+
+// 1..64 chars; must start alphanumeric (no leading space/dash/dot); only space, dash, underscore
+// otherwise — so no separators, no dotfiles, no extensions.
+const WS_NAME = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$/
+const WS_RESERVED = new Set([
+  '.blitzos', 'blitzos.md', '.gitignore', '.git', '.', '..', 'con', 'prn', 'aux', 'nul',
+  ...Array.from({ length: 9 }, (_, i) => `com${i + 1}`),
+  ...Array.from({ length: 9 }, (_, i) => `lpt${i + 1}`)
+])
+
+/** Validate a RAW workspace name. Returns the NFC-normalized name, or null if invalid. */
+export function safeName(name) {
+  if (typeof name !== 'string') return null
+  const n = name.normalize('NFC')
+  if (n !== n.trim()) return null // no leading/trailing whitespace
+  if (!WS_NAME.test(n)) return null
+  if (WS_RESERVED.has(n.toLowerCase())) return null
+  return n
+}
+
+/**
+ * Resolve a workspace name to an absolute path under `root`, realpath-jailed (NOT a string
+ * startsWith — defeats symlink escapes). `mustExist:true` (switch) requires an existing dir whose
+ * realpath is exactly the jailed target; `mustExist:false` (create) requires it NOT to exist yet.
+ * Returns the absolute path or null.
+ */
+export function resolveWorkspace(root, name, { mustExist }) {
+  const safe = safeName(name)
+  if (!safe) return null
+  let rootReal
+  try {
+    rootReal = realpathSync(resolve(root))
+  } catch {
+    return null
+  }
+  const target = join(rootReal, safe)
+  if (mustExist) {
+    let real
+    try {
+      real = realpathSync(target)
+    } catch {
+      return null
+    }
+    if (real !== target) return null // a symlink pointing outside the jail — reject
+    try {
+      if (!statSync(real).isDirectory()) return null
+    } catch {
+      return null
+    }
+    return real
+  }
+  // create: the path must NOT already exist
+  if (existsSync(target)) return null
+  return target
+}
+
+/** List the workspace folders under `root` (newest-edited first). Skips non-dirs, invalid
+ *  names, and symlinks escaping the jail. Each: { name, path, nodeCount, updatedAt }. */
+export function listWorkspaces(root) {
+  let rootReal
+  try {
+    rootReal = realpathSync(resolve(root))
+  } catch {
+    return []
+  }
+  let ents = []
+  try {
+    ents = readdirSync(rootReal, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const out = []
+  for (const e of ents) {
+    if (!e.isDirectory() || !safeName(e.name)) continue
+    const p = join(rootReal, e.name)
+    try {
+      if (realpathSync(p) !== p) continue // escaping symlink — skip
+    } catch {
+      continue
+    }
+    const metaFile = join(p, '.blitzos', 'workspace.json')
+    let nodeCount = 0
+    let updatedAt = 0
+    try {
+      updatedAt = statSync(metaFile).mtimeMs
+    } catch {
+      try {
+        updatedAt = statSync(p).mtimeMs
+      } catch {
+        /* unreadable — leave 0 */
+      }
+    }
+    try {
+      const m = JSON.parse(readFileSync(metaFile, 'utf8'))
+      if (Array.isArray(m.nodes)) nodeCount = m.nodes.length
+    } catch {
+      /* no/blank workspace.json — nodeCount stays 0 */
+    }
+    out.push({ name: e.name, path: p, nodeCount, updatedAt })
+    if (out.length >= 200) break // cap a pathological root
+  }
+  return out.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+/** Create a new workspace folder under `root` + scaffold it. Throws Error with .code
+ *  'EINVAL' (bad name / bad root) or 'EEXIST' (already exists). Returns { name, path }. */
+export function createWorkspace(root, name) {
+  const safe = safeName(name)
+  if (!safe) {
+    const e = new Error('invalid workspace name')
+    e.code = 'EINVAL'
+    throw e
+  }
+  let rootReal
+  try {
+    rootReal = realpathSync(resolve(root))
+  } catch {
+    const e = new Error('invalid workspaces root')
+    e.code = 'EINVAL'
+    throw e
+  }
+  const target = join(rootReal, safe)
+  if (existsSync(target)) {
+    const e = new Error('workspace already exists')
+    e.code = 'EEXIST'
+    throw e
+  }
+  mkdirSync(target, { recursive: false }) // recursive:false → EEXIST backstop if it races
+  scaffold(target) // self-describing BLITZOS.md + .gitignore (private fn above)
+  return { name: safe, path: target }
 }

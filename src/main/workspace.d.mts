@@ -25,3 +25,24 @@ export function reconcileWorkspace(
   dir: string,
   placeAt?: { cx?: number; cy?: number }
 ): (HydratedWorkspace & { changed: boolean }) | null
+
+// ---- Multi-workspace: a ROOT folder holds many workspace folders. ----
+
+export interface WorkspaceEntry {
+  name: string
+  path: string
+  nodeCount: number
+  updatedAt: number
+}
+
+/** Validate a RAW workspace name (strict allow-list). Returns the NFC name or null. */
+export function safeName(name: unknown): string | null
+
+/** Resolve a name to a realpath-jailed absolute path under root (or null). */
+export function resolveWorkspace(root: string, name: string, opts: { mustExist: boolean }): string | null
+
+/** List workspace folders under root, newest-edited first. */
+export function listWorkspaces(root: string): WorkspaceEntry[]
+
+/** Create + scaffold a new workspace. Throws Error with .code 'EINVAL' | 'EEXIST'. */
+export function createWorkspace(root: string, name: string): { name: string; path: string }

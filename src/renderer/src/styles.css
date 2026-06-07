@@ -445,6 +445,91 @@ body,
   font-style: italic;
 }
 
+/* Workspace launcher (the project picker). Reuses .overlay/.panel; adds the list + new-row. */
+.ws-btn {
+  font-weight: 600;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-panel {
+  width: 460px;
+}
+.ws-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.ws-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: #1b2027;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.ws-row:hover:not(:disabled) {
+  background: #232a33;
+  border-color: #3d4651;
+}
+.ws-row:disabled {
+  cursor: default;
+}
+.ws-row-active {
+  border-color: #2ea043;
+  background: #182018;
+}
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6e7681;
+  flex: 0 0 8px;
+}
+.ws-dot.on {
+  background: #2ea043;
+}
+.ws-name {
+  font-weight: 600;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.ws-new {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ws-input {
+  flex: 1 1 auto;
+  background: #0e1116;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--ink);
+  font-size: 13px;
+}
+.ws-input:focus {
+  outline: none;
+  border-color: #1f6feb;
+}
+
 /* Left sidebar (screen-space). For now just a + to add a browser window. */
 .sidebar {
   position: fixed;
