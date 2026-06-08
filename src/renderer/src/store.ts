@@ -56,9 +56,9 @@ function desktopClamp(x: number, y: number, w: number, h: number, vp: { w: numbe
   return { x: clamp(x, r.x, Math.max(r.x, r.x + r.w - w)), y: clamp(y, r.y, Math.max(r.y, r.y + r.h - h)) }
 }
 /** Camera per mode. Normal = scale 1 locked to the CURRENT area (its center maps to a fixed screen
- *  point, so every area lands in the same on-screen desktop region). Control = zoomed out: a single
- *  area uses the exact today constant (0.31); multiple areas fit the whole tiled row in the same
- *  on-screen span (so n===1 collapses to today's bird's-eye byte-identically). */
+ *  point, so every area lands in the same on-screen desktop region). Control = a gentle zoom-out: a
+ *  single area uses controlScale (0.7); multiple areas fit the whole tiled row in the same on-screen
+ *  span (so n===1 collapses to the single-area controlScale). */
 export function viewTransform(
   mode: 'desktop' | 'canvas',
   vp: { w: number; h: number },
@@ -74,12 +74,14 @@ export function viewTransform(
     const acx = area === 0 ? 0 : area * areaStride(vp)
     return { scale: 1, x: cx - acx, y: cy }
   }
-  // CONTROL bird's-eye. Single area → the literal 0.31 (unchanged). Multiple areas → scale so the union
-  // of all areas spans the same screen width one area did at 0.31, union center kept at the (cx,cy) anchor.
-  if (areaCount <= 1) return { scale: 0.31, x: cx, y: cy }
+  // CONTROL = a GENTLE zoom-out (controlScale 0.7; was a 0.31 wide bird's-eye, which was too much).
+  // Single area → 0.7. Multiple areas → scale so the union of all areas spans the same screen width
+  // one area did at 0.7, union center kept at the (cx,cy) anchor. Tune controlScale: 1 = no zoom-out.
+  const controlScale = 0.7
+  if (areaCount <= 1) return { scale: controlScale, x: cx, y: cy }
   const stride = areaStride(vp)
   const unionW = (areaCount - 1) * stride + r.w
-  const scale = (0.31 * r.w) / unionW // == 0.31 when areaCount === 1 (unionW === r.w)
+  const scale = (controlScale * r.w) / unionW
   const ucx = ((areaCount - 1) * stride) / 2 // world x of the tiled row's center
   return { scale, x: cx - ucx * scale, y: cy }
 }
@@ -165,6 +167,10 @@ interface DesktopState {
   editingId: string | null // surface the user is actively editing — its live content survives a reconcile (#47)
   absorbing: string[]
   grabMode: boolean
+  /** View locked (⌘⌘): the infinite canvas is frozen at its current camera — pan/zoom are off
+   *  and a background drag becomes marquee-select. Lets you work inside surfaces without the
+   *  canvas drifting. Toggled by double-tapping ⌘ (or the toolbar lock button). */
+  locked: boolean
 
   setViewport: (w: number, h: number) => void
   setMode: (m: 'desktop' | 'canvas') => void
@@ -189,6 +195,7 @@ interface DesktopState {
   addToFolder: (folderId: string, ids: string[]) => void
   dropIntoFolder: (folderId: string, ids: string[]) => void
   setGrabMode: (on: boolean) => void
+  toggleLock: () => void
 
   setIntegrations: (list: IntegrationStatus[]) => void
   setPos: (id: string, x: number, y: number) => void
@@ -235,6 +242,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   editingId: null,
   absorbing: [],
   grabMode: false,
+  locked: false,
 
   setViewport: (w, h) => set({ viewport: { w, h } }),
   setMode: (m) => set({ mode: m }),
@@ -316,6 +324,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   setOpenDirPath: (p) => set({ openDirPath: p }),
   setEditingId: (id) => set({ editingId: id }),
   setGrabMode: (on) => set({ grabMode: on }),
+  toggleLock: () => set((s) => ({ locked: !s.locked })),
 
   // Add surfaces to an existing folder (drag-onto-folder). Skips folders; re-adding a
   // currently-peeked member just clears its peek so it hides back inside.

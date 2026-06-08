@@ -2,13 +2,13 @@
    BlitzOS design tokens — "Spatial-grade" visual system
    ----------------------------------------------------------------------------
    Single source of truth for the BlitzOS look. Derived from a teardown of
-   Spatial.app (com.44x.spatial): exact colors sampled from screenshots, type
-   and geometry read from the bundle. See ../../../plans/agent-os-design-system.md
-   for rationale, provenance, and the component/motion spec.
+   Spatial.app (com.44x.spatial). See ../../../plans/agent-os-design-system.md.
 
-   STATUS: artifact only — NOT yet imported by the app. Adoption (wiring this in
-   + migrating styles.css off its hardcoded hexes) is the implement phase. Until
-   then this file changes nothing on screen. Dark theme only (light deferred).
+   THEME: LIGHT is the default (`:root`). The original Spatial dark ramp lives
+   under `[data-theme='dark']` as an optional mode — set
+   `document.documentElement.dataset.theme = 'dark'` to enable it.
+   Theme-INDEPENDENT tokens (paper palette, type, radii, spacing, motion) are
+   declared once in `:root` and shared by both themes.
    ============================================================================ */
 
 @font-face {
@@ -26,55 +26,55 @@
   src: url('./assets/fonts/Volkhov-700.woff2') format('woff2');
 }
 
-:root {
-  /* ---- Neutral ramp (the void → chrome) ----------------------------------
-     A cool-charcoal ramp, NOT GitHub blue-black and NOT teal. Sampled exact. */
-  --canvas:           #1d2023;   /* the desktop "void" — darkest                */
-  --surface:          #2c3033;   /* panels, popovers, toolbars, window chrome   */
-  --surface-raised:   #34373c;   /* one step up: hovered rows, nested panels    */
-  --control:          #424445;   /* pill / button rest (on-canvas)              */
-  --control-hover:    #4c4f51;   /* pill / button hover (also in-panel control) */
-  --control-active:   #5a5c60;   /* pressed                                     */
-  --divider:          #3a3d41;   /* solid 1px dividers                          */
+:root,
+[data-theme='light'] {
+  /* ======================================================================
+     LIGHT THEME (default) — clean, bright, frosted-glass-over-wallpaper.
+     ====================================================================== */
+  --canvas:           #e9e9e7;   /* fallback behind the frosted wallpaper       */
+  --surface:          #ffffff;   /* panels, popovers, chrome (glass when frosted)*/
+  --surface-raised:   #f6f6f5;   /* hovered rows, nested panels                 */
+  --control:          #ffffff;   /* pill / button rest (with hairline)          */
+  --control-hover:    #f0f0ee;   /* pill / button hover                         */
+  --control-active:   #e6e6e3;   /* pressed                                     */
+  --divider:          rgba(0, 0, 0, 0.08);   /* 1px dividers                    */
 
-  /* ---- Text ramp ---------------------------------------------------------- */
-  --text:             #f9fafb;   /* primary — titles, body                      */
-  --text-secondary:   #c8cacb;   /* icon glyphs, secondary text                 */
-  --text-muted:       #8e9192;   /* labels, captions                            */
-  --text-tertiary:    #5f6364;   /* placeholder, disabled, chevrons             */
+  --text:             #1a1b1d;   /* primary — titles, body                      */
+  --text-secondary:   #46494c;   /* icon glyphs, secondary text                 */
+  --text-muted:       #797c7f;   /* labels, captions                            */
+  --text-tertiary:    #a9acaf;   /* placeholder, disabled, chevrons             */
 
-  /* ---- Hairlines & edges (the "frosted glass" material) ------------------- */
-  --hairline:         rgba(255, 255, 255, 0.06);  /* 1px inset border on chrome */
-  --edge-highlight:   rgba(255, 255, 255, 0.07);  /* top-edge inner light       */
-  --scrim:            rgba(12, 13, 14, 0.55);      /* dim behind popovers/focus  */
+  --hairline:         rgba(0, 0, 0, 0.09);   /* 1px inset border on chrome      */
+  --edge-highlight:   rgba(255, 255, 255, 0.85); /* top-edge inner light        */
+  --scrim:            rgba(18, 19, 21, 0.30); /* dim behind popovers/focus       */
 
-  /* ---- Accents (signature warm + restrained semantics) -------------------
-     Spatial is muted/editorial — semantics are desaturated, NOT neon. */
-  --accent:           #ff8d61;   /* signature coral (applied paper / focus)     */
-  --accent-deep:      #924b2f;   /* terracotta (coral base / pressed)           */
+  --accent:           #f4673b;   /* signature coral, deepened for white legibility */
+  --accent-deep:      #c14d27;   /* terracotta (pressed)                        */
   --marker:           #ffe92e;   /* text-highlight yellow (ink stays dark)      */
-  --positive:         #7fa98c;   /* muted sage (was GitHub #3fb950)             */
-  --danger:           #e0786e;   /* muted coral-red (was GitHub #f85149)        */
-  --info:             #7fa0c8;   /* dusty blue (was GitHub #58a6ff)             */
+  --positive:         #2e9e6b;   /* sage, deepened for light                    */
+  --danger:           #d8503f;   /* coral-red                                   */
+  --info:             #3f72b8;   /* blue                                        */
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 6px 22px rgba(0, 0, 0, 0.10);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.16);
+
+  /* ======================================================================
+     THEME-INDEPENDENT — shared by light + dark.
+     ====================================================================== */
 
   /* ---- Paper palette (item / native-note colors) -------------------------
-     7 muted tones + the bright coral tint. No saturated primaries — this
-     restraint IS the "designed" feel. `*-ink` = legible text on that paper. */
+     7 muted tones + the bright coral tint. `*-ink` = legible text on it. */
   --paper-ink:        #0d0d0d;   --paper-ink-ink:        #e8e8e8;
   --paper-mauve:      #493839;   --paper-mauve-ink:      #ece3e1;
   --paper-terracotta: #924b2f;   --paper-terracotta-ink: #1c0f09;
-  --paper-coral:      #ff8d61;   --paper-coral-ink:      #2a1206;  /* the hero  */
+  --paper-coral:      #ff8d61;   --paper-coral-ink:      #2a1206;
   --paper-tan:        #a78b6a;   --paper-tan-ink:        #1f160c;
   --paper-bone:       #d1cec2;   --paper-bone-ink:       #20211d;
   --paper-blue-dust:  #7fa0c8;   --paper-blue-dust-ink:  #0b1422;
   --paper-blue-slate: #5b78aa;   --paper-blue-slate-ink: #f3f6fb;
 
-  /* ---- Typography --------------------------------------------------------
-     Free / native substitutes for Spatial's commercial faces:
-       UI grotesque   ← Spatial's Unica77 LL   → SF Pro (native) / Geist
-       Serif (notes)  ← Spatial's Volkhov       → Volkhov (OFL, bundle it)
-       Mono (meta)    ← Spatial's mono          → SF Mono (native) / Geist Mono
-     See the design-system doc §4 for licensing + how to bundle Volkhov. */
+  /* ---- Typography --------------------------------------------------------- */
   --font-ui:    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Geist', 'Inter', system-ui, sans-serif;
   --font-serif: 'Volkhov', Georgia, 'Times New Roman', serif;
   --font-mono:  ui-monospace, 'SF Mono', 'Geist Mono', 'JetBrains Mono', Menlo, monospace;
@@ -83,31 +83,22 @@
   --fw-medium: 500;
   --fw-semibold: 600;
 
-  /* type scale (px / role) */
-  --text-display: 28px;   /* hero / unboxing                                   */
-  --text-title:   18px;   /* panel labels, item titles                         */
-  --text-body:    15px;   /* sticky / note body                                */
-  --text-ui:      13px;   /* controls, list rows                               */
-  --text-label:   11px;   /* mono UPPERCASE counters / metadata / credits      */
+  --text-display: 28px;
+  --text-title:   18px;
+  --text-body:    15px;
+  --text-ui:      13px;
+  --text-label:   11px;
 
-  --track-label: 0.12em;  /* letter-spacing for mono labels                    */
-  --track-tight: -0.01em; /* display / titles                                  */
+  --track-label: 0.12em;
+  --track-tight: -0.01em;
 
-  /* ---- Geometry ----------------------------------------------------------
-     Spatial uses continuous-corner squircles. CSS border-radius is a plain
-     arc; these large radii approximate it. For true squircles on key objects
-     use an SVG/`paint()` mask (see doc §5). */
-  --radius-button: 12px;  /* icon buttons (squircle-ish)                       */
-  --radius-control: 10px; /* dropdowns / inputs                                */
-  --radius-pill: 999px;   /* stadium pills (counters, segmented controls)      */
-  --radius-panel: 16px;   /* popovers / settings panels                        */
-  --radius-window: 14px;  /* web/app surface frames                            */
-  --radius-card: 22px;    /* paper / stickies / native notes (large, soft)     */
-
-  /* ---- Elevation ---------------------------------------------------------- */
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6);
+  /* ---- Geometry ----------------------------------------------------------- */
+  --radius-button: 12px;
+  --radius-control: 10px;
+  --radius-pill: 999px;
+  --radius-panel: 16px;
+  --radius-window: 14px;
+  --radius-card: 22px;
 
   /* ---- Spacing (4px base) ------------------------------------------------- */
   --space-1: 4px;
@@ -118,33 +109,61 @@
   --space-6: 32px;
   --space-8: 48px;
 
-  /* ---- Motion — the "focus flow" (the one borrowed feel) -----------------
-     Expo-out zoom for canvas↔focus transitions; quick eases for chrome. */
+  /* ---- Motion ------------------------------------------------------------- */
   --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --dur-fast: 120ms;
   --dur-base: 240ms;
   --dur-slow: 420ms;
-  --dur-zoom: 520ms;   /* focusAndZoom transition                              */
+  --dur-zoom: 520ms;
 
-  /* ---- Legacy aliases ----------------------------------------------------
-     Map the existing styles.css variables onto the new ramp so adoption can
-     be incremental (import this first; old selectors keep resolving). */
+  /* ---- Legacy aliases (existing styles.css consumes these) ---------------- */
   --bg: var(--canvas);
   --ink: var(--text);
   --muted: var(--text-muted);
   --panel: var(--surface);
   --line: var(--divider);
-  --grid: transparent;   /* Spatial's canvas is a clean void — grid removed    */
+  --grid: transparent;
 }
 
-/* Composite "frosted dark glass" surface — apply to chrome (toolbar, popover,
-   sidebar, scratch-pad HUD). Kept here as the canonical recipe.
-   Usage: add class="material-glass" to a chrome element. */
+[data-theme='dark'] {
+  /* ======================================================================
+     DARK THEME (optional mode) — the original Spatial cool-charcoal void.
+     ====================================================================== */
+  --canvas:           #1d2023;
+  --surface:          #2c3033;
+  --surface-raised:   #34373c;
+  --control:          #424445;
+  --control-hover:    #4c4f51;
+  --control-active:   #5a5c60;
+  --divider:          #3a3d41;
+
+  --text:             #f9fafb;
+  --text-secondary:   #c8cacb;
+  --text-muted:       #8e9192;
+  --text-tertiary:    #5f6364;
+
+  --hairline:         rgba(255, 255, 255, 0.06);
+  --edge-highlight:   rgba(255, 255, 255, 0.07);
+  --scrim:            rgba(12, 13, 14, 0.55);
+
+  --accent:           #ff8d61;
+  --accent-deep:      #924b2f;
+  --positive:         #7fa98c;
+  --danger:           #e0786e;
+  --info:             #7fa0c8;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+/* Composite "frosted glass" surface — chrome (toolbar, popover, sidebar, HUD).
+   Resolves to light-glass by default, dark-glass under [data-theme='dark']. */
 .material-glass {
   background: color-mix(in srgb, var(--surface) 82%, transparent);
-  backdrop-filter: blur(20px) saturate(1.2);
-  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  backdrop-filter: blur(20px) saturate(1.5);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
   box-shadow:
     inset 0 1px 0 var(--edge-highlight),
     inset 0 0 0 1px var(--hairline),

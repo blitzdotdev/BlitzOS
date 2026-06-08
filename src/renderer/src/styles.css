@@ -203,7 +203,7 @@ button {
 /* Marquee-selected surface: crisp white outline (wins over the focus ring). */
 .window.is-selected {
   box-shadow:
-    0 0 0 2px #ffffff,
+    0 0 0 2px var(--accent),
     inset 0 1px 0 var(--edge-highlight),
     var(--shadow-lg);
 }
@@ -898,9 +898,14 @@ button {
   background: var(--control-hover);
 }
 .toolbar .hint {
+  flex: 0 0 auto;
+  width: 250px;
   font-size: 11px;
   color: var(--text-muted);
   padding: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* Workspace-area control (#45): prev/next arrows + indicator + add. Compact, inline in the toolbar. */
 .area-ctl {
@@ -1034,7 +1039,7 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 0 14px;
-  color: #fff;
+  color: var(--text);
   font-weight: var(--fw-semibold);
   font-size: 14px;
   cursor: grab;
@@ -1546,7 +1551,7 @@ button {
 }
 .window.folder.drop-target .folder-tile {
   box-shadow:
-    0 0 0 2px #ffffff,
+    0 0 0 2px var(--accent),
     inset 0 1px 0 rgba(255, 255, 255, 0.22),
     var(--shadow-lg);
 }
@@ -1585,8 +1590,14 @@ button {
 
 /* Workspace switcher: the toolbar pill + the shared name input (reused by the overview). */
 .ws-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-weight: var(--fw-semibold);
-  max-width: 220px;
+  color: var(--text-secondary);
+}
+.ws-btn .ws-name {
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

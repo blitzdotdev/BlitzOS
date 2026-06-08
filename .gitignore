@@ -27,3 +27,10 @@ claude-mono*.md
 
 # Spatial.app design-reference screenshots (third-party pixels — local only)
 design/spatial-reference/
+
+# BlitzOS onboarding artifacts — the user's private scanned context, never commit
+# (onboarding-scan.mjs default-writes to ~/.blitzos/fs/journal/, outside the repo)
+onboarding-context.txt
+onboarding-context*.md
+onboarding-session*.md
+plans/mirror-*.md

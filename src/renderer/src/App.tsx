@@ -8,8 +8,10 @@ import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame } from './components/SurfaceFrame'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
-import { IconCrosshair, IconChat, IconSparkle } from './components/Icons'
+import { IconChat, IconSparkle, IconGrid, IconChevronDown } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
+import { OnboardingFlow } from './onboarding/OnboardingFlow'
+import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
 import { DirOverlay } from './components/DirOverlay'
 import { ContextMenu } from './components/ContextMenu'
 
@@ -91,6 +93,7 @@ export default function App(): JSX.Element {
   const [showAi, setShowAi] = useState(false)
   const [showOverview, setShowOverview] = useState(false)
   const [activeWs, setActiveWs] = useState<string | null>(null)
+  const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
   // #51: pending write-approvals the agent requested (provider.call writes) — the human OKs or denies each.
   // A QUEUE (not a single slot) so concurrent writes don't overwrite each other's card (review fix); we
   // show the oldest and pop it on answer. Keyed by id, matching provider-bridge's pending Map.
@@ -139,9 +142,9 @@ export default function App(): JSX.Element {
     st.setDragTarget(null)
     const next = st.mode === 'desktop' ? 'canvas' : 'desktop'
     if (next === 'canvas') {
-      // Entering control mode: restore the camera we left it at last time (so it "remembers" the
-      // panned/zoomed bird's-eye position), or the default wide view fitting ALL areas the first time.
-      const target = st.controlTransform ?? viewTransform('canvas', st.viewport, st.currentArea, st.areaCount)
+      // Entering control mode: ALWAYS the gentle default zoom-out (controlScale 0.7), never a stale
+      // remembered camera — the human wants a consistent gentle bird's-eye, not whatever it was left at.
+      const target = viewTransform('canvas', st.viewport, st.currentArea, st.areaCount)
       st.setMode('canvas')
       animateTransform(target)
     } else {
@@ -201,8 +204,10 @@ export default function App(): JSX.Element {
     const el = rootRef.current
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
-      // fixed desktop: no canvas pan/zoom (let webviews/iframes scroll normally)
-      if (useDesktop.getState().mode !== 'canvas') return
+      // pan/zoom only on an UNLOCKED canvas; when locked (⌘⌘) or in desktop mode,
+      // let webviews/iframes scroll normally
+      const w = useDesktop.getState()
+      if (w.mode !== 'canvas' || w.locked) return
       e.preventDefault()
       const st = useDesktop.getState()
       if (e.ctrlKey) st.zoomAt(e.clientX, e.clientY, e.deltaY)
@@ -243,14 +248,23 @@ export default function App(): JSX.Element {
           e.preventDefault()
           useDesktop.getState().undoLayout()
         }
-      } else if ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        // Cmd/Ctrl + ← / → : switch workspace area (#45). Skip when typing (so it stays caret nav) and
-        // when there's only one area (let the default behavior through).
+      } else if (e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        // Cmd + ← / → : switch BlitzOS workspace area (#45). Ctrl + ← / → is intentionally NOT bound — it's
+        // the macOS "switch desktop/Space" shortcut, left free so the user can swap real desktops (their way
+        // out of fullscreen). Skip when typing, and when there's only one area.
         const ae = document.activeElement as HTMLElement | null
         const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
         if (!editable && useDesktop.getState().areaCount > 1) {
           e.preventDefault()
           switchArea(e.key === 'ArrowLeft' ? -1 : 1)
+        }
+      } else if ((e.metaKey || e.ctrlKey) && (e.key === 'n' || e.key === 'N')) {
+        // Cmd/Ctrl + N : add a new workspace area and jump to it (#45). Skip when typing in a field.
+        const ae = document.activeElement as HTMLElement | null
+        const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
+        if (!editable) {
+          e.preventDefault()
+          addAreaAndGo()
         }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         // Delete / ⌫ closes the selected surfaces (when not typing in a field).
@@ -644,10 +658,11 @@ export default function App(): JSX.Element {
 
   function onBgDown(e: React.PointerEvent): void {
     const st = useDesktop.getState()
-    if (st.mode === 'canvas') {
+    if (st.mode === 'canvas' && !st.locked) {
+      // unlocked canvas: drag the background to pan
       pan.current = { x: e.clientX, y: e.clientY }
     } else {
-      // desktop: rubber-band (marquee) selection. Shift adds to the current selection.
+      // locked canvas (or desktop): rubber-band (marquee) selection. Shift adds to the selection.
       if (!e.shiftKey) st.clearSelection()
       marquee.current = { x0: e.clientX, y0: e.clientY }
       setMarqueeRect({ x: e.clientX, y: e.clientY, w: 0, h: 0 })
@@ -806,24 +821,20 @@ export default function App(): JSX.Element {
       <div className="toolbar">
         {hasWorkspaces && (
           <button className="ws-btn" onClick={() => void openOverview()} title="Workspaces (Mission Control)">
-            ▦ {activeWs ?? '…'} ▾
+            <IconGrid size={14} />
+            <span className="ws-name">{activeWs ?? '…'}</span>
+            <IconChevronDown size={13} />
           </button>
         )}
-        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => useDesktop.getState().goToPrimary()}>
-          <IconCrosshair size={15} /> Center
-        </button>
-        {/* Workspace areas (#45): prev/next + indicator appear once there's more than one; "＋" always
-            adds a new area to the right. Switch also via Cmd/Ctrl + ← →. */}
-        <span className="area-ctl" title="Workspace areas — Cmd/Ctrl + ← →">
-          {areaCount > 1 && (
-            <>
-              <button className="area-arrow" disabled={currentArea <= 0} onClick={() => switchArea(-1)} title="Previous area">‹</button>
-              <span className="area-ind">Area {currentArea + 1}/{areaCount}</span>
-              <button className="area-arrow" disabled={currentArea >= areaCount - 1} onClick={() => switchArea(1)} title="Next area">›</button>
-            </>
-          )}
-          <button className="area-add" onClick={addAreaAndGo} title="Add a workspace area">＋</button>
-        </span>
+        {/* Workspace areas (#45): the indicator appears once there's more than one. Create a new area
+            with Cmd/Ctrl + N; switch areas with Cmd/Ctrl + ← →. */}
+        {areaCount > 1 && (
+          <span className="area-ctl" title="Workspace areas — ⌘N new · ⌘← ⌘→ switch">
+            <button className="area-arrow" disabled={currentArea <= 0} onClick={() => switchArea(-1)} title="Previous area">‹</button>
+            <span className="area-ind">Area {currentArea + 1}/{areaCount}</span>
+            <button className="area-arrow" disabled={currentArea >= areaCount - 1} onClick={() => switchArea(1)} title="Next area">›</button>
+          </span>
+        )}
         <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={openChat}>
           <IconChat size={15} /> Chat
         </button>
@@ -833,7 +844,11 @@ export default function App(): JSX.Element {
           </span>
           Connect AI
         </button>
-        {!isServer && <span className="hint">fixed desktop · drag the top bar to move · click the dock to focus</span>}
+        {!isServer && (
+          <span className="hint">
+            double-tap ⌘ for control mode
+          </span>
+        )}
       </div>
 
       {showAi && (
@@ -863,6 +878,15 @@ export default function App(): JSX.Element {
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
 
       {openFolder && <FolderOverlay folder={openFolder} />}
+
+      {onboarding && (
+        <OnboardingFlow
+          onComplete={() => {
+            markOnboarded()
+            setOnboarding(false)
+          }}
+        />
+      )}
       {openDirPath !== null && <DirOverlay path={openDirPath} />}
 
       {menu && (
