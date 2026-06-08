@@ -335,7 +335,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     // Snap preview (BOTH modes, #42): dragging a single window so the cursor reaches a primary-area
     // side/corner shows where it will tile on release (left|right half / quarter — never full-screen).
     // Suppressed over a folder target and for file/dir tiles (they aren't windows).
-    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport, st.currentArea) : null)
+    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport, st.currentArea, st.mode) : null)
   }
   function onBarUp(e: React.PointerEvent): void {
     try {
