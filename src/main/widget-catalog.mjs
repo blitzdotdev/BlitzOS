@@ -229,7 +229,24 @@ window.blitz.onProps(p => { /* re-render when props change */ })
 // Run code once the bridge is live (props seeded). Safe to call data() before this;
 // requests queue until the channel is ready.
 window.blitz.ready(props => { /* boot */ })
+
+// More capabilities (each is consent-gated the first time, like data()):
+await window.blitz.tool('open_window', { url: 'https://…' }) // call an OS tool: create_surface/open_window/
+                                                             // move_surface/update_surface/close_surface/group/provider_call/list_state
+window.blitz.sendMessage('hi')             // send a chat message to the agent (the chat widget uses this)
+const dir = await window.blitz.listDir('') // list a workspace folder (the file manager uses this)
+window.blitz.setProps({ text })            // persist THIS widget's own state, e.g. a note's text — no prompt
 \`\`\`
+
+## Use the shared UI kit (don't restyle from scratch)
+
+Every widget gets a component library + design tokens injected (no import needed) so widgets match the OS
+and you never reinvent buttons/rows/bubbles. Prefer these over hand-rolled markup:
+
+- Tokens: \`--blitz-accent\`, \`--blitz-bg\`, \`--blitz-surface\`, \`--blitz-text\`, \`--blitz-text-dim\`, \`--blitz-hairline\`, \`--blitz-radius\`.
+- Elements: \`<blitz-titlebar>\`, \`<blitz-list>\`, \`<blitz-message role="user|agent">\`, \`<blitz-row name meta kind ext>\` (fires \`open\`), \`<blitz-input placeholder>\` (fires \`send\` with \`detail.text\`), \`<blitz-button>\`. Or imperatively: \`window.blitz.ui.message(role,text)\` / \`.row({...})\` / \`.input({onSend})\` / \`.button(label,onClick)\`.
+
+The built-in chat (\`blitz-chat.html\`) and note (\`blitz-note.html\`) are themselves widgets built this way — read them with get_system_ui as templates; the user can have you rewrite them with customize_widget.
 
 Available data resources (provider/resource): ${listProviderResources()
   .map((s) => `\`${s}\``)

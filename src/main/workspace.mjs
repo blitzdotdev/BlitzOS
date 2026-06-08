@@ -76,6 +76,7 @@ function safeAreaCount(n) {
 // (they belong in .blitzos/state/*.jsonl, Phase 4), never nodes. Unknown kinds are skipped.
 function nodeKind(s) {
   if (s && s.role === 'chat') return null // the system chat is a srcdoc whose UI=blitz-chat.html + data=chat.md; never a node
+  if (s && s.role === 'note') return 'note' // a note rendered via blitz-note.html still persists as its .md content file
   if (s.kind === 'web' || s.kind === 'app') return 'web' // app folds to web (both serialize to a .weblink; no distinct 'app' node kind)
   if (s.kind === 'srcdoc') return 'srcdoc'
   if (s.kind === 'native' && s.component === 'note') return 'note'
@@ -501,7 +502,15 @@ function nodeToSurface(dir, n, z) {
     ...(n.zoom ? { zoom: clampScale(n.zoom) } : {})
   }
   if (n.kind === 'note') {
-    return { ...base, kind: 'native', component: 'note', title, props: { text: content, ...(typeof view.color === 'string' ? { color: view.color } : {}) } }
+    const noteProps = { text: content, ...(typeof view.color === 'string' ? { color: view.color } : {}) }
+    // OPT-IN custom UI: if the workspace has a blitz-note.html (the user/agent customized it), render the
+    // note through that srcdoc widget (role:'note', still persisted as this .md); otherwise the built-in
+    // native post-it — so the default is unchanged.
+    const noteUi = safeJoin(dir, 'blitz-note.html')
+    if (noteUi && existsSync(noteUi)) {
+      return { ...base, kind: 'srcdoc', role: 'note', title, html: readSystemRenderer(dir, 'note') || '', props: noteProps }
+    }
+    return { ...base, kind: 'native', component: 'note', title, props: noteProps }
   }
   if (n.kind === 'web' || n.kind === 'app') {
     let url = ''
@@ -984,7 +993,7 @@ export function removeSurfaceFile(dir, id) {
 // (structured + human-readable): the OS appends each message, the widget just renders what's there.
 // ===========================================================================================
 const SYS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'widgets', 'system')
-const SYSTEM_RENDERERS = ['chat'] // roles that ship a default renderer (blitz-<role>.html)
+const SYSTEM_RENDERERS = ['chat', 'note'] // roles that ship a default renderer (blitz-<role>.html)
 const SYSTEM_PREFIX = 'blitz-'
 const CHAT_FILE = 'chat.md'
 

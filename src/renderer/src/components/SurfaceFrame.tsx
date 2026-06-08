@@ -270,7 +270,12 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         else if (m.op === 'tool') void serveTool(win, m.reqId, String(m.tool ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
         else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''))
         else if (m.op === 'listdir') void serveListDir(win, m.reqId, String(m.path ?? ''))
-        else postRes(win, m.reqId, { ok: false, error: `unsupported op: ${String(m.op)}` })
+        else if (m.op === 'setprops') {
+          // A widget persists its OWN state (e.g. a note's text) — own-surface only, so no consent gate.
+          const patch = (m as { patch?: unknown }).patch
+          useDesktop.getState().updateSurfaceProps(surface.id, (patch && typeof patch === 'object' ? patch : {}) as Record<string, unknown>)
+          postRes(win, m.reqId, { ok: true })
+        } else postRes(win, m.reqId, { ok: false, error: `unsupported op: ${String(m.op)}` })
       }
     }
     window.addEventListener('message', onMessage)
