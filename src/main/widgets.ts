@@ -1,21 +1,9 @@
 import { ipcMain } from 'electron'
 import { loadRecord } from './tokenStore'
 import { fetchProviderResource, PROVIDER_DATA } from './widget-catalog.mjs'
-import {
-  osLoadConsent,
-  osPersistConsent,
-  osCreateSurface,
-  osOpenWindow,
-  osMoveSurface,
-  osUpdateSurface,
-  osCloseSurface,
-  osGroupIntoFolder,
-  osGoToPrimary,
-  osGetState,
-  type SurfaceDescriptor
-} from './osActions'
-import { runProviderCall } from './provider-bridge'
-import { makeWidgetToolRunner } from './widget-tools.mjs'
+import { osLoadConsent, osPersistConsent } from './osActions'
+import { electronOps } from './electron-os-tools'
+import { makeWidgetToolRunner, makeWidgetToolHandlers } from './widget-tools.mjs'
 
 // Electron-side widget data bridge (parity with preview/backend.mjs's data route).
 // The renderer relays a sandboxed widget's data request here; we authorize it
@@ -94,23 +82,10 @@ export function registerWidgets(): void {
   })
 
   // blitz.tool — a sandboxed widget calls an OS tool (gated by the `tools` capability in the renderer).
-  // The CLOSED allowlist (widget-tools.mjs) is the same on both transports; we dispatch to the SAME os*
-  // functions the relay uses. provider_call rides the relay-grade gated path (writes → approval card).
-  const runWidgetTool = makeWidgetToolRunner({
-    create_surface: (a) => osCreateSurface(a as unknown as SurfaceDescriptor),
-    open_window: (a) => osOpenWindow(a as { url: string; x?: number; y?: number; w?: number; h?: number; title?: string }),
-    move_surface: (a) => (osMoveSurface(String(a.id), Number(a.x) || 0, Number(a.y) || 0), { ok: true }),
-    update_surface: (a) => (osUpdateSurface(String(a.id), (a.patch && typeof a.patch === 'object' ? a.patch : a) as Record<string, unknown>), { ok: true }),
-    close_surface: (a) => (osCloseSurface(String(a.id)), { ok: true }),
-    group: (a) => osGroupIntoFolder(String(a.name || 'Folder'), Array.isArray(a.ids) ? a.ids.map(String) : [], Number(a.x) || 0, Number(a.y) || 0, a.kind === 'board' ? 'board' : 'folder'),
-    go_to_primary: () => (osGoToPrimary(), { ok: true }),
-    list_state: () => osGetState(),
-    provider_call: (a) =>
-      runProviderCall(
-        { provider: String(a.provider || ''), method: a.method ? String(a.method) : undefined, path: String(a.path || ''), query: a.query as Record<string, unknown> | undefined, body: a.body },
-        'relay'
-      )
-  })
+  // The CLOSED allowlist + handler logic (widget-tools.mjs) is shared with the server; we bind it to the SAME
+  // electronOps the agent registry uses, so the widget contract can't drift between desktop and server.
+  // provider_call rides the relay-grade gated path (writes → approval card) via electronOps.providerCall.
+  const runWidgetTool = makeWidgetToolRunner(makeWidgetToolHandlers(electronOps))
   ipcMain.handle('widget:tool', (_e, req: { surfaceId?: string; name?: string; args?: unknown }) =>
     runWidgetTool(String(req?.name || ''), req?.args, { surfaceId: String(req?.surfaceId || '') })
   )

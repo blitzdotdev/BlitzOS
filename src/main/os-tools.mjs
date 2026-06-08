@@ -20,6 +20,18 @@ function parse(body) {
   }
 }
 
+// The agent-facing view of desktop state — layout fields ONLY. srcdoc `html` and native `props` (which hold
+// the chat transcript) ride the renderer state push for SERIALIZATION, but the agent's list_state must not be
+// bloated with full HTML / leak the transcript. ONE definition so every transport (and the widget list_state
+// tool) returns the IDENTICAL shape — ops.getState() returns raw full state, this whittles it down.
+export function serializeStateForAgent(state) {
+  const s = state || {}
+  return {
+    ...s,
+    surfaces: (s.surfaces || []).map((x) => ({ id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned }))
+  }
+}
+
 // blitz.dev: provision a real backend in ONE unauthenticated POST (SQLite + R2 + auth + admin UI, edge-
 // deployed, no signup). Returns the live preview URL + a per-project agents.md. Pure fetch — runtime-agnostic.
 async function provisionBlitzApp(slug) {
@@ -131,7 +143,7 @@ export function makeOsTools(ops) {
       path: '/list_state',
       description:
         'List the canvas: the active workspace name + its absolute folder path (workspace_path) + the open surfaces. A LOCAL agent authors surfaces by writing files into workspace_path (the folder IS the canvas); check the surfaces here to judge whether new work belongs on THIS desktop or a fresh workspace.',
-      handler: () => ops.getState()
+      handler: () => serializeStateForAgent(ops.getState())
     },
     {
       path: '/list_workspaces',

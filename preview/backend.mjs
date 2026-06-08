@@ -29,7 +29,7 @@ import { fetchProviderResource, PROVIDER_DATA, WIDGET_AUTHORING_MD } from '../sr
 // #51 general provider-access substrate (the agent makes whatever request it needs; token stays here).
 import { callProvider, createApprovalLedger, createRateLimiter } from '../src/main/provider-call.mjs'
 // Widget tool bridge — the CLOSED allowlist a sandboxed widget may call via blitz.tool (shared with Electron).
-import { makeWidgetToolRunner } from '../src/main/widget-tools.mjs'
+import { makeWidgetToolRunner, makeWidgetToolHandlers } from '../src/main/widget-tools.mjs'
 // The ONE shared agent tool registry — the SAME module Electron's relay + localhost transports bind. The server
 // supplies its own primitive ops (broadcast + headless-Chromium) so there is no server/Electron tool difference.
 import { makeOsTools } from '../src/main/os-tools.mjs'
@@ -432,58 +432,10 @@ loadConsent()
 let _widgetToolRunner = null
 function widgetToolRunner() {
   if (_widgetToolRunner) return _widgetToolRunner
-  _widgetToolRunner = makeWidgetToolRunner({
-    create_surface: (a) => {
-      if (!a.kind) throw new Error('kind required')
-      const id = randomUUID() // OS-mint (a widget must not pick an id to inherit a consent grant)
-      if (a.kind === 'web' || a.kind === 'app') setContentShare(id, true)
-      broadcast({ type: 'create', surface: { ...a, id } })
-      if (SERVER_MODE && host && a.kind === 'web' && !host.has(id)) host.createSurface(id, { url: a.url || 'about:blank', width: Math.round(Number(a.w)) || 1280, height: Math.round(Number(a.h)) || 800 }).catch(() => {})
-      return { id }
-    },
-    open_window: (a) => {
-      if (typeof a.url !== 'string') throw new Error('url required')
-      const id = randomUUID()
-      setContentShare(id, true)
-      broadcast({ type: 'create', surface: { kind: 'web', ...a, id } })
-      if (SERVER_MODE && host && !host.has(id)) host.createSurface(id, { url: a.url, width: Math.round(Number(a.w)) || 1280, height: Math.round(Number(a.h)) || 800 }).catch(() => {})
-      return { id }
-    },
-    move_surface: (a) => (broadcast({ type: 'move', id: String(a.id), x: Number(a.x), y: Number(a.y) }), { ok: true }),
-    update_surface: (a) => {
-      const id = String(a.id || '')
-      if (!id) throw new Error('id required')
-      const patch = { ...a }
-      delete patch.id
-      broadcast({ type: 'update', id, patch })
-      if (SERVER_MODE && host && host.has(id) && typeof a.url === 'string') host.navigate(id, a.url).catch(() => {})
-      return { ok: true }
-    },
-    close_surface: (a) => {
-      const id = String(a.id || '')
-      broadcast({ type: 'close', id })
-      for (const k of consentGranted) if (k.startsWith(`${id}:`)) consentGranted.delete(k)
-      if (SERVER_MODE && host) host.closeSurface(id).catch(() => {})
-      wsHost.closeSurfaceFile(id)
-      return { ok: true }
-    },
-    group: (a) => {
-      const ids = Array.isArray(a.ids) ? a.ids.map(String) : []
-      if (!ids.length) throw new Error('no members to group')
-      return wsHost.group(String(a.name || 'Folder'), ids, Number(a.x) || 0, Number(a.y) || 0, a.kind === 'board' ? 'board' : 'folder')
-    },
-    go_to_primary: () => (broadcast({ type: 'goToPrimary' }), { ok: true }),
-    list_state: () => ({ ...osState, surfaces: (osState.surfaces || []).map((s) => ({ id: s.id, kind: s.kind, x: s.x, y: s.y, w: s.w, h: s.h, z: s.z, zoom: s.zoom, title: s.title, url: s.url, component: s.component, pinned: s.pinned })) }),
-    provider_call: (a) => {
-      const toks = readTokens()
-      const t = toks[a.provider]
-      const record = t ? { secrets: t.secrets, grantedScopes: t.grantedScopes } : null
-      return callProvider(
-        { provider: String(a.provider || ''), method: a.method, path: String(a.path || ''), query: a.query, body: a.body, approvalToken: a.approvalToken, caller: { kind: 'agent', transport: 'server' } },
-        { record, approvals: providerApprovals, rate: providerRate, consented: (p) => providerConsent.has(p), audit: providerAudit }
-      )
-    }
-  })
+  // Same CLOSED widget allowlist + handler logic as Electron (src/main/widgets.ts), bound to the SAME serverOps
+  // the agent registry uses. One definition → the widget `blitz.tool` contract can't drift between desktop and
+  // server (the divergence the consolidation audit found: id-as-{id}, validation, list_state shape, group errors).
+  _widgetToolRunner = makeWidgetToolRunner(makeWidgetToolHandlers(serverOps))
   return _widgetToolRunner
 }
 
@@ -582,14 +534,10 @@ const serverOps = {
     wsHost.closeSurfaceFile(i) // delete the backing content file so it doesn't resurrect (no-renderer agent close)
   },
   goToPrimary: () => broadcast({ type: 'goToPrimary' }),
-  // list_state — whitelist layout fields only (html + props ride the SSE state push for serialization, but the
-  // agent's list_state view must not leak full srcdoc HTML or the chat transcript). Same shape as Electron.
-  getState: () => ({
-    ...osState,
-    workspace: wsHost.active(),
-    workspace_path: wsHost.activePath(),
-    surfaces: (osState.surfaces || []).map((s) => ({ id: s.id, kind: s.kind, x: s.x, y: s.y, w: s.w, h: s.h, z: s.z, zoom: s.zoom, title: s.title, url: s.url, component: s.component, pinned: s.pinned }))
-  }),
+  // Raw full state (workspace identity threaded in). The shared os-tools list_state handler whittles this down
+  // to layout fields via serializeStateForAgent — SAME on Electron (osGetState) — so html/transcript never leak
+  // and both transports return an identical shape. Don't whitelist HERE or the two would diverge again.
+  getState: () => ({ ...osState, workspace: wsHost.active(), workspace_path: wsHost.activePath() }),
   // siblings as OBJECTS {id,title,kind} — the shared create_surface handler filters out the new id then maps to titles.
   workspaceContext: () => ({
     workspace: wsHost.active(),
@@ -632,7 +580,12 @@ const serverOps = {
   say: (text) => wsHost.appendChat('agent', String(text)), // append to chat.md + broadcast the transcript to the chat widget
   customizeWidget: (name, html) => wsHost.customizeWidget(String(name), String(html)),
   systemUi: (name) => wsHost.systemUi(String(name)),
-  groupIntoFolder: (name, ids, x, y, kind) => wsHost.group(String(name || 'Folder'), ids, Number(x) || 0, Number(y) || 0, kind === 'board' ? 'board' : 'folder'),
+  groupIntoFolder: (name, ids, x, y, kind) => {
+    // Normalize to { ok, ... } like Electron's osGroupIntoFolder — wsHost.group returns a bare { error } (no ok)
+    // on failure, so without this the agent saw { error } on server vs { ok:false, error } on Electron (parity bug).
+    const r = wsHost.group(String(name || 'Folder'), ids, Number(x) || 0, Number(y) || 0, kind === 'board' ? 'board' : 'folder')
+    return r && 'ok' in r ? r : { ok: false, error: (r && r.error) || 'could not group' }
+  },
   providerCall: (descriptor) => {
     const toks = readTokens()
     const t = toks[descriptor.provider]

@@ -18,3 +18,6 @@ export type OsOps = Record<string, (...args: never[]) => unknown>
 
 export function makeOsTools(ops: Record<string, (...args: never[]) => unknown>): OsTool[]
 export function makeOsToolsByPath(ops: Record<string, (...args: never[]) => unknown>): Record<string, OsTool>
+/** The agent-facing view of desktop state: layout fields only (drops srcdoc html + native props/transcript).
+ *  Used by the shared list_state handler AND the widget list_state tool so every transport returns one shape. */
+export function serializeStateForAgent(state: unknown): Record<string, unknown>

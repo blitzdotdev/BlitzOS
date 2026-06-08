@@ -28,7 +28,10 @@ import {
 import { runProviderCall } from './provider-bridge'
 import { integrationStatuses, connectedProviders } from './integrations'
 
-const electronOps = {
+// Exported so the widget-tool runner (src/main/widgets.ts) can build its handler map from the SAME ops —
+// see makeWidgetToolHandlers in widget-tools.mjs. One ops object → both the agent registry and the widget
+// allowlist, so the two can never drift (the divergence the consolidation audit found).
+export const electronOps = {
   createSurface: (a: unknown) => osCreateSurface(a as SurfaceDescriptor),
   openWindow: (a: unknown) => osOpenWindow(a as { url: string; x?: number; y?: number; w?: number; h?: number; title?: string }),
   moveSurface: (id: string, x: number, y: number) => osMoveSurface(id, x, y),
