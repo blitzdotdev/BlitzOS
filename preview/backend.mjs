@@ -23,31 +23,26 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, re
 import { join, dirname, basename, resolve, sep } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
-import {
-  listWidgets,
-  getWidgetSource,
-  saveWidget,
-  fetchProviderResource,
-  PROVIDER_DATA,
-  WIDGET_AUTHORING_MD
-} from '../src/main/widget-catalog.mjs'
+// listWidgets/getWidgetSource/saveWidget moved INTO the shared os-tools.mjs registry (server no longer
+// references them directly); WIDGET_AUTHORING_MD + the data registry are still used by HTTP routes here.
+import { fetchProviderResource, PROVIDER_DATA, WIDGET_AUTHORING_MD } from '../src/main/widget-catalog.mjs'
 // #51 general provider-access substrate (the agent makes whatever request it needs; token stays here).
 import { callProvider, createApprovalLedger, createRateLimiter } from '../src/main/provider-call.mjs'
 // Widget tool bridge — the CLOSED allowlist a sandboxed widget may call via blitz.tool (shared with Electron).
 import { makeWidgetToolRunner } from '../src/main/widget-tools.mjs'
+// The ONE shared agent tool registry — the SAME module Electron's relay + localhost transports bind. The server
+// supplies its own primitive ops (broadcast + headless-Chromium) so there is no server/Electron tool difference.
+import { makeOsTools } from '../src/main/os-tools.mjs'
 import { capturedScopes } from '../src/main/provider-specs.mjs'
 // Shared perception kernel + resident brain — the SAME modules the Electron main runs,
 // so server mode gets the autonomy loop with no duplicated code.
+// waitForEvents/latestSeq/redactMoment/EVENTS_REMINDER/isContentShared are consumed INSIDE the shared
+// os-tools.mjs registry now (same module instance) — backend.mjs keeps only what its own HTTP routes + ingest use.
 import {
   ingestSignals,
-  waitForEvents,
-  latestSeq,
   setContentShare,
-  isContentShared,
-  redactMoment,
   emitUserMessage,
   emitSurfaceAction,
-  EVENTS_REMINDER,
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
@@ -431,17 +426,6 @@ function saveConsent() {
 }
 loadConsent()
 
-// Workspace context returned by create_surface/open_window + list_state — IDENTICAL shape to the Electron
-// os-tools.ts handler (no server/Electron difference): which desktop, where the folder is (file-authoring
-// hint), and the sibling surface titles (clutter-vs-continuation signal the agent acts on per agents.md).
-function serverWorkspaceCtx(excludeId) {
-  return {
-    workspace: wsHost.active(),
-    workspace_path: wsHost.activePath(),
-    siblings: (osState.surfaces || []).filter((s) => s.id !== excludeId).map((s) => s.title)
-  }
-}
-
 // Lazily-built widget-tool dispatcher (server transport). Mirrors the relay tool handlers — server-minted
 // ids, broadcast to renderers, host target ops — but only for the CLOSED widget allowlist (widget-tools.mjs).
 // Closures bind the live module vars at call time (requests arrive after init), so ordering is moot.
@@ -559,6 +543,109 @@ function withActivity(tools) {
   })
 }
 
+// The server's binding of the SHARED tool registry (os-tools.mjs) — the primitive operations every shared
+// handler calls. Same registry as Electron (agentSocket.ts / control-server.ts), different ops: broadcast over
+// SSE + a headless-Chromium target instead of IPC+CDP. This is what makes "no server/Electron difference" hold —
+// ONE definition of every tool's path/description/schema/handler; only these ~20 primitives differ per runtime.
+const serverOps = {
+  createSurface: (a) => {
+    const id = randomUUID() // OS-mint (an untrusted caller must not pick an id to inherit a consent grant / clobber a file)
+    // The agent opened this surface itself (it chose the url) — auto-share web/app so it can read what it opened.
+    // (Surfaces the USER opens stay private until shared — the P0 confused-deputy gate; this does not weaken it.)
+    if (a.kind === 'web' || a.kind === 'app') setContentShare(id, true)
+    broadcast({ type: 'create', surface: { ...a, id } })
+    if (SERVER_MODE && host && a.kind === 'web' && !host.has(id)) {
+      host.createSurface(id, { url: a.url || 'about:blank', width: Math.round(Number(a.w)) || 1280, height: Math.round(Number(a.h)) || 800 }).catch(() => {})
+    }
+    return id
+  },
+  openWindow: (a) => {
+    const id = randomUUID()
+    setContentShare(id, true) // the agent opened this page — it can read what it opened
+    broadcast({ type: 'create', surface: { kind: 'web', ...a, id } })
+    if (SERVER_MODE && host && !host.has(id)) {
+      host.createSurface(id, { url: a.url, width: Math.round(Number(a.w)) || 1280, height: Math.round(Number(a.h)) || 800 }).catch(() => {})
+    }
+    return id
+  },
+  moveSurface: (id, x, y) => broadcast({ type: 'move', id: String(id), x: Number(x), y: Number(y) }),
+  updateSurface: (id, patch) => {
+    const i = String(id)
+    broadcast({ type: 'update', id: i, patch })
+    if (SERVER_MODE && host && host.has(i) && typeof patch.url === 'string') host.navigate(i, patch.url).catch(() => {})
+  },
+  closeSurface: (id) => {
+    const i = String(id)
+    broadcast({ type: 'close', id: i })
+    for (const k of consentGranted) if (k.startsWith(`${i}:`)) consentGranted.delete(k)
+    if (SERVER_MODE && host) host.closeSurface(i).catch(() => {})
+    wsHost.closeSurfaceFile(i) // delete the backing content file so it doesn't resurrect (no-renderer agent close)
+  },
+  goToPrimary: () => broadcast({ type: 'goToPrimary' }),
+  // list_state — whitelist layout fields only (html + props ride the SSE state push for serialization, but the
+  // agent's list_state view must not leak full srcdoc HTML or the chat transcript). Same shape as Electron.
+  getState: () => ({
+    ...osState,
+    workspace: wsHost.active(),
+    workspace_path: wsHost.activePath(),
+    surfaces: (osState.surfaces || []).map((s) => ({ id: s.id, kind: s.kind, x: s.x, y: s.y, w: s.w, h: s.h, z: s.z, zoom: s.zoom, title: s.title, url: s.url, component: s.component, pinned: s.pinned }))
+  }),
+  // siblings as OBJECTS {id,title,kind} — the shared create_surface handler filters out the new id then maps to titles.
+  workspaceContext: () => ({
+    workspace: wsHost.active(),
+    workspace_path: wsHost.activePath(),
+    siblings: (osState.surfaces || []).map((s) => ({ id: s.id, title: s.title, kind: s.kind }))
+  }),
+  listWorkspaces: () => {
+    const activePath = wsHost.activePath()
+    const root = activePath ? activePath.replace(/[/\\][^/\\]+$/, '') : ''
+    return {
+      workspaces: wsHost.list().map(({ name, nodeCount, updatedAt }) => ({ name, nodeCount, updatedAt, path: root ? `${root}/${name}` : '' })),
+      active: wsHost.active(),
+      activePath,
+      root
+    }
+  },
+  createWorkspace: (name) => {
+    try {
+      return { ok: true, name: wsHost.create(String(name)).name }
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) }
+    }
+  },
+  switchWorkspace: async (name) => {
+    const r = await wsHost.performSwitch(String(name))
+    return r.status === 200 ? { ok: true, active: r.body.active } : { ok: false, error: (r.body && r.body.error) || 'switch failed' }
+  },
+  readWindow: async (id, _script) => {
+    // No raw eval over the relay (confused-deputy on a logged-in session) — the shared handler already drops
+    // `script` for non-localhost transports, so server never evals. Safe DOM read only.
+    if (!SERVER_MODE || !host || !host.has(id)) throw new Error('read_window needs server mode (or the desktop app); this surface has no server browser target')
+    const r = await controlSession(host.session(id), { action: 'read' })
+    if (!r.ok) throw new Error(r.error)
+    return r.result
+  },
+  controlSurface: async (id, action) => {
+    if (!SERVER_MODE || !host || !host.has(id)) return { ok: false, error: 'in-window control needs server mode (BLITZ_SERVER_MODE=1) or the desktop app; this surface has no server browser target' }
+    return controlSession(host.session(id), action)
+  },
+  say: (text) => wsHost.appendChat('agent', String(text)), // append to chat.md + broadcast the transcript to the chat widget
+  customizeWidget: (name, html) => wsHost.customizeWidget(String(name), String(html)),
+  systemUi: (name) => wsHost.systemUi(String(name)),
+  groupIntoFolder: (name, ids, x, y, kind) => wsHost.group(String(name || 'Folder'), ids, Number(x) || 0, Number(y) || 0, kind === 'board' ? 'board' : 'folder'),
+  providerCall: (descriptor) => {
+    const toks = readTokens()
+    const t = toks[descriptor.provider]
+    const record = t ? { secrets: t.secrets, grantedScopes: t.grantedScopes } : null
+    return callProvider(
+      { ...descriptor, caller: { kind: 'agent', transport: 'server' } },
+      { record, approvals: providerApprovals, rate: providerRate, consented: (p) => providerConsent.has(p), audit: providerAudit }
+    )
+  },
+  integrationStatuses: () => statuses(),
+  connectedProviders: () => Object.keys(readTokens())
+}
+
 async function startOsAgentSocket() {
   try {
     const session = await connect({
@@ -566,443 +653,17 @@ async function startOsAgentSocket() {
       baseUrl: process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev',
       appDescription: 'BlitzOS (browser preview): an agent OS desktop — open and arrange surfaces on an infinite canvas.',
       agentsMd: OS_AGENTS_MD,
-      tools: withActivity([
-        {
-          path: '/create_surface',
-          description: 'Create a surface (kind: web | app | srcdoc | native). web/app take url; srcdoc takes html; native takes component+props.',
-          input_schema: {
-            type: 'object',
-            required: ['kind'],
-            properties: {
-              kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] },
-              x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' },
-              title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' },
-              component: { type: 'string' }, props: { type: 'object' }
-            }
-          },
-          handler: ({ body }) => {
-            const a = toolBody(body)
-            if (!a.kind) return { status: 400, body: { error: 'kind required' } }
-            // srcdoc ids are server-minted: a consent grant is keyed by surface id, so
-            // an untrusted caller must not be able to choose one and inherit a grant.
-            // Always OS-mint the id (the agent gets it back in the response). Honoring an
-            // agent-supplied id let two surfaces collide on one content-file path -> clobber.
-            const id = randomUUID()
-            // The agent opened this surface itself (it chose the url), so reading it back
-            // leaks nothing the agent didn't already pick — auto-share web/app so the agent
-            // can read/control what it opened. (Surfaces the USER opens stay private until
-            // they share — that's the P0 confused-deputy gate, which this does not weaken.)
-            if (a.kind === 'web' || a.kind === 'app') setContentShare(id, true)
-            broadcast({ type: 'create', surface: { ...a, id } })
-            if (SERVER_MODE && host && a.kind === 'web' && !host.has(id)) {
-              host.createSurface(id, { url: a.url || 'about:blank', width: Math.round(a.w) || 1280, height: Math.round(a.h) || 800 }).catch(() => {})
-            }
-            return { id, ...serverWorkspaceCtx(id) } // same return shape as Electron (agents.md contract)
-          }
-        },
-        {
-          path: '/open_window',
-          description: 'Open a third-party site as a web surface. Returns its id.',
-          input_schema: {
-            type: 'object',
-            required: ['url'],
-            properties: { url: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' } }
-          },
-          handler: ({ body }) => {
-            const a = toolBody(body)
-            if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
-            const id = randomUUID()
-            setContentShare(id, true) // the agent opened this page — it can read what it opened
-            broadcast({ type: 'create', surface: { kind: 'web', ...a, id } })
-            if (SERVER_MODE && host && !host.has(id)) {
-              host.createSurface(id, { url: a.url, width: Math.round(a.w) || 1280, height: Math.round(a.h) || 800 }).catch(() => {})
-            }
-            return { id, ...serverWorkspaceCtx(id) }
-          }
-        },
-        {
-          path: '/move_surface',
-          description: 'Move a surface to (x, y) world pixels.',
-          input_schema: { type: 'object', required: ['id', 'x', 'y'], properties: { id: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } },
-          handler: ({ body }) => {
-            const a = toolBody(body)
-            broadcast({ type: 'move', id: String(a.id), x: Number(a.x), y: Number(a.y) })
-            return { ok: true }
-          }
-        },
-        {
-          path: '/close_surface',
-          description: 'Close a surface by id.',
-          input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
-          handler: ({ body }) => {
-            const id = String(toolBody(body).id)
-            broadcast({ type: 'close', id })
-            for (const k of consentGranted) if (k.startsWith(`${id}:`)) consentGranted.delete(k)
-            if (SERVER_MODE && host) host.closeSurface(id).catch(() => {})
-            wsHost.closeSurfaceFile(id) // delete the backing content file so it doesn't resurrect (no-renderer agent close)
-            return { ok: true }
-          }
-        },
-        { path: '/go_to_primary', description: 'Recenter the view on the primary workspace.', handler: () => { broadcast({ type: 'goToPrimary' }); return { ok: true } } },
-        // Workspace control — SAME tools as Electron (os-tools.ts). No server/Electron difference: the agent
-        // manages the user's folder-backed desktops here too (auth/login for server mode is a later concern).
-        {
-          path: '/list_workspaces',
-          description:
-            "List the user's workspaces (separate folder-backed desktops, each its own folder = its own memory). Returns { workspaces:[{name,nodeCount,updatedAt,path}], active, activePath, root }. CALL THIS FIRST: reason about WHERE the task belongs before building.",
-          handler: () => {
-            const activePath = wsHost.activePath()
-            const root = activePath ? activePath.replace(/[/\\][^/\\]+$/, '') : ''
-            return {
-              workspaces: wsHost.list().map(({ name, nodeCount, updatedAt }) => ({ name, nodeCount, updatedAt, path: root ? `${root}/${name}` : '' })),
-              active: wsHost.active(),
-              activePath,
-              root
-            }
-          }
-        },
-        {
-          path: '/create_workspace',
-          description: 'Create a NEW empty workspace (a fresh desktop) for an UNRELATED task. Returns { ok, name }. Follow with switch_workspace.',
-          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-          handler: ({ body }) => {
-            const name = String(toolBody(body).name || '').trim()
-            if (!name) return { status: 400, body: { error: 'name required' } }
-            try {
-              return { ok: true, name: wsHost.create(name).name }
-            } catch (e) {
-              return { status: 400, body: { error: String((e && e.message) || e) } }
-            }
-          }
-        },
-        {
-          path: '/switch_workspace',
-          description: 'Move the user to a workspace by name (their canvas swaps to that desktop). Use after create_workspace. Returns { ok, active }.',
-          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-          handler: async ({ body }) => {
-            const name = String(toolBody(body).name || '').trim()
-            if (!name) return { status: 400, body: { error: 'name required' } }
-            const r = await wsHost.performSwitch(name)
-            return r.status === 200 ? { ok: true, active: r.body.active } : { status: r.status, body: r.body }
-          }
-        },
-        {
-          path: '/list_state',
-          description: 'List the surfaces currently open on the canvas.',
-          // Whitelist layout fields only — html + props ride the state push for serialization,
-          // but the agent's list_state view must not leak full srcdoc HTML or the chat transcript.
-          handler: () => ({
-            ...osState,
-            workspace: wsHost.active(), // same shape as Electron os-tools list_state (agents.md reads workspace_path)
-            workspace_path: wsHost.activePath(),
-            surfaces: (osState.surfaces || []).map((s) => ({
-              id: s.id,
-              kind: s.kind,
-              x: s.x,
-              y: s.y,
-              w: s.w,
-              h: s.h,
-              z: s.z,
-              zoom: s.zoom,
-              title: s.title,
-              url: s.url,
-              component: s.component,
-              pinned: s.pinned
-            }))
-          })
-        },
-        {
-          path: '/provider_call',
-          description:
-            'Make an authenticated request to a CONNECTED integration (provider) and get the JSON back — ' +
-            'use this to build whatever the user needs (their unread mail, repos, issues, messages, …). ' +
-            'The OS injects the credential server-side; you NEVER see the token. Reads (GET) are broad: ' +
-            'pass any path under the provider\'s API. Writes (POST/PUT/PATCH/DELETE) need a human approval ' +
-            'and are unavailable in server mode. Args: {provider, method?, path, query?, body?}. ' +
-            'Connected providers + scopes are in list_integrations. A sensitive read (message bodies, file ' +
-            'contents) returns code:"consent_required" until the human approves that provider once.',
-          input_schema: {
-            type: 'object',
-            required: ['provider', 'path'],
-            properties: {
-              provider: { type: 'string' },
-              method: { type: 'string' },
-              path: { type: 'string', description: 'provider-relative, e.g. /user/repos or /gmail/v1/users/me/messages?…via query' },
-              query: { type: 'object' },
-              body: {},
-              approvalToken: { type: 'string' }
-            }
-          },
-          handler: async ({ body }) => {
-            const b = toolBody(body)
-            const toks = readTokens()
-            const t = toks[b.provider]
-            const record = t ? { secrets: t.secrets, grantedScopes: t.grantedScopes } : null
-            return callProvider(
-              {
-                provider: String(b.provider || ''),
-                method: b.method,
-                path: String(b.path || ''),
-                query: b.query,
-                body: b.body,
-                approvalToken: b.approvalToken,
-                caller: { kind: 'agent', transport: 'server' }
-              },
-              { record, approvals: providerApprovals, rate: providerRate, consented: (p) => providerConsent.has(p), audit: providerAudit }
-            )
-          }
-        },
-        {
-          path: '/group',
-          description:
-            'Group surfaces into a REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' ' +
-            'files into it. kind:"folder" (default) → ONE collapsed tile (drill in to browse), best for many ' +
-            'items / a repo. kind:"board" → the items stay SPLAYED on the canvas as a sub-board (small curated ' +
-            'set). A real filesystem folder either way, so it persists. Args: {name, ids:[surfaceId], kind?}.',
-          input_schema: {
-            type: 'object',
-            required: ['ids'],
-            properties: { name: { type: 'string' }, ids: { type: 'array', items: { type: 'string' } }, kind: { type: 'string', enum: ['folder', 'board'] }, x: { type: 'number' }, y: { type: 'number' } }
-          },
-          handler: ({ body }) => {
-            const b = toolBody(body)
-            const ids = Array.isArray(b.ids) ? b.ids.map(String) : []
-            if (!ids.length) return { ok: false, error: 'no members to group' }
-            return wsHost.group(String(b.name || 'Folder'), ids, Number(b.x) || 0, Number(b.y) || 0, b.kind === 'board' ? 'board' : 'folder')
-          }
-        },
-        {
-          path: '/read_window',
-          description: 'Read what is INSIDE a web surface (its DOM): url, title, and visible text. Only kind "web" (server mode).',
-          input_schema: {
-            type: 'object',
-            required: ['id'],
-            properties: { id: { type: 'string' } }
-          },
-          handler: async ({ body }) => {
-            const b = toolBody(body)
-            const id = typeof b.id === 'string' ? b.id : ''
-            if (!id) return { status: 400, body: { error: 'id required' } }
-            if (!SERVER_MODE || !host || !host.has(id)) {
-              return { status: 501, body: { error: 'read_window needs server mode (or the desktop app); this surface has no server browser target' } }
-            }
-            // Reading a logged-in surface only crosses the relay if the user shared it (P0).
-            if (!isContentShared(id)) {
-              return { status: 403, body: { error: 'content not shared — ask the user to enable "share with agent" on this surface', code: 'not_shared' } }
-            }
-            // No raw eval over the relay (confused-deputy on a logged-in session) — safe DOM read only.
-            const action = { action: 'read' }
-            const r = await controlSession(host.session(id), action)
-            if (!r.ok) return { status: 400, body: { error: r.error } }
-            return { result: r.result }
-          }
-        },
-        {
-          path: '/update_surface',
-          description: 'Patch a surface in place: set html (srcdoc), props (native, e.g. note text), url, title, or geometry (x,y,w,h).',
-          input_schema: {
-            type: 'object',
-            required: ['id'],
-            properties: {
-              id: { type: 'string' },
-              html: { type: 'string' }, url: { type: 'string' }, title: { type: 'string' },
-              props: { type: 'object' },
-              x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }
-            }
-          },
-          handler: ({ body }) => {
-            const b = toolBody(body)
-            const id = typeof b.id === 'string' ? b.id : ''
-            if (!id) return { status: 400, body: { error: 'id required' } }
-            const patch = { ...b }
-            delete patch.id
-            broadcast({ type: 'update', id, patch })
-            // server mode: a url change navigates the live target
-            if (SERVER_MODE && host && host.has(id) && typeof b.url === 'string') host.navigate(id, b.url).catch(() => {})
-            return { ok: true }
-          }
-        },
-        {
-          path: '/surface_control',
-          description: 'Act INSIDE a web surface: click, type, press a key, read text, or screenshot. Only kind "web"; requires server mode. Put the surface id in the body.',
-          input_schema: {
-            type: 'object',
-            required: ['id', 'action'],
-            properties: {
-              id: { type: 'string' },
-              action: {
-                type: 'object',
-                required: ['action'],
-                properties: {
-                  action: { type: 'string', enum: ['click', 'type', 'key', 'read', 'screenshot'] },
-                  selector: { type: 'string' },
-                  x: { type: 'number' }, y: { type: 'number' },
-                  text: { type: 'string' }, perKey: { type: 'boolean' },
-                  key: { type: 'string', description: 'Enter | Tab | ArrowDown | ...' }
-                }
-              }
-            }
-          },
-          handler: async ({ body }) => {
-            const b = toolBody(body)
-            const id = typeof b.id === 'string' ? b.id : ''
-            const action = b.action || {}
-            if (!id || !action.action) return { status: 400, body: { error: 'id and action.action required' } }
-            // eval stays localhost-only — never over the relay (confused-deputy on a logged-in session).
-            if (action.action === 'eval') return { status: 403, body: { error: 'eval is not available over the relay' } }
-            // Reading/screenshotting a logged-in surface only crosses the relay if shared (P0).
-            if ((action.action === 'read' || action.action === 'screenshot') && !isContentShared(id)) {
-              return { status: 403, body: { error: 'content not shared — enable "share with agent" on this surface to read or screenshot it', code: 'not_shared' } }
-            }
-            if (!SERVER_MODE || !host || !host.has(id)) {
-              return { status: 501, body: { error: 'in-window control needs server mode (BLITZ_SERVER_MODE=1) or the desktop app; this surface has no server browser target' } }
-            }
-            const r = await controlSession(host.session(id), action)
-            if (!r.ok) return { status: 400, body: { error: r.error } }
-            if (action.action === 'screenshot') return { image: r.result }
-            if (action.action === 'read') return { text: r.result }
-            return { ok: true }
-          }
-        },
-        {
-          path: '/events',
-          description:
-            "Long-poll the user's activity, coalesced into framed 'moments' (batched ~15s; flushed immediately on navigation or going idle after acting). Each moment: {seq,surfaceId,url,title,trigger,signals,user[],snapshot}. THE AUTONOMY LOOP: start since=0, loop with since=latest and wait=25; on each moment decide whether to act, then build/arrange surfaces to help. (Page content — snapshot/user — is withheld for surfaces the user hasn't shared with the agent.)",
-          input_schema: { type: 'object', properties: { since: { type: 'number' }, wait: { type: 'number' } } },
-          handler: async ({ body }) => {
-            const a = toolBody(body)
-            const since = Number(a.since) || 0
-            const wait = Math.min(Math.max(a.wait == null ? 25 : Number(a.wait) || 0, 0), 25) // default 25, but honor an explicit wait:0 (the startup latest-read)
-            const raw = await waitForEvents(since, wait * 1000)
-            // Relay is untrusted: page content only crosses for surfaces the user shared.
-            const events = raw.map((m) => (isContentShared(m.surfaceId) ? m : redactMoment(m)))
-            return { events, latest: latestSeq(), reminder: EVENTS_REMINDER }
-          }
-        },
-        {
-          path: '/say',
-          description:
-            "Send a chat message to the USER — appears in their in-canvas Chat panel. Use this to reply when a moment has trigger:'message' (the user typed to you), or to proactively tell them what you did. Plain text.",
-          input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
-          handler: ({ body }) => {
-            const text = String(toolBody(body).text || '')
-            if (!text) return { status: 400, body: { error: 'text required' } }
-            wsHost.appendChat('agent', text) // append to chat.md + broadcast the transcript to the chat widget
-            return { ok: true }
-          }
-        },
-        {
-          path: '/customize_widget',
-          description:
-            "Rewrite a built-in OS widget's UI — currently {name:'chat'} (the chat panel). The UI is a workspace " +
-            'file (blitz-chat.html) you fully replace; it live-reloads. Build it with the Blitz UI kit injected ' +
-            'into every widget: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + the ' +
-            '--blitz-* tokens, and window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Read the ' +
-            'current source with get_system_ui first. Args: {name, html}.',
-          input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' } } },
-          handler: ({ body }) => {
-            const b = toolBody(body)
-            const r = wsHost.customizeWidget(String(b.name || ''), String(b.html || ''))
-            return r && r.ok ? { ok: true, file: r.rel } : { status: 400, body: { error: (r && r.error) || 'failed' } }
-          }
-        },
-        {
-          path: '/get_system_ui',
-          description: "Read a built-in widget's current UI source before editing it (the fork pattern). Args: {name:'chat'}. Returns {html}.",
-          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-          handler: ({ body }) => {
-            const html = wsHost.systemUi(String(toolBody(body).name || ''))
-            return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html }
-          }
-        },
-        {
-          path: '/list_widgets',
-          description:
-            'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML) backed by the user’s connected integrations. Returns each widget’s name, description, and which integrations it needs (needsMet=true if connected). Use get_widget_source to read one, spawn_widget to open it.',
-          handler: () => {
-            const connected = readTokens()
-            return {
-              widgets: listWidgets().map((w) => ({ ...w, needsMet: (w.needs || []).every((n) => !!connected[n]) })),
-              connected: Object.keys(connected)
-            }
-          }
-        },
-        {
-          path: '/get_widget_source',
-          description:
-            'Read the exact, forkable HTML source of a library widget by name (to understand or fork it). Returns { name, html, needs, props, version, origin }.',
-          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-          handler: ({ body }) => {
-            const name = String(toolBody(body).name || '')
-            const w = getWidgetSource(name)
-            if (!w) return { status: 404, body: { error: `no widget named "${name}"` } }
-            return w
-          }
-        },
-        {
-          path: '/spawn_widget',
-          description:
-            'Open a library widget on the canvas as a live sandboxed surface. It fetches its data through the OS bridge; the user approves integration access once. Returns { id } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
-          input_schema: {
-            type: 'object',
-            required: ['name'],
-            properties: {
-              name: { type: 'string' },
-              x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' },
-              title: { type: 'string' }, props: { type: 'object' }
-            }
-          },
-          handler: ({ body }) => {
-            const a = toolBody(body)
-            const w = getWidgetSource(String(a.name || ''))
-            if (!w) return { status: 404, body: { error: `no widget named "${a.name}"` } }
-            const id = randomUUID()
-            const surface = { kind: 'srcdoc', id, html: w.html, props: { ...(w.props || {}), ...(a.props || {}) }, title: a.title || w.name }
-            for (const k of ['x', 'y', 'w', 'h']) if (a[k] != null) surface[k] = Number(a[k])
-            broadcast({ type: 'create', surface })
-            const connected = readTokens()
-            const needsConnect = (w.needs || []).filter((n) => !connected[n])
-            return needsConnect.length ? { id, needsConnect } : { id }
-          }
-        },
-        {
-          path: '/save_widget',
-          description:
-            'Save a NEW or forked widget (sandboxed HTML using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST to learn the bridge. Returns { name, version }.',
-          input_schema: {
-            type: 'object',
-            required: ['name', 'html'],
-            properties: {
-              name: { type: 'string', description: 'a-z 0-9 -, 2-49 chars' },
-              html: { type: 'string' },
-              description: { type: 'string' },
-              needs: { type: 'array', items: { type: 'string' } },
-              props: { type: 'object' },
-              forkedFrom: { type: 'string' }
-            }
-          },
-          handler: ({ body }) => {
-            const a = toolBody(body)
-            try {
-              return saveWidget(a)
-            } catch (e) {
-              return { status: 400, body: { error: e?.message || 'save failed' } }
-            }
-          }
-        },
-        {
-          path: '/list_integrations',
-          description:
-            'List the integrations (Discord, GitHub, Gmail, Jira, Slack) and whether each is connected — so you know which widgets can show real data and what to ask the user to connect.',
-          handler: () => ({ integrations: statuses() })
-        },
-        {
-          path: '/get_widget_authoring',
-          description:
-            'Get the widget-authoring guide: how to write a widget that reads integration data via the sandboxed window.blitz bridge. Read this BEFORE authoring a new widget with save_widget.',
-          handler: () => ({ markdown: WIDGET_AUTHORING_MD })
-        }
-      ])
+      // The ONE shared registry, server-bound (serverOps). Same paths/descriptions/schemas/handlers as Electron;
+      // mapped to the agent-socket tool shape. transport:relay — the server is untrusted like the relay (no
+      // localhost trust), so the few security branches behave identically. Add/change a tool in os-tools.mjs once.
+      tools: withActivity(
+        makeOsTools(serverOps).map((t) => ({
+          path: t.path,
+          description: t.description,
+          ...(t.input_schema ? { input_schema: t.input_schema } : {}),
+          handler: ({ body }) => t.handler({ body: body || '', transport: 'relay' })
+        }))
+      )
     })
     const link = await session.mintAgentToken({ label: 'blitzos-preview' })
     agentUrl = link.url

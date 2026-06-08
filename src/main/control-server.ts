@@ -1,7 +1,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { randomBytes } from 'crypto'
 import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, type SurfaceDescriptor } from './osActions'
-import { OS_TOOLS_BY_PATH } from './os-tools'
+import { OS_TOOLS_BY_PATH } from './electron-os-tools'
 import type { ControlAction } from './cdp'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './events'
 import { setLocal } from './sessionFile'
@@ -36,7 +36,7 @@ export function startControlServer(): void {
     // NOTE: /provider_call and /group are dispatched below by the GENERIC shared-registry handler
     // (OS_TOOLS_BY_PATH) with transport:'localhost' — no per-path alias here. The old hand-written aliases
     // had drifted (the /group alias dropped x/y that the shared handler forwards); deleting them keeps the
-    // localhost path from rotting behind the relay, which is the whole point of the shared os-tools.ts.
+    // localhost path from rotting behind the relay, which is the whole point of the shared os-tools.mjs.
 
     // POST /surfaces/:id/control (also /windows/:id/control) — act inside a web surface.
     const ctl = req.method === 'POST' && req.url ? /^\/(?:surfaces?|windows)\/([^/]+)\/control$/.exec(req.url) : null
@@ -125,7 +125,7 @@ export function startControlServer(): void {
       return
     }
 
-    // Generic dispatch for every SHARED tool (os-tools.ts) by its canonical path — this is what makes the
+    // Generic dispatch for every SHARED tool (os-tools.mjs) by its canonical path — this is what makes the
     // localhost path serve the FULL agent tool surface (list_state, create_surface, read_window, say,
     // list/create/switch_workspace, new_app, …) instead of the old stale subset that 404'd. Trusted
     // transport: eval allowed, DOM reads + moments unredacted. The legacy aliases above (/state, /windows,

@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { connect, type Session } from '@agent-socket/sdk'
 import { setRelay } from './sessionFile'
-import { OS_TOOLS } from './os-tools'
+import { OS_TOOLS } from './electron-os-tools'
 // The single source of truth for the BlitzOS operating doc. Vite inlines the .md at
 // build (the main bundle has no runtime fs access to it); the server preview reads the
 // same file at runtime. Edit src/main/blitzos-agents.md, then relaunch.
@@ -34,10 +34,11 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
       baseUrl: RELAY,
       appDescription: 'BlitzOS: an agent OS desktop. Open and arrange surfaces on an infinite canvas.',
       agentsMd: AGENTS_MD,
-      // The relay (untrusted) path of the SHARED tool registry — see os-tools.ts. Every tool runs with
-      // transport:'relay' here (page content is gated to surfaces the user shared, raw eval is blocked).
-      // The localhost control server dispatches the SAME registry with transport:'localhost' (trusted).
-      // To add or change a tool, edit os-tools.ts once and BOTH transports get it.
+      // The relay (untrusted) path of the SHARED tool registry — see os-tools.mjs (bound for Electron in
+      // electron-os-tools.ts). Every tool runs with transport:'relay' here (page content is gated to surfaces
+      // the user shared, raw eval is blocked). The localhost control server dispatches the SAME registry with
+      // transport:'localhost' (trusted), and the server (preview/backend.mjs) builds it from its own ops.
+      // To add or change a tool, edit os-tools.mjs once and ALL THREE transports get it.
       tools: OS_TOOLS.map((t) => ({
         path: t.path,
         description: t.description,
