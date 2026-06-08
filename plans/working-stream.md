@@ -1,6 +1,22 @@
 # BlitzOS — Working Stream
 
-**My working notes — agent self-continuity, not a handoff doc.** For *me* to keep state across context compactions: current state, decisions + rationale, exact contracts, open threads, next actions, and the commands I use. Terse + operational + dense on purpose. I update it as I work and re-read it on resume. Last touched 2026-06-07.
+**My working notes — agent self-continuity, not a handoff doc.** For *me* to keep state across context compactions: current state, decisions + rationale, exact contracts, open threads, next actions, and the commands I use. Terse + operational + dense on purpose. I update it as I work and re-read it on resume. Last touched 2026-06-08.
+
+---
+
+## LATEST (2026-06-08) — Widget framework: OS UI is now file-backed, customizable widgets + merge
+
+Merged `origin/agent-runtime-moments` (onboarding, light theme, wallpaper, fullscreen) → master, clean. Then built the **widget framework** the user asked for ("provide the framework, don't force a UI; I can ask the agent to customize even the chat; a shared component lib so no duplication"). All committed, all 14 headless suites + typecheck + build green; chat + routes live-verified on :8799.
+
+- **Shared UI kit** `src/renderer/src/widget-ui-kit.ts` (`UI_KIT`) — `--blitz-*` tokens + `<blitz-titlebar|list|message|row|input|button>` web components + `window.blitz.ui`, injected after `BRIDGE_SHIM` into every srcdoc (SurfaceFrame). ONE source.
+- **Capability-gated bridge** (`widget-bridge.ts` + SurfaceFrame op-switch): `blitz.tool` (CLOSED allowlist `src/main/widget-tools.mjs`, NOT relay pass-through; raw eval/surface_control denied; provider writes still gated) / `sendMessage` / `listDir` / `setProps`. Consent generalized per-CAPABILITY (`provider:x|tools|chat|files`). `widgetTool` IPC (widgets.ts) + `/api/os/widget-tool` (backend.mjs), preload↔shim mirrored.
+- **Chat IS a widget**: UI = `blitz-chat.html` (visible workspace file; recreated from default if deleted; customizable). Transcript = **`chat.md`** (OS-serialized: `appendChatMessage`/`readChatMessages`). Surface = `{kind:'srcdoc', role:'chat', pinned}` built by `workspace-host.buildChatSurface()` in hydrate/switch; `appendChat(role,text)` appends + syncs osState + broadcasts `{type:'chat',messages}`; `sendMessage→appendChat('user')+emitUserMessage` (redaction-exempt), `say→appendChat('agent')`. Recognition: `nodeKind` skips role:'chat'/'note'; `autoKind` skips `isSystemFile` (blitz-*.html + chat.md never double-tile). Re-keyed pinned/runtime-keep off component→`role` (SurfaceFrame/App/store/host). `migrateChatToFile()` seeds chat.md from old panels.json once.
+- **customize_widget {name,html} / get_system_ui {name}** agent tools (both transports) → `host.customizeWidget` (live-reload) / `systemUi`. The user asks → the agent rewrites `blitz-<role>.html` → reloads.
+- **File manager** = native multi-instance **window** (`FileManager.tsx`, component:'files'), not a srcdoc widget (per user: any folder → many copies). Dir-tile double-click spawns/focuses it; drill/up/breadcrumb via its own props.path; opens files onto the canvas. Old `DirOverlay` modal deleted.
+- **Note** = opt-in file-backed widget: default native post-it (zero regression); if `blitz-note.html` exists (customized) a note renders as a srcdoc (`role:'note'`, writes text back via `blitz.setProps`) but still persists as its `.md`.
+- New tests: `test-ui-kit` (13), `test-widget-tools` (25), `test-chat-transcript` (24), + host chat/customize in `test-folder-host`. Plan: `~/.claude/plans/abstract-marinating-meerkat.md`.
+- **Try it:** push, hard-refresh agentos.blitzmen.com. Open Chat (a widget; history in chat.md), ask "customize the chat" → it rewrites blitz-chat.html live; double-click a folder → a file-manager window.
+- **Residuals:** file-manager GUI feel Mac-pending; packaged-Electron needs `widgets/` bundled (dev/server fine); dead `.dir-overlay` CSS in styles.css (harmless).
 
 ---
 
