@@ -162,7 +162,7 @@ console.log('\n#45 workspace areas — step 1: area-aware spatial fns, byte-iden
   ok('viewTransform(desktop) === (desktop,0,1)', JSON.stringify(vtD) === JSON.stringify(vtD01), { vtD, vtD01 })
   const vtC = viewTransform('canvas', vp)
   const vtC01 = viewTransform('canvas', vp, 0, 1)
-  ok('viewTransform(canvas) === (canvas,0,1) and scale===0.31', JSON.stringify(vtC) === JSON.stringify(vtC01) && vtC.scale === 0.31, { vtC })
+  ok('viewTransform(canvas) === (canvas,0,1) and scale===0.7', JSON.stringify(vtC) === JSON.stringify(vtC01) && vtC.scale === 0.7, { vtC })
   // areas are same-size, one stride apart
   ok('areaRect(1).x - areaRect(0).x === stride', areaRect(1, vp).x - areaRect(0, vp).x === stride)
   ok('areaRect(1).w === areaRect(0).w', areaRect(1, vp).w === areaRect(0, vp).w)
@@ -191,7 +191,7 @@ console.log('\n#45 workspace areas — step 1: area-aware spatial fns, byte-iden
   const a0CenterScreenX = (areaRect(0, vp).x + r.w / 2) * 1 + cxAnchor
   ok('desktop: area-1 center maps to the SAME screen x as area-0 center (area lock)', Math.abs(a1CenterScreenX - a0CenterScreenX) < 0.001, { a1CenterScreenX, a0CenterScreenX })
   const vtC2 = viewTransform('canvas', vp, 0, 2)
-  ok('canvas: 2 areas zoom out (scale < single-area 0.31)', vtC2.scale < 0.31, vtC2.scale)
+  ok('canvas: 2 areas zoom out (scale < single-area 0.7)', vtC2.scale < 0.7, vtC2.scale)
   const unionCenterScreenX = (((2 - 1) * stride) / 2) * vtC2.scale + vtC2.x
   ok('canvas: the tiled-row center maps to the area anchor screen x', Math.abs(unionCenterScreenX - vtC.x) < 0.001, { unionCenterScreenX, anchor: vtC.x })
 

@@ -2,7 +2,7 @@
 // reconcile, with the new folder broadcast to renderers. Drives the real host with a fake adapter +
 // a real temp dir (the host is transport-agnostic; this is exactly what backend.mjs / osActions call).
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
-import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -83,6 +83,22 @@ console.log('\nworkspace-host.listDir — the file-manager listing (jailed):')
 const ld = host.listDir('repo')
 ok('lists the dropped repo contents', !!ld && ld.entries.some((e) => e.name === 'index.js') && ld.entries.some((e) => e.dir && e.name === 'src'))
 ok('listDir jails ".." → null', host.listDir('..') === null)
+
+console.log('\nworkspace-host chat — file-backed widget (appendChat → chat.md + broadcast):')
+osState = { surfaces: [{ id: 'chat', kind: 'srcdoc', role: 'chat', x: 0, y: 0, w: 360, h: 460, z: 5, props: { messages: [] } }], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' }
+const m1 = host.appendChat('user', 'hello chat')
+ok('appendChat writes chat.md', existsSync(join(ws, 'chat.md')) && m1.length === 1 && m1[0].text === 'hello chat', m1)
+ok('appendChat broadcasts {type:chat, messages}', broadcasts.some((b) => b && b.type === 'chat' && Array.isArray(b.messages) && b.messages.length === 1))
+ok('appendChat syncs osState chat surface props (fresh hydrate shows it)', (osState.surfaces.find((s) => s.role === 'chat')?.props?.messages || []).length === 1)
+host.appendChat('agent', 'hi there')
+ok('both roles append in order', host.appendChat('user', 'x').slice(0, 2).map((m) => m.role).join() === 'user,agent')
+
+console.log('\nworkspace-host customizeWidget — the agent rewrites the chat UI (live-reload):')
+const cu = host.customizeWidget('chat', '<blitz-titlebar>Custom Chat</blitz-titlebar>')
+ok('customizeWidget writes blitz-chat.html', cu.ok && readFileSync(join(ws, 'blitz-chat.html'), 'utf8').includes('Custom Chat'))
+ok('customizeWidget broadcasts a live-reload update for the chat', broadcasts.some((b) => b && b.type === 'update' && b.id === 'chat' && (b.patch?.html || '').includes('Custom Chat')))
+ok('systemUi returns the customized source', (host.systemUi('chat') || '').includes('Custom Chat'))
+ok('customize rejects an unknown widget', host.customizeWidget('nope', 'x').ok === false)
 
 // and it persists: a fresh read of the folder shows the folder tile (real directory on disk)
 host.stopWatch?.()

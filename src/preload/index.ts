@@ -38,6 +38,7 @@ export interface OsState {
     html?: string
     props?: Record<string, unknown>
     component?: string
+    role?: string
     pinned?: boolean
   }>
   /** Screen size in px (so the agent knows what fits). */
@@ -136,6 +137,10 @@ const api = {
     resource: string
   }): Promise<{ ok: boolean; data?: unknown; error?: string; code?: string }> {
     return ipcRenderer.invoke('widget:req', req)
+  },
+  /** A sandboxed widget calls an OS tool via blitz.tool (gated by the `tools` capability; CLOSED allowlist). */
+  widgetTool(surfaceId: string, name: string, args: unknown): Promise<{ ok: boolean; result?: unknown; error?: string }> {
+    return ipcRenderer.invoke('widget:tool', { surfaceId, name, args })
   },
   /** Record the human's one-time consent for (surface, provider). */
   grantConsent(surfaceId: string, provider: string): Promise<{ ok: boolean }> {

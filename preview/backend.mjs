@@ -33,6 +33,8 @@ import {
 } from '../src/main/widget-catalog.mjs'
 // #51 general provider-access substrate (the agent makes whatever request it needs; token stays here).
 import { callProvider, createApprovalLedger, createRateLimiter } from '../src/main/provider-call.mjs'
+// Widget tool bridge — the CLOSED allowlist a sandboxed widget may call via blitz.tool (shared with Electron).
+import { makeWidgetToolRunner } from '../src/main/widget-tools.mjs'
 import { capturedScopes } from '../src/main/provider-specs.mjs'
 // Shared perception kernel + resident brain — the SAME modules the Electron main runs,
 // so server mode gets the autonomy loop with no duplicated code.
@@ -429,6 +431,67 @@ function saveConsent() {
 }
 loadConsent()
 
+// Lazily-built widget-tool dispatcher (server transport). Mirrors the relay tool handlers — server-minted
+// ids, broadcast to renderers, host target ops — but only for the CLOSED widget allowlist (widget-tools.mjs).
+// Closures bind the live module vars at call time (requests arrive after init), so ordering is moot.
+let _widgetToolRunner = null
+function widgetToolRunner() {
+  if (_widgetToolRunner) return _widgetToolRunner
+  _widgetToolRunner = makeWidgetToolRunner({
+    create_surface: (a) => {
+      if (!a.kind) throw new Error('kind required')
+      const id = randomUUID() // OS-mint (a widget must not pick an id to inherit a consent grant)
+      if (a.kind === 'web' || a.kind === 'app') setContentShare(id, true)
+      broadcast({ type: 'create', surface: { ...a, id } })
+      if (SERVER_MODE && host && a.kind === 'web' && !host.has(id)) host.createSurface(id, { url: a.url || 'about:blank', width: Math.round(Number(a.w)) || 1280, height: Math.round(Number(a.h)) || 800 }).catch(() => {})
+      return { id }
+    },
+    open_window: (a) => {
+      if (typeof a.url !== 'string') throw new Error('url required')
+      const id = randomUUID()
+      setContentShare(id, true)
+      broadcast({ type: 'create', surface: { kind: 'web', ...a, id } })
+      if (SERVER_MODE && host && !host.has(id)) host.createSurface(id, { url: a.url, width: Math.round(Number(a.w)) || 1280, height: Math.round(Number(a.h)) || 800 }).catch(() => {})
+      return { id }
+    },
+    move_surface: (a) => (broadcast({ type: 'move', id: String(a.id), x: Number(a.x), y: Number(a.y) }), { ok: true }),
+    update_surface: (a) => {
+      const id = String(a.id || '')
+      if (!id) throw new Error('id required')
+      const patch = { ...a }
+      delete patch.id
+      broadcast({ type: 'update', id, patch })
+      if (SERVER_MODE && host && host.has(id) && typeof a.url === 'string') host.navigate(id, a.url).catch(() => {})
+      return { ok: true }
+    },
+    close_surface: (a) => {
+      const id = String(a.id || '')
+      broadcast({ type: 'close', id })
+      for (const k of consentGranted) if (k.startsWith(`${id}:`)) consentGranted.delete(k)
+      if (SERVER_MODE && host) host.closeSurface(id).catch(() => {})
+      wsHost.closeSurfaceFile(id)
+      return { ok: true }
+    },
+    group: (a) => {
+      const ids = Array.isArray(a.ids) ? a.ids.map(String) : []
+      if (!ids.length) throw new Error('no members to group')
+      return wsHost.group(String(a.name || 'Folder'), ids, Number(a.x) || 0, Number(a.y) || 0, a.kind === 'board' ? 'board' : 'folder')
+    },
+    go_to_primary: () => (broadcast({ type: 'goToPrimary' }), { ok: true }),
+    list_state: () => ({ ...osState, surfaces: (osState.surfaces || []).map((s) => ({ id: s.id, kind: s.kind, x: s.x, y: s.y, w: s.w, h: s.h, z: s.z, zoom: s.zoom, title: s.title, url: s.url, component: s.component, pinned: s.pinned })) }),
+    provider_call: (a) => {
+      const toks = readTokens()
+      const t = toks[a.provider]
+      const record = t ? { secrets: t.secrets, grantedScopes: t.grantedScopes } : null
+      return callProvider(
+        { provider: String(a.provider || ''), method: a.method, path: String(a.path || ''), query: a.query, body: a.body, approvalToken: a.approvalToken, caller: { kind: 'agent', transport: 'server' } },
+        { record, approvals: providerApprovals, rate: providerRate, consented: (p) => providerConsent.has(p), audit: providerAudit }
+      )
+    }
+  })
+  return _widgetToolRunner
+}
+
 function toolBody(body) {
   try {
     return body ? JSON.parse(body) : {}
@@ -769,8 +832,32 @@ async function startOsAgentSocket() {
           handler: ({ body }) => {
             const text = String(toolBody(body).text || '')
             if (!text) return { status: 400, body: { error: 'text required' } }
-            broadcast({ type: 'chat', text })
+            wsHost.appendChat('agent', text) // append to chat.md + broadcast the transcript to the chat widget
             return { ok: true }
+          }
+        },
+        {
+          path: '/customize_widget',
+          description:
+            "Rewrite a built-in OS widget's UI — currently {name:'chat'} (the chat panel). The UI is a workspace " +
+            'file (blitz-chat.html) you fully replace; it live-reloads. Build it with the Blitz UI kit injected ' +
+            'into every widget: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + the ' +
+            '--blitz-* tokens, and window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Read the ' +
+            'current source with get_system_ui first. Args: {name, html}.',
+          input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' } } },
+          handler: ({ body }) => {
+            const b = toolBody(body)
+            const r = wsHost.customizeWidget(String(b.name || ''), String(b.html || ''))
+            return r && r.ok ? { ok: true, file: r.rel } : { status: 400, body: { error: (r && r.error) || 'failed' } }
+          }
+        },
+        {
+          path: '/get_system_ui',
+          description: "Read a built-in widget's current UI source before editing it (the fork pattern). Args: {name:'chat'}. Returns {html}.",
+          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+          handler: ({ body }) => {
+            const html = wsHost.systemUi(String(toolBody(body).name || ''))
+            return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html }
           }
         },
         {
@@ -1170,6 +1257,24 @@ const server = createServer(async (req, res) => {
     })
     return
   }
+  // POST /api/os/widget-tool { surfaceId, name, args } — a sandboxed widget calls an OS tool via
+  // blitz.tool (gated by the `tools` capability in the renderer). Same CLOSED allowlist as Electron
+  // (widget-tools.mjs); dispatches through the same primitives the relay tools use. provider_call
+  // writes are still hard-refused in server mode (callProvider transport:'server').
+  if (path === '/api/os/widget-tool' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let wbody = ''
+    req.on('data', (c) => {
+      wbody += c
+      if (wbody.length > 1_000_000) req.destroy()
+    })
+    req.on('end', async () => {
+      const b = toolBody(wbody)
+      const r = await widgetToolRunner()(String(b.name || ''), b.args, { surfaceId: String(b.surfaceId || '') })
+      return json(res, r && r.ok ? 200 : 400, r || { ok: false })
+    })
+    return
+  }
   // POST /api/os/new-folder { name, kind, x, y } — "New Folder" (files) / "New Board" (windows+widgets).
   if (path === '/api/os/new-folder' && req.method === 'POST') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
@@ -1225,7 +1330,10 @@ const server = createServer(async (req, res) => {
     req.on('data', (c) => { cbody += c; if (cbody.length > 20_000) req.destroy() })
     req.on('end', () => {
       const t = toolBody(cbody).text
-      if (typeof t === 'string' && t.trim()) emitUserMessage(t)
+      if (typeof t === 'string' && t.trim()) {
+        wsHost.appendChat('user', t) // write the user's message to chat.md + echo it to the chat widget
+        emitUserMessage(t) // …and wake the agent (trigger:'message' moment, redaction-exempt)
+      }
       json(res, 200, { ok: true })
     })
     return

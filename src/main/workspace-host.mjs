@@ -18,6 +18,11 @@ import {
   createFolder,
   listDir,
   removeSurfaceFile,
+  ensureSystemRenderer,
+  readSystemRenderer,
+  writeSystemRenderer,
+  readChatMessages,
+  appendChatMessage,
   readConsent,
   writeConsent,
   wasSelfWrite,
@@ -95,7 +100,7 @@ export function createWorkspaceHost(a) {
       //    in-flight). `r.knownIds` ARE the persisted node ids: an osState id NOT in knownIds and
       //    NOT in the reconciled set is genuinely un-persisted → keep it (a DELETED file's id IS a
       //    known node → it correctly drops). Re-apply group memberships to the disk surfaces too.
-      const isRuntimeLike = (s) => s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder')
+      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder'))
       const reconciledIds = new Set(r.surfaces.map((s) => s.id))
       const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
       const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))
@@ -175,6 +180,74 @@ export function createWorkspaceHost(a) {
     if (switching) return { ok: false, error: 'switch in progress' }
     return removeSurfaceFile(activeWorkspace, String(id))
   }
+
+  // ---- The system Chat: a srcdoc widget whose UI is the workspace file blitz-chat.html (customizable)
+  // and whose transcript is chat.md (the OS appends each message; the widget just renders props.messages).
+  /** Build the chat surface from its workspace files (ensuring/recreating blitz-chat.html if missing). */
+  function buildChatSurface() {
+    ensureSystemRenderer(activeWorkspace, 'chat') // recreate the default UI if it was deleted
+    return {
+      id: 'chat',
+      kind: 'srcdoc',
+      role: 'chat',
+      pinned: true,
+      title: 'Chat',
+      x: -700,
+      y: -210,
+      w: 360,
+      h: 460,
+      z: 5,
+      html: readSystemRenderer(activeWorkspace, 'chat') || '',
+      props: { messages: readChatMessages(activeWorkspace) }
+    }
+  }
+  /** One-time: an OLD workspace kept the transcript in panels.json — seed chat.md from it so no history is lost. */
+  function migrateChatToFile() {
+    if (readChatMessages(activeWorkspace).length) return
+    const chat = readRuntimePanels(activeWorkspace).find((p) => p.component === 'chat')
+    const msgs = chat && chat.props && Array.isArray(chat.props.messages) ? chat.props.messages : []
+    for (const m of msgs) appendChatMessage(activeWorkspace, m.role === 'user' ? 'user' : 'agent', String(m.text || ''))
+  }
+  /** Append a chat message to chat.md and broadcast the new transcript so the chat widget re-renders.
+   *  role 'user' (the human typed) | 'agent' (a `say`). Returns the full message list. */
+  function appendChat(role, text) {
+    appendChatMessage(activeWorkspace, role, text)
+    const messages = readChatMessages(activeWorkspace)
+    // Keep osState's chat surface current so a FRESH hydrate (a page refresh / a new SSE connect) shows
+    // the up-to-date transcript, not the boot-time snapshot — live renderers also get the broadcast below.
+    try {
+      const st = a.getState()
+      if (st && Array.isArray(st.surfaces)) {
+        a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.role === 'chat' ? { ...s, props: { ...(s.props || {}), messages } } : s)) })
+      }
+    } catch {
+      /* getState/setState optional on some adapters */
+    }
+    a.broadcast({ type: 'chat', messages })
+    return messages
+  }
+  /** The agent customizes a system widget's UI (e.g. the chat) by rewriting blitz-<name>.html, then we
+   *  live-reload that surface so the change is visible immediately (the iframe reloads → re-earns its
+   *  capabilities; the transcript is re-seeded from props on reload). */
+  function customizeWidget(name, html) {
+    const r = writeSystemRenderer(activeWorkspace, name, html)
+    if (!r.ok) return r
+    if (name === 'chat') {
+      const newHtml = readSystemRenderer(activeWorkspace, 'chat') || ''
+      try {
+        const st = a.getState()
+        if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.role === 'chat' ? { ...s, html: newHtml } : s)) })
+      } catch {
+        /* adapter without getState/setState */
+      }
+      a.broadcast({ type: 'update', id: 'chat', patch: { html: newHtml } })
+    }
+    return r
+  }
+  /** Read a system widget's current UI source (workspace file, else the shipped default) — read-before-edit. */
+  function systemUi(name) {
+    return readSystemRenderer(activeWorkspace, name)
+  }
   /** Make an EMPTY real folder ('New Folder') or '.board' on-canvas folder ('New Board'), then reconcile
    *  at (x,y) so a normal folder shows as one tile (an empty board has no children to splay yet). */
   function newFolder(name, kind, x, y) {
@@ -219,11 +292,12 @@ export function createWorkspaceHost(a) {
   function hydrateOnBoot() {
     try {
       const h = readWorkspace(activeWorkspace)
-      // Runtime panels (chat/activity) live in .blitzos/state, not as nodes — merge them back so the
-      // chat transcript + activity feed survive a backend RESTART (#38), not just a page refresh.
-      const panels = readRuntimePanels(activeWorkspace)
+      // The chat is now a srcdoc widget backed by blitz-chat.html + chat.md (the transcript file). The
+      // activity feed still lives in .blitzos/state/panels.json. Merge both back on boot.
+      migrateChatToFile() // seed chat.md from an old panels.json transcript, once
+      const panels = readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')
       const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', areaCount: 1 }
-      const surfaces = [...base.surfaces, ...panels]
+      const surfaces = [...base.surfaces, buildChatSurface(), ...panels]
       // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted areaCount > 1 isn't lost on an
       // empty workspace — the hydrate senders read cached.areaCount, which would otherwise stay undefined→1.
       a.setState({ surfaces, camera: base.camera, mode: base.mode, areaCount: base.areaCount ?? 1 })
@@ -262,10 +336,10 @@ export function createWorkspaceHost(a) {
       stopWatch()
       activeWorkspace = newPath // load-bearing: AFTER flush (flush already persisted OLD's chat to OLD)
       const next = readWorkspace(newPath) || blank()
-      // Per-workspace chat/activity: load the DESTINATION's OWN persisted panels — do NOT carry the
-      // previous workspace's live chat over (that would overwrite B's saved chat with A's on the next
-      // push, destroying B's history). flush() above already saved A's panels into A.
-      const surfaces = [...next.surfaces, ...readRuntimePanels(newPath)]
+      // Per-workspace chat/activity: the DESTINATION's own chat (its blitz-chat.html + chat.md) and its
+      // activity panel — never carry the previous workspace's over.
+      migrateChatToFile()
+      const surfaces = [...next.surfaces, buildChatSurface(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
       a.setState({ surfaces, camera: next.camera, mode: next.mode, areaCount: next.areaCount ?? 1, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
@@ -330,6 +404,9 @@ export function createWorkspaceHost(a) {
     newFolder,
     listDir: listDirInWorkspace,
     closeSurfaceFile,
+    appendChat,
+    customizeWidget,
+    systemUi,
     group,
     // #53: per-workspace consent persistence (read on boot/switch, write on a human grant). The write
     // MERGES (a caller may update just `surfaces` or just `providers` — e.g. the widget bridge vs the

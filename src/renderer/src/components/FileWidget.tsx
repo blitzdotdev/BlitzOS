@@ -61,12 +61,20 @@ export function FileWidget({ surface }: { surface: Surface }): JSX.Element {
 
 export function DirWidget({ surface }: { surface: Surface }): JSX.Element {
   const p = (surface.props ?? {}) as { name?: string; entries?: number; path?: string }
-  const setOpenDirPath = useDesktop((s) => s.setOpenDirPath)
+  const createSurface = useDesktop((s) => s.createSurface)
+  const focusSurface = useDesktop((s) => s.focusSurface)
   const name = String(p.name || surface.title || 'folder')
   const path = String(p.path || p.name || '')
   const n = Number(p.entries || 0)
+  // Open a movable file-manager WINDOW for this folder (one instance per folder; focus an already-open one).
+  function open(): void {
+    if (!path) return
+    const existing = useDesktop.getState().surfaces.find((s) => s.kind === 'native' && s.component === 'files' && s.props?.path === path)
+    if (existing) focusSurface(existing.id)
+    else createSurface({ kind: 'native', component: 'files', title: name, w: 560, h: 440, props: { path } })
+  }
   return (
-    <div className="dir-tile" title="Double-click to open" onDoubleClick={() => path && setOpenDirPath(path)}>
+    <div className="dir-tile" title="Double-click to open" onDoubleClick={open}>
       <div className="dir-icon" />
       <div className="file-name" title={name}>
         {name}
