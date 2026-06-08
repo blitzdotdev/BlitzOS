@@ -832,7 +832,7 @@ async function startOsAgentSocket() {
           handler: ({ body }) => {
             const text = String(toolBody(body).text || '')
             if (!text) return { status: 400, body: { error: 'text required' } }
-            broadcast({ type: 'chat', text })
+            wsHost.appendChat('agent', text) // append to chat.md + broadcast the transcript to the chat widget
             return { ok: true }
           }
         },
@@ -1306,7 +1306,10 @@ const server = createServer(async (req, res) => {
     req.on('data', (c) => { cbody += c; if (cbody.length > 20_000) req.destroy() })
     req.on('end', () => {
       const t = toolBody(cbody).text
-      if (typeof t === 'string' && t.trim()) emitUserMessage(t)
+      if (typeof t === 'string' && t.trim()) {
+        wsHost.appendChat('user', t) // write the user's message to chat.md + echo it to the chat widget
+        emitUserMessage(t) // …and wake the agent (trigger:'message' moment, redaction-exempt)
+      }
       json(res, 200, { ok: true })
     })
     return

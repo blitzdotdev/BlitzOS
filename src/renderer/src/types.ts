@@ -30,6 +30,11 @@ export interface Surface {
   component?: string
   /** native: component props (e.g. { text, color }) */
   props?: Record<string, unknown>
+  /** A system surface the OS owns (e.g. 'chat' — a srcdoc widget backed by blitz-chat.html + chat.md).
+   *  Pinned + never serialized as a node. */
+  role?: string
+  /** Always-on-top (chat/activity) — kept above normal windows regardless of z. */
+  pinned?: boolean
   /** content zoom factor (web: webview zoom; app/srcdoc: CSS scale). default 1 */
   zoom?: number
   /** saved geometry when maximized, for restore */

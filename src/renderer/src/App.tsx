@@ -410,15 +410,18 @@ export default function App(): JSX.Element {
       else if (a.type === 'close') st.closeSurface(String(a.id))
       else if (a.type === 'goToPrimary') st.goToPrimary()
       else if (a.type === 'chat') {
-        // Agent reply -> append to the Chat panel (create one if none is open).
-        const text = String(a.text ?? '')
-        if (!text) return
-        const chat = st.surfaces.find((s) => s.kind === 'native' && s.component === 'chat')
-        if (chat) {
+        // The OS owns the transcript (chat.md) and sends the FULL message list; the chat widget renders
+        // props.messages. (Legacy single-text callers fall back to an append.) The chat surface is the
+        // role:'chat' srcdoc the host hydrates — if it isn't here yet, ignore (hydrate will bring it).
+        const chat = st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
+        if (!chat) return
+        if (Array.isArray(a.messages)) {
+          st.updateSurfaceProps(chat.id, { messages: a.messages as Array<{ role: string; text: string }> })
+        } else {
+          const text = String(a.text ?? '')
+          if (!text) return
           const msgs = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
           st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }].slice(-200) })
-        } else {
-          st.createSurface(chatSurfaceInput([{ role: 'agent', text }]))
         }
       } else if (a.type === 'activity') {
         // A live feed of what the agent is doing (its tool calls) -> the Agent-activity
@@ -510,8 +513,9 @@ export default function App(): JSX.Element {
         html: s.html,
         props: s.props,
         component: s.component,
+        role: s.role,
         // Chat + Agent-activity panels are pinned always-on-top — the agent must not cover them
-        pinned: s.kind === 'native' && (s.component === 'chat' || s.component === 'activity')
+        pinned: s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
       }))
       // The world-space rectangle currently visible on screen (screen = world*scale + t).
       const view = {
@@ -766,7 +770,9 @@ export default function App(): JSX.Element {
 
   function openChat(): void {
     const st = useDesktop.getState()
-    const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'chat')
+    // The chat is a host-hydrated role:'chat' srcdoc widget (blitz-chat.html). Just focus/center it; if a
+    // very old session is still on the native chat, fall back to that.
+    const existing = st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
     if (existing) st.focusSurface(existing.id)
     else createSurface(chatSurfaceInput([]))
   }

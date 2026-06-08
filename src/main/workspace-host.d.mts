@@ -33,6 +33,7 @@ export interface WorkspaceHost {
   newFolder(name: string, kind: 'board' | 'folder' | undefined, x: number, y: number): { ok: true; folder: string } | { error: string }
   listDir(rel: string): { path: string; entries: Array<{ name: string; dir: boolean; ext: string; size: number; isImage: boolean; path: string }>; total: number; truncated: boolean } | null
   closeSurfaceFile(id: string): { ok: boolean; removed?: string; error?: string; skipped?: string }
+  appendChat(role: 'user' | 'agent', text: string): Array<{ role: string; text: string; ts: number }>
   group(name: string, memberIds: string[], x?: number, y?: number, kind?: 'board' | 'folder'): { ok: true; folder: string; moved: number } | { error: string }
   consent(): { surfaces: string[]; providers: string[] }
   persistConsent(c: { surfaces?: string[]; providers?: string[] }): void

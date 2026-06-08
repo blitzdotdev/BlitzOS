@@ -116,7 +116,10 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   })
   // The human typed a message to the agent in the in-canvas Chat.
   ipcMain.on('os:user-message', (_e, text: unknown) => {
-    if (typeof text === 'string' && text.trim()) emitUserMessage(text)
+    if (typeof text === 'string' && text.trim()) {
+      wsHost?.appendChat('user', text) // write to chat.md + echo to the chat widget
+      emitUserMessage(text) // wake the agent (trigger:'message')
+    }
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
   ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {
@@ -224,9 +227,9 @@ export function osCloseSurface(id: string): void {
 export function osGoToPrimary(): void {
   send('goToPrimary')
 }
-/** Agent → user: post a chat message into the user's in-canvas Chat panel. */
+/** Agent → user: append a chat message to chat.md and broadcast the transcript to the chat widget. */
 export function osSay(text: string): void {
-  send('chat', { text })
+  wsHost?.appendChat('agent', text)
 }
 /**
  * Group surfaces into a named iPhone-style folder. The agent passes the ids of related

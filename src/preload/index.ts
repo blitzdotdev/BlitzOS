@@ -38,6 +38,7 @@ export interface OsState {
     html?: string
     props?: Record<string, unknown>
     component?: string
+    role?: string
     pinned?: boolean
   }>
   /** Screen size in px (so the agent knows what fits). */

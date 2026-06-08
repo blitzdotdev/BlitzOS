@@ -75,6 +75,7 @@ function safeAreaCount(n) {
 // Which surfaces become canvas NODES. The chat + agent-activity native panels are RUNTIME
 // (they belong in .blitzos/state/*.jsonl, Phase 4), never nodes. Unknown kinds are skipped.
 function nodeKind(s) {
+  if (s && s.role === 'chat') return null // the system chat is a srcdoc whose UI=blitz-chat.html + data=chat.md; never a node
   if (s.kind === 'web' || s.kind === 'app') return 'web' // app folds to web (both serialize to a .weblink; no distinct 'app' node kind)
   if (s.kind === 'srcdoc') return 'srcdoc'
   if (s.kind === 'native' && s.component === 'note') return 'note'
@@ -554,6 +555,7 @@ export function readWorkspace(dir) {
 const META_FILES = new Set(['blitzos.md', '.gitignore'])
 function autoKind(name) {
   if (name.startsWith('.') || /\.tmp(-[0-9a-f]+)?$/.test(name) || META_FILES.has(name.toLowerCase())) return null
+  if (isSystemFile(name)) return null // blitz-chat.html (the chat UI) + chat.md (transcript) are OS-managed, not plain tiles
   const ext = extname(name).toLowerCase()
   if (ext === '.weblink') return 'web'
   if (ext === '.md') return 'note'

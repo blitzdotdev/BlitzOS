@@ -558,7 +558,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         // The Chat + Agent-activity panels are pinned: a z-band far above any focus-raised
         // window, so the agent (or the user) can never bury the channel/feed they rely on.
         zIndex:
-          surface.kind === 'native' && (surface.component === 'chat' || surface.component === 'activity')
+          surface.role === 'chat' || surface.role === 'activity' || (surface.kind === 'native' && (surface.component === 'chat' || surface.component === 'activity'))
             ? 2_000_000 + surface.z
             : surface.z
       }}

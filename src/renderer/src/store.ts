@@ -482,7 +482,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         // Runtime chat/activity panels persist absolute x/y. Boot is always area 0, so a panel last left
         // in another area would restore off-screen — pull it back into area 0 so the agent conversation
         // is always reachable on boot (a no-op in the single-area case; content surfaces keep their area).
-        if (base.kind === 'native' && (base.component === 'chat' || base.component === 'activity')) {
+        if (base.role === 'chat' || base.role === 'activity' || (base.kind === 'native' && (base.component === 'chat' || base.component === 'activity'))) {
           const p = desktopClamp(base.x, base.y, base.w, base.h, s.viewport, 0)
           return { ...base, x: p.x, y: p.y }
         }
@@ -505,7 +505,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   // backend's osState). Replaces only the file-backed surfaces with the reconciled set.
   applyReconcile: (incoming) =>
     set((s) => {
-      const isRuntime = (w: Surface): boolean => w.kind === 'native' && (w.component === 'chat' || w.component === 'activity')
+      const isRuntime = (w: Surface): boolean => w.role === 'chat' || w.role === 'activity' || (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity'))
       const keepRuntime = s.surfaces.filter(isRuntime)
       const localById = new Map(s.surfaces.map((w) => [w.id, w]))
       const fileBacked = incoming
