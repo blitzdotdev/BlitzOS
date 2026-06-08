@@ -23,12 +23,3 @@ export function markOnboarded(): void {
     /* private mode / storage disabled — onboarding just shows again next launch */
   }
 }
-
-/** Dev helper: clear the completed flag so 'first-launch' mode shows onboarding again. */
-export function resetOnboarding(): void {
-  try {
-    localStorage.removeItem(DONE_KEY)
-  } catch {
-    /* ignore */
-  }
-}

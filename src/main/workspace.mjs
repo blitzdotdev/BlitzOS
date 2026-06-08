@@ -91,6 +91,9 @@ const RESERVED_ROOT = new Set(['blitzos.md', '.gitignore'])
 // deleted when their surface is closed — a real dropped file/dir/repo is never auto-removed.
 const CONTENT_EXTS = new Set(['.md', '.weblink', '.html'])
 
+// Raster image extensions — canvas file tiles render these inline; the file-manager flags them. One source.
+const IMAGE_EXT = /^(png|jpe?g|gif|webp|svg|bmp|avif)$/
+
 // #54 — a SPECIAL on-canvas folder is a real subdir whose name ends in `.board` (the macOS .app-bundle
 // analogy: the kind is encoded in the name, so it survives copy/move + is greppable). Its direct children
 // splay onto the canvas; capped so it can never explode (an over-full board falls back to a collapsed tile).
@@ -477,7 +480,7 @@ function nodeToSurface(dir, n, z) {
       return { ...base, kind: 'native', component: 'dir', title, props: { dir: true, name, path: n.path, entries } }
     }
     const ext = extname(name).toLowerCase().replace(/^\./, '')
-    const isImage = /^(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(ext)
+    const isImage = IMAGE_EXT.test(ext)
     return { ...base, kind: 'native', component: 'file', title, props: { name, path: n.path, ext, bytes: st.size, isImage } }
   }
   let content
@@ -1090,7 +1093,6 @@ export function readChatMessages(dir, cap = 400) {
 }
 
 const LISTDIR_CAP = 1000
-const IMAGE_EXT = /^(png|jpe?g|gif|webp|svg|bmp|avif)$/
 /**
  * List a normal folder's contents for the file-manager overlay (#44) — the SAME jailed, capped,
  * sorted listing for BOTH transports (server /api/os/dir + Electron os:dir IPC route here, one impl).

@@ -27,31 +27,15 @@ export const IconPlus = (p: P): JSX.Element => (
     <path d="M12 5v14M5 12h14" />
   </Svg>
 )
-export const IconMinus = (p: P): JSX.Element => (
-  <Svg {...p}>
-    <path d="M5 12h14" />
-  </Svg>
-)
 export const IconClose = (p: P): JSX.Element => (
   <Svg {...p}>
     <path d="M6 6l12 12M18 6L6 18" />
-  </Svg>
-)
-export const IconReload = (p: P): JSX.Element => (
-  <Svg {...p}>
-    <path d="M20 12a8 8 0 1 1-2.34-5.66" />
-    <path d="M20 4v4h-4" />
   </Svg>
 )
 export const IconEye = (p: P): JSX.Element => (
   <Svg {...p}>
     <path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12Z" />
     <circle cx="12" cy="12" r="2.5" />
-  </Svg>
-)
-export const IconMaximize = (p: P): JSX.Element => (
-  <Svg {...p}>
-    <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M3 16v3a2 2 0 0 0 2 2h3" />
   </Svg>
 )
 export const IconGlobe = (p: P): JSX.Element => (
@@ -84,24 +68,6 @@ export const IconChat = (p: P): JSX.Element => (
 export const IconSparkle = (p: P): JSX.Element => (
   <Svg {...p}>
     <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" />
-  </Svg>
-)
-export const IconCrosshair = (p: P): JSX.Element => (
-  <Svg {...p}>
-    <circle cx="12" cy="12" r="8" />
-    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-    <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
-  </Svg>
-)
-export const IconReturn = (p: P): JSX.Element => (
-  <Svg {...p}>
-    <path d="M9 10l-4 4 4 4" />
-    <path d="M5 14h11a4 4 0 0 0 4-4V6" />
-  </Svg>
-)
-export const IconArrowLeft = (p: P): JSX.Element => (
-  <Svg {...p}>
-    <path d="M15 6l-6 6 6 6" />
   </Svg>
 )
 export const IconChevronDown = (p: P): JSX.Element => (

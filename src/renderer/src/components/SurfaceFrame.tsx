@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Surface } from '../types'
+import { Surface, isRuntimePanel } from '../types'
 import { useDesktop, snapTargetFor, primaryRect } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
@@ -77,6 +77,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const serverMode = !!window.agentOS?.serverMode
   const [consentCap, setConsentCap] = useState<string | null>(null)
   const [shared, setShared] = useState(surface.shared ?? false) // P0: agent may read this surface over the relay (agent-opened web/app start shared)
+  const [draft, setDraft] = useState(surface.url ?? '') // address-bar draft text (web/app surfaces)
   const zoom = surface.zoom ?? 1
 
   // If this surface unmounts mid-drag (the agent closes it, a reconcile removes its file, a folder
@@ -169,6 +170,38 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       /* not ready — dom-ready will reconcile on the next store change */
     }
   }, [surface.kind, surface.id, surface.url, serverMode])
+
+  // Keep the address-bar draft in sync with the live/stored url (user navigation folds into the store
+  // via the sync effect above; an agent update_surface{url} also lands here).
+  useEffect(() => setDraft(surface.url ?? ''), [surface.url])
+
+  function normalizeUrl(s: string): string {
+    const t = s.trim()
+    if (!t || /^https?:\/\//i.test(t)) return t
+    return 'https://' + t
+  }
+  // Address-bar submit: navigate THIS surface. app (iframe) → set src through the store; web → loadURL
+  // (Electron) or serverNavigate (server preview), keeping the store url/title in sync either way.
+  function go(e: React.FormEvent): void {
+    e.preventDefault()
+    const u = normalizeUrl(draft)
+    if (!u) return
+    setDraft(u)
+    if (surface.kind === 'app') {
+      useDesktop.getState().updateSurface(surface.id, { url: u })
+      return
+    }
+    if (serverMode) {
+      window.agentOS?.serverNavigate?.(surface.id, u)
+      let title = u
+      try {
+        title = new URL(u).hostname || u
+      } catch {
+        /* keep u */
+      }
+      useDesktop.getState().updateSurface(surface.id, { url: u, title })
+    } else (webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
+  }
 
   // Server mode: mount the streamed <canvas> for this web surface (draws screencast
   // frames, forwards pointer/wheel/key to the server browser via the stream WS).
@@ -559,10 +592,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         ...(paper ? { background: paper.bg, color: paper.ink } : {}),
         // The Chat + Agent-activity panels are pinned: a z-band far above any focus-raised
         // window, so the agent (or the user) can never bury the channel/feed they rely on.
-        zIndex:
-          surface.role === 'chat' || surface.role === 'activity' || (surface.kind === 'native' && (surface.component === 'chat' || surface.component === 'activity'))
-            ? 2_000_000 + surface.z
-            : surface.z
+        zIndex: isRuntimePanel(surface) ? 2_000_000 + surface.z : surface.z
       }}
       onPointerDown={() => focusSurface(surface.id)}
     >
@@ -581,7 +611,19 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />}
           <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
         </div>
-        <div className="window-bar-fill" />
+        {surface.kind === 'web' || surface.kind === 'app' ? (
+          <form className="window-url" onSubmit={go} onPointerDown={stop}>
+            <input
+              value={draft}
+              spellCheck={false}
+              placeholder="url…"
+              onChange={(e) => setDraft(e.target.value)}
+              onPointerDown={stop}
+            />
+          </form>
+        ) : (
+          <div className="window-bar-fill" />
+        )}
         {surface.kind === 'web' && (
           <button
             className="window-ico"

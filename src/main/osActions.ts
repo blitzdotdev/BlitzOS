@@ -243,19 +243,6 @@ export function osCustomizeWidget(name: string, html: string): { ok: boolean; re
 export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
 }
-/**
- * Group surfaces into a named iPhone-style folder. The agent passes the ids of related
- * surfaces it opened (more than 2), a name, and where to place the folder (top-left x,y).
- * Returns the folder id, or '' if fewer than 2 of the ids are real surfaces. The renderer
- * does the final validation (skips folders / already-grouped surfaces).
- */
-export function osGroup(ids: string[], name?: string, x?: number, y?: number): string {
-  const existing = (Array.isArray(ids) ? ids : []).filter((id) => cached.surfaces.some((s) => s.id === id))
-  if (existing.length < 2) return ''
-  const folderId = `folder-${randomUUID()}`
-  send('group', { ids: existing, folderId, ...(name ? { name } : {}), ...(x != null ? { x } : {}), ...(y != null ? { y } : {}) })
-  return folderId
-}
 /** #52: group surfaces into a REAL folder on disk (mkdir + mv their files into a subdir), via the shared
  *  workspace host. Returns the host result. The reconcile that follows surfaces the new folder as a tile. */
 export function osGroupIntoFolder(name: string, ids: string[], x?: number, y?: number, kind?: 'board' | 'folder'): { ok: boolean; folder?: string; moved?: number; error?: string } {

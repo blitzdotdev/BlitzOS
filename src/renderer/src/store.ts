@@ -7,7 +7,8 @@ import {
   IntegrationStatus,
   GRID,
   WIDGET_W,
-  WIDGET_H
+  WIDGET_H,
+  isRuntimePanel
 } from './types'
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -167,7 +168,6 @@ interface DesktopState {
   selection: string[]
   dragTarget: string | null
   snapPreview: { x: number; y: number; w: number; h: number } | null
-  openDirPath: string | null // a real subfolder being browsed in the DirOverlay (#44)
   editingId: string | null // surface the user is actively editing — its live content survives a reconcile (#47)
   absorbing: string[]
   grabMode: boolean
@@ -194,7 +194,6 @@ interface DesktopState {
   ungroupOne: (memberId: string, pos?: { x: number; y: number }) => void
   setDragTarget: (id: string | null) => void
   setSnapPreview: (r: { x: number; y: number; w: number; h: number } | null) => void
-  setOpenDirPath: (p: string | null) => void
   setEditingId: (id: string | null) => void
   addToFolder: (folderId: string, ids: string[]) => void
   dropIntoFolder: (folderId: string, ids: string[]) => void
@@ -242,7 +241,6 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   selection: [],
   dragTarget: null,
   snapPreview: null,
-  openDirPath: null,
   editingId: null,
   absorbing: [],
   grabMode: false,
@@ -325,7 +323,6 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   setDragTarget: (id) => set({ dragTarget: id }),
   setSnapPreview: (r) => set({ snapPreview: r }),
-  setOpenDirPath: (p) => set({ openDirPath: p }),
   setEditingId: (id) => set({ editingId: id }),
   setGrabMode: (on) => set({ grabMode: on }),
   toggleLock: () => set((s) => ({ locked: !s.locked })),
@@ -486,7 +483,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         // Runtime chat/activity panels persist absolute x/y. Boot is always area 0, so a panel last left
         // in another area would restore off-screen — pull it back into area 0 so the agent conversation
         // is always reachable on boot (a no-op in the single-area case; content surfaces keep their area).
-        if (base.role === 'chat' || base.role === 'activity' || (base.kind === 'native' && (base.component === 'chat' || base.component === 'activity'))) {
+        if (isRuntimePanel(base)) {
           const p = desktopClamp(base.x, base.y, base.w, base.h, s.viewport, 0)
           return { ...base, x: p.x, y: p.y }
         }
@@ -509,11 +506,10 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   // backend's osState). Replaces only the file-backed surfaces with the reconciled set.
   applyReconcile: (incoming) =>
     set((s) => {
-      const isRuntime = (w: Surface): boolean => w.role === 'chat' || w.role === 'activity' || (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity'))
-      const keepRuntime = s.surfaces.filter(isRuntime)
+      const keepRuntime = s.surfaces.filter(isRuntimePanel)
       const localById = new Map(s.surfaces.map((w) => [w.id, w]))
       const fileBacked = incoming
-        .filter((w) => !isRuntime(w))
+        .filter((w) => !isRuntimePanel(w))
         .map((w) => {
           const live = localById.get(w.id)
           // Brand-new surface (a just-dropped file, a folder the agent created): take its disk content,
