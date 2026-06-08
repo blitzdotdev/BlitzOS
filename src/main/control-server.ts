@@ -1,6 +1,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { randomBytes } from 'crypto'
 import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, osGroupIntoFolder, type SurfaceDescriptor } from './osActions'
+import { OS_TOOLS_BY_PATH } from './os-tools'
 import { runProviderCall } from './provider-bridge'
 import type { ControlAction } from './cdp'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './events'
@@ -168,6 +169,37 @@ export function startControlServer(): void {
         const events = await waitForEvents(since, wait * 1000)
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ events, latest: latestSeq(), reminder: EVENTS_REMINDER }))
+      })
+      return
+    }
+
+    // Generic dispatch for every SHARED tool (os-tools.ts) by its canonical path — this is what makes the
+    // localhost path serve the FULL agent tool surface (list_state, create_surface, read_window, say,
+    // list/create/switch_workspace, new_app, …) instead of the old stale subset that 404'd. Trusted
+    // transport: eval allowed, DOM reads + moments unredacted. The legacy aliases above (/state, /windows,
+    // /surface, /provider_call, /group, /events, /surfaces/:id/control) are kept for back-compat (caught first).
+    const toolPath = req.url ? req.url.split('?')[0] : ''
+    const tool = req.method === 'POST' ? OS_TOOLS_BY_PATH[toolPath] : undefined
+    if (tool) {
+      let body = ''
+      req.on('data', (chunk) => {
+        body += chunk
+        if (body.length > 2_000_000) req.destroy()
+      })
+      req.on('end', async () => {
+        try {
+          const out = (await tool.handler({ body, transport: 'localhost' })) as Record<string, unknown> | null
+          if (out && typeof out === 'object' && typeof out.status === 'number' && 'body' in out) {
+            res.writeHead(out.status, { 'content-type': 'application/json' })
+            res.end(JSON.stringify(out.body))
+          } else {
+            res.writeHead(200, { 'content-type': 'application/json' })
+            res.end(JSON.stringify(out))
+          }
+        } catch (e) {
+          res.writeHead(500, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }))
+        }
       })
       return
     }

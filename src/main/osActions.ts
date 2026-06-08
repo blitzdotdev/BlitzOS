@@ -34,6 +34,10 @@ export interface OsState {
   currentArea?: number
   currentAreaRect?: { x: number; y: number; w: number; h: number }
   workspace?: string
+  // The active workspace's absolute folder path (~/Blitz/<name>). The filesystem IS the canvas: a LOCAL
+  // agent authors surfaces by writing files INTO this folder (.html=panel, .md=note, .weblink=web) and the
+  // host's watcher materializes them in ~250ms. Surfaced so the agent knows WHERE to write.
+  workspace_path?: string
 }
 
 let getWin: () => BrowserWindow | null = () => null
@@ -274,6 +278,54 @@ export function osListDir(rel: string): { path: string; entries: unknown[]; tota
 export function osCloseSurfaceFile(id: string): { ok: boolean; removed?: string } {
   return wsHost ? wsHost.closeSurfaceFile(String(id)) : { ok: false }
 }
+/** Agent-facing workspace control (Mission-Control parity): list / create / switch the user's folder-backed
+ *  workspaces (separate desktops, each its own folder = its own memory). Lets the agent give an UNRELATED
+ *  task its own clean workspace and move the user there instead of polluting the current one — the SAME
+ *  shared host the human's launcher uses. */
+export function osListWorkspaces(): {
+  workspaces: Array<{ name: string; nodeCount: number; updatedAt: number; path: string }>
+  active: string
+  activePath: string
+  root: string
+} {
+  if (!wsHost) return { workspaces: [], active: '', activePath: '', root: '' }
+  // activePath = ~/Blitz/<active>; its parent is the workspaces root, so every workspace's folder is
+  // join(root, name). The agent uses these absolute paths to author by writing files into a workspace.
+  const activePath = wsHost.activePath()
+  const root = activePath ? dirname(activePath) : ''
+  return {
+    workspaces: wsHost.list().map(({ name, nodeCount, updatedAt }) => ({ name, nodeCount, updatedAt, path: root ? join(root, name) : '' })),
+    active: wsHost.active(),
+    activePath,
+    root
+  }
+}
+/** Active workspace identity + absolute folder path + a light inventory (surface titles/kinds). Threaded
+ * into create_surface's RETURN so the agent sees, at the point of action: which desktop it's on, WHERE the
+ * folder is (a local agent authors by writing files into it), and what's already there (clutter-vs-
+ * continuation). Content-agnostic — just the inventory; the agent decides significance. */
+export function osWorkspaceContext(): { workspace: string; workspace_path: string; siblings: Array<{ id: string; title: string; kind: string }> } {
+  return {
+    workspace: wsHost ? wsHost.active() : cached.workspace || '',
+    workspace_path: wsHost ? wsHost.activePath() : '',
+    siblings: (cached.surfaces || []).map((s) => ({ id: s.id, title: s.title, kind: s.kind }))
+  }
+}
+export function osCreateWorkspace(name: string): { ok: boolean; name?: string; error?: string } {
+  if (!wsHost) return { ok: false, error: 'no workspace host' }
+  try {
+    return { ok: true, name: wsHost.create(String(name || '')).name }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || 'create failed' }
+  }
+}
+export async function osSwitchWorkspace(name: string): Promise<{ ok: boolean; active?: string; error?: string }> {
+  if (!wsHost) return { ok: false, error: 'no workspace host' }
+  const r = await wsHost.performSwitch(String(name || ''))
+  return r.status === 200
+    ? { ok: true, active: r.body.active as string | undefined }
+    : { ok: false, error: r.body.error as string | undefined }
+}
 /** #53: per-workspace consent persistence for the Electron transports (widget grants + sensitive-read
  *  providers), via the shared host. Load on boot, persist (merge) on each grant. */
 export function osLoadConsent(): { surfaces: string[]; providers: string[] } {
@@ -283,7 +335,9 @@ export function osPersistConsent(c: { surfaces?: string[]; providers?: string[] 
   wsHost?.persistConsent(c)
 }
 export function osGetState(): OsState {
-  return cached
+  // Thread the active workspace identity + absolute folder PATH into every state read, so the agent always
+  // knows which desktop it's on and WHERE to write files to author surfaces (the filesystem is the canvas).
+  return { ...cached, workspace: wsHost ? wsHost.active() : cached.workspace, workspace_path: wsHost ? wsHost.activePath() : undefined }
 }
 
 /**
