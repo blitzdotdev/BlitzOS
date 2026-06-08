@@ -431,6 +431,17 @@ function saveConsent() {
 }
 loadConsent()
 
+// Workspace context returned by create_surface/open_window + list_state — IDENTICAL shape to the Electron
+// os-tools.ts handler (no server/Electron difference): which desktop, where the folder is (file-authoring
+// hint), and the sibling surface titles (clutter-vs-continuation signal the agent acts on per agents.md).
+function serverWorkspaceCtx(excludeId) {
+  return {
+    workspace: wsHost.active(),
+    workspace_path: wsHost.activePath(),
+    siblings: (osState.surfaces || []).filter((s) => s.id !== excludeId).map((s) => s.title)
+  }
+}
+
 // Lazily-built widget-tool dispatcher (server transport). Mirrors the relay tool handlers — server-minted
 // ids, broadcast to renderers, host target ops — but only for the CLOSED widget allowlist (widget-tools.mjs).
 // Closures bind the live module vars at call time (requests arrive after init), so ordering is moot.
@@ -586,7 +597,7 @@ async function startOsAgentSocket() {
             if (SERVER_MODE && host && a.kind === 'web' && !host.has(id)) {
               host.createSurface(id, { url: a.url || 'about:blank', width: Math.round(a.w) || 1280, height: Math.round(a.h) || 800 }).catch(() => {})
             }
-            return { id }
+            return { id, ...serverWorkspaceCtx(id) } // same return shape as Electron (agents.md contract)
           }
         },
         {
@@ -606,7 +617,7 @@ async function startOsAgentSocket() {
             if (SERVER_MODE && host && !host.has(id)) {
               host.createSurface(id, { url: a.url, width: Math.round(a.w) || 1280, height: Math.round(a.h) || 800 }).catch(() => {})
             }
-            return { id }
+            return { id, ...serverWorkspaceCtx(id) }
           }
         },
         {
@@ -633,6 +644,48 @@ async function startOsAgentSocket() {
           }
         },
         { path: '/go_to_primary', description: 'Recenter the view on the primary workspace.', handler: () => { broadcast({ type: 'goToPrimary' }); return { ok: true } } },
+        // Workspace control — SAME tools as Electron (os-tools.ts). No server/Electron difference: the agent
+        // manages the user's folder-backed desktops here too (auth/login for server mode is a later concern).
+        {
+          path: '/list_workspaces',
+          description:
+            "List the user's workspaces (separate folder-backed desktops, each its own folder = its own memory). Returns { workspaces:[{name,nodeCount,updatedAt,path}], active, activePath, root }. CALL THIS FIRST: reason about WHERE the task belongs before building.",
+          handler: () => {
+            const activePath = wsHost.activePath()
+            const root = activePath ? activePath.replace(/[/\\][^/\\]+$/, '') : ''
+            return {
+              workspaces: wsHost.list().map(({ name, nodeCount, updatedAt }) => ({ name, nodeCount, updatedAt, path: root ? `${root}/${name}` : '' })),
+              active: wsHost.active(),
+              activePath,
+              root
+            }
+          }
+        },
+        {
+          path: '/create_workspace',
+          description: 'Create a NEW empty workspace (a fresh desktop) for an UNRELATED task. Returns { ok, name }. Follow with switch_workspace.',
+          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+          handler: ({ body }) => {
+            const name = String(toolBody(body).name || '').trim()
+            if (!name) return { status: 400, body: { error: 'name required' } }
+            try {
+              return { ok: true, name: wsHost.create(name).name }
+            } catch (e) {
+              return { status: 400, body: { error: String((e && e.message) || e) } }
+            }
+          }
+        },
+        {
+          path: '/switch_workspace',
+          description: 'Move the user to a workspace by name (their canvas swaps to that desktop). Use after create_workspace. Returns { ok, active }.',
+          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+          handler: async ({ body }) => {
+            const name = String(toolBody(body).name || '').trim()
+            if (!name) return { status: 400, body: { error: 'name required' } }
+            const r = await wsHost.performSwitch(name)
+            return r.status === 200 ? { ok: true, active: r.body.active } : { status: r.status, body: r.body }
+          }
+        },
         {
           path: '/list_state',
           description: 'List the surfaces currently open on the canvas.',
@@ -640,6 +693,8 @@ async function startOsAgentSocket() {
           // but the agent's list_state view must not leak full srcdoc HTML or the chat transcript.
           handler: () => ({
             ...osState,
+            workspace: wsHost.active(), // same shape as Electron os-tools list_state (agents.md reads workspace_path)
+            workspace_path: wsHost.activePath(),
             surfaces: (osState.surfaces || []).map((s) => ({
               id: s.id,
               kind: s.kind,
@@ -707,13 +762,13 @@ async function startOsAgentSocket() {
           input_schema: {
             type: 'object',
             required: ['ids'],
-            properties: { name: { type: 'string' }, ids: { type: 'array', items: { type: 'string' } }, kind: { type: 'string', enum: ['folder', 'board'] } }
+            properties: { name: { type: 'string' }, ids: { type: 'array', items: { type: 'string' } }, kind: { type: 'string', enum: ['folder', 'board'] }, x: { type: 'number' }, y: { type: 'number' } }
           },
           handler: ({ body }) => {
             const b = toolBody(body)
             const ids = Array.isArray(b.ids) ? b.ids.map(String) : []
             if (!ids.length) return { ok: false, error: 'no members to group' }
-            return wsHost.group(String(b.name || 'Folder'), ids, 0, 0, b.kind === 'board' ? 'board' : 'folder')
+            return wsHost.group(String(b.name || 'Folder'), ids, Number(b.x) || 0, Number(b.y) || 0, b.kind === 'board' ? 'board' : 'folder')
           }
         },
         {
