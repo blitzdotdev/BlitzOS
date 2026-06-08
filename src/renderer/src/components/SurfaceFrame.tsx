@@ -9,6 +9,7 @@ import { UI_KIT } from '../widget-ui-kit'
 import { IconEye } from './Icons'
 import { FolderWidget } from './FolderWidget'
 import { FileWidget, DirWidget } from './FileWidget'
+import { FileManager } from './FileManager'
 import { NOTE_PAPER } from '../paper'
 
 type BridgeReply = { ok: boolean; data?: unknown; error?: string }
@@ -528,6 +529,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         if (surface.component === 'activity') return <ActivityPanel surface={surface} />
         if (surface.component === 'file') return <FileWidget surface={surface} />
         if (surface.component === 'dir') return <DirWidget surface={surface} />
+        if (surface.component === 'files') return <FileManager surface={surface} />
         return <div className="native-fallback">unknown widget: {surface.component}</div>
     }
   }

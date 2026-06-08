@@ -12,7 +12,6 @@ import { IconChat, IconSparkle, IconGrid, IconChevronDown } from './components/I
 import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
-import { DirOverlay } from './components/DirOverlay'
 import { ContextMenu } from './components/ContextMenu'
 
 // The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
@@ -83,7 +82,6 @@ export default function App(): JSX.Element {
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
   const snapPreview = useDesktop((s) => s.snapPreview)
-  const openDirPath = useDesktop((s) => s.openDirPath)
   const selection = useDesktop((s) => s.selection)
   const createSurface = useDesktop((s) => s.createSurface)
   const setIntegrations = useDesktop((s) => s.setIntegrations)
@@ -893,7 +891,6 @@ export default function App(): JSX.Element {
           }}
         />
       )}
-      {openDirPath !== null && <DirOverlay path={openDirPath} />}
 
       {menu && (
         <ContextMenu
