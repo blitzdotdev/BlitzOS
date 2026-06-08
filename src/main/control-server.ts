@@ -1,8 +1,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { randomBytes } from 'crypto'
-import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, osGroupIntoFolder, type SurfaceDescriptor } from './osActions'
-import { OS_TOOLS_BY_PATH } from './os-tools'
-import { runProviderCall } from './provider-bridge'
+import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, type SurfaceDescriptor } from './osActions'
+import { OS_TOOLS_BY_PATH } from './electron-os-tools'
 import type { ControlAction } from './cdp'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './events'
 import { setLocal } from './sessionFile'
@@ -34,57 +33,10 @@ export function startControlServer(): void {
       return
     }
 
-    // POST /provider_call — authenticated request to a connected integration (#51). Localhost is trusted
-    // for eval/CDP, but provider WRITES still pop the same human-approval card (no localhost asymmetry).
-    if (req.method === 'POST' && req.url === '/provider_call') {
-      let body = ''
-      req.on('data', (chunk) => {
-        body += chunk
-        if (body.length > 2_000_000) req.destroy()
-      })
-      req.on('end', async () => {
-        let d: { provider?: string; method?: string; path?: string; query?: Record<string, unknown>; body?: unknown }
-        try {
-          d = body ? JSON.parse(body) : {}
-        } catch {
-          res.writeHead(400, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: 'invalid json' }))
-          return
-        }
-        const r = await runProviderCall(
-          { provider: String(d.provider || ''), method: d.method ? String(d.method) : undefined, path: String(d.path || ''), query: d.query, body: d.body },
-          'localhost'
-        )
-        res.writeHead(r.ok ? 200 : 400, { 'content-type': 'application/json' })
-        res.end(JSON.stringify(r))
-      })
-      return
-    }
-
-    // POST /group { name, ids, kind? } — group surfaces into a REAL folder (mkdir + mv); parity with the
-    // relay + server /group so the localhost agent can organize the workspace too (#52/#54).
-    if (req.method === 'POST' && req.url === '/group') {
-      let body = ''
-      req.on('data', (chunk) => {
-        body += chunk
-        if (body.length > 100_000) req.destroy()
-      })
-      req.on('end', () => {
-        let d: { name?: string; ids?: unknown[]; kind?: string }
-        try {
-          d = body ? JSON.parse(body) : {}
-        } catch {
-          res.writeHead(400, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: 'invalid json' }))
-          return
-        }
-        const ids = Array.isArray(d.ids) ? d.ids.map(String) : []
-        const r = osGroupIntoFolder(String(d.name || 'Folder'), ids, undefined, undefined, d.kind === 'board' ? 'board' : 'folder')
-        res.writeHead(r.ok ? 200 : 400, { 'content-type': 'application/json' })
-        res.end(JSON.stringify(r))
-      })
-      return
-    }
+    // NOTE: /provider_call and /group are dispatched below by the GENERIC shared-registry handler
+    // (OS_TOOLS_BY_PATH) with transport:'localhost' — no per-path alias here. The old hand-written aliases
+    // had drifted (the /group alias dropped x/y that the shared handler forwards); deleting them keeps the
+    // localhost path from rotting behind the relay, which is the whole point of the shared os-tools.mjs.
 
     // POST /surfaces/:id/control (also /windows/:id/control) — act inside a web surface.
     const ctl = req.method === 'POST' && req.url ? /^\/(?:surfaces?|windows)\/([^/]+)\/control$/.exec(req.url) : null
@@ -173,7 +125,7 @@ export function startControlServer(): void {
       return
     }
 
-    // Generic dispatch for every SHARED tool (os-tools.ts) by its canonical path — this is what makes the
+    // Generic dispatch for every SHARED tool (os-tools.mjs) by its canonical path — this is what makes the
     // localhost path serve the FULL agent tool surface (list_state, create_surface, read_window, say,
     // list/create/switch_workspace, new_app, …) instead of the old stale subset that 404'd. Trusted
     // transport: eval allowed, DOM reads + moments unredacted. The legacy aliases above (/state, /windows,

@@ -57,6 +57,7 @@ export const BRIDGE_SHIM = `<script>
     tool: function (tool, args) { return request('tool', { tool: tool, args: args || {} }); },
     sendMessage: function (text) { return request('msg', { text: String(text == null ? '' : text) }); },
     listDir: function (path) { return request('listdir', { path: String(path == null ? '' : path) }); },
+    setProps: function (patch) { return request('setprops', { patch: patch || {} }); },
     props: function () { return props; },
     onProps: function (cb) { propCbs.push(cb); if (ready) try { cb(props); } catch (x) {} },
     ready: function (cb) { if (ready) { try { cb(props); } catch (x) {} } else readyCbs.push(cb); }

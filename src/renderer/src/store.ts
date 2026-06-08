@@ -506,7 +506,8 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   // backend's osState). Replaces only the file-backed surfaces with the reconciled set.
   applyReconcile: (incoming) =>
     set((s) => {
-      const keepRuntime = s.surfaces.filter(isRuntimePanel)
+      const isRuntime = (w: Surface): boolean => w.role === 'chat' || w.role === 'activity' || (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder'))
+      const keepRuntime = s.surfaces.filter(isRuntime)
       const localById = new Map(s.surfaces.map((w) => [w.id, w]))
       const fileBacked = incoming
         .filter((w) => !isRuntimePanel(w))

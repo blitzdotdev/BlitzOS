@@ -26,6 +26,14 @@
   function getJSON(path, opts) {
     return fetch(API + path, opts).then(function (r) { return r.json() })
   }
+  // POST a JSON body and parse the JSON reply, resolving to `fallback` (default { ok: false }) on network error.
+  // One helper for the consent/group/folder/close/widget-tool/content-share calls that all shared this boilerplate.
+  function postJSON(path, body, fallback) {
+    return fetch(API + path, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body || {})
+    }).then(function (r) { return r.json() }).catch(function () { return fallback || { ok: false } })
+  }
   function fire(list, arg) {
     list.slice().forEach(function (cb) { try { cb(arg) } catch (e) { /* ignore */ } })
   }
@@ -84,7 +92,6 @@
     else ws.addEventListener('open', function () { try { ws.send(s) } catch (e) {} }, { once: true })
   }
   function mountServerSurface(canvas, surfaceId) {
-    ensureStream()
     var ctx = canvas.getContext('2d')
     var img = new Image()
     img.onload = function () {
@@ -93,6 +100,9 @@
       ctx.drawImage(img, 0, 0)
     }
     frameHandlers[surfaceId] = function (b64) { img.src = 'data:image/jpeg;base64,' + b64 }
+    // Open the stream WS AFTER registering the handler, so the backend's replay-last-frame on connect
+    // (for static pages) can't arrive before frameHandlers[surfaceId] exists and get dropped.
+    ensureStream()
     // map a canvas event to the page's CSS px (frame buffer is the page's CSS size at DPR 1)
     function toPage(e) {
       var r = canvas.getBoundingClientRect()
@@ -161,31 +171,19 @@
       }).catch(function (e) { return { ok: false, error: String((e && e.message) || e) } })
     },
     grantConsent: function (surfaceId, provider) {
-      return fetch(API + '/os/consent', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ surfaceId: surfaceId, provider: provider })
-      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+      return postJSON('/os/consent', { surfaceId: surfaceId, provider: provider })
     },
     // Drop all consent for a surface (its widget code changed → re-approval required).
     revokeConsent: function (surfaceId) {
-      return fetch(API + '/os/consent/revoke', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ surfaceId: surfaceId })
-      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+      return postJSON('/os/consent/revoke', { surfaceId: surfaceId })
     },
     // #52: group surfaces into a REAL folder on disk (mkdir + mv their files into a subdir).
     groupIntoFolder: function (name, ids, kind) {
-      return fetch(API + '/os/group', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: name, ids: ids, kind: kind })
-      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+      return postJSON('/os/group', { name: name, ids: ids, kind: kind })
     },
     // "New Folder" (files) / "New Board" (windows+widgets) — the right-click desktop action.
     newFolder: function (name, kind, x, y) {
-      return fetch(API + '/os/new-folder', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: name, kind: kind, x: x, y: y })
-      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+      return postJSON('/os/new-folder', { name: name, kind: kind, x: x, y: y })
     },
     // List a normal folder's contents for the file-manager overlay (Electron uses the os:dir IPC).
     listDir: function (p) {
@@ -193,17 +191,11 @@
     },
     // Close = delete the closed window's backing content file so it doesn't resurrect on reconcile.
     closeSurfaceFile: function (id) {
-      return fetch(API + '/os/close-surface', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id: id })
-      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+      return postJSON('/os/close-surface', { id: id })
     },
     // A sandboxed widget calls an OS tool via blitz.tool (gated by the `tools` capability; CLOSED allowlist).
     widgetTool: function (surfaceId, name, args) {
-      return fetch(API + '/os/widget-tool', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ surfaceId: surfaceId, name: name, args: args })
-      }).then(function (r) { return r.json() }).catch(function () { return { ok: false, error: 'widget tool unavailable' } })
+      return postJSON('/os/widget-tool', { surfaceId: surfaceId, name: name, args: args }, { ok: false, error: 'widget tool unavailable' })
     },
     // A sandboxed srcdoc widget fired an action back to the agent (server parity with Electron IPC).
     surfaceAction: function (payload) {
@@ -219,10 +211,7 @@
     ingestPaths: function () { return Promise.resolve({ ok: false }) },
     // P0 consent: let the agent read this web surface's content over the relay.
     setContentShare: function (surfaceId, on) {
-      return fetch(API + '/os/content-share', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ surfaceId: surfaceId, on: on })
-      }).then(function (r) { return r.json() }).catch(function () { return { ok: false } })
+      return postJSON('/os/content-share', { surfaceId: surfaceId, on: on })
     },
     // The user typed a message to the agent in the in-canvas Chat.
     sendMessage: function (text) {

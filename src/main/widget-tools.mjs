@@ -1,3 +1,5 @@
+import { serializeStateForAgent } from './os-tools.mjs'
+
 // The CLOSED set of OS tools a sandboxed widget may call via `blitz.tool` (consent-gated under the
 // `tools` capability). This is deliberately NOT the full relay tool set: raw `eval` / `surface_control`
 // scripts are excluded, and `provider_call` WRITES still hit the human approval card. ONE source, imported
@@ -37,5 +39,71 @@ export function makeWidgetToolRunner(handlers) {
     } catch (e) {
       return { ok: false, error: String((e && e.message) || e) }
     }
+  }
+}
+
+/**
+ * Build the widget-tool HANDLER MAP from the SAME runtime `ops` the agent registry (os-tools.mjs) binds.
+ * ONE definition for both transports — Electron passes electronOps, the server passes serverOps — so the
+ * widget `blitz.tool` contract (id-as-{id}, validation, list_state shape, group-error shape) can NOT drift
+ * between desktop and server the way the two hand-written maps did. The closed allowlist is still enforced
+ * by makeWidgetToolRunner; this only supplies the (subset of) handlers a widget is allowed to reach.
+ * @param {object} ops — same shape os-tools.mjs documents (createSurface->id, openWindow->id, moveSurface,
+ *   updateSurface, closeSurface, goToPrimary, getState, groupIntoFolder->{ok,...}, providerCall(desc,transport)).
+ */
+export function makeWidgetToolHandlers(ops) {
+  return {
+    create_surface: (a) => {
+      if (!a.kind) throw new Error('kind required')
+      return { id: ops.createSurface(a) }
+    },
+    open_window: (a) => {
+      if (typeof a.url !== 'string') throw new Error('url required')
+      return { id: ops.openWindow(a) }
+    },
+    move_surface: (a) => {
+      const id = String(a.id || '')
+      if (!id) throw new Error('id required')
+      ops.moveSurface(id, Number(a.x) || 0, Number(a.y) || 0)
+      return { ok: true }
+    },
+    update_surface: (a) => {
+      const id = String(a.id || '')
+      if (!id) throw new Error('id required')
+      // accept either {id, patch:{…}} or a flat {id, url, html, …} — strip id either way
+      let patch
+      if (a.patch && typeof a.patch === 'object') {
+        patch = a.patch
+      } else {
+        patch = { ...a }
+        delete patch.id
+      }
+      ops.updateSurface(id, patch)
+      return { ok: true }
+    },
+    close_surface: (a) => {
+      const id = String(a.id || '')
+      if (!id) throw new Error('id required')
+      ops.closeSurface(id)
+      return { ok: true }
+    },
+    group: (a) => {
+      const ids = Array.isArray(a.ids) ? a.ids.map(String) : []
+      if (!ids.length) throw new Error('no members to group')
+      return ops.groupIntoFolder(String(a.name || 'Folder'), ids, Number(a.x) || 0, Number(a.y) || 0, a.kind === 'board' ? 'board' : 'folder')
+    },
+    go_to_primary: () => {
+      ops.goToPrimary()
+      return { ok: true }
+    },
+    list_state: () => serializeStateForAgent(ops.getState()),
+    // provider_call rides the SAME provider engine the agent tools use on each transport (Electron: gated
+    // relay path with the human approval card; server: callProvider, writes hard-refused). 'relay' selects
+    // the untrusted/gated path on Electron; the server ignores it (its caller is always transport:'server').
+    provider_call: (a) =>
+      ops.providerCall(
+        { provider: String(a.provider || ''), method: a.method ? String(a.method) : undefined, path: String(a.path || ''), query: a.query, body: a.body, approvalToken: a.approvalToken },
+        'relay'
+      )
   }
 }

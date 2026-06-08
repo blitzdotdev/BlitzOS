@@ -1,9 +1,9 @@
 // Phase 3/4 core: the chat transcript is a STRUCTURED WORKSPACE FILE (chat.md) the OS serializes, and the
 // chat UI is a recreatable, customizable workspace file (blitz-chat.html). Proven against the real fns.
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { appendChatMessage, readChatMessages, ensureSystemRenderer, readSystemRenderer, isSystemFile, systemRoleOf } from '../src/main/workspace.mjs'
+import { appendChatMessage, readChatMessages, ensureSystemRenderer, readSystemRenderer, isSystemFile, systemRoleOf, writeWorkspace, readWorkspace } from '../src/main/workspace.mjs'
 
 let pass = 0
 let fail = 0
@@ -47,6 +47,21 @@ ok('isSystemFile(blitz-chat.html)', isSystemFile('blitz-chat.html'))
 ok('a user note is NOT a system file', !isSystemFile('my-notes.md') && !isSystemFile('readme.html'))
 ok('systemRoleOf(blitz-chat.html) = chat', systemRoleOf('blitz-chat.html') === 'chat')
 ok('systemRoleOf(blitz-foo.html) = null (unknown role)', systemRoleOf('blitz-foo.html') === null)
+
+console.log('\n# note → opt-in custom widget (default native; blitz-note.html → srcdoc; still persists as .md)')
+const nd = join(dir, 'notews')
+mkdirSync(nd, { recursive: true })
+writeWorkspace(nd, { surfaces: [{ id: 'n1', kind: 'native', component: 'note', title: 'todo', x: 0, y: 0, w: 200, h: 200, z: 1, props: { text: 'buy milk', color: 'pink' } }], camera: { x: 0, y: 0, scale: 1 } })
+const before = readWorkspace(nd).surfaces.find((s) => s.id === 'n1')
+ok('default note hydrates NATIVE (no blitz-note.html)', before.kind === 'native' && before.component === 'note' && before.props.text === 'buy milk')
+ensureSystemRenderer(nd, 'note') // = customizing: the renderer file now exists
+const after = readWorkspace(nd).surfaces.find((s) => s.id === 'n1')
+ok('with blitz-note.html → note hydrates as a srcdoc widget (role:note)', after.kind === 'srcdoc' && after.role === 'note' && (after.html || '').includes('blitz.setProps'))
+ok('the note text is the widget prop', after.props.text === 'buy milk' && after.props.color === 'pink')
+writeWorkspace(nd, { surfaces: [{ ...after, props: { text: 'buy oat milk', color: 'pink' } }], camera: { x: 0, y: 0, scale: 1 } })
+const round = readWorkspace(nd).surfaces.find((s) => s.id === 'n1')
+ok('editing the srcdoc note persists back to its .md (role:note → node kind note)', round.props.text === 'buy oat milk')
+ok('blitz-note.html is a recognized system file (no double-tile)', isSystemFile('blitz-note.html') && systemRoleOf('blitz-note.html') === 'note')
 
 rmSync(dir, { recursive: true, force: true })
 console.log(`\n${fail === 0 ? 'ALL PASS' : 'FAIL'} — ${pass} passed, ${fail} failed`)

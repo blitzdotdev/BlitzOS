@@ -241,6 +241,8 @@ export function createWorkspaceHost(a) {
         /* adapter without getState/setState */
       }
       a.broadcast({ type: 'update', id: 'chat', patch: { html: newHtml } })
+    } else if (name === 'note') {
+      doReconcile({}) // re-materialize every note through the (now-present) blitz-note.html renderer
     }
     return r
   }
