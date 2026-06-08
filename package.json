@@ -9,7 +9,10 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "onboard": "node scripts/onboarding-scan.mjs --no-fda --prompt src/main/blitzos-onboarding.md --out -",
+    "onboard:fda": "node scripts/onboarding-scan.mjs --prompt src/main/blitzos-onboarding.md --out -",
+    "onboard:scan": "node scripts/onboarding-scan.mjs --out -"
   },
   "dependencies": {
     "@agent-socket/sdk": "file:./vendor/agent-socket-sdk",

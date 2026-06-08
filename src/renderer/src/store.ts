@@ -94,13 +94,17 @@ export function snapTargetFor(
   wx: number,
   wy: number,
   vp: { w: number; h: number },
-  area = 0
+  area = 0,
+  mode: 'desktop' | 'canvas' = 'canvas'
 ): { x: number; y: number; w: number; h: number } | null {
   const r = area === 0 ? primaryRect(vp) : areaRect(area, vp)
   const nx = (wx - r.x) / r.w
   const ny = (wy - r.y) / r.h
   if (nx < -0.05 || nx > 1.05 || ny < -0.05 || ny > 1.05) return null // cursor well outside the area
-  const E = 0.135 // edge/corner snap-intent zone (≈13.5% per side; the user asked for a generous zone)
+  // Edge/corner snap-intent zone per side. CONTROL mode (the zoomed-out bird's-eye, mode==='canvas') keeps
+  // a GENEROUS zone for easy arranging; NORMAL mode (mode==='desktop') uses a thin zone so the cursor must
+  // nearly TOUCH the area border to tile — otherwise nudging a window slightly kept firing an unwanted tile.
+  const E = mode === 'desktop' ? 0.03 : 0.135
   const nearL = nx < E
   const nearR = nx > 1 - E
   const nearT = ny < E
