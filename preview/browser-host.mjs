@@ -173,6 +173,8 @@ export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
     async closeSurface(surfaceId) {
       const s = surfaces.get(surfaceId)
       if (!s) return
+      // Cancel any pending debounced resize so its timer can't fire CDP at this now-closed session.
+      if (s.resizeTimer) { clearTimeout(s.resizeTimer); s.resizeTimer = null }
       sessionToSurface.delete(s.sessionId)
       surfaces.delete(surfaceId)
       try {

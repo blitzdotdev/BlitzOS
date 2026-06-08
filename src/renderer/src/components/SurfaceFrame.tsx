@@ -249,8 +249,24 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       held.forEach(([, v]) => postRes(v.win, v.reqId, { ok: false, error: 'access denied by the user' }))
     } else {
       consented.current.add(cap)
-      if (cap.startsWith('provider:')) await window.agentOS?.grantConsent?.(surface.id, cap.slice('provider:'.length))
-      for (const [, v] of held) postRes(v.win, v.reqId, await v.run())
+      // grantConsent can reject (network/IPC) — guard it, else a failure aborts resolveConsent and orphans
+      // every held reply below (each was already removed from heldReplies, so the widget would wait forever).
+      if (cap.startsWith('provider:')) {
+        try {
+          await window.agentOS?.grantConsent?.(surface.id, cap.slice('provider:'.length))
+        } catch {
+          /* best-effort; run() below surfaces consent_required if the grant didn't land */
+        }
+      }
+      // Run each held reply INDEPENDENTLY: one rejecting run() must not drop the rest (a thrown await would
+      // break the loop, leaving the already-dequeued requests with no blitz:res — the widget hangs forever).
+      for (const [, v] of held) {
+        try {
+          postRes(v.win, v.reqId, await v.run())
+        } catch (e) {
+          postRes(v.win, v.reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
+        }
+      }
     }
     const next = [...heldReplies.current.values()][0]?.cap ?? null
     if (next) setConsentCap(next)
