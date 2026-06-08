@@ -30,6 +30,17 @@ function PreviewBody({ surface }: { surface: Surface }): JSX.Element {
     return <webview src={surface.url} partition="persist:agentos" style={{ ...fill, display: 'inline-flex' }} />
   if (surface.kind === 'app')
     return <iframe title={surface.title} src={surface.url} sandbox="allow-scripts allow-same-origin" style={{ ...fill, display: 'block', background: '#fff' }} />
+  // System widgets (chat / customized note) preview their REAL content via the native renderer (which
+  // reads props directly) — a bare srcdoc preview would have no bridge/kit injected and render blank.
+  if (surface.role === 'chat') return <ChatPanel surface={surface} />
+  if (surface.role === 'note') {
+    const p = paperFor(surface.props?.color)
+    return (
+      <div style={{ width: '100%', height: '100%', background: p.bg, color: p.ink }}>
+        <NoteWidget surface={surface} />
+      </div>
+    )
+  }
   if (surface.kind === 'srcdoc')
     return <iframe title={surface.title} sandbox="allow-scripts" srcDoc={surface.html ?? ''} style={{ ...fill, display: 'block', background: 'var(--surface)' }} />
   if (surface.component === 'note') {
