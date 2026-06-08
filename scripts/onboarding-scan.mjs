@@ -74,7 +74,33 @@ function parseArgs(argv) {
     else if (a === '--no-verbatim') CFG.verbatim = false
     else if (a === '--stochastic') CFG.stochastic = true
     else if (a === '--quiet') CFG.quiet = true
+    else if (a === '--help' || a === '-h') { printHelp(); process.exit(0) }
   }
+}
+function printHelp() {
+  process.stdout.write([
+    'onboarding-scan.mjs — scan your local macOS footprint into ONE markdown doc to prime BlitzOS onboarding.',
+    '',
+    'QUICK START (from the agent-os repo):',
+    '  npm run onboard        # Branch B: zero setup, no permissions',
+    '  npm run onboard:fda    # Branch A+B: richer; needs Full Disk Access granted to your terminal',
+    '  npm run onboard:scan   # just the scanned context (no onboarding prompt)',
+    '',
+    'DIRECT:',
+    '  node scripts/onboarding-scan.mjs [--no-fda|--assume-fda] --prompt src/main/blitzos-onboarding.md --out -',
+    '',
+    'FLAGS:',
+    '  --out PATH|-      file path, or - for stdout (default: ~/.blitzos/fs/journal/onboarding-context.md)',
+    '  --prompt FILE     prepend an onboarding prompt above the scan (one combined doc)',
+    '  --no-fda          skip Full-Disk-Access sources (Branch B only)',
+    '  --assume-fda      force Branch A sources on',
+    '  --comms-content   include verbatim Messages/Mail text (default: summary-only)',
+    '  --window N        lookback days for history/usage (default 90)',
+    '  --quiet           suppress progress logs',
+    '',
+    'Local-only, read-only, secrets excluded, contacts hashed. macOS only. See plans/ONBOARDING-FLOW.md.',
+    ''
+  ].join('\n'))
 }
 const log = (...a) => { if (!CFG.quiet) process.stderr.write(a.join(' ') + '\n') }
 
