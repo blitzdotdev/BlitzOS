@@ -10,7 +10,7 @@
 // branches (raw eval / reading a logged-in surface across an untrusted path) behave the same everywhere:
 // localhost is trusted; relay + server are untrusted (gate page content to surfaces the user shared).
 import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from './widget-catalog.mjs'
-import { waitForEvents, latestSeq, isContentShared, redactMoment, EVENTS_REMINDER } from './perception-core.mjs'
+import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
 
 function parse(body) {
   try {
@@ -204,9 +204,6 @@ export function makeOsTools(ops) {
       handler: async ({ body, transport }) => {
         const a = parse(body)
         const id = String(a.id)
-        if (transport !== 'localhost' && !isContentShared(id)) {
-          return { status: 403, body: { error: 'content not shared — ask the user to enable "share with agent" on this surface', code: 'not_shared' } }
-        }
         try {
           const script = transport === 'localhost' && typeof a.script === 'string' ? a.script : undefined
           return { result: await ops.readWindow(id, script) }
@@ -229,9 +226,6 @@ export function makeOsTools(ops) {
         const action = b.action || {}
         if (!id || !action.action) return { status: 400, body: { error: 'id and action.action required' } }
         if (action.action === 'eval' && transport !== 'localhost') return { status: 403, body: { error: 'eval is not available over the relay' } }
-        if (transport !== 'localhost' && (action.action === 'read' || action.action === 'screenshot') && !isContentShared(id)) {
-          return { status: 403, body: { error: 'content not shared — enable "share with agent" on this surface to read or screenshot it', code: 'not_shared' } }
-        }
         const r = await ops.controlSurface(id, action)
         if (!r.ok) return { status: 400, body: { error: r.error } }
         if (action.action === 'screenshot') return { image: r.result }
@@ -305,12 +299,12 @@ export function makeOsTools(ops) {
       description:
         "Long-poll the user's activity, coalesced into framed 'moments' (batched ~15s; flushed immediately on navigation or going idle after acting). Each moment carries a snapshot of the surface so you can react without a second read: {seq,surfaceId,url,title,trigger,signals,user[],snapshot}. THE AUTONOMY LOOP: start since=0, loop with since=latest and wait=25; on each moment decide whether to act, then build/arrange surfaces to help.",
       input_schema: { type: 'object', properties: { since: { type: 'number' }, wait: { type: 'number' } } },
-      handler: async ({ body, transport }) => {
+      handler: async ({ body }) => {
         const a = parse(body)
         const since = Number(a.since) || 0
         const wait = Math.min(Math.max(a.wait == null ? 25 : Number(a.wait) || 0, 0), 25)
-        const raw = await waitForEvents(since, wait * 1000)
-        const events = transport === 'localhost' ? raw : raw.map((m) => (isContentShared(m.surfaceId) ? m : redactMoment(m)))
+        // No content-share redaction (removed): every transport gets the full moment, snapshot included.
+        const events = await waitForEvents(since, wait * 1000)
         return { events, latest: latestSeq(), reminder: EVENTS_REMINDER }
       }
     },

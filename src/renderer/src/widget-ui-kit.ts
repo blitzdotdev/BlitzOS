@@ -9,16 +9,18 @@
 //   - Imperative:   window.blitz.ui.message('agent','Hi'), .row({...}), .input({...})
 //
 // Tokens are explicit values (a sandboxed iframe doesn't inherit the OS's CSS vars) chosen to match the
-// OS dark theme. Keep this in sync with widget-catalog.mjs's WIDGET_AUTHORING_MD.
+// OS's default LIGHT theme (tokens.css: --canvas #e9e9e7, --surface #fff, --surface-raised #f6f6f5,
+// --text #1a1b1d, --text-muted #797c7f, --accent coral #f4673b). The OS canvas is light, so the kit must be
+// light too or every widget clashes dark-on-light. Keep in sync with widget-catalog.mjs's WIDGET_AUTHORING_MD.
 //
 // Sandboxed `allow-scripts` srcdoc CAN `customElements.define` + Shadow DOM (no same-origin needed).
 
 export const UI_KIT = `<style>
 :root{
-  --blitz-accent:#2563eb; --blitz-accent-ink:#ffffff;
-  --blitz-bg:#0d1117; --blitz-surface:#161b22; --blitz-surface-2:#1c2230;
-  --blitz-text:#e6edf3; --blitz-text-dim:#9aa4b2;
-  --blitz-hairline:#30363d; --blitz-radius:10px; --blitz-radius-sm:7px;
+  --blitz-accent:#f4673b; --blitz-accent-ink:#ffffff;
+  --blitz-bg:#ececea; --blitz-surface:#ffffff; --blitz-surface-2:#f1f1ee;
+  --blitz-text:#1a1b1d; --blitz-text-dim:#797c7f;
+  --blitz-hairline:rgba(0,0,0,.10); --blitz-radius:10px; --blitz-radius-sm:7px;
   --blitz-font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
 }
 html,body{margin:0;height:100%;background:var(--blitz-bg);color:var(--blitz-text);font-family:var(--blitz-font);font-size:13px}

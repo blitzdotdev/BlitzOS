@@ -92,7 +92,6 @@
     else ws.addEventListener('open', function () { try { ws.send(s) } catch (e) {} }, { once: true })
   }
   function mountServerSurface(canvas, surfaceId) {
-    ensureStream()
     var ctx = canvas.getContext('2d')
     var img = new Image()
     img.onload = function () {
@@ -101,6 +100,9 @@
       ctx.drawImage(img, 0, 0)
     }
     frameHandlers[surfaceId] = function (b64) { img.src = 'data:image/jpeg;base64,' + b64 }
+    // Open the stream WS AFTER registering the handler, so the backend's replay-last-frame on connect
+    // (for static pages) can't arrive before frameHandlers[surfaceId] exists and get dropped.
+    ensureStream()
     // map a canvas event to the page's CSS px (frame buffer is the page's CSS size at DPR 1)
     function toPage(e) {
       var r = canvas.getBoundingClientRect()

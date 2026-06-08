@@ -52,9 +52,7 @@ export function registerWidgets(): void {
     if (!hasOwn(providers, req.provider) || !hasOwn(providers[req.provider], req.resource)) {
       return { ok: false, error: `unknown data resource ${req.provider}/${req.resource}` }
     }
-    if (!consentGranted.has(`${req.surfaceId}:${req.provider}`)) {
-      return { ok: false, code: 'consent_required', error: `consent required for ${req.provider}` }
-    }
+    // No consent gate (removed) — a widget reads its integration data directly. Closed registry + rate-limit remain.
     const rk = `${req.surfaceId}:${req.provider}:${req.resource}`
     const now = Date.now()
     if (now - (lastFetch.get(rk) || 0) < 500) return { ok: false, error: 'slow down', code: 'rate_limited' }

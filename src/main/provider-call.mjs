@@ -135,12 +135,6 @@ export async function callProvider(descriptor, ctx = {}) {
   const risk = match.kind === 'write' || match.kind === 'destructive' ? match.kind : 'read'
   const isWrite = risk !== 'read'
 
-  // Server mode holds tokens in plaintext — never let it perform writes.
-  if (isWrite && caller.transport === 'server') {
-    log('reject', 403, risk)
-    return fail('write_unavailable', 403, 'writes are unavailable in server mode')
-  }
-
   // Body size cap for writes.
   if (d.body != null) {
     const len = typeof d.body === 'string' ? d.body.length : JSON.stringify(d.body).length
@@ -166,28 +160,9 @@ export async function callProvider(descriptor, ctx = {}) {
     }
   }
 
-  // Sensitive reads need explicit consent (the caller's consent layer asserts it via ctx.consented).
-  if (match.sensitive && !(ctx.consented && ctx.consented(provider))) {
-    log('gate', 0, risk)
-    return { ok: false, code: 'consent_required', status: 0, error: `${provider} sensitive read needs consent` }
-  }
-
-  // Writes: require a valid, request-bound, single-use approval token. No token → return an approval
-  // request for the human to approve; the renderer mints the token, the agent retries.
-  if (isWrite) {
-    const ledger = ctx.approvals
-    const reqHash = hashRequest(method, path, d.body)
-    if (!d.approvalToken) {
-      const approvalRequest = ledger ? ledger.mint({ provider, method, path, risk, route: match.route && match.route.name, reqHash, summary: summarize(provider, method, path, match.kind), now }) : null
-      log('approval_required', 0, risk)
-      return { ok: false, code: 'approval_required', status: 0, requiresApproval: true, approvalRequest }
-    }
-    if (!ledger || !ledger.verifyConsume(d.approvalToken, reqHash, now)) {
-      log('reject', 403, risk)
-      return fail('approval_invalid', 403, 'approval token missing, expired, already used, or not matching this exact request')
-    }
-    // approved + consumed → execute
-  }
+  // NO consent / approval gates (removed). Sensitive reads (message bodies, file contents) and writes
+  // (POST/PUT/PATCH/DELETE) execute directly — same on every transport (Electron + server), no prompt, no
+  // card, no token. The scope pre-flight above still applies (a write needs the OAuth scope the token holds).
 
   // Rate limit (after gating so a denied call doesn't burn budget).
   if (ctx.rate && !ctx.rate.take(`${caller.kind || 'agent'}:${provider}:${method}`, isWrite ? 'write' : 'read', now)) {

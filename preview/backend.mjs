@@ -257,6 +257,12 @@ const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
 const SERVER_MODE = process.env.BLITZ_SERVER_MODE === '1'
 let host = null
 const streamClients = new Set() // open /api/os/stream WebSockets
+// Last screencast frame per surface id. A web page screencasts on CHANGE, so a STATIC page (e.g. a loaded
+// news site) emits its frames once — at boot, before any renderer is connected — then goes quiet. Without a
+// cache, a renderer that connects later (or after a workspace switch) shows a BLANK canvas until the page
+// repaints. We replay the last frame to every newly-connected stream client so a hydrated web surface paints
+// immediately.
+const lastFrame = new Map() // surfaceId -> base64 jpeg
 
 async function initServerMode() {
   if (!SERVER_MODE) return
@@ -264,6 +270,7 @@ async function initServerMode() {
     host = await startBrowserHost({
       chromiumPath: process.env.CHROMIUM,
       onFrame: (id, data) => {
+        lastFrame.set(id, data) // cache for replay to late-connecting renderers (static pages emit once)
         const msg = JSON.stringify({ t: 'frame', id, data }) // base64 jpeg (binary framing = future opt)
         for (const ws of streamClients) {
           try {
@@ -668,10 +675,8 @@ const server = createServer(async (req, res) => {
     if (!hasOwn(PROVIDER_DATA, provider) || !hasOwn(PROVIDER_DATA[provider], resource)) {
       return json(res, 404, { error: `unknown data resource ${provider}/${resource}` })
     }
-    const surface = url.searchParams.get('surface') || ''
-    if (!surface || !consentGranted.has(`${surface}:${provider}`)) {
-      return json(res, 403, { error: `consent required for ${provider}`, code: 'consent_required', provider })
-    }
+    // No consent gate (removed) — a widget reads its integration data directly. Closed registry + rate-limit remain.
+    const surface = url.searchParams.get('surface') || provider
     const rk = `${surface}:${provider}:${resource}`
     const now = Date.now()
     if (now - (lastFetch.get(rk) || 0) < 500) return json(res, 429, { error: 'slow down', code: 'rate_limited' })
@@ -1122,6 +1127,15 @@ server.on('upgrade', (req, socket, head) => {
   }
   streamWss.handleUpgrade(req, socket, head, (ws) => {
     streamClients.add(ws)
+    // Replay the last frame of every live surface so a just-connected renderer paints immediately
+    // (a static page won't emit a fresh frame on its own). Only for surfaces the host still has.
+    for (const [id, data] of lastFrame) {
+      if (host && host.has(id)) {
+        try { ws.send(JSON.stringify({ t: 'frame', id, data })) } catch { /* client gone */ }
+      } else {
+        lastFrame.delete(id)
+      }
+    }
     ws.on('close', () => streamClients.delete(ws))
     ws.on('message', async (raw) => {
       let m

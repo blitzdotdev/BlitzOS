@@ -14,6 +14,10 @@ import { OnboardingFlow } from './onboarding/OnboardingFlow'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
 import { ContextMenu } from './components/ContextMenu'
 
+// Legacy always-on integration cards on the canvas (they stacked at origin and clutter the agent-driven
+// desktop). Off by default — integrations now surface as agent-spawned widgets. Flip to re-enable.
+const SHOW_INTEGRATION_CARDS = false
+
 // The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
 // hydrate so a fresh workspace gets one (it then persists as a file); idempotent on a restored board.
 function ensureNotepad(): void {
@@ -800,9 +804,11 @@ export default function App(): JSX.Element {
             style={{ left: snapPreview.x, top: snapPreview.y, width: snapPreview.w, height: snapPreview.h }}
           />
         )}
-        {integrations.map((it) => (
-          <IntegrationWidget key={it.id} integration={it} onConnect={setConnecting} />
-        ))}
+        {/* Always-on integration connect cards are hidden — integrations surface as agent-spawned widgets
+            (e.g. `spawn_widget discord-list`, which reads live data through the OS), not fixed canvas cards.
+            Connection status + the OAuth flow still live in ConnectPanel (reachable from the dock). */}
+        {SHOW_INTEGRATION_CARDS &&
+          integrations.map((it) => <IntegrationWidget key={it.id} integration={it} onConnect={setConnecting} />)}
         {surfaces.map((s) =>
           // folder members live only inside the folder — unless "peeked" open onto the desktop
           s.groupId && !s.peek ? null : <SurfaceFrame key={s.id} surface={s} />

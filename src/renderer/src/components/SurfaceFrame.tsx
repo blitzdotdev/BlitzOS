@@ -13,21 +13,6 @@ import { FileManager } from './FileManager'
 import { NOTE_PAPER } from '../paper'
 
 type BridgeReply = { ok: boolean; data?: unknown; error?: string }
-// A request held pending consent for a capability (`provider:x` | `tools` | `chat` | `files`). `run`
-// performs the action once the capability is approved; `cap` keys the consent + the card.
-type HeldReply = { cap: string; win: Window; reqId: string; run: () => Promise<BridgeReply> }
-
-/** Human-readable phrase for the consent card, per capability key. */
-function capabilityLabel(cap: string): string {
-  if (cap.startsWith('provider:')) {
-    const p = cap.slice('provider:'.length)
-    return `read your ${p.charAt(0).toUpperCase()}${p.slice(1)}`
-  }
-  if (cap === 'tools') return 'run OS commands (open windows, arrange the canvas)'
-  if (cap === 'chat') return 'send messages to the agent'
-  if (cap === 'files') return 'browse your workspace files'
-  return `use ${cap}`
-}
 
 interface WebviewMethods {
   loadURL(url: string): Promise<void>
@@ -67,16 +52,11 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const webviewRef = useRef<HTMLWebViewElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const heldReplies = useRef<Map<string, HeldReply>>(new Map())
-  const consented = useRef<Set<string>>(new Set()) // providers the human OK'd for THIS widget generation
-  const prevHtml = useRef(surface.html)
   // The webview's `src` is set ONCE (uncontrolled): React must never reload a <webview> just because
   // surface.url changed in the store, or it would yank the user off the page they navigated to (the
   // "typing on Google → back to HN" bug). Programmatic navigation goes through loadURL (see below).
   const initialUrl = useRef(surface.url)
   const serverMode = !!window.agentOS?.serverMode
-  const [consentCap, setConsentCap] = useState<string | null>(null)
-  const [shared, setShared] = useState(surface.shared ?? false) // P0: agent may read this surface over the relay (agent-opened web/app start shared)
   const zoom = surface.zoom ?? 1
 
   // If this surface unmounts mid-drag (the agent closes it, a reconcile removes its file, a folder
@@ -190,86 +170,47 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   function postRes(win: Window, reqId: string, r: BridgeReply): void {
     if (iframeRef.current?.contentWindow === win) win.postMessage({ type: 'blitz:res', reqId, ...r }, '*')
   }
-  // ONE consent gate for ALL capabilities. A request runs immediately if its `cap` is already approved
-  // for THIS widget generation, else it's held and the consent card shown. `cap` keys: `provider:<name>`
-  // (integration read), `tools` (call an OS tool), `chat` (message the agent), `files` (read the
-  // workspace). A reloaded widget starts with an empty `consented` set, so new code re-earns every
-  // capability — deterministic, no dependence on a backend revoke round-trip.
-  async function gate(win: Window, reqId: string, cap: string, run: () => Promise<BridgeReply>): Promise<void> {
-    if (!consented.current.has(cap)) {
-      heldReplies.current.set(reqId, { cap, win, reqId, run })
-      setConsentCap((cur) => cur ?? cap)
-      return
-    }
-    postRes(win, reqId, await run())
-  }
+  // The widget bridge runs every op IMMEDIATELY — no consent gate, no card, no held queue (removed: the OS
+  // draws no distinction here and a connected agent already has full power; widgets are first-class). Each
+  // serve* does the work and replies to the SAME generation that asked (postRes is contentWindow-checked, so
+  // a reply for the old document can't land on a reloaded iframe).
   function serveData(win: Window, reqId: string, provider: string, resource: string): Promise<void> {
     const api = window.agentOS
     if (!api?.widgetRequest) return Promise.resolve(postRes(win, reqId, { ok: false, error: 'widget data bridge unavailable here' }))
-    const cap = `provider:${provider}`
-    return gate(win, reqId, cap, async () => {
-      const res = await api.widgetRequest!({ surfaceId: surface.id, op: 'data', provider, resource })
-      if (res?.ok) return { ok: true, data: res.data }
-      if (res?.code === 'consent_required') consented.current.delete(cap) // backend dropped the grant → next call re-prompts
-      return { ok: false, error: res?.error || 'request failed' }
-    })
+    return api
+      .widgetRequest({ surfaceId: surface.id, op: 'data', provider, resource })
+      .then(
+        (res) => postRes(win, reqId, res?.ok ? { ok: true, data: res.data } : { ok: false, error: res?.error || 'request failed' }),
+        (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      )
   }
-  // blitz.tool — the widget calls an OS tool (create_surface/open_window/group/provider_call/…). The set
-  // is a CLOSED allowlist enforced main/server-side (widget-tools.mjs); writes still hit the human
-  // approval card. Capability `tools`.
+  // blitz.tool — the widget calls an OS tool (create_surface/open_window/group/provider_call/…). CLOSED
+  // allowlist enforced main/server-side (widget-tools.mjs).
   function serveTool(win: Window, reqId: string, name: string, args: Record<string, unknown>): Promise<void> {
     const api = window.agentOS
     if (!api?.widgetTool) return Promise.resolve(postRes(win, reqId, { ok: false, error: 'widget tool bridge unavailable here' }))
-    return gate(win, reqId, 'tools', async () => {
-      const res = await api.widgetTool!(surface.id, name, args)
-      return res?.ok ? { ok: true, data: res.result } : { ok: false, error: res?.error || 'tool failed' }
-    })
+    return api
+      .widgetTool(surface.id, name, args)
+      .then(
+        (res) => postRes(win, reqId, res?.ok ? { ok: true, data: res.result } : { ok: false, error: res?.error || 'tool failed' }),
+        (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      )
   }
-  // blitz.sendMessage — the widget sends a message to the agent (the chat widget). Capability `chat`.
+  // blitz.sendMessage — the widget sends a message to the agent (the chat widget).
   function serveMessage(win: Window, reqId: string, text: string): Promise<void> {
-    return gate(win, reqId, 'chat', async () => {
-      window.agentOS?.sendMessage?.(String(text))
-      return { ok: true }
-    })
+    window.agentOS?.sendMessage?.(String(text))
+    return Promise.resolve(postRes(win, reqId, { ok: true }))
   }
-  // blitz.listDir — the widget lists a workspace folder (the file-manager widget). Capability `files`.
+  // blitz.listDir — the widget lists a workspace folder (the file-manager widget).
   function serveListDir(win: Window, reqId: string, path: string): Promise<void> {
     const api = window.agentOS
     if (!api?.listDir) return Promise.resolve(postRes(win, reqId, { ok: false, error: 'widget files bridge unavailable here' }))
-    return gate(win, reqId, 'files', async () => {
-      const r = await api.listDir!(String(path))
-      return { ok: true, data: r }
-    })
-  }
-  async function resolveConsent(cap: string, allow: boolean): Promise<void> {
-    setConsentCap(null)
-    const held = [...heldReplies.current.entries()].filter(([, v]) => v.cap === cap)
-    held.forEach(([k]) => heldReplies.current.delete(k))
-    if (!allow) {
-      held.forEach(([, v]) => postRes(v.win, v.reqId, { ok: false, error: 'access denied by the user' }))
-    } else {
-      consented.current.add(cap)
-      // grantConsent can reject (network/IPC) — guard it, else a failure aborts resolveConsent and orphans
-      // every held reply below (each was already removed from heldReplies, so the widget would wait forever).
-      if (cap.startsWith('provider:')) {
-        try {
-          await window.agentOS?.grantConsent?.(surface.id, cap.slice('provider:'.length))
-        } catch {
-          /* best-effort; run() below surfaces consent_required if the grant didn't land */
-        }
-      }
-      // Run each held reply INDEPENDENTLY: one rejecting run() must not drop the rest (a thrown await would
-      // break the loop, leaving the already-dequeued requests with no blitz:res — the widget hangs forever).
-      for (const [, v] of held) {
-        try {
-          postRes(v.win, v.reqId, await v.run())
-        } catch (e) {
-          postRes(v.win, v.reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
-        }
-      }
-    }
-    const next = [...heldReplies.current.values()][0]?.cap ?? null
-    if (next) setConsentCap(next)
+    return api
+      .listDir(String(path))
+      .then(
+        (r) => postRes(win, reqId, { ok: true, data: r }),
+        (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      )
   }
 
   useEffect(() => {
@@ -304,29 +245,6 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     if (surface.kind !== 'srcdoc') return
     iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:props', props: surface.props ?? {} }, '*')
   }, [surface.kind, surface.props])
-
-  // An html change is a NEW code generation: the human approved the OLD code, not
-  // this one. Revoke any prior consent (so the reloaded widget must re-ask) and
-  // deny in-flight held replies so they can't cross into the new document.
-  useEffect(() => {
-    if (surface.kind !== 'srcdoc') return
-    if (prevHtml.current === surface.html) return // initial mount, or no change
-    prevHtml.current = surface.html
-    consented.current.clear() // new generation must re-earn every capability (deterministic gate)
-    window.agentOS?.revokeConsent?.(surface.id)
-    heldReplies.current.forEach((v) => postRes(v.win, v.reqId, { ok: false, error: 'widget reloaded' }))
-    heldReplies.current.clear()
-    setConsentCap(null)
-  }, [surface.kind, surface.id, surface.html])
-
-  // On close/unmount, deny any pending consent requests (no dangling held replies).
-  useEffect(() => {
-    if (surface.kind !== 'srcdoc') return
-    return () => {
-      heldReplies.current.forEach((v) => postRes(v.win, v.reqId, { ok: false, error: 'closed' }))
-      heldReplies.current.clear()
-    }
-  }, [surface.kind, surface.id])
 
   function onBarDown(e: React.PointerEvent): void {
     e.stopPropagation()
@@ -603,49 +521,12 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
         </div>
         <div className="window-bar-fill" />
-        {surface.kind === 'web' && (
-          <button
-            className="window-ico"
-            title={shared ? 'Agent can read this page — click to stop sharing' : 'Let the agent read this page (off by default)'}
-            onPointerDown={stop}
-            onClick={() => {
-              const next = !shared
-              setShared(next)
-              window.agentOS?.setContentShare?.(surface.id, next)
-            }}
-            style={shared ? { color: 'var(--positive)' } : { color: 'var(--text-secondary)', opacity: 0.85 }}
-          >
-            <IconEye />
-          </button>
-        )}
       </div>
       <div
         className="window-body"
         style={{ position: 'relative', ...(isNote ? { background: 'transparent' } : {}) }}
       >
         {body()}
-        {consentCap && (
-          <div className="consent" onPointerDown={stop}>
-            <div className="consent-card">
-              <h4>Allow this widget to {capabilityLabel(consentCap)}?</h4>
-              <p>
-                {consentCap.startsWith('provider:')
-                  ? 'It receives only the data — never your account tokens.'
-                  : consentCap === 'tools'
-                    ? 'Writes to your connected accounts still ask you to approve each one.'
-                    : 'This stays inside your workspace.'}
-              </p>
-              <div className="consent-actions">
-                <button className="btn ghost" onClick={() => resolveConsent(consentCap, false)}>
-                  Deny
-                </button>
-                <button className="btn primary" onClick={() => resolveConsent(consentCap, true)}>
-                  Allow
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
       {/* macOS-style resize from all sides + corners; above the drag-overlay so it works in control
           mode too (#41). The handles avoid the title-bar controls (traffic lights / eye). */}
