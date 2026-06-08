@@ -231,6 +231,14 @@ export function osGoToPrimary(): void {
 export function osSay(text: string): void {
   wsHost?.appendChat('agent', text)
 }
+/** The agent customizes a built-in widget's UI (blitz-<name>.html) — currently 'chat'. Live-reloads. */
+export function osCustomizeWidget(name: string, html: string): { ok: boolean; rel?: string; error?: string } {
+  return wsHost ? wsHost.customizeWidget(String(name), String(html)) : { ok: false, error: 'no workspace host' }
+}
+/** Read a built-in widget's current UI source (workspace file or shipped default) — read-before-edit. */
+export function osSystemUi(name: string): string | null {
+  return wsHost ? wsHost.systemUi(String(name)) : null
+}
 /**
  * Group surfaces into a named iPhone-style folder. The agent passes the ids of related
  * surfaces it opened (more than 2), a name, and where to place the folder (top-left x,y).

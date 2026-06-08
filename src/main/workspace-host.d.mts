@@ -34,6 +34,8 @@ export interface WorkspaceHost {
   listDir(rel: string): { path: string; entries: Array<{ name: string; dir: boolean; ext: string; size: number; isImage: boolean; path: string }>; total: number; truncated: boolean } | null
   closeSurfaceFile(id: string): { ok: boolean; removed?: string; error?: string; skipped?: string }
   appendChat(role: 'user' | 'agent', text: string): Array<{ role: string; text: string; ts: number }>
+  customizeWidget(name: string, html: string): { ok: boolean; rel?: string; error?: string }
+  systemUi(name: string): string | null
   group(name: string, memberIds: string[], x?: number, y?: number, kind?: 'board' | 'folder'): { ok: true; folder: string; moved: number } | { error: string }
   consent(): { surfaces: string[]; providers: string[] }
   persistConsent(c: { surfaces?: string[]; providers?: string[] }): void

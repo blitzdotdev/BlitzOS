@@ -837,6 +837,30 @@ async function startOsAgentSocket() {
           }
         },
         {
+          path: '/customize_widget',
+          description:
+            "Rewrite a built-in OS widget's UI — currently {name:'chat'} (the chat panel). The UI is a workspace " +
+            'file (blitz-chat.html) you fully replace; it live-reloads. Build it with the Blitz UI kit injected ' +
+            'into every widget: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + the ' +
+            '--blitz-* tokens, and window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Read the ' +
+            'current source with get_system_ui first. Args: {name, html}.',
+          input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' } } },
+          handler: ({ body }) => {
+            const b = toolBody(body)
+            const r = wsHost.customizeWidget(String(b.name || ''), String(b.html || ''))
+            return r && r.ok ? { ok: true, file: r.rel } : { status: 400, body: { error: (r && r.error) || 'failed' } }
+          }
+        },
+        {
+          path: '/get_system_ui',
+          description: "Read a built-in widget's current UI source before editing it (the fork pattern). Args: {name:'chat'}. Returns {html}.",
+          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+          handler: ({ body }) => {
+            const html = wsHost.systemUi(String(toolBody(body).name || ''))
+            return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html }
+          }
+        },
+        {
           path: '/list_widgets',
           description:
             'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML) backed by the user’s connected integrations. Returns each widget’s name, description, and which integrations it needs (needsMet=true if connected). Use get_widget_source to read one, spawn_widget to open it.',

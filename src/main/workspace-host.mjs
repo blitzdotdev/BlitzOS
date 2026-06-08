@@ -20,6 +20,7 @@ import {
   removeSurfaceFile,
   ensureSystemRenderer,
   readSystemRenderer,
+  writeSystemRenderer,
   readChatMessages,
   appendChatMessage,
   readConsent,
@@ -225,6 +226,28 @@ export function createWorkspaceHost(a) {
     a.broadcast({ type: 'chat', messages })
     return messages
   }
+  /** The agent customizes a system widget's UI (e.g. the chat) by rewriting blitz-<name>.html, then we
+   *  live-reload that surface so the change is visible immediately (the iframe reloads → re-earns its
+   *  capabilities; the transcript is re-seeded from props on reload). */
+  function customizeWidget(name, html) {
+    const r = writeSystemRenderer(activeWorkspace, name, html)
+    if (!r.ok) return r
+    if (name === 'chat') {
+      const newHtml = readSystemRenderer(activeWorkspace, 'chat') || ''
+      try {
+        const st = a.getState()
+        if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.role === 'chat' ? { ...s, html: newHtml } : s)) })
+      } catch {
+        /* adapter without getState/setState */
+      }
+      a.broadcast({ type: 'update', id: 'chat', patch: { html: newHtml } })
+    }
+    return r
+  }
+  /** Read a system widget's current UI source (workspace file, else the shipped default) — read-before-edit. */
+  function systemUi(name) {
+    return readSystemRenderer(activeWorkspace, name)
+  }
   /** Make an EMPTY real folder ('New Folder') or '.board' on-canvas folder ('New Board'), then reconcile
    *  at (x,y) so a normal folder shows as one tile (an empty board has no children to splay yet). */
   function newFolder(name, kind, x, y) {
@@ -382,6 +405,8 @@ export function createWorkspaceHost(a) {
     listDir: listDirInWorkspace,
     closeSurfaceFile,
     appendChat,
+    customizeWidget,
+    systemUi,
     group,
     // #53: per-workspace consent persistence (read on boot/switch, write on a human grant). The write
     // MERGES (a caller may update just `surfaces` or just `providers` — e.g. the widget bridge vs the

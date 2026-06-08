@@ -77,6 +77,12 @@ A widget is a reusable, forkable sandboxed mini-app backed by the user's connect
 - get_widget_authoring — READ before authoring a widget: it explains the `window.blitz` data bridge (a sandboxed widget cannot fetch(); it gets integration data only via window.blitz.data(provider, resource)).
 Flow: list_widgets -> spawn_widget to use one; or get_widget_source -> edit -> save_widget to fork; or get_widget_authoring -> write HTML -> save_widget -> spawn_widget to author new.
 
+## Customizing the OS UI itself (the chat is a widget too)
+The OS chrome is not fixed — the in-canvas **Chat** is itself a sandboxed widget whose UI is a workspace file (`blitz-chat.html`) you can fully rewrite when the user asks ("make the chat dark green", "show timestamps", "bigger text"). The chat TRANSCRIPT lives in `chat.md`; you never write it directly — `say` appends your replies and the user's sends are recorded automatically. The widget just renders what's there.
+- get_system_ui { name:'chat' } — READ the current chat UI source first (fork pattern).
+- customize_widget { name:'chat', html } — replace it; it live-reloads instantly. If the file is deleted it's recreated from the default, so you can always reset.
+Every widget (including the chat) has a shared component kit injected — build with it instead of restyling from scratch: tokens `--blitz-accent / --blitz-surface / --blitz-text / --blitz-hairline / --blitz-radius`, and elements `<blitz-titlebar>`, `<blitz-list>`, `<blitz-message role="user|agent">`, `<blitz-row>`, `<blitz-input>` (fires a `send` event), `<blitz-button>`. The chat UI reads `window.blitz.onProps(p => render(p.messages))` and sends with `window.blitz.sendMessage(text)`. Widgets can also call `window.blitz.tool(name, args)` (OS tools, consent-gated) and `window.blitz.listDir(path)`.
+
 ## Design language (use this for EVERY srcdoc or widget you author; no default-browser slop)
 Surfaces you author (srcdoc HTML, widgets) are SANDBOXED and do NOT inherit the OS stylesheet, so unstyled HTML looks like generic-browser slop and breaks the desktop's look. Paste this token block at the TOP of every srcdoc/widget and build with the variables (this IS the BlitzOS dark, editorial, restrained system):
 

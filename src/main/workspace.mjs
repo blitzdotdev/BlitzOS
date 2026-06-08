@@ -1016,6 +1016,19 @@ export function ensureSystemRenderer(dir, role) {
     return null
   }
 }
+/** Write a system renderer's HTML (the agent customizing the chat UI) → blitz-<role>.html, jailed +
+ *  self-write-stamped. The role must be a known system widget. Returns { ok, rel } or { ok:false }. */
+export function writeSystemRenderer(dir, role, html) {
+  if (SYSTEM_RENDERERS.indexOf(role) === -1) return { ok: false, error: `unknown system widget: ${role}` }
+  const dest = safeJoin(dir, `${SYSTEM_PREFIX}${role}.html`)
+  if (!dest) return { ok: false, error: 'bad path' }
+  try {
+    atomicWrite(dest, String(html == null ? '' : html))
+    return { ok: true, rel: `${SYSTEM_PREFIX}${role}.html` }
+  } catch {
+    return { ok: false, error: 'write failed' }
+  }
+}
 /** Resolve a system renderer's HTML: the workspace file (customized) if present, else the shipped default. */
 export function readSystemRenderer(dir, role) {
   const abs = safeJoin(dir, `${SYSTEM_PREFIX}${role}.html`)

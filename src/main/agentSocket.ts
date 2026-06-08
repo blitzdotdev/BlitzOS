@@ -12,6 +12,8 @@ import {
   osReadWindow,
   osControlSurface,
   osSay,
+  osCustomizeWidget,
+  osSystemUi,
   osGroupIntoFolder,
   type SurfaceDescriptor
 } from './osActions'
@@ -417,6 +419,29 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
             if (!text) return { status: 400, body: { error: 'text required' } }
             osSay(text)
             return { ok: true }
+          }
+        },
+        {
+          path: '/customize_widget',
+          description:
+            "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) " +
+            'you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/' +
+            '<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), ' +
+            'sendMessage(text)). Read the current source with get_system_ui first. Args: {name, html}.',
+          input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' } } },
+          handler: ({ body }) => {
+            const b = parse(body)
+            const r = osCustomizeWidget(String(b.name || ''), String(b.html || ''))
+            return r.ok ? { ok: true, file: r.rel } : { status: 400, body: { error: r.error || 'failed' } }
+          }
+        },
+        {
+          path: '/get_system_ui',
+          description: "Read a built-in widget's current UI source before editing it (the fork pattern). Args: {name:'chat'}. Returns {html}.",
+          input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+          handler: ({ body }) => {
+            const html = osSystemUi(String(parse(body).name || ''))
+            return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html }
           }
         }
       ],
