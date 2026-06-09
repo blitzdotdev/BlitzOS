@@ -36,7 +36,8 @@ const SHARED_CORES = [
   'workspace-host',  // folder-backed workspace host
   'control-core',    // CDP control vocabulary
   'provider-call',   // integration/provider calls
-  'widget-tools'     // sandboxed-widget data bridge
+  'widget-tools',    // sandboxed-widget data bridge
+  'session-ops'      // multi-agent session lifecycle (tmux-backed, workspace-keyed)
 ]
 
 const violations = []

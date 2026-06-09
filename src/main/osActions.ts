@@ -189,6 +189,11 @@ function send(type: string, payload: Record<string, unknown> = {}): void {
   getWin()?.webContents.send('os:action', { type, ...payload })
 }
 
+/** Send an arbitrary os:action to the renderer — the Electron emit seam for shared cores (e.g. session events). */
+export function osBroadcast(action: Record<string, unknown>): void {
+  getWin()?.webContents.send('os:action', action)
+}
+
 /** Create any surface kind. Returns its id. */
 export function osCreateSurface(desc: SurfaceDescriptor): string {
   // srcdoc ids are server-minted: a consent grant is keyed by surface id, so an

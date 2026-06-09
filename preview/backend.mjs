@@ -51,6 +51,8 @@ import { startAgentRunner } from '../src/main/agent-runner.mjs'
 import { startRelay } from '../src/main/relay.mjs'
 // Shared "Agent activity" feed — the SAME module the Electron relay uses; only `emit` differs (SSE here).
 import { withActivity } from '../src/main/activity.mjs'
+// Shared multi-agent session lifecycle (tmux-backed, workspace-keyed) — SAME module Electron binds.
+import { makeSessionOps } from '../src/main/session-ops.mjs'
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
 import { fileURLToPath } from 'node:url'
 
@@ -571,6 +573,10 @@ const serverOps = {
   integrationStatuses: () => statuses(),
   connectedProviders: () => Object.keys(readTokens())
 }
+
+// Session ops — the SHARED workspace-keyed lifecycle (session-ops.mjs). Server seam: the active
+// workspace folder + the SSE broadcast emit. Electron binds the SAME makeSessionOps with its own seam.
+Object.assign(serverOps, makeSessionOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast }))
 
 // Start the agent-socket relay via the SHARED lifecycle module (relay.mjs) — connect + self-heal + watchdog +
 // status all live there now (one impl, Electron too). The server only supplies its tools + the adapter: how to

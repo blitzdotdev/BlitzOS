@@ -23,10 +23,12 @@ import {
   osCustomizeWidget,
   osSystemUi,
   osGroupIntoFolder,
+  osBroadcast,
   type SurfaceDescriptor
 } from './osActions'
 import { runProviderCall } from './provider-bridge'
 import { integrationStatuses, connectedProviders } from './integrations'
+import { makeSessionOps } from './session-ops.mjs'
 
 // Exported so the widget-tool runner (src/main/widgets.ts) can build its handler map from the SAME ops —
 // see makeWidgetToolHandlers in widget-tools.mjs. One ops object → both the agent registry and the widget
@@ -53,6 +55,11 @@ export const electronOps = {
   integrationStatuses: () => integrationStatuses(),
   connectedProviders: () => connectedProviders()
 } as Record<string, (...args: never[]) => unknown>
+
+// Session ops — the SHARED workspace-keyed lifecycle (session-ops.mjs). Electron seam: the active
+// workspace folder + the os:action emit. The server binds the SAME makeSessionOps with its own seam,
+// so the multi-agent session model can't diverge between the two modes.
+Object.assign(electronOps, makeSessionOps({ getWorkspacePath: () => osWorkspaceContext().workspace_path, emit: osBroadcast }))
 
 export const OS_TOOLS: OsTool[] = makeOsTools(electronOps)
 export const OS_TOOLS_BY_PATH: Record<string, OsTool> = makeOsToolsByPath(electronOps)

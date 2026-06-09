@@ -38,7 +38,7 @@ function safeJoin(dir, rel) {
 // ---- self-write suppression: every file BlitzOS writes is stamped here so the workspace
 // watcher (Phase 3) can ignore its own writes and only reconcile on EXTERNAL edits.
 const recentWrites = new Map() // absPath -> ts
-function markWrite(absPath) {
+export function markWrite(absPath) {
   const now = Date.now()
   recentWrites.set(absPath, now)
   if (recentWrites.size > 400) for (const [k, v] of recentWrites) if (now - v > 3000) recentWrites.delete(k)

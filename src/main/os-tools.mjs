@@ -339,6 +339,52 @@ export function makeOsTools(ops) {
         const html = ops.systemUi(String(parse(body).name || ''))
         return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html }
       }
+    },
+    {
+      path: '/spawn_session',
+      description:
+        "Start a SESSION — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (claude/codex), a build/test runner, or any long job. The session SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/sessions/. Args: {command (e.g. 'bash' or \"claude -p '…'\"), kind?:'pty'|'agent', cwd?, title?, cols?, rows?}. Returns { session }.",
+      input_schema: { type: 'object', properties: { command: { type: 'string' }, kind: { type: 'string', enum: ['pty', 'agent'] }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' } } },
+      handler: async ({ body }) => {
+        const a = parse(body)
+        const session = await ops.spawnSession({ command: a.command, kind: a.kind, cwd: a.cwd, title: a.title, cols: a.cols, rows: a.rows })
+        return { session }
+      }
+    },
+    {
+      path: '/list_sessions',
+      description: 'List the sessions in this workspace (running + persisted): id, kind, title, command, status, pid.',
+      handler: () => ({ sessions: ops.listSessions() })
+    },
+    {
+      path: '/send_to_session',
+      description: "Send input to a session's terminal — keystrokes/commands as raw text. Include a trailing newline to submit (e.g. data:'git status\\n'). Args: {id, data}.",
+      input_schema: { type: 'object', required: ['id', 'data'], properties: { id: { type: 'string' }, data: { type: 'string' } } },
+      handler: ({ body }) => {
+        const a = parse(body)
+        if (!a.id) return { status: 400, body: { error: 'id required' } }
+        return { ok: ops.sendToSession(String(a.id), String(a.data ?? '')) }
+      }
+    },
+    {
+      path: '/read_session',
+      description: "Read a session's current terminal output (scrollback) — to see what a shell/agent/build produced. Args: {id}. Returns { text }.",
+      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+      handler: ({ body }) => {
+        const id = String(parse(body).id || '')
+        if (!id) return { status: 400, body: { error: 'id required' } }
+        return { text: ops.readSession(id) }
+      }
+    },
+    {
+      path: '/stop_session',
+      description: 'Stop (kill) a session by id. Args: {id}.',
+      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+      handler: ({ body }) => {
+        const id = String(parse(body).id || '')
+        if (!id) return { status: 400, body: { error: 'id required' } }
+        return { ok: ops.stopSession(id) }
+      }
     }
   ]
 }

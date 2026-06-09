@@ -93,6 +93,9 @@ export function createTmuxHost(cfg) {
       client.on('exit', () => { client = null }) // sessions survive; a caller re-start()s to reattach
       // NB: do NOT `set -g window-size manual` — verified to crash the tmux 3.6 server on the next
       // new-window. Windows follow the control client's size; resize() adjusts it via refresh-client.
+      // The default window (index 0) new-session creates is NOT a BlitzOS session — name it so adopt
+      // skips it. Target index 0 explicitly (NOT the active window — on reattach that's a real session).
+      sendRaw(`rename-window -t ${SESSION}:0 __blitzroot__`)
       setTimeout(resolve, 250) // let the session/control handshake settle
     })
     return ready
@@ -161,7 +164,7 @@ export function createTmuxHost(cfg) {
     const adopted = []
     for (const ln of out.trim().split('\n').filter(Boolean)) {
       const [window, pane, name, pid] = ln.trim().split(/\s+/)
-      if (!name || sessions.has(name)) continue
+      if (!name || name === '__blitzroot__' || sessions.has(name)) continue
       const rec = { id: name, window, pane, pid: Number(pid) || null, cols: DEF_COLS, rows: DEF_ROWS, exited: false, exitCode: null, endedAt: null, startedAt: Date.now(), ring: [], ringBytes: 0, dataL: new Set(), exitL: new Set() }
       // seed the ring from the survivor's scrollback so a reconnecting renderer repaints
       try { rec.ring.push(tmuxSync(['capture-pane', '-p', '-e', '-t', window])); rec.ringBytes = rec.ring[0].length } catch { /* ignore */ }
