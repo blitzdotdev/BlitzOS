@@ -97,6 +97,13 @@ export default function App(): JSX.Element {
   // Relay/brain connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [showOverview, setShowOverview] = useState(false)
+  // Mirror showOverview into a ref so the ASYNC thumbnail capture reads the current value (not a stale
+  // closure): it must never run while the overview overlay is mounted, or capturePage saves the gallery
+  // itself AS the workspace's thumbnail (the screenshot-of-the-gallery-in-a-tile bug).
+  const showOverviewRef = useRef(false)
+  useEffect(() => {
+    showOverviewRef.current = showOverview
+  }, [showOverview])
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
   // #51: pending write-approvals the agent requested (provider.call writes) — the human OKs or denies each.
@@ -735,6 +742,10 @@ export default function App(): JSX.Element {
   // (best-effort, last-seen). Done before opening the overview and before switching away (while the
   // board we're leaving still has live streamed frames — they're torn down by the switch).
   async function captureCurrent(): Promise<void> {
+    // Hard guard: the board is snapshotted in openOverview BEFORE the overlay mounts (the only moment the
+    // canvas is the visible top layer). If the overview is already up, bail — capturePage would otherwise
+    // save the overlay itself as this workspace's thumbnail.
+    if (showOverviewRef.current) return
     const name = activeWsRef.current
     const ws = window.agentOS?.workspaces
     if (!name || !ws) return
@@ -754,7 +765,9 @@ export default function App(): JSX.Element {
     setShowOverview(true)
   }
   async function switchWorkspace(name: string): Promise<{ ok: boolean; error?: string }> {
-    await captureCurrent() // snapshot the board we're leaving BEFORE its targets are torn down
+    // Don't capture here: this only runs from the OPEN overview, so the board we're leaving is obscured by
+    // the overlay. openOverview already snapshotted it before the overlay mounted, and that thumb is still
+    // current (the workspace can't change while you're sitting in the overview).
     const r = await window.agentOS?.workspaces?.switch(name)
     // success → the {type:'switch'} broadcast swaps the canvas + closes the overview; a 409 (lock) /
     // 404 / 500 resolves {error} (getJSON never throws) → signal it so the overview clears "opening…".

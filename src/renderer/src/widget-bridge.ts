@@ -34,6 +34,12 @@ export const BRIDGE_SHIM = `<script>
   // which would otherwise re-run every widget's render() and replay its entrance animation each time.
   // Dedupe by value so a no-op re-delivery is silent.
   function firePropCbs() {
+    // Don't dedupe-poison before any onProps is registered. A blitz:props posted while the iframe is
+    // still loading (bridge listener up, but the widget hasn't called onProps yet) would otherwise set
+    // lastFired with NOTHING to fire — then the blitz:init on load carrying the same props is deduped
+    // away and the (now-registered) callback never fires: the widget renders its spawn state forever
+    // (the "spawned-then-driven dossier stays blank" bug). No callbacks = nothing to remember.
+    if (!propCbs.length) return;
     var sig; try { sig = JSON.stringify(props); } catch (e) { sig = null; }
     if (sig !== null && sig === lastFired) return;
     lastFired = sig;

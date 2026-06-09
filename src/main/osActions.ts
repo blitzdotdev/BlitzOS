@@ -179,7 +179,14 @@ const DEFAULT_READ = `(() => {
 /** Run JS inside a web surface and return the (JSON-serializable) result. */
 export async function osReadWindow(id: string, script?: string): Promise<unknown> {
   const wcid = webviewIds.get(id)
-  if (wcid == null) throw new Error(`surface ${id} has no readable web content yet`)
+  if (wcid == null) {
+    const kind = cached.surfaces.find((s) => s.id === id)?.kind
+    if (kind === 'srcdoc' || kind === 'native')
+      throw new Error(
+        `surface ${id} is a sandboxed ${kind} widget — read_window only works on \`web\` surfaces. To verify a widget's data, read its props from list_state, not its DOM.`
+      )
+    throw new Error(`surface ${id} has no readable web content yet`)
+  }
   const wc = webContents.fromId(wcid)
   if (!wc || wc.isDestroyed()) throw new Error(`web content for ${id} is gone`)
   return wc.executeJavaScript(script && script.trim() ? script : DEFAULT_READ, true)

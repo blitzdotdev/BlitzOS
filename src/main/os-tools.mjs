@@ -20,15 +20,21 @@ function parse(body) {
   }
 }
 
-// The agent-facing view of desktop state — layout fields ONLY. srcdoc `html` and native `props` (which hold
-// the chat transcript) ride the renderer state push for SERIALIZATION, but the agent's list_state must not be
-// bloated with full HTML / leak the transcript. ONE definition so every transport (and the widget list_state
-// tool) returns the IDENTICAL shape — ops.getState() returns raw full state, this whittles it down.
+// The agent-facing view of desktop state — layout fields + props, but NOT html. srcdoc `html` is omitted
+// (bloat — you DRIVE a widget via props, never re-read its html). props ARE included so the agent can
+// VERIFY a widget's data landed and read its Notepad text (`props.text`) — a srcdoc iframe can't be
+// read_window'd, so list_state.props is the agent's ONLY confirmation path — EXCEPT the chat/activity
+// panels, whose props hold the full transcript (don't leak / bloat). ONE definition so every transport
+// (and the widget list_state tool) returns the IDENTICAL shape — ops.getState() returns raw full state.
 export function serializeStateForAgent(state) {
   const s = state || {}
+  const isTranscript = (x) => x.role === 'chat' || x.role === 'activity' || x.component === 'chat' || x.component === 'activity'
   return {
     ...s,
-    surfaces: (s.surfaces || []).map((x) => ({ id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned }))
+    surfaces: (s.surfaces || []).map((x) => ({
+      id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
+      ...(isTranscript(x) || !x.props ? {} : { props: x.props })
+    }))
   }
 }
 
