@@ -17,7 +17,6 @@
  */
 import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
-import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync, readdirSync, appendFileSync } from 'node:fs'
 import { join, dirname, basename, resolve, sep } from 'node:path'
@@ -47,6 +46,9 @@ import {
   DRAIN
 } from '../src/main/perception-core.mjs'
 import { startAgentRunner } from '../src/main/agent-runner.mjs'
+// The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
+// the relay can't diverge between the two modes again. Only the adapter (publish url/status, restart brain) differs.
+import { startRelay } from '../src/main/relay.mjs'
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
 import { fileURLToPath } from 'node:url'
 
@@ -226,9 +228,8 @@ let osState = { surfaces: [] }
 // Boot-hydrated from the active workspace by the shared host (wsHost.hydrateOnBoot(), created below
 // after broadcast + reconcileSurfaces exist). The renderer adopts it via a `hydrate` on SSE connect.
 let agentUrl = null
-let agentSession = null // the live agent-socket session (so the watchdog can probe .connected + re-connect)
+let relay = null // the SHARED relay handle ({ getUrl, isOnline, stop }) — same module Electron uses (no divergence)
 let brainRunner = null // the supervised brain handle ({ stop, restart }) — restarted when the relay URL changes
-let lastRelayOkAt = Date.now() // last time the relay WS was confirmed up (watchdog backstop uses this)
 const sseClients = new Set()
 // Widget data consent: `${surfaceId}:${provider}` the human approved (via the
 // renderer prompt). The data route 403s until the pair is here — a widget can't
@@ -616,46 +617,18 @@ const serverOps = {
   connectedProviders: () => Object.keys(readTokens())
 }
 
-// Tell the renderer whether the brain's relay link is up (UI shows online/offline) + stamp the last-OK time.
-function relayStatus(online) {
-  if (online) lastRelayOkAt = Date.now()
-  broadcast({ type: 'agentStatus', online: !!online, agentUrl, brain: !!process.env.BLITZ_AGENT })
-}
-
-async function startOsAgentSocket() {
-  try {
-    agentSession = await connect({
+// Start the agent-socket relay via the SHARED lifecycle module (relay.mjs) — connect + self-heal + watchdog +
+// status all live there now (one impl, Electron too). The server only supplies its tools + the adapter: how to
+// publish the URL/status to the browser (SSE broadcast) and how to restart its brain.
+function startServerRelay() {
+  relay = startRelay(
+    {
       appId: process.env.AGENT_SOCKET_APP_ID || 'as_app_anon',
       baseUrl: process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev',
       appDescription: 'BlitzOS (browser preview): an agent OS desktop — open and arrange surfaces on an infinite canvas.',
       agentsMd: OS_AGENTS_MD,
-      // NEVER give up reconnecting (exponential 1s→30s) and flip the UI to "offline" the instant the WS drops.
-      onDisconnect: ({ attempt, reconnect }) => {
-        relayStatus(false)
-        const delay = Math.min(30_000, 1000 * Math.pow(2, Math.max(0, attempt - 1)))
-        setTimeout(reconnect, delay)
-      },
-      // On reconnect the SDK mints a NEW session URL — adopt it (the old one is dead on the relay), tell the
-      // renderer, and RESTART the brain. Without this the brain keeps its dead URL and loops on app_offline
-      // forever — the exact "typed in chat, no response, don't know if it's working" failure.
-      onSessionChanged: async (info) => {
-        const next = info && info.tokensRemapped && info.tokensRemapped.get(agentUrl)
-        if (next) agentUrl = next
-        else {
-          try {
-            agentUrl = (await agentSession.mintAgentToken({ label: 'blitzos-preview' })).url
-          } catch {
-            /* keep the old URL; the watchdog will force a fresh connect */
-          }
-        }
-        relayStatus(true)
-        broadcast({ __agentUrl: agentUrl })
-        console.log('[agent-os backend] relay reconnected — new agent URL:\n  ' + agentUrl)
-        if (brainRunner) brainRunner.restart()
-      },
-      // The ONE shared registry, server-bound (serverOps). Same paths/descriptions/schemas/handlers as Electron;
-      // mapped to the agent-socket tool shape. transport:relay — the server is untrusted like the relay (no
-      // localhost trust), so the few security branches behave identically. Add/change a tool in os-tools.mjs once.
+      label: 'blitzos-preview',
+      // The ONE shared registry, server-bound (serverOps). transport:relay — server is untrusted like the relay.
       tools: withActivity(
         makeOsTools(serverOps).map((t) => ({
           path: t.path,
@@ -664,17 +637,17 @@ async function startOsAgentSocket() {
           handler: ({ body }) => t.handler({ body: body || '', transport: 'relay' })
         }))
       )
-    })
-    const link = await agentSession.mintAgentToken({ label: 'blitzos-preview' })
-    agentUrl = link.url
-    relayStatus(true)
-    broadcast({ __agentUrl: agentUrl })
-    console.log('[agent-os backend] agent-socket paste URL (drive the preview from any AI chat):\n  ' + agentUrl)
-  } catch (e) {
-    console.error('[agent-os backend] agent-socket connect failed — retrying in 5s:', e?.message || e)
-    relayStatus(false)
-    setTimeout(startOsAgentSocket, 5000) // relay may be briefly down at boot — keep trying instead of giving up
-  }
+    },
+    {
+      onUrl: (u) => {
+        agentUrl = u
+        broadcast({ __agentUrl: agentUrl })
+        console.log('[agent-os backend] agent-socket paste URL (drive the preview from any AI chat):\n  ' + agentUrl)
+      },
+      onStatus: (online) => broadcast({ type: 'agentStatus', online, agentUrl, brain: !!process.env.BLITZ_AGENT }),
+      restartBrain: () => brainRunner && brainRunner.restart()
+    }
+  )
 }
 
 const server = createServer(async (req, res) => {
@@ -686,7 +659,7 @@ const server = createServer(async (req, res) => {
       ok: true,
       redirectUri: REDIRECT_URI,
       // relay + brain health, so `curl /api/health` (or start-all's doctor) can tell if the agent path is live
-      relayOnline: !!(agentSession && agentSession.connected),
+      relayOnline: !!(relay && relay.isOnline()),
       agentUrl,
       brain: !!process.env.BLITZ_AGENT,
       workspace: wsHost.active()
@@ -836,7 +809,7 @@ const server = createServer(async (req, res) => {
     if (agentUrl) res.write(`data: ${JSON.stringify({ __agentUrl: agentUrl })}\n\n`)
     // Send the current relay/brain status immediately so the toolbar pill shows online/offline on first
     // paint (don't make a fresh tab wait up to 20s for the next watchdog tick).
-    res.write(`data: ${JSON.stringify({ type: 'agentStatus', online: !!(agentSession && agentSession.connected), agentUrl, brain: !!process.env.BLITZ_AGENT })}\n\n`)
+    res.write(`data: ${JSON.stringify({ type: 'agentStatus', online: !!(relay && relay.isOnline()), agentUrl, brain: !!process.env.BLITZ_AGENT })}\n\n`)
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
     res.write(
@@ -1217,8 +1190,8 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`[agent-os backend] listening on http://127.0.0.1:${PORT}`)
   console.log(`[agent-os backend] OAuth redirect URI to register: ${REDIRECT_URI}`)
   console.log(`[agent-os backend] providers configured: ${statuses().filter((s) => s.configured).map((s) => s.id).join(', ') || '(none — add integrations.config.json)'}`)
-  // Connect to the agent-socket relay so a pasted URL can drive the preview.
-  startOsAgentSocket()
+  // Connect to the agent-socket relay (shared self-healing lifecycle in relay.mjs) so a pasted URL can drive it.
+  startServerRelay()
   // Server mode: bring up the headless browser host for live web surfaces.
   initServerMode()
   // Phase 3: watch the workspace folder so external file edits (agent/Finder/git) reflect live.
@@ -1229,26 +1202,7 @@ server.listen(PORT, '127.0.0.1', () => {
   if (process.env.BLITZ_AGENT) {
     brainRunner = startAgentRunner({ getUrl: () => agentUrl, cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, label: 'server-agent' })
   }
-  // Relay watchdog. Every 20s: (1) broadcast the live up/down status so the renderer can SHOW it (so the
-  // user never has to wonder "is it working?"), and (2) as a hard backstop, if the WS has been down for
-  // >90s — the SDK normally self-reconnects via onDisconnect, but if it ever gets wedged — tear the dead
-  // session down and start a FRESH connect (new URL + brain restart). This is the "once and for all" guard
-  // against the brain silently going offline.
-  setInterval(() => {
-    const online = !!(agentSession && agentSession.connected)
-    relayStatus(online)
-    if (!online && Date.now() - lastRelayOkAt > 90_000) {
-      console.warn('[agent-os backend] relay down >90s — forcing a fresh agent-socket connect')
-      lastRelayOkAt = Date.now() // reset so we don't re-fire every tick while the fresh connect is in flight
-      try {
-        agentSession && agentSession.close && agentSession.close()
-      } catch {
-        /* already gone */
-      }
-      agentSession = null
-      startOsAgentSocket()
-    }
-  }, 20_000).unref?.()
+  // (the relay self-heal + watchdog + status heartbeat now live in the shared relay.mjs — see startServerRelay)
 })
 
 // On shutdown, gracefully close the browser so its profile (cookies/localStorage = the

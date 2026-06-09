@@ -197,17 +197,18 @@ app.whenReady().then(() => {
   // Local agent path: a localhost HTTP control API.
   startControlServer()
 
-  // Remote agent path: connect to the agent-socket relay and mint a paste-able
-  // URL so any AI chat can drive BlitzOS (no MCP needed). The connected agent is the
-  // BRAIN — it watches /events and decides everything. BlitzOS ships NO in-process
-  // decision logic (no resident reasoner/governor); it is pure substrate.
-  startAgentSocket(() => mainWindow)
+  // Remote agent path: connect to the agent-socket relay (SHARED self-healing lifecycle in relay.mjs — same
+  // module the server uses, so it can't diverge) and mint a paste-able URL so any AI chat can drive BlitzOS.
+  // restartBrain is threaded so a relay reconnect (new URL) restarts the brain instead of leaving it on a dead
+  // URL. The connected agent is the BRAIN; BlitzOS ships NO in-process decision logic — pure substrate.
+  let electronBrain: { stop: () => void; restart: () => void } | null = null
+  startAgentSocket(() => mainWindow, () => electronBrain?.restart())
 
   // Boot + supervise the brain: spawn the agent and auto-restart it on exit, so a brain
   // is always watching. Opt-in via BLITZ_AGENT (=claude or a custom command). This is
   // process supervision, not decision-making — the agent remains the sole decider.
   if (process.env.BLITZ_AGENT) {
-    startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT })
+    electronBrain = startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT })
   }
 
   app.on('activate', () => {
