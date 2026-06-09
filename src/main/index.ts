@@ -223,7 +223,10 @@ app.whenReady().then(() => {
 })
 
 // Flush a pending workspace write + stop the folder watchers before quit (so the last edit persists).
-app.on('before-quit', () => osFlushWorkspace())
+app.on('before-quit', () => {
+  osFlushWorkspace()
+  try { electronSessionOps.stopHosts() } catch { /* ignore */ } // flush session transcripts + close tmux control clients (sessions survive)
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

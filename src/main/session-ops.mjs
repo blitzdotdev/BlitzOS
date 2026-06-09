@@ -21,6 +21,14 @@ export function makeSessionOps({ getWorkspacePath, emit = () => {}, markWrite = 
   function mgrFor() {
     const wsPath = typeof getWorkspacePath === 'function' ? getWorkspacePath() : null
     if (!wsPath) return null
+    // Keep ONLY the active workspace's manager live — evict the rest (their tmux sessions survive in
+    // their own servers; restore() re-adopts them if that workspace is re-activated). Bounds the leak
+    // to one control client instead of one per workspace ever switched to.
+    for (const [p, e] of mgrs) {
+      if (p === wsPath) continue
+      try { e.mgr.flushAll(); e.host.stop() } catch { /* ignore */ }
+      mgrs.delete(p)
+    }
     let entry = mgrs.get(wsPath)
     if (!entry) {
       const tmuxDir = join(wsPath, '.blitzos', 'tmux')
@@ -46,7 +54,7 @@ export function makeSessionOps({ getWorkspacePath, emit = () => {}, markWrite = 
     resizeSession: (id, cols, rows) => { const m = mgrFor(); return m ? m.resizeSession(id, cols, rows) : false },
     readSession: (id) => { const m = mgrFor(); return m ? m.scrollback(id) : '' },
     stopSession: (id) => { const m = mgrFor(); return m ? m.stopSession(id) : false },
-    /** Close every control client on shutdown (sessions SURVIVE in their tmux servers). */
-    stopHosts: () => { for (const { host } of mgrs.values()) { try { host.stop() } catch { /* ignore */ } } }
+    /** Flush transcripts + close every control client on shutdown (sessions SURVIVE in their tmux servers). */
+    stopHosts: () => { for (const { host, mgr } of mgrs.values()) { try { mgr.flushAll(); host.stop() } catch { /* ignore */ } } }
   }
 }

@@ -147,6 +147,8 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
   }
 
   function stopAll() { for (const id of live.keys()) host.kill(id) }
+  // Flush every live session's pending transcript buffer NOW (e.g. on app shutdown, before the 500ms timer).
+  function flushAll() { for (const [id, r] of live) { if (r.flushTimer) { clearTimeout(r.flushTimer); r.flushTimer = null } flushTranscript(id) } }
 
-  return { spawnSession, sendToSession, resizeSession, stopSession, restartSession, restore, scrollback, getSession, listSessions, stopAll }
+  return { spawnSession, sendToSession, resizeSession, stopSession, restartSession, restore, scrollback, getSession, listSessions, stopAll, flushAll }
 }

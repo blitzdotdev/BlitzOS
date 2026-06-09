@@ -1198,6 +1198,7 @@ async function gracefulExit() {
   // created/moved right before quit lands on disk — otherwise hydrate restores the stale state.
   wsHost.flush()
   wsHost.stopWatch() // close fs watchers (handle hygiene)
+  try { serverSessionOps.stopHosts() } catch { /* ignore */ } // flush session transcripts + close tmux control clients (sessions survive)
   try {
     if (host) await host.stop()
   } catch {
