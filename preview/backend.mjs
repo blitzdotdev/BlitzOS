@@ -456,6 +456,17 @@ function toolBody(body) {
 
 // One source of truth (the SAME .md the Electron relay serves): src/main/blitzos-agents.md.
 const OS_AGENTS_MD = readFileSync(new URL('../src/main/blitzos-agents.md', import.meta.url), 'utf8')
+// Fill the doc's {{CONNECTORS}} placeholder with the live wired/unwired line (mirror of integrations.ts).
+function injectConnectors(md) {
+  const nameOf = (s) => String(s.name || s.id || '?')
+  const all = statuses()
+  const conn = all.filter((s) => s.connected).map(nameOf)
+  const off = all.filter((s) => !s.connected).map(nameOf)
+  const parts = []
+  if (conn.length) parts.push(`Connected: ${conn.join(', ')}`)
+  if (off.length) parts.push(`Not connected: ${off.join(', ')}`)
+  return md.replace('{{CONNECTORS}}', parts.join(' · ') || 'No connectors registered.')
+}
 
 // Tools whose calls are surfaced in the on-screen "Agent activity" log, so the user can
 // SEE what the agent is doing during reply latency (polls/reads like /events, list_state,
@@ -612,7 +623,7 @@ async function startOsAgentSocket() {
       appId: process.env.AGENT_SOCKET_APP_ID || 'as_app_anon',
       baseUrl: process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev',
       appDescription: 'BlitzOS (browser preview): an agent OS desktop — open and arrange surfaces on an infinite canvas.',
-      agentsMd: OS_AGENTS_MD,
+      agentsMd: injectConnectors(OS_AGENTS_MD),
       // The ONE shared registry, server-bound (serverOps). Same paths/descriptions/schemas/handlers as Electron;
       // mapped to the agent-socket tool shape. transport:relay — the server is untrusted like the relay (no
       // localhost trust), so the few security branches behave identically. Add/change a tool in os-tools.mjs once.

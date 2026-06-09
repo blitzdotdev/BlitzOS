@@ -6,6 +6,7 @@ import { OS_TOOLS } from './electron-os-tools'
 // build (the main bundle has no runtime fs access to it); the server preview reads the
 // same file at runtime. Edit src/main/blitzos-agents.md, then relaunch.
 import AGENTS_MD from './blitzos-agents.md?raw'
+import { injectConnectors } from './integrations'
 
 const RELAY = process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev'
 const APP_ID = process.env.AGENT_SOCKET_APP_ID || 'as_app_anon'
@@ -33,7 +34,7 @@ export async function startAgentSocket(getWindow: () => BrowserWindow | null): P
       appId: APP_ID,
       baseUrl: RELAY,
       appDescription: 'BlitzOS: an agent OS desktop. Open and arrange surfaces on an infinite canvas.',
-      agentsMd: AGENTS_MD,
+      agentsMd: injectConnectors(AGENTS_MD), // {{CONNECTORS}} → live wired/unwired line at connect
       // The relay (untrusted) path of the SHARED tool registry — see os-tools.mjs (bound for Electron in
       // electron-os-tools.ts). Every tool runs with transport:'relay' here (page content is gated to surfaces
       // the user shared, raw eval is blocked). The localhost control server dispatches the SAME registry with

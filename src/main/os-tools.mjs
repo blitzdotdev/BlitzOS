@@ -65,7 +65,7 @@ export function makeOsTools(ops) {
     {
       path: '/create_surface',
       description:
-        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html, native takes component+props. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace).',
+        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html, native takes component+props. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace).',
       input_schema: {
         type: 'object',
         required: ['kind'],
@@ -206,7 +206,13 @@ export function makeOsTools(ops) {
         const id = String(a.id)
         try {
           const script = transport === 'localhost' && typeof a.script === 'string' ? a.script : undefined
-          return { result: await ops.readWindow(id, script) }
+          // D (incremental-drive nudge woven into the work loop): reading a window is how the agent
+          // gathers info — which is exactly the moment to reflect it on its live surface before moving on.
+          return {
+            result: await ops.readWindow(id, script),
+            reminder:
+              'If you gathered anything here worth showing (a finding, a candidate, a status), reflect it in your live surface NOW (update_surface{id,props}) before the next read — don’t batch updates to the end.'
+          }
         } catch (e) {
           return { status: 400, body: { error: e instanceof Error ? e.message : String(e) } }
         }
@@ -256,7 +262,7 @@ export function makeOsTools(ops) {
     {
       path: '/spawn_widget',
       description:
-        'Open a library widget on the canvas as a live sandboxed surface. It fetches its data through the OS bridge; the user approves integration access once. Returns { id } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
+        'Open a library widget on the canvas as a live sandboxed surface — a thinking-widget is an INSTRUMENT you DRIVE, not a final render: update_surface{id,props} it after EACH step of progress, never once at the end. It fetches integration data through the OS bridge; the user approves access once. Returns { id, drive? } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, props: { type: 'object' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -269,7 +275,14 @@ export function makeOsTools(ops) {
         if (typeof a.h === 'number') desc.h = a.h
         const id = ops.createSurface(desc)
         const needsConnect = w.needs.filter((n) => !ops.connectedProviders().includes(n))
-        return needsConnect.length ? { id, needsConnect } : { id }
+        const out = needsConnect.length ? { id, needsConnect } : { id }
+        // A (live-driving contract): a thinking-widget (no integration) is an INSTRUMENT, not a final
+        // render. The #1 failure is spawning one with a skeleton then populating it once at the end, so
+        // it sits frozen through the whole task. Return the contract at spawn time, mid-flow.
+        if (!w.needs.length)
+          out.drive =
+            'This is a LIVE surface, not a final render. Call update_surface{id,props} after EACH step of progress (each item found, each phase advanced) so the user watches the work happen — leaving it on this initial state until you finish defeats its purpose.'
+        return out
       }
     },
     {

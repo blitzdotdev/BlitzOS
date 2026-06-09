@@ -1,5 +1,40 @@
 [
   {
+    "name": "pipeline",
+    "description": "Thinking-widget (no integration). A live work queue: items flow queued → processing → done with a pop/drain/check animation. Drive it with update_surface{props:{items:[{label,sub?,status:'queued'|'active'|'done'}]}} to externalize a multi-item loop as it runs.",
+    "needs": [],
+    "props": { "title": "Pipeline" },
+    "version": 1
+  },
+  {
+    "name": "dossiers",
+    "description": "Thinking-widget. A grid of scored entity cards (a score ring, stats, tags per card). For comparing/profiling a SET of things — candidates, repos, options. Drive with update_surface{props:{items:[{name,sub?,score?,stats?:[{k,n}],tags?}]}}.",
+    "needs": [],
+    "props": { "title": "Dossiers" },
+    "version": 1
+  },
+  {
+    "name": "timeline",
+    "description": "Thinking-widget. A vertical timeline of events with a pulsing 'now' marker. For a SEQUENCE over time — a plan, a session log, what happened then what's next. Drive with update_surface{props:{items:[{time,title,detail?,now?}]}}.",
+    "needs": [],
+    "props": { "title": "Timeline" },
+    "version": 1
+  },
+  {
+    "name": "matrix",
+    "description": "Thinking-widget. A comparison matrix (options as rows × criteria as columns; cells render as yes/no dots, 0-3 heat pills, or text). For a DECISION or trade-off table. Drive with update_surface{props:{cols:[...],rows:[{name,cells:[true|false|0..3|'text']}]}}.",
+    "needs": [],
+    "props": { "title": "Matrix" },
+    "version": 1
+  },
+  {
+    "name": "graph",
+    "description": "Thinking-widget. A hub-and-spoke relationship graph (a center node with labelled spokes, animated edges). For RELATIONSHIPS around one thing — who connects to X, parts of a system. Drive with update_surface{props:{center:{label},nodes:[{label,sub?}]}}.",
+    "needs": [],
+    "props": { "title": "Graph" },
+    "version": 1
+  },
+  {
     "name": "discord-servers",
     "description": "Your Discord servers (guilds) as a live grid — icons, names, owner badge; click to open in Discord.",
     "needs": ["discord"],

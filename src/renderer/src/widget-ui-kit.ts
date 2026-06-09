@@ -17,14 +17,17 @@
 
 export const UI_KIT = `<style>
 :root{
-  --blitz-accent:#f4673b; --blitz-accent-ink:#ffffff;
+  --blitz-accent:#1a1b1d; --blitz-accent-ink:#ffffff; /* TEMP neutral (was coral #f4673b) — matches the OS accent */
   --blitz-bg:#ececea; --blitz-surface:#ffffff; --blitz-surface-2:#f1f1ee;
   --blitz-text:#1a1b1d; --blitz-text-dim:#797c7f;
   --blitz-hairline:rgba(0,0,0,.10); --blitz-radius:10px; --blitz-radius-sm:7px;
   --blitz-font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
 }
-html,body{margin:0;height:100%;background:var(--blitz-bg);color:var(--blitz-text);font-family:var(--blitz-font);font-size:13px}
-body{display:flex;flex-direction:column;overflow:hidden}
+html{height:100%}
+body{margin:0;min-height:100%;background:var(--blitz-bg);color:var(--blitz-text);font-family:var(--blitz-font);font-size:13px}
+/* Default = a normal scrolling DOCUMENT: agent-authored HTML taller than its surface scrolls (don't clip it).
+   A widget that uses <blitz-list> (a fill-height internal scroller) auto-gets .blitz-app = the fixed app frame. */
+body.blitz-app{height:100%;display:flex;flex-direction:column;overflow:hidden}
 *{box-sizing:border-box}
 </style>
 <script>
@@ -38,7 +41,11 @@ body{display:flex;flex-direction:column;overflow:hidden}
     ':host{display:flex;align-items:center;gap:8px;flex:0 0 auto;padding:8px 11px;font-weight:600;font-size:12px;color:var(--blitz-text-dim);border-bottom:1px solid var(--blitz-hairline);background:var(--blitz-surface)}'); }});
 
   // <blitz-list> — a flex-growing, scrollable column. The chat transcript / file list lives here.
-  customElements.define('blitz-list', class extends HTMLElement{ connectedCallback(){ if(this.shadowRoot)return; shadow(this,
+  customElements.define('blitz-list', class extends HTMLElement{ connectedCallback(){ if(this.shadowRoot)return;
+    // A <blitz-list> fills the surface and scrolls INTERNALLY, which needs the body to be a definite-height
+    // flex frame — so opt the page into the app layout (vs the default scrolling document) when one mounts.
+    try{ if(document.body) document.body.classList.add('blitz-app'); }catch(e){}
+    shadow(this,
     ':host{display:flex;flex-direction:column;gap:6px;flex:1 1 0;min-height:0;overflow-y:auto;padding:10px}'); }});
 
   // <blitz-message role="user|agent"> — a chat bubble. Content via slot.

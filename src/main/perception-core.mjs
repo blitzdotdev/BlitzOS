@@ -53,9 +53,9 @@ export function dropContentShare(surfaceId) {
 /** Strip page-derived content from a moment, leaving only metadata the relay may see
  *  (surface identity + activity counts; url/title are already exposed via list_state). */
 export function redactMoment(m) {
-  // A 'message' moment is text the user typed TO the agent (the in-canvas chat) — it
-  // is consent by construction, not scraped page content, so it crosses the relay intact.
-  if (m.trigger === 'message') return m
+  // A 'message' (in-canvas chat) or 'connector' (the user wired/removed an integration) moment is
+  // consent by construction, not scraped page content, so it crosses the relay intact.
+  if (m.trigger === 'message' || m.trigger === 'connector') return m
   return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, url: m.url, title: m.title, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: [] }
 }
 
@@ -195,6 +195,20 @@ export function emitUserMessage(text) {
     user: [`user message: "${msg.slice(0, 400)}"`],
     message: msg
   }
+  LOG.push(moment)
+  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
+  for (const w of waiters.splice(0)) {
+    clearTimeout(w.timer)
+    w.resolve(LOG.filter((m) => m.seq > w.since))
+  }
+}
+
+/** A connector (integration) was wired up or removed — wake the agent so it learns live. Like a chat
+ *  message this is consent-by-construction (the user clicked connect), so it crosses the relay intact. */
+export function emitConnectorChange(provider, connected) {
+  const name = String(provider || 'a connector')
+  const verb = connected ? 'connected' : 'disconnected'
+  const moment = { seq: ++seq, ts: Date.now(), surfaceId: 'system', trigger: 'connector', windowMs: 0, signals: { connector: 1 }, user: [`connector ${verb}: ${name}`] }
   LOG.push(moment)
   if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
   for (const w of waiters.splice(0)) {

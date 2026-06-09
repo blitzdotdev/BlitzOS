@@ -26,19 +26,29 @@ export const BRIDGE_SHIM = `<script>
   // collide with another's after an html reload (the parent also checks the
   // issuing window, so a stale reply can't be cross-delivered).
   var inst = Math.random().toString(36).slice(2);
-  var seq = 0, pending = {}, props = {}, ready = false, queue = [], readyCbs = [], propCbs = [];
+  var seq = 0, pending = {}, props = {}, ready = false, queue = [], readyCbs = [], propCbs = [], lastFired = null;
   function post(m) { try { window.parent.postMessage(m, '*'); } catch (e) {} }
   function flush() { var q = queue; queue = []; for (var i = 0; i < q.length; i++) q[i](); }
+  // onProps fires on CHANGE, not on every delivery: the OS re-posts props whenever a surface's props
+  // identity changes (e.g. a workspace-folder reconcile rebuilds the descriptor with identical content),
+  // which would otherwise re-run every widget's render() and replay its entrance animation each time.
+  // Dedupe by value so a no-op re-delivery is silent.
+  function firePropCbs() {
+    var sig; try { sig = JSON.stringify(props); } catch (e) { sig = null; }
+    if (sig !== null && sig === lastFired) return;
+    lastFired = sig;
+    for (var i = 0; i < propCbs.length; i++) try { propCbs[i](props); } catch (x) {}
+  }
   window.addEventListener('message', function (e) {
     if (e.source !== window.parent) return;            // only the OS parent
     var m = e.data; if (!m || typeof m !== 'object') return;
     if (m.type === 'blitz:init') {
       props = m.props || {};
       if (!ready) { ready = true; flush(); for (var i = 0; i < readyCbs.length; i++) try { readyCbs[i](props); } catch (x) {} }
-      for (var j = 0; j < propCbs.length; j++) try { propCbs[j](props); } catch (x) {}
+      firePropCbs();
     } else if (m.type === 'blitz:props') {
       props = Object.assign({}, props, m.props || {});
-      for (var k = 0; k < propCbs.length; k++) try { propCbs[k](props); } catch (x) {}
+      firePropCbs();
     } else if (m.type === 'blitz:res' && m.reqId && pending[m.reqId]) {
       var p = pending[m.reqId]; delete pending[m.reqId];
       if (m.ok) p.resolve(m.data); else p.reject(new Error(m.error || 'request failed'));
