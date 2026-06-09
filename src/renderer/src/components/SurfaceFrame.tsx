@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop, snapTargetFor, primaryRect } from '../store'
+import { useDesktop, snapTargetFor, primaryRect, nextTerminalName } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
 import { SessionTerminal } from './SessionTerminal'
+import { SessionsPanel } from './SessionsPanel'
+import { InboxPanel } from './InboxPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
 import { UI_KIT } from '../widget-ui-kit'
 import { IconEye } from './Icons'
@@ -29,6 +31,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const closeSurface = useDesktop((s) => s.closeSurface)
   const toggleMaximize = useDesktop((s) => s.toggleMaximize)
   const minimizeSurface = useDesktop((s) => s.minimizeSurface)
+  const setActiveTab = useDesktop((s) => s.setActiveTab)
+  const closeTab = useDesktop((s) => s.closeTab)
   // macOS-style: the front-most (highest-z) surface is "active"; only its lights colorize.
   const maxZ = useDesktop((s) => s.surfaces.reduce((m, w) => Math.max(m, w.z), -Infinity))
   const isActive = surface.z === maxZ
@@ -230,9 +234,10 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
       )
   }
-  // blitz.sendMessage — the widget sends a message to the agent (the chat widget).
+  // blitz.sendMessage — the widget sends a message to ITS session's agent. The session id rides from the
+  // surface (props.sessionId, set by the host per chat session) so each chat widget routes to its own agent.
   function serveMessage(win: Window, reqId: string, text: string): Promise<void> {
-    window.agentOS?.sendMessage?.(String(text))
+    window.agentOS?.sendMessage?.(String(text), String(surface.props?.sessionId ?? '0'))
     return Promise.resolve(postRes(win, reqId, { ok: true }))
   }
   // blitz.listDir — the widget lists a workspace folder (the file-manager widget).
@@ -500,7 +505,15 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         if (surface.component === 'note') return <NoteWidget surface={surface} />
         if (surface.component === 'chat') return <ChatPanel surface={surface} />
         if (surface.component === 'activity') return <ActivityPanel surface={surface} />
-        if (surface.component === 'terminal') return <SessionTerminal surface={surface} />
+        if (surface.component === 'terminal') {
+          const tabs = surface.tabs || []
+          const active = tabs[Math.min(Math.max(surface.activeTab || 0, 0), Math.max(0, tabs.length - 1))]
+          const sid = active?.sessionId || (surface.props?.sessionId as string) || ''
+          // key by session id so switching tabs remounts the terminal onto the new session (scrollback re-fetched)
+          return <SessionTerminal key={sid} surface={{ ...surface, props: { sessionId: sid } }} />
+        }
+        if (surface.component === 'sessions') return <SessionsPanel surface={surface} />
+        if (surface.component === 'inbox') return <InboxPanel surface={surface} />
         if (surface.component === 'file') return <FileWidget surface={surface} />
         if (surface.component === 'dir') return <DirWidget surface={surface} />
         if (surface.component === 'files') return <FileManager surface={surface} />
@@ -569,6 +582,38 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           <div className="window-bar-fill" />
         )}
       </div>
+      {surface.component === 'terminal' && surface.tabs && (
+        <div className="window-tabs" onPointerDown={stop}>
+          {surface.tabs.map((t, i) => (
+            <div
+              key={t.id}
+              className={`wtab${i === (surface.activeTab || 0) ? ' active' : ''}`}
+              title={t.title}
+              onClick={() => setActiveTab(surface.id, i)}
+            >
+              <span className="wtab-title">{t.title}</span>
+              <button
+                className="wtab-close"
+                title="Close tab"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (t.sessionId) (window.agentOS as unknown as { sessionStop?: (id: string) => void })?.sessionStop?.(t.sessionId)
+                  closeTab(surface.id, t.id)
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <button
+            className="wtab-add"
+            title="New session tab"
+            onClick={() => (window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })}
+          >
+            +
+          </button>
+        </div>
+      )}
       <div
         className="window-body"
         style={{ position: 'relative', ...(isNote ? { background: 'transparent' } : {}) }}

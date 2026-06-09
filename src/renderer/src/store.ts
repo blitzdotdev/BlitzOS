@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   CanvasTransform,
   Surface,
+  SurfaceTab,
   SurfaceKind,
   Vec2,
   IntegrationStatus,
@@ -146,6 +147,14 @@ export interface CreateSurfaceInput {
   props?: Record<string, unknown>
   /** P0: agent may read this surface's content over the relay (auto-true for agent-opened web/app). */
   shared?: boolean
+  /** tabbed windows (terminal): a session per tab. */
+  tabs?: SurfaceTab[]
+  activeTab?: number
+  /** system runtime surface (e.g. a chat session widget: role:'chat', pinned). */
+  role?: string
+  pinned?: boolean
+  /** the chat session this surface belongs to (a per-session chat widget). */
+  sessionId?: string
 }
 
 interface DesktopState {
@@ -216,6 +225,13 @@ interface DesktopState {
   minimizeSurface: (id: string) => void
   updateSurface: (id: string, patch: Partial<Surface>) => void
   updateSurfaceProps: (id: string, props: Record<string, unknown>) => void
+  addTab: (id: string, tab: SurfaceTab) => void
+  setActiveTab: (id: string, index: number) => void
+  closeTab: (id: string, tabId: string) => void
+  // Open (or focus) a session's terminal tab: activate it if it's already a tab, else add it to the
+  // existing terminal window, else open the first terminal window. The one shared seam for the live
+  // session-spawn action, resume-on-load, and the Sessions tray's "Open" — so a session is in one tab.
+  openSession: (sessionId: string, title: string) => void
   // Layout undo: the agent auto-applies layouts; the human reverts with Cmd+Z.
   snapshotLayout: () => void
   undoLayout: () => void
@@ -464,7 +480,13 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       html: input.html,
       component: input.component,
       props: input.props ?? {},
-      shared: input.shared
+      shared: input.shared,
+      // preserve system-surface fields so a broadcast 'create' (e.g. a new chat session) keeps its
+      // role/pinned/sessionId — without these a created chat widget would lose role:'chat' and not render.
+      ...(input.role ? { role: input.role } : {}),
+      ...(input.pinned ? { pinned: input.pinned } : {}),
+      ...(input.sessionId != null ? { sessionId: String(input.sessionId) } : {}),
+      ...(input.tabs ? { tabs: input.tabs, activeTab: input.activeTab ?? 0 } : {})
     }
     set((s) => ({ surfaces: [...s.surfaces, surface] }))
     return id
@@ -506,11 +528,24 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   // backend's osState). Replaces only the file-backed surfaces with the reconciled set.
   applyReconcile: (incoming) =>
     set((s) => {
-      const isRuntime = (w: Surface): boolean => w.role === 'chat' || w.role === 'activity' || (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder'))
+      // Runtime-only surfaces NOT backed by a workspace file (nodeKind returns null for them), so they're
+      // never in the reconciled `incoming` set — keep the LIVE ones or a reconcile would wipe them. Covers
+      // the chat/activity panels, in-memory folders, AND the session surfaces (terminal windows + the
+      // Sessions tray), which are reconstructed from live sessions, never persisted as nodes.
+      const isRuntime = (w: Surface): boolean =>
+        w.role === 'chat' ||
+        w.role === 'activity' ||
+        (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder' || w.component === 'terminal' || w.component === 'sessions' || w.component === 'inbox'))
       const keepRuntime = s.surfaces.filter(isRuntime)
       const localById = new Map(s.surfaces.map((w) => [w.id, w]))
+      // A reconcile's `incoming` can echo back runtime-only surfaces (the host keeps un-persisted state
+      // like an open terminal/sessions/folder). Those are preserved via keepRuntime from the LIVE store,
+      // so they must be EXCLUDED from fileBacked here — otherwise the surface lands in `restored` twice
+      // (once from incoming, once from keepRuntime), a duplicate React key. Worse, the duplicate is then
+      // pushed back, re-echoed, and re-doubled on the next reconcile — an exponential blow-up that floods
+      // the canvas and hangs the main thread. Filtering on the SAME isRuntime keeps them single-sourced.
       const fileBacked = incoming
-        .filter((w) => !isRuntimePanel(w))
+        .filter((w) => !isRuntime(w))
         .map((w) => {
           const live = localById.get(w.id)
           // Brand-new surface (a just-dropped file, a folder the agent created): take its disk content,
@@ -573,6 +608,48 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => ({
       surfaces: s.surfaces.map((it) => (it.id === id ? { ...it, zoom: clamp(zoom, 0.3, 3) } : it))
     })),
+
+  // ---- tabbed windows (terminal windows hold a session per tab) ----
+  addTab: (id, tab) =>
+    set((s) => ({
+      surfaces: s.surfaces.map((w) => {
+        if (w.id !== id) return w
+        const tabs = w.tabs || []
+        const at = tabs.findIndex((t) => t.id === tab.id)
+        if (at >= 0) return { ...w, activeTab: at } // already a tab — just activate it
+        return { ...w, tabs: [...tabs, tab], activeTab: tabs.length, z: ++zCounter }
+      })
+    })),
+  setActiveTab: (id, index) =>
+    set((s) => ({
+      surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, activeTab: clamp(index, 0, (w.tabs?.length || 1) - 1) } : w))
+    })),
+  closeTab: (id, tabId) =>
+    set((s) => {
+      const w = s.surfaces.find((x) => x.id === id)
+      if (!w || !w.tabs) return {}
+      const tabs = w.tabs.filter((t) => t.id !== tabId)
+      if (!tabs.length) return { surfaces: s.surfaces.filter((x) => x.id !== id) } // last tab closed → close the window
+      return { surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, tabs, activeTab: clamp(w.activeTab || 0, 0, tabs.length - 1) } : x)) }
+    }),
+  openSession: (sessionId, title) => {
+    const s = get()
+    // Already a tab somewhere? activate it + raise its window (idempotent — no duplicate tab).
+    for (const w of s.surfaces) {
+      if (w.kind === 'native' && w.component === 'terminal') {
+        const idx = (w.tabs || []).findIndex((t) => t.sessionId === sessionId)
+        if (idx >= 0) {
+          get().setActiveTab(w.id, idx)
+          get().focusSurface(w.id)
+          return
+        }
+      }
+    }
+    // Add to the existing terminal window, or open the first one (store cascades/clamps its position).
+    const term = s.surfaces.find((w) => w.kind === 'native' && w.component === 'terminal')
+    if (term) get().addTab(term.id, { id: sessionId, title, sessionId })
+    else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, tabs: [{ id: sessionId, title, sessionId }], activeTab: 0 })
+  },
 
   toggleMaximize: (id) => {
     get().snapshotLayout()
@@ -673,3 +750,14 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       return { layoutHistory: hist, surfaces: prev }
     })
 }))
+
+/** Default name for a UI-spawned terminal session — "Terminal N", N counting existing terminal tabs,
+ *  so the "+ Terminal" toolbar button and the tab strip's "+" produce distinct, readable tab names
+ *  instead of every tab reading "Terminal". (Agent/tool spawns name themselves from the command.) */
+export function nextTerminalName(): string {
+  const n = useDesktop
+    .getState()
+    .surfaces.filter((s) => s.kind === 'native' && s.component === 'terminal')
+    .reduce((acc, s) => acc + (s.tabs?.length || 0), 0)
+  return `Terminal ${n + 1}`
+}

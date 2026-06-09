@@ -8,6 +8,8 @@ export interface SessionOps {
   resizeSession(id: string, cols: number, rows: number): boolean
   readSession(id: string): string
   stopSession(id: string): boolean
+  /** Re-spawn a dead session from its persisted meta (one-click resume). */
+  restartSession(id: string): Promise<SessionMeta | null>
   /** Close every control client on shutdown (sessions survive in their tmux servers). */
   stopHosts(): void
 }

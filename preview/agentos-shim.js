@@ -213,11 +213,11 @@
     setContentShare: function (surfaceId, on) {
       return postJSON('/os/content-share', { surfaceId: surfaceId, on: on })
     },
-    // The user typed a message to the agent in the in-canvas Chat.
-    sendMessage: function (text) {
+    // The user typed a message to a chat session's agent (sessionId '0' = the primary chat).
+    sendMessage: function (text, sessionId) {
       fetch(API + '/os/user-message', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: text })
+        body: JSON.stringify({ text: text, sessionId: sessionId || '0' })
       }).catch(function () {})
     },
     onAction: function (cb) {
@@ -251,6 +251,26 @@
     },
     sessionSpawn: function (opts) {
       fetch(API + '/os/session-spawn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(opts || {}) }).catch(function () {})
+    },
+    sessionList: function () {
+      return postJSON('/os/session-list', {}, { sessions: [] }).then(function (r) { return (r && r.sessions) || [] })
+    },
+    sessionStop: function (id) {
+      fetch(API + '/os/session-stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
+    },
+    sessionRestart: function (id) {
+      // Re-spawn a dead session — the backend emits session-spawn, which re-opens its terminal tab.
+      fetch(API + '/os/session-restart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
+    },
+    // Action-items inbox (human side): load the list, tick an item (resolve), clear a resolved one.
+    actionList: function (status) {
+      return postJSON('/os/action-list', { status: status }, { actions: [] }).then(function (r) { return (r && r.actions) || [] })
+    },
+    actionResolve: function (id, resolution) {
+      fetch(API + '/os/action-resolve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, resolution: resolution }) }).catch(function () {})
+    },
+    actionClear: function (id) {
+      fetch(API + '/os/action-clear', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
     },
 
     integrations: {

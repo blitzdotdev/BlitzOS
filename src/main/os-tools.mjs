@@ -298,36 +298,37 @@ export function makeOsTools(ops) {
       path: '/events',
       description:
         "Long-poll the user's activity, coalesced into framed 'moments' (batched ~15s; flushed immediately on navigation or going idle after acting). Each moment carries a snapshot of the surface so you can react without a second read: {seq,surfaceId,url,title,trigger,signals,user[],snapshot}. THE AUTONOMY LOOP: start since=0, loop with since=latest and wait=25; on each moment decide whether to act, then build/arrange surfaces to help.",
-      input_schema: { type: 'object', properties: { since: { type: 'number' }, wait: { type: 'number' } } },
+      input_schema: { type: 'object', properties: { since: { type: 'number' }, wait: { type: 'number' }, session: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)
         const since = Number(a.since) || 0
         const wait = Math.min(Math.max(a.wait == null ? 25 : Number(a.wait) || 0, 0), 25)
-        // No content-share redaction (removed): every transport gets the full moment, snapshot included.
-        const events = await waitForEvents(since, wait * 1000)
+        // `session` scopes the stream to ONE chat session's messages (default '0' = primary chat).
+        const events = await waitForEvents(since, wait * 1000, a.session != null ? String(a.session) : '0')
         return { events, latest: latestSeq(), reminder: EVENTS_REMINDER }
       }
     },
     {
       path: '/say',
       description:
-        "Send a chat message to the USER — it appears in their in-canvas Chat panel. Use this to reply when a moment has trigger:'message' (the user typed to you), or to proactively tell them something. Plain text.",
-      input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
+        "Send a chat message to the USER — it appears in their in-canvas Chat panel. Use this to reply when a moment has trigger:'message' (the user typed to you), or to proactively tell them something. Plain text. If you are a non-primary session, pass {session:'<your id>'} so it lands in YOUR chat.",
+      input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, session: { type: 'string' } } },
       handler: ({ body }) => {
-        const text = String(parse(body).text || '')
+        const b = parse(body)
+        const text = String(b.text || '')
         if (!text) return { status: 400, body: { error: 'text required' } }
-        ops.say(text)
+        ops.say(text, b.session != null ? String(b.session) : '0')
         return { ok: true }
       }
     },
     {
       path: '/customize_widget',
       description:
-        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Read the current source with get_system_ui first. Args: {name, html}.",
-      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' } } },
+        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Read the current source with get_system_ui first. Args: {name, html, session? (which chat session's widget; default '0')}.",
+      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' }, session: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
-        const r = ops.customizeWidget(String(b.name || ''), String(b.html || ''))
+        const r = ops.customizeWidget(String(b.name || ''), String(b.html || ''), b.session != null ? String(b.session) : '0')
         return r.ok ? { ok: true, file: r.rel } : { status: 400, body: { error: r.error || 'failed' } }
       }
     },
@@ -338,6 +339,18 @@ export function makeOsTools(ops) {
       handler: ({ body }) => {
         const html = ops.systemUi(String(parse(body).name || ''))
         return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html }
+      }
+    },
+    {
+      path: '/spawn_chat_session',
+      description:
+        "Open a NEW chat session — a fresh peer agent with its OWN chat widget (a `chat-<id>.md` transcript + window), reachable over this same relay. The new agent is independent: messages typed into ITS widget go only to it, and its `say`s land only in its widget (no cross-talk with you or other sessions). Use this to spin up a parallel agent for a separate task/conversation. Args: {title?}. Returns { session:{id,title} }.",
+      input_schema: { type: 'object', properties: { title: { type: 'string' } } },
+      handler: async ({ body }) => {
+        const a = parse(body)
+        if (typeof ops.spawnChatSession !== 'function') return { status: 501, body: { error: 'chat sessions not supported on this transport' } }
+        const session = await ops.spawnChatSession(a.title != null ? String(a.title) : undefined)
+        return { session }
       }
     },
     {
@@ -384,6 +397,33 @@ export function makeOsTools(ops) {
         const id = String(parse(body).id || '')
         if (!id) return { status: 400, body: { error: 'id required' } }
         return { ok: ops.stopSession(id) }
+      }
+    },
+    {
+      path: '/request_action',
+      description:
+        "Ask the HUMAN to do something only they can — sign in, scan a QR, approve a send, choose an option. Surfaces as a checkable card in their Action-items inbox (NOT a chat wall). Use this instead of /say for anything that needs a human action. When they tick it, you're woken via /events with trigger:'action' {kind:'action-resolved', id, title, resolution}. Args: {title, detail?, kind?:'task'|'signin'|'approve'|'choose'|'scan'|'info', sessionId?, choices?:[string] (for kind:'choose'), id? (pass to UPDATE an existing item)}. Returns { item }.",
+      input_schema: { type: 'object', required: ['title'], properties: { title: { type: 'string' }, detail: { type: 'string' }, kind: { type: 'string', enum: ['task', 'signin', 'approve', 'choose', 'scan', 'info'] }, sessionId: { type: 'string' }, choices: { type: 'array', items: { type: 'string' } }, id: { type: 'string' } } },
+      handler: ({ body }) => {
+        const a = parse(body)
+        const item = ops.requestAction({ title: a.title, detail: a.detail, kind: a.kind, sessionId: a.sessionId, choices: a.choices, id: a.id })
+        return item ? { item } : { status: 400, body: { error: 'title required (or no active workspace)' } }
+      }
+    },
+    {
+      path: '/list_actions',
+      description: "List the human's action items (things YOU asked them to do). Args: {status?:'pending'|'done'|'dismissed'}. Returns { actions }. Check pending ones to see what's still blocking you.",
+      input_schema: { type: 'object', properties: { status: { type: 'string', enum: ['pending', 'done', 'dismissed'] } } },
+      handler: ({ body }) => ({ actions: ops.listActions(parse(body).status) })
+    },
+    {
+      path: '/resolve_action',
+      description: "Retract/resolve one of YOUR action items — e.g. you detected the human already did it, or it's no longer needed. The human normally resolves items themselves by ticking them. Args: {id, resolution?:'done'|'dismissed'}.",
+      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, resolution: { type: 'string' } } },
+      handler: ({ body }) => {
+        const a = parse(body)
+        if (!a.id) return { status: 400, body: { error: 'id required' } }
+        return { ok: ops.resolveAction(String(a.id), a.resolution ? String(a.resolution) : 'done') }
       }
     }
   ]

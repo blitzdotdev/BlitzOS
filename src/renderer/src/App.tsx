@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useDesktop, viewTransform, areaRect, type CreateSurfaceInput } from './store'
+import { useDesktop, viewTransform, areaRect, nextTerminalName, type CreateSurfaceInput } from './store'
 import { pushSessionData, pushSessionExit } from './sessionStream'
 import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
@@ -391,6 +391,8 @@ export default function App(): JSX.Element {
         const surf = a.surface as CreateSurfaceInput
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
         if (surf && (surf.kind === 'web' || surf.kind === 'app')) surf.shared = true
+        // Dedupe by id: a 'create' (e.g. a new chat session) can race a hydrate that already brought it.
+        if (surf && surf.id && st.surfaces.some((s) => s.id === surf.id)) return
         st.createSurface(surf)
       }
       else if (a.type === 'provider-approval') {
@@ -406,10 +408,12 @@ export default function App(): JSX.Element {
       else if (a.type === 'close') st.closeSurface(String(a.id))
       else if (a.type === 'goToPrimary') st.goToPrimary()
       else if (a.type === 'chat') {
-        // The OS owns the transcript (chat.md) and sends the FULL message list; the chat widget renders
-        // props.messages. (Legacy single-text callers fall back to an append.) The chat surface is the
-        // role:'chat' srcdoc the host hydrates — if it isn't here yet, ignore (hydrate will bring it).
-        const chat = st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
+        // The OS owns each session's transcript and sends the FULL message list tagged with sessionId
+        // ('0' = the primary chat). Route to THAT session's chat surface (id 'chat' / 'chat-<id>') so a
+        // per-session widget only shows its own conversation. If it isn't here yet, ignore (hydrate brings it).
+        const sid = a.sessionId != null ? String(a.sessionId) : '0'
+        const chatId = sid === '0' ? 'chat' : `chat-${sid}`
+        const chat = st.surfaces.find((s) => s.id === chatId) || (sid === '0' ? st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat')) : undefined)
         if (!chat) return
         if (Array.isArray(a.messages)) {
           st.updateSurfaceProps(chat.id, { messages: a.messages as Array<{ role: string; text: string }> })
@@ -441,12 +445,21 @@ export default function App(): JSX.Element {
       } else if (a.type === 'session-exit') {
         pushSessionExit(String(a.id), a.exitCode == null ? null : Number(a.exitCode))
       } else if (a.type === 'session-spawn') {
-        // a session was created (by an agent or the user) -> open a terminal for it if not already shown
-        const sid = String(a.id)
-        const open = st.surfaces.some((s) => s.kind === 'native' && s.component === 'terminal' && s.props?.sessionId === sid)
-        if (!open) {
-          const sess = (a.session ?? {}) as { title?: string }
-          st.createSurface(terminalSurfaceInput(sid, sess.title || 'Terminal'))
+        // A session was created (by an agent or the user), or re-adopted on restore. Sessions live as
+        // TABS in a terminal window — add this one as a tab (idempotent). Covers both live spawns and
+        // the restore() replay that brings back tmux survivors after a restart.
+        const sess = (a.session ?? {}) as { title?: string }
+        ensureTerminalTab(String(a.id), sess.title || 'Terminal')
+      } else if (a.type === 'action-item') {
+        // An agent pushed (or updated/resolved) an action item the human must do → the Inbox surface.
+        const item = a.item as { id?: string; status?: string } | undefined
+        if (item && item.id) ensureInboxItem(item as Record<string, unknown> & { id: string; status: string })
+      } else if (a.type === 'action-item-removed') {
+        const id = String(a.id)
+        const panel = st.surfaces.find((s) => s.kind === 'native' && s.component === 'inbox')
+        if (panel) {
+          const its = (panel.props?.items as Array<{ id: string }>) ?? []
+          st.updateSurfaceProps(panel.id, { items: its.filter((x) => x.id !== id) })
         }
       }
     })
@@ -457,6 +470,41 @@ export default function App(): JSX.Element {
   useEffect(() => {
     window.agentOS?.requestHydrate?.()
   }, [])
+
+  // Resume sessions: terminal surfaces aren't serialized (they're runtime-only), so on load — and on
+  // every workspace switch — we reconstruct a terminal tab for each session still ALIVE in this
+  // workspace. tmux keeps the process across a BlitzOS/page restart; calling sessionList() also drives
+  // the backend's lazy restore() (re-adopting survivors). ensureTerminalTab is idempotent, so this
+  // converges with the restore() session-spawn replay rather than double-creating. Keyed on the active
+  // workspace because sessions are per-workspace (a switch wholesale-replaces the canvas first).
+  useEffect(() => {
+    if (!activeWs) return
+    let cancelled = false
+    const api = window.agentOS as unknown as { sessionList?: () => Promise<unknown[]> }
+    Promise.resolve(api?.sessionList?.() ?? [])
+      .then((list) => {
+        if (cancelled || !Array.isArray(list)) return
+        for (const s of list as Array<{ id?: string; title?: string; status?: string }>) {
+          if (s && s.id && s.status === 'running') ensureTerminalTab(String(s.id), s.title || 'Terminal')
+        }
+      })
+      .catch(() => {})
+    // Reconstruct the Action-items inbox: if this workspace has any PENDING items (agent asked, human
+    // hasn't done them yet), bring the inbox back so the task isn't lost across a restart. The inbox
+    // surface is runtime-only (not serialized), so it's rebuilt from the persisted action-items.json.
+    const ax = window.agentOS as unknown as { actionList?: (s?: string) => Promise<unknown[]> }
+    Promise.resolve(ax?.actionList?.('pending') ?? [])
+      .then((items) => {
+        if (cancelled || !Array.isArray(items) || !items.length) return
+        for (const it of items as Array<{ id?: string; status?: string }>) {
+          if (it && it.id) ensureInboxItem(it as Record<string, unknown> & { id: string; status: string })
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [activeWs])
 
   // srcdoc surfaces (agent-authored UI) can fire actions back to the agent: a
   // sandboxed iframe postMessages {__blitz:'action', surfaceId, ...} to us and we
@@ -740,15 +788,37 @@ export default function App(): JSX.Element {
     return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x, y, props: { events } }
   }
 
-  // A terminal surface for a session — placed near the view center; the store cascades/clamps stacks.
-  function terminalSurfaceInput(sessionId: string, title: string): CreateSurfaceInput {
+  // Open/focus a session's terminal tab (idempotent). Shared by the live session-spawn action,
+  // resume-on-load, and the Sessions tray — the placement + add-tab-or-create logic lives in the
+  // store action so all three callers stay in sync.
+  function ensureTerminalTab(sid: string, title: string): void {
+    useDesktop.getState().openSession(sid, title || 'Terminal')
+  }
+
+  // The Action-items inbox docks TOP-RIGHT of the current view (out of the way of chat/activity which
+  // dock left), so a pushed task is visible without covering the conversation.
+  function inboxSurfaceInput(items: Array<Record<string, unknown>>): CreateSurfaceInput {
     const st = useDesktop.getState()
     const { scale, x: tx, y: ty } = st.transform
-    const W = 620
-    const H = 380
-    const x = Math.round((st.viewport.w / 2 - tx) / scale - W / 2)
-    const y = Math.round((st.viewport.h / 2 - ty) / scale - H / 2)
-    return { kind: 'native', component: 'terminal', title: title || 'Terminal', w: W, h: H, x, y, props: { sessionId } }
+    const W = 320
+    const H = 300
+    const x = Math.round((st.viewport.w - tx) / scale - W - 24)
+    const y = Math.round(-ty / scale + 24)
+    return { kind: 'native', component: 'inbox', title: 'Action items', w: W, h: H, x, y, props: { items } }
+  }
+
+  // Merge an action item into the Inbox surface (create it if absent); a new PENDING item raises the
+  // inbox so the human notices. Items are keyed by id (an update replaces the prior copy).
+  function ensureInboxItem(item: Record<string, unknown> & { id: string; status: string }): void {
+    const st = useDesktop.getState()
+    const panel = st.surfaces.find((s) => s.kind === 'native' && s.component === 'inbox')
+    if (panel) {
+      const its = ((panel.props?.items as Array<{ id: string }>) ?? []).filter((x) => x.id !== item.id)
+      st.updateSurfaceProps(panel.id, { items: [...its, item].slice(-100) })
+      if (item.status === 'pending') st.focusSurface(panel.id)
+    } else {
+      st.createSurface(inboxSurfaceInput([item]))
+    }
   }
 
   function addBrowser(): void {
@@ -786,6 +856,31 @@ export default function App(): JSX.Element {
     return r?.ok ? { ok: true } : { ok: false, error: (r as { error?: string })?.error || 'could not switch' }
   }
 
+  // The Sessions tray: a glanceable list of every session in the workspace. Docks to the left of the
+  // current view (like Chat); focus it if it's already open.
+  function openSessions(): void {
+    const st = useDesktop.getState()
+    const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'sessions')
+    if (existing) {
+      st.focusSurface(existing.id)
+      return
+    }
+    const { scale, x: tx, y: ty } = st.transform
+    const W = 380
+    const H = 420
+    const x = Math.round(-tx / scale + 24)
+    const y = Math.round((st.viewport.h / 2 - ty) / scale - H / 2)
+    st.createSurface({ kind: 'native', component: 'sessions', title: 'Sessions', w: W, h: H, x, y })
+  }
+
+  // The Action-items inbox: focus it if open, else create it empty (the agent fills it via request_action).
+  function openInbox(): void {
+    const st = useDesktop.getState()
+    const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'inbox')
+    if (existing) st.focusSurface(existing.id)
+    else st.createSurface(inboxSurfaceInput([]))
+  }
+
   function openChat(): void {
     const st = useDesktop.getState()
     // The chat is a host-hydrated role:'chat' srcdoc widget (blitz-chat.html). Just focus/center it; if a
@@ -797,6 +892,11 @@ export default function App(): JSX.Element {
 
   const active = integrations.find((i) => i.id === connecting) ?? null
   const openFolder = surfaces.find((s) => s.kind === 'native' && s.component === 'folder' && s.props?.open)
+  // Pending action-items count → the toolbar Inbox badge (so the human notices tasks even when the inbox is buried).
+  const inboxPending = (() => {
+    const p = surfaces.find((s) => s.kind === 'native' && s.component === 'inbox')
+    return ((p?.props?.items as Array<{ status?: string }>) ?? []).filter((i) => i.status === 'pending').length
+  })()
 
   return (
     <div id="root-canvas" ref={rootRef} className={grabMode ? 'grab-mode' : undefined} onDragOver={onDragOver} onDrop={onDrop}>
@@ -867,9 +967,24 @@ export default function App(): JSX.Element {
         <button
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
           title="Open a terminal session (a real shell — or an agent like claude/codex)"
-          onClick={() => (window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: 'Terminal' })}
+          onClick={() => (window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })}
         >
           ⌗ Terminal
+        </button>
+        <button
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
+          title="Sessions — every shell / agent in this workspace (open, resume, stop)"
+          onClick={openSessions}
+        >
+          ▤ Sessions
+        </button>
+        <button
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
+          title="Action items — things the agents need you to do"
+          onClick={openInbox}
+        >
+          ☑ Inbox
+          {inboxPending > 0 && <span className="inbox-badge">{inboxPending}</span>}
         </button>
         <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => setShowAi((v) => !v)}>
           <span style={{ display: 'inline-flex', color: aiUrl ? 'var(--positive)' : 'var(--text-muted)' }}>

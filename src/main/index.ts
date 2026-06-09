@@ -3,9 +3,10 @@ import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent } from './osActions'
+import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, setSpawnChatAgent, osChatSessionIds } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
-import { electronSessionOps } from './electron-os-tools'
+import { electronSessionOps, electronActionItems } from './electron-os-tools'
+import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
 import { startAgentRunner } from './agent-runner.mjs'
@@ -200,6 +201,14 @@ app.whenReady().then(() => {
   ipcMain.on('os:session-resize', (_e, p: { id: string; cols: number; rows: number }) => electronSessionOps.resizeSession(String(p?.id), Number(p?.cols) || 80, Number(p?.rows) || 24))
   ipcMain.handle('os:session-read', (_e, id: string) => electronSessionOps.readSession(String(id)))
   ipcMain.on('os:session-spawn', (_e, opts: { command?: string; title?: string }) => { void electronSessionOps.spawnSession(opts || {}) })
+  ipcMain.handle('os:session-list', () => electronSessionOps.listSessions())
+  ipcMain.on('os:session-stop', (_e, id: string) => electronSessionOps.stopSession(String(id)))
+  ipcMain.on('os:session-restart', (_e, id: string) => { void electronSessionOps.restartSession(String(id)) })
+
+  // Action-items inbox (human side): list / resolve / clear.
+  ipcMain.handle('os:action-list', (_e, status?: string) => electronActionItems.listActions(status as ActionStatus | undefined))
+  ipcMain.on('os:action-resolve', (_e, p: { id: string; resolution?: string }) => { electronActionItems.resolveAction(String(p?.id), p?.resolution ? String(p.resolution) : 'done') })
+  ipcMain.on('os:action-clear', (_e, id: string) => { electronActionItems.clearAction(String(id)) })
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()
@@ -215,8 +224,22 @@ app.whenReady().then(() => {
   // is always watching. Opt-in via BLITZ_AGENT (=claude or a custom command). This is
   // process supervision, not decision-making — the agent remains the sole decider.
   if (process.env.BLITZ_AGENT) {
-    electronBrain = startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT })
+    electronBrain = startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, sessionId: '0', getWorkspacePath: () => osWorkspaceContext().workspace_path })
   }
+
+  // Per-session chat agents (#1+): each opened chat session gets its OWN supervised claude over the same
+  // relay, scoped to its id. osActions mints the id + surfaces the widget, then calls this hook to spawn the
+  // agent (process supervision stays here, with the relay url). #0 is electronBrain above.
+  const chatRunners = new Map<string, { stop: () => void; restart: () => void }>()
+  const chatAgentCmd = (): string => (process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : 'claude')
+  const ensureChatAgent = (sessionId: string): void => {
+    const id = String(sessionId)
+    if (id === '0' || chatRunners.has(id)) return
+    chatRunners.set(id, startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: chatAgentCmd(), label: 'chat-' + id, sessionId: id, getWorkspacePath: () => osWorkspaceContext().workspace_path }))
+  }
+  setSpawnChatAgent(ensureChatAgent)
+  // Resume agents for chat sessions opened in a previous run (their meta persists in the workspace).
+  for (const id of osChatSessionIds()) if (id !== '0') ensureChatAgent(id)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

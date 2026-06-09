@@ -63,6 +63,8 @@ export function makeSessionOps({ getWorkspacePath, emit = () => {}, markWrite = 
     resizeSession: (id, cols, rows) => { const m = mgrFor(); return m ? m.resizeSession(id, cols, rows) : false },
     readSession: (id) => { const m = mgrFor(); return m ? m.scrollback(id) : '' },
     stopSession: (id) => { const m = mgrFor(); return m ? m.stopSession(id) : false },
+    /** Re-spawn a dead session from its persisted meta (one-click resume of an exited/stopped session). */
+    restartSession: (id) => { const m = mgrFor(); return m ? m.restartSession(id) : Promise.resolve(null) },
     /** Flush transcripts + close every control client on shutdown (sessions SURVIVE in their tmux servers). */
     stopHosts: () => { for (const { host, mgr } of mgrs.values()) { try { mgr.flushAll(); host.stop() } catch { /* ignore */ } } }
   }

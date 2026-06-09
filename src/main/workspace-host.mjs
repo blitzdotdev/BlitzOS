@@ -4,7 +4,7 @@
 // is ONE implementation, no second copy to drift. The serializer (workspace.mjs) does disk I/O; the
 // per-transport bits (reaching renderers, realizing web surfaces) are adapter callbacks. This is the
 // control-core.mjs / perception-core.mjs pattern: one feature, both modes.
-import { mkdirSync, writeFileSync, readFileSync, watch, statSync, realpathSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, watch, statSync, realpathSync } from 'node:fs'
 import { join, basename, resolve, sep } from 'node:path'
 import {
   writeWorkspace,
@@ -100,7 +100,11 @@ export function createWorkspaceHost(a) {
       //    in-flight). `r.knownIds` ARE the persisted node ids: an osState id NOT in knownIds and
       //    NOT in the reconciled set is genuinely un-persisted → keep it (a DELETED file's id IS a
       //    known node → it correctly drops). Re-apply group memberships to the disk surfaces too.
-      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder'))
+      // Runtime-only surfaces (never serialized as workspace.json nodes). This MUST match the renderer's
+      // isRuntime predicate in store.ts applyReconcile — the two run the same reconcile contract and any
+      // drift is exactly the divergence the parity guard exists to prevent. terminal/sessions/inbox are
+      // reconstructed from session/action-item events on load, so they're kept across a reconcile here too.
+      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'terminal' || s.component === 'sessions' || s.component === 'inbox'))
       const reconciledIds = new Set(r.surfaces.map((s) => s.id))
       const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
       const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))
@@ -181,25 +185,74 @@ export function createWorkspaceHost(a) {
     return removeSurfaceFile(activeWorkspace, String(id))
   }
 
-  // ---- The system Chat: a srcdoc widget whose UI is the workspace file blitz-chat.html (customizable)
-  // and whose transcript is chat.md (the OS appends each message; the widget just renders props.messages).
-  /** Build the chat surface from its workspace files (ensuring/recreating blitz-chat.html if missing). */
-  function buildChatSurface() {
-    ensureSystemRenderer(activeWorkspace, 'chat') // recreate the default UI if it was deleted
+  // ---- The system Chat: a srcdoc widget per SESSION whose UI is blitz-[<id>-]chat.html (customizable)
+  // and whose transcript is chat[-<id>].md. Session '0' is the primary chat (legacy names, pinned). Each
+  // session has its own agent (agent-runner) that /says into ITS transcript. The OS appends each message
+  // and broadcasts {type:'chat', sessionId, messages}; the widget just renders props.messages.
+  const chatSurfaceId = (sessionId = '0') => (!sessionId || String(sessionId) === '0' ? 'chat' : `chat-${sessionId}`)
+  /** The chat sessions in this workspace: always '0' (primary) + any .blitzos/sessions/<id> with kind:'chat'. */
+  function chatSessionIds() {
+    const ids = ['0']
+    try {
+      for (const d of readdirSync(join(activeWorkspace, '.blitzos', 'sessions'), { withFileTypes: true })) {
+        if (!d.isDirectory() || d.name === '0') continue
+        try { const m = JSON.parse(readFileSync(join(activeWorkspace, '.blitzos', 'sessions', d.name, 'meta.json'), 'utf8')); if (m && m.kind === 'chat') ids.push(d.name) } catch { /* skip */ }
+      }
+    } catch { /* no sessions dir */ }
+    return ids
+  }
+  /** Build one session's chat surface (ensuring/recreating its blitz-[<id>-]chat.html if missing). */
+  function buildChatSurface(sessionId = '0') {
+    ensureSystemRenderer(activeWorkspace, 'chat', sessionId)
+    const primary = !sessionId || String(sessionId) === '0'
     return {
-      id: 'chat',
+      id: chatSurfaceId(sessionId),
       kind: 'srcdoc',
       role: 'chat',
-      pinned: true,
-      title: 'Chat',
-      x: -700,
+      pinned: primary, // only the primary chat is pinned-always-on-top; others are normal windows
+      sessionId: String(sessionId),
+      title: primary ? 'Chat' : `Chat ${sessionId}`,
+      x: primary ? -700 : -300,
       y: -210,
       w: 360,
       h: 460,
       z: 5,
-      html: readSystemRenderer(activeWorkspace, 'chat') || '',
-      props: { messages: readChatMessages(activeWorkspace) }
+      html: readSystemRenderer(activeWorkspace, 'chat', sessionId) || '',
+      props: { messages: readChatMessages(activeWorkspace, 400, sessionId), sessionId: String(sessionId) }
     }
+  }
+  /** Every chat session's surface (primary + agent sessions) — built on hydrate/switch. */
+  function buildChatSurfaces() { return chatSessionIds().map((id) => buildChatSurface(id)) }
+  /** Mint the next chat-session id: max existing integer id + 1 (primary '0' counts), so ids stay 1,2,3…
+   *  Non-numeric ids (none today) are ignored for the max. */
+  function newChatSessionId() {
+    let max = 0
+    for (const id of chatSessionIds()) { const n = Number(id); if (Number.isInteger(n) && n > max) max = n }
+    return String(max + 1)
+  }
+  /** Register + LIVE-surface a new chat session: write its meta (kind:'chat'), build its chat widget, add it
+   *  to osState, and broadcast a 'create' so every open renderer shows it without a refresh. Idempotent —
+   *  re-adding an existing session just refreshes its surface. The CALLER (transport) spawns its agent-runner. */
+  function addChatSession(sessionId, title) {
+    const id = String(sessionId)
+    try {
+      const dir = join(activeWorkspace, '.blitzos', 'sessions', id)
+      mkdirSync(dir, { recursive: true })
+      const mp = join(dir, 'meta.json')
+      let m = {}
+      try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
+      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'chat', title: title || m.title || `Chat ${id}`, updatedAt: 0 }, null, 2))
+    } catch { /* best-effort: the surface still works in-memory this session */ }
+    const surface = buildChatSurface(id)
+    try {
+      const st = a.getState()
+      if (st && Array.isArray(st.surfaces)) {
+        const without = st.surfaces.filter((s) => !(s && s.id === surface.id))
+        a.setState({ ...st, surfaces: [...without, surface] })
+      }
+    } catch { /* adapter without getState/setState */ }
+    a.broadcast({ type: 'create', surface })
+    return surface
   }
   /** One-time: an OLD workspace kept the transcript in panels.json — seed chat.md from it so no history is lost. */
   function migrateChatToFile() {
@@ -208,39 +261,40 @@ export function createWorkspaceHost(a) {
     const msgs = chat && chat.props && Array.isArray(chat.props.messages) ? chat.props.messages : []
     for (const m of msgs) appendChatMessage(activeWorkspace, m.role === 'user' ? 'user' : 'agent', String(m.text || ''))
   }
-  /** Append a chat message to chat.md and broadcast the new transcript so the chat widget re-renders.
-   *  role 'user' (the human typed) | 'agent' (a `say`). Returns the full message list. */
-  function appendChat(role, text) {
-    appendChatMessage(activeWorkspace, role, text)
-    const messages = readChatMessages(activeWorkspace)
-    // Keep osState's chat surface current so a FRESH hydrate (a page refresh / a new SSE connect) shows
-    // the up-to-date transcript, not the boot-time snapshot — live renderers also get the broadcast below.
+  /** Append a chat message to a SESSION's transcript and broadcast it so that session's widget re-renders.
+   *  role 'user' (the human typed) | 'agent' (a `say`). sessionId defaults to '0' (the primary chat). */
+  function appendChat(role, text, sessionId = '0') {
+    appendChatMessage(activeWorkspace, role, text, sessionId)
+    const messages = readChatMessages(activeWorkspace, 400, sessionId)
+    const sid = chatSurfaceId(sessionId)
+    // Keep osState's chat surface current so a FRESH hydrate (a page refresh / new SSE connect) shows the
+    // up-to-date transcript, not the boot-time snapshot — live renderers also get the broadcast below.
     try {
       const st = a.getState()
       if (st && Array.isArray(st.surfaces)) {
-        a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.role === 'chat' ? { ...s, props: { ...(s.props || {}), messages } } : s)) })
+        a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.id === sid ? { ...s, props: { ...(s.props || {}), messages } } : s)) })
       }
     } catch {
       /* getState/setState optional on some adapters */
     }
-    a.broadcast({ type: 'chat', messages })
+    a.broadcast({ type: 'chat', sessionId: String(sessionId), messages })
     return messages
   }
-  /** The agent customizes a system widget's UI (e.g. the chat) by rewriting blitz-<name>.html, then we
-   *  live-reload that surface so the change is visible immediately (the iframe reloads → re-earns its
-   *  capabilities; the transcript is re-seeded from props on reload). */
-  function customizeWidget(name, html) {
-    const r = writeSystemRenderer(activeWorkspace, name, html)
+  /** The agent customizes a session's widget UI by rewriting blitz-[<id>-]<name>.html, then we live-reload
+   *  that one surface (the iframe reloads → re-earns its capabilities; transcript re-seeds from props). */
+  function customizeWidget(name, html, sessionId = '0') {
+    const r = writeSystemRenderer(activeWorkspace, name, html, sessionId)
     if (!r.ok) return r
     if (name === 'chat') {
-      const newHtml = readSystemRenderer(activeWorkspace, 'chat') || ''
+      const newHtml = readSystemRenderer(activeWorkspace, 'chat', sessionId) || ''
+      const sid = chatSurfaceId(sessionId)
       try {
         const st = a.getState()
-        if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.role === 'chat' ? { ...s, html: newHtml } : s)) })
+        if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.id === sid ? { ...s, html: newHtml } : s)) })
       } catch {
         /* adapter without getState/setState */
       }
-      a.broadcast({ type: 'update', id: 'chat', patch: { html: newHtml } })
+      a.broadcast({ type: 'update', id: sid, patch: { html: newHtml } })
     } else if (name === 'note') {
       doReconcile({}) // re-materialize every note through the (now-present) blitz-note.html renderer
     }
@@ -299,7 +353,7 @@ export function createWorkspaceHost(a) {
       migrateChatToFile() // seed chat.md from an old panels.json transcript, once
       const panels = readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')
       const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', areaCount: 1 }
-      const surfaces = [...base.surfaces, buildChatSurface(), ...panels]
+      const surfaces = [...base.surfaces, ...buildChatSurfaces(), ...panels]
       // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted areaCount > 1 isn't lost on an
       // empty workspace — the hydrate senders read cached.areaCount, which would otherwise stay undefined→1.
       a.setState({ surfaces, camera: base.camera, mode: base.mode, areaCount: base.areaCount ?? 1 })
@@ -341,7 +395,7 @@ export function createWorkspaceHost(a) {
       // Per-workspace chat/activity: the DESTINATION's own chat (its blitz-chat.html + chat.md) and its
       // activity panel — never carry the previous workspace's over.
       migrateChatToFile()
-      const surfaces = [...next.surfaces, buildChatSurface(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
+      const surfaces = [...next.surfaces, ...buildChatSurfaces(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
       a.setState({ surfaces, camera: next.camera, mode: next.mode, areaCount: next.areaCount ?? 1, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
@@ -409,6 +463,9 @@ export function createWorkspaceHost(a) {
     appendChat,
     customizeWidget,
     systemUi,
+    chatSessionIds,
+    newChatSessionId,
+    addChatSession,
     group,
     // #53: per-workspace consent persistence (read on boot/switch, write on a human grant). The write
     // MERGES (a caller may update just `surfaces` or just `providers` — e.g. the widget bridge vs the
