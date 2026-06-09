@@ -94,6 +94,8 @@ export default function App(): JSX.Element {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [aiUrl, setAiUrl] = useState<string | null>(null)
   const [showAi, setShowAi] = useState(false)
+  // Relay/brain connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
+  const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [showOverview, setShowOverview] = useState(false)
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
@@ -416,6 +418,9 @@ export default function App(): JSX.Element {
           const msgs = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
           st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }].slice(-200) })
         }
+      } else if (a.type === 'agentStatus') {
+        // Backend heartbeat: is the brain's relay link up? Drives the toolbar status pill.
+        setAgentOnline(!!a.online)
       } else if (a.type === 'activity') {
         // A live feed of what the agent is doing (its tool calls) -> the Agent-activity
         // panel (auto-created, pinned), so the user can see it working during latency.
@@ -840,6 +845,15 @@ export default function App(): JSX.Element {
           </span>
           Connect AI
         </button>
+        {isServer && agentOnline !== null && (
+          <span
+            title={agentOnline ? 'Brain connected — it can see your chat and the canvas' : 'Brain link is down — reconnecting…'}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: agentOnline ? 'var(--positive)' : 'var(--text-muted)' }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: agentOnline ? 'var(--positive)' : '#e0a23c' }} />
+            {agentOnline ? 'Agent online' : 'Agent reconnecting…'}
+          </span>
+        )}
         {!isServer && (
           <span className="hint">
             double-tap ⌘ for control mode

@@ -17,7 +17,6 @@
  */
 import { createServer } from 'node:http'
 import { randomBytes, createHash, randomUUID } from 'node:crypto'
-import { connect } from '@agent-socket/sdk'
 import { WebSocketServer } from 'ws'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync, readdirSync, appendFileSync } from 'node:fs'
 import { join, dirname, basename, resolve, sep } from 'node:path'
@@ -47,6 +46,11 @@ import {
   DRAIN
 } from '../src/main/perception-core.mjs'
 import { startAgentRunner } from '../src/main/agent-runner.mjs'
+// The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
+// the relay can't diverge between the two modes again. Only the adapter (publish url/status, restart brain) differs.
+import { startRelay } from '../src/main/relay.mjs'
+// Shared "Agent activity" feed — the SAME module the Electron relay uses; only `emit` differs (SSE here).
+import { withActivity } from '../src/main/activity.mjs'
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
 import { fileURLToPath } from 'node:url'
 
@@ -226,6 +230,8 @@ let osState = { surfaces: [] }
 // Boot-hydrated from the active workspace by the shared host (wsHost.hydrateOnBoot(), created below
 // after broadcast + reconcileSurfaces exist). The renderer adopts it via a `hydrate` on SSE connect.
 let agentUrl = null
+let relay = null // the SHARED relay handle ({ getUrl, isOnline, stop }) — same module Electron uses (no divergence)
+let brainRunner = null // the supervised brain handle ({ stop, restart }) — restarted when the relay URL changes
 const sseClients = new Set()
 // Widget data consent: `${surfaceId}:${provider}` the human approved (via the
 // renderer prompt). The data route 403s until the pair is here — a widget can't
@@ -468,50 +474,10 @@ function injectConnectors(md) {
   return md.replace('{{CONNECTORS}}', parts.join(' · ') || 'No connectors registered.')
 }
 
-// Tools whose calls are surfaced in the on-screen "Agent activity" log, so the user can
-// SEE what the agent is doing during reply latency (polls/reads like /events, list_state,
-// list_widgets are excluded as noise).
-const ACTIVITY_TOOLS = new Set([
-  '/open_window', '/create_surface', '/update_surface', '/move_surface', '/close_surface',
-  '/surface_control', '/read_window', '/spawn_widget', '/save_widget', '/say', '/go_to_primary'
-])
-
-/** A short human label for an agent tool call, for the activity feed. */
-function activityText(path, a) {
-  a = a || {}
-  const host = (u) => { try { return new URL(u).hostname } catch { return String(u || '').slice(0, 40) } }
-  const sid = (id) => (id ? String(id).slice(0, 6) : '')
-  switch (path) {
-    case '/open_window': return `↗ open ${host(a.url)}`
-    case '/create_surface': return `+ ${a.kind || 'surface'}${a.url ? ' ' + host(a.url) : ''}${a.component ? ' ' + a.component : ''}`
-    case '/update_surface': return `✎ update ${sid(a.id)}${a.url ? ' → ' + host(a.url) : ''}`
-    case '/move_surface': return `⇄ move ${sid(a.id)}`
-    case '/close_surface': return `✕ close ${sid(a.id)}`
-    case '/surface_control': return `⌖ ${a.action?.action || 'control'}${a.action?.selector ? ' ' + a.action.selector : ''}`
-    case '/read_window': return `👁 read page ${sid(a.id)}`
-    case '/spawn_widget': return `▣ widget ${a.name || ''}`
-    case '/save_widget': return `💾 save widget ${a.name || ''}`
-    case '/say': return '💬 replying'
-    case '/go_to_primary': return '⌂ recenter'
-    default: return path.replace(/^\//, '')
-  }
-}
-
-/** Wrap action-tool handlers to broadcast an activity event (before running) so the
- *  on-screen Agent-activity panel shows what the agent is doing in real time. */
-function withActivity(tools) {
-  return tools.map((t) => {
-    if (!ACTIVITY_TOOLS.has(t.path)) return t
-    const orig = t.handler
-    return {
-      ...t,
-      handler: (ctx) => {
-        try { broadcast({ type: 'activity', at: Date.now(), text: activityText(t.path, toolBody(ctx?.body)) }) } catch {}
-        return orig(ctx)
-      }
-    }
-  })
-}
+// The "Agent activity" feed (ACTIVITY_TOOLS / activityText / withActivity) is the SHARED
+// core in src/main/activity.mjs — the SAME module the Electron relay (agentSocket.ts) uses,
+// so it can't diverge. Here `emit` is the SSE broadcast; in Electron it's webContents.send.
+// See `withActivity(makeOsTools(serverOps)…, broadcast)` in startServerRelay below.
 
 // The server's binding of the SHARED tool registry (os-tools.mjs) — the primitive operations every shared
 // handler calls. Same registry as Electron (agentSocket.ts / control-server.ts), different ops: broadcast over
@@ -617,13 +583,17 @@ const serverOps = {
   connectedProviders: () => Object.keys(readTokens())
 }
 
-async function startOsAgentSocket() {
-  try {
-    const session = await connect({
+// Start the agent-socket relay via the SHARED lifecycle module (relay.mjs) — connect + self-heal + watchdog +
+// status all live there now (one impl, Electron too). The server only supplies its tools + the adapter: how to
+// publish the URL/status to the browser (SSE broadcast) and how to restart its brain.
+function startServerRelay() {
+  relay = startRelay(
+    {
       appId: process.env.AGENT_SOCKET_APP_ID || 'as_app_anon',
       baseUrl: process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev',
       appDescription: 'BlitzOS (browser preview): an agent OS desktop — open and arrange surfaces on an infinite canvas.',
       agentsMd: injectConnectors(OS_AGENTS_MD),
+      label: 'blitzos-preview',
       // The ONE shared registry, server-bound (serverOps). Same paths/descriptions/schemas/handlers as Electron;
       // mapped to the agent-socket tool shape. transport:relay — the server is untrusted like the relay (no
       // localhost trust), so the few security branches behave identically. Add/change a tool in os-tools.mjs once.
@@ -633,23 +603,36 @@ async function startOsAgentSocket() {
           description: t.description,
           ...(t.input_schema ? { input_schema: t.input_schema } : {}),
           handler: ({ body }) => t.handler({ body: body || '', transport: 'relay' })
-        }))
+        })),
+        broadcast // emit each activity event over SSE (Electron emits via webContents.send)
       )
-    })
-    const link = await session.mintAgentToken({ label: 'blitzos-preview' })
-    agentUrl = link.url
-    broadcast({ __agentUrl: agentUrl })
-    console.log('[agent-os backend] agent-socket paste URL (drive the preview from any AI chat):\n  ' + agentUrl)
-  } catch (e) {
-    console.error('[agent-os backend] agent-socket connect failed (canvas + integrations still work):', e?.message || e)
-  }
+    },
+    {
+      onUrl: (u) => {
+        agentUrl = u
+        broadcast({ __agentUrl: agentUrl })
+        console.log('[agent-os backend] agent-socket paste URL (drive the preview from any AI chat):\n  ' + agentUrl)
+      },
+      onStatus: (online) => broadcast({ type: 'agentStatus', online, agentUrl, brain: !!process.env.BLITZ_AGENT }),
+      restartBrain: () => brainRunner && brainRunner.restart()
+    }
+  )
 }
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', PUBLIC_BASE_URL)
   const path = url.pathname
 
-  if (path === '/api/health') return json(res, 200, { ok: true, redirectUri: REDIRECT_URI })
+  if (path === '/api/health')
+    return json(res, 200, {
+      ok: true,
+      redirectUri: REDIRECT_URI,
+      // relay + brain health, so `curl /api/health` (or start-all's doctor) can tell if the agent path is live
+      relayOnline: !!(relay && relay.isOnline()),
+      agentUrl,
+      brain: !!process.env.BLITZ_AGENT,
+      workspace: wsHost.active()
+    })
   if (path === '/api/integrations' && req.method === 'GET') return json(res, 200, statuses())
 
   // POST /api/integrations/:id/start  -> { authorizeUrl } | { error, needsConfig }
@@ -793,6 +776,9 @@ const server = createServer(async (req, res) => {
     })
     res.write(': connected\n\n')
     if (agentUrl) res.write(`data: ${JSON.stringify({ __agentUrl: agentUrl })}\n\n`)
+    // Send the current relay/brain status immediately so the toolbar pill shows online/offline on first
+    // paint (don't make a fresh tab wait up to 20s for the next watchdog tick).
+    res.write(`data: ${JSON.stringify({ type: 'agentStatus', online: !!(relay && relay.isOnline()), agentUrl, brain: !!process.env.BLITZ_AGENT })}\n\n`)
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
     res.write(
@@ -1173,8 +1159,8 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`[agent-os backend] listening on http://127.0.0.1:${PORT}`)
   console.log(`[agent-os backend] OAuth redirect URI to register: ${REDIRECT_URI}`)
   console.log(`[agent-os backend] providers configured: ${statuses().filter((s) => s.configured).map((s) => s.id).join(', ') || '(none — add integrations.config.json)'}`)
-  // Connect to the agent-socket relay so a pasted URL can drive the preview.
-  startOsAgentSocket()
+  // Connect to the agent-socket relay (shared self-healing lifecycle in relay.mjs) so a pasted URL can drive it.
+  startServerRelay()
   // Server mode: bring up the headless browser host for live web surfaces.
   initServerMode()
   // Phase 3: watch the workspace folder so external file edits (agent/Finder/git) reflect live.
@@ -1183,8 +1169,9 @@ server.listen(PORT, '127.0.0.1', () => {
   // alive (auto-restart on exit), so a brain is always watching. Opt-in via BLITZ_AGENT
   // (=claude or a custom command); off by default (continuous LLM use has a cost).
   if (process.env.BLITZ_AGENT) {
-    startAgentRunner({ getUrl: () => agentUrl, cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, label: 'server-agent' })
+    brainRunner = startAgentRunner({ getUrl: () => agentUrl, cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, label: 'server-agent' })
   }
+  // (the relay self-heal + watchdog + status heartbeat now live in the shared relay.mjs — see startServerRelay)
 })
 
 // On shutdown, gracefully close the browser so its profile (cookies/localStorage = the

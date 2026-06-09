@@ -10,12 +10,15 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "parity": "node scripts/check-parity.mjs",
+    "check": "npm run typecheck && npm run parity && npm run build",
     "onboard": "node scripts/onboarding-scan.mjs --no-fda --prompt src/main/blitzos-onboarding.md --out -",
     "onboard:fda": "node scripts/onboarding-scan.mjs --prompt src/main/blitzos-onboarding.md --out -",
     "onboard:scan": "node scripts/onboarding-scan.mjs --out -"
   },
   "dependencies": {
     "@agent-socket/sdk": "file:./vendor/agent-socket-sdk",
+    "node-pty": "^1.1.0",
     "ws": "^8.18.0",
     "zustand": "^4.5.5"
   },
