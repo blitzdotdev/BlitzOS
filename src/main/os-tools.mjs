@@ -65,7 +65,7 @@ export function makeOsTools(ops) {
     {
       path: '/create_surface',
       description:
-        'Create a surface (kind: web | app | srcdoc | native). web/app take url; srcdoc takes html; native takes component+props. Returns { id, workspace, workspace_path, siblings:[titles] }. NOTE for a LOCAL agent (you can see the filesystem): the folder IS the canvas — prefer authoring by writing a file INTO workspace_path (`<name>.html`=panel, `<name>.md`=note, `<name>.weblink`={"url":…}=web); it materializes as a surface in ~250ms, no escaping, no /tmp. Use THIS api when remote (relay, no file access) or when you need exact x/y/w/h placed in one shot. `siblings` tells you what is already on this desktop — if it is unrelated to your task, consider create_workspace first.',
+        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html, native takes component+props. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace).',
       input_schema: {
         type: 'object',
         required: ['kind'],
@@ -142,13 +142,13 @@ export function makeOsTools(ops) {
     {
       path: '/list_state',
       description:
-        'List the canvas: the active workspace name + its absolute folder path (workspace_path) + the open surfaces. A LOCAL agent authors surfaces by writing files into workspace_path (the folder IS the canvas); check the surfaces here to judge whether new work belongs on THIS desktop or a fresh workspace.',
+        'List the canvas: active workspace, its folder path (workspace_path), and the open surfaces. Local agents author by writing files into workspace_path; check surfaces to judge THIS desktop vs a fresh workspace.',
       handler: () => serializeStateForAgent(ops.getState())
     },
     {
       path: '/list_workspaces',
       description:
-        "List the user's workspaces (separate folder-backed desktops, like macOS Spaces but persistent — each is its own folder = its own memory). Returns { workspaces:[{name,nodeCount,updatedAt,path}], active, activePath, root }. CALL THIS FIRST: reason about WHERE the task belongs before building. A workspace holding UNRELATED surfaces is NOT a continuation — create_workspace + switch_workspace for a clean stage. activePath is the folder you author into.",
+        "List the user's workspaces (separate persistent desktops; each folder = its own memory). Returns { workspaces:[{name,nodeCount,updatedAt,path}], active, activePath, root }. CALL FIRST to decide WHERE work belongs: a workspace with UNRELATED surfaces isn't a continuation → create_workspace + switch_workspace. activePath = the folder you author into.",
       handler: () => ops.listWorkspaces()
     },
     {
@@ -175,7 +175,7 @@ export function makeOsTools(ops) {
     {
       path: '/new_app',
       description:
-        'Provision a REAL blitz.dev app in one call (SQLite + R2 + auth + admin UI, edge-deployed, no signup). Use EAGERLY, up front, for any DELIVERABLE the user will keep or ship — a landing page, site, web app, tool, or shareable dashboard — EVEN IF v1 looks static (on blitz.dev it gets a live claimable URL, deploys on every save, and is one save from a backend). NOT for session scaffolding (plan notes, status widgets, one-off panels → those are srcdoc / workspace files). Returns { preview_url, claim_url, agents_md, slug }. THEN fetch agents_md and author files through it (each save auto-builds + deploys); open the preview_url as an `app` surface. Args { slug } (a-z 0-9 -, unique).',
+        "Provision a real blitz.dev app (SQLite+R2+auth, edge-deployed) for a DELIVERABLE the user will keep/ship (landing page, site, app, dashboard — even if v1 looks static); not for session scaffolding (→ srcdoc). Returns { preview_url, claim_url, agents_md, slug }. Then author files and PRESENT as one `app` surface per page/variation, tiled (canvas = the gallery, never an in-app chooser). Speed-first: build what's asked, offer backends. Working rules in the doctrine's 'Build deliverables on blitz.dev'. Args { slug } (a-z 0-9 -).",
       input_schema: { type: 'object', required: ['slug'], properties: { slug: { type: 'string', description: 'unique project slug, a-z 0-9 -' }, title: { type: 'string' } } },
       handler: async ({ body }) => {
         const slug = String(parse(body).slug || '')
@@ -184,7 +184,7 @@ export function makeOsTools(ops) {
         if (!/^[a-z0-9][a-z0-9-]{1,48}$/.test(slug)) return { status: 400, body: { error: 'slug must be a-z 0-9 - (2-49 chars, start alphanumeric)' } }
         const r = await provisionBlitzApp(slug)
         if (!r.ok) return { status: r.status || 400, body: { error: r.error } }
-        return { ok: true, slug, preview_url: r.preview_url, claim_url: r.claim_url, agents_md: r.agents_md, next: 'Fetch agents_md, save a starter file (it auto-builds + deploys), then open the preview_url as an `app` surface. Tell the user the preview + claim URLs.' }
+        return { ok: true, slug, preview_url: r.preview_url, claim_url: r.claim_url, agents_md: r.agents_md, next: "IS THIS ONE OF SEVERAL VARIATIONS/PARTS? Then STOP — do NOT author here. You are the orchestrator: provision the rest, put up a placeholder surface per part, and spawn ONE sub-agent per part (build NONE yourself — not even the 'reference'/canonical one, and don't 'prove the deploy on this one first'). SINGLE deliverable only: author files (relative imports auto-bundle, every save deploys — no bundler), open as one `app` surface, offer backends, tell the user the preview + claim URLs." }
       }
     },
     {

@@ -7,7 +7,8 @@ import {
   IntegrationStatus,
   GRID,
   WIDGET_W,
-  WIDGET_H
+  WIDGET_H,
+  isRuntimePanel
 } from './types'
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -482,7 +483,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         // Runtime chat/activity panels persist absolute x/y. Boot is always area 0, so a panel last left
         // in another area would restore off-screen — pull it back into area 0 so the agent conversation
         // is always reachable on boot (a no-op in the single-area case; content surfaces keep their area).
-        if (base.role === 'chat' || base.role === 'activity' || (base.kind === 'native' && (base.component === 'chat' || base.component === 'activity'))) {
+        if (isRuntimePanel(base)) {
           const p = desktopClamp(base.x, base.y, base.w, base.h, s.viewport, 0)
           return { ...base, x: p.x, y: p.y }
         }
@@ -509,7 +510,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const keepRuntime = s.surfaces.filter(isRuntime)
       const localById = new Map(s.surfaces.map((w) => [w.id, w]))
       const fileBacked = incoming
-        .filter((w) => !isRuntime(w))
+        .filter((w) => !isRuntimePanel(w))
         .map((w) => {
           const live = localById.get(w.id)
           // Brand-new surface (a just-dropped file, a folder the agent created): take its disk content,

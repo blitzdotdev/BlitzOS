@@ -33,12 +33,6 @@ export function initCdp(): void {
   })
 }
 
-/** Explicitly hand DevTools back to the user (also fired on surface close). */
-export function releaseControl(surfaceId: string): void {
-  const wcId = registry.get(surfaceId)
-  if (wcId !== undefined) detachById(wcId)
-}
-
 function detachById(wcId: number): void {
   const t = idleTimers.get(wcId)
   if (t) {

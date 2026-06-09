@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDesktop, viewTransform, areaRect, type CreateSurfaceInput } from './store'
 import type { Surface, CanvasTransform } from './types'
+import { isRuntimePanel } from './types'
 import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
 import { Overview } from './components/Overview'
@@ -227,23 +228,13 @@ export default function App(): JSX.Element {
         e.preventDefault()
         useDesktop.getState().goToPrimary()
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'g' || e.key === 'G')) {
-        // Cmd+G: group the selection into a REAL folder on disk (mkdir + mv); the reconcile that follows
-        // replaces the loose tiles with one tile (#52). The KIND is inferred: a selection of only file/dir
-        // tiles → a normal FILE folder (collapses to a file-manager); anything with a window/widget → a
-        // BOARD (.board) so those surfaces stay LIVE and splay on the canvas. Falls back to in-memory
-        // grouping only if no host is wired (e.g. a bare preview with no backend).
+        // Cmd+G: collapse the multi-selection into an iPhone-style folder you tap to open (in-memory
+        // `component:'folder'` via groupSelection). Works for ANY surface kind — windows, widgets, notes
+        // — whereas the file-based disk folder/board (the old Cmd+G path) silently no-ops on a widget
+        // with no file to move. REAL persistent folders/boards stay on the right-click desktop menu and
+        // the agent's `group` tool, so this keybind is purely the quick visual grouping.
         e.preventDefault()
-        const st = useDesktop.getState()
-        const ids = [...st.selection]
-        if (ids.length >= 2 && window.agentOS?.groupIntoFolder) {
-          const sel = st.surfaces.filter((s) => ids.includes(s.id))
-          const allFiles = sel.length > 0 && sel.every((s) => s.kind === 'native' && (s.component === 'file' || s.component === 'dir'))
-          const kind = allFiles ? 'folder' : 'board'
-          void window.agentOS.groupIntoFolder(allFiles ? 'Folder' : 'Board', ids, kind)
-          st.clearSelection()
-        } else {
-          st.groupSelection()
-        }
+        useDesktop.getState().groupSelection()
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
         // layout undo (Cmd+Z) when nothing editable is focused; else let the browser text-undo win
         const ae = document.activeElement as HTMLElement | null
@@ -443,15 +434,6 @@ export default function App(): JSX.Element {
         } else {
           st.createSurface(activitySurfaceInput([evt]))
         }
-      } else if (a.type === 'group') {
-        // Agent packed related surfaces into a named iPhone-style folder.
-        st.group(
-          (a.ids as string[]) ?? [],
-          a.name != null ? String(a.name) : undefined,
-          a.x != null ? Number(a.x) : undefined,
-          a.y != null ? Number(a.y) : undefined,
-          a.folderId != null ? String(a.folderId) : undefined
-        )
       }
     })
   }, [])
@@ -522,7 +504,7 @@ export default function App(): JSX.Element {
         component: s.component,
         role: s.role,
         // Chat + Agent-activity panels are pinned always-on-top — the agent must not cover them
-        pinned: s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+        pinned: isRuntimePanel(s)
       }))
       // The world-space rectangle currently visible on screen (screen = world*scale + t).
       const view = {
@@ -668,6 +650,10 @@ export default function App(): JSX.Element {
   }
 
   function onBgDown(e: React.PointerEvent): void {
+    // Only the LEFT button pans / starts a marquee / clears the selection. A right-click is the context
+    // menu (onBgContextMenu) — it must NOT clear the selection, or "New Folder/Board with Selection (N)"
+    // would never show (the right-click's pointerdown was wiping the very selection the menu groups).
+    if (e.button !== 0) return
     const st = useDesktop.getState()
     if (st.mode === 'canvas' && !st.locked) {
       // unlocked canvas: drag the background to pan
@@ -920,11 +906,18 @@ export default function App(): JSX.Element {
           items={[
             { label: 'New Folder', onClick: () => makeFolder('folder', menu.wx, menu.wy) },
             { label: 'New Board', onClick: () => makeFolder('board', menu.wx, menu.wy) },
+            // A selection of LIVE surfaces (windows/widgets/notes) → the iPhone-style collapsing folder you
+            // tap to open (groupSelection — in-memory, works for ANY kind). Only a selection of REAL file/dir
+            // tiles offers the disk folder, since collapsing live surfaces into a file-manager would just turn
+            // them into bare file entries. (Real disk folders/boards stay the agent's `group` tool + drag-drop.)
             ...(selection.length
-              ? [
-                  { label: `New Folder with Selection (${selection.length})`, onClick: () => groupSelectionInto('folder') },
-                  { label: `New Board with Selection (${selection.length})`, onClick: () => groupSelectionInto('board') }
-                ]
+              ? (() => {
+                  const sel = surfaces.filter((s) => selection.includes(s.id))
+                  const allFiles = sel.length > 0 && sel.every((s) => s.kind === 'native' && (s.component === 'file' || s.component === 'dir'))
+                  return allFiles
+                    ? [{ label: `New Folder with Selection (${selection.length})`, onClick: () => groupSelectionInto('folder') }]
+                    : [{ label: `Group into Folder (${selection.length})`, onClick: () => useDesktop.getState().groupSelection() }]
+                })()
               : [])
           ]}
         />

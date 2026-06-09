@@ -57,6 +57,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   // "typing on Google → back to HN" bug). Programmatic navigation goes through loadURL (see below).
   const initialUrl = useRef(surface.url)
   const serverMode = !!window.agentOS?.serverMode
+  const [draft, setDraft] = useState(surface.url ?? '') // address-bar draft text (web/app surfaces)
   const zoom = surface.zoom ?? 1
 
   // If this surface unmounts mid-drag (the agent closes it, a reconcile removes its file, a folder
@@ -149,6 +150,38 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       /* not ready — dom-ready will reconcile on the next store change */
     }
   }, [surface.kind, surface.id, surface.url, serverMode])
+
+  // Keep the address-bar draft in sync with the live/stored url (user navigation folds into the store
+  // via the sync effect above; an agent update_surface{url} also lands here).
+  useEffect(() => setDraft(surface.url ?? ''), [surface.url])
+
+  function normalizeUrl(s: string): string {
+    const t = s.trim()
+    if (!t || /^https?:\/\//i.test(t)) return t
+    return 'https://' + t
+  }
+  // Address-bar submit: navigate THIS surface. app (iframe) → set src through the store; web → loadURL
+  // (Electron) or serverNavigate (server preview), keeping the store url/title in sync either way.
+  function go(e: React.FormEvent): void {
+    e.preventDefault()
+    const u = normalizeUrl(draft)
+    if (!u) return
+    setDraft(u)
+    if (surface.kind === 'app') {
+      useDesktop.getState().updateSurface(surface.id, { url: u })
+      return
+    }
+    if (serverMode) {
+      window.agentOS?.serverNavigate?.(surface.id, u)
+      let title = u
+      try {
+        title = new URL(u).hostname || u
+      } catch {
+        /* keep u */
+      }
+      useDesktop.getState().updateSurface(surface.id, { url: u, title })
+    } else (webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
+  }
 
   // Server mode: mount the streamed <canvas> for this web surface (draws screencast
   // frames, forwards pointer/wheel/key to the server browser via the stream WS).
@@ -520,7 +553,19 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />}
           <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
         </div>
-        <div className="window-bar-fill" />
+        {surface.kind === 'web' || surface.kind === 'app' ? (
+          <form className="window-url" onSubmit={go} onPointerDown={stop}>
+            <input
+              value={draft}
+              spellCheck={false}
+              placeholder="url…"
+              onChange={(e) => setDraft(e.target.value)}
+              onPointerDown={stop}
+            />
+          </form>
+        ) : (
+          <div className="window-bar-fill" />
+        )}
       </div>
       <div
         className="window-body"

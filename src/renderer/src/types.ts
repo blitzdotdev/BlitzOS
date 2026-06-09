@@ -60,4 +60,11 @@ export const GRID = 20
 export const WIDGET_W = 240
 export const WIDGET_H = 168
 
+/** A runtime OS panel (the in-canvas Chat / Agent-activity): pinned above normal windows and never
+ *  serialized as a workspace node. Centralizes the predicate previously copy-pasted across the renderer
+ *  (store hydrate/reconcile, App push, SurfaceFrame z-band). */
+export function isRuntimePanel(s: Pick<Surface, 'role' | 'kind' | 'component'>): boolean {
+  return s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+}
+
 export type { IntegrationStatus } from '../../preload'

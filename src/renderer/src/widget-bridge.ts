@@ -18,14 +18,6 @@
 // iframe.contentWindow) — NOT event.origin, which is the literal string "null" for a
 // sandboxed srcdoc and is forgeable. reqId is namespaced per-surface by that identity.
 
-export const BLITZ_MSG = {
-  hello: 'blitz:hello',
-  init: 'blitz:init',
-  props: 'blitz:props',
-  req: 'blitz:req',
-  res: 'blitz:res'
-} as const
-
 /** Injected (prepended to srcDoc) so `window.blitz` exists in every widget. */
 export const BRIDGE_SHIM = `<script>
 (function () {
