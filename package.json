@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@agent-socket/sdk": "file:./vendor/agent-socket-sdk",
+    "node-pty": "^1.1.0",
     "ws": "^8.18.0",
     "zustand": "^4.5.5"
   },
