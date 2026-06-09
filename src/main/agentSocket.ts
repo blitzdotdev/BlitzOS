@@ -2,6 +2,8 @@ import type { BrowserWindow } from 'electron'
 import { startRelay } from './relay.mjs'
 import { setRelay } from './sessionFile'
 import { OS_TOOLS } from './electron-os-tools'
+// Shared "Agent activity" feed — the SAME module the server uses; only `emit` differs (webContents.send here).
+import { withActivity } from './activity.mjs'
 // The single source of truth for the BlitzOS operating doc. Vite inlines the .md at
 // build (the main bundle has no runtime fs access to it); the server preview reads the
 // same file at runtime. Edit src/main/blitzos-agents.md, then relaunch.
@@ -32,12 +34,18 @@ export function startAgentSocket(getWindow: () => BrowserWindow | null, restartB
       label: 'blitzos',
       // The relay (untrusted) path of the SHARED tool registry — see os-tools.mjs (bound for Electron in
       // electron-os-tools.ts). Every tool runs with transport:'relay'. To add/change a tool, edit os-tools.mjs.
-      tools: OS_TOOLS.map((t) => ({
-        path: t.path,
-        description: t.description,
-        ...(t.input_schema ? { input_schema: t.input_schema } : {}),
-        handler: (ctx: { body?: string }) => t.handler({ body: ctx?.body ?? '', transport: 'relay' })
-      }))
+      // withActivity is the SAME shared wrapper the server uses — it publishes an activity event before each
+      // action tool so the on-screen Agent-activity panel shows what the agent is doing (Electron emits it via
+      // webContents.send; the server over SSE). This is what Electron was missing — the panel had no feed.
+      tools: withActivity(
+        OS_TOOLS.map((t) => ({
+          path: t.path,
+          description: t.description,
+          ...(t.input_schema ? { input_schema: t.input_schema } : {}),
+          handler: (ctx: { body?: string }) => t.handler({ body: ctx?.body ?? '', transport: 'relay' })
+        })),
+        (ev) => getWindow()?.webContents.send('os:action', ev)
+      )
     },
     {
       onUrl: (url) => {

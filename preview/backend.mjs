@@ -49,6 +49,8 @@ import { startAgentRunner } from '../src/main/agent-runner.mjs'
 // The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
 // the relay can't diverge between the two modes again. Only the adapter (publish url/status, restart brain) differs.
 import { startRelay } from '../src/main/relay.mjs'
+// Shared "Agent activity" feed — the SAME module the Electron relay uses; only `emit` differs (SSE here).
+import { withActivity } from '../src/main/activity.mjs'
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
 import { fileURLToPath } from 'node:url'
 
@@ -461,57 +463,10 @@ function toolBody(body) {
 // One source of truth (the SAME .md the Electron relay serves): src/main/blitzos-agents.md.
 const OS_AGENTS_MD = readFileSync(new URL('../src/main/blitzos-agents.md', import.meta.url), 'utf8')
 
-// Tools whose calls are surfaced in the on-screen "Agent activity" log, so the user can
-// SEE what the agent is doing during reply latency (polls/reads like /events, list_state,
-// list_widgets are excluded as noise).
-const ACTIVITY_TOOLS = new Set([
-  '/open_window', '/create_surface', '/update_surface', '/move_surface', '/close_surface',
-  '/surface_control', '/read_window', '/spawn_widget', '/save_widget', '/say', '/go_to_primary',
-  '/group', '/provider_call', '/new_app', '/customize_widget', '/create_workspace', '/switch_workspace'
-])
-
-/** A short human label for an agent tool call, for the activity feed. */
-function activityText(path, a) {
-  a = a || {}
-  const host = (u) => { try { return new URL(u).hostname } catch { return String(u || '').slice(0, 40) } }
-  const clip = (t, n) => { t = String(t || ''); return t.length > n ? t.slice(0, n) + '…' : t }
-  switch (path) {
-    case '/open_window': return `↗ opening ${host(a.url)}`
-    case '/create_surface': return `+ ${a.kind || 'surface'}${a.url ? ' ' + host(a.url) : ''}${a.title ? ' · ' + clip(a.title, 24) : a.component ? ' ' + a.component : ''}`
-    case '/update_surface': return `✎ updating${a.url ? ' → ' + host(a.url) : a.title ? ' · ' + clip(a.title, 24) : ''}`
-    case '/move_surface': return '⇄ moving a window'
-    case '/close_surface': return '✕ closing a window'
-    case '/group': return `🗂 grouping into “${clip(a.name || 'folder', 24)}”`
-    case '/surface_control': return `⌖ ${a.action?.action || 'acting'}${a.action?.text ? ' “' + clip(a.action.text, 20) + '”' : a.action?.selector ? ' ' + clip(a.action.selector, 20) : ''}`
-    case '/read_window': return '👁 reading the page'
-    case '/provider_call': return `🔌 ${a.provider || 'integration'} ${a.method || 'GET'} ${clip(a.path, 28)}`
-    case '/spawn_widget': return `▣ opening widget ${a.name || ''}`
-    case '/save_widget': return `💾 saving widget ${a.name || ''}`
-    case '/new_app': return `🚀 provisioning app ${a.slug || ''}`
-    case '/customize_widget': return `🎨 restyling ${a.name || 'widget'}`
-    case '/create_workspace': return `🗃 new workspace “${clip(a.name, 20)}”`
-    case '/switch_workspace': return `↪ switching to “${clip(a.name, 20)}”`
-    case '/say': return `💬 ${clip(a.text, 52)}`
-    case '/go_to_primary': return '⌂ recenter'
-    default: return path.replace(/^\//, '')
-  }
-}
-
-/** Wrap action-tool handlers to broadcast an activity event (before running) so the
- *  on-screen Agent-activity panel shows what the agent is doing in real time. */
-function withActivity(tools) {
-  return tools.map((t) => {
-    if (!ACTIVITY_TOOLS.has(t.path)) return t
-    const orig = t.handler
-    return {
-      ...t,
-      handler: (ctx) => {
-        try { broadcast({ type: 'activity', at: Date.now(), text: activityText(t.path, toolBody(ctx?.body)) }) } catch {}
-        return orig(ctx)
-      }
-    }
-  })
-}
+// The "Agent activity" feed (ACTIVITY_TOOLS / activityText / withActivity) is the SHARED
+// core in src/main/activity.mjs — the SAME module the Electron relay (agentSocket.ts) uses,
+// so it can't diverge. Here `emit` is the SSE broadcast; in Electron it's webContents.send.
+// See `withActivity(makeOsTools(serverOps)…, broadcast)` in startServerRelay below.
 
 // The server's binding of the SHARED tool registry (os-tools.mjs) — the primitive operations every shared
 // handler calls. Same registry as Electron (agentSocket.ts / control-server.ts), different ops: broadcast over
@@ -635,7 +590,8 @@ function startServerRelay() {
           description: t.description,
           ...(t.input_schema ? { input_schema: t.input_schema } : {}),
           handler: ({ body }) => t.handler({ body: body || '', transport: 'relay' })
-        }))
+        })),
+        broadcast // emit each activity event over SSE (Electron emits via webContents.send)
       )
     },
     {
