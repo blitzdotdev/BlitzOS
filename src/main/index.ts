@@ -199,6 +199,7 @@ app.whenReady().then(() => {
   ipcMain.on('os:session-input', (_e, p: { id: string; data: string }) => electronSessionOps.sendToSession(String(p?.id), String(p?.data ?? '')))
   ipcMain.on('os:session-resize', (_e, p: { id: string; cols: number; rows: number }) => electronSessionOps.resizeSession(String(p?.id), Number(p?.cols) || 80, Number(p?.rows) || 24))
   ipcMain.handle('os:session-read', (_e, id: string) => electronSessionOps.readSession(String(id)))
+  ipcMain.on('os:session-spawn', (_e, opts: { command?: string; title?: string }) => { void electronSessionOps.spawnSession(opts || {}) })
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()

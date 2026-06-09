@@ -864,6 +864,13 @@ export default function App(): JSX.Element {
         <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={openChat}>
           <IconChat size={15} /> Chat
         </button>
+        <button
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
+          title="Open a terminal session (a real shell — or an agent like claude/codex)"
+          onClick={() => (window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: 'Terminal' })}
+        >
+          ⌗ Terminal
+        </button>
         <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => setShowAi((v) => !v)}>
           <span style={{ display: 'inline-flex', color: aiUrl ? 'var(--positive)' : 'var(--text-muted)' }}>
             <IconSparkle size={15} />

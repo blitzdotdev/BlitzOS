@@ -249,6 +249,9 @@
     sessionRead: function (id) {
       return postJSON('/os/session-read', { id: id }, { text: '' }).then(function (r) { return (r && r.text) || '' })
     },
+    sessionSpawn: function (opts) {
+      fetch(API + '/os/session-spawn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(opts || {}) }).catch(function () {})
+    },
 
     integrations: {
       list: function () { return getJSON('/integrations') },

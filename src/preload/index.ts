@@ -94,6 +94,10 @@ const api = {
   sessionRead(id: string): Promise<string> {
     return ipcRenderer.invoke('os:session-read', id) as Promise<string>
   },
+  /** Open a new session from the UI (a "+ Terminal" button) — the backend emits session-spawn which auto-opens its terminal. */
+  sessionSpawn(opts: { command?: string; title?: string }): void {
+    ipcRenderer.send('os:session-spawn', opts)
+  },
   /** The agent-socket paste URL (for the "Connect AI" affordance). */
   onAgentSocketUrl(cb: (url: string) => void): () => void {
     const listener = (_e: unknown, url: string): void => cb(url)

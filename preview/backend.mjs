@@ -814,6 +814,12 @@ const server = createServer(async (req, res) => {
     req.on('end', () => { const b = toolBody(body); json(res, 200, { text: serverSessionOps.readSession(String(b.id || '')) }) })
     return
   }
+  if (path === '/api/os/session-spawn' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverSessionOps.spawnSession({ command: b.command, title: b.title, kind: b.kind, cwd: b.cwd })).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
+    return
+  }
   if (path === '/api/os/agent-url' && req.method === 'GET') return json(res, 200, { url: agentUrl })
   // Serve a real workspace file as a canvas tile's content (#37) — JAILED to the active workspace
   // dir, never .blitzos (runtime/secret state), size-capped. Read-only GET.
