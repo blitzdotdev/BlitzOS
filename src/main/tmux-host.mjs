@@ -39,6 +39,7 @@ export function createTmuxHost(cfg) {
   // Send a control-mode command and resolve with its reply lines (between %begin/%end).
   function command(cmd) {
     return new Promise((resolve, reject) => {
+      if (!client) { reject(new Error('no tmux control client')); return } // dead client — don't throw a TypeError
       cmdQueue.push({ resolve, reject })
       client.stdin.write(cmd + '\n')
     })
@@ -77,8 +78,9 @@ export function createTmuxHost(cfg) {
     if (ln.startsWith('%window-close') || ln.startsWith('%unlinked-window-close')) {
       windowClosed('@' + ln.trim().split('@')[1]); return
     }
-    // %window-add / %session-changed / %layout-change / %exit — not load-bearing for the host
-    if (ln.startsWith('%exit')) { for (const rec of sessions.values()) if (!rec.exited) windowClosed(rec.window) }
+    // %window-add / %session-changed / %layout-change — not load-bearing. NB: %exit means the CONTROL
+    // CLIENT is detaching, NOT that sessions died — the windows survive in the tmux server, so do NOT
+    // mark them exited here (client.on('exit') resets connection state so a later start() reattaches).
   }
 
   /** Connect the control client (create the session if absent, else attach — idempotent, enables reattach). */
@@ -123,8 +125,10 @@ export function createTmuxHost(cfg) {
     // control char (the injection guard) and command() REJECTS if the client died — return null either way.
     let reply
     try { reply = await command(args.map(quoteArg).join(' ')) } catch (e) { console.error('[tmux-host] spawn rejected:', e?.message || e); return null }
-    const line = (reply.find((l) => /^@?\w*\s+%\d+/.test(l)) || reply[0] || '').trim()
+    const line = (reply.find((l) => /^@\d+\s+%\d+/.test(l)) || '').trim()
     const [window, pane, pid] = line.split(/\s+/)
+    // A %error reply (e.g. bad cwd) yields no valid "@N %N" line — DON'T register a zombie that looks alive.
+    if (!/^@\d+$/.test(window || '') || !/^%\d+$/.test(pane || '')) { console.error('[tmux-host] new-window failed:', reply.join(' ').slice(0, 140)); return null }
     const rec = { id, window, pane, pid: Number(pid) || null, cols, rows, exited: false, exitCode: null, endedAt: null, startedAt: Date.now(), ring: [], ringBytes: 0, dataL: new Set(), exitL: new Set() }
     sessions.set(id, rec); byPane.set(pane, id)
     if (cols !== DEF_COLS || rows !== DEF_ROWS) resize(id, cols, rows)
