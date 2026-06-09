@@ -25,6 +25,9 @@ export function createTmuxHost(cfg) {
   const DEF_COLS = cfg.cols || 120
   const DEF_ROWS = cfg.rows || 40
   const ENV = { ...process.env, ...(cfg.tmuxTmpdir ? { TMUX_TMPDIR: cfg.tmuxTmpdir } : {}) }
+  // The tmux binary — overridable so the packaged app can point at a BUNDLED tmux (extraResources)
+  // instead of relying on one on PATH. Defaults to BLITZ_TMUX_BIN or `tmux`.
+  const TMUX = cfg.tmuxBin || process.env.BLITZ_TMUX_BIN || 'tmux'
 
   let client = null // the control-client child process
   let lineBuf = ''
@@ -34,7 +37,7 @@ export function createTmuxHost(cfg) {
   const cmdQueue = [] // FIFO of { resolve, reject } awaiting a %begin..%end block
   let curReply = null // { lines:[], error:false }
 
-  const tmuxSync = (args) => execFileSync('tmux', ['-S', SOCK, ...args], { env: ENV, stdio: ['ignore', 'pipe', 'pipe'] }).toString()
+  const tmuxSync = (args) => execFileSync(TMUX, ['-S', SOCK, ...args], { env: ENV, stdio: ['ignore', 'pipe', 'pipe'] }).toString()
 
   // Send a control-mode command and resolve with its reply lines (between %begin/%end).
   function command(cmd) {
@@ -87,7 +90,7 @@ export function createTmuxHost(cfg) {
   function start() {
     if (ready) return ready
     ready = new Promise((resolve) => {
-      client = cpSpawn('tmux', ['-S', SOCK, '-C', 'new-session', '-A', '-s', SESSION, '-x', String(DEF_COLS), '-y', String(DEF_ROWS)], { env: ENV, stdio: ['pipe', 'pipe', 'ignore'] })
+      client = cpSpawn(TMUX, ['-S', SOCK, '-C', 'new-session', '-A', '-s', SESSION, '-x', String(DEF_COLS), '-y', String(DEF_ROWS)], { env: ENV, stdio: ['pipe', 'pipe', 'ignore'] })
       // A UTF-8 StringDecoder (per connection) buffers a multibyte char split across stdout chunks — tmux
       // passes high UTF-8 bytes RAW in %output, so a plain per-chunk d.toString() would corrupt TUI frames.
       const dec = new StringDecoder('utf8')
@@ -206,4 +209,9 @@ function quoteArg(a) {
   if (/[\x00-\x1f\x7f]/.test(a)) throw new Error('illegal control character in tmux argument')
   if (a === '' || /[^\w@%./:=,+-]/.test(a)) return "'" + a.replace(/'/g, `'\\''`) + "'"
   return a
+}
+
+// Is tmux runnable? Returns its version string (e.g. "tmux 3.6") or null. Used for a startup preflight.
+export function tmuxAvailable(bin) {
+  try { return execFileSync(bin || process.env.BLITZ_TMUX_BIN || 'tmux', ['-V'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() } catch { return null }
 }

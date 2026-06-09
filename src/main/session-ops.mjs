@@ -5,7 +5,7 @@
 // workspace folder (the only datasource) and survive a restart. The only per-transport difference is
 // the seam: getWorkspacePath (server: wsHost.activePath; Electron: osWorkspaceContext().workspace_path)
 // and emit (server: SSE broadcast; Electron: webContents.send 'os:action'). Same makeOsTools(ops) pattern.
-import { createTmuxHost } from './tmux-host.mjs'
+import { createTmuxHost, tmuxAvailable } from './tmux-host.mjs'
 import { createSessionManager } from './session-manager.mjs'
 import { markWrite as defaultMarkWrite } from './workspace.mjs'
 import { join, resolve } from 'node:path'
@@ -17,10 +17,19 @@ import { mkdirSync } from 'node:fs'
  */
 export function makeSessionOps({ getWorkspacePath, emit = () => {}, markWrite = defaultMarkWrite } = {}) {
   const mgrs = new Map() // workspacePath -> { host, mgr }
+  let preflighted = false
 
   function mgrFor() {
     const wsPath = typeof getWorkspacePath === 'function' ? getWorkspacePath() : null
     if (!wsPath) return null
+    // Preflight tmux once — sessions are a hard tmux dependency (no fallback). A clear message beats a
+    // silent ENOENT when tmux isn't installed / bundled.
+    if (!preflighted) {
+      preflighted = true
+      const v = tmuxAvailable()
+      if (v) console.log('[session-ops] sessions backed by', v)
+      else console.error('[session-ops] tmux NOT found — sessions need tmux. Install (apk add tmux / brew install tmux) or set BLITZ_TMUX_BIN to a bundled binary.')
+    }
     // Keep ONLY the active workspace's manager live — evict the rest (their tmux sessions survive in
     // their own servers; restore() re-adopts them if that workspace is re-activated). Bounds the leak
     // to one control client instead of one per workspace ever switched to.
