@@ -40,6 +40,13 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
 
   // Subscribe a session's tmux streams to the transcript + the renderer, with the review fixes baked in.
   function wireSession(id, meta) {
+    // Idempotent: tear down any prior live rec for this id first, so a re-wire (re-spawn / restore)
+    // can't leak the old host listeners or duplicate the session-data stream to the renderer.
+    const prev = live.get(id)
+    if (prev) {
+      try { prev.unsubData && prev.unsubData(); prev.unsubExit && prev.unsubExit() } catch { /* ignore */ }
+      if (prev.flushTimer) { clearTimeout(prev.flushTimer); prev.flushTimer = null }
+    }
     const rec = { meta, buf: [], flushTimer: null, unsubData: null, unsubExit: null }
     live.set(id, rec)
     rec.unsubData = host.onData(id, (data) => {
@@ -75,7 +82,8 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
       cols: opts.cols || 120, rows: opts.rows || 40
     }
     const info = await host.spawn(id, { command: opts.command, cwd: opts.cwd, env: opts.env, cols: meta.cols, rows: meta.rows })
-    meta.pid = info?.pid ?? null
+    if (!info) return null // spawn rejected (illegal control char in a field, or the control client died)
+    meta.pid = info.pid ?? null
     writeMeta(meta)
     wireSession(id, meta)
     emit({ type: 'session-spawn', id, session: publicMeta(meta) })
@@ -110,7 +118,10 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
     for (const id of adopted) {
       if (live.has(id)) continue
       const m = readMeta(id) || { id, kind: 'pty', title: id, command: null, cwd: null, autonomy: 'auto', createdAt: Date.now(), endedAt: null, exitCode: null, cols: 120, rows: 40 }
-      m.status = 'running'; m.pid = host.info(id)?.pid ?? m.pid ?? null
+      const li = host.info(id)
+      if (li?.exited) { m.status = 'exited'; m.exitCode = li.exitCode ?? m.exitCode ?? null; m.endedAt = m.endedAt || Date.now() }
+      else m.status = 'running'
+      m.pid = li?.pid ?? m.pid ?? null
       writeMeta(m)
       wireSession(id, m)
       emit({ type: 'session-spawn', id, session: publicMeta(m) })

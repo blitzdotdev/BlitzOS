@@ -8,6 +8,7 @@
 // BlitzOS session is a tmux WINDOW multiplexed over ONE `tmux -C` control client. Protocol facts
 // here were empirically verified against tmux 3.6 (see project memory), not assumed.
 import { spawn as cpSpawn, execFileSync } from 'node:child_process'
+import { StringDecoder } from 'node:string_decoder'
 
 const SCROLLBACK_BYTES = 256 * 1024
 // Unescape tmux control-mode octal escapes in %output (\033=ESC, \015=CR, \012=LF, \010=BS, …).
@@ -85,12 +86,20 @@ export function createTmuxHost(cfg) {
     if (ready) return ready
     ready = new Promise((resolve) => {
       client = cpSpawn('tmux', ['-S', SOCK, '-C', 'new-session', '-A', '-s', SESSION, '-x', String(DEF_COLS), '-y', String(DEF_ROWS)], { env: ENV, stdio: ['pipe', 'pipe', 'ignore'] })
+      // A UTF-8 StringDecoder (per connection) buffers a multibyte char split across stdout chunks — tmux
+      // passes high UTF-8 bytes RAW in %output, so a plain per-chunk d.toString() would corrupt TUI frames.
+      const dec = new StringDecoder('utf8')
       client.stdout.on('data', (d) => {
-        lineBuf += d.toString()
+        lineBuf += dec.write(d)
         let i
         while ((i = lineBuf.indexOf('\n')) >= 0) { const ln = lineBuf.slice(0, i); lineBuf = lineBuf.slice(i + 1); onLine(ln) }
       })
-      client.on('exit', () => { client = null }) // sessions survive; a caller re-start()s to reattach
+      // Reset ALL connection state on exit so a later start() (e.g. adoptExisting) actually re-spawns the
+      // control client instead of returning the stale memoized `ready` (which left it permanently dead).
+      client.on('exit', () => {
+        client = null; ready = null; lineBuf = ''; curReply = null
+        while (cmdQueue.length) { const q = cmdQueue.shift(); try { q && q.reject && q.reject(new Error('tmux control client exited')) } catch { /* ignore */ } }
+      })
       // NB: do NOT `set -g window-size manual` — verified to crash the tmux 3.6 server on the next
       // new-window. Windows follow the control client's size; resize() adjusts it via refresh-client.
       // The default window (index 0) new-session creates is NOT a BlitzOS session — name it so adopt
@@ -110,8 +119,10 @@ export function createTmuxHost(cfg) {
     if (opts.cwd) args.push('-c', opts.cwd)
     for (const [k, v] of Object.entries(opts.env || {})) args.push('-e', `${k}=${v}`)
     if (opts.command) args.push(opts.command) // a shell-command string; tmux runs it via the shell
-    // new-window via control command so we capture the assigned ids from the reply
-    const reply = await command(args.map(quoteArg).join(' '))
+    // new-window via control command so we capture the assigned ids from the reply. quoteArg THROWS on a
+    // control char (the injection guard) and command() REJECTS if the client died — return null either way.
+    let reply
+    try { reply = await command(args.map(quoteArg).join(' ')) } catch (e) { console.error('[tmux-host] spawn rejected:', e?.message || e); return null }
     const line = (reply.find((l) => /^@?\w*\s+%\d+/.test(l)) || reply[0] || '').trim()
     const [window, pane, pid] = line.split(/\s+/)
     const rec = { id, window, pane, pid: Number(pid) || null, cols, rows, exited: false, exitCode: null, endedAt: null, startedAt: Date.now(), ring: [], ringBytes: 0, dataL: new Set(), exitL: new Set() }
@@ -160,12 +171,13 @@ export function createTmuxHost(cfg) {
   async function adoptExisting() {
     await start()
     let out = ''
-    try { out = tmuxSync(['list-windows', '-t', SESSION, '-F', '#{window_id} #{pane_id} #{window_name} #{pane_pid}']) } catch { return [] }
+    try { out = tmuxSync(['list-windows', '-t', SESSION, '-F', '#{window_id} #{pane_id} #{window_name} #{pane_pid} #{pane_dead} #{pane_dead_status}']) } catch { return [] }
     const adopted = []
     for (const ln of out.trim().split('\n').filter(Boolean)) {
-      const [window, pane, name, pid] = ln.trim().split(/\s+/)
+      const [window, pane, name, pid, dead, deadStatus] = ln.trim().split(/\s+/)
       if (!name || name === '__blitzroot__' || sessions.has(name)) continue
-      const rec = { id: name, window, pane, pid: Number(pid) || null, cols: DEF_COLS, rows: DEF_ROWS, exited: false, exitCode: null, endedAt: null, startedAt: Date.now(), ring: [], ringBytes: 0, dataL: new Set(), exitL: new Set() }
+      const isDead = dead === '1' // a lingering dead pane (remain-on-exit) — adopt as EXITED, not live, so it doesn't stick at "running"
+      const rec = { id: name, window, pane, pid: Number(pid) || null, cols: DEF_COLS, rows: DEF_ROWS, exited: isDead, exitCode: isDead ? (Number(deadStatus) || 0) : null, endedAt: isDead ? Date.now() : null, startedAt: Date.now(), ring: [], ringBytes: 0, dataL: new Set(), exitL: new Set() }
       // seed the ring from the survivor's scrollback so a reconnecting renderer repaints
       try { rec.ring.push(tmuxSync(['capture-pane', '-p', '-e', '-t', window])); rec.ringBytes = rec.ring[0].length } catch { /* ignore */ }
       sessions.set(name, rec); byPane.set(pane, name); adopted.push(name)
@@ -183,6 +195,11 @@ export function createTmuxHost(cfg) {
 // Minimal shell-arg quoting for control-mode command lines (single-quote, escape embedded quotes).
 function quoteArg(a) {
   a = String(a)
+  // SECURITY: tmux control mode ends a command at a newline REGARDLESS of quoting, so a value with a
+  // control char (esp. LF) would break out of the new-window line and inject a second tmux command
+  // (run-shell = arbitrary host RCE, kill-server, …). There is no in-band escape — reject it. (Keystroke
+  // input never comes through here; write() uses send-keys -H with hex bytes.)
+  if (/[\x00-\x1f\x7f]/.test(a)) throw new Error('illegal control character in tmux argument')
   if (a === '' || /[^\w@%./:=,+-]/.test(a)) return "'" + a.replace(/'/g, `'\\''`) + "'"
   return a
 }
