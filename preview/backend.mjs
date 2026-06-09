@@ -226,6 +226,9 @@ let osState = { surfaces: [] }
 // Boot-hydrated from the active workspace by the shared host (wsHost.hydrateOnBoot(), created below
 // after broadcast + reconcileSurfaces exist). The renderer adopts it via a `hydrate` on SSE connect.
 let agentUrl = null
+let agentSession = null // the live agent-socket session (so the watchdog can probe .connected + re-connect)
+let brainRunner = null // the supervised brain handle ({ stop, restart }) — restarted when the relay URL changes
+let lastRelayOkAt = Date.now() // last time the relay WS was confirmed up (watchdog backstop uses this)
 const sseClients = new Set()
 // Widget data consent: `${surfaceId}:${provider}` the human approved (via the
 // renderer prompt). The data route 403s until the pair is here — a widget can't
@@ -462,25 +465,32 @@ const OS_AGENTS_MD = readFileSync(new URL('../src/main/blitzos-agents.md', impor
 // list_widgets are excluded as noise).
 const ACTIVITY_TOOLS = new Set([
   '/open_window', '/create_surface', '/update_surface', '/move_surface', '/close_surface',
-  '/surface_control', '/read_window', '/spawn_widget', '/save_widget', '/say', '/go_to_primary'
+  '/surface_control', '/read_window', '/spawn_widget', '/save_widget', '/say', '/go_to_primary',
+  '/group', '/provider_call', '/new_app', '/customize_widget', '/create_workspace', '/switch_workspace'
 ])
 
 /** A short human label for an agent tool call, for the activity feed. */
 function activityText(path, a) {
   a = a || {}
   const host = (u) => { try { return new URL(u).hostname } catch { return String(u || '').slice(0, 40) } }
-  const sid = (id) => (id ? String(id).slice(0, 6) : '')
+  const clip = (t, n) => { t = String(t || ''); return t.length > n ? t.slice(0, n) + '…' : t }
   switch (path) {
-    case '/open_window': return `↗ open ${host(a.url)}`
-    case '/create_surface': return `+ ${a.kind || 'surface'}${a.url ? ' ' + host(a.url) : ''}${a.component ? ' ' + a.component : ''}`
-    case '/update_surface': return `✎ update ${sid(a.id)}${a.url ? ' → ' + host(a.url) : ''}`
-    case '/move_surface': return `⇄ move ${sid(a.id)}`
-    case '/close_surface': return `✕ close ${sid(a.id)}`
-    case '/surface_control': return `⌖ ${a.action?.action || 'control'}${a.action?.selector ? ' ' + a.action.selector : ''}`
-    case '/read_window': return `👁 read page ${sid(a.id)}`
-    case '/spawn_widget': return `▣ widget ${a.name || ''}`
-    case '/save_widget': return `💾 save widget ${a.name || ''}`
-    case '/say': return '💬 replying'
+    case '/open_window': return `↗ opening ${host(a.url)}`
+    case '/create_surface': return `+ ${a.kind || 'surface'}${a.url ? ' ' + host(a.url) : ''}${a.title ? ' · ' + clip(a.title, 24) : a.component ? ' ' + a.component : ''}`
+    case '/update_surface': return `✎ updating${a.url ? ' → ' + host(a.url) : a.title ? ' · ' + clip(a.title, 24) : ''}`
+    case '/move_surface': return '⇄ moving a window'
+    case '/close_surface': return '✕ closing a window'
+    case '/group': return `🗂 grouping into “${clip(a.name || 'folder', 24)}”`
+    case '/surface_control': return `⌖ ${a.action?.action || 'acting'}${a.action?.text ? ' “' + clip(a.action.text, 20) + '”' : a.action?.selector ? ' ' + clip(a.action.selector, 20) : ''}`
+    case '/read_window': return '👁 reading the page'
+    case '/provider_call': return `🔌 ${a.provider || 'integration'} ${a.method || 'GET'} ${clip(a.path, 28)}`
+    case '/spawn_widget': return `▣ opening widget ${a.name || ''}`
+    case '/save_widget': return `💾 saving widget ${a.name || ''}`
+    case '/new_app': return `🚀 provisioning app ${a.slug || ''}`
+    case '/customize_widget': return `🎨 restyling ${a.name || 'widget'}`
+    case '/create_workspace': return `🗃 new workspace “${clip(a.name, 20)}”`
+    case '/switch_workspace': return `↪ switching to “${clip(a.name, 20)}”`
+    case '/say': return `💬 ${clip(a.text, 52)}`
     case '/go_to_primary': return '⌂ recenter'
     default: return path.replace(/^\//, '')
   }
@@ -606,13 +616,43 @@ const serverOps = {
   connectedProviders: () => Object.keys(readTokens())
 }
 
+// Tell the renderer whether the brain's relay link is up (UI shows online/offline) + stamp the last-OK time.
+function relayStatus(online) {
+  if (online) lastRelayOkAt = Date.now()
+  broadcast({ type: 'agentStatus', online: !!online, agentUrl, brain: !!process.env.BLITZ_AGENT })
+}
+
 async function startOsAgentSocket() {
   try {
-    const session = await connect({
+    agentSession = await connect({
       appId: process.env.AGENT_SOCKET_APP_ID || 'as_app_anon',
       baseUrl: process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev',
       appDescription: 'BlitzOS (browser preview): an agent OS desktop — open and arrange surfaces on an infinite canvas.',
       agentsMd: OS_AGENTS_MD,
+      // NEVER give up reconnecting (exponential 1s→30s) and flip the UI to "offline" the instant the WS drops.
+      onDisconnect: ({ attempt, reconnect }) => {
+        relayStatus(false)
+        const delay = Math.min(30_000, 1000 * Math.pow(2, Math.max(0, attempt - 1)))
+        setTimeout(reconnect, delay)
+      },
+      // On reconnect the SDK mints a NEW session URL — adopt it (the old one is dead on the relay), tell the
+      // renderer, and RESTART the brain. Without this the brain keeps its dead URL and loops on app_offline
+      // forever — the exact "typed in chat, no response, don't know if it's working" failure.
+      onSessionChanged: async (info) => {
+        const next = info && info.tokensRemapped && info.tokensRemapped.get(agentUrl)
+        if (next) agentUrl = next
+        else {
+          try {
+            agentUrl = (await agentSession.mintAgentToken({ label: 'blitzos-preview' })).url
+          } catch {
+            /* keep the old URL; the watchdog will force a fresh connect */
+          }
+        }
+        relayStatus(true)
+        broadcast({ __agentUrl: agentUrl })
+        console.log('[agent-os backend] relay reconnected — new agent URL:\n  ' + agentUrl)
+        if (brainRunner) brainRunner.restart()
+      },
       // The ONE shared registry, server-bound (serverOps). Same paths/descriptions/schemas/handlers as Electron;
       // mapped to the agent-socket tool shape. transport:relay — the server is untrusted like the relay (no
       // localhost trust), so the few security branches behave identically. Add/change a tool in os-tools.mjs once.
@@ -625,12 +665,15 @@ async function startOsAgentSocket() {
         }))
       )
     })
-    const link = await session.mintAgentToken({ label: 'blitzos-preview' })
+    const link = await agentSession.mintAgentToken({ label: 'blitzos-preview' })
     agentUrl = link.url
+    relayStatus(true)
     broadcast({ __agentUrl: agentUrl })
     console.log('[agent-os backend] agent-socket paste URL (drive the preview from any AI chat):\n  ' + agentUrl)
   } catch (e) {
-    console.error('[agent-os backend] agent-socket connect failed (canvas + integrations still work):', e?.message || e)
+    console.error('[agent-os backend] agent-socket connect failed — retrying in 5s:', e?.message || e)
+    relayStatus(false)
+    setTimeout(startOsAgentSocket, 5000) // relay may be briefly down at boot — keep trying instead of giving up
   }
 }
 
@@ -638,7 +681,16 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', PUBLIC_BASE_URL)
   const path = url.pathname
 
-  if (path === '/api/health') return json(res, 200, { ok: true, redirectUri: REDIRECT_URI })
+  if (path === '/api/health')
+    return json(res, 200, {
+      ok: true,
+      redirectUri: REDIRECT_URI,
+      // relay + brain health, so `curl /api/health` (or start-all's doctor) can tell if the agent path is live
+      relayOnline: !!(agentSession && agentSession.connected),
+      agentUrl,
+      brain: !!process.env.BLITZ_AGENT,
+      workspace: wsHost.active()
+    })
   if (path === '/api/integrations' && req.method === 'GET') return json(res, 200, statuses())
 
   // POST /api/integrations/:id/start  -> { authorizeUrl } | { error, needsConfig }
@@ -782,6 +834,9 @@ const server = createServer(async (req, res) => {
     })
     res.write(': connected\n\n')
     if (agentUrl) res.write(`data: ${JSON.stringify({ __agentUrl: agentUrl })}\n\n`)
+    // Send the current relay/brain status immediately so the toolbar pill shows online/offline on first
+    // paint (don't make a fresh tab wait up to 20s for the next watchdog tick).
+    res.write(`data: ${JSON.stringify({ type: 'agentStatus', online: !!(agentSession && agentSession.connected), agentUrl, brain: !!process.env.BLITZ_AGENT })}\n\n`)
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
     res.write(
@@ -1172,8 +1227,28 @@ server.listen(PORT, '127.0.0.1', () => {
   // alive (auto-restart on exit), so a brain is always watching. Opt-in via BLITZ_AGENT
   // (=claude or a custom command); off by default (continuous LLM use has a cost).
   if (process.env.BLITZ_AGENT) {
-    startAgentRunner({ getUrl: () => agentUrl, cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, label: 'server-agent' })
+    brainRunner = startAgentRunner({ getUrl: () => agentUrl, cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, label: 'server-agent' })
   }
+  // Relay watchdog. Every 20s: (1) broadcast the live up/down status so the renderer can SHOW it (so the
+  // user never has to wonder "is it working?"), and (2) as a hard backstop, if the WS has been down for
+  // >90s — the SDK normally self-reconnects via onDisconnect, but if it ever gets wedged — tear the dead
+  // session down and start a FRESH connect (new URL + brain restart). This is the "once and for all" guard
+  // against the brain silently going offline.
+  setInterval(() => {
+    const online = !!(agentSession && agentSession.connected)
+    relayStatus(online)
+    if (!online && Date.now() - lastRelayOkAt > 90_000) {
+      console.warn('[agent-os backend] relay down >90s — forcing a fresh agent-socket connect')
+      lastRelayOkAt = Date.now() // reset so we don't re-fire every tick while the fresh connect is in flight
+      try {
+        agentSession && agentSession.close && agentSession.close()
+      } catch {
+        /* already gone */
+      }
+      agentSession = null
+      startOsAgentSocket()
+    }
+  }, 20_000).unref?.()
 })
 
 // On shutdown, gracefully close the browser so its profile (cookies/localStorage = the

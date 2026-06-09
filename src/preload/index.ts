@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus'
   [k: string]: unknown
 }
 

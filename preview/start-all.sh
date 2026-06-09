@@ -67,6 +67,9 @@ cmd_stop() {
   # user-data-dir name). Never touches 8787 (the agent-socket relay) or other browsers.
   if command -v fuser >/dev/null 2>&1; then fuser -k -KILL "${RENDERER_PORT}/tcp" "${BACKEND_PORT}/tcp" 2>/dev/null || true; fi
   pkill -KILL -f 'blitz-chrome' 2>/dev/null || true
+  # Kill any orphaned brain (claude -p) left over if the backend died uncleanly — the marker is unique to us,
+  # so this can't touch the user's own `claude` sessions. (Cleanly, the brain dies with the backend's group.)
+  pkill -KILL -f 'blitz-brain-session' 2>/dev/null || true
   say "stopped."
 }
 
@@ -83,6 +86,9 @@ cmd_start() {
   # preview/.workspace). BLITZ_WORKSPACE (optional, back-compat): a single explicit workspace folder.
   export BLITZ_SERVER_MODE="$SERVER_MODE" BACKEND_PORT="$BACKEND_PORT" CHROMIUM="$CHROMIUM" PUBLIC_BASE_URL="$PUBLIC_BASE_URL" BLITZ_AGENT="${BLITZ_AGENT:-}" BLITZ_WORKSPACES_ROOT="${BLITZ_WORKSPACES_ROOT:-}" BLITZ_WORKSPACE="${BLITZ_WORKSPACE:-}"
 
+  # Clear Vite's transform cache so a restart can NEVER serve a stale module (the "fresh bundle + old
+  # agentos-shim" bug). The port was already freed by cmd_stop above, so :5174 is clean here.
+  rm -rf "$DIR/node_modules/.vite" 2>/dev/null || true
   say "starting vite (:$RENDERER_PORT, server mode=$SERVER_MODE)…"
   start_svc vite npx vite --config vite.renderer.preview.mjs
 
@@ -107,7 +113,18 @@ cmd_status() {
     if [ -f "$f" ] && alive "$(cat "$f" 2>/dev/null)"; then echo "$s:    running (pgid $(cat "$f"))"; else echo "$s:    stopped"; fi
   done
   curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${RENDERER_PORT}/" && echo "renderer: :$RENDERER_PORT responding" || echo "renderer: :$RENDERER_PORT no response"
-  curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${BACKEND_PORT}/api/health" && echo "backend:  :$BACKEND_PORT responding" || echo "backend:  :$BACKEND_PORT no response"
+  H="$(curl -s --max-time 3 "http://127.0.0.1:${BACKEND_PORT}/api/health" 2>/dev/null)"
+  if [ -n "$H" ]; then
+    echo "backend:  :$BACKEND_PORT responding  $(printf '%s' "$H" | sed -n 's/.*"workspace":"\([^"]*\)".*/[ws=\1]/p')"
+    # the load-bearing line: is the brain's RELAY link actually up? (a dead relay = brain can't see/answer chat)
+    case "$H" in
+      *'"relayOnline":true'*)  echo "relay:    UP (brain can see + answer chat)";;
+      *'"relayOnline":false'*) echo "relay:    DOWN — brain is offline (the watchdog will reconnect; or restart)";;
+    esac
+    echo "brains:   $(pgrep -f 'blitz-brain-session' 2>/dev/null | grep -vc '^$' || echo 0) running"
+  else
+    echo "backend:  :$BACKEND_PORT no response"
+  fi
 }
 
 case "${1:-restart}" in
