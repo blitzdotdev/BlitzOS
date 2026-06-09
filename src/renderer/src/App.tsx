@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDesktop, viewTransform, areaRect, type CreateSurfaceInput } from './store'
+import { pushSessionData, pushSessionExit } from './sessionStream'
 import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
 import { IntegrationWidget } from './components/IntegrationWidget'
@@ -434,6 +435,19 @@ export default function App(): JSX.Element {
         } else {
           st.createSurface(activitySurfaceInput([evt]))
         }
+      } else if (a.type === 'session-data') {
+        // live tmux %output for a session -> its terminal surface (sessionStream routes by id)
+        pushSessionData(String(a.id), String(a.data ?? ''))
+      } else if (a.type === 'session-exit') {
+        pushSessionExit(String(a.id), a.exitCode == null ? null : Number(a.exitCode))
+      } else if (a.type === 'session-spawn') {
+        // a session was created (by an agent or the user) -> open a terminal for it if not already shown
+        const sid = String(a.id)
+        const open = st.surfaces.some((s) => s.kind === 'native' && s.component === 'terminal' && s.props?.sessionId === sid)
+        if (!open) {
+          const sess = (a.session ?? {}) as { title?: string }
+          st.createSurface(terminalSurfaceInput(sid, sess.title || 'Terminal'))
+        }
       }
     })
   }, [])
@@ -724,6 +738,17 @@ export default function App(): JSX.Element {
     const x = Math.round(-tx / scale + 24)
     const y = Math.round(-ty / scale + 24)
     return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x, y, props: { events } }
+  }
+
+  // A terminal surface for a session — placed near the view center; the store cascades/clamps stacks.
+  function terminalSurfaceInput(sessionId: string, title: string): CreateSurfaceInput {
+    const st = useDesktop.getState()
+    const { scale, x: tx, y: ty } = st.transform
+    const W = 620
+    const H = 380
+    const x = Math.round((st.viewport.w / 2 - tx) / scale - W / 2)
+    const y = Math.round((st.viewport.h / 2 - ty) / scale - H / 2)
+    return { kind: 'native', component: 'terminal', title: title || 'Terminal', w: W, h: H, x, y, props: { sessionId } }
   }
 
   function addBrowser(): void {

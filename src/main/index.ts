@@ -5,6 +5,7 @@ import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
 import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
+import { electronSessionOps } from './electron-os-tools'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
 import { startAgentRunner } from './agent-runner.mjs'
@@ -193,6 +194,11 @@ app.whenReady().then(() => {
   ipcMain.handle('os:dir', (_e, rel: string) => osListDir(String(rel || '')))
   // Close = delete the closed window's backing content file (so it doesn't pop back up on reconcile).
   ipcMain.handle('os:close-surface-file', (_e, id: string) => osCloseSurfaceFile(String(id)))
+
+  // Session terminal I/O from a SessionTerminal in the renderer: keystrokes, resize, scrollback read.
+  ipcMain.on('os:session-input', (_e, p: { id: string; data: string }) => electronSessionOps.sendToSession(String(p?.id), String(p?.data ?? '')))
+  ipcMain.on('os:session-resize', (_e, p: { id: string; cols: number; rows: number }) => electronSessionOps.resizeSession(String(p?.id), Number(p?.cols) || 80, Number(p?.rows) || 24))
+  ipcMain.handle('os:session-read', (_e, id: string) => electronSessionOps.readSession(String(id)))
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()

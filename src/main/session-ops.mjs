@@ -43,6 +43,7 @@ export function makeSessionOps({ getWorkspacePath, emit = () => {}, markWrite = 
     spawnSession: (opts) => { const m = mgrFor(); return m ? m.spawnSession(opts) : Promise.resolve(null) },
     listSessions: () => { const m = mgrFor(); return m ? m.listSessions() : [] },
     sendToSession: (id, data) => { const m = mgrFor(); return m ? m.sendToSession(id, data) : false },
+    resizeSession: (id, cols, rows) => { const m = mgrFor(); return m ? m.resizeSession(id, cols, rows) : false },
     readSession: (id) => { const m = mgrFor(); return m ? m.scrollback(id) : '' },
     stopSession: (id) => { const m = mgrFor(); return m ? m.stopSession(id) : false },
     /** Close every control client on shutdown (sessions SURVIVE in their tmux servers). */

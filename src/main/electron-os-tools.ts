@@ -59,7 +59,8 @@ export const electronOps = {
 // Session ops — the SHARED workspace-keyed lifecycle (session-ops.mjs). Electron seam: the active
 // workspace folder + the os:action emit. The server binds the SAME makeSessionOps with its own seam,
 // so the multi-agent session model can't diverge between the two modes.
-Object.assign(electronOps, makeSessionOps({ getWorkspacePath: () => osWorkspaceContext().workspace_path, emit: osBroadcast }))
+export const electronSessionOps = makeSessionOps({ getWorkspacePath: () => osWorkspaceContext().workspace_path, emit: osBroadcast })
+Object.assign(electronOps, electronSessionOps)
 
 export const OS_TOOLS: OsTool[] = makeOsTools(electronOps)
 export const OS_TOOLS_BY_PATH: Record<string, OsTool> = makeOsToolsByPath(electronOps)

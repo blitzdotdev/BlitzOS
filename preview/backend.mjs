@@ -576,7 +576,8 @@ const serverOps = {
 
 // Session ops — the SHARED workspace-keyed lifecycle (session-ops.mjs). Server seam: the active
 // workspace folder + the SSE broadcast emit. Electron binds the SAME makeSessionOps with its own seam.
-Object.assign(serverOps, makeSessionOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast }))
+const serverSessionOps = makeSessionOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast })
+Object.assign(serverOps, serverSessionOps)
 
 // Start the agent-socket relay via the SHARED lifecycle module (relay.mjs) — connect + self-heal + watchdog +
 // status all live there now (one impl, Electron too). The server only supplies its tools + the adapter: how to
@@ -791,6 +792,26 @@ const server = createServer(async (req, res) => {
       wsHost.onStatePush(toolBody(body)) // persist (stale-push-guarded) + realize web surfaces
       json(res, 200, { ok: true })
     })
+    return
+  }
+  // Session terminal I/O from a SessionTerminal in the browser (mirrors /api/os/state): keystrokes,
+  // resize, and a one-shot scrollback read for repaint. Drive the SAME shared session ops as the tools.
+  if (path === '/api/os/session-input' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 1_000_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverSessionOps.sendToSession(String(b.id || ''), String(b.data ?? '')) }) })
+    return
+  }
+  if (path === '/api/os/session-resize' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverSessionOps.resizeSession(String(b.id || ''), Number(b.cols) || 80, Number(b.rows) || 24) }) })
+    return
+  }
+  if (path === '/api/os/session-read' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { text: serverSessionOps.readSession(String(b.id || '')) }) })
     return
   }
   if (path === '/api/os/agent-url' && req.method === 'GET') return json(res, 200, { url: agentUrl })

@@ -5,6 +5,7 @@ export interface SessionOps {
   spawnSession(opts?: SpawnSessionOpts): Promise<SessionMeta | null>
   listSessions(): SessionMeta[]
   sendToSession(id: string, data: string): boolean
+  resizeSession(id: string, cols: number, rows: number): boolean
   readSession(id: string): string
   stopSession(id: string): boolean
   /** Close every control client on shutdown (sessions survive in their tmux servers). */

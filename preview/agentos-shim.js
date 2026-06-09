@@ -239,6 +239,16 @@
     unregisterWebview: function () {},
     reportWebview: function () {}, // electron-only (webview guest -> main); no-op in the browser
     onMetaTap: function () { return function () {} }, // electron-only ⌘-tap; no-op subscribe
+    // Session terminal I/O (server mode) — POST to the backend, the SAME shared session ops as Electron IPC.
+    sessionInput: function (id, data) {
+      fetch(API + '/os/session-input', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, data: data }) }).catch(function () {})
+    },
+    sessionResize: function (id, cols, rows) {
+      fetch(API + '/os/session-resize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, cols: cols, rows: rows }) }).catch(function () {})
+    },
+    sessionRead: function (id) {
+      return postJSON('/os/session-read', { id: id }, { text: '' }).then(function (r) { return (r && r.text) || '' })
+    },
 
     integrations: {
       list: function () { return getJSON('/integrations') },
