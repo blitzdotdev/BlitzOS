@@ -11,6 +11,7 @@ import {
   osMoveSurface,
   osUpdateSurface,
   osCloseSurface,
+  osCloseSurfaceFile,
   osGoToPrimary,
   osGetState,
   osWorkspaceContext,
@@ -36,7 +37,17 @@ export const electronOps = {
   openWindow: (a: unknown) => osOpenWindow(a as { url: string; x?: number; y?: number; w?: number; h?: number; title?: string }),
   moveSurface: (id: string, x: number, y: number) => osMoveSurface(id, x, y),
   updateSurface: (id: string, patch: Record<string, unknown>) => osUpdateSurface(id, patch),
-  closeSurface: (id: string) => osCloseSurface(id),
+  closeSurface: (id: string) => {
+    // Parity with the server ops (backend.mjs closeSurface): delete the backing content file IN
+    // MAIN, synchronously, before broadcasting the close. The renderer also calls closeSurfaceFile
+    // on every close, but that rides a main→renderer→main round-trip — an agent that closes and
+    // immediately switches workspace wins that race, the flush projects stale state (or the late
+    // delete looks up the id in the NEW workspace and no-ops), and the orphaned file resurrects
+    // the surface on the next reconcile (observed live). Duplicate delete is a no-op (the host
+    // skips missing/non-content files).
+    osCloseSurfaceFile(id)
+    osCloseSurface(id)
+  },
   goToPrimary: () => osGoToPrimary(),
   getState: () => osGetState(),
   workspaceContext: () => osWorkspaceContext(),

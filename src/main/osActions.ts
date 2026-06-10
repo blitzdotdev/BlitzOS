@@ -104,6 +104,7 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     if (m && m.surfaceId) {
       webviewIds.set(m.surfaceId, m.wcid)
       ensureCapture(m.surfaceId)
+      ensureNavEmitter(m.surfaceId, m.wcid)
     }
   })
   // A srcdoc surface fired an action back (e.g. "approve" in a triage panel).
@@ -148,6 +149,26 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
 // the guest is gone.
 
 const captureIntervals = new Map<string, ReturnType<typeof setInterval>>()
+
+// Host-side hard-navigation sensor. A real CROSS-DOCUMENT navigation destroys the page — and
+// with it the in-page sensor and its undrained signal buffer — before the 600ms href poll can
+// report it; the sensor re-injected on the new page initializes lastHref to the NEW url, so
+// in-page detection only ever catches SAME-document (SPA) route changes. Main is the authority
+// for cross-document navs: emit the nav signal from did-navigate so "flush immediately on
+// navigation" holds for ordinary link clicks too. Registration arrives on dom-ready — after the
+// initial load's did-navigate — so every event seen here is a real subsequent navigation (link,
+// redirect, reload), never the boot load. The pre-nav buffer (e.g. the causing click) dies with
+// the page: accepted — the nav moment records the transition, and the re-injected sensor's
+// baseline `content` push refreshes the snapshot on the next drain.
+const navWired = new Set<number>()
+function ensureNavEmitter(surfaceId: string, wcid: number): void {
+  if (navWired.has(wcid)) return
+  const wc = webContents.fromId(wcid)
+  if (!wc || wc.isDestroyed()) return
+  navWired.add(wcid)
+  wc.on('did-navigate', (_e, url) => ingestSignals(surfaceId, [{ type: 'nav', url, t: Date.now() }]))
+  wc.once('destroyed', () => navWired.delete(wcid))
+}
 
 function ensureCapture(surfaceId: string): void {
   // (re)install the listener; idempotent within a page, fresh after a navigation

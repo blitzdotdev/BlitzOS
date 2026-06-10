@@ -3,7 +3,7 @@ import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -62,6 +62,60 @@ function createWindow(): void {
 
   // Log when a web-surface guest actually loads (proof the real site rendered).
   mainWindow.webContents.on('did-attach-webview', (_e, guest) => {
+    // Popup policy for guests (pairs with `allowpopups` on the <webview> in SurfaceFrame.tsx).
+    // window.open must succeed inside a guest — when it returns null, sites fall back to
+    // `top.location = url` and the popup HIJACKS the whole surface (Gmail's contact-hovercard
+    // did exactly this, replacing the compose page with a blank widget). Policy:
+    //  - scripted utility children (about:blank) + known Google widget frames → a REAL but
+    //    invisible window, so the script gets its handle and runs its RPC; these self-close.
+    //  - auth popups (accounts.google.com) → a real visible window: sign-in flows need the
+    //    opener handle (postMessage back) and human eyes.
+    //  - any other real page (target=_blank links, window.open to a URL) → the OS-correct
+    //    behavior: it becomes a NEW WEB SURFACE on the canvas, never a stray native window.
+    //  - non-http schemes (javascript:, data:, file:) → denied outright.
+    // TODO(server-parity): server mode has no hijack (headless Chromium allows popups natively)
+    // but popups there are unattached targets — adopting Target.targetCreated as surfaces is the
+    // matching server-side feature.
+    const SAFE_CHILD = { nodeIntegration: false, contextIsolation: true, sandbox: true }
+    // A popup we DENY may retry as `top.location = url` (the hijack this policy exists to stop).
+    // Remember each denial briefly and swallow the matching top-frame navigation in will-navigate
+    // below — the page keeps running and the popup simply never happens (Gmail's contact hovercard:
+    // purely cosmetic). Do NOT "allow as a hidden window" instead: tried 2026-06-09, and it
+    // SIGSEGV'd the browser process — Gmail spams hovercard opens on hover, the widget URL refuses
+    // to load as a top-level document (ERR_FAILED), and the rapid create→fail→destroy churn of
+    // guest child windows hit a use-after-free in Electron 31's guest-view manager (poison pointer
+    // 0xefefef… on CrBrowserMain), killing the whole app.
+    const deniedPopups = new Map<string, number>() // url -> denied-at ts
+    const DENY_NAV_TTL = 4000
+    guest.setWindowOpenHandler(({ url }) => {
+      // scripted utility children (gapi RPC frames etc.): about:blank always loads, never churns
+      if (url === 'about:blank')
+        return { action: 'allow', overrideBrowserWindowOptions: { show: false, width: 80, height: 60, webPreferences: SAFE_CHILD } }
+      // auth popups need a visible window + the opener handle (postMessage back) + human eyes
+      if (/^https:\/\/accounts\.google\.com\//.test(url))
+        return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 640, webPreferences: SAFE_CHILD } }
+      if (/^https?:\/\//.test(url)) {
+        deniedPopups.set(url, Date.now())
+        if (deniedPopups.size > 50) for (const [u, t] of deniedPopups) if (Date.now() - t > DENY_NAV_TTL) deniedPopups.delete(u)
+        // widget/helper frames are not real destinations — deny outright, no surface
+        if (/^https:\/\/contacts\.google\.com\/widget\//.test(url)) return { action: 'deny' }
+        // any other real page (target=_blank, window.open): the OS-correct behavior — it becomes
+        // a NEW WEB SURFACE on the canvas, never a stray native window
+        osCreateSurface({ kind: 'web', url })
+        return { action: 'deny' }
+      }
+      return { action: 'deny' } // javascript:, data:, file:, custom schemes — never windows
+    })
+    // The fallback-swallower: a top-frame navigation to a URL we just denied as a popup is the
+    // hijack, not the user going somewhere — block it. One-shot per denial + short TTL, so a real
+    // later navigation to the same URL still works.
+    guest.on('will-navigate', (e, url) => {
+      const t = deniedPopups.get(url)
+      if (t != null) {
+        deniedPopups.delete(url)
+        if (Date.now() - t < DENY_NAV_TTL) e.preventDefault()
+      }
+    })
     guest.on('did-finish-load', () => console.log('[guest] loaded:', guest.getURL()))
     guest.on('did-fail-load', (_ev, code, desc, url) => {
       if (code !== -3) console.log(`[guest] fail-load ${code} ${desc} ${url}`)

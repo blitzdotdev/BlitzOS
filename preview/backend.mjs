@@ -275,6 +275,11 @@ async function initServerMode() {
   try {
     host = await startBrowserHost({
       chromiumPath: process.env.CHROMIUM,
+      // Host-side hard-nav sensor (parity with Electron's did-navigate emitter in osActions.ts): a
+      // cross-document navigation kills the in-page sensor before it can report, so the CDP host
+      // emits the nav signal into the SAME coalescer — moments flush immediately on real link
+      // clicks, not only on SPA route changes.
+      onNavigated: (id, url) => ingestSignals(id, [{ type: 'nav', url, t: Date.now() }]),
       onFrame: (id, data) => {
         lastFrame.set(id, data) // cache for replay to late-connecting renderers (static pages emit once)
         const msg = JSON.stringify({ t: 'frame', id, data }) // base64 jpeg (binary framing = future opt)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
 import { useDesktop, snapTargetFor, primaryRect } from '../store'
 import { NoteWidget } from './NoteWidget'
@@ -22,7 +22,12 @@ interface WebviewMethods {
   getURL(): string
 }
 
-export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
+// memo: the camera tween (⌘⌘ zoom-out, pan/zoom) re-renders App ~60×/sec, which re-creates every
+// SurfaceFrame element. Their `surface` prop keeps a stable reference when only the transform changes,
+// so memo lets React skip re-running each (webview-bearing) frame per animation tick. A surface's own
+// store subscriptions (z/selection/drag) still re-render it independently — memo only gates the
+// parent-driven churn, so behavior is unchanged.
+export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
@@ -463,10 +468,16 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         // Electron / plain preview: a real <webview> guest.
         if (serverMode) return <canvas ref={canvasRef} style={fill} />
         return (
+          // allowpopups: window.open must RETURN A WINDOW inside guests — when it returns null,
+          // sites' fallback is `top.location = url`, which HIJACKS the whole surface (Gmail's
+          // contact-hovercard gapi frame wiped the compose page this way). Main decides what each
+          // popup actually becomes (hidden utility window / auth window / a new web surface) via
+          // setWindowOpenHandler in index.ts — nothing opens unmanaged.
           <webview
             ref={webviewRef}
             src={initialUrl.current}
             partition="persist:agentos"
+            allowpopups
             style={{ ...fill, display: 'inline-flex' }}
           />
         )
@@ -596,4 +607,4 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       />
     </div>
   )
-}
+})

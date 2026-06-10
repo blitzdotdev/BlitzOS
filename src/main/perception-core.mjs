@@ -242,6 +242,13 @@ export function waitForEvents(since, maxMs) {
 // MutationObserver: async loads + DOM updates), and idle-after-activity. Each signal
 // carries a `digest` (text snapshot) where useful. Idempotent per page (re-injectable
 // after navigation); self-cleans when drained by a gone surface.
+//
+// NOTE on navigation: the in-page href poll below only ever catches SAME-document (SPA)
+// route changes — a CROSS-document navigation destroys the page (and its undrained signal
+// buffer) before the poll/drain can run, and the sensor re-injected on the new page boots
+// with lastHref already at the new URL. Hard navs are therefore emitted HOST-side into the
+// same coalescer by each runtime: Electron from `did-navigate` (osActions.ts
+// ensureNavEmitter), server from `Page.frameNavigated` (browser-host.mjs onNavigated).
 export const INJECT = `(() => {
   if (window.__blitzCap) return 'present';
   window.__blitzCap = true;

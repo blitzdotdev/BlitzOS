@@ -89,6 +89,9 @@ button {
   height: 0;
   transform-origin: 0 0;
   z-index: 1;
+  /* Promote to its own compositor layer so camera pan/zoom (and the ⌘⌘ zoom-out tween) only
+     re-composites this layer instead of repainting it — keeps the animation off the main thread. */
+  will-change: transform;
 }
 
 /* Window-snap preview: where a dragged window will dock (full / half / quarter of the primary area). */
