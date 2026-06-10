@@ -3,7 +3,7 @@ import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, setSpawnChatAgent, osChatSessionIds } from './osActions'
+import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, setSpawnChatAgent, osChatSessionIds, osSpawnChatSession } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronSessionOps, electronActionItems } from './electron-os-tools'
 import type { ActionStatus } from './action-items.mjs'
@@ -201,6 +201,7 @@ app.whenReady().then(() => {
   ipcMain.on('os:session-resize', (_e, p: { id: string; cols: number; rows: number }) => electronSessionOps.resizeSession(String(p?.id), Number(p?.cols) || 80, Number(p?.rows) || 24))
   ipcMain.handle('os:session-read', (_e, id: string) => electronSessionOps.readSession(String(id)))
   ipcMain.on('os:session-spawn', (_e, opts: { command?: string; title?: string }) => { void electronSessionOps.spawnSession(opts || {}) })
+  ipcMain.on('os:chat-session-spawn', (_e, p?: { title?: string }) => { try { osSpawnChatSession(p?.title != null ? String(p.title) : undefined) } catch { /* no workspace host yet */ } })
   ipcMain.handle('os:session-list', () => electronSessionOps.listSessions())
   ipcMain.on('os:session-stop', (_e, id: string) => electronSessionOps.stopSession(String(id)))
   ipcMain.on('os:session-restart', (_e, id: string) => { void electronSessionOps.restartSession(String(id)) })

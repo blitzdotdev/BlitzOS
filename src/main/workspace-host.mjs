@@ -205,6 +205,9 @@ export function createWorkspaceHost(a) {
   function buildChatSurface(sessionId = '0') {
     ensureSystemRenderer(activeWorkspace, 'chat', sessionId)
     const primary = !sessionId || String(sessionId) === '0'
+    // Non-primary sessions cascade by their (integer) id so opening several doesn't stack them exactly on
+    // top of each other (macOS-style stagger). Deterministic in id → stable placement across hydrate/restart.
+    const n = primary ? 0 : (Number(sessionId) || 1)
     return {
       id: chatSurfaceId(sessionId),
       kind: 'srcdoc',
@@ -212,8 +215,8 @@ export function createWorkspaceHost(a) {
       pinned: primary, // only the primary chat is pinned-always-on-top; others are normal windows
       sessionId: String(sessionId),
       title: primary ? 'Chat' : `Chat ${sessionId}`,
-      x: primary ? -700 : -300,
-      y: -210,
+      x: primary ? -700 : -300 + (n - 1) * 42,
+      y: primary ? -210 : -200 + (n - 1) * 36,
       w: 360,
       h: 460,
       z: 5,

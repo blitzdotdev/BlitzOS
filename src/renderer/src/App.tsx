@@ -961,8 +961,15 @@ export default function App(): JSX.Element {
             <button className="area-arrow" disabled={currentArea >= areaCount - 1} onClick={() => switchArea(1)} title="Next area">›</button>
           </span>
         )}
-        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={openChat}>
+        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} title="Jump to your primary chat" onClick={openChat}>
           <IconChat size={15} /> Chat
+        </button>
+        <button
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
+          title="Open a new chat session — a fresh peer agent with its own chat widget"
+          onClick={() => (window.agentOS as unknown as { spawnChatSession?: (t?: string) => void })?.spawnChatSession?.()}
+        >
+          <IconChat size={15} /> + New
         </button>
         <button
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}

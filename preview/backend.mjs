@@ -844,6 +844,14 @@ const server = createServer(async (req, res) => {
     req.on('end', () => { const b = toolBody(body); Promise.resolve(serverSessionOps.spawnSession({ command: b.command, title: b.title, kind: b.kind, cwd: b.cwd })).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
     return
   }
+  // Open a new CHAT session from the UI (the "+ Chat" button). serverOps.spawnChatSession mints the id,
+  // surfaces its widget (broadcast), and supervises its agent over the relay.
+  if (path === '/api/os/chat-session-spawn' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverOps.spawnChatSession(b.title != null ? String(b.title) : undefined)).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
+    return
+  }
   if (path === '/api/os/session-list' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 1000) req.destroy() })

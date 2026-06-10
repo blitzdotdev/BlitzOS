@@ -98,6 +98,11 @@ const api = {
   sessionSpawn(opts: { command?: string; title?: string }): void {
     ipcRenderer.send('os:session-spawn', opts)
   },
+  /** Open a NEW chat session from the UI (a "+ Chat" button) — a fresh peer agent + its own chat widget.
+   *  The host broadcasts a `create` for the new chat surface, so it appears without a refresh. */
+  spawnChatSession(title?: string): void {
+    ipcRenderer.send('os:chat-session-spawn', { title })
+  },
   /** List every session in the active workspace (running + persisted) — for the Sessions tray. */
   sessionList(): Promise<unknown[]> {
     return (ipcRenderer.invoke('os:session-list') as Promise<unknown[]>).catch(() => [])

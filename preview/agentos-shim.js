@@ -252,6 +252,11 @@
     sessionSpawn: function (opts) {
       fetch(API + '/os/session-spawn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(opts || {}) }).catch(function () {})
     },
+    // Open a NEW chat session (a fresh peer agent + its own chat widget). The host broadcasts a `create`
+    // for the new chat surface over SSE, so it appears without a refresh.
+    spawnChatSession: function (title) {
+      fetch(API + '/os/chat-session-spawn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: title }) }).catch(function () {})
+    },
     sessionList: function () {
       return postJSON('/os/session-list', {}, { sessions: [] }).then(function (r) { return (r && r.sessions) || [] })
     },
