@@ -51,6 +51,8 @@ import { startAgentRunner } from '../src/main/agent-runner.mjs'
 import { startRelay } from '../src/main/relay.mjs'
 // Shared "Agent activity" feed — the SAME module the Electron relay uses; only `emit` differs (SSE here).
 import { withActivity } from '../src/main/activity.mjs'
+// Shared multi-agent session lifecycle (tmux-backed, workspace-keyed) — SAME module Electron binds.
+import { makeSessionOps } from '../src/main/session-ops.mjs'
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
 import { fileURLToPath } from 'node:url'
 
@@ -588,6 +590,11 @@ const serverOps = {
   connectedProviders: () => Object.keys(readTokens())
 }
 
+// Session ops — the SHARED workspace-keyed lifecycle (session-ops.mjs). Server seam: the active
+// workspace folder + the SSE broadcast emit. Electron binds the SAME makeSessionOps with its own seam.
+const serverSessionOps = makeSessionOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast })
+Object.assign(serverOps, serverSessionOps)
+
 // Start the agent-socket relay via the SHARED lifecycle module (relay.mjs) — connect + self-heal + watchdog +
 // status all live there now (one impl, Electron too). The server only supplies its tools + the adapter: how to
 // publish the URL/status to the browser (SSE broadcast) and how to restart its brain.
@@ -803,6 +810,32 @@ const server = createServer(async (req, res) => {
       wsHost.onStatePush(toolBody(body)) // persist (stale-push-guarded) + realize web surfaces
       json(res, 200, { ok: true })
     })
+    return
+  }
+  // Session terminal I/O from a SessionTerminal in the browser (mirrors /api/os/state): keystrokes,
+  // resize, and a one-shot scrollback read for repaint. Drive the SAME shared session ops as the tools.
+  if (path === '/api/os/session-input' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 1_000_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverSessionOps.sendToSession(String(b.id || ''), String(b.data ?? '')) }) })
+    return
+  }
+  if (path === '/api/os/session-resize' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverSessionOps.resizeSession(String(b.id || ''), Number(b.cols) || 80, Number(b.rows) || 24) }) })
+    return
+  }
+  if (path === '/api/os/session-read' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { text: serverSessionOps.readSession(String(b.id || '')) }) })
+    return
+  }
+  if (path === '/api/os/session-spawn' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverSessionOps.spawnSession({ command: b.command, title: b.title, kind: b.kind, cwd: b.cwd })).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
     return
   }
   if (path === '/api/os/agent-url' && req.method === 'GET') return json(res, 200, { url: agentUrl })
@@ -1189,6 +1222,7 @@ async function gracefulExit() {
   // created/moved right before quit lands on disk — otherwise hydrate restores the stale state.
   wsHost.flush()
   wsHost.stopWatch() // close fs watchers (handle hygiene)
+  try { serverSessionOps.stopHosts() } catch { /* ignore */ } // flush session transcripts + close tmux control clients (sessions survive)
   try {
     if (host) await host.stop()
   } catch {

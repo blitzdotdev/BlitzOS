@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus' | 'session-spawn' | 'session-data' | 'session-exit'
   [k: string]: unknown
 }
 
@@ -83,6 +83,20 @@ const api = {
   /** Renderer reports a web surface's guest WebContents id so main can read its DOM. */
   reportWebview(surfaceId: string, wcid: number): void {
     ipcRenderer.send('os:webview', { surfaceId, wcid })
+  },
+  /** Session terminal I/O — the user typing/resizing/repainting a SessionTerminal (mirrors sendState). */
+  sessionInput(id: string, data: string): void {
+    ipcRenderer.send('os:session-input', { id, data })
+  },
+  sessionResize(id: string, cols: number, rows: number): void {
+    ipcRenderer.send('os:session-resize', { id, cols, rows })
+  },
+  sessionRead(id: string): Promise<string> {
+    return ipcRenderer.invoke('os:session-read', id) as Promise<string>
+  },
+  /** Open a new session from the UI (a "+ Terminal" button) — the backend emits session-spawn which auto-opens its terminal. */
+  sessionSpawn(opts: { command?: string; title?: string }): void {
+    ipcRenderer.send('os:session-spawn', opts)
   },
   /** The agent-socket paste URL (for the "Connect AI" affordance). */
   onAgentSocketUrl(cb: (url: string) => void): () => void {

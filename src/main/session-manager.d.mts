@@ -1,5 +1,5 @@
-// Types for the file-backed session manager (session-manager.mjs).
-import type { PtyHost } from './pty-host.d.mts'
+// Types for the file-backed session manager (session-manager.mjs), backed by the tmux host.
+import type { TmuxHost } from './tmux-host.d.mts'
 
 export type SessionKind = 'pty' | 'agent'
 export type SessionStatus = 'running' | 'exited' | 'stopped'
@@ -41,7 +41,8 @@ export interface SessionEvent {
 }
 
 export interface SessionManagerDeps {
-  ptyHost: PtyHost
+  /** The tmux control-mode host (tmux-host.mjs). */
+  host: TmuxHost
   /** <workspace>/.blitzos/sessions — all session files live here (the workspace is the only datasource). */
   sessionsDir: string
   /** Publish a session event to the renderer (server: SSE broadcast; Electron: webContents.send). */
@@ -51,11 +52,13 @@ export interface SessionManagerDeps {
 }
 
 export interface SessionManager {
-  spawnSession(opts?: SpawnSessionOpts): SessionMeta
+  spawnSession(opts?: SpawnSessionOpts): Promise<SessionMeta>
   sendToSession(id: string, data: string): boolean
   resizeSession(id: string, cols: number, rows: number): boolean
   stopSession(id: string): boolean
-  restartSession(id: string): SessionMeta | null
+  restartSession(id: string): Promise<SessionMeta | null>
+  /** Reattach-on-boot: adopt tmux windows that survived a restart; returns adopted ids. */
+  restore(): Promise<string[]>
   scrollback(id: string): string
   getSession(id: string): SessionMeta | null
   listSessions(): SessionMeta[]

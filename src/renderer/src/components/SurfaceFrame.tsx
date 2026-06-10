@@ -4,6 +4,7 @@ import { useDesktop, snapTargetFor, primaryRect } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
+import { SessionTerminal } from './SessionTerminal'
 import { BRIDGE_SHIM } from '../widget-bridge'
 import { UI_KIT } from '../widget-ui-kit'
 import { IconEye } from './Icons'
@@ -510,6 +511,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
         if (surface.component === 'note') return <NoteWidget surface={surface} />
         if (surface.component === 'chat') return <ChatPanel surface={surface} />
         if (surface.component === 'activity') return <ActivityPanel surface={surface} />
+        if (surface.component === 'terminal') return <SessionTerminal surface={surface} />
         if (surface.component === 'file') return <FileWidget surface={surface} />
         if (surface.component === 'dir') return <DirWidget surface={surface} />
         if (surface.component === 'files') return <FileManager surface={surface} />
