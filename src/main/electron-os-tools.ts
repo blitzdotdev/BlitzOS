@@ -22,6 +22,7 @@ import {
   osControlSurface,
   osSay,
   osCustomizeWidget,
+  osSpawnChatSession,
   osSystemUi,
   osGroupIntoFolder,
   osBroadcast,
@@ -30,6 +31,8 @@ import {
 import { runProviderCall } from './provider-bridge'
 import { integrationStatuses, connectedProviders } from './integrations'
 import { makeSessionOps } from './session-ops.mjs'
+import { makeActionItems } from './action-items.mjs'
+import { emitSurfaceAction } from './events'
 
 // Exported so the widget-tool runner (src/main/widgets.ts) can build its handler map from the SAME ops —
 // see makeWidgetToolHandlers in widget-tools.mjs. One ops object → both the agent registry and the widget
@@ -58,8 +61,9 @@ export const electronOps = {
   switchWorkspace: (name: string) => osSwitchWorkspace(name),
   readWindow: (id: string, script?: string) => osReadWindow(id, script),
   controlSurface: (id: string, action: unknown) => osControlSurface(id, action as Parameters<typeof osControlSurface>[1]),
-  say: (text: string) => osSay(text),
-  customizeWidget: (name: string, html: string) => osCustomizeWidget(name, html),
+  say: (text: string, sessionId?: string) => osSay(text, sessionId),
+  customizeWidget: (name: string, html: string, sessionId?: string) => osCustomizeWidget(name, html, sessionId),
+  spawnChatSession: (title?: string) => osSpawnChatSession(title),
   systemUi: (name: string) => osSystemUi(name),
   groupIntoFolder: (name: string, ids: string[], x: number | undefined, y: number | undefined, kind: 'board' | 'folder') => osGroupIntoFolder(name, ids, x, y, kind),
   providerCall: (descriptor: Parameters<typeof runProviderCall>[0], transport: 'relay' | 'localhost') => runProviderCall(descriptor, transport === 'localhost' ? 'localhost' : 'relay'),
@@ -72,6 +76,15 @@ export const electronOps = {
 // so the multi-agent session model can't diverge between the two modes.
 export const electronSessionOps = makeSessionOps({ getWorkspacePath: () => osWorkspaceContext().workspace_path, emit: osBroadcast })
 Object.assign(electronOps, electronSessionOps)
+
+// Action-items inbox — same shared-core pattern. emitMoment wakes the watching agent (a perception
+// 'action' moment) when the human ticks an item; emit pushes the UI update over os:action.
+export const electronActionItems = makeActionItems({
+  getWorkspacePath: () => osWorkspaceContext().workspace_path,
+  emit: osBroadcast,
+  emitMoment: (action) => emitSurfaceAction('inbox', action)
+})
+Object.assign(electronOps, electronActionItems)
 
 export const OS_TOOLS: OsTool[] = makeOsTools(electronOps)
 export const OS_TOOLS_BY_PATH: Record<string, OsTool> = makeOsToolsByPath(electronOps)

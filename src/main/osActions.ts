@@ -120,10 +120,13 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     if (m && typeof m.surfaceId === 'string') setContentShare(m.surfaceId, !!m.on)
   })
   // The human typed a message to the agent in the in-canvas Chat.
-  ipcMain.on('os:user-message', (_e, text: unknown) => {
-    if (typeof text === 'string' && text.trim()) {
-      wsHost?.appendChat('user', text) // write to chat.md + echo to the chat widget
-      emitUserMessage(text) // wake the agent (trigger:'message')
+  ipcMain.on('os:user-message', (_e, payload: unknown) => {
+    // payload is { text, sessionId } (object) — tolerate a bare string (older renderer) → session '0'.
+    const text = typeof payload === 'string' ? payload : String((payload as { text?: unknown })?.text ?? '')
+    const sid = payload && typeof payload === 'object' && (payload as { sessionId?: unknown }).sessionId != null ? String((payload as { sessionId?: unknown }).sessionId) : '0'
+    if (text.trim()) {
+      wsHost?.appendChat('user', text, sid) // write to that session's chat.md + echo to its widget
+      emitUserMessage(text, sid) // wake ONLY that session's agent (trigger:'message')
     }
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
@@ -264,17 +267,36 @@ export function osCloseSurface(id: string): void {
 export function osGoToPrimary(): void {
   send('goToPrimary')
 }
-/** Agent → user: append a chat message to chat.md and broadcast the transcript to the chat widget. */
-export function osSay(text: string): void {
-  wsHost?.appendChat('agent', text)
+/** Agent → user: append a chat message to a session's chat.md and broadcast it to that session's widget. */
+export function osSay(text: string, sessionId = '0'): void {
+  wsHost?.appendChat('agent', text, sessionId)
 }
-/** The agent customizes a built-in widget's UI (blitz-<name>.html) — currently 'chat'. Live-reloads. */
-export function osCustomizeWidget(name: string, html: string): { ok: boolean; rel?: string; error?: string } {
-  return wsHost ? wsHost.customizeWidget(String(name), String(html)) : { ok: false, error: 'no workspace host' }
+/** The agent customizes a session's widget UI (blitz-[<id>-]<name>.html) — currently 'chat'. Live-reloads. */
+export function osCustomizeWidget(name: string, html: string, sessionId = '0'): { ok: boolean; rel?: string; error?: string } {
+  return wsHost ? wsHost.customizeWidget(String(name), String(html), sessionId) : { ok: false, error: 'no workspace host' }
 }
 /** Read a built-in widget's current UI source (workspace file or shipped default) — read-before-edit. */
 export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
+}
+// index.ts owns process supervision (the agent-runner + relay url), so it registers HOW to start a chat
+// session's agent. osActions handles the workspace-side (mint id + surface the widget) and delegates the
+// agent spawn through this hook — keeping the agent-runner wiring in one place (parity with backend.mjs).
+let spawnChatAgent: ((sessionId: string) => void) | null = null
+export function setSpawnChatAgent(fn: (sessionId: string) => void): void {
+  spawnChatAgent = fn
+}
+/** Open a new chat session: mint its id, register + live-surface its chat widget, then spawn its agent. */
+export function osSpawnChatSession(title?: string): { id: string; title: string } {
+  if (!wsHost) throw new Error('no workspace host')
+  const id = wsHost.newChatSessionId()
+  wsHost.addChatSession(id, title)
+  spawnChatAgent?.(id)
+  return { id, title: title || `Chat ${id}` }
+}
+/** The chat sessions in the active workspace (always '0' + any persisted agent sessions) — for boot-resume. */
+export function osChatSessionIds(): string[] {
+  return wsHost ? wsHost.chatSessionIds() : ['0']
 }
 /** #52: group surfaces into a REAL folder on disk (mkdir + mv their files into a subdir), via the shared
  *  workspace host. Returns the host result. The reconcile that follows surfaces the new folder as a tile. */

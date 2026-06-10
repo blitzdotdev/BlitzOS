@@ -133,6 +133,49 @@ export async function startBrowserHost({ onFrame, onNavigated, chromiumPath } = 
   const client = new CdpClient(wsUrl)
   await client.ready()
 
+  // Derive a clean desktop-Chrome UA from the live browser. The headless default carries a
+  // "HeadlessChrome" token that UA-sniffing sites (e.g. WhatsApp Web) reject — they show
+  // "update your browser" and never render the login QR. We swap that token for "Chrome" and
+  // apply it per web surface (createSurface, below). Derived from Browser.getVersion so it
+  // never rots when Chromium updates; if the query fails we just keep the default UA.
+  let cleanUA = null
+  let uaMeta = undefined
+  try {
+    const ver = await client.send('Browser.getVersion')
+    const real = ver?.userAgent || ''
+    if (real.includes('HeadlessChrome')) {
+      cleanUA = real.replace('HeadlessChrome', 'Chrome')
+      const full = (ver.product || '').match(/\/([\d.]+)/)?.[1] || ''
+      const major = full.split('.')[0] || ''
+      if (major) {
+        // Keep navigator.userAgentData consistent with the spoofed string (some sniffers
+        // also read client hints), so the surface doesn't read as headless either way.
+        uaMeta = {
+          brands: [
+            { brand: 'Not)A;Brand', version: '8' },
+            { brand: 'Chromium', version: major },
+            { brand: 'Google Chrome', version: major }
+          ],
+          fullVersion: full,
+          fullVersionList: [
+            { brand: 'Not)A;Brand', version: '8.0.0.0' },
+            { brand: 'Chromium', version: full },
+            { brand: 'Google Chrome', version: full }
+          ],
+          platform: 'Linux',
+          platformVersion: '',
+          architecture: 'x86',
+          model: '',
+          mobile: false,
+          bitness: '64',
+          wow64: false
+        }
+      }
+    }
+  } catch {
+    /* non-fatal: surfaces keep the default UA */
+  }
+
   const surfaces = new Map() // surfaceId -> { targetId, sessionId, browserContextId }
   const sessionToSurface = new Map() // target sessionId -> surfaceId
 
@@ -183,17 +226,33 @@ export async function startBrowserHost({ onFrame, onNavigated, chromiumPath } = 
     async createSurface(surfaceId, { url, width = 1280, height = 800, quality = 70 } = {}) {
       // No width/height on createTarget: the default (persisted) context rejects window
       // sizing ("only for new windows"). Size the render viewport via Emulation instead.
-      const { targetId } = await client.send('Target.createTarget', { url: url || 'about:blank' })
+      // Open about:blank first so the UA override is installed BEFORE the real URL loads —
+      // otherwise the first navigation (e.g. WhatsApp's browser sniff) sees HeadlessChrome.
+      const { targetId } = await client.send('Target.createTarget', { url: 'about:blank' })
       const { sessionId } = await client.send('Target.attachToTarget', { targetId, flatten: true })
       sessionToSurface.set(sessionId, surfaceId)
       surfaces.set(surfaceId, { targetId, sessionId, width, height, quality })
       await client.send('Page.enable', {}, sessionId)
+      if (cleanUA) {
+        try {
+          await client.send('Network.setUserAgentOverride', { userAgent: cleanUA, userAgentMetadata: uaMeta }, sessionId)
+        } catch {
+          /* non-fatal: keep the default UA */
+        }
+      }
       try {
         await client.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }, sessionId)
       } catch {
         /* non-fatal: screencast max bounds still constrain the frame */
       }
       await client.send('Page.startScreencast', { format: 'jpeg', quality, maxWidth: width, maxHeight: height, everyNthFrame: 1 }, sessionId)
+      if (url) {
+        try {
+          await client.send('Page.navigate', { url }, sessionId)
+        } catch {
+          /* navigation failures surface on the page itself */
+        }
+      }
       return { targetId, sessionId }
     },
     async closeSurface(surfaceId) {

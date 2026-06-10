@@ -53,6 +53,7 @@ import { startRelay } from '../src/main/relay.mjs'
 import { withActivity } from '../src/main/activity.mjs'
 // Shared multi-agent session lifecycle (tmux-backed, workspace-keyed) — SAME module Electron binds.
 import { makeSessionOps } from '../src/main/session-ops.mjs'
+import { makeActionItems } from '../src/main/action-items.mjs'
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
 import { fileURLToPath } from 'node:url'
 
@@ -234,6 +235,17 @@ let osState = { surfaces: [] }
 let agentUrl = null
 let relay = null // the SHARED relay handle ({ getUrl, isOnline, stop }) — same module Electron uses (no divergence)
 let brainRunner = null // the supervised brain handle ({ stop, restart }) — restarted when the relay URL changes
+// Per-session chat agents (#1+). #0 is the brainRunner above; #1,#2… each get their OWN supervised claude
+// over the SAME relay, scoped to their session id (its /events + /say carry session:'<id>'). One map keeps
+// us from double-spawning a session's agent.
+const chatRunners = new Map() // sessionId -> { stop, restart }
+function chatAgentCmd() { return process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : 'claude' }
+/** Ensure a supervised agent is running for chat session `id`. Idempotent; '0' is the brainRunner. */
+function ensureChatAgent(sessionId) {
+  const id = String(sessionId)
+  if (id === '0' || chatRunners.has(id)) return
+  chatRunners.set(id, startAgentRunner({ getUrl: () => agentUrl, cmd: chatAgentCmd(), label: 'chat-' + id, sessionId: id, getWorkspacePath: () => wsHost.activePath() }))
+}
 const sseClients = new Set()
 // Widget data consent: `${surfaceId}:${provider}` the human approved (via the
 // renderer prompt). The data route 403s until the pair is here — a widget can't
@@ -568,8 +580,15 @@ const serverOps = {
     if (!SERVER_MODE || !host || !host.has(id)) return { ok: false, error: 'in-window control needs server mode (BLITZ_SERVER_MODE=1) or the desktop app; this surface has no server browser target' }
     return controlSession(host.session(id), action)
   },
-  say: (text) => wsHost.appendChat('agent', String(text)), // append to chat.md + broadcast the transcript to the chat widget
-  customizeWidget: (name, html) => wsHost.customizeWidget(String(name), String(html)),
+  say: (text, sessionId) => wsHost.appendChat('agent', String(text), sessionId), // append to that session's chat.md + broadcast
+  customizeWidget: (name, html, sessionId) => wsHost.customizeWidget(String(name), String(html), sessionId),
+  // Open a new chat session: register + surface it (host), then supervise ITS agent over the same relay.
+  spawnChatSession: async (title) => {
+    const id = wsHost.newChatSessionId()
+    wsHost.addChatSession(id, title)
+    ensureChatAgent(id)
+    return { id, title: title || `Chat ${id}` }
+  },
   systemUi: (name) => wsHost.systemUi(String(name)),
   groupIntoFolder: (name, ids, x, y, kind) => {
     // Normalize to { ok, ... } like Electron's osGroupIntoFolder — wsHost.group returns a bare { error } (no ok)
@@ -594,6 +613,11 @@ const serverOps = {
 // workspace folder + the SSE broadcast emit. Electron binds the SAME makeSessionOps with its own seam.
 const serverSessionOps = makeSessionOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast })
 Object.assign(serverOps, serverSessionOps)
+
+// Action-items inbox — the SAME shared core Electron binds. Server seam: active workspace + SSE
+// broadcast for UI; emitMoment wakes the watching agent (perception 'action' moment) on resolve.
+const serverActionItems = makeActionItems({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast, emitMoment: (action) => emitSurfaceAction('inbox', action) })
+Object.assign(serverOps, serverActionItems)
 
 // Start the agent-socket relay via the SHARED lifecycle module (relay.mjs) — connect + self-heal + watchdog +
 // status all live there now (one impl, Electron too). The server only supplies its tools + the adapter: how to
@@ -838,6 +862,43 @@ const server = createServer(async (req, res) => {
     req.on('end', () => { const b = toolBody(body); Promise.resolve(serverSessionOps.spawnSession({ command: b.command, title: b.title, kind: b.kind, cwd: b.cwd })).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
     return
   }
+  if (path === '/api/os/session-list' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 1000) req.destroy() })
+    req.on('end', () => json(res, 200, { sessions: serverSessionOps.listSessions() }))
+    return
+  }
+  if (path === '/api/os/session-stop' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverSessionOps.stopSession(String(b.id || '')) }) })
+    return
+  }
+  if (path === '/api/os/session-restart' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverSessionOps.restartSession(String(b.id || ''))).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
+    return
+  }
+  // Action-items inbox — the renderer (human) loads/resolves/clears items (mirrors the session routes).
+  if (path === '/api/os/action-list' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 1000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { actions: serverActionItems.listActions(b.status) }) })
+    return
+  }
+  if (path === '/api/os/action-resolve' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverActionItems.resolveAction(String(b.id || ''), b.resolution ? String(b.resolution) : 'done') }) })
+    return
+  }
+  if (path === '/api/os/action-clear' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverActionItems.clearAction(String(b.id || '')) }) })
+    return
+  }
   if (path === '/api/os/agent-url' && req.method === 'GET') return json(res, 200, { url: agentUrl })
   // Serve a real workspace file as a canvas tile's content (#37) — JAILED to the active workspace
   // dir, never .blitzos (runtime/secret state), size-capped. Read-only GET.
@@ -1038,10 +1099,12 @@ const server = createServer(async (req, res) => {
     let cbody = ''
     req.on('data', (c) => { cbody += c; if (cbody.length > 20_000) req.destroy() })
     req.on('end', () => {
-      const t = toolBody(cbody).text
+      const cb = toolBody(cbody)
+      const t = cb.text
+      const sid = cb.sessionId != null ? String(cb.sessionId) : '0' // which chat session the human typed into
       if (typeof t === 'string' && t.trim()) {
-        wsHost.appendChat('user', t) // write the user's message to chat.md + echo it to the chat widget
-        emitUserMessage(t) // …and wake the agent (trigger:'message' moment, redaction-exempt)
+        wsHost.appendChat('user', t, sid) // write the user's message to that session's chat.md + echo to its widget
+        emitUserMessage(t, sid) // …and wake ONLY that session's agent (trigger:'message' moment, redaction-exempt)
       }
       json(res, 200, { ok: true })
     })
@@ -1207,8 +1270,11 @@ server.listen(PORT, '127.0.0.1', () => {
   // alive (auto-restart on exit), so a brain is always watching. Opt-in via BLITZ_AGENT
   // (=claude or a custom command); off by default (continuous LLM use has a cost).
   if (process.env.BLITZ_AGENT) {
-    brainRunner = startAgentRunner({ getUrl: () => agentUrl, cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, label: 'server-agent' })
+    brainRunner = startAgentRunner({ getUrl: () => agentUrl, cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, label: 'server-agent', sessionId: '0', getWorkspacePath: () => wsHost.activePath() })
   }
+  // Resume agents for any chat sessions opened in a previous run (their meta persists in the workspace),
+  // so a restart re-attaches every session's claude — not just the primary. #0 is handled above.
+  for (const id of wsHost.chatSessionIds()) if (id !== '0') ensureChatAgent(id)
   // (the relay self-heal + watchdog + status heartbeat now live in the shared relay.mjs — see startServerRelay)
 })
 
@@ -1223,6 +1289,7 @@ async function gracefulExit() {
   wsHost.flush()
   wsHost.stopWatch() // close fs watchers (handle hygiene)
   try { serverSessionOps.stopHosts() } catch { /* ignore */ } // flush session transcripts + close tmux control clients (sessions survive)
+  for (const r of chatRunners.values()) { try { r.stop() } catch { /* ignore */ } } // stop per-session chat agents (sessions persist; agents re-attach on next boot)
   try {
     if (host) await host.stop()
   } catch {

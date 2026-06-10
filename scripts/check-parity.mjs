@@ -37,7 +37,8 @@ const SHARED_CORES = [
   'control-core',    // CDP control vocabulary
   'provider-call',   // integration/provider calls
   'widget-tools',    // sandboxed-widget data bridge
-  'session-ops'      // multi-agent session lifecycle (tmux-backed, workspace-keyed)
+  'session-ops',     // multi-agent session lifecycle (tmux-backed, workspace-keyed)
+  'action-items'     // the human Action-items inbox (request_action / resolve, workspace-keyed)
 ]
 
 const violations = []

@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus' | 'session-spawn' | 'session-data' | 'session-exit'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus' | 'session-spawn' | 'session-data' | 'session-exit' | 'action-item' | 'action-item-removed'
   [k: string]: unknown
 }
 
@@ -98,6 +98,28 @@ const api = {
   sessionSpawn(opts: { command?: string; title?: string }): void {
     ipcRenderer.send('os:session-spawn', opts)
   },
+  /** List every session in the active workspace (running + persisted) — for the Sessions tray. */
+  sessionList(): Promise<unknown[]> {
+    return (ipcRenderer.invoke('os:session-list') as Promise<unknown[]>).catch(() => [])
+  },
+  /** Stop (kill) a session by id. */
+  sessionStop(id: string): void {
+    ipcRenderer.send('os:session-stop', id)
+  },
+  /** Re-spawn a dead session from its persisted meta (one-click resume) — emits session-spawn. */
+  sessionRestart(id: string): void {
+    ipcRenderer.send('os:session-restart', id)
+  },
+  /** Action-items inbox (human side): list / resolve (tick) / clear a resolved item. */
+  actionList(status?: string): Promise<unknown[]> {
+    return (ipcRenderer.invoke('os:action-list', status) as Promise<unknown[]>).catch(() => [])
+  },
+  actionResolve(id: string, resolution?: string): void {
+    ipcRenderer.send('os:action-resolve', { id, resolution })
+  },
+  actionClear(id: string): void {
+    ipcRenderer.send('os:action-clear', id)
+  },
   /** The agent-socket paste URL (for the "Connect AI" affordance). */
   onAgentSocketUrl(cb: (url: string) => void): () => void {
     const listener = (_e: unknown, url: string): void => cb(url)
@@ -134,9 +156,9 @@ const api = {
   getWallpaper(): Promise<string | null> {
     return ipcRenderer.invoke('os:wallpaper')
   },
-  /** The user typed a message to the agent in the in-canvas Chat. */
-  sendMessage(text: string): void {
-    ipcRenderer.send('os:user-message', text)
+  /** The user typed a message to a chat session's agent (sessionId '0' = the primary chat). */
+  sendMessage(text: string, sessionId = '0'): void {
+    ipcRenderer.send('os:user-message', { text, sessionId })
   },
   /** Ask main to (re)send the persisted canvas as a hydrate, once our onAction listener is up. */
   requestHydrate(): void {

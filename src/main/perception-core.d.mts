@@ -23,9 +23,9 @@ export function redactMoment(m: BlitzMoment): BlitzMoment
 export function ingestSignals(surfaceId: string, raw: Array<Record<string, unknown>>): void
 export function latestSeq(): number
 export function emitSurfaceAction(surfaceId: string, action: Record<string, unknown>): void
-export function emitUserMessage(text: string): void
+export function emitUserMessage(text: string, sessionId?: string): void
 export function emitConnectorChange(provider: string, connected: boolean): void
-export function waitForEvents(since: number, maxMs: number): Promise<BlitzMoment[]>
+export function waitForEvents(since: number, maxMs: number, sessionId?: string): Promise<BlitzMoment[]>
 export const EVENTS_REMINDER: string
 
 /** In-page sensor installer (evaluate in a web surface). */

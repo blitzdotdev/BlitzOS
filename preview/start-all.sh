@@ -70,6 +70,9 @@ cmd_stop() {
   # Kill any orphaned brain (claude -p) left over if the backend died uncleanly — the marker is unique to us,
   # so this can't touch the user's own `claude` sessions. (Cleanly, the brain dies with the backend's group.)
   pkill -KILL -f 'blitz-brain-session' 2>/dev/null || true
+  # Same for per-session chat agents (#1+): their marker is 'blitz-session-<id>', also unique to us. Cleanly
+  # they die with the backend's group; this reaps any orphaned by an unclean exit.
+  pkill -KILL -f 'blitz-session-' 2>/dev/null || true
   say "stopped."
 }
 

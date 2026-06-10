@@ -7,6 +7,10 @@ export interface AgentRunnerOpts {
   cmd?: string
   /** Log prefix. */
   label?: string
+  /** The BlitzOS session id this agent serves (default '0' = the primary chat). */
+  sessionId?: string
+  /** Active workspace folder — where the custom claude session id is persisted (.blitzos/sessions/<id>/meta.json). */
+  getWorkspacePath?: () => string | null | undefined
 }
 
 /** A handle to the running brain supervisor. */

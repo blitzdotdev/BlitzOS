@@ -1000,55 +1000,67 @@ const SYSTEM_RENDERERS = ['chat', 'note'] // roles that ship a default renderer 
 const SYSTEM_PREFIX = 'blitz-'
 const CHAT_FILE = 'chat.md'
 
-/** The recognized system files (the chat renderer + its transcript) — never auto-surfaced as plain tiles. */
+// Per-session chat (brain-as-session): session '0' (the primary chat) keeps the LEGACY names
+// (chat.md, blitz-chat.html) so it needs ZERO migration; any other session gets chat-<id>.md and
+// blitz-<id>-chat.html. Both naming families are recognized as system files (never surfaced as tiles).
+export function chatFileName(sessionId = '0') { return sessionId && String(sessionId) !== '0' ? `chat-${sessionId}.md` : CHAT_FILE }
+export function sysRendererName(role, sessionId = '0') { return sessionId && String(sessionId) !== '0' ? `${SYSTEM_PREFIX}${sessionId}-${role}.html` : `${SYSTEM_PREFIX}${role}.html` }
+/** The role a `blitz-[<sessionId>-]<role>.html` name encodes (the LAST dash-segment), or null. */
+function rendererRoleOf(name) {
+  const n = String(name || '').toLowerCase()
+  if (!n.startsWith(SYSTEM_PREFIX) || !n.endsWith('.html')) return null
+  const mid = n.slice(SYSTEM_PREFIX.length, -5) // 'chat' or '<sessionId>-chat'
+  const role = mid.includes('-') ? mid.slice(mid.lastIndexOf('-') + 1) : mid
+  return SYSTEM_RENDERERS.indexOf(role) !== -1 ? role : null
+}
+
+/** The recognized system files (the chat renderers + their transcripts) — never auto-surfaced as plain tiles. */
 export function isSystemFile(name) {
   const n = String(name || '').toLowerCase()
-  if (n === CHAT_FILE) return true
-  return n.startsWith(SYSTEM_PREFIX) && n.endsWith('.html') && SYSTEM_RENDERERS.indexOf(n.slice(SYSTEM_PREFIX.length, -5)) !== -1
+  if (n === CHAT_FILE || /^chat-[a-z0-9_-]+\.md$/.test(n)) return true
+  return rendererRoleOf(n) !== null
 }
 /** If a workspace `.html` is a recognized system renderer, return its role (chat | …), else null. */
 export function systemRoleOf(name) {
-  const n = String(name || '').toLowerCase()
-  if (!n.startsWith(SYSTEM_PREFIX) || !n.endsWith('.html')) return null
-  const role = n.slice(SYSTEM_PREFIX.length, -5)
-  return SYSTEM_RENDERERS.indexOf(role) !== -1 ? role : null
+  return rendererRoleOf(name)
 }
 
 /** Ensure `blitz-<role>.html` exists in the workspace — copy the shipped default if MISSING (so a
  *  deleted renderer is recreated). Never overwrites an existing (possibly customized) file. */
-export function ensureSystemRenderer(dir, role) {
+export function ensureSystemRenderer(dir, role, sessionId = '0') {
   if (SYSTEM_RENDERERS.indexOf(role) === -1) return null
-  const dest = safeJoin(dir, `${SYSTEM_PREFIX}${role}.html`)
+  const rel = sysRendererName(role, sessionId)
+  const dest = safeJoin(dir, rel)
   if (!dest) return null
-  if (existsSync(dest)) return { rel: `${SYSTEM_PREFIX}${role}.html`, created: false }
+  if (existsSync(dest)) return { rel, created: false }
   try {
-    atomicWrite(dest, readFileSync(join(SYS_DIR, `${role}.html`), 'utf8'))
-    return { rel: `${SYSTEM_PREFIX}${role}.html`, created: true }
+    atomicWrite(dest, readFileSync(join(SYS_DIR, `${role}.html`), 'utf8')) // per-session widgets default to the SAME shipped UI
+    return { rel, created: true }
   } catch {
     return null
   }
 }
 /** Write a system renderer's HTML (the agent customizing the chat UI) → blitz-<role>.html, jailed +
  *  self-write-stamped. The role must be a known system widget. Returns { ok, rel } or { ok:false }. */
-export function writeSystemRenderer(dir, role, html) {
+export function writeSystemRenderer(dir, role, html, sessionId = '0') {
   if (SYSTEM_RENDERERS.indexOf(role) === -1) return { ok: false, error: `unknown system widget: ${role}` }
-  const dest = safeJoin(dir, `${SYSTEM_PREFIX}${role}.html`)
+  const rel = sysRendererName(role, sessionId)
+  const dest = safeJoin(dir, rel)
   if (!dest) return { ok: false, error: 'bad path' }
   try {
     atomicWrite(dest, String(html == null ? '' : html))
-    return { ok: true, rel: `${SYSTEM_PREFIX}${role}.html` }
+    return { ok: true, rel }
   } catch {
     return { ok: false, error: 'write failed' }
   }
 }
-/** Resolve a system renderer's HTML: the workspace file (customized) if present, else the shipped default. */
-export function readSystemRenderer(dir, role) {
-  const abs = safeJoin(dir, `${SYSTEM_PREFIX}${role}.html`)
-  if (abs && existsSync(abs)) {
-    try {
-      return readFileSync(abs, 'utf8')
-    } catch {
-      /* fall through to the default */
+/** Resolve a system renderer's HTML: this session's file if present, else the workspace's shared
+ *  blitz-<role>.html (so a new session inherits the workspace's customized look), else the shipped default. */
+export function readSystemRenderer(dir, role, sessionId = '0') {
+  for (const rel of [sysRendererName(role, sessionId), sysRendererName(role, '0')]) {
+    const abs = safeJoin(dir, rel)
+    if (abs && existsSync(abs)) {
+      try { return readFileSync(abs, 'utf8') } catch { /* try next */ }
     }
   }
   try {
@@ -1061,12 +1073,12 @@ export function readSystemRenderer(dir, role) {
 // ---- chat transcript file (chat.md) — the OS owns the serialization; the widget just renders it.
 // Format: a readable markdown log, one block per message: `### <role> · <ts>` then the text. Parseable
 // + human-readable + the agent can read it as plain markdown. Append-only (O(1) per message).
-function chatAbs(dir) {
-  return safeJoin(dir, CHAT_FILE)
+function chatAbs(dir, sessionId = '0') {
+  return safeJoin(dir, chatFileName(sessionId))
 }
-/** Append a chat message to chat.md (recreating the file if missing). role: 'user' | 'agent'. */
-export function appendChatMessage(dir, role, text) {
-  const abs = chatAbs(dir)
+/** Append a chat message to a session's transcript (recreating the file if missing). role: 'user' | 'agent'. */
+export function appendChatMessage(dir, role, text, sessionId = '0') {
+  const abs = chatAbs(dir, sessionId)
   if (!abs) return { ok: false }
   try {
     if (!existsSync(abs)) atomicWrite(abs, '# Chat\n')
@@ -1078,9 +1090,9 @@ export function appendChatMessage(dir, role, text) {
     return { ok: false }
   }
 }
-/** Parse chat.md into [{role,text,ts}] (last `cap`). Inverse of appendChatMessage; tolerant of edits. */
-export function readChatMessages(dir, cap = 400) {
-  const abs = chatAbs(dir)
+/** Parse a session's transcript into [{role,text,ts}] (last `cap`). Inverse of appendChatMessage. */
+export function readChatMessages(dir, cap = 400, sessionId = '0') {
+  const abs = chatAbs(dir, sessionId)
   if (!abs || !existsSync(abs)) return []
   let raw = ''
   try {
