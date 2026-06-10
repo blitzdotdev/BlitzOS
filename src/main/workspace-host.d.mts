@@ -35,6 +35,10 @@ export interface WorkspaceHost {
   newFolder(name: string, kind: 'board' | 'folder' | undefined, x: number, y: number): { ok: true; folder: string } | { error: string }
   listDir(rel: string): { path: string; entries: Array<{ name: string; dir: boolean; ext: string; size: number; isImage: boolean; path: string }>; total: number; truncated: boolean } | null
   closeSurfaceFile(id: string): { ok: boolean; removed?: string; error?: string; skipped?: string }
+  /** Item 4: which OTHER workspace holds surface `id` (or null). */
+  locateSurface(id: string): { name: string; dir: string; node: Record<string, unknown> } | null
+  /** Item 4: bring a surface from another workspace into the active one (id preserved). */
+  bringSurfaceHere(id: string, x?: number, y?: number): { ok: boolean; from?: string; id?: string; notFound?: boolean; error?: string }
   appendChat(role: 'user' | 'agent', text: string, sessionId?: string): Array<{ role: string; text: string; ts: number }>
   customizeWidget(name: string, html: string, sessionId?: string): { ok: boolean; rel?: string; error?: string }
   systemUi(name: string): string | null
@@ -42,6 +46,7 @@ export interface WorkspaceHost {
   newChatSessionId(): string
   addChatSession(sessionId: string, title?: string): Record<string, unknown>
   renameChatSession(sessionId: string, title: string): { ok: boolean; id?: string; title?: string; error?: string }
+  stopChatSession(sessionId: string): { ok: boolean; id?: string }
   group(name: string, memberIds: string[], x?: number, y?: number, kind?: 'board' | 'folder'): { ok: true; folder: string; moved: number } | { error: string }
   consent(): { surfaces: string[]; providers: string[] }
   persistConsent(c: { surfaces?: string[]; providers?: string[] }): void

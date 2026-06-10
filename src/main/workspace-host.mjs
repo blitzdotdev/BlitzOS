@@ -31,7 +31,9 @@ import {
   resolveWorkspace,
   safeName,
   readRootState,
-  patchRootState
+  patchRootState,
+  findSurfaceWorkspace,
+  relocateSurface
 } from './workspace.mjs'
 
 /**
@@ -207,6 +209,26 @@ export function createWorkspaceHost(a) {
     return removeSurfaceFile(activeWorkspace, String(id))
   }
 
+  // Item 4: which OTHER workspace holds this surface id (so an op on a non-active id can NAME where it is).
+  function locateSurface(id) {
+    return findSurfaceWorkspace(root, String(id), activeWorkspace)
+  }
+  // Item 4: BRING a surface from another workspace INTO the active one — the "I just want this one window
+  // here" path. Moves its content file across folders (id preserved), inserts it into the live state, and
+  // persists. Returns { ok, from, id } or { ok:false, notFound }.
+  function bringSurfaceHere(id, x, y) {
+    if (switching) return { ok: false, error: 'switch in progress' }
+    const r = relocateSurface(root, activeWorkspace, String(id), { x, y })
+    if (!r) return { ok: false, notFound: true }
+    const st = a.getState()
+    const surfaces = [...(st.surfaces || []), r.surface]
+    a.setState({ ...st, surfaces })
+    Promise.resolve(onSurfaces(surfaces)).catch(() => {})
+    a.broadcast({ type: 'create', surface: r.surface })
+    flush() // persist the destination now (durable) — the source already lost the file + node
+    return { ok: true, from: r.fromName, id: r.surface.id }
+  }
+
   // ---- The system Chat: a srcdoc widget per SESSION whose UI is blitz-[<id>-]chat.html (customizable)
   // and whose transcript is chat[-<id>].md. Session '0' is the primary chat (legacy names, pinned). Each
   // session has its own agent (agent-runner) that /says into ITS transcript. The OS appends each message
@@ -313,6 +335,15 @@ export function createWorkspaceHost(a) {
     } catch { /* best-effort */ }
     pushChatHub()
     return { ok: true, id, title: t }
+  }
+  /** Stop a session (the human hit Stop): clear its 'thinking' status and re-push the hub so the indicator
+   *  drops at once. The actual brain-process kill is the TRANSPORT's job (osActions → index.ts brains map);
+   *  this is the shared state/UI half. The transcript + session stay — the next message respawns the brain. */
+  function stopChatSession(sessionId) {
+    const sid = String(sessionId)
+    chatStatus[sid] = ''
+    pushChatHub()
+    return { ok: true, id: sid }
   }
   /** One-time: an OLD workspace kept the transcript in panels.json — seed chat.md from it so no history is lost. */
   function migrateChatToFile() {
@@ -525,6 +556,8 @@ export function createWorkspaceHost(a) {
     newFolder,
     listDir: listDirInWorkspace,
     closeSurfaceFile,
+    locateSurface,
+    bringSurfaceHere,
     appendChat,
     customizeWidget,
     systemUi,
@@ -532,6 +565,7 @@ export function createWorkspaceHost(a) {
     newChatSessionId,
     addChatSession,
     renameChatSession,
+    stopChatSession,
     group,
     // #53: per-workspace consent persistence (read on boot/switch, write on a human grant). The write
     // MERGES (a caller may update just `surfaces` or just `providers` — e.g. the widget bridge vs the

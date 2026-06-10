@@ -469,7 +469,12 @@ function durableFlush() {
     /* best-effort */
   }
 }
-const noSuch = (id) => ({ ok: false, error: `no surface "${id}" in the active workspace` })
+// Item 4: name where a non-active id lives so the agent can bring it (move_surface) or switch_workspace.
+function noSuch(id) {
+  const found = wsHost.locateSurface(String(id))
+  if (found) return { ok: false, error: `surface "${id}" is in workspace "${found.name}", not the active one — move_surface it (to bring just this window here) or switch_workspace "${found.name}" (for that whole desktop)` }
+  return { ok: false, error: `no surface "${id}" in any workspace` }
+}
 // Claim the root + read the previous run's dirty bit (kernel fault model — parity with Electron's
 // index.ts). `concurrent` = the old record's pid is still alive: another BlitzOS owns this root
 // (warn, never false-report a crash). Announced via a trigger:'system' moment for any watching
@@ -581,7 +586,12 @@ const serverOps = {
   },
   moveSurface: (id, x, y) => {
     const i = String(id)
-    if (!surfaceExists(i)) return noSuch(i)
+    if (!surfaceExists(i)) {
+      // Not here — if it lives in another workspace, move_surface MEANS "bring it here + place it".
+      const r = wsHost.bringSurfaceHere(i, Number(x), Number(y))
+      if (r && r.ok) return { ok: true }
+      return noSuch(i)
+    }
     osState = { ...osState, surfaces: (osState.surfaces || []).map((s) => (s.id === i ? { ...s, x: Number(x), y: Number(y) } : s)) }
     broadcast({ type: 'move', id: i, x: Number(x), y: Number(y) })
     return { ok: true }

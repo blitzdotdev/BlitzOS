@@ -74,6 +74,13 @@ export function listWorkspaces(root: string): WorkspaceEntry[]
 /** Create + scaffold a new workspace. Throws Error with .code 'EINVAL' | 'EEXIST'. */
 export function createWorkspace(root: string, name: string): { name: string; path: string }
 
+// ---- cross-workspace surface addressing (item 4) ----
+/** Locate which workspace holds surface `id` (skipping `exceptDir`). Null if not found. */
+export function findSurfaceWorkspace(root: string, id: string, exceptDir?: string): { name: string; dir: string; node: Record<string, unknown> } | null
+/** Move surface `id` from its workspace INTO destDir (file move + node transfer, id preserved). Returns
+ *  the reconstructed descriptor + source name, or null if not elsewhere / unmovable. */
+export function relocateSurface(root: string, destDir: string, id: string, placeAt?: { x?: number; y?: number }): { surface: Record<string, unknown>; fromName: string } | null
+
 // ---- machine-global root state (<root>/.blitzos/state.json): the OS runtime journal ----
 
 export interface BootRecord {

@@ -140,6 +140,7 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     const args = (payload?.args && typeof payload.args === 'object' ? payload.args : {}) as Record<string, unknown>
     if (op === 'new') return osSpawnChatSession(typeof args.title === 'string' ? args.title : undefined)
     if (op === 'rename') return osRenameChatSession(String(args.id ?? '0'), String(args.title ?? ''))
+    if (op === 'stop') return osStopChatSession(String(args.id ?? '0')) // human hit Stop: kill the brain, clear thinking
     if (op === 'switch') return { ok: true } // active session is widget-side state; nothing to persist (yet)
     return { ok: false, error: `unknown chat op: ${op}` }
   })
@@ -257,6 +258,12 @@ export async function osReadWindow(id: string, script?: string): Promise<unknown
       throw new Error(
         `surface ${id} is a sandboxed ${kind} widget — read_window only works on \`web\` surfaces. To verify a widget's data, read its props from list_state, not its DOM.`
       )
+    // Item 4: a web surface in ANOTHER workspace isn't live (not rendered) — name where it is so the agent
+    // brings it here (move_surface) or switches, then it becomes readable.
+    if (!surfaceExists(id)) {
+      const found = wsHost ? wsHost.locateSurface(id) : null
+      if (found) throw new Error(`surface ${id} is in workspace "${found.name}", not the active one — move_surface it here (or switch_workspace "${found.name}") to make it live, then read it`)
+    }
     throw new Error(`surface ${id} has no readable web content yet`)
   }
   const wc = webContents.fromId(wcid)
@@ -313,10 +320,23 @@ export interface MutationResult {
   ok: boolean
   error?: string
 }
-const noSuch = (id: string): MutationResult => ({ ok: false, error: `no surface "${id}" in the active workspace` })
+// Item 4: when an id isn't in the active workspace, locate it elsewhere and turn the dead-end into a
+// navigable instruction — the agent decides (per its own policy): pull JUST this window here
+// (move_surface, which brings it), or switch_workspace for that whole desktop.
+function noSuch(id: string): MutationResult {
+  const found = wsHost ? wsHost.locateSurface(id) : null
+  if (found) return { ok: false, error: `surface "${id}" is in workspace "${found.name}", not the active one — move_surface it (to bring just this window here) or switch_workspace "${found.name}" (for that whole desktop)` }
+  return { ok: false, error: `no surface "${id}" in any workspace` }
+}
 
 export function osMoveSurface(id: string, x: number, y: number): MutationResult {
-  if (!surfaceExists(id)) return noSuch(id)
+  if (!surfaceExists(id)) {
+    // Not here — but if it lives in another workspace, move_surface MEANS "bring it here + place it"
+    // (the agent wants just this one window). Preserves the id so the agent's handle keeps working.
+    const r = wsHost ? wsHost.bringSurfaceHere(id, x, y) : null
+    if (r && r.ok) return { ok: true }
+    return noSuch(id)
+  }
   cached = { ...cached, surfaces: (cached.surfaces || []).map((s) => (s.id === id ? { ...s, x, y } : s)) }
   send('move', { id, x, y }) // geometry rides the normal persist debounce — a lost move is harmless
   return { ok: true }
@@ -370,6 +390,13 @@ let onChatActivity: ((sessionId: string, spawn: boolean) => void) | null = null
 export function setOnChatActivity(fn: (sessionId: string, spawn: boolean) => void): void {
   onChatActivity = fn
 }
+// The human hit Stop on a session. index.ts owns the brain processes, so it registers the KILLER here and
+// osStopChatSession fires it. Kept separate from onChatActivity so a stop can never be misread as activity
+// (which would re-arm the idle timer instead of tearing the brain down).
+let onChatStop: ((sessionId: string) => void) | null = null
+export function setOnChatStop(fn: (sessionId: string) => void): void {
+  onChatStop = fn
+}
 /** Open a new chat session: mint its id + register it (the hub sidebar shows it). The agent is NOT spawned
  *  here — it comes up on-demand on the first message (onChatActivity), so opening a session costs nothing. */
 export function osSpawnChatSession(title?: string): { id: string; title: string } {
@@ -381,6 +408,14 @@ export function osSpawnChatSession(title?: string): { id: string; title: string 
 /** Set a chat session's sidebar title (the agent auto-names; the human can rename). */
 export function osRenameChatSession(id: string, title: string): { ok: boolean; id?: string; title?: string; error?: string } {
   return wsHost ? wsHost.renameChatSession(String(id), String(title)) : { ok: false, error: 'no workspace host' }
+}
+/** The human hit Stop on a session: kill its brain process NOW (index.ts hook) and clear its 'thinking'
+ *  status (workspace host re-pushes the hub). The session + transcript stay — the next message respawns the
+ *  brain on-demand, so Stop is a halt, not a delete. */
+export function osStopChatSession(id: string): { ok: boolean; id?: string; error?: string } {
+  const sid = String(id)
+  onChatStop?.(sid)
+  return wsHost ? wsHost.stopChatSession(sid) : { ok: false, error: 'no workspace host' }
 }
 /** The chat sessions in the active workspace (always '0' + any persisted agent sessions) — for boot-resume. */
 export function osChatSessionIds(): string[] {

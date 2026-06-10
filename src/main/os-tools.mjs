@@ -97,7 +97,8 @@ export function makeOsTools(ops) {
     },
     {
       path: '/move_surface',
-      description: 'Move a surface to (x, y) world pixels.',
+      description:
+        'Move a surface to (x, y) world pixels. If the id lives in ANOTHER workspace, this BRINGS it into the active one and places it (keeping its id) — use it to pull just that one window here; switch_workspace instead when you want its whole desktop.',
       input_schema: { type: 'object', required: ['id', 'x', 'y'], properties: { id: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } },
       handler: ({ body }) => {
         const a = parse(body)

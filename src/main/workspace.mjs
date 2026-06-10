@@ -969,6 +969,102 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   return { surfaces, camera, mode, areaCount, changed, knownIds }
 }
 
+// ---- cross-workspace surface addressing (item 4): a surface id lives in exactly one workspace folder.
+// findSurfaceWorkspace locates it (so an op on a non-active id can NAME where it is); relocateSurface
+// MOVES it into the active workspace (the "I just want this one window here" path) by carrying its
+// content file across folders and preserving the id — the everything-is-a-file model makes this a plain
+// file move + a node transfer.
+
+/** Find which workspace under `root` holds surface `id` (scanning each workspace.json). `exceptDir` skips
+ *  the active one. Returns { name, dir, node } or null. Read-only + size-capped. */
+export function findSurfaceWorkspace(root, id, exceptDir) {
+  let rootReal
+  try {
+    rootReal = realpathSync(resolve(root))
+  } catch {
+    return null
+  }
+  if (!id) return null
+  const except = exceptDir ? resolve(exceptDir) : null
+  let ents = []
+  try {
+    ents = readdirSync(rootReal, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const e of ents) {
+    if (!e.isDirectory() || !safeName(e.name)) continue
+    const dir = join(rootReal, e.name)
+    if (except && resolve(dir) === except) continue
+    const metaFile = join(dir, '.blitzos', 'workspace.json')
+    try {
+      const ms = statSync(metaFile)
+      if (ms.size > MAX_META) continue
+      const m = JSON.parse(readFileSync(metaFile, 'utf8'))
+      const node = Array.isArray(m.nodes) ? m.nodes.find((n) => n && n.id === id) : null
+      if (node) return { name: e.name, dir, node }
+    } catch {
+      /* unreadable workspace.json — skip */
+    }
+  }
+  return null
+}
+
+/**
+ * Move surface `id` from whatever OTHER workspace holds it INTO `destDir`: copy its content file across,
+ * delete it + drop its node from the source workspace.json, and return the reconstructed surface
+ * descriptor (SAME id, placed at `placeAt`) for the caller to insert into the live destination state.
+ * Single-file kinds only (note/web/srcdoc/file — a recursive folder move is out of scope). Returns
+ * { surface, fromName } or null if the id isn't in another workspace / is unmovable.
+ */
+export function relocateSurface(root, destDir, id, placeAt = {}) {
+  const found = findSurfaceWorkspace(root, id, destDir)
+  if (!found) return null
+  const { name: fromName, dir: srcDir, node } = found
+  if (node.kind === 'dir') return null // recursive folder move not supported yet
+  const srcRel = typeof node.path === 'string' ? node.path : null
+  const srcAbs = srcRel ? safeJoin(srcDir, srcRel) : null
+  if (!srcAbs || !existsSync(srcAbs)) return null
+  let bytes
+  try {
+    bytes = readFileSync(srcAbs)
+  } catch {
+    return null
+  }
+  // write into dest (uniquify the basename against existing dest files), then remove from source
+  const base = basename(srcRel)
+  const dot = base.lastIndexOf('.')
+  let destRel = base
+  for (let i = 2; existsSync(join(destDir, destRel)); i++) destRel = dot > 0 ? `${base.slice(0, dot)}-${i}${base.slice(dot)}` : `${base}-${i}`
+  const destAbs = safeJoin(destDir, destRel)
+  if (!destAbs) return null
+  try {
+    mkdirSync(dirname(destAbs), { recursive: true })
+    writeFileSync(destAbs, bytes)
+    markWrite(resolve(destAbs))
+    unlinkSync(srcAbs)
+    markWrite(resolve(srcAbs))
+  } catch {
+    return null
+  }
+  // drop the node from the source workspace.json so it doesn't linger / resurrect there
+  try {
+    const srcMeta = join(srcDir, '.blitzos', 'workspace.json')
+    const m = JSON.parse(readFileSync(srcMeta, 'utf8'))
+    m.nodes = (m.nodes || []).filter((n) => n.id !== id)
+    if (Array.isArray(m.stack)) m.stack = m.stack.filter((x) => x !== id)
+    writeMeta(srcMeta, m)
+  } catch {
+    /* source json untouched — the moved file is gone, so it won't resurface there on reconcile anyway */
+  }
+  // reconstruct the descriptor in the destination, preserving id + placing it at the requested point
+  const px = Number(placeAt.x)
+  const py = Number(placeAt.y)
+  const destNode = { ...node, path: destRel, x: Math.round(Number.isFinite(px) ? px : node.x || 0), y: Math.round(Number.isFinite(py) ? py : node.y || 0) }
+  const surface = nodeToSurface(destDir, destNode, 1)
+  return surface ? { surface, fromName } : null
+}
+
 /**
  * #52 — "group into a folder" is a REAL filesystem operation: make a subdirectory and MOVE the chosen
  * members' content files into it. Not an in-memory membership list — the folder is a real directory, so
@@ -1122,14 +1218,32 @@ export function systemRoleOf(name) {
   return rendererRoleOf(name)
 }
 
-/** Ensure `blitz-<role>.html` exists in the workspace — copy the shipped default if MISSING (so a
- *  deleted renderer is recreated). Never overwrites an existing (possibly customized) file. */
+/** Ensure `blitz-<role>.html` exists in the workspace — copy the shipped default if MISSING (so a deleted
+ *  renderer is recreated). Never overwrites a real customization. EXCEPTION: a chat renderer that predates
+ *  the session HUB (renders the old `p.messages` and has no hub API) is incompatible with the new backend
+ *  props and would render BLANK — refresh it to the shipped default. A renderer written against the hub
+ *  (uses `blitz.chat` / `props.threads`) is a genuine customization and is left untouched. */
 export function ensureSystemRenderer(dir, role, sessionId = '0') {
   if (SYSTEM_RENDERERS.indexOf(role) === -1) return null
   const rel = sysRendererName(role, sessionId)
   const dest = safeJoin(dir, rel)
   if (!dest) return null
-  if (existsSync(dest)) return { rel, created: false }
+  if (existsSync(dest)) {
+    if (role === 'chat') {
+      try {
+        const cur = readFileSync(dest, 'utf8')
+        const hubAware = cur.indexOf('blitz.chat(') !== -1 || cur.indexOf('props.threads') !== -1 || cur.indexOf('p.threads') !== -1
+        const preHub = /p\.messages|onProps\(render\)/.test(cur)
+        if (!hubAware && preHub) {
+          atomicWrite(dest, readFileSync(join(SYS_DIR, 'chat.html'), 'utf8'))
+          return { rel, created: false, refreshed: true }
+        }
+      } catch {
+        /* leave it as-is */
+      }
+    }
+    return { rel, created: false }
+  }
   try {
     atomicWrite(dest, readFileSync(join(SYS_DIR, `${role}.html`), 'utf8')) // per-session widgets default to the SAME shipped UI
     return { rel, created: true }
