@@ -129,5 +129,8 @@ Local only. `safeStorage.encryptString` (Keychain-backed) for tokens, persisted 
 - Path A `<webview>` vs Path B OSR if perf/z-order bites.
 - Security: CDP is powerful; scope what the agent can drive and require user consent per window.
 
+**Capabilities (use-cases to support + showcase)**
+- Redesign the web. Point BlitzOS at any URL and it rewrites the page into what the user actually wants: subtract the slop (kill the Google Docs AI bar nobody asked for), re-paradigm (X as Instagram, YouTube as TikTok), gamify and adapt (a boring Canvas portal becomes a tech-tree game whose fun exercises do the real assignment), or fully generate an experience. Stays functional by driving the real site underneath, not just repainting it. Full vision plus the AI-gateway-as-tool-calls substrate in `redesign-the-web.md`.
+
 ## 7. Verification reality
 The GUI runs on the user's Mac (no display in the dev sandbox). I compile-check headlessly; behavioral verification is the user running `npm run dev`. Iterate from there.
