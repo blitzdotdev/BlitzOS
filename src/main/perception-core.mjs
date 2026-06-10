@@ -116,12 +116,31 @@ export function ingestSignals(surfaceId, raw) {
       if (p.user[p.user.length - 1] !== line) p.user.push(line) // drop consecutive dupes
       if (p.user.length > 8) p.user.splice(0, p.user.length - 8)
     }
+    // Flush CLASSES (item 5a): nav + idle are genuine transitions → flush IMMEDIATELY. `select` is NOT —
+    // a human highlighting text while reading fires a mouseup-select per phrase (measured: ~30 in 30s),
+    // and flushing each one buried the agent in a firehose + rate-limited the watcher. So `select`
+    // DEBOUNCES: a burst merges into ONE "looking at this" moment ~2.5s after the highlighting stops
+    // (or sooner if a nav/idle flush carries it). Routine input/click still ride the ~15s batch.
     if (type === 'nav') p.significant = 'nav'
-    else if (type === 'select' && p.significant !== 'nav') p.significant = 'select'
-    else if (type === 'idle' && p.significant !== 'nav' && p.significant !== 'select') p.significant = 'idle'
+    else if (type === 'idle' && p.significant !== 'nav') p.significant = 'idle'
+    else if (type === 'select') armSelectFlush(surfaceId)
   }
   lastCtx.set(surfaceId, ctx)
-  if (p && p.significant) flush(surfaceId, p.significant)
+  if (p && p.significant) flush(surfaceId, p.significant) // nav/idle only — select rides its debounce
+}
+
+// Per-surface debounce so a run of selections collapses to one moment (5a).
+const SELECT_DEBOUNCE_MS = 2500
+const selectTimers = new Map()
+function armSelectFlush(surfaceId) {
+  const prev = selectTimers.get(surfaceId)
+  if (prev) clearTimeout(prev)
+  const t = setTimeout(() => {
+    selectTimers.delete(surfaceId)
+    flush(surfaceId, 'select')
+  }, SELECT_DEBOUNCE_MS)
+  if (t.unref) t.unref()
+  selectTimers.set(surfaceId, t)
 }
 
 /** Append a finished moment to the LOG and wake every long-poll waiter (each gets the slice it may
@@ -137,6 +156,12 @@ function emit(moment) {
 }
 
 function flush(surfaceId, trigger) {
+  // any pending select-debounce is consumed by THIS flush (its selects are in the batch) — cancel it (5a)
+  const st = selectTimers.get(surfaceId)
+  if (st) {
+    clearTimeout(st)
+    selectTimers.delete(surfaceId)
+  }
   const p = pending.get(surfaceId)
   if (!p) return
   pending.delete(surfaceId)
@@ -221,6 +246,26 @@ export function emitConnectorChange(provider, connected) {
   const name = String(provider || 'a connector')
   const verb = connected ? 'connected' : 'disconnected'
   emit({ seq: ++seq, ts: Date.now(), surfaceId: 'system', trigger: 'connector', windowMs: 0, signals: { connector: 1 }, user: [`connector ${verb}: ${name}`] })
+}
+
+/** The human placed a spatial ANNOTATION on a surface and asked the agent about that exact spot (item
+ *  5b). A direct, surface-anchored question — ALWAYS warrants a response (like a chat message), carrying
+ *  the surface id + the point (xPct/yPct) + a snapshot, so the agent can answer about precisely what the
+ *  human pointed at. Consent-by-construction (the human authored it for the agent) → crosses the relay. */
+export function emitAnnotation(surfaceId, text, anchor, snapshot) {
+  const msg = String(text || '').slice(0, 2000)
+  emit({
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId: String(surfaceId || ''),
+    trigger: 'annotation',
+    windowMs: 0,
+    signals: { annotation: 1 },
+    user: [`annotated this surface: "${msg.slice(0, 200)}"`],
+    message: msg,
+    anchor: anchor && typeof anchor === 'object' ? { xPct: Number(anchor.xPct) || 0, yPct: Number(anchor.yPct) || 0 } : undefined,
+    snapshot: snapshot ? String(snapshot).slice(0, 600) : undefined
+  })
 }
 
 /** An OS-level event both inhabitants should know about — today a crash recovery; later an update,

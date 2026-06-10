@@ -38,6 +38,11 @@
   .row.user .bub { background: var(--blitz-accent, #1a1b1d); color: var(--blitz-accent-ink, #fff); border-bottom-right-radius: 4px; }
   .row.agent .bub { background: var(--blitz-surface-2, #f1f1ee); color: var(--blitz-text); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
   .bub p { margin: 0 0 7px; } .bub p:last-child { margin-bottom: 0; }
+  /* item 5b: a grounded annotation message — clickable; a pin fades in on hover ("show on the surface"). */
+  .bub.anno { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .bub.anno .anno-pin { opacity: 0; font-size: 12px; transition: opacity .12s ease; }
+  .bub.anno:hover { box-shadow: inset 0 0 0 1.5px var(--blitz-info, #3f72b8); }
+  .bub.anno:hover .anno-pin { opacity: 1; }
   .bub strong { font-weight: 680; } .bub a { color: var(--vio); }
   .bub ul { margin: 5px 0; padding-left: 18px; } .bub li { margin: 2px 0; }
   .bub img { max-width: 100%; border-radius: 9px; margin: 6px 0; display: block; }
@@ -142,6 +147,15 @@
   function renderMsg(m) {
     var row = document.createElement('div'); row.className = 'row ' + (m.role === 'user' ? 'user' : 'agent');
     var bub = document.createElement('div'); bub.className = 'bub';
+    // Item 5b: a user message carrying a `ref` is a GROUNDED ANNOTATION — render it as a special clickable
+    // bubble (a pin appears on hover). Clicking re-shows the speech bubble at that spot on the surface.
+    if (m.role === 'user' && m.ref && m.ref.surfaceId) {
+      bub.className += ' anno';
+      var t = document.createElement('span'); t.textContent = m.text || ''; bub.appendChild(t);
+      var pin = document.createElement('span'); pin.className = 'anno-pin'; pin.textContent = '📍'; pin.title = 'Show on the surface'; bub.appendChild(pin);
+      bub.onclick = function () { try { window.blitz.focusAnnotation(m.ref); } catch (e) {} };
+      row.appendChild(bub); return row;
+    }
     if (m.role === 'user') { bub.textContent = m.text || ''; }
     else {
       parseParts(m.text || '').forEach(function (p) {

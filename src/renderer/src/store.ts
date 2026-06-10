@@ -5,6 +5,7 @@ import {
   SurfaceTab,
   SurfaceKind,
   Vec2,
+  Annotation,
   IntegrationStatus,
   GRID,
   WIDGET_W,
@@ -130,6 +131,7 @@ export function snapTargetFor(
 }
 
 let zCounter = 10
+let annCounter = 0 // monotonic annotation id source (item 5b)
 // Quiet-period boundary (ms): layout changes closer than this coalesce into ONE undo step.
 let lastSnapTs = 0
 
@@ -175,6 +177,14 @@ interface DesktopState {
   surfaces: Surface[]
   layoutHistory: Surface[][]
   selection: string[]
+  /** Spatial annotations (item 5b): grounded references the human placed on surfaces. `annotationDraft`
+   *  is the in-progress one (input open); `focusedAnnotation` is the one to flash open (e.g. recalled
+   *  from a chat reference). */
+  annotations: Annotation[]
+  annotationDraft: { surfaceId: string; xPct: number; yPct: number } | null
+  focusedAnnotation: string | null
+  /** A pending "Ask the agent about this" right-click menu on a surface (screen px sx,sy + the point). */
+  annotationMenu: { surfaceId: string; xPct: number; yPct: number; sx: number; sy: number } | null
   dragTarget: string | null
   snapPreview: { x: number; y: number; w: number; h: number } | null
   editingId: string | null // surface the user is actively editing — its live content survives a reconcile (#47)
@@ -235,6 +245,16 @@ interface DesktopState {
   // Layout undo: the agent auto-applies layouts; the human reverts with Cmd+Z.
   snapshotLayout: () => void
   undoLayout: () => void
+  // Annotations (item 5b): start a draft at a point on a surface, commit it (with the human's text),
+  // cancel, focus one (recall from a chat reference), or remove it.
+  startAnnotation: (surfaceId: string, xPct: number, yPct: number) => void
+  cancelAnnotation: () => void
+  commitAnnotation: (text: string) => Annotation | null
+  focusAnnotation: (id: string | null) => void
+  recallAnnotation: (ref: Annotation) => void
+  removeAnnotation: (id: string) => void
+  openAnnotationMenu: (surfaceId: string, xPct: number, yPct: number, sx: number, sy: number) => void
+  closeAnnotationMenu: () => void
 }
 
 function defaultSize(kind: SurfaceKind): { w: number; h: number } {
@@ -255,6 +275,10 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   surfaces: [],
   layoutHistory: [],
   selection: [],
+  annotations: [],
+  annotationDraft: null,
+  focusedAnnotation: null,
+  annotationMenu: null,
   dragTarget: null,
   snapPreview: null,
   editingId: null,
@@ -748,7 +772,38 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const hist = [...s.layoutHistory]
       const prev = hist.pop() as Surface[]
       return { layoutHistory: hist, surfaces: prev }
-    })
+    }),
+
+  // ---- Annotations (item 5b) ----
+  openAnnotationMenu: (surfaceId, xPct, yPct, sx, sy) => set({ annotationMenu: { surfaceId, xPct: clamp(xPct, 0, 1), yPct: clamp(yPct, 0, 1), sx, sy } }),
+  closeAnnotationMenu: () => set({ annotationMenu: null }),
+  startAnnotation: (surfaceId, xPct, yPct) =>
+    set({ annotationDraft: { surfaceId, xPct: clamp(xPct, 0, 1), yPct: clamp(yPct, 0, 1) }, annotationMenu: null, focusedAnnotation: null }),
+  cancelAnnotation: () => set({ annotationDraft: null }),
+  commitAnnotation: (text) => {
+    const d = get().annotationDraft
+    const body = String(text || '').trim()
+    if (!d || !body) {
+      set({ annotationDraft: null })
+      return null
+    }
+    const ann: Annotation = { id: `a_${++annCounter}`, surfaceId: d.surfaceId, xPct: d.xPct, yPct: d.yPct, text: body, ts: Date.now() }
+    // After SEND the on-canvas annotation vanishes (focusedAnnotation: null) — the chat message becomes the
+    // grounded reference; the bubble re-appears only when the human clicks that message (recallAnnotation).
+    set((s) => ({ annotations: [...s.annotations, ann], annotationDraft: null, focusedAnnotation: null }))
+    return ann
+  },
+  focusAnnotation: (id) => set((s) => ({ focusedAnnotation: s.focusedAnnotation === id ? null : id })),
+  // Recall from a chat reference: the message carries the full annotation (it survives a reload even though
+  // the in-memory list doesn't), so ensure it's in the list, then toggle it open on its surface.
+  recallAnnotation: (ref) =>
+    set((s) => {
+      const exists = s.annotations.some((a) => a.id === ref.id)
+      const annotations = exists ? s.annotations : [...s.annotations, ref]
+      return { annotations, focusedAnnotation: s.focusedAnnotation === ref.id ? null : ref.id }
+    }),
+  removeAnnotation: (id) =>
+    set((s) => ({ annotations: s.annotations.filter((a) => a.id !== id), focusedAnnotation: s.focusedAnnotation === id ? null : s.focusedAnnotation }))
 }))
 
 /** Default name for a UI-spawned terminal session — "Terminal N", N counting existing terminal tabs,

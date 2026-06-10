@@ -277,6 +277,13 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
       if (!m || typeof m !== 'object') return
       if (m.type === 'blitz:hello') {
         win.postMessage({ type: 'blitz:init', props: surface.props ?? {} }, '*')
+      } else if (m.type === 'blitz:annotation') {
+        // Item 5b: the chat hub's grounded reference was clicked → recall the annotation bubble on its
+        // surface (fire-and-forget; the ref carries the full annotation so it works after a reload).
+        const ref = (m as { ref?: unknown }).ref as { id?: unknown; surfaceId?: unknown; xPct?: unknown; yPct?: unknown; text?: unknown } | undefined
+        if (ref && ref.id && ref.surfaceId) {
+          useDesktop.getState().recallAnnotation({ id: String(ref.id), surfaceId: String(ref.surfaceId), xPct: Number(ref.xPct) || 0, yPct: Number(ref.yPct) || 0, text: String(ref.text ?? ''), ts: 0 })
+        }
       } else if (m.type === 'blitz:req' && typeof m.reqId === 'string') {
         if (m.op === 'data') void serveData(win, m.reqId, String(m.provider ?? ''), String(m.resource ?? ''))
         else if (m.op === 'tool') void serveTool(win, m.reqId, String(m.tool ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
@@ -575,6 +582,15 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
             : surface.z
       }}
       onPointerDown={() => focusSurface(surface.id)}
+      onContextMenu={(e) => {
+        // Item 5b: right-click a native surface (note/tile/frame chrome) → annotation menu at that point.
+        // web is handled in main (the webview swallows this); srcdoc's sandboxed iframe also swallows it.
+        if (surface.kind === 'web') return
+        const r = e.currentTarget.getBoundingClientRect()
+        if (r.width < 1 || r.height < 1) return
+        e.preventDefault()
+        useDesktop.getState().openAnnotationMenu(surface.id, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, e.clientX, e.clientY)
+      }}
     >
       <div
         className="window-bar"

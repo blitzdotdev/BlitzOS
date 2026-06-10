@@ -228,7 +228,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/surface_control',
-      description: 'Act INSIDE a web surface (third-party site): click, type, press a key, read text, or screenshot. Only kind "web". Put the surface id in the body. Use read/screenshot first to see the page.',
+      description: 'Act INSIDE a web surface (third-party site): click, type, press a key, read text, or screenshot. Only kind "web". Put the surface id in the body. Use read/screenshot first to see the page. A screenshot returns base64 PNG — to SHOW it to the user, inline it in `say` as ![](data:image/png;base64,…) (the reliable way; never hotlink the site\'s own image URLs, they 403/blank). Frame first (scroll so the thing fills the surface), then shoot.',
       input_schema: {
         type: 'object',
         required: ['id', 'action'],
@@ -334,7 +334,7 @@ export function makeOsTools(ops) {
     {
       path: '/say',
       description:
-        "Send a chat message to the USER (their in-canvas Chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. Embed an image with markdown ![alt](url) (or inline <svg>…</svg>) whenever a visual carries meaning words can't. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary sessions MUST pass {session:'<your id>'} so it lands in YOUR chat.",
+        "Send a chat message to the USER (their in-canvas Chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. To SHOW a visual, do BOTH: keep the real SOURCE open as a web surface (the live page it's from), AND screenshot it (surface_control {action:'screenshot'} returns base64 PNG) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary sessions MUST pass {session:'<your id>'} so it lands in YOUR chat.",
       input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, session: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)

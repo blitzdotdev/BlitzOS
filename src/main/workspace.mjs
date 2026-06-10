@@ -17,7 +17,7 @@
 // Shared module (the control-core.mjs / perception-core.mjs pattern): plain Node, importable
 // by the server backend now and Electron main later.
 
-import { mkdirSync, writeFileSync, appendFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, lstatSync, copyFileSync, cpSync, unlinkSync, realpathSync } from 'node:fs'
+import { mkdirSync, writeFileSync, appendFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, lstatSync, copyFileSync, cpSync, unlinkSync, rmSync, realpathSync } from 'node:fs'
 import { join, dirname, resolve, sep, extname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
@@ -1232,10 +1232,17 @@ export function ensureSystemRenderer(dir, role, sessionId = '0') {
     if (role === 'chat') {
       try {
         const cur = readFileSync(dest, 'utf8')
+        const shipped = readFileSync(join(SYS_DIR, 'chat.html'), 'utf8')
         const hubAware = cur.indexOf('blitz.chat(') !== -1 || cur.indexOf('props.threads') !== -1 || cur.indexOf('p.threads') !== -1
         const preHub = /p\.messages|onProps\(render\)/.test(cur)
-        if (!hubAware && preHub) {
-          atomicWrite(dest, readFileSync(join(SYS_DIR, 'chat.html'), 'utf8'))
+        // System-widget UPDATE propagation: a workspace holds its OWN copy of blitz-chat.html, so a shipped
+        // feature (here: item 5b annotation references) never reaches existing desktops. Refresh a SHIPPED
+        // copy that lags the shipped feature set; a copy the human CUSTOMIZED (writeSystemRenderer) is left
+        // alone — it carries the `blitz-chat-custom` opt-out marker. (Pre-hub copies still migrate as before.)
+        const featureLag = shipped.indexOf('focusAnnotation') !== -1 && cur.indexOf('focusAnnotation') === -1
+        const customized = cur.indexOf('blitz-chat-custom') !== -1
+        if ((!hubAware && preHub) || (hubAware && featureLag && !customized)) {
+          atomicWrite(dest, shipped)
           return { rel, created: false, refreshed: true }
         }
       } catch {
@@ -1259,7 +1266,11 @@ export function writeSystemRenderer(dir, role, html, sessionId = '0') {
   const dest = safeJoin(dir, rel)
   if (!dest) return { ok: false, error: 'bad path' }
   try {
-    atomicWrite(dest, String(html == null ? '' : html))
+    // Stamp customized copies so ensureSystemRenderer never auto-refreshes over a human/agent customization
+    // (system-widget update propagation only refreshes UN-customized shipped copies).
+    let out = String(html == null ? '' : html)
+    if (out.indexOf('blitz-chat-custom') === -1) out = `<!--blitz-chat-custom-->\n${out}`
+    atomicWrite(dest, out)
     return { ok: true, rel }
   } catch {
     return { ok: false, error: 'write failed' }
@@ -1288,12 +1299,22 @@ function chatAbs(dir, sessionId = '0') {
   return safeJoin(dir, chatFileName(sessionId))
 }
 /** Append a chat message to a session's transcript (recreating the file if missing). role: 'user' | 'agent'. */
-export function appendChatMessage(dir, role, text, sessionId = '0') {
+export function appendChatMessage(dir, role, text, sessionId = '0', meta) {
   const abs = chatAbs(dir, sessionId)
   if (!abs) return { ok: false }
   try {
     if (!existsSync(abs)) atomicWrite(abs, '# Chat\n')
-    const block = `\n### ${role === 'user' ? 'user' : 'agent'} · ${Date.now()}\n${String(text == null ? '' : text)}\n`
+    // Optional structured ref (item 5b: a grounded annotation) rides the header as base64 JSON, so the
+    // transcript stays plain-text + human-readable and old messages without it parse unchanged.
+    let tag = ''
+    if (meta && typeof meta === 'object') {
+      try {
+        tag = ` · a:${Buffer.from(JSON.stringify(meta)).toString('base64')}`
+      } catch {
+        /* non-serializable meta — drop the tag */
+      }
+    }
+    const block = `\n### ${role === 'user' ? 'user' : 'agent'} · ${Date.now()}${tag}\n${String(text == null ? '' : text)}\n`
     appendFileSync(abs, block)
     markWrite(resolve(abs))
     return { ok: true }
@@ -1313,13 +1334,22 @@ export function readChatMessages(dir, cap = 400, sessionId = '0') {
     return []
   }
   const marks = []
-  const re = /^### (user|agent)(?: · (\d+))?[ \t]*$/gm
+  // optional ` · a:<base64>` carries a structured ref (item 5b: a grounded annotation) on the header
+  const re = /^### (user|agent)(?: · (\d+))?(?: · a:([A-Za-z0-9+/=]+))?[ \t]*$/gm
   let m
-  while ((m = re.exec(raw))) marks.push({ role: m[1], ts: Number(m[2]) || 0, start: m.index, end: re.lastIndex })
+  while ((m = re.exec(raw))) marks.push({ role: m[1], ts: Number(m[2]) || 0, metaB64: m[3] || null, start: m.index, end: re.lastIndex })
   const msgs = []
   for (let i = 0; i < marks.length; i++) {
     const body = raw.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].start : raw.length).replace(/^\n+|\n+$/g, '')
-    msgs.push({ role: marks[i].role, text: body, ts: marks[i].ts })
+    const msg = { role: marks[i].role, text: body, ts: marks[i].ts }
+    if (marks[i].metaB64) {
+      try {
+        msg.ref = { ...JSON.parse(Buffer.from(marks[i].metaB64, 'base64').toString('utf8')), text: body }
+      } catch {
+        /* corrupt ref — fall back to a plain message */
+      }
+    }
+    msgs.push(msg)
   }
   return msgs.slice(-cap)
 }
@@ -1517,4 +1547,26 @@ export function createWorkspace(root, name) {
   mkdirSync(target, { recursive: false }) // recursive:false → EEXIST backstop if it races
   scaffold(target) // self-describing BLITZOS.md + .gitignore (private fn above)
   return { name: safe, path: target }
+}
+
+/** Delete a workspace folder under `root` — rm -rf its dir and EVERYTHING in it (incl. .blitzos). Realpath-
+ *  jailed via resolveWorkspace: only an existing dir whose realpath is exactly <root>/<safeName> is removed,
+ *  so a crafted name or an escaping symlink can never delete outside the jail. Throws Error with .code
+ *  'EINVAL' (bad name/root) or 'ENOENT' (not found). Returns { name }. The HOST is responsible for the
+ *  policy guards (never the active workspace, never the last one) — this just does the destructive removal. */
+export function deleteWorkspace(root, name) {
+  const safe = safeName(name)
+  if (!safe) {
+    const e = new Error('invalid workspace name')
+    e.code = 'EINVAL'
+    throw e
+  }
+  const target = resolveWorkspace(root, safe, { mustExist: true }) // realpath-jailed to <rootReal>/<safe>, must be a real dir
+  if (!target) {
+    const e = new Error('workspace not found')
+    e.code = 'ENOENT'
+    throw e
+  }
+  rmSync(target, { recursive: true, force: true })
+  return { name: safe }
 }

@@ -25,6 +25,8 @@ export function latestSeq(): number
 export function emitSurfaceAction(surfaceId: string, action: Record<string, unknown>): void
 export function emitUserMessage(text: string, sessionId?: string): void
 export function emitConnectorChange(provider: string, connected: boolean): void
+/** The human placed a spatial annotation on a surface + asked the agent about that point (item 5b). */
+export function emitAnnotation(surfaceId: string, text: string, anchor?: { xPct: number; yPct: number }, snapshot?: string): void
 /** An OS-level event both inhabitants should know about (crash recovery, update, restore…). */
 export function emitSystemMoment(kind: string, line: string, detail?: Record<string, unknown>): void
 export function waitForEvents(since: number, maxMs: number, sessionId?: string): Promise<BlitzMoment[]>

@@ -68,6 +68,20 @@ export interface Vec2 {
   y: number
 }
 
+/** A spatial annotation (item 5b): the human right-clicks a POINT on a surface and asks the agent about
+ *  it. Anchored by PERCENT of the surface (xPct/yPct) so it tracks the surface across move/resize. The
+ *  question is sent to the agent (a surface-anchored moment); the bubble persists on the canvas as a
+ *  grounded reference you can click to re-read. `pending` = drafting (input open, not yet sent). */
+export interface Annotation {
+  id: string
+  surfaceId: string
+  xPct: number
+  yPct: number
+  text: string
+  ts: number
+  pending?: boolean
+}
+
 export const GRID = 20
 export const WIDGET_W = 240
 export const WIDGET_H = 168

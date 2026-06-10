@@ -1234,6 +1234,24 @@ const server = createServer(async (req, res) => {
     })
     return
   }
+  // Delete a workspace + its folder (human-only, from Mission Control). The host guards the active/last
+  // cases and switches away first if the deleted one is current — so the active may change here too.
+  if (path === '/api/os/workspace/delete' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let cbody = ''
+    req.on('data', (c) => { cbody += c; if (cbody.length > 4096) req.destroy() })
+    req.on('end', async () => {
+      try {
+        const r = await wsHost.removeWorkspace(toolBody(cbody).name)
+        if (r.ok) loadConsent() // deleting the current one switched away → load the new active's consent
+        json(res, r.ok ? 200 : 400, r)
+      } catch (e) {
+        console.error('[workspace] delete failed:', e?.message || e)
+        json(res, 500, { ok: false, error: 'delete failed' })
+      }
+    })
+    return
+  }
 
   // POST /api/os/workspace/thumb { workspace, dataUrl } — the renderer uploads a captured snapshot of
   // the primary area (a data:image/jpeg) as that workspace's thumbnail (last-seen, Mission-Control

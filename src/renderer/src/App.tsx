@@ -8,6 +8,7 @@ import { ConnectPanel } from './components/ConnectPanel'
 import { Overview } from './components/Overview'
 import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame } from './components/SurfaceFrame'
+import { AnnotationLayer } from './components/AnnotationLayer'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
 import { IconChat, IconSparkle, IconGrid, IconChevronDown } from './components/Icons'
@@ -116,6 +117,7 @@ export default function App(): JSX.Element {
   const [permissionPrompts, setPermissionPrompts] = useState<Array<{ id: string; origin: string; permission: string; surfaceId: string | null }>>([])
   // Right-click desktop menu (New Folder / New Board). wx/wy = the world position to place the new folder.
   const [menu, setMenu] = useState<{ x: number; y: number; wx: number; wy: number } | null>(null)
+  const annotationMenu = useDesktop((s) => s.annotationMenu) // item 5b: surface right-click annotation menu
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
@@ -411,6 +413,24 @@ export default function App(): JSX.Element {
         if (req && req.id) {
           const card = { id: String(req.id), summary: String(req.summary || 'a provider write'), risk: String(req.risk || 'write') }
           setProviderApprovals((q) => (q.some((c) => c.id === card.id) ? q : [...q, card])) // enqueue (dedupe by id)
+        }
+      }
+      else if (a.type === 'surface-contextmenu') {
+        // Item 5b: a WEB guest's right-click (main intercepts it — the webview swallows React's onContextMenu).
+        // params x/y are guest-viewport CSS px; map to a percent of the surface so the annotation anchors,
+        // and to screen px (via the live camera) so the menu opens at the cursor.
+        const st = useDesktop.getState()
+        const sid = String(a.surfaceId || '')
+        const surf = st.surfaces.find((s) => s.id === sid)
+        if (surf) {
+          const gx = Number(a.x) || 0
+          const gy = Number(a.y) || 0
+          const xPct = surf.w ? gx / surf.w : 0.5
+          const yPct = surf.h ? gy / surf.h : 0.5
+          const { x: tx, y: ty, scale } = st.transform
+          const sx = tx + (surf.x + gx) * scale
+          const sy = ty + (surf.y + gy) * scale
+          st.openAnnotationMenu(sid, xPct, yPct, sx, sy)
         }
       }
       else if (a.type === 'permission-request') {
@@ -952,6 +972,8 @@ export default function App(): JSX.Element {
           // folder members live only inside the folder — unless "peeked" open onto the desktop
           s.groupId && !s.peek ? null : <SurfaceFrame key={s.id} surface={s} />
         )}
+        {/* Item 5b: spatial annotations pin to surfaces (in-world so they pan/zoom with their surface). */}
+        <AnnotationLayer />
       </div>
 
       {mode === 'canvas' && (
@@ -1089,6 +1111,21 @@ export default function App(): JSX.Element {
                     : [{ label: `Group into Folder (${selection.length})`, onClick: () => useDesktop.getState().groupSelection() }]
                 })()
               : [])
+          ]}
+        />
+      )}
+
+      {/* Item 5b: right-click on a surface → "Ask the agent about this" at the clicked point. */}
+      {annotationMenu && (
+        <ContextMenu
+          x={annotationMenu.sx}
+          y={annotationMenu.sy}
+          onClose={() => useDesktop.getState().closeAnnotationMenu()}
+          items={[
+            {
+              label: '💬 Ask the agent about this',
+              onClick: () => useDesktop.getState().startAnnotation(annotationMenu.surfaceId, annotationMenu.xPct, annotationMenu.yPct)
+            }
           ]}
         />
       )}

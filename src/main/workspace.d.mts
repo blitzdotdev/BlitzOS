@@ -74,6 +74,9 @@ export function listWorkspaces(root: string): WorkspaceEntry[]
 /** Create + scaffold a new workspace. Throws Error with .code 'EINVAL' | 'EEXIST'. */
 export function createWorkspace(root: string, name: string): { name: string; path: string }
 
+/** Delete a workspace folder (rm -rf, realpath-jailed). Throws Error with .code 'EINVAL' | 'ENOENT'. */
+export function deleteWorkspace(root: string, name: string): { name: string }
+
 // ---- cross-workspace surface addressing (item 4) ----
 /** Locate which workspace holds surface `id` (skipping `exceptDir`). Null if not found. */
 export function findSurfaceWorkspace(root: string, id: string, exceptDir?: string): { name: string; dir: string; node: Record<string, unknown> } | null

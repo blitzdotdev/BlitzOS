@@ -2104,6 +2104,118 @@ button {
   border-color: var(--positive);
 }
 
+/* Mission-Control delete: a hover-revealed X on each non-current tile + an in-place destructive confirm.
+   The cell wraps the tile button and these siblings, so the X is never a <button> inside a <button>. */
+.ovr-cell {
+  position: relative;
+  min-width: 0;
+}
+
+.ovr-cell > .ovr-tile {
+  width: 100%;
+}
+
+.ovr-del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--canvas) 75%, transparent);
+  color: var(--text-dim, var(--text));
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  backdrop-filter: blur(6px);
+  transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.ovr-cell:hover .ovr-del,
+.ovr-del:focus-visible {
+  opacity: 1;
+}
+
+.ovr-del:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+
+.ovr-del:disabled {
+  cursor: default;
+  opacity: 0;
+}
+
+.ovr-confirm {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  padding: 16px;
+  border-radius: var(--radius-button);
+  background: color-mix(in srgb, var(--surface) 95%, transparent);
+  border: 2px solid var(--danger);
+  backdrop-filter: blur(8px);
+  z-index: 2;
+}
+
+.ovr-confirm-title {
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.ovr-confirm-body {
+  color: var(--text-dim, var(--text));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ovr-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ovr-confirm-btn {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: var(--radius-button);
+  border: 1px solid var(--divider);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out);
+}
+
+.ovr-confirm-btn.cancel:hover:not(:disabled) {
+  border-color: var(--control-hover);
+}
+
+.ovr-confirm-btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.ovr-confirm-btn.danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.ovr-confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .ovr-thumb img {
   width: 100%;
   height: 100%;
@@ -2379,3 +2491,53 @@ button {
   font-size: 10px;
   color: var(--text-muted);
 }
+
+/* ── Item 5b: spatial annotations (aqua speech bubble + composer + posted text) ─────────────── */
+/* Rendered inside the world container; each marker counter-scales to stay a constant size at any zoom. */
+.annotation { pointer-events: none; }
+.annotation > * { pointer-events: auto; }
+
+/* The posted question, in a speech bubble next to the aqua marker. */
+.annotation-bubble {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  padding: 9px 11px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.annotation-bubble-text { white-space: pre-wrap; word-break: break-word; }
+.annotation-bubble-x {
+  position: absolute; top: -8px; right: -8px;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 1px solid var(--hairline); background: var(--surface);
+  color: var(--text-muted); font-size: 13px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-sm);
+}
+.annotation-bubble-x:hover { color: var(--danger); }
+
+/* The drafting composer. */
+.annotation-input {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 9px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.annotation-input textarea {
+  resize: none; border: none; outline: none; background: transparent;
+  color: var(--text); font: inherit; font-size: 13px; line-height: 1.45; width: 100%;
+}
+.annotation-input textarea::placeholder { color: var(--text-tertiary); }
+.annotation-input-row { display: flex; justify-content: flex-end; gap: 6px; }
+.annotation-input-row button {
+  border: 1px solid var(--hairline); border-radius: 7px; padding: 4px 11px;
+  font-size: 12px; cursor: pointer; background: var(--control);
+}
+.annotation-cancel { color: var(--text-muted); }
+.annotation-cancel:hover { background: var(--control-hover); }
+.annotation-send { background: var(--info); color: #fff; border-color: transparent; font-weight: 500; }
+.annotation-send:disabled { opacity: 0.4; cursor: default; }

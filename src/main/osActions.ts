@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
-import { ingestSignals, emitSurfaceAction, emitUserMessage, setContentShare, dropContentShare, INJECT, DRAIN } from './events'
+import { ingestSignals, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName } from './workspace.mjs'
 
@@ -129,6 +129,15 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     return r.status === 200 ? { ok: true, active: r.body.active } : { ok: false, error: r.body.error }
   })
   ipcMain.handle('workspace:capture', (_e, name: string) => osCaptureThumb(name))
+  // Delete a workspace + its folder (human-only, from Mission Control; never an agent tool — destructive).
+  // The host guards the active/last cases and switches away first if needed.
+  ipcMain.handle('workspace:delete', async (_e, name: string) => {
+    try {
+      return await wsHost!.removeWorkspace(name)
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message || 'delete failed' }
+    }
+  })
   // The renderer pulls its hydrate once its onAction listener is mounted (race-free; absorbs the
   // teammate's request-hydrate, replacing the old main-push on did-finish-load).
   ipcMain.on('workspace:request-hydrate', () => osSendHydrate())
@@ -177,6 +186,21 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
       emitUserMessage(text, sid) // wake ONLY that session's agent (trigger:'message')
       onChatActivity?.(sid, true) // on-demand: spawn this session's brain if it isn't running, and keep it alive
     }
+  })
+  // The human placed a spatial annotation on a surface + asked about that point (item 5b). The question
+  // lands in chat (so it reads as a normal turn the agent answers) AND wakes the agent with a surface-
+  // anchored 'annotation' moment carrying the point. Routes to the primary watcher ('0').
+  ipcMain.on('os:annotate', (_e, p: { id?: unknown; surfaceId?: unknown; text?: unknown; xPct?: unknown; yPct?: unknown }) => {
+    const surfaceId = String(p?.surfaceId ?? '')
+    const text = String(p?.text ?? '').trim()
+    if (!surfaceId || !text) return
+    const xPct = Number(p?.xPct) || 0
+    const yPct = Number(p?.yPct) || 0
+    // The chat message carries the full annotation ref (id + surface + point) so a click recalls the
+    // bubble even after a reload; the agent gets the surface-anchored moment.
+    wsHost?.appendChat('user', text, '0', { id: String(p?.id ?? ''), surfaceId, xPct, yPct })
+    emitAnnotation(surfaceId, text, { xPct, yPct })
+    onChatActivity?.('0', true)
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
   ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {

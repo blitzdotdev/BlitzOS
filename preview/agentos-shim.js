@@ -154,6 +154,7 @@
       list: function () { return getJSON('/os/workspaces') },
       create: function (name) { return getJSON('/os/workspaces', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) }) },
       switch: function (name) { return getJSON('/os/workspace/switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) }) },
+      delete: function (name) { return getJSON('/os/workspace/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) }) },
       thumb: function (name, dataUrl) { return getJSON('/os/workspace/thumb', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspace: name, dataUrl: dataUrl }) }) },
       thumbUrl: function (name, ts) { return API + '/os/workspace/thumb?name=' + encodeURIComponent(name) + (ts ? '&t=' + ts : '') }
     },

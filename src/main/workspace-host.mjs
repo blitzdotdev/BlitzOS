@@ -28,6 +28,7 @@ import {
   wasSelfWrite,
   listWorkspaces,
   createWorkspace,
+  deleteWorkspace,
   resolveWorkspace,
   safeName,
   readRootState,
@@ -354,9 +355,9 @@ export function createWorkspaceHost(a) {
   }
   /** Append a chat message to a SESSION's transcript and broadcast it so that session's widget re-renders.
    *  role 'user' (the human typed) | 'agent' (a `say`). sessionId defaults to '0' (the primary chat). */
-  function appendChat(role, text, sessionId = '0') {
+  function appendChat(role, text, sessionId = '0', meta) {
     const sid = String(sessionId)
-    appendChatMessage(activeWorkspace, role, text, sid)
+    appendChatMessage(activeWorkspace, role, text, sid, meta)
     // Status: the human typing means the agent is now thinking; an agent `say` clears it. Drives the
     // "thinking…" indicator with zero extra plumbing (every message already flows through here).
     chatStatus[sid] = role === 'user' ? 'thinking' : ''
@@ -546,6 +547,37 @@ export function createWorkspaceHost(a) {
     }
   }
 
+  /** Delete a workspace + its folder. POLICY GUARDS live here (the serializer just removes the dir):
+   *   - never the LAST workspace (the app must always have one to be in);
+   *   - if it's the ACTIVE one, switch to another FIRST (newest other) so we never rm the live folder
+   *     out from under the running host — only then delete the now-inactive dir.
+   *  Returns { ok, active } or { error }. */
+  async function removeWorkspace(rawName) {
+    if (switching) return { ok: false, error: 'switch in progress' }
+    const name = safeName(rawName)
+    if (!name) return { ok: false, error: 'invalid workspace name' }
+    const all = listWorkspaces(root)
+    if (!all.some((w) => w.name === name)) return { ok: false, error: 'no such workspace' }
+    if (all.length <= 1) return { ok: false, error: 'cannot delete the last workspace' }
+    if (basename(activeWorkspace) === name) {
+      const other = all.find((w) => w.name !== name) // listWorkspaces is newest-first → most-recent other
+      const sw = await performSwitch(other.name)
+      if (sw.status !== 200) return { ok: false, error: `could not switch away before delete: ${sw.body?.error || 'switch failed'}` }
+    }
+    try {
+      deleteWorkspace(root, name)
+    } catch (e) {
+      return { ok: false, error: e?.message || 'delete failed' }
+    }
+    // Renderers re-list on their own (the Overview re-fetches), but broadcast so any other open view refreshes.
+    try {
+      a.broadcast({ type: 'workspaces-changed', active: basename(activeWorkspace) })
+    } catch {
+      /* best-effort */
+    }
+    return { ok: true, active: basename(activeWorkspace) }
+  }
+
   return {
     active,
     activePath: () => activeWorkspace,
@@ -587,6 +619,7 @@ export function createWorkspaceHost(a) {
     stopWatch,
     list: () => listWorkspaces(root),
     create: (name) => createWorkspace(root, name),
+    removeWorkspace,
     writeThumb,
     readThumb,
     readWorkspaceFile

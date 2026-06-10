@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'permission-request' | 'agentStatus' | 'session-spawn' | 'session-data' | 'session-exit' | 'action-item' | 'action-item-removed'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'session-spawn' | 'session-data' | 'session-exit' | 'action-item' | 'action-item-removed'
   [k: string]: unknown
 }
 
@@ -64,6 +64,7 @@ export interface WorkspacesApi {
   list(): Promise<{ workspaces: Array<{ name: string; nodeCount: number; updatedAt: number; thumbTs: number }>; active: string }>
   create(name: string): Promise<{ ok: boolean; name?: string; error?: string }>
   switch(name: string): Promise<{ ok: boolean; active?: string; error?: string }>
+  delete(name: string): Promise<{ ok: boolean; active?: string; error?: string }>
   thumbUrl(name: string, ts?: number): string
   thumb?(name: string, dataUrl: string): Promise<{ ok?: boolean; error?: string }>
   captureThumb?(name: string): Promise<{ ok: boolean; error?: string }>
@@ -160,6 +161,11 @@ const api = {
   sendMessage(text: string, sessionId = '0'): void {
     ipcRenderer.send('os:user-message', { text, sessionId })
   },
+  /** Item 5b: the human placed a spatial annotation on a surface + asked about that point. Lands in chat
+   *  + wakes the agent with a surface-anchored moment carrying the point. */
+  annotate(p: { id: string; surfaceId: string; text: string; xPct: number; yPct: number }): void {
+    ipcRenderer.send('os:annotate', p)
+  },
   /** The chat hub manages its sessions: op 'new' → { id } of a fresh session; 'rename' → set its title. */
   chatControl(op: string, args: Record<string, unknown>): Promise<unknown> {
     return ipcRenderer.invoke('os:chat-control', { op, args })
@@ -246,6 +252,7 @@ const api = {
     list: () => ipcRenderer.invoke('workspace:list'),
     create: (name: string) => ipcRenderer.invoke('workspace:create', name),
     switch: (name: string) => ipcRenderer.invoke('workspace:switch', name),
+    delete: (name: string) => ipcRenderer.invoke('workspace:delete', name),
     captureThumb: (name: string) => ipcRenderer.invoke('workspace:capture', name),
     thumbUrl: (name: string, ts?: number) => `blitz-thumb://t/?name=${encodeURIComponent(name)}${ts ? `&t=${ts}` : ''}`
   } as WorkspacesApi,

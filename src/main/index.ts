@@ -98,6 +98,15 @@ function createWindow(): void {
       openSurface: (url) => osCreateSurface({ kind: 'web', url }),
       logPlan: (plan, d) => console.log(`[guest] popup ${plan.kind} <- ${JSON.stringify({ url: String(d.url).slice(0, 80), disposition: d.disposition, features: d.features })}`)
     })
+    // Item 5b: a right-click inside a WEB guest is swallowed by the webview (never reaches the renderer's
+    // onContextMenu), so main intercepts it and forwards the surface + guest point — the renderer shows the
+    // "Ask the agent about this" annotation menu. (Native/srcdoc surfaces use React onContextMenu directly.)
+    guest.on('context-menu', (e, params) => {
+      const surfaceId = osSurfaceIdForWebContents(guest)
+      if (!surfaceId) return // not a tracked surface — leave the default menu
+      e.preventDefault()
+      mainWindow?.webContents.send('os:action', { type: 'surface-contextmenu', surfaceId, x: params.x, y: params.y })
+    })
     guest.on('did-finish-load', () => console.log('[guest] loaded:', guest.getURL()))
     guest.on('did-fail-load', (_ev, code, desc, url) => {
       if (code !== -3) console.log(`[guest] fail-load ${code} ${desc} ${url}`)

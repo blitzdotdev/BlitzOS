@@ -25,6 +25,7 @@ export interface WorkspaceHost {
   stopWatch(): void
   list(): WorkspaceEntry[]
   create(name: string): { name: string; path: string }
+  removeWorkspace(name: string): Promise<{ ok: boolean; active?: string; error?: string }>
   writeThumb(name: string, buf: Buffer): boolean
   readThumb(name: string): Buffer | null
   readWorkspaceFile(rel: string): { buf: Buffer; contentType: string } | null
@@ -39,7 +40,7 @@ export interface WorkspaceHost {
   locateSurface(id: string): { name: string; dir: string; node: Record<string, unknown> } | null
   /** Item 4: bring a surface from another workspace into the active one (id preserved). */
   bringSurfaceHere(id: string, x?: number, y?: number): { ok: boolean; from?: string; id?: string; notFound?: boolean; error?: string }
-  appendChat(role: 'user' | 'agent', text: string, sessionId?: string): Array<{ role: string; text: string; ts: number }>
+  appendChat(role: 'user' | 'agent', text: string, sessionId?: string, meta?: Record<string, unknown>): Array<{ role: string; text: string; ts: number }>
   customizeWidget(name: string, html: string, sessionId?: string): { ok: boolean; rel?: string; error?: string }
   systemUi(name: string): string | null
   chatSessionIds(): string[]
