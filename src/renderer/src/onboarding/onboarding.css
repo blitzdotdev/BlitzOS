@@ -74,7 +74,8 @@
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  transition: width 120ms linear;
+  /* No width transition: the width is driven directly by requestAnimationFrame (~60fps). A CSS
+     transition here only fights those per-frame updates and adds lag. */
 }
 .boot-stage {
   font-family: var(--font-mono);

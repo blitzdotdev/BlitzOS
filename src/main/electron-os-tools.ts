@@ -23,6 +23,7 @@ import {
   osSay,
   osCustomizeWidget,
   osSpawnChatSession,
+  osRenameChatSession,
   osSystemUi,
   osGroupIntoFolder,
   osBroadcast,
@@ -44,14 +45,14 @@ export const electronOps = {
   updateSurface: (id: string, patch: Record<string, unknown>) => osUpdateSurface(id, patch),
   closeSurface: (id: string) => {
     // Parity with the server ops (backend.mjs closeSurface): delete the backing content file IN
-    // MAIN, synchronously, before broadcasting the close. The renderer also calls closeSurfaceFile
+    // MAIN, synchronously, before the close removes the node. The renderer also calls closeSurfaceFile
     // on every close, but that rides a main→renderer→main round-trip — an agent that closes and
     // immediately switches workspace wins that race, the flush projects stale state (or the late
     // delete looks up the id in the NEW workspace and no-ops), and the orphaned file resurrects
     // the surface on the next reconcile (observed live). Duplicate delete is a no-op (the host
-    // skips missing/non-content files).
+    // skips missing/non-content files). osCloseSurface returns the loud-error result (2C).
     osCloseSurfaceFile(id)
-    osCloseSurface(id)
+    return osCloseSurface(id)
   },
   goToPrimary: () => osGoToPrimary(),
   getState: () => osGetState(),
@@ -64,6 +65,7 @@ export const electronOps = {
   say: (text: string, sessionId?: string) => osSay(text, sessionId),
   customizeWidget: (name: string, html: string, sessionId?: string) => osCustomizeWidget(name, html, sessionId),
   spawnChatSession: (title?: string) => osSpawnChatSession(title),
+  renameChatSession: (sessionId: string, title: string) => osRenameChatSession(sessionId, title),
   systemUi: (name: string) => osSystemUi(name),
   groupIntoFolder: (name: string, ids: string[], x: number | undefined, y: number | undefined, kind: 'board' | 'folder') => osGroupIntoFolder(name, ids, x, y, kind),
   providerCall: (descriptor: Parameters<typeof runProviderCall>[0], transport: 'relay' | 'localhost') => runProviderCall(descriptor, transport === 'localhost' ? 'localhost' : 'relay'),

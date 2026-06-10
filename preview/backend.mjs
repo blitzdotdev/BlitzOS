@@ -42,9 +42,12 @@ import {
   setContentShare,
   emitUserMessage,
   emitSurfaceAction,
+  emitSystemMoment,
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
+// Boot journal (crash dirty-bit + root lease) — the SAME root-state store the Electron main uses.
+import { openBootJournal } from '../src/main/workspace.mjs'
 import { startAgentRunner } from '../src/main/agent-runner.mjs'
 // The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
 // the relay can't diverge between the two modes again. Only the adapter (publish url/status, restart brain) differs.
@@ -434,15 +437,60 @@ function broadcast(obj) {
 const wsHost = createWorkspaceHost({
   root: WORKSPACES_ROOT,
   initialName: INITIAL_WS,
+  // a BLITZ_WORKSPACE pin beats boot-where-you-left-off; a bare root override does not
+  explicitInitial: !!process.env.BLITZ_WORKSPACE,
   getState: () => osState,
   setState: (s) => {
     osState = s
+    reconcilePending(osState) // confirm/expire optimistic agent creates against the authoritative push
   },
   broadcast,
   onSurfaces: (surfaces) => (SERVER_MODE ? reconcileSurfaces(surfaces) : undefined),
   defaultMode: 'canvas'
 })
+
+// 2C/2D parity with Electron (osActions): main is AUTHORITATIVE-ON-WRITE for agent mutations — apply each
+// to osState immediately (existence is exact; on a HEADLESS server there may be NO renderer to echo a
+// create, so this is the only thing that makes a create→operate sequence resolve), then broadcast for any
+// connected renderer. Content/existence changes also flush durably so an `ok` ack survives a crash.
+const serverPending = new Map()
+const PENDING_TTL = 10_000
+function surfaceExists(id) {
+  return serverPending.has(id) || (osState.surfaces || []).some((s) => s.id === id)
+}
+function reconcilePending(s) {
+  const now = Date.now()
+  for (const [id, t] of serverPending) if ((s.surfaces || []).some((x) => x.id === id) || now - t > PENDING_TTL) serverPending.delete(id)
+}
+function durableFlush() {
+  try {
+    if (!wsHost.isSwitching()) wsHost.flush()
+  } catch {
+    /* best-effort */
+  }
+}
+const noSuch = (id) => ({ ok: false, error: `no surface "${id}" in the active workspace` })
+// Claim the root + read the previous run's dirty bit (kernel fault model — parity with Electron's
+// index.ts). `concurrent` = the old record's pid is still alive: another BlitzOS owns this root
+// (warn, never false-report a crash). Announced via a trigger:'system' moment for any watching
+// agent + a chat line for the human (which lands in chat.md, the brains' boot memory).
+const bootJournal = openBootJournal(WORKSPACES_ROOT, 'server')
 wsHost.hydrateOnBoot()
+if (bootJournal.concurrent) {
+  console.error(
+    `[agent-os backend] another BlitzOS (pid ${bootJournal.prev?.pid}, mode ${bootJournal.prev?.mode}) appears to be running on this workspaces root — two hosts on one root WILL fight over files. Close one of them.`
+  )
+} else if (bootJournal.dirty) {
+  const when = new Date(bootJournal.lastAliveAt || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const line = `Recovered from a crash: the previous BlitzOS process died around ${when} without a clean shutdown. Workspaces were restored from disk; edits made in the last moments before the crash may have been lost.`
+  console.error('[agent-os backend] ' + line)
+  emitSystemMoment('crash', line, { at: bootJournal.lastAliveAt || Date.now() })
+  try {
+    wsHost.appendChat('agent', line)
+  } catch {
+    /* chat append is best-effort at boot */
+  }
+}
 
 // #53: restore the human's persisted consent for the active workspace (so grants survive a restart).
 // Re-run after a switch (loadConsent) to swap to the new workspace's grants.
@@ -508,33 +556,57 @@ const serverOps = {
     // The agent opened this surface itself (it chose the url) — auto-share web/app so it can read what it opened.
     // (Surfaces the USER opens stay private until shared — the P0 confused-deputy gate; this does not weaken it.)
     if (a.kind === 'web' || a.kind === 'app') setContentShare(id, true)
-    broadcast({ type: 'create', surface: { ...a, id } })
+    const surface = { ...a, id }
+    serverPending.set(id, Date.now())
+    osState = { ...osState, surfaces: [...(osState.surfaces || []), surface] }
+    broadcast({ type: 'create', surface })
     if (SERVER_MODE && host && a.kind === 'web' && !host.has(id)) {
       host.createSurface(id, { url: a.url || 'about:blank', width: Math.round(Number(a.w)) || 1280, height: Math.round(Number(a.h)) || 800 }).catch(() => {})
     }
+    durableFlush()
     return id
   },
   openWindow: (a) => {
     const id = randomUUID()
     setContentShare(id, true) // the agent opened this page — it can read what it opened
-    broadcast({ type: 'create', surface: { kind: 'web', ...a, id } })
+    const surface = { kind: 'web', ...a, id }
+    serverPending.set(id, Date.now())
+    osState = { ...osState, surfaces: [...(osState.surfaces || []), surface] }
+    broadcast({ type: 'create', surface })
     if (SERVER_MODE && host && !host.has(id)) {
       host.createSurface(id, { url: a.url, width: Math.round(Number(a.w)) || 1280, height: Math.round(Number(a.h)) || 800 }).catch(() => {})
     }
+    durableFlush()
     return id
   },
-  moveSurface: (id, x, y) => broadcast({ type: 'move', id: String(id), x: Number(x), y: Number(y) }),
+  moveSurface: (id, x, y) => {
+    const i = String(id)
+    if (!surfaceExists(i)) return noSuch(i)
+    osState = { ...osState, surfaces: (osState.surfaces || []).map((s) => (s.id === i ? { ...s, x: Number(x), y: Number(y) } : s)) }
+    broadcast({ type: 'move', id: i, x: Number(x), y: Number(y) })
+    return { ok: true }
+  },
   updateSurface: (id, patch) => {
     const i = String(id)
+    if (!surfaceExists(i)) return noSuch(i)
+    const props = patch.props
+    osState = { ...osState, surfaces: (osState.surfaces || []).map((s) => (s.id === i ? { ...s, ...patch, props: { ...(s.props || {}), ...(props || {}) } } : s)) }
     broadcast({ type: 'update', id: i, patch })
     if (SERVER_MODE && host && host.has(i) && typeof patch.url === 'string') host.navigate(i, patch.url).catch(() => {})
+    durableFlush()
+    return { ok: true }
   },
   closeSurface: (id) => {
     const i = String(id)
+    if (!surfaceExists(i)) return noSuch(i)
+    serverPending.delete(i)
+    osState = { ...osState, surfaces: (osState.surfaces || []).filter((s) => s.id !== i) }
     broadcast({ type: 'close', id: i })
     for (const k of consentGranted) if (k.startsWith(`${i}:`)) consentGranted.delete(k)
     if (SERVER_MODE && host) host.closeSurface(i).catch(() => {})
     wsHost.closeSurfaceFile(i) // delete the backing content file so it doesn't resurrect (no-renderer agent close)
+    durableFlush()
+    return { ok: true }
   },
   goToPrimary: () => broadcast({ type: 'goToPrimary' }),
   // Raw full state (workspace identity threaded in). The shared os-tools list_state handler whittles this down
@@ -589,6 +661,7 @@ const serverOps = {
     ensureChatAgent(id)
     return { id, title: title || `Chat ${id}` }
   },
+  renameChatSession: (sessionId, title) => wsHost.renameChatSession(String(sessionId), String(title)),
   systemUi: (name) => wsHost.systemUi(String(name)),
   groupIntoFolder: (name, ids, x, y, kind) => {
     // Normalize to { ok, ... } like Electron's osGroupIntoFolder — wsHost.group returns a bare { error } (no ok)
@@ -1295,6 +1368,7 @@ async function gracefulExit() {
   } catch {
     /* ignore */
   }
+  bootJournal.markClean() // LAST: "clean shutdown" means everything above flushed first
   process.exit(0)
 }
 process.on('SIGTERM', gracefulExit)

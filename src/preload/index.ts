@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus' | 'session-spawn' | 'session-data' | 'session-exit' | 'action-item' | 'action-item-removed'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'permission-request' | 'agentStatus' | 'session-spawn' | 'session-data' | 'session-exit' | 'action-item' | 'action-item-removed'
   [k: string]: unknown
 }
 
@@ -160,6 +160,10 @@ const api = {
   sendMessage(text: string, sessionId = '0'): void {
     ipcRenderer.send('os:user-message', { text, sessionId })
   },
+  /** The chat hub manages its sessions: op 'new' → { id } of a fresh session; 'rename' → set its title. */
+  chatControl(op: string, args: Record<string, unknown>): Promise<unknown> {
+    return ipcRenderer.invoke('os:chat-control', { op, args })
+  },
   /** Ask main to (re)send the persisted canvas as a hydrate, once our onAction listener is up. */
   requestHydrate(): void {
     ipcRenderer.send('workspace:request-hydrate')
@@ -196,6 +200,10 @@ const api = {
   },
   grantProviderConsent(provider: string, allow: boolean): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('os:provider-consent', provider, allow)
+  },
+  // Item 3: the human answered a web guest's Allow/Block permission prompt (geolocation, camera, …).
+  decidePermission(id: string, allow: boolean, remember: boolean): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('os:permission-decide', id, allow, remember)
   },
   // #52: group surfaces into a REAL folder on disk (mkdir + mv). Server mode overrides this in the shim.
   // kind:'board' → a '.board' on-canvas folder (windows/widgets splay live); else a normal file folder.

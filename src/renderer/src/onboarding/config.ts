@@ -2,7 +2,7 @@
 //   'always'       — every launch (use this while iterating on the flow)
 //   'first-launch' — only until completed once, then never again
 //   'off'          — never
-export const ONBOARDING_MODE: 'always' | 'first-launch' | 'off' = 'off'
+export const ONBOARDING_MODE: 'always' | 'first-launch' | 'off' = 'always'
 
 const DONE_KEY = 'blitzos.onboarded.v1'
 

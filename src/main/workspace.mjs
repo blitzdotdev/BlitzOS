@@ -212,6 +212,103 @@ function uniquePath(name, ext, taken) {
   return p
 }
 
+// ---- machine-global ROOT state (<root>/.blitzos/state.json) — the OS runtime journal. Holds what
+// must survive a process death but belongs to NO single workspace: the last-active workspace (boot
+// returns the user where they were) and the boot record (the dirty bit that detects a crash/kill on
+// the next launch, plus the soft-lease data against two hosts sharing one root). Root-level .blitzos
+// is deliberately OUTSIDE every per-workspace watcher, so the heartbeat can never trigger reconciles.
+function rootStateFile(root) {
+  return join(resolve(root), '.blitzos', 'state.json')
+}
+export function readRootState(root) {
+  try {
+    return JSON.parse(readFileSync(rootStateFile(root), 'utf8')) || {}
+  } catch {
+    return {}
+  }
+}
+/** Shallow top-level merge + atomic write. Pass a whole sub-object to replace it (e.g. { boot: {…} }). */
+export function patchRootState(root, patch) {
+  const next = { ...readRootState(root), ...(patch || {}) }
+  atomicWrite(rootStateFile(root), JSON.stringify(next, null, 2) + '\n')
+  return next
+}
+// Per-origin browser permission decisions, machine-global (an origin's camera grant is not workspace-
+// specific) — stored in the same root journal. Shape: { "<origin>": { "<permission>": "granted"|"denied" } }.
+export function readPermissions(root) {
+  const p = readRootState(root).permissions
+  return p && typeof p === 'object' ? p : {}
+}
+export function getPermission(root, origin, permission) {
+  const o = readPermissions(root)[origin]
+  return o && typeof o === 'object' ? o[permission] || null : null
+}
+export function setPermission(root, origin, permission, decision) {
+  if (!origin || !permission) return
+  const all = readPermissions(root)
+  const o = { ...(all[origin] || {}) }
+  o[permission] = decision === 'granted' ? 'granted' : 'denied'
+  patchRootState(root, { permissions: { ...all, [origin]: o } })
+}
+
+/** True if pid is a live process we can see (EPERM counts as alive; pid reuse is an accepted rare false-alive). */
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return !!e && e.code === 'EPERM'
+  }
+}
+/**
+ * Open the per-process boot journal: read the previous run's record (the dirty bit), then claim the
+ * root with a fresh record + a 60s heartbeat. Call `markClean()` as the LAST step of a graceful quit —
+ * "clean" means "state was flushed first". On the next boot:
+ *   dirty      → the previous run died without a clean shutdown (crash / SIGKILL / power loss)
+ *   concurrent → the previous record's pid is STILL ALIVE: not a crash — another BlitzOS (Electron or
+ *                server) is running on this root right now. Callers must NOT report a crash then;
+ *                whether to refuse to share a root is a pending product decision — today we detect
+ *                and warn loudly, and our heartbeat yields if another process re-claims the record.
+ */
+export function openBootJournal(root, mode) {
+  const prev = readRootState(root).boot || null
+  // A record carrying OUR OWN pid is a double-open within this process — neither a crash nor a
+  // concurrent owner (and never worth a false crash report).
+  const self = !!(prev && prev.pid === process.pid)
+  const concurrent = !!(prev && !self && prev.cleanShutdown !== true && pidAlive(prev.pid))
+  const dirty = !!(prev && !self && prev.cleanShutdown !== true && !concurrent)
+  const lastAliveAt = prev ? Number(prev.heartbeatAt || prev.bootedAt) || null : null
+  const write = (rec) => {
+    try {
+      patchRootState(root, { boot: rec })
+    } catch (e) {
+      console.error('[boot-journal] write failed:', e?.message || e)
+    }
+  }
+  write({ pid: process.pid, mode: String(mode || 'unknown'), bootedAt: Date.now(), heartbeatAt: Date.now(), cleanShutdown: false })
+  const iv = setInterval(() => {
+    const cur = readRootState(root).boot
+    // only beat OUR record — if another process re-claimed the root, leave its record alone
+    if (cur && cur.pid === process.pid) write({ ...cur, heartbeatAt: Date.now() })
+  }, 60_000)
+  if (iv.unref) iv.unref()
+  let closed = false
+  return {
+    dirty,
+    concurrent,
+    lastAliveAt,
+    prev,
+    markClean() {
+      if (closed) return
+      closed = true
+      clearInterval(iv)
+      const cur = readRootState(root).boot
+      if (cur && cur.pid === process.pid) write({ ...cur, cleanShutdown: true })
+    }
+  }
+}
+
 /**
  * Serialize osState into the workspace folder. Returns a small summary.
  * @param {string} dir absolute path to the workspace folder.

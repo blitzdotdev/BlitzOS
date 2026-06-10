@@ -124,6 +124,18 @@ export function ingestSignals(surfaceId, raw) {
   if (p && p.significant) flush(surfaceId, p.significant)
 }
 
+/** Append a finished moment to the LOG and wake every long-poll waiter (each gets the slice it may
+ *  see, per visibleTo). The ONE place moments enter the stream — every emitter funnels here so the
+ *  ring cap + waiter wake can never drift between emitters. */
+function emit(moment) {
+  LOG.push(moment)
+  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
+  for (const w of waiters.splice(0)) {
+    clearTimeout(w.timer)
+    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId)))
+  }
+}
+
 function flush(surfaceId, trigger) {
   const p = pending.get(surfaceId)
   if (!p) return
@@ -133,7 +145,7 @@ function flush(surfaceId, trigger) {
   if (!p.hasUser) return
   const ctx = lastCtx.get(surfaceId) || {}
   const now = Date.now()
-  const moment = {
+  emit({
     seq: ++seq,
     ts: now,
     surfaceId,
@@ -144,13 +156,7 @@ function flush(surfaceId, trigger) {
     signals: p.signals,
     user: p.user,
     snapshot: ctx.snapshot
-  }
-  LOG.push(moment)
-  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
-  for (const w of waiters.splice(0)) {
-    clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId)))
-  }
+  })
 }
 
 // Batch timer: emit a moment for any surface whose window has aged past BATCH_MS
@@ -172,7 +178,7 @@ export function latestSeq() {
  * the watching agent is woken to act.
  */
 export function emitSurfaceAction(surfaceId, action) {
-  const moment = {
+  emit({
     seq: ++seq,
     ts: Date.now(),
     surfaceId,
@@ -184,13 +190,7 @@ export function emitSurfaceAction(surfaceId, action) {
     signals: { action: 1 },
     user: ['UI action: ' + JSON.stringify(action).slice(0, 180)],
     action
-  }
-  LOG.push(moment)
-  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
-  for (const w of waiters.splice(0)) {
-    clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId)))
-  }
+  })
 }
 
 /**
@@ -202,7 +202,7 @@ export function emitSurfaceAction(surfaceId, action) {
 export function emitUserMessage(text, sessionId = '0') {
   const msg = String(text || '').slice(0, 2000)
   const sid = String(sessionId || '0')
-  const moment = {
+  emit({
     seq: ++seq,
     ts: Date.now(),
     surfaceId: sid === '0' ? 'chat' : `chat-${sid}`,
@@ -212,13 +212,7 @@ export function emitUserMessage(text, sessionId = '0') {
     signals: { message: 1 },
     user: [`user message: "${msg.slice(0, 400)}"`],
     message: msg
-  }
-  LOG.push(moment)
-  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
-  for (const w of waiters.splice(0)) {
-    clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId)))
-  }
+  })
 }
 
 /** A connector (integration) was wired up or removed — wake the agent so it learns live. Like a chat
@@ -226,13 +220,24 @@ export function emitUserMessage(text, sessionId = '0') {
 export function emitConnectorChange(provider, connected) {
   const name = String(provider || 'a connector')
   const verb = connected ? 'connected' : 'disconnected'
-  const moment = { seq: ++seq, ts: Date.now(), surfaceId: 'system', trigger: 'connector', windowMs: 0, signals: { connector: 1 }, user: [`connector ${verb}: ${name}`] }
-  LOG.push(moment)
-  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
-  for (const w of waiters.splice(0)) {
-    clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId)))
-  }
+  emit({ seq: ++seq, ts: Date.now(), surfaceId: 'system', trigger: 'connector', windowMs: 0, signals: { connector: 1 }, user: [`connector ${verb}: ${name}`] })
+}
+
+/** An OS-level event both inhabitants should know about — today a crash recovery; later an update,
+ *  a restore, a relay re-mint. Content-agnostic: BlitzOS reports WHAT happened, the agent decides
+ *  significance. Routed like connector moments (the primary watcher); `say`/chat.md carries it to
+ *  the human and into every brain's boot memory. */
+export function emitSystemMoment(kind, line, detail) {
+  emit({
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId: 'system',
+    trigger: 'system',
+    windowMs: 0,
+    signals: { system: 1 },
+    user: [String(line || kind || 'system event')],
+    system: { kind: String(kind || 'event'), ...(detail && typeof detail === 'object' ? detail : {}) }
+  })
 }
 
 /** Long-poll for a session: resolve immediately if there are moments visible to `sessionId` after

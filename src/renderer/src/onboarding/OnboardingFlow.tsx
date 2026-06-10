@@ -47,6 +47,12 @@ function useWallpaper(): string | null {
 function BootScreen({ onDone }: { onDone: () => void }): JSX.Element {
   const [progress, setProgress] = useState(0)
   const done = useRef(false)
+  // Keep the latest onDone in a ref so the boot timer can call it WITHOUT depending on its identity.
+  // OnboardingFlow re-creates onDone on every render (and the parent App re-renders often), so an
+  // `[onDone]` effect would re-run, reset `start = performance.now()`, and snap the bar back to 0 —
+  // that is the rubber-banding. Run the timer EXACTLY ONCE on mount instead.
+  const onDoneRef = useRef(onDone)
+  onDoneRef.current = onDone
   useEffect(() => {
     const DUR = 2800
     const start = performance.now()
@@ -57,12 +63,14 @@ function BootScreen({ onDone }: { onDone: () => void }): JSX.Element {
       if (p < 1) raf = requestAnimationFrame(tick)
       else if (!done.current) {
         done.current = true
-        window.setTimeout(onDone, 450)
+        window.setTimeout(() => onDoneRef.current(), 450)
       }
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [onDone])
+    // run once — the bar must never reset when the parent re-renders (see onDoneRef above)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const stages = ['Waking up', 'Reading your Mac', 'Personalizing your questions']
   const stage = stages[Math.min(stages.length - 1, Math.floor(progress * stages.length))]
   return (

@@ -42,6 +42,38 @@ export interface OsState {
 
 let getWin: () => BrowserWindow | null = () => null
 let cached: OsState = { surfaces: [] }
+// The workspaces root this process runs on (~/Blitz unless overridden) — index.ts needs it for the
+// boot journal (root-level runtime state lives at <root>/.blitzos/state.json).
+let wsRoot = ''
+// 2C/2D: main is AUTHORITATIVE-ON-WRITE for agent mutations. Each create/update/move/close is applied
+// to `cached` immediately (so a create→operate in the same tick — faster than the renderer round-trip —
+// resolves, and so existence checks are exact), then the IPC is sent for the renderer to reflect. The
+// renderer stays the authority: its next `os:state` push replaces `cached` wholesale, reconciling away
+// any optimistic drift. `pendingCreates` covers the window before that first echo. Content/existence
+// changes (create/update/close) also force a durable flush so an `ok` ack means the write survives a
+// crash — the gap that lost a note this session.
+const pendingCreates = new Map<string, number>()
+const PENDING_TTL = 10_000
+function surfaceExists(id: string): boolean {
+  return pendingCreates.has(id) || (cached.surfaces || []).some((s) => s.id === id)
+}
+/** Reconcile optimistic creates against an authoritative renderer snapshot: confirmed (now in the push)
+ *  or stale (renderer never echoed within the TTL) → forget. */
+function reconcilePending(s: OsState): void {
+  const now = Date.now()
+  for (const [id, t] of pendingCreates) {
+    if ((s.surfaces || []).some((x) => x.id === id) || now - t > PENDING_TTL) pendingCreates.delete(id)
+  }
+}
+/** Persist `cached` NOW (not on the 500ms debounce) so an agent write is durable at ack time. Guarded
+ *  against a mid-switch flush (the host owns the folder then) and best-effort (durability, never a throw). */
+function durableFlush(): void {
+  try {
+    if (wsHost && !wsHost.isSwitching()) wsHost.flush()
+  } catch {
+    /* best-effort */
+  }
+}
 // The SHARED workspace host (created in initOsActions, once app paths exist) — the SAME module the
 // server backend uses, so workspaces are ONE feature across both modes. Electron adapter: broadcast =
 // os:action IPC; web surfaces are <webview>s the renderer owns (onSurfaces no-op); mode 'desktop'.
@@ -62,12 +94,16 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
       : join(app.getPath('home'), 'Blitz')
   let initialName = process.env.BLITZ_WORKSPACE ? basename(resolve(process.env.BLITZ_WORKSPACE)) : 'Home'
   if (!safeName(initialName)) initialName = 'Home'
+  wsRoot = root
   wsHost = createWorkspaceHost({
     root,
     initialName,
+    // a BLITZ_WORKSPACE pin beats boot-where-you-left-off; a bare root override does not
+    explicitInitial: !!process.env.BLITZ_WORKSPACE,
     getState: () => cached,
     setState: (s) => {
       cached = s as OsState
+      reconcilePending(cached) // confirm/expire optimistic agent creates against the authoritative push
     },
     broadcast: (obj) => getWin()?.webContents.send('os:action', obj),
     onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
@@ -96,6 +132,17 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   // The renderer pulls its hydrate once its onAction listener is mounted (race-free; absorbs the
   // teammate's request-hydrate, replacing the old main-push on did-finish-load).
   ipcMain.on('workspace:request-hydrate', () => osSendHydrate())
+
+  // The chat HUB widget manages its sessions over the bridge: 'new' mints a session (the agent spawns
+  // on-demand on its first message); 'rename' sets a session's sidebar title (the agent auto-names).
+  ipcMain.handle('os:chat-control', (_e, payload: { op?: unknown; args?: Record<string, unknown> }) => {
+    const op = String(payload?.op || '')
+    const args = (payload?.args && typeof payload.args === 'object' ? payload.args : {}) as Record<string, unknown>
+    if (op === 'new') return osSpawnChatSession(typeof args.title === 'string' ? args.title : undefined)
+    if (op === 'rename') return osRenameChatSession(String(args.id ?? '0'), String(args.title ?? ''))
+    if (op === 'switch') return { ok: true } // active session is widget-side state; nothing to persist (yet)
+    return { ok: false, error: `unknown chat op: ${op}` }
+  })
 
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) wsHost?.onStatePush(state)
@@ -127,6 +174,7 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     if (text.trim()) {
       wsHost?.appendChat('user', text, sid) // write to that session's chat.md + echo to its widget
       emitUserMessage(text, sid) // wake ONLY that session's agent (trigger:'message')
+      onChatActivity?.(sid, true) // on-demand: spawn this session's brain if it isn't running, and keep it alive
     }
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
@@ -236,7 +284,14 @@ export function osCreateSurface(desc: SurfaceDescriptor): string {
   // nothing the agent didn't pick — auto-share web/app so it can read/control what it
   // opened. Surfaces the USER opens stay private until they share (the P0 gate).
   if (desc.kind === 'web' || desc.kind === 'app') setContentShare(id, true)
-  send('create', { surface: { ...desc, id } })
+  const surface = { ...desc, id }
+  // Authoritative-on-write: record it now (existence is exact for an immediate operate) + persist so a
+  // freshly-created surface survives a crash before the renderer's echo. The renderer reconciles geometry/z
+  // on its next push; writeIfChanged makes the re-persist a no-op.
+  pendingCreates.set(id, Date.now())
+  cached = { ...cached, surfaces: [...(cached.surfaces || []), surface as OsState['surfaces'][number]] }
+  send('create', { surface })
+  durableFlush()
   return id
 }
 
@@ -252,17 +307,43 @@ export function osOpenWindow(p: {
   return osCreateSurface({ kind: 'web', ...p })
 }
 
-export function osMoveSurface(id: string, x: number, y: number): void {
-  send('move', { id, x, y })
+/** Result of an agent surface mutation — `ok:false` when the target id is not in the active workspace,
+ *  so the tool layer returns a TRUE error instead of a silent no-op (2C). */
+export interface MutationResult {
+  ok: boolean
+  error?: string
+}
+const noSuch = (id: string): MutationResult => ({ ok: false, error: `no surface "${id}" in the active workspace` })
+
+export function osMoveSurface(id: string, x: number, y: number): MutationResult {
+  if (!surfaceExists(id)) return noSuch(id)
+  cached = { ...cached, surfaces: (cached.surfaces || []).map((s) => (s.id === id ? { ...s, x, y } : s)) }
+  send('move', { id, x, y }) // geometry rides the normal persist debounce — a lost move is harmless
+  return { ok: true }
 }
 /** Patch an existing surface (e.g. update a srcdoc's html, a note's text, geometry). */
-export function osUpdateSurface(id: string, patch: Record<string, unknown>): void {
+export function osUpdateSurface(id: string, patch: Record<string, unknown>): MutationResult {
+  if (!surfaceExists(id)) return noSuch(id)
+  // Apply the SAME merge the renderer does (props deep-merge, other fields assign) so the durable flush
+  // persists exactly what the agent set — this is the note-memory write whose loss we're fixing.
+  const props = patch.props as Record<string, unknown> | undefined
+  cached = {
+    ...cached,
+    surfaces: (cached.surfaces || []).map((s) => (s.id === id ? { ...s, ...patch, props: { ...(s.props || {}), ...(props || {}) } } : s))
+  }
   send('update', { id, patch })
+  durableFlush()
+  return { ok: true }
 }
-export function osCloseSurface(id: string): void {
+export function osCloseSurface(id: string): MutationResult {
+  if (!surfaceExists(id)) return noSuch(id)
   dropConsent(id)
   dropContentShare(id)
+  pendingCreates.delete(id)
+  cached = { ...cached, surfaces: (cached.surfaces || []).filter((s) => s.id !== id) }
   send('close', { id })
+  durableFlush() // persist the removal so a crash can't resurrect it from a stale workspace.json
+  return { ok: true }
 }
 export function osGoToPrimary(): void {
   send('goToPrimary')
@@ -270,6 +351,7 @@ export function osGoToPrimary(): void {
 /** Agent → user: append a chat message to a session's chat.md and broadcast it to that session's widget. */
 export function osSay(text: string, sessionId = '0'): void {
   wsHost?.appendChat('agent', text, sessionId)
+  onChatActivity?.(String(sessionId), false) // keep an EXISTING local brain alive through long work; never spawn
 }
 /** The agent customizes a session's widget UI (blitz-[<id>-]<name>.html) — currently 'chat'. Live-reloads. */
 export function osCustomizeWidget(name: string, html: string, sessionId = '0'): { ok: boolean; rel?: string; error?: string } {
@@ -279,20 +361,26 @@ export function osCustomizeWidget(name: string, html: string, sessionId = '0'): 
 export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
 }
-// index.ts owns process supervision (the agent-runner + relay url), so it registers HOW to start a chat
-// session's agent. osActions handles the workspace-side (mint id + surface the widget) and delegates the
-// agent spawn through this hook — keeping the agent-runner wiring in one place (parity with backend.mjs).
-let spawnChatAgent: ((sessionId: string) => void) | null = null
-export function setSpawnChatAgent(fn: (sessionId: string) => void): void {
-  spawnChatAgent = fn
+// index.ts owns process supervision (the agent-runner + relay url). The chat brain is ON-DEMAND: osActions
+// fires this hook on chat ACTIVITY so index.ts can spawn/keep-alive the session's agent. `spawn` distinguishes
+// the two callers: a USER MESSAGE (spawn=true) may bring a brain up; an AGENT REPLY (spawn=false) only RE-ARMS
+// an existing local brain's idle timer — it must NEVER spawn one, or an EXTERNAL agent driving over the relay
+// (whose /say also lands in osSay) would conscript a duplicate local brain and both would answer.
+let onChatActivity: ((sessionId: string, spawn: boolean) => void) | null = null
+export function setOnChatActivity(fn: (sessionId: string, spawn: boolean) => void): void {
+  onChatActivity = fn
 }
-/** Open a new chat session: mint its id, register + live-surface its chat widget, then spawn its agent. */
+/** Open a new chat session: mint its id + register it (the hub sidebar shows it). The agent is NOT spawned
+ *  here — it comes up on-demand on the first message (onChatActivity), so opening a session costs nothing. */
 export function osSpawnChatSession(title?: string): { id: string; title: string } {
   if (!wsHost) throw new Error('no workspace host')
   const id = wsHost.newChatSessionId()
   wsHost.addChatSession(id, title)
-  spawnChatAgent?.(id)
   return { id, title: title || `Chat ${id}` }
+}
+/** Set a chat session's sidebar title (the agent auto-names; the human can rename). */
+export function osRenameChatSession(id: string, title: string): { ok: boolean; id?: string; title?: string; error?: string } {
+  return wsHost ? wsHost.renameChatSession(String(id), String(title)) : { ok: false, error: 'no workspace host' }
 }
 /** The chat sessions in the active workspace (always '0' + any persisted agent sessions) — for boot-resume. */
 export function osChatSessionIds(): string[] {
@@ -386,6 +474,21 @@ export function osLoadConsent(): { surfaces: string[]; providers: string[] } {
 }
 export function osPersistConsent(c: { surfaces?: string[]; providers?: string[] }): void {
   wsHost?.persistConsent(c)
+}
+/** The workspaces root this process runs on (set by initOsActions; '' before init). */
+export function osWorkspacesRoot(): string {
+  return wsRoot
+}
+/** Reverse-map a guest's WebContents to its surface id (anchors a permission prompt to the requesting
+ *  surface). Null for the desktop renderer or an unregistered guest. */
+export function osSurfaceIdForWebContents(wc: { id: number } | null | undefined): string | null {
+  if (!wc || wc.id == null) return null
+  for (const [sid, wcid] of webviewIds) if (wcid === wc.id) return sid
+  return null
+}
+/** Absolute path of the active workspace folder (where a guest download lands), or null before init. */
+export function osActiveWorkspaceDir(): string | null {
+  return wsHost ? wsHost.activePath() : null
 }
 export function osGetState(): OsState {
   // Thread the active workspace identity + absolute folder PATH into every state read, so the agent always

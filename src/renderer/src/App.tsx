@@ -111,6 +111,9 @@ export default function App(): JSX.Element {
   // A QUEUE (not a single slot) so concurrent writes don't overwrite each other's card (review fix); we
   // show the oldest and pop it on answer. Keyed by id, matching provider-bridge's pending Map.
   const [providerApprovals, setProviderApprovals] = useState<Array<{ id: string; summary: string; risk: string }>>([])
+  // Item 3: a web guest asked for a sensitive browser permission (camera, location, …) — show the human a
+  // real Allow/Block prompt (browser parity), remembered per-origin.
+  const [permissionPrompts, setPermissionPrompts] = useState<Array<{ id: string; origin: string; permission: string; surfaceId: string | null }>>([])
   // Right-click desktop menu (New Folder / New Board). wx/wy = the world position to place the new folder.
   const [menu, setMenu] = useState<{ x: number; y: number; wx: number; wy: number } | null>(null)
   const isServer = !!window.agentOS?.serverMode
@@ -410,26 +413,33 @@ export default function App(): JSX.Element {
           setProviderApprovals((q) => (q.some((c) => c.id === card.id) ? q : [...q, card])) // enqueue (dedupe by id)
         }
       }
+      else if (a.type === 'permission-request') {
+        // A web guest requested a sensitive permission (item 3). Enqueue a real Allow/Block prompt.
+        const id = a.id ? String(a.id) : ''
+        if (id) setPermissionPrompts((q) => (q.some((p) => p.id === id) ? q : [...q, { id, origin: String(a.origin || ''), permission: String(a.permission || ''), surfaceId: a.surfaceId ? String(a.surfaceId) : null }]))
+      }
       else if (a.type === 'move') st.moveSurface(String(a.id), Number(a.x), Number(a.y))
       else if (a.type === 'update') st.updateSurface(String(a.id), (a.patch ?? {}) as Partial<Surface>)
       else if (a.type === 'close') st.closeSurface(String(a.id))
       else if (a.type === 'goToPrimary') st.goToPrimary()
       else if (a.type === 'chat') {
-        // The OS owns each session's transcript and sends the FULL message list tagged with sessionId
-        // ('0' = the primary chat). Route to THAT session's chat surface (id 'chat' / 'chat-<id>') so a
-        // per-session widget only shows its own conversation. If it isn't here yet, ignore (hydrate brings it).
+        // ONE hub chat surface holds every session. The OS broadcasts a session's full transcript tagged
+        // with sessionId; merge it into the hub's props.threads[sid] and refresh the sidebar (sessions) +
+        // per-session status when included. The widget renders the active thread + a session sidebar.
         const sid = a.sessionId != null ? String(a.sessionId) : '0'
-        const chatId = sid === '0' ? 'chat' : `chat-${sid}`
-        const chat = st.surfaces.find((s) => s.id === chatId) || (sid === '0' ? st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat')) : undefined)
-        if (!chat) return
-        if (Array.isArray(a.messages)) {
-          st.updateSurfaceProps(chat.id, { messages: a.messages as Array<{ role: string; text: string }> })
-        } else {
+        const hub = st.surfaces.find((s) => s.id === 'chat' || s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
+        if (!hub) return
+        const extra = a as { sessions?: unknown; status?: unknown }
+        const prevThreads = (hub.props?.threads as Record<string, Array<{ role: string; text: string }>>) ?? {}
+        const patch: Record<string, unknown> = {}
+        if (Array.isArray(a.messages)) patch.threads = { ...prevThreads, [sid]: a.messages as Array<{ role: string; text: string }> }
+        else {
           const text = String(a.text ?? '')
-          if (!text) return
-          const msgs = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
-          st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }].slice(-200) })
+          if (text) patch.threads = { ...prevThreads, [sid]: [...(prevThreads[sid] ?? []), { role: 'agent', text }].slice(-200) }
         }
+        if (extra.sessions) patch.sessions = extra.sessions
+        if (extra.status) patch.status = extra.status
+        if (Object.keys(patch).length) st.updateSurfaceProps(hub.id, patch)
       } else if (a.type === 'agentStatus') {
         // Backend heartbeat: is the brain's relay link up? Drives the toolbar status pill.
         setAgentOnline(!!a.online)
@@ -1098,6 +1108,29 @@ export default function App(): JSX.Element {
               <div className="consent-actions">
                 <button className="btn ghost" onClick={() => { window.agentOS?.denyProviderCall?.(card.id); pop() }}>Deny</button>
                 <button className="btn primary" onClick={() => { window.agentOS?.approveProviderCall?.(card.id); pop() }}>Allow</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Item 3: a web guest asked for a sensitive permission — browser-parity Allow/Block, remembered
+          per-origin. Oldest first; answering pops it and reveals the next. */}
+      {permissionPrompts.length > 0 && (() => {
+        const p = permissionPrompts[0]
+        const pop = (): void => setPermissionPrompts((q) => q.filter((x) => x.id !== p.id))
+        const decide = (allow: boolean): void => { window.agentOS?.decidePermission?.(p.id, allow, true); pop() }
+        const LABELS: Record<string, string> = { media: 'use your camera and microphone', geolocation: 'know your location', notifications: 'show notifications', 'clipboard-read': 'read your clipboard', midiSysex: 'use your MIDI devices', 'display-capture': 'capture your screen', 'window-management': 'manage your windows' }
+        const what = LABELS[p.permission] || `use "${p.permission}"`
+        const host = (() => { try { return new URL(p.origin).host } catch { return p.origin || 'A site' } })()
+        return (
+          <div className="consent" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="consent-card">
+              <h4>Allow <b>{host}</b> to {what}?</h4>
+              <p>This site is asking for a browser permission, like in a normal browser. Your choice is remembered for this site.{permissionPrompts.length > 1 ? ` (${permissionPrompts.length - 1} more pending)` : ''}</p>
+              <div className="consent-actions">
+                <button className="btn ghost" onClick={() => decide(false)}>Block</button>
+                <button className="btn primary" onClick={() => decide(true)}>Allow</button>
               </div>
             </div>
           </div>

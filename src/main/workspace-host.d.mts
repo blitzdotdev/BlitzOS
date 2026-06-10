@@ -4,6 +4,8 @@ import type { WorkspaceEntry } from './workspace.mjs'
 export interface WorkspaceHostAdapter {
   root: string
   initialName?: string
+  /** true when initialName was PINNED by the user (BLITZ_WORKSPACE): skip boot-where-you-left-off. */
+  explicitInitial?: boolean
   getState(): { surfaces: unknown[]; camera?: { x: number; y: number; scale: number }; mode?: string; view?: { cx: number; cy: number } }
   setState(s: unknown): void
   broadcast(obj: unknown): void
@@ -39,6 +41,7 @@ export interface WorkspaceHost {
   chatSessionIds(): string[]
   newChatSessionId(): string
   addChatSession(sessionId: string, title?: string): Record<string, unknown>
+  renameChatSession(sessionId: string, title: string): { ok: boolean; id?: string; title?: string; error?: string }
   group(name: string, memberIds: string[], x?: number, y?: number, kind?: 'board' | 'folder'): { ok: true; folder: string; moved: number } | { error: string }
   consent(): { surfaces: string[]; providers: string[] }
   persistConsent(c: { surfaces?: string[]; providers?: string[] }): void

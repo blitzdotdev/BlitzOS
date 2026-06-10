@@ -241,9 +241,20 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
   }
   // blitz.sendMessage — the widget sends a message to ITS session's agent. The session id rides from the
   // surface (props.sessionId, set by the host per chat session) so each chat widget routes to its own agent.
-  function serveMessage(win: Window, reqId: string, text: string): Promise<void> {
-    window.agentOS?.sendMessage?.(String(text), String(surface.props?.sessionId ?? '0'))
+  function serveMessage(win: Window, reqId: string, text: string, sessionId?: string): Promise<void> {
+    // The hub chat widget passes the ACTIVE session id per send; a plain per-session widget omits it and
+    // the id rides from the surface (props.sessionId). Either way the message wakes the right session's agent.
+    window.agentOS?.sendMessage?.(String(text), String(sessionId ?? surface.props?.sessionId ?? '0'))
     return Promise.resolve(postRes(win, reqId, { ok: true }))
+  }
+  // blitz.chat — the chat HUB manages its sessions (new / rename). Returns the result (e.g. the new id).
+  function serveChat(win: Window, reqId: string, op: string, args: Record<string, unknown>): Promise<void> {
+    const api = window.agentOS as { chatControl?: (op: string, args: Record<string, unknown>) => Promise<unknown> } | undefined
+    if (!api?.chatControl) return Promise.resolve(postRes(win, reqId, { ok: false, error: 'chat control unavailable here' }))
+    return api.chatControl(String(op), args).then(
+      (r) => postRes(win, reqId, { ok: true, data: r }),
+      (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
+    )
   }
   // blitz.listDir — the widget lists a workspace folder (the file-manager widget).
   function serveListDir(win: Window, reqId: string, path: string): Promise<void> {
@@ -262,14 +273,15 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
     const onMessage = (e: MessageEvent): void => {
       const win = iframeRef.current?.contentWindow
       if (!win || e.source !== win) return // only OUR widget (origin is unusable "null")
-      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; path?: string }
+      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; path?: string; sessionId?: string; chatOp?: string }
       if (!m || typeof m !== 'object') return
       if (m.type === 'blitz:hello') {
         win.postMessage({ type: 'blitz:init', props: surface.props ?? {} }, '*')
       } else if (m.type === 'blitz:req' && typeof m.reqId === 'string') {
         if (m.op === 'data') void serveData(win, m.reqId, String(m.provider ?? ''), String(m.resource ?? ''))
         else if (m.op === 'tool') void serveTool(win, m.reqId, String(m.tool ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
-        else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''))
+        else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''), m.sessionId)
+        else if (m.op === 'chat') void serveChat(win, m.reqId, String(m.chatOp ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
         else if (m.op === 'listdir') void serveListDir(win, m.reqId, String(m.path ?? ''))
         else if (m.op === 'setprops') {
           // A widget persists its OWN state (e.g. a note's text) — own-surface only, so no consent gate.

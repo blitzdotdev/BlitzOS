@@ -1,9 +1,14 @@
-import { app, BrowserWindow, protocol, ipcMain } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain, crashReporter } from 'electron'
 import { join } from 'path'
+import { readdirSync, readFileSync, statSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, setSpawnChatAgent, osChatSessionIds } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, setOnChatActivity, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir } from './osActions'
+import { emitSystemMoment } from './events'
+import { openBootJournal } from './workspace.mjs'
+import type { BootJournal } from './workspace.mjs'
+import { attachGuestWindowPolicy, installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronSessionOps, electronActionItems } from './electron-os-tools'
 import type { ActionStatus } from './action-items.mjs'
@@ -18,6 +23,22 @@ import { registerWallpaperIpc } from './wallpaper'
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
 process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getAppPath(), 'widgets')
 
+// ONE BlitzOS per machine: a second launch focuses the first instead of fighting it for the webview
+// partition + the workspace watchers (observed live: partition LOCK errors, two hosts persisting over
+// each other, "Object has been destroyed" 500s). app.exit is immediate — the duplicate runs no
+// before-quit handlers, so it can never mark the journal clean or flush state over the owner's.
+if (!app.requestSingleInstanceLock()) app.exit(0)
+app.on('second-instance', () => {
+  const w = mainWindow
+  if (!w) return
+  if (w.isMinimized()) w.restore()
+  w.show()
+  w.focus()
+})
+
+// Retain local minidumps for renderer/GPU/browser-process crashes (forensics only, never uploaded).
+crashReporter.start({ uploadToServer: false })
+
 // Serve workspace thumbnails (rendered board snapshots, written by capturePage) to the renderer's
 // <img> over a custom protocol — main owns the bytes; the renderer just references blitz-thumb://…
 protocol.registerSchemesAsPrivileged([
@@ -26,6 +47,9 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
+// The boot journal (crash dirty-bit + root lease) — opened once the workspace host exists, marked
+// clean as the LAST step of a graceful quit ("clean" = state was flushed first).
+let bootJournal: BootJournal | null = null
 
 // Fullscreen "video-game" mode: NATIVE macOS fullscreen (its own Space), opt-in via `BLITZ_FULLSCREEN=1`
 // (default windowed so a relaunch never traps you). Stays fully escapable — Ctrl+← / Ctrl+→ swap to your
@@ -64,59 +88,15 @@ function createWindow(): void {
 
   // Log when a web-surface guest actually loads (proof the real site rendered).
   mainWindow.webContents.on('did-attach-webview', (_e, guest) => {
-    // Popup policy for guests (pairs with `allowpopups` on the <webview> in SurfaceFrame.tsx).
-    // window.open must succeed inside a guest — when it returns null, sites fall back to
-    // `top.location = url` and the popup HIJACKS the whole surface (Gmail's contact-hovercard
-    // did exactly this, replacing the compose page with a blank widget). Policy:
-    //  - scripted utility children (about:blank) + known Google widget frames → a REAL but
-    //    invisible window, so the script gets its handle and runs its RPC; these self-close.
-    //  - auth popups (accounts.google.com) → a real visible window: sign-in flows need the
-    //    opener handle (postMessage back) and human eyes.
-    //  - any other real page (target=_blank links, window.open to a URL) → the OS-correct
-    //    behavior: it becomes a NEW WEB SURFACE on the canvas, never a stray native window.
-    //  - non-http schemes (javascript:, data:, file:) → denied outright.
-    // TODO(server-parity): server mode has no hijack (headless Chromium allows popups natively)
-    // but popups there are unattached targets — adopting Target.targetCreated as surfaces is the
-    // matching server-side feature.
-    const SAFE_CHILD = { nodeIntegration: false, contextIsolation: true, sandbox: true }
-    // A popup we DENY may retry as `top.location = url` (the hijack this policy exists to stop).
-    // Remember each denial briefly and swallow the matching top-frame navigation in will-navigate
-    // below — the page keeps running and the popup simply never happens (Gmail's contact hovercard:
-    // purely cosmetic). Do NOT "allow as a hidden window" instead: tried 2026-06-09, and it
-    // SIGSEGV'd the browser process — Gmail spams hovercard opens on hover, the widget URL refuses
-    // to load as a top-level document (ERR_FAILED), and the rapid create→fail→destroy churn of
-    // guest child windows hit a use-after-free in Electron 31's guest-view manager (poison pointer
-    // 0xefefef… on CrBrowserMain), killing the whole app.
-    const deniedPopups = new Map<string, number>() // url -> denied-at ts
-    const DENY_NAV_TTL = 4000
-    guest.setWindowOpenHandler(({ url }) => {
-      // scripted utility children (gapi RPC frames etc.): about:blank always loads, never churns
-      if (url === 'about:blank')
-        return { action: 'allow', overrideBrowserWindowOptions: { show: false, width: 80, height: 60, webPreferences: SAFE_CHILD } }
-      // auth popups need a visible window + the opener handle (postMessage back) + human eyes
-      if (/^https:\/\/accounts\.google\.com\//.test(url))
-        return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 640, webPreferences: SAFE_CHILD } }
-      if (/^https?:\/\//.test(url)) {
-        deniedPopups.set(url, Date.now())
-        if (deniedPopups.size > 50) for (const [u, t] of deniedPopups) if (Date.now() - t > DENY_NAV_TTL) deniedPopups.delete(u)
-        // widget/helper frames are not real destinations — deny outright, no surface
-        if (/^https:\/\/contacts\.google\.com\/widget\//.test(url)) return { action: 'deny' }
-        // any other real page (target=_blank, window.open): the OS-correct behavior — it becomes
-        // a NEW WEB SURFACE on the canvas, never a stray native window
-        osCreateSurface({ kind: 'web', url })
-        return { action: 'deny' }
-      }
-      return { action: 'deny' } // javascript:, data:, file:, custom schemes — never windows
-    })
-    // The fallback-swallower: a top-frame navigation to a URL we just denied as a popup is the
-    // hijack, not the user going somewhere — block it. One-shot per denial + short TTL, so a real
-    // later navigation to the same URL still works.
-    guest.on('will-navigate', (e, url) => {
-      const t = deniedPopups.get(url)
-      if (t != null) {
-        deniedPopups.delete(url)
-        if (Date.now() - t < DENY_NAV_TTL) e.preventDefault()
-      }
+    // The guest's browser-initiated escape hatches (popups, beforeunload) — content-agnostic policy owned
+    // by guest-capabilities.ts (NO hostnames; the old accounts.google.com / contacts.google.com regexes
+    // are gone). A popup becomes a window / a hidden child / a new surface / a denied-and-swallowed
+    // hijack purely by web-platform signals. Downloads + permission prompts are session-level (set once
+    // below, after the workspace host exists). logPlan records real features/disposition so the popup
+    // classifier can be tuned from data, not guesses.
+    attachGuestWindowPolicy(guest, {
+      openSurface: (url) => osCreateSurface({ kind: 'web', url }),
+      logPlan: (plan, d) => console.log(`[guest] popup ${plan.kind} <- ${JSON.stringify({ url: String(d.url).slice(0, 80), disposition: d.disposition, features: d.features })}`)
     })
     guest.on('did-finish-load', () => console.log('[guest] loaded:', guest.getURL()))
     guest.on('did-fail-load', (_ev, code, desc, url) => {
@@ -174,6 +154,27 @@ app.whenReady().then(() => {
   // the shared workspace host (hydrate/persist/switch/list/create/thumb) — the SAME module the server
   // backend uses, so workspaces are one feature across both modes.
   initOsActions(() => mainWindow)
+
+  // Claim the root + read the previous run's dirty bit (announced below once the control plane is up,
+  // so a watching agent's /events long-poll can actually deliver the moment).
+  bootJournal = openBootJournal(osWorkspacesRoot(), 'electron')
+
+  // Guest capability contract (item 3): set the session-level policy ONCE on the shared persist:agentos
+  // session — covers every current + future web guest. Downloads land in the active workspace folder (→ a
+  // file tile); a sensitive permission request shows the human a real Allow/Block prompt (browser parity),
+  // remembered per-origin. Content-agnostic — see guest-capabilities.ts. (Per-guest popup/unload policy is
+  // attached in did-attach-webview via attachGuestWindowPolicy.)
+  installGuestSessionPolicy({
+    root: osWorkspacesRoot(),
+    getDownloadDir: () => osActiveWorkspaceDir(),
+    broadcastPermission: (p) => {
+      console.log(`[guest] permission prompt: ${p.permission} <- ${p.origin}`)
+      mainWindow?.webContents.send('os:action', { type: 'permission-request', ...p })
+    },
+    surfaceIdFor: (wc) => osSurfaceIdForWebContents(wc)
+  })
+  // The human answered an Allow/Block prompt in the renderer → resolve the held request + remember per-origin.
+  ipcMain.handle('os:permission-decide', (_e, id: string, allow: boolean, remember: boolean) => resolvePermissionPrompt(osWorkspacesRoot(), String(id), !!allow, !!remember))
 
   // Workspace thumbnail protocol (blitz-thumb://t/?name=X&t=ts → the cached jpeg). After initOsActions
   // so the host exists; osReadThumb null-guards anyway. (initOsActions already wired the shared
@@ -274,26 +275,57 @@ app.whenReady().then(() => {
   let electronBrain: { stop: () => void; restart: () => void } | null = null
   startAgentSocket(() => mainWindow, () => electronBrain?.restart())
 
-  // Boot + supervise the brain: spawn the agent and auto-restart it on exit, so a brain
-  // is always watching. Opt-in via BLITZ_AGENT (=claude or a custom command). This is
-  // process supervision, not decision-making — the agent remains the sole decider.
-  if (process.env.BLITZ_AGENT) {
-    electronBrain = startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, sessionId: '0', getWorkspacePath: () => osWorkspaceContext().workspace_path })
-  }
-
-  // Per-session chat agents (#1+): each opened chat session gets its OWN supervised claude over the same
-  // relay, scoped to its id. osActions mints the id + surfaces the widget, then calls this hook to spawn the
-  // agent (process supervision stays here, with the relay url). #0 is electronBrain above.
-  const chatRunners = new Map<string, { stop: () => void; restart: () => void }>()
-  const chatAgentCmd = (): string => (process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : 'claude')
-  const ensureChatAgent = (sessionId: string): void => {
+  // ON-DEMAND chat brains. A supervised claude per chat session, spawned the moment there's ACTIVITY in that
+  // session (a user message or an agent reply, via osActions' onChatActivity hook) and idle-stopped after
+  // IDLE_MS of silence — so the in-app chat "just works" without a constant token drain, while a print-mode
+  // run that exits on its turn budget respawns near-seamlessly (agent-runner backoff). The conversation
+  // PERSISTS across an idle-stop AND a BlitzOS restart (claude --resume, id tracked in the workspace), so a
+  // re-spawned brain continues exactly where it left off. BLITZ_AGENT only overrides the COMMAND now — it no
+  // longer gates existence. Supervision (never decisions) stays here; the agent is the brain.
+  const IDLE_MS = 8 * 60 * 1000
+  const brainCmd = (): string => (process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : 'claude')
+  const brains = new Map<string, { runner: { stop: () => void; restart: () => void }; idle: ReturnType<typeof setTimeout> | null }>()
+  const ensureBrain = (sessionId: string, spawn: boolean): void => {
     const id = String(sessionId)
-    if (id === '0' || chatRunners.has(id)) return
-    chatRunners.set(id, startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: chatAgentCmd(), label: 'chat-' + id, sessionId: id, getWorkspacePath: () => osWorkspaceContext().workspace_path }))
+    let b = brains.get(id)
+    if (!b) {
+      if (!spawn) return // an agent reply (spawn=false) only keeps an EXISTING brain alive — never starts one
+      const runner = startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: brainCmd(), label: 'chat-' + id, sessionId: id, getWorkspacePath: () => osWorkspaceContext().workspace_path })
+      b = { runner, idle: null }
+      brains.set(id, b)
+      console.log(`[brain ${id}] spawned on demand`)
+    }
+    if (b.idle) clearTimeout(b.idle)
+    b.idle = setTimeout(() => {
+      b.runner.stop()
+      brains.delete(id)
+      console.log(`[brain ${id}] idle-stopped after ${IDLE_MS / 60000}m quiet — resumes on the next message`)
+    }, IDLE_MS)
   }
-  setSpawnChatAgent(ensureChatAgent)
-  // Resume agents for chat sessions opened in a previous run (their meta persists in the workspace).
-  for (const id of osChatSessionIds()) if (id !== '0') ensureChatAgent(id)
+  setOnChatActivity(ensureBrain)
+  // Relay reconnect (new url) restarts every live brain so none loops on the dead url; stop kills all.
+  electronBrain = { stop: () => brains.forEach((b) => b.runner.stop()), restart: () => brains.forEach((b) => b.runner.restart()) }
+
+  // Kernel fault model: tell BOTH inhabitants when the previous run died without a clean shutdown.
+  // The dirty bit is the truth source (covers SIGSEGV / SIGKILL / power loss); the DiagnosticReports
+  // scan adds the WHY on macOS when it can. `concurrent` means the previous record's pid is still
+  // alive — that's another BlitzOS on this root (not a crash): warn loudly, never false-report. The
+  // agent gets a trigger:'system' moment (it decides significance); the human gets a chat line, which
+  // also lands in chat.md — the brains' boot memory.
+  if (bootJournal?.concurrent) {
+    console.error(
+      `[boot] another BlitzOS (pid ${bootJournal.prev?.pid}, mode ${bootJournal.prev?.mode}) appears to be running on this workspaces root — two hosts on one root WILL fight over files. Close one of them.`
+    )
+  } else if (bootJournal?.dirty) {
+    const upTo = bootJournal.lastAliveAt || Date.now()
+    const report = scanCrashReports(upTo, Date.now(), bootJournal.prev?.pid)
+    const when = new Date(report?.at || upTo).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    const why = report ? ` (${report.detail})` : ''
+    const line = `Recovered from a crash: the previous BlitzOS process died around ${when}${why} without a clean shutdown. Workspaces were restored from disk; edits made in the last moments before the crash may have been lost.`
+    console.error('[boot] ' + line)
+    emitSystemMoment('crash', line, { at: report?.at || upTo, ...(report ? { detail: report.detail } : {}) })
+    osSay(line)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -304,8 +336,50 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   osFlushWorkspace()
   try { electronSessionOps.stopHosts() } catch { /* ignore */ } // flush session transcripts + close tmux control clients (sessions survive)
+  bootJournal?.markClean() // LAST: "clean shutdown" means everything above flushed first
 })
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+
+// Best-effort macOS crash-report scan: find the Electron .ips in ~/Library/Logs/DiagnosticReports
+// whose header timestamp falls inside the previous run's death window. The .ips is two JSON docs —
+// a one-line header {timestamp, app_name} then the body {pid, termination, exception} — so we can
+// match OUR pid strictly when the body parses (another Electron app crashing in the window must not
+// be blamed). Returns the most recent match or null; every step is failure-tolerant by design.
+function scanCrashReports(fromTs: number, toTs: number, pid?: number): { at: number; detail: string } | null {
+  try {
+    const dir = join(app.getPath('home'), 'Library', 'Logs', 'DiagnosticReports')
+    let best: { at: number; detail: string } | null = null
+    for (const name of readdirSync(dir)) {
+      if (!/^Electron-.*\.ips$/.test(name)) continue
+      try {
+        const file = join(dir, name)
+        const st = statSync(file)
+        if (st.size > 8 * 1024 * 1024 || st.mtimeMs < fromTs - 120_000) continue
+        const raw = readFileSync(file, 'utf8')
+        const nl = raw.indexOf('\n')
+        if (nl <= 0) continue
+        const head = JSON.parse(raw.slice(0, nl)) as { timestamp?: string }
+        const at = Date.parse(String(head.timestamp || ''))
+        if (!Number.isFinite(at) || at < fromTs - 90_000 || at > toTs + 5_000) continue
+        let detail = 'native crash'
+        try {
+          const body = JSON.parse(raw.slice(nl + 1)) as { pid?: number; termination?: { indicator?: string; signal?: number }; exception?: { type?: string } }
+          if (pid != null && body.pid != null && body.pid !== pid) continue // someone else's Electron
+          const term = body.termination || {}
+          detail = [body.exception?.type, term.indicator || (term.signal != null ? `signal ${term.signal}` : '')].filter(Boolean).join(', ') || detail
+        } catch {
+          /* header-only match is still useful */
+        }
+        if (!best || at > best.at) best = { at, detail }
+      } catch {
+        /* unreadable report — skip */
+      }
+    }
+    return best
+  } catch {
+    return null
+  }
+}

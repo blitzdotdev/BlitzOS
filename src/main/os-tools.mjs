@@ -101,8 +101,9 @@ export function makeOsTools(ops) {
       input_schema: { type: 'object', required: ['id', 'x', 'y'], properties: { id: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } },
       handler: ({ body }) => {
         const a = parse(body)
-        ops.moveSurface(String(a.id), Number(a.x), Number(a.y))
-        return { ok: true }
+        // 2C: ops return {ok:false,error} for an unknown id — surface it as a real error, not a silent ok.
+        const r = ops.moveSurface(String(a.id), Number(a.x), Number(a.y))
+        return r && r.ok === false ? { status: 404, body: { error: r.error } } : { ok: true }
       }
     },
     {
@@ -112,8 +113,8 @@ export function makeOsTools(ops) {
       handler: ({ body }) => {
         const { id, ...patch } = parse(body)
         if (!id) return { status: 400, body: { error: 'id required' } }
-        ops.updateSurface(String(id), patch)
-        return { ok: true }
+        const r = ops.updateSurface(String(id), patch)
+        return r && r.ok === false ? { status: 404, body: { error: r.error } } : { ok: true }
       }
     },
     {
@@ -121,8 +122,8 @@ export function makeOsTools(ops) {
       description: 'Close a surface by id.',
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
       handler: ({ body }) => {
-        ops.closeSurface(String(parse(body).id))
-        return { ok: true }
+        const r = ops.closeSurface(String(parse(body).id))
+        return r && r.ok === false ? { status: 404, body: { error: r.error } } : { ok: true }
       }
     },
     {
@@ -242,7 +243,9 @@ export function makeOsTools(ops) {
         if (!r.ok) return { status: 400, body: { error: r.error } }
         if (action.action === 'screenshot') return { image: r.result }
         if (action.action === 'read' || action.action === 'eval') return { text: r.result }
-        return { ok: true }
+        // 2B: surface the action's observed effect (field value after type, url/dom change after
+        // click/key) so the agent can verify in-band that the act actually landed.
+        return r.effect ? { ok: true, effect: r.effect } : { ok: true }
       }
     },
     {
@@ -330,7 +333,7 @@ export function makeOsTools(ops) {
     {
       path: '/say',
       description:
-        "Send a chat message to the USER — it appears in their in-canvas Chat panel. Use this to reply when a moment has trigger:'message' (the user typed to you), or to proactively tell them something. Plain text. If you are a non-primary session, pass {session:'<your id>'} so it lands in YOUR chat.",
+        "Send a chat message to the USER (their in-canvas Chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. Embed an image with markdown ![alt](url) (or inline <svg>…</svg>) whenever a visual carries meaning words can't. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary sessions MUST pass {session:'<your id>'} so it lands in YOUR chat.",
       input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, session: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
@@ -343,7 +346,7 @@ export function makeOsTools(ops) {
     {
       path: '/customize_widget',
       description:
-        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Read the current source with get_system_ui first. Args: {name, html, session? (which chat session's widget; default '0')}.",
+        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. The Chat is a HUB: onProps gives { sessions:[{id,title,status}], threads:{<id>:[{role,text}]}, status:{<id>:'thinking'} }; send with blitz.sendMessage(text, sessionId) and manage sessions with blitz.chat('new'|'rename', args). Agent messages may embed markdown images / inline <svg> / a ```blitz-ui {type,prompt,options} card. Use the --blitz-* light tokens. Read the current source with get_system_ui first. Args: {name, html, session?}.",
       input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' }, session: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
@@ -370,6 +373,33 @@ export function makeOsTools(ops) {
         if (typeof ops.spawnChatSession !== 'function') return { status: 501, body: { error: 'chat sessions not supported on this transport' } }
         const session = await ops.spawnChatSession(a.title != null ? String(a.title) : undefined)
         return { session }
+      }
+    },
+    {
+      path: '/rename_chat_session',
+      description:
+        "Give a chat session a SHORT, concise sidebar title (2–4 words, like a thread name) — AUTO-NAME your session after the first real exchange so the user can tell their chats apart at a glance. Args: {session, title}.",
+      input_schema: { type: 'object', required: ['title'], properties: { session: { type: 'string' }, title: { type: 'string' } } },
+      handler: ({ body }) => {
+        const b = parse(body)
+        if (typeof ops.renameChatSession !== 'function') return { status: 501, body: { error: 'rename not supported on this transport' } }
+        return ops.renameChatSession(b.session != null ? String(b.session) : '0', String(b.title || ''))
+      }
+    },
+    {
+      path: '/ask',
+      description:
+        "Ask the user a DECISION as real tappable UI in chat — the RIGHT way to get a yes/no, a pick, or an approval (never bury the question in prose). kind: 'confirm' (a few inline buttons; put the recommended/affirmative option FIRST), 'choice' (a vertical list of options), or 'grid' (cards, each option {label, sub?, img?}). The user's tap returns to you as their next message (the chosen label), so just continue from it. Args: {kind?, prompt, options:[string|{label,sub?,img?}], session?}. Keep `prompt` to one plain-language line.",
+      input_schema: { type: 'object', required: ['prompt', 'options'], properties: { kind: { type: 'string', enum: ['confirm', 'choice', 'grid'] }, prompt: { type: 'string' }, options: { type: 'array' }, session: { type: 'string' } } },
+      handler: ({ body }) => {
+        const b = parse(body)
+        const prompt = String(b.prompt || '')
+        const options = Array.isArray(b.options) ? b.options : []
+        if (!prompt || !options.length) return { status: 400, body: { error: 'prompt and options required' } }
+        const spec = { type: b.kind === 'choice' || b.kind === 'grid' ? b.kind : 'confirm', prompt, options }
+        // The structured prompt rides in the say transcript as a fenced block; the chat widget renders it as a card.
+        ops.say('```blitz-ui\n' + JSON.stringify(spec) + '\n```', b.session != null ? String(b.session) : '0')
+        return { ok: true }
       }
     },
     {

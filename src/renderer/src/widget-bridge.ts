@@ -71,7 +71,8 @@ export const BRIDGE_SHIM = `<script>
   window.blitz = {
     data: function (provider, resource) { return request('data', { provider: provider, resource: resource }); },
     tool: function (tool, args) { return request('tool', { tool: tool, args: args || {} }); },
-    sendMessage: function (text) { return request('msg', { text: String(text == null ? '' : text) }); },
+    sendMessage: function (text, sessionId) { return request('msg', { text: String(text == null ? '' : text), sessionId: sessionId == null ? undefined : String(sessionId) }); },
+    chat: function (op, args) { return request('chat', { chatOp: String(op || ''), args: args || {} }); },
     listDir: function (path) { return request('listdir', { path: String(path == null ? '' : path) }); },
     setProps: function (patch) { return request('setprops', { patch: patch || {} }); },
     props: function () { return props; },

@@ -73,3 +73,40 @@ export function listWorkspaces(root: string): WorkspaceEntry[]
 
 /** Create + scaffold a new workspace. Throws Error with .code 'EINVAL' | 'EEXIST'. */
 export function createWorkspace(root: string, name: string): { name: string; path: string }
+
+// ---- machine-global root state (<root>/.blitzos/state.json): the OS runtime journal ----
+
+export interface BootRecord {
+  pid: number
+  mode: string
+  bootedAt: number
+  heartbeatAt: number
+  cleanShutdown: boolean
+}
+export interface RootState {
+  lastActiveWorkspace?: string
+  boot?: BootRecord
+  [k: string]: unknown
+}
+export function readRootState(root: string): RootState
+/** Shallow top-level merge + atomic write. Pass a whole sub-object to replace it. */
+export function patchRootState(root: string, patch: Partial<RootState>): RootState
+
+// ---- per-origin browser permission decisions (machine-global, in the root journal) ----
+export type PermissionDecision = 'granted' | 'denied'
+export function readPermissions(root: string): Record<string, Record<string, PermissionDecision>>
+export function getPermission(root: string, origin: string, permission: string): PermissionDecision | null
+export function setPermission(root: string, origin: string, permission: string, decision: PermissionDecision): void
+
+export interface BootJournal {
+  /** Previous run died without a clean shutdown (crash / SIGKILL / power loss). */
+  dirty: boolean
+  /** Previous record's pid is still alive: another BlitzOS owns this root right now (not a crash). */
+  concurrent: boolean
+  lastAliveAt: number | null
+  prev: BootRecord | null
+  /** Call as the LAST step of a graceful quit ("clean" = state was flushed first). */
+  markClean(): void
+}
+/** Read the dirty bit, claim the root with a fresh record, start the 60s heartbeat. */
+export function openBootJournal(root: string, mode: string): BootJournal
