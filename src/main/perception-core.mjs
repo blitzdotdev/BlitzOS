@@ -32,7 +32,7 @@ let seq = 0
 const MAX = 1000
 const waiters = []
 
-// Per-session visibility (brain-as-session): a chat 'message' moment is PRIVATE to its session, so each
+// Per-session visibility (one agent per session): a chat 'message' moment is PRIVATE to its session, so each
 // session's agent only sees + answers ITS chat. All OTHER (activity/canvas) moments go to the PRIMARY
 // session ('0') only — the desktop-watcher — so spawning N chat agents doesn't wake them all on canvas
 // churn. seq stays a single global counter, so an agent's `since` cursor advances past filtered moments.
@@ -47,7 +47,7 @@ function visibleTo(moment, sessionId) {
 
 // ---- perception content consent (P0: the untrusted relay must not receive the
 // CONTENT of a logged-in surface unless the human shared it). The localhost-trusted
-// path (and the in-process resident brain) are never redacted. Default: not shared.
+// path (the trusted localhost) is never redacted. Default: not shared.
 const contentShared = new Set()
 
 /** The human toggled "let the agent read this surface" for a web surface. */

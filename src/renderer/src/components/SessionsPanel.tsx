@@ -17,6 +17,7 @@ type SessionMeta = {
   exitCode: number | null
   createdAt: number
   endedAt: number | null
+  area?: number | null
 }
 type SessionApi = {
   sessionList?: () => Promise<unknown[]>
@@ -103,7 +104,7 @@ export function SessionsPanel({ surface }: { surface: Surface }): JSX.Element {
           </div>
         )}
         {sessions.map((s) => (
-          <div key={s.id} className="sess-row" onDoubleClick={() => openSession(s.id, s.title)}>
+          <div key={s.id} className="sess-row" onDoubleClick={() => openSession(s.id, s.title, s.area)}>
             <span className="sess-dot" style={{ background: statusColor(s) }} title={s.status} />
             <div className="sess-main">
               <div className="sess-title">{s.title || s.id.slice(0, 8)}</div>
@@ -122,7 +123,7 @@ export function SessionsPanel({ surface }: { surface: Surface }): JSX.Element {
             <div className="sess-actions">
               {s.status === 'running' ? (
                 <>
-                  <button className="sess-btn" title="Show this session's terminal" onClick={() => openSession(s.id, s.title)}>
+                  <button className="sess-btn" title="Show this session's terminal" onClick={() => openSession(s.id, s.title, s.area)}>
                     Open
                   </button>
                   <button

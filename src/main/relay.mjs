@@ -1,17 +1,17 @@
 // The agent-socket relay LIFECYCLE — ONE implementation for BOTH transports (Electron main via
 // agentSocket.ts, and the server via preview/backend.mjs), so it can NEVER diverge again. This was the
 // last place the two drifted: the self-heal (never-give-up reconnect + adopt-the-new-url-on-reconnect +
-// restart-the-brain + a watchdog backstop + boot retry + the online/offline status) was added to the server
-// only, leaving Electron with the silent-offline bug. It now lives here once; both modes call startRelay().
+// a watchdog backstop + boot retry + the online/offline status) was added to the server only, leaving
+// Electron with the silent-offline bug. It now lives here once; both modes call startRelay().
 //
-// The only thing that differs per transport is the `adapter` (how to publish the URL / status, and how to
-// restart the local brain) — the os-tools.mjs `makeOsTools(ops)` pattern, applied to the relay.
+// The only thing that differs per transport is the `adapter` (how to publish the URL / status) — the
+// os-tools.mjs `makeOsTools(ops)` pattern, applied to the relay.
 import { connect } from '@agent-socket/sdk'
 
 /**
  * Connect to the agent-socket relay and keep the connection healthy forever.
  * @param {object} cfg   { appId, baseUrl, appDescription, agentsMd, tools, label? } — tools is the SDK-shaped array
- * @param {object} adapter { onUrl(url), onStatus(online, url), restartBrain() } — platform-specific publish/restart
+ * @param {object} adapter { onUrl(url), onStatus(online, url) } — platform-specific publish of the URL/status
  * @returns {{ getUrl: () => (string|null), isOnline: () => boolean, stop: () => void }}
  */
 export function startRelay(cfg, adapter = {}) {
@@ -48,8 +48,9 @@ export function startRelay(cfg, adapter = {}) {
           status(false)
           setTimeout(reconnect, Math.min(30_000, 1000 * Math.pow(2, Math.max(0, attempt - 1))))
         },
-        // A reconnect mints a NEW session URL — adopt it (the old one is dead on the relay), publish it, and
-        // RESTART the brain (it still holds the dead URL → it would loop on app_offline forever otherwise).
+        // A reconnect mints a NEW session URL — adopt it (the old one is dead on the relay) + publish it.
+        // publishUrl() refreshes .blitzos/relay-url, so the running agent terminals (which re-read it per
+        // call) self-heal onto the fresh url — no privileged brain to restart.
         onSessionChanged: async (info) => {
           const next = info && info.tokensRemapped && info.tokensRemapped.get(url)
           if (next) url = next
@@ -62,11 +63,6 @@ export function startRelay(cfg, adapter = {}) {
           }
           status(true)
           publishUrl()
-          try {
-            adapter.restartBrain && adapter.restartBrain()
-          } catch {
-            /* no brain wired here */
-          }
         },
         tools: cfg.tools
       })

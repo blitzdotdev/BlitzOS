@@ -32,7 +32,7 @@ const SHARED_CORES = [
   'relay',           // agent-socket relay lifecycle (startRelay + self-heal)
   'activity',        // the "Agent activity" feed (withActivity)
   'perception-core', // moments / sensors / /events
-  'agent-runner',    // resident-brain process supervisor
+  'agent-session',   // an agent = a claude in a tmux terminal (bootstrap + claude command + --resume id)
   'workspace-host',  // folder-backed workspace host
   'control-core',    // CDP control vocabulary
   'provider-call',   // integration/provider calls

@@ -29,12 +29,47 @@ Free-form x/y/w/h is the AI's single biggest spatial failure class: pixel stipul
 3. **Move feel (CORRECTED from the video; overrides the earlier auto-reflow pick):** widgets never reflow, period. Drag = float + outline preview at the nearest valid free position + spring snap. Files/folders are the fluid layer that moves out of the way (phase 2). Right-click on a widget: size picker (S/M/L) + Remove.
 4. **Pull-in:** a live page the human pulls in appears as a free-form floating focus window (L3), not a tile.
 
+## Apple's actual placement model (REVERSE-ENGINEERED 2026-06-10, definitive — spike 1 RESOLVED)
+
+Recovered from this machine right after the reference video was recorded. The desktop widget layout is written by the NotificationCenter process (the desktop-widget renderer) to its sandbox container:
+`~/Library/Containers/com.apple.notificationcenterui/Data/Library/Preferences/com.apple.notificationcenterui.plist`, key `widgets.DesktopWidgetPlacementStorage` (a nested bplist). The widget metrics come from chronod's store (`~/Library/Group Containers/group.com.apple.chronod/chronod/chrono.sql`, `HostConfigs` blob, classes `CHSWidgetConfiguration` / `CHSWidgetMetrics`).
+
+**The data model (decoded verbatim from this Mac):**
+
+```
+NumberedDisplays[ {Number, Resolutions[ {Size:{1512,949}, Groups[
+  { Origin:{135,127}, Items[
+      {Identifier:<uuid>, Column:0, Row:1, Size:{Medium}, ZOrder:2},   // News
+      {Identifier:<uuid>, Column:1, Row:0, Size:{Small},  ZOrder:3},   // Coinbase
+      {Identifier:<uuid>, Column:2, Row:1, Size:{Large},  ZOrder:5},   // Photos
+      {Identifier:<uuid>, Column:3, Row:3, Size:{Small},  ZOrder:0} ]},// ChatGPT
+  { Origin:{758,72}, Items[
+      {.. Column:0, Row:0, Small ..},                                  // Clock
+      {.. Column:1, Row:0, Small ..} ]}                                // Copilot
+]} ]} ]
+```
+
+**There are NO per-widget pixel positions.** The model is:
+
+1. **Groups (islands), each with one pixel Origin.** Widgets inside a group sit at **integer Column/Row** cells. Dragging near an existing group snaps to the nearest free cell span IN that group (that is the outline preview); dropping far from every group starts a new group whose Origin is the drop point. That is why widgets align perfectly to neighbors yet clusters can live anywhere.
+2. **Exact metrics, corrected implementation model (CHSWidgetMetrics + live CGWindowList cross-check):** the real unit is an **edge-to-edge 180pt tile** (widget *windows*: S 180×180, M 360×180, L 360×360, XL predicted 720×360) and the **visible card is the tile inset 8pt per side** (visible: 164×164 / 344×164 / 344×344 / 704×344, so the visible gap between neighbors is 16pt). Verified exactly on all six live windows: `global = (Origin.x + Column·180, menuBar(≈33) + Origin.y + Row·180)`. Content margins **18pt** inside the card; corner radius **27.88pt stored** (CHS), measured ≈30pt **continuous squircle** on current OS. Spans: S=1×1, M=2×1, L=2×2, XL=4×2 tiles. Build the clone on 180-tiles + 8pt inset, not on 164-cards + 16-gutters (same arithmetic, cleaner hit/drag frames).
+3. **The grid is sparse** (ChatGPT sits at col 3 row 3 with empty cells between); occupied spans are simply invalid drop candidates, which is the whole never-reflow guarantee.
+4. **Per display AND per resolution**: each display size remembers its own Groups (resize = a different `Resolutions` entry, no live reflow). Screen-edge margins are NOT enforced; group Origins are arbitrary floats.
+5. **ZOrder is a global insertion-order counter** across groups (ordering, not stacking; widgets can never overlap).
+6. Desktop **icons are a separate Finder system** that flows around widget frames (Finder defaults: `gridSpacing` 54, `iconSize` 64 are the starting knobs); widgets never store icon data.
+7. **⌘-drag opts out of snapping entirely** (drop anywhere = force a new free group). The human free-form escape hatch is built into Apple's model.
+8. Implementation hint: a hidden `onscreen:false`, lattice-aligned widget-sized window rides along during drags — the outline ghost is a real pre-positioned window, not a drawn overlay (speculative but observed).
+
+**What BlitzOS adopts:** the 180pt-tile + 8pt-card-inset model (S/M/L/XL spans) scaled to our unit; the sparse-grid + invalid-occupied-span placer; outline-preview snap semantics; ⌘-drag as the future free-island escape hatch. **Simplification for the agent:** v1 models the Stage as ONE group whose Origin is the stage margin (a single fixed lattice, which is exactly what the agent API needs); human-dragged free islands (multiple Groups) are a later, purely-renderer-side addition that the same data model already supports.
+
+**Build-vs-borrow (researched):** NO existing library implements the islands model — we will be first. Explicitly do NOT use `react-grid-layout`: it is the wrong model (it pushes/compacts neighbors, the exact behavior this design forbids); its placeholder-preview pattern is the only reusable idea. Best animation reference for grid feel: `JotaMelo/jSpringBoard` (iOS-10 SpringBoard reproduction). Behavior corroboration: MacStories Sonoma review + Six Colors ("Apple's just making it easy for adjacent widgets to look properly aligned" — i.e. islands, not a global grid).
+
 ## Slot system
 
-- Unit cell **U** derived from window size (the macOS small-widget square, ≈150px + gutter; exact metrics = spike 1). Sizes: **S=1×1U, M=2×1U, L=2×2U, XL=3×2U** (focus tile).
-- A widget of size W×H occupies a rectangle of cells; **the placer only ever returns positions where every covered cell is free**. Non-overlap is enforced by the placer, not by policy.
+- Tile = **180×180 logical pt, edge-to-edge** (Apple's real model): the visible card is the tile **inset 8pt per side** (164×164 visible, 16pt visible gap), 18pt content margins, radius 27.88 stored / ≈30 measured squircle. Sizes: **S=1×1, M=2×1, L=2×2, XL=4×2** tiles.
+- A widget occupies a span of cells; **the placer only ever returns spans whose every cell is free**. Non-overlap is enforced by the placer, not by policy. The grid may stay sparse (Apple's does).
 - **Stage budget:** a soft cap (~8 S-equivalents, tune in spike 6) below the hard capacity. Past budget, placement returns `stage_full` + current occupants; the agent must evict explicitly or queue. It cannot overflow attention even with a bad policy.
-- Slots remap on window resize by relative anchor (spike 4).
+- **Per-window-size layouts** like Apple: each window size remembers its own arrangement; no live reflow on resize (spike 4 reduces to remembering layouts per size bucket).
 
 ## Agent API (the guardrails)
 
@@ -64,10 +99,10 @@ Free-form x/y/w/h is the AI's single biggest spatial failure class: pixel stipul
 
 ## Open spikes
 
-1. Exact macOS metrics: cell size, gutters, snap animation timing, outline style (measure from the recording).
-2. File-displacement physics: nearest-free-cell settle, animation.
+1. ~~Exact macOS metrics~~ **RESOLVED** (see "Apple's actual placement model": 180pt tiles + 8pt card inset, r≈30 squircle, spans S/M/L/XL = 1×1/2×1/2×2/4×2, sparse grid, per-resolution layouts, ⌘-drag opt-out). Remaining slivers, with defaults to start from: snap-engagement threshold is unmeasured anywhere (start at **~90pt = half a tile** from a candidate span; matches reviewer descriptions), snap spring = WWDC23 `snappy` (response ~0.35–0.5s, damping ~0.85), icon-reflow spring = `smooth`. Manual 5-minute experiments still owed: group merge/split rules (when does dropping between two groups merge them), whether icons RETURN to their cells after a widget moves away, and the gallery's auto-placement policy (click-+ vs drag).
+2. File-displacement physics: nearest-free-cell settle, animation (Finder owns this on macOS; ours is custom).
 3. Focus-window rules: how many at once, does it dim the Stage, dismiss gesture.
-4. Resize/multi-display slot remapping.
+4. ~~Resize/multi-display remap~~ reduced by the Apple model: remember a layout per window-size bucket (their `Resolutions[]`), no live reflow. Decide bucket granularity.
 5. Backstage reveal: strip vs Mission-Control grid; promote affordance.
 6. Budget default (start 8 S-equivalents).
 7. Web-in-slot interaction model: click-through vs activate-first.

@@ -7,15 +7,19 @@
 // and emit (server: SSE broadcast; Electron: webContents.send 'os:action'). Same makeOsTools(ops) pattern.
 import { createTmuxHost, tmuxAvailable } from './tmux-host.mjs'
 import { createSessionManager } from './session-manager.mjs'
+import { prepareAgentLaunch } from './agent-session.mjs'
 import { markWrite as defaultMarkWrite } from './workspace.mjs'
 import { join, resolve } from 'node:path'
 import { mkdirSync } from 'node:fs'
 
 /**
- * @param {{ getWorkspacePath: () => (string|null|undefined), emit?: (ev:object)=>void, markWrite?: (p:string)=>void }} deps
- * @returns the 5 session ops (+ stopHosts for shutdown), to spread into a transport's ops object.
+ * @param {{ getWorkspacePath: () => (string|null|undefined), emit?: (ev:object)=>void, markWrite?: (p:string)=>void,
+ *           getUrl?: () => (string|null|undefined) }} deps
+ *   getUrl: the current agent-socket relay url — used to REBUILD an agent's command (fresh url + --resume)
+ *   when its dead terminal is re-spawned (manual Resume or a true restart). Absent ⇒ shells only.
+ * @returns the session ops (+ stopHosts for shutdown), to spread into a transport's ops object.
  */
-export function makeSessionOps({ getWorkspacePath, emit = () => {}, markWrite = defaultMarkWrite } = {}) {
+export function makeSessionOps({ getWorkspacePath, emit = () => {}, markWrite = defaultMarkWrite, getUrl, agentCmd = 'claude' } = {}) {
   const mgrs = new Map() // workspacePath -> { host, mgr }
   let preflighted = false
 
@@ -43,22 +47,46 @@ export function makeSessionOps({ getWorkspacePath, emit = () => {}, markWrite = 
       const tmuxDir = join(wsPath, '.blitzos', 'tmux')
       try { mkdirSync(tmuxDir, { recursive: true }) } catch { /* exists */ }
       const host = createTmuxHost({ socketPath: join(tmuxDir, 'server.sock') })
+      const sessionsDir = join(wsPath, '.blitzos', 'sessions')
       const mgr = createSessionManager({
         host,
-        sessionsDir: join(wsPath, '.blitzos', 'sessions'),
+        sessionsDir,
         emit,
-        markWrite: (p) => { try { markWrite(resolve(p)) } catch { /* ignore */ } }
+        markWrite: (p) => { try { markWrite(resolve(p)) } catch { /* ignore */ } },
+        // Rebuild a dead AGENT session's command on re-exec: fresh relay url + --resume of its persisted
+        // claude session id (created vs resume decided by claudeEstablished inside prepareAgentLaunch).
+        rebuildAgentCommand: (meta) => {
+          const url = typeof getUrl === 'function' ? getUrl() : null
+          if (!url) return null
+          try { return prepareAgentLaunch({ sessionsDir, id: meta.id, url, cmd: agentCmd }).command } catch { return null }
+        }
       })
-      entry = { host, mgr }
+      entry = { host, mgr, restorePromise: null }
       mgrs.set(wsPath, entry)
-      mgr.restore().catch(() => { /* nothing to reattach */ }) // adopt sessions that survived a restart
+      entry.restorePromise = mgr.restore().catch(() => []) // adopt sessions that survived a restart (cached so boot-resume can await it)
     }
     return entry.mgr
+  }
+  /** Resolves once the ACTIVE workspace's survivors have been re-adopted — so boot resume can tell a live
+   *  survivor from a dead session without racing restore(). Returns the (cached) restore promise. */
+  function whenRestored() {
+    mgrFor() // ensure the manager + its restore are kicked off
+    const wsPath = typeof getWorkspacePath === 'function' ? getWorkspacePath() : null
+    const e = wsPath ? mgrs.get(wsPath) : null
+    return e ? e.restorePromise : Promise.resolve([])
   }
 
   return {
     spawnSession: (opts) => { const m = mgrFor(); return m ? m.spawnSession(opts) : Promise.resolve(null) },
     listSessions: () => { const m = mgrFor(); return m ? m.listSessions() : [] },
+    /** A session's current record (live or persisted), or null — used to tell a reattached survivor from a
+     *  dead session during boot resume (status 'running' ⇒ tmux kept it alive, don't re-exec). */
+    getSession: (id) => { const m = mgrFor(); return m ? m.getSession(id) : null },
+    /** Whether a session is actually wired to a live tmux window THIS run (a reattached survivor or a fresh
+     *  spawn) — boot resume re-execs everything NOT live, so a died-while-down agent isn't skipped. */
+    isSessionLive: (id) => { const m = mgrFor(); return m ? m.isLive(id) : false },
+    /** Awaits adoption of survivors for the active workspace (so boot resume doesn't race restore()). */
+    whenRestored,
     sendToSession: (id, data) => { const m = mgrFor(); return m ? m.sendToSession(id, data) : false },
     resizeSession: (id, cols, rows) => { const m = mgrFor(); return m ? m.resizeSession(id, cols, rows) : false },
     readSession: (id) => { const m = mgrFor(); return m ? m.scrollback(id) : '' },

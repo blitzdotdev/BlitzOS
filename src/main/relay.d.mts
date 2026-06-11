@@ -15,8 +15,6 @@ export interface RelayAdapter {
   onUrl?: (url: string) => void
   /** Publish online/offline so the UI can show it. */
   onStatus?: (online: boolean, url: string | null) => void
-  /** Restart the local brain so it picks up a freshly-remapped URL after a reconnect. */
-  restartBrain?: () => void
 }
 
 export interface RelayHandle {

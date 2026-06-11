@@ -12,6 +12,11 @@ import {
   WIDGET_H,
   isRuntimePanel
 } from './types'
+// The area-grid geometry (insets, primaryRect, areaStride, areaRect, areaCenterX, areaForSession) lives
+// in the shared areas-core so the renderer and the main-process cores share ONE definition (no divergence).
+// Re-exported below so existing `from './store'` importers (capture/App/SurfaceFrame/PrimarySpace) don't churn.
+import { primaryRect, areaStride, areaRect, areaCenterX, areaForSession, areaOfX } from './areas-core.mjs'
+export { primaryRect, areaStride, areaRect, areaCenterX, areaForSession, areaOfX }
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
@@ -23,34 +28,10 @@ function overlaps(a: Vec2, b: Vec2): boolean {
   return a.x < b.x + WIDGET_W && a.x + WIDGET_W > b.x && a.y < b.y + WIDGET_H && a.y + WIDGET_H > b.y
 }
 
-// Fixed-desktop chrome insets (px): the top titlebar, the left dock, the bottom toolbar, right pad.
+// (area-grid geometry moved to ./areas-core — imported + re-exported above)
+// These two insets are still used by the camera anchor below (cx = SIDEBAR + r.w/2, cy = TITLEBAR + r.h/2).
 const SIDEBAR = 52
 const TITLEBAR = 32
-const TOOLBAR = 64
-const RIGHTPAD = 24
-
-/** The primary workspace area in WORLD coords = the on-screen desktop region (below the titlebar,
- *  right of the dock, above the toolbar). At scale 1 it maps 1:1 to that region — so the area is
- *  "the same size as the screen" by default and windows render at natural size. */
-export function primaryRect(vp: { w: number; h: number }): { x: number; y: number; w: number; h: number } {
-  const w = Math.max(320, vp.w - SIDEBAR - RIGHTPAD)
-  const h = Math.max(240, vp.h - TITLEBAR - TOOLBAR)
-  return { x: -w / 2, y: -h / 2, w, h }
-}
-
-// Workspace areas (#45) are screen-sized desktops tiled left→right in WORLD space. AREA_GAP is the
-// world gap between adjacent areas (only ever visible once areaCount > 1). Area i is centered at
-// i*stride; area 0 is centered at the world origin, so areaRect(0, vp) is field-for-field identical to
-// primaryRect(vp) — the invariant that keeps single-area behavior byte-identical. primaryRect itself is
-// left UNCHANGED (areaRect references it) so there's zero risk of order-of-ops/rounding drift.
-const AREA_GAP = 1200
-export function areaStride(vp: { w: number; h: number }): number {
-  return primaryRect(vp).w + AREA_GAP
-}
-export function areaRect(i: number, vp: { w: number; h: number }): { x: number; y: number; w: number; h: number } {
-  const r = primaryRect(vp)
-  return { x: i * areaStride(vp) - r.w / 2, y: -r.h / 2, w: r.w, h: r.h }
-}
 /** Clamp a window so it stays inside its workspace area (its title bar therefore can't slide under
  *  the top titlebar in normal mode — #29). `area` defaults to 0, whose rect IS primaryRect, so the
  *  single-area path is byte-identical to before. */
@@ -157,6 +138,9 @@ export interface CreateSurfaceInput {
   pinned?: boolean
   /** the chat session this surface belongs to (a per-session chat widget). */
   sessionId?: string
+  /** place this surface in a SPECIFIC workspace area (a session-scoped agent → its own area N); when
+   *  omitted, it cascades into the current area. Derived from x afterward — never stored on the Surface. */
+  area?: number
 }
 
 interface DesktopState {
@@ -241,7 +225,7 @@ interface DesktopState {
   // Open (or focus) a session's terminal tab: activate it if it's already a tab, else add it to the
   // existing terminal window, else open the first terminal window. The one shared seam for the live
   // session-spawn action, resume-on-load, and the Sessions tray's "Open" — so a session is in one tab.
-  openSession: (sessionId: string, title: string) => void
+  openSession: (sessionId: string, title: string, area?: number | null) => void
   // Layout undo: the agent auto-applies layouts; the human reverts with Cmd+Z.
   snapshotLayout: () => void
   undoLayout: () => void
@@ -480,14 +464,16 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     const w = input.w ?? size.w
     const h = input.h ?? size.h
     const st = get()
-    // cascade if no explicit position (macOS-style stagger), centered on the CURRENT area (area 0 ⇒
-    // the world origin ⇒ byte-identical to before; a later area shifts the cascade by its world offset).
+    // cascade if no explicit position (macOS-style stagger), centered on the TARGET area: input.area when
+    // given (a session-scoped agent's surface → its own area, isolating it from the user) else currentArea.
+    // area 0 ⇒ the world origin ⇒ byte-identical to before; a later area shifts the cascade by its offset.
+    const targetArea = Number.isInteger(input.area) ? (input.area as number) : st.currentArea
     const n = st.surfaces.length % 7
-    const ax = st.currentArea === 0 ? 0 : st.currentArea * areaStride(st.viewport)
+    const ax = targetArea === 0 ? 0 : targetArea * areaStride(st.viewport)
     let x = input.x ?? ax - w / 2 + n * 34 - 100
     let y = input.y ?? -h / 2 + n * 30 - 70
     if (st.mode === 'desktop') {
-      const p = desktopClamp(x, y, w, h, st.viewport, st.currentArea)
+      const p = desktopClamp(x, y, w, h, st.viewport, targetArea)
       x = p.x
       y = p.y
     }
@@ -526,11 +512,15 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const nAreas = Number.isInteger(areaCount) && (areaCount as number) > 0 ? (areaCount as number) : 1
       const restored: Surface[] = surfaces.map((w) => {
         const base = { zoom: 1, props: {}, ...w, z: w.z ?? ++zCounter } as Surface
-        // Runtime chat/activity panels persist absolute x/y. Boot is always area 0, so a panel last left
-        // in another area would restore off-screen — pull it back into area 0 so the agent conversation
-        // is always reachable on boot (a no-op in the single-area case; content surfaces keep their area).
+        // Runtime chat/activity panels persist absolute x/y. A per-session chat lives in ITS OWN area
+        // (area N for session N); the activity feed + the primary chat live in area 0. Recompute a session
+        // chat's x from its area using the renderer's REAL viewport (authoritative — the host may have
+        // guessed a default vp), then clamp into that area. Single-area / primary case is byte-identical
+        // (areaForSession('0')=0, areaCenterX(0)=0 → x=-700). The camera can reach any area (areaCount below).
         if (isRuntimePanel(base)) {
-          const p = desktopClamp(base.x, base.y, base.w, base.h, s.viewport, 0)
+          const area = base.role === 'chat' && base.sessionId != null ? areaForSession(base.sessionId) : 0
+          const x = base.role === 'chat' && base.sessionId != null ? Math.round(areaCenterX(area, s.viewport) - 700) : base.x
+          const p = desktopClamp(x, base.y, base.w, base.h, s.viewport, area)
           return { ...base, x: p.x, y: p.y }
         }
         return base
@@ -656,7 +646,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       if (!tabs.length) return { surfaces: s.surfaces.filter((x) => x.id !== id) } // last tab closed → close the window
       return { surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, tabs, activeTab: clamp(w.activeTab || 0, 0, tabs.length - 1) } : x)) }
     }),
-  openSession: (sessionId, title) => {
+  openSession: (sessionId, title, area) => {
     const s = get()
     // Already a tab somewhere? activate it + raise its window (idempotent — no duplicate tab).
     for (const w of s.surfaces) {
@@ -669,10 +659,15 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         }
       }
     }
-    // Add to the existing terminal window, or open the first one (store cascades/clamps its position).
-    const term = s.surfaces.find((w) => w.kind === 'native' && w.component === 'terminal')
+    // Dock the session's terminal in ITS area: an agent's session carries an area (so its terminal stays
+    // out of the user's area); a human spawn has none → the current area, today's behavior. Add to a
+    // terminal window ALREADY in that area, else open one there (createSurface honors the `area` hint).
+    const want = Number.isInteger(area) ? (area as number) : s.currentArea
+    const term = s.surfaces.find(
+      (w) => w.kind === 'native' && w.component === 'terminal' && areaOfX(w.x + (w.w || 0) / 2, s.viewport) === want
+    )
     if (term) get().addTab(term.id, { id: sessionId, title, sessionId })
-    else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, tabs: [{ id: sessionId, title, sessionId }], activeTab: 0 })
+    else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, area: want, tabs: [{ id: sessionId, title, sessionId }], activeTab: 0 })
   },
 
   toggleMaximize: (id) => {

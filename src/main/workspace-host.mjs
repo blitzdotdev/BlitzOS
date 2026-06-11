@@ -26,6 +26,7 @@ import {
   readConsent,
   writeConsent,
   wasSelfWrite,
+  markWrite,
   listWorkspaces,
   createWorkspace,
   deleteWorkspace,
@@ -36,6 +37,11 @@ import {
   findSurfaceWorkspace,
   relocateSurface
 } from './workspace.mjs'
+// Area grid: a chat session N owns area N (areaForSession), so its chat widget + the windows its agent
+// opens land in area N — isolated from the user's primary (area 0). Shared with the renderer (one grid).
+import { areaForSession, areaCenterX, DEFAULT_VP } from '../renderer/src/areas-core.mjs'
+// The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
+import { writeRelayUrl } from './agent-session.mjs'
 
 /**
  * @param {object} a
@@ -232,10 +238,11 @@ export function createWorkspaceHost(a) {
 
   // ---- The system Chat: a srcdoc widget per SESSION whose UI is blitz-[<id>-]chat.html (customizable)
   // and whose transcript is chat[-<id>].md. Session '0' is the primary chat (legacy names, pinned). Each
-  // session has its own agent (agent-runner) that /says into ITS transcript. The OS appends each message
-  // and broadcasts {type:'chat', sessionId, messages}; the widget just renders props.messages.
-  // ONE hub chat surface ('chat') holds EVERY session; a sidebar switches between them client-side. (Was a
-  // surface per session.) Each session still has its own chat-<id>.md transcript + its own on-demand agent.
+  // session is an AGENT — a claude running in its own tmux terminal (launchAgent) that /says into ITS
+  // transcript. The OS appends each message and broadcasts {type:'chat', sessionId, messages}.
+  // The chat UI is ONE hub surface ('chat') holding EVERY session — a sidebar switches threads
+  // client-side (this branch's model; master briefly had a chat surface per session+area). Agents
+  // themselves still get per-session AREAS for their windows/terminals.
   const CHAT_HUB_ID = 'chat'
   const chatSurfaceId = () => CHAT_HUB_ID
   const chatStatus = {} // sessionId -> '' | 'thinking' (true while the agent is working that session)
@@ -244,16 +251,23 @@ export function createWorkspaceHost(a) {
     try { const m = JSON.parse(readFileSync(join(activeWorkspace, '.blitzos', 'sessions', String(id), 'meta.json'), 'utf8')); if (m && m.title) return String(m.title) } catch { /* no meta */ }
     return !id || String(id) === '0' ? 'Main' : `Chat ${id}`
   }
-  /** The chat sessions in this workspace: always '0' (primary) + any .blitzos/sessions/<id> with kind:'chat'. */
+  /** The chat-bearing sessions: always '0' (primary) + any .blitzos/sessions/<id> that is an AGENT (its
+   *  terminal runs a BlitzOS claude → it has a chat thread). 'chat' is the legacy kind from before agents
+   *  ran in terminals; 'agent' is the unified kind now. Plain 'pty' shells are NOT chat sessions. */
   function chatSessionIds() {
     const ids = ['0']
     try {
       for (const d of readdirSync(join(activeWorkspace, '.blitzos', 'sessions'), { withFileTypes: true })) {
         if (!d.isDirectory() || d.name === '0') continue
-        try { const m = JSON.parse(readFileSync(join(activeWorkspace, '.blitzos', 'sessions', d.name, 'meta.json'), 'utf8')); if (m && m.kind === 'chat') ids.push(d.name) } catch { /* skip */ }
+        try { const m = JSON.parse(readFileSync(join(activeWorkspace, '.blitzos', 'sessions', d.name, 'meta.json'), 'utf8')); if (m && (m.kind === 'agent' || m.kind === 'chat')) ids.push(d.name) } catch { /* skip */ }
       }
     } catch { /* no sessions dir */ }
     return ids
+  }
+  /** The viewport last pushed by a renderer (for area-math placement); a default until the first push. */
+  function viewportOf() {
+    try { const st = a.getState(); if (st && st.viewport && st.viewport.w) return st.viewport } catch { /* no state */ }
+    return DEFAULT_VP
   }
   /** The hub's props: the session list (id + title + status) + every session's recent transcript, so the
    *  widget can render a sidebar and switch threads with zero round-trips. */
@@ -264,6 +278,7 @@ export function createWorkspaceHost(a) {
     return {
       sessionId: '0',
       activeSessionId: '0',
+      messages: threads['0'] || [], // compat: simple per-session renderers (chat-session.html) read this
       sessions: ids.map((id) => ({ id, title: sessionTitle(id), status: chatStatus[id] || '' })),
       threads,
       status: { ...chatStatus }
@@ -297,7 +312,14 @@ export function createWorkspaceHost(a) {
       props: chatHubProps()
     }
   }
-  /** The chat surfaces in this workspace — now exactly ONE hub (it holds every session). */
+  /** The minimum areaCount needed for every chat session to have its area (max chat-session id + 1) —
+   *  agents' windows/terminals live in per-session areas even though the chat UI is one hub. */
+  function maxChatAreaCount() {
+    let max = 1
+    for (const id of chatSessionIds()) max = Math.max(max, areaForSession(id) + 1)
+    return max
+  }
+  /** The chat surfaces in this workspace — exactly ONE hub (it holds every session's thread). */
   function buildChatSurfaces() { return [buildChatSurface()] }
   /** Mint the next chat-session id: max existing integer id + 1 (primary '0' counts), so ids stay 1,2,3…
    *  Non-numeric ids (none today) are ignored for the max. */
@@ -306,19 +328,38 @@ export function createWorkspaceHost(a) {
     for (const id of chatSessionIds()) { const n = Number(id); if (Number.isInteger(n) && n > max) max = n }
     return String(max + 1)
   }
-  /** Register a new chat session: write its meta (kind:'chat'), then re-push the hub so it appears in the
-   *  sidebar (no separate surface — the hub holds it). Idempotent. The CALLER (transport) handles its agent. */
-  function addChatSession(sessionId, title) {
+  /** Register a new chat session: write its meta (kind:'agent', its area), grow areaCount so its area
+   *  exists, launch its claude terminal (launchAgent seam, when wired), and re-push the hub so it appears
+   *  in the sidebar. Idempotent — re-adding an existing session just refreshes meta + hub. opts.focus is
+   *  accepted for parity with the per-surface model (the hub switches threads client-side, so no camera move). */
+  function addChatSession(sessionId, title, opts = {}) {
+    void opts
     const id = String(sessionId)
+    const area = areaForSession(id)
+    const name = title || (id === '0' ? 'Chat' : `Chat ${id}`)
+    // Persist the session RECORD up front (kind:'agent') so the chat session survives a restart even when no
+    // claude is auto-launched (BLITZ_AGENT off). launchAgent (below) will overwrite this with the full live
+    // meta when it spawns the terminal; both keep the same id/kind/title/area, so chatSessionIds() finds it.
     try {
       const dir = join(activeWorkspace, '.blitzos', 'sessions', id)
       mkdirSync(dir, { recursive: true })
       const mp = join(dir, 'meta.json')
       let m = {}
       try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
-      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'chat', title: title || m.title || `Chat ${id}`, updatedAt: 0 }, null, 2))
-    } catch { /* best-effort: the session still works in-memory this session */ }
+      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, area, createdAt: m.createdAt || Date.now() }, null, 2))
+    } catch { /* best-effort: the session still works in-memory this run */ }
+    try {
+      const st = a.getState()
+      if (st && Array.isArray(st.surfaces)) {
+        // Grow areaCount so this session's area exists + is navigable (persisted via writeWorkspace) —
+        // the agent's terminal + windows land there even though its chat thread lives in the hub.
+        const areaCount = Math.max(Number(st.areaCount) || 1, area + 1)
+        a.setState({ ...st, areaCount })
+      }
+    } catch { /* adapter without getState/setState */ }
     pushChatHub()
+    // Launch the agent in a VISIBLE terminal in its area (only when a launcher is wired — BLITZ_AGENT on).
+    try { a.launchAgent?.(id, area, name) } catch (e) { console.error('[workspace] launchAgent failed:', e?.message || e) }
     return { id }
   }
   /** Set a session's title (the agent auto-names; the human can rename) and re-push the hub sidebar. */
@@ -332,19 +373,38 @@ export function createWorkspaceHost(a) {
       const mp = join(dir, 'meta.json')
       let m = {}
       try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
-      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'chat', title: t, updatedAt: 0 }, null, 2))
+      writeFileSync(mp, JSON.stringify({ ...m, id, kind: m.kind || 'agent', title: t, updatedAt: 0 }, null, 2))
     } catch { /* best-effort */ }
     pushChatHub()
     return { ok: true, id, title: t }
   }
   /** Stop a session (the human hit Stop): clear its 'thinking' status and re-push the hub so the indicator
-   *  drops at once. The actual brain-process kill is the TRANSPORT's job (osActions → index.ts brains map);
-   *  this is the shared state/UI half. The transcript + session stay — the next message respawns the brain. */
+   *  drops at once. The actual agent-process kill is the TRANSPORT's job (osActions → session ops); this is
+   *  the shared state/UI half. The transcript + session stay — the next message relaunches the agent. */
   function stopChatSession(sessionId) {
     const sid = String(sessionId)
     chatStatus[sid] = ''
     pushChatHub()
     return { ok: true, id: sid }
+  }
+  /** Boot: (re)launch the claude terminal for EVERY chat session with the CURRENT relay url + --resume of its
+   *  persisted session id. We deliberately re-exec rather than reattach a survivor: the relay url is re-minted
+   *  each run, so a survivor would hold a DEAD url and silently disconnect — re-exec'ing on the fresh url (with
+   *  --resume keeping the conversation) is the only reliable reconnect. spawnSession replaces any existing
+   *  window, so there's no duplicate. No-op when launchAgent is unwired (BLITZ_AGENT off). */
+  function resumeAgentsOnBoot() {
+    if (typeof a.launchAgent !== 'function') return
+    for (const id of chatSessionIds()) {
+      try { a.launchAgent(id, areaForSession(id)) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) }
+    }
+  }
+  /** Publish the CURRENT relay base url to <ws>/.blitzos/relay-url — the file every agent re-reads on each
+   *  call, so a reattached agent self-heals onto the fresh url after BlitzOS restarts (no privileged brain to
+   *  restart). Called on boot + on every relay url change by both transports. */
+  function setRelayUrl(url) {
+    const dir = join(activeWorkspace, '.blitzos')
+    try { markWrite(join(dir, 'relay-url')) } catch { /* ignore */ } // our own write — the watcher must skip it
+    writeRelayUrl(dir, url)
   }
   /** One-time: an OLD workspace kept the transcript in panels.json — seed chat.md from it so no history is lost. */
   function migrateChatToFile() {
@@ -452,7 +512,10 @@ export function createWorkspaceHost(a) {
       const surfaces = [...base.surfaces, ...buildChatSurfaces(), ...panels]
       // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted areaCount > 1 isn't lost on an
       // empty workspace — the hydrate senders read cached.areaCount, which would otherwise stay undefined→1.
-      a.setState({ surfaces, camera: base.camera, mode: base.mode, areaCount: base.areaCount ?? 1 })
+      // areaCount self-heals to fit every chat session's area (max chat id + 1), so an old workspace whose
+      // areaCount wasn't bumped — or a hand-added session — still lands its widget in a reachable area.
+      const areaCount = Math.max(base.areaCount ?? 1, maxChatAreaCount())
+      a.setState({ surfaces, camera: base.camera, mode: base.mode, areaCount })
       if (surfaces.length) console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
     } catch (e) {
       console.error('[workspace] hydrate failed:', e?.message || e)
@@ -492,11 +555,12 @@ export function createWorkspaceHost(a) {
       // activity panel — never carry the previous workspace's over.
       migrateChatToFile()
       const surfaces = [...next.surfaces, ...buildChatSurfaces(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
-      a.setState({ surfaces, camera: next.camera, mode: next.mode, areaCount: next.areaCount ?? 1, view: { cx: next.camera.x, cy: next.camera.y } })
+      const areaCount = Math.max(next.areaCount ?? 1, maxChatAreaCount()) // self-heal for the destination's chat sessions
+      a.setState({ surfaces, camera: next.camera, mode: next.mode, areaCount, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
       rememberActive() // boot returns the user HERE, not to the default
-      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, areaCount: next.areaCount ?? 1, workspace: name })
+      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, areaCount, workspace: name })
       console.log(`[workspace] switched → ${name}`)
       return { status: 200, body: { ok: true, active: name } }
     } finally {
@@ -598,6 +662,8 @@ export function createWorkspaceHost(a) {
     addChatSession,
     renameChatSession,
     stopChatSession,
+    resumeAgentsOnBoot,
+    setRelayUrl,
     group,
     // #53: per-workspace consent persistence (read on boot/switch, write on a human grant). The write
     // MERGES (a caller may update just `surfaces` or just `providers` — e.g. the widget bridge vs the

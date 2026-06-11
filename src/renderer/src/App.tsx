@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useDesktop, viewTransform, areaRect, nextTerminalName, type CreateSurfaceInput } from './store'
+import { useDesktop, viewTransform, areaRect, areaForSession, areaCenterX, nextTerminalName, type CreateSurfaceInput } from './store'
 import { pushSessionData, pushSessionExit } from './sessionStream'
 import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
@@ -96,7 +96,7 @@ export default function App(): JSX.Element {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [aiUrl, setAiUrl] = useState<string | null>(null)
   const [showAi, setShowAi] = useState(false)
-  // Relay/brain connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
+  // Agent relay connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [showOverview, setShowOverview] = useState(false)
   // Mirror showOverview into a ref so the ASYNC thumbnail capture reads the current value (not a stale
@@ -405,7 +405,29 @@ export default function App(): JSX.Element {
         if (surf && (surf.kind === 'web' || surf.kind === 'app')) surf.shared = true
         // Dedupe by id: a 'create' (e.g. a new chat session) can race a hydrate that already brought it.
         if (surf && surf.id && st.surfaces.some((s) => s.id === surf.id)) return
+        // A NEW chat session owns its own area N. Recompute its x from the area with the renderer's REAL
+        // viewport (the host may have used a default vp), so its widget lands precisely in area N.
+        const isNewChat = hydrated.current && surf && surf.role === 'chat' && surf.sessionId != null
+        const chatArea = isNewChat ? areaForSession(surf.sessionId as string) : 0
+        if (isNewChat && chatArea > 0) {
+          // area tags it for createSurface's clamp (else it clamps to the CURRENT area); x sets the precise
+          // left-of-center spot in area N using the real viewport.
+          surf.area = chatArea
+          surf.x = Math.round(areaCenterX(chatArea, useDesktop.getState().viewport) - 700)
+        }
         st.createSurface(surf)
+        if (isNewChat && chatArea > 0) {
+          // ALWAYS grow areaCount so the new area exists + is navigable (whether a user or an agent spawned it).
+          const cur = useDesktop.getState()
+          if (chatArea + 1 > cur.areaCount) cur.setAreaCount(chatArea + 1)
+          // Follow the camera ONLY for a USER '+ New' (a.focus) — so "+ New" visibly opens the new agent's
+          // workspace — never for an agent's spawn_chat_session (a background agent must not yank the user's view).
+          if (a.focus) {
+            const now = useDesktop.getState()
+            now.setCurrentArea(chatArea)
+            animateTransform(viewTransform(now.mode, now.viewport, chatArea, now.areaCount))
+          }
+        }
       }
       else if (a.type === 'provider-approval') {
         // The agent asked to perform a WRITE on a connected provider (#51) — show the human a card.
@@ -461,7 +483,7 @@ export default function App(): JSX.Element {
         if (extra.status) patch.status = extra.status
         if (Object.keys(patch).length) st.updateSurfaceProps(hub.id, patch)
       } else if (a.type === 'agentStatus') {
-        // Backend heartbeat: is the brain's relay link up? Drives the toolbar status pill.
+        // Backend heartbeat: is the agent's relay link up? Drives the toolbar status pill.
         setAgentOnline(!!a.online)
       } else if (a.type === 'activity') {
         // A live feed of what the agent is doing (its tool calls) -> the Agent-activity
@@ -485,8 +507,8 @@ export default function App(): JSX.Element {
         // A session was created (by an agent or the user), or re-adopted on restore. Sessions live as
         // TABS in a terminal window — add this one as a tab (idempotent). Covers both live spawns and
         // the restore() replay that brings back tmux survivors after a restart.
-        const sess = (a.session ?? {}) as { title?: string }
-        ensureTerminalTab(String(a.id), sess.title || 'Terminal')
+        const sess = (a.session ?? {}) as { title?: string; area?: number | null }
+        ensureTerminalTab(String(a.id), sess.title || 'Terminal', sess.area)
       } else if (a.type === 'action-item') {
         // An agent pushed (or updated/resolved) an action item the human must do → the Inbox surface.
         const item = a.item as { id?: string; status?: string } | undefined
@@ -521,8 +543,8 @@ export default function App(): JSX.Element {
     Promise.resolve(api?.sessionList?.() ?? [])
       .then((list) => {
         if (cancelled || !Array.isArray(list)) return
-        for (const s of list as Array<{ id?: string; title?: string; status?: string }>) {
-          if (s && s.id && s.status === 'running') ensureTerminalTab(String(s.id), s.title || 'Terminal')
+        for (const s of list as Array<{ id?: string; title?: string; status?: string; area?: number | null }>) {
+          if (s && s.id && s.status === 'running') ensureTerminalTab(String(s.id), s.title || 'Terminal', s.area)
         }
       })
       .catch(() => {})
@@ -602,6 +624,9 @@ export default function App(): JSX.Element {
         props: s.props,
         component: s.component,
         role: s.role,
+        // Carry the chat session id so a per-session chat survives the round-trip (osState → a later
+        // hydrate): without it the surface would lose its area on the next connect and snap back to area 0.
+        sessionId: s.sessionId,
         // Chat + Agent-activity panels are pinned always-on-top — the agent must not cover them
         pinned: isRuntimePanel(s)
       }))
@@ -828,8 +853,8 @@ export default function App(): JSX.Element {
   // Open/focus a session's terminal tab (idempotent). Shared by the live session-spawn action,
   // resume-on-load, and the Sessions tray — the placement + add-tab-or-create logic lives in the
   // store action so all three callers stay in sync.
-  function ensureTerminalTab(sid: string, title: string): void {
-    useDesktop.getState().openSession(sid, title || 'Terminal')
+  function ensureTerminalTab(sid: string, title: string, area?: number | null): void {
+    useDesktop.getState().openSession(sid, title || 'Terminal', area)
   }
 
   // The Action-items inbox docks TOP-RIGHT of the current view (out of the way of chat/activity which
@@ -1006,8 +1031,15 @@ export default function App(): JSX.Element {
             <button className="area-arrow" disabled={currentArea >= areaCount - 1} onClick={() => switchArea(1)} title="Next area">›</button>
           </span>
         )}
-        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={openChat}>
+        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} title="Jump to your primary chat" onClick={openChat}>
           <IconChat size={15} /> Chat
+        </button>
+        <button
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
+          title="Open a new chat session — a fresh peer agent with its own chat widget"
+          onClick={() => (window.agentOS as unknown as { spawnChatSession?: (t?: string) => void })?.spawnChatSession?.()}
+        >
+          <IconChat size={15} /> + New
         </button>
         <button
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
@@ -1039,7 +1071,7 @@ export default function App(): JSX.Element {
         </button>
         {isServer && agentOnline !== null && (
           <span
-            title={agentOnline ? 'Brain connected — it can see your chat and the canvas' : 'Brain link is down — reconnecting…'}
+            title={agentOnline ? 'Agent connected — it can see your chat and the canvas' : 'Agent link is down — reconnecting…'}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: agentOnline ? 'var(--positive)' : 'var(--text-muted)' }}
           >
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: agentOnline ? 'var(--positive)' : '#e0a23c' }} />

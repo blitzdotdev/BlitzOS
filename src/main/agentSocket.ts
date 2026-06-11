@@ -23,9 +23,9 @@ export function getAgentSocketUrl(): string | null {
  * Connect the Electron main to the agent-socket relay via the SHARED relay lifecycle (relay.mjs) — the SAME
  * module the server (preview/backend.mjs) uses, so the connect/self-heal/watchdog/status can NEVER diverge.
  * This Electron path only supplies its tool registry + the adapter: publish the URL/status to the renderer
- * and restart the brain on a reconnect (so it doesn't keep a dead URL).
+ * and report each URL change so the agents' .blitzos/relay-url file is refreshed (they re-read it per call).
  */
-export function startAgentSocket(getWindow: () => BrowserWindow | null, restartBrain: () => void = () => {}): void {
+export function startAgentSocket(getWindow: () => BrowserWindow | null, onUrlChange: (url: string) => void = () => {}): void {
   startRelay(
     {
       appId: APP_ID,
@@ -52,13 +52,13 @@ export function startAgentSocket(getWindow: () => BrowserWindow | null, restartB
       onUrl: (url) => {
         currentUrl = url
         setRelay(url)
+        onUrlChange(url) // refresh .blitzos/relay-url so reattached agents pick up the fresh base
         console.log('[agent-socket] paste this into an AI chat to drive BlitzOS:\n  ' + url)
         getWindow()?.webContents.send('agentsocket:url', url)
       },
-      // Mirror the server: tell the renderer whether the brain's relay link is up (drives the toolbar pill).
+      // Tell the renderer whether the agent's relay link is up (drives the toolbar pill).
       onStatus: (online) =>
-        getWindow()?.webContents.send('os:action', { type: 'agentStatus', online, agentUrl: currentUrl, brain: !!process.env.BLITZ_AGENT }),
-      restartBrain
+        getWindow()?.webContents.send('os:action', { type: 'agentStatus', online, agentUrl: currentUrl, agent: !!process.env.BLITZ_AGENT })
     }
   )
 }

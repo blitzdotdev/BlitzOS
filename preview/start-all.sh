@@ -67,12 +67,8 @@ cmd_stop() {
   # user-data-dir name). Never touches 8787 (the agent-socket relay) or other browsers.
   if command -v fuser >/dev/null 2>&1; then fuser -k -KILL "${RENDERER_PORT}/tcp" "${BACKEND_PORT}/tcp" 2>/dev/null || true; fi
   pkill -KILL -f 'blitz-chrome' 2>/dev/null || true
-  # Kill any orphaned brain (claude -p) left over if the backend died uncleanly — the marker is unique to us,
-  # so this can't touch the user's own `claude` sessions. (Cleanly, the brain dies with the backend's group.)
-  pkill -KILL -f 'blitz-brain-session' 2>/dev/null || true
-  # Same for per-session chat agents (#1+): their marker is 'blitz-session-<id>', also unique to us. Cleanly
-  # they die with the backend's group; this reaps any orphaned by an unclean exit.
-  pkill -KILL -f 'blitz-session-' 2>/dev/null || true
+  # NOTE: agent sessions are claude processes running in the workspace's OWN tmux server (not the backend's
+  # process group), so they intentionally SURVIVE a stop and reattach on the next start. Do NOT kill them here.
   say "stopped."
 }
 
@@ -83,8 +79,8 @@ cmd_start() {
     say "WARNING: server mode needs Chromium ('$CHROMIUM' not found) — set CHROMIUM=/path, or run with SERVER_MODE=0."
   fi
 
-  # BLITZ_AGENT (optional): if set (e.g. =claude), the backend boots + auto-restarts the
-  # agent/brain so a brain is always watching. Unset = no auto-agent.
+  # BLITZ_AGENT (optional): if set (e.g. =claude), each chat session runs a claude in its own tmux terminal
+  # (reattached across restarts). Unset = sessions persist but no claude is auto-launched.
   # BLITZ_WORKSPACES_ROOT (optional): the folder that holds all workspace folders (default
   # preview/.workspace). BLITZ_WORKSPACE (optional, back-compat): a single explicit workspace folder.
   export BLITZ_SERVER_MODE="$SERVER_MODE" BACKEND_PORT="$BACKEND_PORT" CHROMIUM="$CHROMIUM" PUBLIC_BASE_URL="$PUBLIC_BASE_URL" BLITZ_AGENT="${BLITZ_AGENT:-}" BLITZ_WORKSPACES_ROOT="${BLITZ_WORKSPACES_ROOT:-}" BLITZ_WORKSPACE="${BLITZ_WORKSPACE:-}"
@@ -119,12 +115,12 @@ cmd_status() {
   H="$(curl -s --max-time 3 "http://127.0.0.1:${BACKEND_PORT}/api/health" 2>/dev/null)"
   if [ -n "$H" ]; then
     echo "backend:  :$BACKEND_PORT responding  $(printf '%s' "$H" | sed -n 's/.*"workspace":"\([^"]*\)".*/[ws=\1]/p')"
-    # the load-bearing line: is the brain's RELAY link actually up? (a dead relay = brain can't see/answer chat)
+    # the load-bearing line: is the agent's RELAY link actually up? (a dead relay = agents can't see/answer chat)
     case "$H" in
-      *'"relayOnline":true'*)  echo "relay:    UP (brain can see + answer chat)";;
-      *'"relayOnline":false'*) echo "relay:    DOWN — brain is offline (the watchdog will reconnect; or restart)";;
+      *'"relayOnline":true'*)  echo "relay:    UP (agents can see + answer chat)";;
+      *'"relayOnline":false'*) echo "relay:    DOWN — agents offline (the watchdog will reconnect; or restart)";;
     esac
-    echo "brains:   $(pgrep -f 'blitz-brain-session' 2>/dev/null | grep -vc '^$' || echo 0) running"
+    echo "agents:   $(ps -eo args 2>/dev/null | grep -c '[c]laude --\(session-id\|resume\)') claude terminal(s)"
   else
     echo "backend:  :$BACKEND_PORT no response"
   fi

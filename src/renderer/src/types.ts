@@ -41,6 +41,8 @@ export interface Surface {
   /** A system surface the OS owns (e.g. 'chat' — a srcdoc widget backed by blitz-chat.html + chat.md).
    *  Pinned + never serialized as a node. */
   role?: string
+  /** the chat session this surface belongs to (a per-session chat widget); session N lives in area N. */
+  sessionId?: string
   /** Always-on-top (chat/activity) — kept above normal windows regardless of z. */
   pinned?: boolean
   /** content zoom factor (web: webview zoom; app/srcdoc: CSS scale). default 1 */

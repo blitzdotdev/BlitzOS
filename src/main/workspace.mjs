@@ -1193,7 +1193,7 @@ const SYSTEM_RENDERERS = ['chat', 'note'] // roles that ship a default renderer 
 const SYSTEM_PREFIX = 'blitz-'
 const CHAT_FILE = 'chat.md'
 
-// Per-session chat (brain-as-session): session '0' (the primary chat) keeps the LEGACY names
+// Per-session chat (one agent per session): session '0' (the primary chat) keeps the LEGACY names
 // (chat.md, blitz-chat.html) so it needs ZERO migration; any other session gets chat-<id>.md and
 // blitz-<id>-chat.html. Both naming families are recognized as system files (never surfaced as tiles).
 export function chatFileName(sessionId = '0') { return sessionId && String(sessionId) !== '0' ? `chat-${sessionId}.md` : CHAT_FILE }

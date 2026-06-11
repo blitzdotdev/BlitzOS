@@ -107,7 +107,10 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     },
     broadcast: (obj) => getWin()?.webContents.send('os:action', obj),
     onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
-    defaultMode: 'canvas' // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
+    defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
+    // A chat session's claude runs in a VISIBLE terminal in its area; index.ts wires this from the shared
+    // agent-session core + the session-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
+    launchAgent: (id, area, title) => launchAgentHook?.(id, area, title)
   })
   wsHost.hydrateOnBoot()
   wsHost.startWatch()
@@ -405,42 +408,52 @@ export function osCustomizeWidget(name: string, html: string, sessionId = '0'): 
 export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
 }
-// index.ts owns process supervision (the agent-runner + relay url). The chat brain is ON-DEMAND: osActions
-// fires this hook on chat ACTIVITY so index.ts can spawn/keep-alive the session's agent. `spawn` distinguishes
-// the two callers: a USER MESSAGE (spawn=true) may bring a brain up; an AGENT REPLY (spawn=false) only RE-ARMS
-// an existing local brain's idle timer — it must NEVER spawn one, or an EXTERNAL agent driving over the relay
-// (whose /say also lands in osSay) would conscript a duplicate local brain and both would answer.
+// Chat activity hook (legacy seam, kept for liveness signals): a USER MESSAGE (spawn=true) may bring an
+// agent up; an AGENT REPLY (spawn=false) only re-arms liveness — it must NEVER spawn one, or an EXTERNAL
+// agent driving over the relay (whose /say also lands in osSay) would conscript a duplicate and both answer.
 let onChatActivity: ((sessionId: string, spawn: boolean) => void) | null = null
 export function setOnChatActivity(fn: (sessionId: string, spawn: boolean) => void): void {
   onChatActivity = fn
 }
-/** Spawn (or keep alive) a session's brain WITHOUT a chat message — the onboarding director uses
- *  this to start the resident interviewer at board-ready (its standing duty rides the boot task). */
-export function osKickBrain(sessionId = '0'): void {
-  onChatActivity?.(String(sessionId), true)
+// index.ts owns the relay url + session-ops, so it registers HOW to launch a chat session's claude in a
+// tmux terminal. osActions handles the workspace-side (mint id + hub registration); addChatSession then
+// calls launchAgent via the host adapter. index.ts registers this when an agent command is available
+// (BLITZ_AGENT, or a detected `claude` CLI).
+let launchAgentHook: ((sessionId: string, area: number, title?: string) => void) | null = null
+export function setLaunchAgent(fn: (sessionId: string, area: number, title?: string) => void): void {
+  launchAgentHook = fn
 }
-// The human hit Stop on a session. index.ts owns the brain processes, so it registers the KILLER here and
-// osStopChatSession fires it. Kept separate from onChatActivity so a stop can never be misread as activity
-// (which would re-arm the idle timer instead of tearing the brain down).
+/** Ensure a session's agent is up WITHOUT a chat message — the onboarding director uses this to start
+ *  the resident interviewer at board-ready (its standing duty rides the bootstrap). Prefers the tmux
+ *  launcher (re-exec replaces any stale terminal); falls back to the legacy activity hook. */
+export function osKickBrain(sessionId = '0'): void {
+  const sid = String(sessionId)
+  if (launchAgentHook) {
+    launchAgentHook(sid, sid === '0' ? 0 : 0)
+    return
+  }
+  onChatActivity?.(sid, true)
+}
+// The human hit Stop on a session. index.ts owns the agent processes, so it registers the KILLER here and
+// osStopChatSession fires it. Kept separate from onChatActivity so a stop can never be misread as activity.
 let onChatStop: ((sessionId: string) => void) | null = null
 export function setOnChatStop(fn: (sessionId: string) => void): void {
   onChatStop = fn
 }
-/** Open a new chat session: mint its id + register it (the hub sidebar shows it). The agent is NOT spawned
- *  here — it comes up on-demand on the first message (onChatActivity), so opening a session costs nothing. */
-export function osSpawnChatSession(title?: string): { id: string; title: string } {
+/** Open a new chat session: mint its id, register it in the hub; addChatSession launches its claude
+ *  terminal (via the launchAgent seam, when wired). focus is accepted for API parity (hub switches client-side). */
+export function osSpawnChatSession(title?: string, focus = false): { id: string; title: string } {
   if (!wsHost) throw new Error('no workspace host')
   const id = wsHost.newChatSessionId()
-  wsHost.addChatSession(id, title)
+  wsHost.addChatSession(id, title, { focus })
   return { id, title: title || `Chat ${id}` }
 }
 /** Set a chat session's sidebar title (the agent auto-names; the human can rename). */
 export function osRenameChatSession(id: string, title: string): { ok: boolean; id?: string; title?: string; error?: string } {
   return wsHost ? wsHost.renameChatSession(String(id), String(title)) : { ok: false, error: 'no workspace host' }
 }
-/** The human hit Stop on a session: kill its brain process NOW (index.ts hook) and clear its 'thinking'
- *  status (workspace host re-pushes the hub). The session + transcript stay — the next message respawns the
- *  brain on-demand, so Stop is a halt, not a delete. */
+/** The human hit Stop on a session: kill its agent process NOW (index.ts hook) and clear its 'thinking'
+ *  status (workspace host re-pushes the hub). The session + transcript stay — Stop is a halt, not a delete. */
 export function osStopChatSession(id: string): { ok: boolean; id?: string; error?: string } {
   const sid = String(id)
   onChatStop?.(sid)
@@ -449,6 +462,14 @@ export function osStopChatSession(id: string): { ok: boolean; id?: string; error
 /** The chat sessions in the active workspace (always '0' + any persisted agent sessions) — for boot-resume. */
 export function osChatSessionIds(): string[] {
   return wsHost ? wsHost.chatSessionIds() : ['0']
+}
+/** Boot: re-exec the claude terminal for every chat session on the current relay url (+ --resume). */
+export function osResumeAgentsOnBoot(): void {
+  wsHost?.resumeAgentsOnBoot()
+}
+/** Publish the current relay url to .blitzos/relay-url so reattached agents self-heal onto it (no brain to restart). */
+export function osSetRelayUrl(url: string | null | undefined): void {
+  wsHost?.setRelayUrl(url)
 }
 /** #52: group surfaces into a REAL folder on disk (mkdir + mv their files into a subdir), via the shared
  *  workspace host. Returns the host result. The reconcile that follows surfaces the new folder as a tile. */

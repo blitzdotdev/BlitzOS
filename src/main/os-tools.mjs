@@ -11,6 +11,9 @@
 // localhost is trusted; relay + server are untrusted (gate page content to surfaces the user shared).
 import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from './widget-catalog.mjs'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
+// Area grid: a chat session N owns area N. When a session-scoped agent creates a surface, we tag it with
+// {area} so the renderer cascades it into that session's area — isolated from the user's primary (area 0).
+import { areaForSession } from '../renderer/src/areas-core.mjs'
 
 function parse(body) {
   try {
@@ -53,26 +56,40 @@ function accountHintFor(url, integrations) {
   return null
 }
 
-// The agent-facing view of desktop state — layout fields + props, but NOT html. srcdoc `html` is omitted
-// (bloat — you DRIVE a widget via props, never re-read its html). props ARE included so the agent can
-// VERIFY a widget's data landed and read its Notepad text (`props.text`) — a srcdoc iframe can't be
-// read_window'd, so list_state.props is the agent's ONLY confirmation path — EXCEPT the chat/activity
-// panels, whose props hold the full transcript (don't leak / bloat). ONE definition so every transport
-// (and the widget list_state tool) returns the IDENTICAL shape — ops.getState() returns raw full state.
+// The agent-facing view of desktop state — layout fields ONLY (master's contract): an INDEX, not the
+// content. srcdoc `html` and `props` are omitted (bloat; chat/activity props hold the full transcript).
+// To VERIFY a specific widget's data landed (a srcdoc iframe can't be read_window'd), use the targeted
+// `get_surface {id}` tool — pull one surface's props on demand instead of pushing everyone's every call.
+// ONE definition so every transport (and the widget list_state tool) returns the IDENTICAL shape.
 // `integrations` (optional) drives the item-7 per-web-surface account_hint (who-am-I correlation).
 export function serializeStateForAgent(state, integrations) {
   const s = state || {}
-  const isTranscript = (x) => x.role === 'chat' || x.role === 'activity' || x.component === 'chat' || x.component === 'activity'
   return {
     ...s,
     surfaces: (s.surfaces || []).map((x) => {
       const hint = x.kind === 'web' && x.url ? accountHintFor(x.url, integrations) : null
       return {
         id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
-        ...(hint ? { account_hint: hint } : {}),
-        ...(isTranscript(x) || !x.props ? {} : { props: x.props })
+        ...(hint ? { account_hint: hint } : {})
       }
     })
+  }
+}
+
+// The targeted verification read: ONE surface, props included — the pull complement to the lean
+// list_state. Transcript-bearing surfaces (chat/activity) are refused: their props ARE the conversation.
+export function serializeSurfaceForAgent(state, id) {
+  const s = state || {}
+  const x = (s.surfaces || []).find((w) => w && w.id === String(id))
+  if (!x) return { error: `no surface ${id}` }
+  if (x.role === 'chat' || x.role === 'activity' || x.component === 'chat' || x.component === 'activity') {
+    return { error: 'transcript surfaces are not readable here — the chat history is yours already' }
+  }
+  return {
+    surface: {
+      id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
+      ...(x.props ? { props: x.props } : {})
+    }
   }
 }
 
@@ -109,15 +126,18 @@ export function makeOsTools(ops) {
     {
       path: '/create_surface',
       description:
-        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html, native takes component+props. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace).',
+        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html, native takes component+props. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary session, pass {session:"<your id>"} so it opens in YOUR area (do NOT also pass x/y unless repositioning within your area).',
       input_schema: {
         type: 'object',
         required: ['kind'],
-        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' } }
+        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' }, session: { type: 'string' } }
       },
       handler: ({ body }) => {
         const a = parse(body)
         if (!a.kind) return { status: 400, body: { error: 'kind required' } }
+        // A session-scoped agent's surface lands in ITS area (the renderer cascades by `area` when no
+        // explicit x is given); the primary session '0' → area 0 = today's behavior.
+        if (a.session != null) a.area = areaForSession(a.session)
         const id = ops.createSurface(a)
         const ctx = ops.workspaceContext()
         return { id, workspace: ctx.workspace, workspace_path: ctx.workspace_path, siblings: (ctx.siblings || []).filter((s) => s.id !== id).map((s) => s.title) }
@@ -125,11 +145,12 @@ export function makeOsTools(ops) {
     },
     {
       path: '/open_window',
-      description: 'Open a third-party website as a live web surface. Returns its id.',
-      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' } } },
+      description: 'Open a third-party website as a live web surface. Returns its id. If you are a non-primary session, pass {session:"<your id>"} so it opens in YOUR area.',
+      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, session: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
         if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
+        if (a.session != null) a.area = areaForSession(a.session) // open in the session's own area
         return { id: ops.openWindow(a) }
       }
     },
@@ -188,8 +209,20 @@ export function makeOsTools(ops) {
     {
       path: '/list_state',
       description:
-        'List the canvas: active workspace, its folder path (workspace_path), and the open surfaces. Local agents author by writing files into workspace_path; check surfaces to judge THIS desktop vs a fresh workspace. A web surface MAY carry account_hint {provider,label,verify} when a connected integration matches its host — a hint that an account exists, NOT proof of the surface\'s logged-in account; read_window to confirm before acting AS it.',
+        'List the canvas: active workspace, its folder path (workspace_path), and the open surfaces (layout fields only — an INDEX; use get_surface for one surface\'s props). Local agents author by writing files into workspace_path; check surfaces to judge THIS desktop vs a fresh workspace. A web surface MAY carry account_hint {provider,label,verify} when a connected integration matches its host — a hint that an account exists, NOT proof of the surface\'s logged-in account; read_window to confirm before acting AS it.',
       handler: () => serializeStateForAgent(ops.getState(), ops.integrationStatuses ? ops.integrationStatuses() : undefined)
+    },
+    {
+      path: '/get_surface',
+      description:
+        'Fetch ONE surface in full (layout + props; html still omitted) — the targeted verification read after an update_surface, and the only way to read a srcdoc widget\'s data (its iframe can\'t be read_window\'d). Transcript surfaces (chat/activity) are refused. Args: {id}.',
+      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+      handler: ({ body }) => {
+        const a = parse(body)
+        if (!a.id) return { status: 400, body: { error: 'id required' } }
+        const r = serializeSurfaceForAgent(ops.getState(), String(a.id))
+        return r.error ? { status: 404, body: r } : r
+      }
     },
     {
       path: '/list_workspaces',
@@ -444,11 +477,14 @@ export function makeOsTools(ops) {
     {
       path: '/spawn_session',
       description:
-        "Start a SESSION — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (claude/codex), a build/test runner, or any long job. The session SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/sessions/. Args: {command (e.g. 'bash' or \"claude -p '…'\"), kind?:'pty'|'agent', cwd?, title?, cols?, rows?}. Returns { session }.",
-      input_schema: { type: 'object', properties: { command: { type: 'string' }, kind: { type: 'string', enum: ['pty', 'agent'] }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' } } },
+        "Start a SESSION — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (claude/codex), a build/test runner, or any long job. The session SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/sessions/. If you are a non-primary session, pass {session:\"<your id>\"} so the terminal opens in YOUR area, not the user's. Args: {command (e.g. 'bash' or \"claude -p '…'\"), kind?:'pty'|'agent', cwd?, title?, cols?, rows?, session?}. Returns { session }.",
+      input_schema: { type: 'object', properties: { command: { type: 'string' }, kind: { type: 'string', enum: ['pty', 'agent'] }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' }, session: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)
-        const session = await ops.spawnSession({ command: a.command, kind: a.kind, cwd: a.cwd, title: a.title, cols: a.cols, rows: a.rows })
+        // A session-scoped agent's terminal opens in ITS area; an unscoped call leaves area undefined so
+        // the renderer opens it in the current area (today's behavior for the primary agent + human spawns).
+        const area = a.session != null ? areaForSession(a.session) : undefined
+        const session = await ops.spawnSession({ command: a.command, kind: a.kind, cwd: a.cwd, title: a.title, cols: a.cols, rows: a.rows, area })
         return { session }
       }
     },
