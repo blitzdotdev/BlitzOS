@@ -1373,6 +1373,7 @@ button {
 }
 .sidebar-app {
   flex: 0 0 auto;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1385,11 +1386,45 @@ button {
   cursor: pointer;
   padding: 0;
   box-shadow: inset 0 1px 0 var(--edge-highlight);
-  transition: background var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 .sidebar-app:hover {
   background: var(--control-hover);
   color: var(--text);
+}
+.sidebar-app.minimized {
+  opacity: 0.68;
+  background: color-mix(in srgb, var(--surface-raised) 64%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.sidebar-app.minimized::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 8px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0.8;
+}
+.sidebar-app.is-minimizing,
+.sidebar-app.is-restoring {
+  opacity: 1;
+  color: var(--text);
+  background: var(--control-hover);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 8px 24px color-mix(in srgb, var(--accent) 16%, transparent);
+  animation: sidebar-dock-target 760ms var(--ease-out) infinite alternate;
 }
 .sidebar-app-ic {
   display: inline-flex;
@@ -1400,6 +1435,22 @@ button {
 }
 .sidebar-app-label {
   display: none;
+}
+
+@keyframes sidebar-dock-target {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.05);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-app.is-minimizing,
+  .sidebar-app.is-restoring {
+    animation: none;
+  }
 }
 
 /* Integration widgets (ground plane). */

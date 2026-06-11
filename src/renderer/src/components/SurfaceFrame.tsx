@@ -25,7 +25,17 @@ interface WebviewMethods {
   getURL(): string
 }
 
-export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
+export function SurfaceFrame({
+  surface,
+  onRequestMinimize,
+  onRequestToggleMaximize,
+  restoring = false
+}: {
+  surface: Surface
+  onRequestMinimize?: (id: string) => void
+  onRequestToggleMaximize?: (id: string) => void
+  restoring?: boolean
+}): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
@@ -543,6 +553,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         width: surface.w,
         height: surface.h,
         ...(surface.minimized ? { display: 'none' } : {}),
+        ...(restoring ? { visibility: 'hidden', pointerEvents: 'none' as const } : {}),
         ...(paper ? { background: paper.bg, color: paper.ink } : {}),
         // The Chat + Agent-activity panels are pinned: a z-band far above any focus-raised
         // window, so the agent (or the user) can never bury the channel/feed they rely on.
@@ -565,8 +576,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
               reconcile (the file still exists), so only offer zoom; delete the file to remove it. */}
           {!isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
-          {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />}
-          <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
+          {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => (onRequestMinimize ? onRequestMinimize(surface.id) : minimizeSurface(surface.id))} />}
+          <button className="tl tl-max" title="Zoom" onClick={() => (onRequestToggleMaximize ? onRequestToggleMaximize(surface.id) : toggleMaximize(surface.id))} />
         </div>
         {surface.kind === 'web' || surface.kind === 'app' ? (
           <form className="window-url" onSubmit={go} onPointerDown={stop}>
