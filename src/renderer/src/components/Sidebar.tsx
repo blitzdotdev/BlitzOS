@@ -50,6 +50,7 @@ export function Sidebar({ onCreateSurface, onRequestRestore, animating = {} }: P
   const tooltipCloseTimer = useRef<number | null>(null)
   const [launcher, setLauncher] = useState<LauncherState | null>(null)
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
+  const surfaceIdsKey = useMemo(() => surfaces.map((s) => s.id).join('|'), [surfaces])
   const orderRef = useRef<Map<string, number>>(new Map())
   const nextOrder = useRef(0)
   const orderedSurfaces = useMemo(() => {
@@ -78,6 +79,14 @@ export function Sidebar({ onCreateSurface, onRequestRestore, animating = {} }: P
       if (tooltipCloseTimer.current != null) window.clearTimeout(tooltipCloseTimer.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (tooltipCloseTimer.current != null) {
+      window.clearTimeout(tooltipCloseTimer.current)
+      tooltipCloseTimer.current = null
+    }
+    setTooltip(null)
+  }, [surfaceIdsKey])
 
   const closeLauncher = (): void => {
     if (!launcher || launcher.closing) return
