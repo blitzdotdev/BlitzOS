@@ -663,6 +663,13 @@ button {
 .drag-overlay.control {
   top: 0;
 }
+.window-focus-catcher {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: transparent;
+  cursor: default;
+}
 
 /* File + folder tiles (#37): a real workspace file / subfolder shown on the canvas. */
 .file-tile,

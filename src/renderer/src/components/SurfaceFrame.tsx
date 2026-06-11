@@ -473,6 +473,7 @@ export function SurfaceFrame({
   const isNote = surface.kind === 'native' && surface.component === 'note'
   const isFolder = surface.kind === 'native' && surface.component === 'folder'
   const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
+  const needsFocusCatcher = !isActive && !isControl && (surface.kind === 'web' || surface.kind === 'app' || surface.kind === 'srcdoc')
   const paper = isNote ? (NOTE_PAPER[(surface.props?.color as string) || 'coral'] ?? NOTE_PAPER.coral) : undefined
 
   function body(): JSX.Element {
@@ -641,6 +642,7 @@ export function SurfaceFrame({
         style={{ position: 'relative', ...(isNote ? { background: 'transparent' } : {}) }}
       >
         {body()}
+        {needsFocusCatcher && <div className="window-focus-catcher" onPointerDown={() => focusSurface(surface.id)} />}
       </div>
       {/* macOS-style resize from all sides + corners; above the drag-overlay so it works in control
           mode too (#41). The handles avoid the title-bar controls (traffic lights / eye). */}
