@@ -1295,13 +1295,21 @@ button {
    Screen-space chrome
    ============================================================================ */
 
-/* Bottom-center toolbar (frosted cluster). */
-.toolbar {
+/* Bottom toolbars (frosted clusters). */
+.toolbar-shell {
   position: fixed;
   bottom: 18px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  max-width: calc(100vw - 96px);
+  pointer-events: none;
+}
+.toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1314,8 +1322,14 @@ button {
     inset 0 1px 0 var(--edge-highlight),
     inset 0 0 0 1px var(--hairline),
     var(--shadow-md);
+  pointer-events: auto;
 }
 .toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: 0 0 auto;
   background: var(--control);
   color: var(--text);
   border: none;
@@ -1325,19 +1339,40 @@ button {
   cursor: pointer;
   box-shadow: inset 0 1px 0 var(--edge-highlight);
   transition: background var(--dur-fast) var(--ease-out);
+  white-space: nowrap;
 }
-.toolbar button:hover {
+.toolbar button:hover,
+.toolbar button.active {
   background: var(--control-hover);
 }
-.toolbar .hint {
-  flex: 0 0 auto;
-  width: 250px;
+.connect-ai-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  line-height: 0;
+}
+.agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--text-muted);
   padding: 0 6px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+.agent-status.online {
+  color: var(--positive);
+}
+.agent-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e0a23c;
+}
+.agent-status.online .agent-status-dot {
+  background: var(--positive);
 }
 /* Workspace-area control (#45): prev/next arrows + indicator + add. Compact, inline in the toolbar. */
 .area-ctl {
@@ -1379,39 +1414,6 @@ button {
   gap: 10px;
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
-}
-.sidebar-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-button);
-  border: none;
-  background: var(--control);
-  color: var(--text-secondary);
-  cursor: pointer;
-  box-shadow: inset 0 1px 0 var(--edge-highlight);
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.sidebar-btn:hover {
-  background: var(--control-hover);
-  color: var(--text);
-}
-.sidebar-btn.active {
-  background: var(--control-hover);
-  color: var(--text);
-}
-.sidebar-btn svg {
-  width: 18px;
-  height: 18px;
-}
-.sidebar-sep {
-  width: 24px;
-  height: 1px;
-  background: var(--hairline);
-  margin: 2px 0;
-  flex: 0 0 auto;
 }
 .sidebar-apps {
   display: flex;
@@ -1514,6 +1516,11 @@ button {
 .sidebar-tooltip.closing {
   animation: sidebar-tooltip-out 120ms var(--ease-out) both;
 }
+.toolbar-tooltip {
+  transform: translate(-50%, -100%);
+  max-width: min(320px, calc(100vw - 32px));
+  animation: toolbar-tooltip-in 90ms var(--ease-out) both;
+}
 
 .surface-launcher-backdrop {
   position: fixed;
@@ -1548,6 +1555,9 @@ button {
   -webkit-backdrop-filter: blur(22px) saturate(1.18);
   transform-origin: 0 18px;
   animation: surface-launcher-in 170ms var(--ease-out) both;
+}
+.surface-launcher-toolbar {
+  transform-origin: 50% 100%;
 }
 .surface-launcher.closing {
   animation: surface-launcher-out 150ms var(--ease-out) both;
@@ -1638,6 +1648,17 @@ button {
   to {
     opacity: 0;
     transform: translate(3px, -50%) scale(0.98);
+  }
+}
+
+@keyframes toolbar-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-100% + 3px)) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -100%) scale(1);
   }
 }
 
@@ -1978,12 +1999,16 @@ button {
 }
 
 /* Command HUD (the agent-connect / scratch-pad-style bar). */
-.hud {
+.hud-backdrop {
   position: fixed;
+  inset: 0;
+  z-index: 1600;
+}
+.hud {
+  position: absolute;
   bottom: 74px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1600;
   width: 480px;
   max-width: 92vw;
   background: color-mix(in srgb, var(--surface) 82%, transparent);

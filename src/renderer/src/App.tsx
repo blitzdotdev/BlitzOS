@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { flushSync } from 'react-dom'
+import type { FocusEvent, PointerEvent } from 'react'
+import { createPortal, flushSync } from 'react-dom'
 import { useDesktop, viewTransform, areaRect, areaForSession, areaCenterX, nextTerminalName, type CreateSurfaceInput } from './store'
 import { pushSessionData, pushSessionExit } from './sessionStream'
 import type { Surface, CanvasTransform } from './types'
@@ -11,7 +12,8 @@ import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame } from './components/SurfaceFrame'
 import { AnnotationLayer } from './components/AnnotationLayer'
 import { PrimarySpace } from './components/PrimarySpace'
-import { Sidebar, type SurfaceLauncherKind } from './components/Sidebar'
+import { Sidebar } from './components/Sidebar'
+import { SurfaceLauncherButton, type SurfaceLauncherKind } from './components/SurfaceLauncherButton'
 import { IconChat, IconSparkle, IconGrid, IconChevronDown } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
@@ -22,6 +24,7 @@ import { ContextMenu } from './components/ContextMenu'
 // desktop). Off by default — integrations now surface as agent-spawned widgets. Flip to re-enable.
 const SHOW_INTEGRATION_CARDS = false
 type DockAnimationPhase = 'minimizing' | 'restoring'
+type ToolbarTooltip = { text: string; left: number; top: number }
 const WIDGET_PLACEHOLDER_HTML = `
 <style>
   body {
@@ -252,6 +255,14 @@ async function uploadDroppedEntries(entries: FileSystemEntry[], wx: number, wy: 
   }
 }
 
+function findChatHub(surfaces: Surface[]): Surface | undefined {
+  return (
+    surfaces.find((s) => s.role === 'chat' && s.kind === 'srcdoc') ??
+    surfaces.find((s) => s.id === 'chat' && s.kind === 'srcdoc') ??
+    surfaces.find((s) => s.role === 'chat')
+  )
+}
+
 export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
@@ -317,7 +328,12 @@ export default function App(): JSX.Element {
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
   const dockAnimationIds = useRef<Set<string>>(new Set())
   const rectAnimationIds = useRef<Set<string>>(new Set())
+  const toolbarTipShowTimer = useRef<number | null>(null)
+  const toolbarTipWarmTimer = useRef<number | null>(null)
+  const toolbarTipWarm = useRef(false)
+  const toolbarTipVisible = useRef(false)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [toolbarTooltip, setToolbarTooltip] = useState<ToolbarTooltip | null>(null)
   // Phase 2: true once the backend has sent (or declined) a hydrate. The state-push is
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
   // restored canvas before hydration arrives.
@@ -327,6 +343,66 @@ export default function App(): JSX.Element {
   // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
   const activeWsRef = useRef<string | null>(null)
   const animRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (toolbarTipShowTimer.current != null) window.clearTimeout(toolbarTipShowTimer.current)
+      if (toolbarTipWarmTimer.current != null) window.clearTimeout(toolbarTipWarmTimer.current)
+    }
+  }, [])
+
+  function openToolbarTooltip(target: HTMLElement, text: string): void {
+    if (toolbarTipWarmTimer.current != null) {
+      window.clearTimeout(toolbarTipWarmTimer.current)
+      toolbarTipWarmTimer.current = null
+    }
+    const r = target.getBoundingClientRect()
+    toolbarTipWarm.current = true
+    toolbarTipVisible.current = true
+    setToolbarTooltip({ text, left: Math.round(r.left + r.width / 2), top: Math.round(r.top - 10) })
+  }
+
+  function closeToolbarTooltip(): void {
+    if (toolbarTipShowTimer.current != null) {
+      window.clearTimeout(toolbarTipShowTimer.current)
+      toolbarTipShowTimer.current = null
+    }
+    if (!toolbarTipVisible.current) return
+    toolbarTipVisible.current = false
+    setToolbarTooltip(null)
+    if (toolbarTipWarmTimer.current != null) window.clearTimeout(toolbarTipWarmTimer.current)
+    toolbarTipWarmTimer.current = window.setTimeout(() => {
+      toolbarTipWarm.current = false
+      toolbarTipWarmTimer.current = null
+    }, 2000)
+  }
+
+  function toolbarTip(text: string): {
+    'aria-label': string
+    onPointerEnter: (e: PointerEvent<HTMLElement>) => void
+    onPointerDown: () => void
+    onPointerLeave: () => void
+    onFocus: (e: FocusEvent<HTMLElement>) => void
+    onBlur: () => void
+  } {
+    return {
+      'aria-label': text,
+      onPointerEnter: (e) => {
+        if (toolbarTipShowTimer.current != null) window.clearTimeout(toolbarTipShowTimer.current)
+        const target = e.currentTarget
+        const show = (): void => {
+          toolbarTipShowTimer.current = null
+          openToolbarTooltip(target, text)
+        }
+        if (toolbarTipWarm.current || toolbarTipVisible.current) show()
+        else toolbarTipShowTimer.current = window.setTimeout(show, 1000)
+      },
+      onPointerDown: closeToolbarTooltip,
+      onPointerLeave: closeToolbarTooltip,
+      onFocus: (e) => openToolbarTooltip(e.currentTarget, text),
+      onBlur: closeToolbarTooltip
+    }
+  }
 
   // Smoothly tween the camera (used when entering/leaving control mode).
   function animateTransform(target: CanvasTransform, dur = 320): void {
@@ -635,7 +711,7 @@ export default function App(): JSX.Element {
           surf.area = chatArea
           surf.x = Math.round(areaCenterX(chatArea, useDesktop.getState().viewport) - 700)
         }
-        st.createSurface(surf)
+        const createdId = st.createSurface(surf)
         if (isNewChat && chatArea > 0) {
           // ALWAYS grow areaCount so the new area exists + is navigable (whether a user or an agent spawned it).
           const cur = useDesktop.getState()
@@ -647,6 +723,8 @@ export default function App(): JSX.Element {
             now.setCurrentArea(chatArea)
             animateTransform(viewTransform(now.mode, now.viewport, chatArea, now.areaCount))
           }
+        } else if (a.focus && createdId) {
+          useDesktop.getState().focusAndZoom(createdId)
         }
       }
       else if (a.type === 'provider-approval') {
@@ -689,7 +767,7 @@ export default function App(): JSX.Element {
         // with sessionId; merge it into the hub's props.threads[sid] and refresh the sidebar (sessions) +
         // per-session status when included. The widget renders the active thread + a session sidebar.
         const sid = a.sessionId != null ? String(a.sessionId) : '0'
-        const hub = st.surfaces.find((s) => s.id === 'chat' || s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
+        const hub = findChatHub(st.surfaces) ?? st.surfaces.find((s) => s.kind === 'native' && s.component === 'chat')
         if (!hub) return
         const extra = a as { sessions?: unknown; status?: unknown }
         const prevThreads = (hub.props?.threads as Record<string, Array<{ role: string; text: string }>>) ?? {}
@@ -1047,18 +1125,6 @@ export default function App(): JSX.Element {
     setMarqueeRect(null)
   }
 
-  // The Chat panel docks to the LEFT of whatever the user is currently looking at,
-  // so it opens visible (and stays out of the area where the agent puts windows).
-  function chatSurfaceInput(messages: Array<{ role: string; text: string }>): CreateSurfaceInput {
-    const st = useDesktop.getState()
-    const { scale, x: tx, y: ty } = st.transform
-    const W = 360
-    const H = 460
-    const x = Math.round(-tx / scale + 24) // 24 world-px from the left edge of the view
-    const y = Math.round((st.viewport.h / 2 - ty) / scale - H / 2) // vertically centered
-    return { kind: 'native', component: 'chat', title: 'Chat', w: W, h: H, x, y, props: { messages } }
-  }
-
   // The Agent-activity feed docks to the TOP-LEFT of the view (above the centered chat).
   function activitySurfaceInput(events: Array<{ at: number; text: string }>): CreateSurfaceInput {
     const st = useDesktop.getState()
@@ -1200,11 +1266,17 @@ export default function App(): JSX.Element {
 
   function openChat(): void {
     const st = useDesktop.getState()
-    // The chat is a host-hydrated role:'chat' srcdoc widget (blitz-chat.html). Just focus/center it; if a
-    // very old session is still on the native chat, fall back to that.
-    const existing = st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
-    if (existing) st.focusSurface(existing.id)
-    else createSurface(chatSurfaceInput([]))
+    // The toolbar should always open the host-hydrated srcdoc chat hub (blitz-chat.html),
+    // not the retired native ChatPanel fallback.
+    const hub = findChatHub(st.surfaces)
+    if (hub) {
+      if (hub.minimized) st.updateSurface(hub.id, { minimized: false })
+      st.focusAndZoom(hub.id)
+      return
+    }
+    // If the user closed the runtime hub, ask main/workspace-host to rebuild the same srcdoc chat
+    // surface boot/switch install. No native ChatPanel fallback.
+    void window.agentOS?.restoreChatHub?.()
   }
 
   function setDockAnimation(id: string, phase: DockAnimationPhase | null): void {
@@ -1344,7 +1416,7 @@ export default function App(): JSX.Element {
 
       <div className="bg" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onContextMenu={onBgContextMenu} />
 
-      <Sidebar onCreateSurface={createFromLauncher} onRequestRestore={requestRestore} animating={dockAnimations} />
+      <Sidebar onRequestRestore={requestRestore} animating={dockAnimations} />
 
       <div
         className="world"
@@ -1391,97 +1463,96 @@ export default function App(): JSX.Element {
         />
       )}
 
-      <div className="toolbar">
-        {hasWorkspaces && (
-          <button className="ws-btn" onClick={() => void openOverview()} title="Workspaces (Mission Control)">
-            <IconGrid size={14} />
-            <span className="ws-name">{activeWs ?? '…'}</span>
-            <IconChevronDown size={13} />
+      <div className="toolbar-shell">
+        <div className="toolbar toolbar-main">
+          {hasWorkspaces && (
+            <button className="ws-btn" onClick={() => void openOverview()} {...toolbarTip('Workspaces')}>
+              <IconGrid size={14} />
+              <span className="ws-name">{activeWs ?? '…'}</span>
+              <IconChevronDown size={13} />
+            </button>
+          )}
+          {/* Workspace areas (#45): the indicator appears once there's more than one. Create a new area
+              with Cmd/Ctrl + N; switch areas with Cmd/Ctrl + ← →. */}
+          {areaCount > 1 && (
+            <span className="area-ctl" {...toolbarTip('Workspace areas')}>
+              <button className="area-arrow" disabled={currentArea <= 0} onClick={() => switchArea(-1)} aria-label="Previous area">‹</button>
+              <span className="area-ind">Area {currentArea + 1}/{areaCount}</span>
+              <button className="area-arrow" disabled={currentArea >= areaCount - 1} onClick={() => switchArea(1)} aria-label="Next area">›</button>
+            </span>
+          )}
+          <SurfaceLauncherButton onCreateSurface={createFromLauncher} buttonProps={toolbarTip('Create surface')} />
+          <button onClick={openChat} {...toolbarTip('Primary chat')}>
+            <IconChat size={15} /> Chat
           </button>
-        )}
-        {/* Workspace areas (#45): the indicator appears once there's more than one. Create a new area
-            with Cmd/Ctrl + N; switch areas with Cmd/Ctrl + ← →. */}
-        {areaCount > 1 && (
-          <span className="area-ctl" title="Workspace areas — ⌘N new · ⌘← ⌘→ switch">
-            <button className="area-arrow" disabled={currentArea <= 0} onClick={() => switchArea(-1)} title="Previous area">‹</button>
-            <span className="area-ind">Area {currentArea + 1}/{areaCount}</span>
-            <button className="area-arrow" disabled={currentArea >= areaCount - 1} onClick={() => switchArea(1)} title="Next area">›</button>
-          </span>
-        )}
-        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} title="Jump to your primary chat" onClick={openChat}>
-          <IconChat size={15} /> Chat
-        </button>
-        <button
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
-          title="Open a new chat session — a fresh peer agent with its own chat widget"
-          onClick={() => (window.agentOS as unknown as { spawnChatSession?: (t?: string) => void })?.spawnChatSession?.()}
-        >
-          <IconChat size={15} /> + New
-        </button>
-        <button
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
-          title="Open a terminal session (a real shell — or an agent like claude/codex)"
-          onClick={() => (window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })}
-        >
-          ⌗ Terminal
-        </button>
-        <button
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
-          title="Sessions — every shell / agent in this workspace (open, resume, stop)"
-          onClick={openSessions}
-        >
-          ▤ Sessions
-        </button>
-        <button
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
-          title="Action items — things the agents need you to do"
-          onClick={openInbox}
-        >
-          ☑ Inbox
-          {inboxPending > 0 && <span className="inbox-badge">{inboxPending}</span>}
-        </button>
-        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => setShowAi((v) => !v)}>
-          <span style={{ display: 'inline-flex', color: aiUrl ? 'var(--positive)' : 'var(--text-muted)' }}>
-            <IconSparkle size={15} />
-          </span>
-          Connect AI
-        </button>
-        {isServer && agentOnline !== null && (
-          <span
-            title={agentOnline ? 'Agent connected — it can see your chat and the canvas' : 'Agent link is down — reconnecting…'}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: agentOnline ? 'var(--positive)' : 'var(--text-muted)' }}
+          <button onClick={() => setShowAi((v) => !v)} {...toolbarTip('URL for your agent')}>
+            <span className="connect-ai-icon" style={{ color: aiUrl ? 'var(--positive, #3fb950)' : 'var(--text-muted)' }}>
+              <IconSparkle size={17} />
+            </span>
+            Connect AI
+          </button>
+          {isServer && agentOnline !== null && (
+            <span
+              className={`agent-status${agentOnline ? ' online' : ''}`}
+              title={agentOnline ? 'Agent connected — it can see your chat and the canvas' : 'Agent link is down — reconnecting…'}
+            >
+              <span className="agent-status-dot" />
+              {agentOnline ? 'Agent online' : 'Agent reconnecting…'}
+            </span>
+          )}
+        </div>
+        <div className="toolbar toolbar-secondary">
+          <button
+            onClick={openInbox}
+            {...toolbarTip('Action items from your agent')}
           >
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: agentOnline ? 'var(--positive)' : '#e0a23c' }} />
-            {agentOnline ? 'Agent online' : 'Agent reconnecting…'}
-          </span>
-        )}
-        {!isServer && (
-          <span className="hint">
-            double-tap ⌘ for control mode
-          </span>
-        )}
+            ☑ Inbox
+            {inboxPending > 0 && <span className="inbox-badge">{inboxPending}</span>}
+          </button>
+          <button
+            onClick={openSessions}
+            {...toolbarTip('Every shell / agent in this workspace')}
+          >
+            ▤ Sessions
+          </button>
+          <button
+            onClick={() => (window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })}
+            {...toolbarTip('Open terminal session')}
+          >
+            ⌗ Terminal
+          </button>
+        </div>
       </div>
+      {toolbarTooltip &&
+        createPortal(
+          <div className="sidebar-tooltip toolbar-tooltip" style={{ left: toolbarTooltip.left, top: toolbarTooltip.top }}>
+            {toolbarTooltip.text}
+          </div>,
+          document.body
+        )}
 
       {showAi && (
-        <div className="hud">
-          <div className="hud-head">Drive BlitzOS from an AI chat</div>
-          {aiUrl ? (
-            <>
-              <p className="hud-sub">
-                Paste this URL into a <strong>tool-capable</strong> AI agent — Claude Code, or <code>claude -p</code> — and ask
-                it to open windows, post-its, etc. (It needs to make HTTP calls, so a plain Claude.ai / ChatGPT chat can only
-                read the link, not drive BlitzOS.)
-              </p>
-              <div className="hud-row">
-                <input className="hud-input" readOnly value={aiUrl} onFocus={(e) => e.currentTarget.select()} />
-                <button className="btn primary" onClick={() => navigator.clipboard?.writeText(aiUrl)}>
-                  Copy
-                </button>
-              </div>
-            </>
-          ) : (
-            <p className="hud-sub">Connecting to the agent-socket relay…</p>
-          )}
+        <div className="hud-backdrop" onPointerDown={() => setShowAi(false)}>
+          <div className="hud" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="hud-head">Drive BlitzOS from an AI chat</div>
+            {aiUrl ? (
+              <>
+                <p className="hud-sub">
+                  Paste this URL into a <strong>tool-capable</strong> AI agent — Claude Code, or <code>claude -p</code> — and ask
+                  it to open windows, post-its, etc. (It needs to make HTTP calls, so a plain Claude.ai / ChatGPT chat can only
+                  read the link, not drive BlitzOS.)
+                </p>
+                <div className="hud-row">
+                  <input className="hud-input" readOnly value={aiUrl} onFocus={(e) => e.currentTarget.select()} />
+                  <button className="btn primary" onClick={() => navigator.clipboard?.writeText(aiUrl)}>
+                    Copy
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="hud-sub">Connecting to the agent-socket relay…</p>
+            )}
+          </div>
         </div>
       )}
 

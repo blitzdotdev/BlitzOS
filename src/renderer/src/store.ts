@@ -140,7 +140,7 @@ export interface CreateSurfaceInput {
   /** system runtime surface (e.g. a chat session widget: role:'chat', pinned). */
   role?: string
   pinned?: boolean
-  /** the chat session this surface belongs to (a per-session chat widget). */
+  /** the chat session this runtime surface belongs to. */
   sessionId?: string
   /** place this surface in a SPECIFIC workspace area (a session-scoped agent → its own area N); when
    *  omitted, it cascades into the current area. Derived from x afterward — never stored on the Surface. */
@@ -317,7 +317,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   /** Snap a tile to a lattice cell (drag drop / bar toggle / place_widget update). Geometry derives
    *  from the cell; never reflows neighbors — the placer only ever offers free spans, this just
    *  commits one. First snap remembers the free-form size in preSnap so popping out restores it
-   *  (a slot size that squishes a widget — the chat — must never be a one-way door). */
+   *  (a slot size that squishes a widget must never be a one-way door). */
   placeSurfaceSlot: (id, col, row, size, areaArg) =>
     set((s) => {
       const cur = s.surfaces.find((x) => x.id === id)
@@ -378,7 +378,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     const idx = SIZE_ORDER.indexOf(sl.size)
     const n = SIZE_ORDER.length
     // walk the cycle, SKIPPING sizes with no free span anywhere (a crowded stage must not turn the
-    // keybind into a silent no-op — e.g. chat tall -> xl blocked -> land on whatever fits next).
+    // keybind into a silent no-op — blocked size -> land on whatever fits next).
     for (let step = 1; step < n; step++) {
       const next = SIZE_ORDER[(idx + (dir > 0 ? step : n - step)) % n]
       const sp = spanOf(next)
@@ -641,8 +641,8 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       component: input.component,
       props: input.props ?? {},
       shared: input.shared,
-      // preserve system-surface fields so a broadcast 'create' (e.g. a new chat session) keeps its
-      // role/pinned/sessionId — without these a created chat widget would lose role:'chat' and not render.
+      // preserve system-surface fields so runtime surfaces keep their role/pinned/session identity
+      // through broadcast creates.
       ...(input.role ? { role: input.role } : {}),
       ...(input.pinned ? { pinned: input.pinned } : {}),
       ...(input.sessionId != null ? { sessionId: String(input.sessionId) } : {}),

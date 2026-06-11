@@ -325,6 +325,24 @@ export function createWorkspaceHost(a) {
   }
   /** The chat surfaces in this workspace — exactly ONE hub (it holds every session's thread). */
   function buildChatSurfaces() { return [buildChatSurface()] }
+  /** Re-open the system chat hub after the human closes it. It is runtime-only, so closing removes it
+   *  from live osState; rebuild the same srcdoc surface boot/switch add and broadcast it to renderers. */
+  function restoreChatHub() {
+    const st = a.getState() || blank()
+    const chat = buildChatSurface()
+    const surfaces = Array.isArray(st.surfaces) ? st.surfaces : []
+    const nextSurfaces = surfaces.some((s) => s && (s.id === CHAT_HUB_ID || s.role === 'chat'))
+      ? surfaces.map((s) => (
+          s && (s.id === CHAT_HUB_ID || s.role === 'chat')
+            ? { ...chat, ...s, slot: chat.slot, slotArea: undefined, preSnap: chat.preSnap, minimized: false, html: chat.html, props: chat.props }
+            : s
+        ))
+      : [...surfaces, chat]
+    const areaCount = Math.max(Number(st.areaCount) || 1, maxChatAreaCount())
+    a.setState({ ...st, surfaces: nextSurfaces, areaCount })
+    a.broadcast({ type: 'create', surface: { ...chat, minimized: false }, focus: true })
+    return { ok: true, id: CHAT_HUB_ID }
+  }
   /** Mint the next chat-session id: max existing integer id + 1 (primary '0' counts), so ids stay 1,2,3…
    *  Non-numeric ids (none today) are ignored for the max. */
   function newChatSessionId() {
@@ -662,6 +680,7 @@ export function createWorkspaceHost(a) {
     customizeWidget,
     systemUi,
     chatSessionIds,
+    restoreChatHub,
     newChatSessionId,
     addChatSession,
     renameChatSession,

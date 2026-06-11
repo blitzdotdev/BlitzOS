@@ -47,6 +47,7 @@ export interface WorkspaceHost {
   customizeWidget(name: string, html: string, sessionId?: string): { ok: boolean; rel?: string; error?: string }
   systemUi(name: string): string | null
   chatSessionIds(): string[]
+  restoreChatHub(): { ok: boolean; id?: string; error?: string }
   newChatSessionId(): string
   addChatSession(sessionId: string, title?: string, opts?: { focus?: boolean }): Record<string, unknown>
   renameChatSession(sessionId: string, title: string): { ok: boolean; id?: string; title?: string; error?: string }

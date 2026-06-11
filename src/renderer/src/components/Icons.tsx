@@ -1,5 +1,5 @@
 /* Thin-line icon set, Spatial-style: 24px grid, currentColor stroke, rounded caps.
-   Sized by CSS (.window-ico svg, .sidebar-btn svg, …) or the `size` prop. */
+   Sized by CSS (.window-ico svg, .sidebar-app svg, …) or the `size` prop. */
 import type { SVGProps, ReactNode } from 'react'
 
 function Svg({ size = 18, children, ...rest }: { size?: number; children: ReactNode } & SVGProps<SVGSVGElement>): JSX.Element {
