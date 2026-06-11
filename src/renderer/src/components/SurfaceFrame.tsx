@@ -564,6 +564,15 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
   const isSlotted = !!slotOf(surface) // a stage tile: lattice-snapped, fixed-size, never edge-tiles
   const needsFocusCatcher = !isActive && !isControl && (surface.kind === 'web' || surface.kind === 'app' || surface.kind === 'srcdoc')
+  // A direct click/focus means THIS is the window the user is acting on: raise it AND drop any stale
+  // marquee selection that doesn't include it — ⌘T/⇧⌘T target "the single selection else the
+  // front-most", so a forgotten selection would silently hijack the keybind to an old window.
+  // Clicking a selected member keeps the multi-selection (mac behavior).
+  const focusHere = (): void => {
+    focusSurface(surface.id)
+    const st = useDesktop.getState()
+    if (st.selection.length && !st.selection.includes(surface.id)) st.clearSelection()
+  }
   const paper = isNote ? (NOTE_PAPER[(surface.props?.color as string) || 'coral'] ?? NOTE_PAPER.coral) : undefined
 
   function body(): JSX.Element {
@@ -645,7 +654,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       <div
         className={`window folder${isActive ? ' is-active' : ''}${isSelected ? ' is-selected' : ''}${isDropTarget ? ' drop-target' : ''}`}
         style={{ left: surface.x, top: surface.y, width: surface.w, height: surface.h, zIndex: surface.z }}
-        onPointerDown={() => focusSurface(surface.id)}
+        onPointerDown={focusHere}
       >
         <FolderWidget surface={surface} onDragDown={onBarDown} onDragMove={onBarMove} onDragUp={onBarUp} />
       </div>
@@ -687,8 +696,8 @@ export const SurfaceFrame = memo(function SurfaceFrame({
                   ? surface.z
                   : 500_000 + surface.z
       }}
-      onPointerDown={() => focusSurface(surface.id)}
-      onFocus={() => focusSurface(surface.id)} // a click INTO an iframe/webview focuses the guest, not the host — still raise this window front-most so keybinds target it
+      onPointerDown={focusHere}
+      onFocus={focusHere} // a click INTO an iframe/webview focuses the guest, not the host — still raise this window front-most so keybinds target it
       onContextMenu={(e) => {
         // Item 5b: right-click a native surface (note/tile/frame chrome) → annotation menu at that point.
         // web is handled in main (the webview swallows this); srcdoc's sandboxed iframe also swallows it.
@@ -770,7 +779,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         style={{ position: 'relative', ...(isNote ? { background: 'transparent' } : {}) }}
       >
         {body()}
-        {needsFocusCatcher && <div className="window-focus-catcher" onPointerDown={() => focusSurface(surface.id)} />}
+        {needsFocusCatcher && <div className="window-focus-catcher" onPointerDown={focusHere} />}
       </div>
       {/* macOS-style resize from all sides + corners; above the drag-overlay so it works in control
           mode too (#41). The handles avoid the title-bar controls (traffic lights / eye).

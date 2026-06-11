@@ -10,7 +10,7 @@
 name: release
 on:
   push:
-    branches: [master, agent-runtime-moments]
+    branches: ['**'] # every branch gets its own build channel (tag build-<branch>-<run>)
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
@@ -34,6 +34,11 @@ jobs:
       - run: npm ci
       - name: Stamp version (0.0.1-<run>)
         run: npm version "0.0.1-${{ github.run_number }}" --no-git-tag-version
+      - name: Branch channel
+        run: |
+          SAFE="${GITHUB_REF_NAME//\//-}"
+          echo "SAFE_BRANCH=$SAFE" >> $GITHUB_ENV
+          echo "BUILD_TAG=build-$SAFE-${{ github.run_number }}" >> $GITHUB_ENV
       - name: Import signing cert (when configured)
         if: env.MAC_CERT_P12 != ''
         run: |
@@ -48,7 +53,8 @@ jobs:
         run: npm run build
       - name: Package
         run: |
-          ARGS="--mac zip --arm64 --publish never"
+          # stamp the channel into the app: the updater follows ITS OWN branch; the dev picker shows all
+          ARGS="--mac zip --arm64 --publish never -c.extraMetadata.buildBranch=$SAFE_BRANCH -c.extraMetadata.buildRun=${{ github.run_number }}"
           if [ -z "$MAC_CERT_P12" ]; then
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             echo "[ci] unsigned build (no MAC_CERT_P12 secret)"
@@ -67,9 +73,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.0.1-${{ github.run_number }}"
-          gh release create "$TAG" release/*.zip \
+          gh release create "$BUILD_TAG" release/*.zip \
             --prerelease \
             --target "${{ github.sha }}" \
-            --title "BlitzOS $TAG" \
+            --title "BlitzOS ${{ github.ref_name }} #${{ github.run_number }}" \
             --notes "Auto-build of ${{ github.ref_name }} @ ${{ github.sha }}"

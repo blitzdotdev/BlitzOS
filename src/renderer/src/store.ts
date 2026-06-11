@@ -354,9 +354,18 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       st.clearSurfaceSlot(id)
     } else {
       const stage = stageOfX(cur.x + cur.w / 2, st.viewport)
-      const size = sizeForDims(cur.w, cur.h)
-      const slot = nearestFreeSlot(st.surfaces, latticeFor(st.viewport, stage), size, cur.x + cur.w / 2, cur.y + cur.h / 2, stage, id)
-      if (slot) st.placeSurfaceSlot(id, slot.col, slot.row, size, stage)
+      // A crowded stage must not make ⌘T a silent no-op: when the window's natural span has no
+      // free cells, fall back through smaller spans until one fits (truly full → nothing happens,
+      // matching the placer's contract that tiles never overlap).
+      const start = SIZE_ORDER.indexOf(sizeForDims(cur.w, cur.h))
+      for (let i = start; i >= 0; i--) {
+        const size = SIZE_ORDER[i]
+        const slot = nearestFreeSlot(st.surfaces, latticeFor(st.viewport, stage), size, cur.x + cur.w / 2, cur.y + cur.h / 2, stage, id)
+        if (slot) {
+          st.placeSurfaceSlot(id, slot.col, slot.row, size, stage)
+          break
+        }
+      }
     }
     st.reflowFiles()
   },

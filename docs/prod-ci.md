@@ -9,14 +9,22 @@ the VM never share state.
 - **`electron-builder.yml`** — packages `out/` + `widgets/` into `BlitzOS.app` (arm64 zip).
   The onboarding scan + its prompt `.md`s ship `asarUnpack`'d (the scan runs as a plain-node
   child, which can't read inside an asar); `onboarding.ts` resolves them via `app.asar.unpacked`.
-- **`.github/workflows/release.yml`** — on every push to `master` / `agent-runtime-moments`:
-  stamps version `0.0.1-<run_number>`, builds, packages, publishes a GitHub **prerelease**
-  tagged `v0.0.1-<run_number>` with the zip attached. Signing + notarization turn on
-  automatically once the four secrets exist (below); until then artifacts are unsigned.
-- **`src/main/update.ts`** — in-app OTA: packaged builds poll the repo's newest release (boot
-  + every 30 min); a different version ⇒ download the zip, stage it, and offer **Restart Now**.
-  On restart a detached script swaps the `.app` in place and relaunches. Not Squirrel — works
-  signed or unsigned (it re-strips quarantine after the swap; harmless when notarized).
+- **`.github/workflows/release.yml`** — on every push to ANY branch: stamps version
+  `0.0.1-<run_number>`, builds, packages, publishes a GitHub **prerelease** tagged
+  `build-<branch>-<run_number>` with the zip attached, and bakes `{buildBranch, buildRun}`
+  into the app (electron-builder extraMetadata). Every branch is its own update channel —
+  push a `staging` branch and you get staging builds. Signing + notarization turn on
+  automatically once the secrets exist (below); until then artifacts are unsigned.
+- **`src/main/update.ts`** — in-app OTA: packaged builds poll the repo (boot + every 30 min)
+  and follow ONLY their own branch channel — a newer run of the SAME branch downloads, stages,
+  and offers **Restart Now**; a staging push can never hijack a master install. On restart a
+  detached script swaps the `.app` in place and relaunches. Not Squirrel — works signed or
+  unsigned (it re-strips quarantine after the swap; harmless when notarized).
+- **The dev build picker (⌥⌘U)** — on developer machines only (hardware-UUID allowlist in
+  `update.ts`, or touch `~/.blitzos/dev-machine` on any box), ⌥⌘U opens a hidden window listing
+  EVERY CI build grouped by branch (newest first, your running build marked). Click **Install**
+  on any of them — older, newer, another branch — and it downloads, stages, and swaps the .app
+  on restart. This is how you flip one machine between master / staging / feature builds.
 - **`npm run dist`** (`scripts/dist-mac.sh`) — the same build locally. Signed + notarized
   automatically from the `APPLE_*` exports already in `~/.zshrc`; unsigned without them.
 

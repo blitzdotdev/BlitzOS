@@ -19,7 +19,7 @@ import { registerWidgets } from './widgets'
 import { startSessionPersistence } from './persistence'
 import { registerWallpaperIpc } from './wallpaper'
 import { registerOnboarding, interviewBootTask, claudeCliPath } from './onboarding'
-import { initUpdater } from './update'
+import { initUpdater, openBuildPicker, isDevMachine } from './update'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -64,7 +64,11 @@ function createWindow(): void {
     width: 1440,
     height: 900, // TODO make sure its close to windowless fullscreen
     show: false,
-    fullscreen: FULLSCREEN,
+    // Only pass `fullscreen` when STARTING fullscreen. An EXPLICIT `fullscreen: false` is not
+    // "start windowed" on macOS — it disables the green traffic-light's fullscreen action
+    // entirely (it degrades to zoom/maximize). Omitting the key starts windowed AND keeps the
+    // green button working.
+    ...(FULLSCREEN ? { fullscreen: true } : {}),
     backgroundColor: '#e9e9e7',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
@@ -143,7 +147,13 @@ function createWindow(): void {
   const forwardTileKeybind = (input: Electron.Input): boolean => {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return false
     const cmd = process.platform === 'darwin' ? input.meta : input.control
-    if (!cmd || input.alt || input.code !== 'KeyT') return false
+    if (!cmd) return false
+    // ⌥⌘U — the hidden CI-build picker (developer machines only; see update.ts isDevMachine).
+    if (input.alt && input.code === 'KeyU') {
+      if (isDevMachine()) void openBuildPicker()
+      return isDevMachine()
+    }
+    if (input.alt || input.code !== 'KeyT') return false
     mainWindow?.webContents.send('os:keybind', { id: 'tile', shift: !!input.shift })
     return true
   }
