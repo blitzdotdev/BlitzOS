@@ -83,7 +83,9 @@ export function redactMoment(m) {
   // A 'message' (in-canvas chat) or 'connector' (the user wired/removed an integration) moment is
   // consent by construction, not scraped page content, so it crosses the relay intact.
   if (m.trigger === 'message' || m.trigger === 'connector') return m
-  return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, url: m.url, title: m.title, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: [] }
+  // keep the workspace stamp (v2 scoping): filtering is server-side, but the agent should still SEE
+  // which workspace a moment belongs to (self-awareness + debugging), redacted or not.
+  return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, url: m.url, title: m.title, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: [], ...(m.workspace ? { workspace: m.workspace } : {}) }
 }
 
 /** A short human-readable line for a raw user signal (for the moment's `user` list). */
