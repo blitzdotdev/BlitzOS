@@ -175,6 +175,8 @@ interface DesktopState {
   setControlTransform: (t: CanvasTransform | null) => void
   setCurrentArea: (i: number) => void
   setAreaCount: (n: number) => void
+  /** Jump the camera to a workspace area (set currentArea + retarget the view) — e.g. the Sessions tray's "Area N". */
+  goToArea: (area: number) => void
   addArea: () => void
   panBy: (dx: number, dy: number) => void
   zoomAt: (cursorX: number, cursorY: number, deltaY: number) => void
@@ -216,6 +218,10 @@ interface DesktopState {
   // existing terminal window, else open the first terminal window. The one shared seam for the live
   // session-spawn action, resume-on-load, and the Sessions tray's "Open" — so a session is in one tab.
   openSession: (sessionId: string, title: string, area?: number | null) => void
+  // Close a non-primary chat session (stop its agent + remove its widget/files/area, via the host) and drop
+  // its chat surface + terminal tab locally. Rename updates the title live. Both no-op on the primary '0'.
+  closeChatSession: (sessionId: string) => void
+  renameChatSession: (sessionId: string, newTitle: string) => void
   // Layout undo: the agent auto-applies layouts; the human reverts with Cmd+Z.
   snapshotLayout: () => void
   undoLayout: () => void
@@ -253,6 +259,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   // Pure state mutations (the camera animation on switch is wired by the caller in App.tsx).
   setCurrentArea: (i) => set((s) => ({ currentArea: clamp(Math.round(i), 0, s.areaCount - 1) })),
   setAreaCount: (n) => set((s) => ({ areaCount: Math.max(1, Math.round(n)), currentArea: clamp(s.currentArea, 0, Math.max(0, Math.round(n) - 1)) })),
+  goToArea: (area) =>
+    set((s) => {
+      const a = clamp(Math.round(area), 0, s.areaCount - 1)
+      return { currentArea: a, transform: viewTransform(s.mode, s.viewport, a, s.areaCount) }
+    }),
   addArea: () => set((s) => ({ areaCount: s.areaCount + 1, currentArea: s.areaCount })),
 
   setSelection: (ids) => set({ selection: ids }),
@@ -644,6 +655,39 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     )
     if (term) get().addTab(term.id, { id: sessionId, title, sessionId })
     else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, area: want, tabs: [{ id: sessionId, title, sessionId }], activeTab: 0 })
+  },
+
+  closeChatSession: (sessionId) => {
+    const id = String(sessionId)
+    if (id === '0') return // the primary chat is never closed
+    // Tell the host to stop the agent + delete the session's files/area (it broadcasts a 'close' for the chat
+    // widget + a 'session-remove'). Optimistically drop the chat surface + the agent's terminal TAB locally
+    // (the host can't reach a renderer-only tab) so the UI updates instantly.
+    void (window.agentOS as unknown as { closeChatSession?: (s: string) => Promise<unknown> })?.closeChatSession?.(id)
+    set((s) => {
+      let surfaces = s.surfaces.filter((w) => !(w.role === 'chat' && String(w.sessionId ?? '') === id))
+      surfaces = surfaces
+        .map((w) => {
+          if (w.kind !== 'native' || w.component !== 'terminal' || !w.tabs) return w
+          const tabs = w.tabs.filter((t) => t.sessionId !== id)
+          return tabs.length === w.tabs.length ? w : { ...w, tabs, activeTab: clamp(w.activeTab || 0, 0, Math.max(0, tabs.length - 1)) }
+        })
+        .filter((w) => !(w.kind === 'native' && w.component === 'terminal' && w.tabs && w.tabs.length === 0)) // drop an emptied terminal window
+      return { surfaces }
+    })
+  },
+  renameChatSession: (sessionId, newTitle) => {
+    const id = String(sessionId)
+    const title = String(newTitle || '').trim()
+    if (!title) return
+    void (window.agentOS as unknown as { renameChatSession?: (s: string, t: string) => Promise<unknown> })?.renameChatSession?.(id, title)
+    set((s) => ({
+      surfaces: s.surfaces.map((w) => {
+        if (w.role === 'chat' && String(w.sessionId ?? '') === id) return { ...w, title }
+        if (w.kind === 'native' && w.component === 'terminal' && w.tabs) return { ...w, tabs: w.tabs.map((t) => (t.sessionId === id ? { ...t, title } : t)) }
+        return w
+      })
+    }))
   },
 
   toggleMaximize: (id) => {

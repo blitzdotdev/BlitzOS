@@ -74,7 +74,9 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
     // A chat session's claude runs in a VISIBLE terminal in its area; index.ts wires this from the shared
     // agent-session core + the session-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
-    launchAgent: (id, area, title) => launchAgentHook?.(id, area, title)
+    launchAgent: (id, area, title) => launchAgentHook?.(id, area, title),
+    // Stop a session's agent (when closing it) — index.ts wires this to session-ops.stopSession.
+    stopAgent: (id) => stopAgentHook?.(id)
   })
   wsHost.hydrateOnBoot()
   wsHost.startWatch()
@@ -261,6 +263,10 @@ let launchAgentHook: ((sessionId: string, area: number, title?: string) => void)
 export function setLaunchAgent(fn: (sessionId: string, area: number, title?: string) => void): void {
   launchAgentHook = fn
 }
+let stopAgentHook: ((sessionId: string) => void) | null = null
+export function setStopAgent(fn: (sessionId: string) => void): void {
+  stopAgentHook = fn
+}
 /** Open a new chat session: mint its id, register + live-surface its chat widget; addChatSession launches
  *  its claude terminal (via the launchAgent seam). focus:true (a USER '+ New') follows the camera to it. */
 export function osSpawnChatSession(title?: string, focus = false): { id: string; title: string } {
@@ -268,6 +274,14 @@ export function osSpawnChatSession(title?: string, focus = false): { id: string;
   const id = wsHost.newChatSessionId()
   wsHost.addChatSession(id, title, { focus })
   return { id, title: title || `Chat ${id}` }
+}
+/** Close a non-primary chat session (stop its agent + remove its widget/files/area). */
+export function osCloseChatSession(sessionId: string): { ok: boolean; error?: string } {
+  return wsHost ? wsHost.closeChatSession(sessionId) : { ok: false, error: 'no workspace host' }
+}
+/** Rename a chat session (cosmetic title). */
+export function osRenameChatSession(sessionId: string, newTitle: string): { ok: boolean; error?: string; title?: string } {
+  return wsHost ? wsHost.renameChatSession(sessionId, newTitle) : { ok: false, error: 'no workspace host' }
 }
 /** Boot: re-exec the claude terminal for every chat session on the current relay url (+ --resume). */
 export function osResumeAgentsOnBoot(): void {

@@ -17,7 +17,7 @@
 // Shared module (the control-core.mjs / perception-core.mjs pattern): plain Node, importable
 // by the server backend now and Electron main later.
 
-import { mkdirSync, writeFileSync, appendFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, lstatSync, copyFileSync, cpSync, unlinkSync, realpathSync } from 'node:fs'
+import { mkdirSync, writeFileSync, appendFileSync, renameSync, readFileSync, existsSync, readdirSync, statSync, lstatSync, copyFileSync, cpSync, unlinkSync, rmSync, realpathSync } from 'node:fs'
 import { join, dirname, resolve, sep, extname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
@@ -987,6 +987,27 @@ export function removeSurfaceFile(dir, id) {
   } catch {
     return { ok: false }
   }
+}
+
+/**
+ * Delete everything a CHAT session owns when it's closed: its transcript (chat-<id>.md), its (possibly
+ * agent-customized) widget UI (blitz-<id>-chat.html), and its session dir (.blitzos/sessions/<id>/ —
+ * meta.json + transcript.jsonl + bootstrap.txt). removeSurfaceFile can't do this (a chat surface has no
+ * idToPath entry). Every delete is markWrite-stamped so the folder watcher skips its own writes. Never
+ * called for primary '0' (the caller guards) — but chatFileName/sysRendererName branch on '0' anyway.
+ */
+export function removeChatSessionFiles(dir, sessionId) {
+  const id = String(sessionId)
+  // SECURITY: a chat-session id is numeric. Refuse anything else (esp. '..'/separators) — a crafted id would
+  // resolve to a valid-but-wrong path INSIDE the workspace (safeJoin only blocks escapes OUT of it) and
+  // rmSync the wrong tree (e.g. id '..' → the whole .blitzos dir). '0' is the primary — never deleted here.
+  if (!/^[1-9][0-9]*$/.test(id)) return
+  for (const rel of [chatFileName(id), sysRendererName('chat', id)]) {
+    const abs = safeJoin(dir, rel)
+    if (abs && existsSync(abs)) { try { markWrite(resolve(abs)); unlinkSync(abs) } catch { /* best-effort */ } }
+  }
+  const sdir = safeJoin(dir, join('.blitzos', 'sessions', id))
+  if (sdir && existsSync(sdir)) { try { markWrite(resolve(sdir)); rmSync(sdir, { recursive: true, force: true }) } catch { /* best-effort */ } }
 }
 
 // ===========================================================================================

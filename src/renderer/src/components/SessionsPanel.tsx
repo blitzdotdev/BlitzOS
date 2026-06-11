@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
 import { useDesktop, nextTerminalName } from '../store'
 
@@ -47,7 +47,12 @@ function statusColor(s: SessionMeta): string {
 
 export function SessionsPanel({ surface }: { surface: Surface }): JSX.Element {
   const [sessions, setSessions] = useState<SessionMeta[]>([])
+  const [editing, setEditing] = useState<string | null>(null) // session id whose title is being renamed inline
+  const skipBlur = useRef(false) // set on Enter/Escape so the input's onBlur doesn't double-commit or commit-after-cancel
   const openSession = useDesktop((s) => s.openSession)
+  const closeChatSession = useDesktop((s) => s.closeChatSession)
+  const renameChatSession = useDesktop((s) => s.renameChatSession)
+  const goToArea = useDesktop((s) => s.goToArea)
   void surface
 
   const refresh = useCallback(() => {
@@ -103,14 +108,34 @@ export function SessionsPanel({ surface }: { surface: Surface }): JSX.Element {
             Click <strong>+ New</strong> (or “Terminal” in the toolbar) to start one.
           </div>
         )}
-        {sessions.map((s) => (
+        {sessions.map((s) => {
+          const isAgent = s.kind === 'agent'
+          const isPrimary = isAgent && s.id === '0'
+          return (
           <div key={s.id} className="sess-row" onDoubleClick={() => openSession(s.id, s.title, s.area)}>
             <span className="sess-dot" style={{ background: statusColor(s) }} title={s.status} />
             <div className="sess-main">
-              <div className="sess-title">{s.title || s.id.slice(0, 8)}</div>
+              {editing === s.id ? (
+                <input
+                  className="sess-title-edit"
+                  defaultValue={s.title || ''}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { skipBlur.current = true; const v = (e.target as HTMLInputElement).value.trim(); if (v && v !== s.title) renameChatSession(s.id, v); setEditing(null); setTimeout(refresh, 200) }
+                    else if (e.key === 'Escape') { skipBlur.current = true; setEditing(null) } // cancel — do NOT commit
+                  }}
+                  onBlur={(e) => { if (skipBlur.current) { skipBlur.current = false; return } const v = e.target.value.trim(); if (v && v !== s.title) renameChatSession(s.id, v); setEditing(null); setTimeout(refresh, 200) }}
+                />
+              ) : (
+                <div className="sess-title" title="Double-click to rename" onDoubleClick={(e) => { e.stopPropagation(); setEditing(s.id) }}>
+                  {s.title || s.id.slice(0, 8)}
+                </div>
+              )}
               <div className="sess-meta">
-                <span className="sess-kind">{s.kind === 'agent' ? 'agent' : 'shell'}</span>
-                {s.command && <span className="sess-cmd"> · {s.command}</span>}
+                <span className="sess-kind">{isPrimary ? 'agent · primary' : isAgent ? 'agent' : 'shell'}</span>
+                {Number.isInteger(s.area) && (
+                  <button className="sess-area" title={`Go to area ${s.area}`} onClick={(e) => { e.stopPropagation(); goToArea(s.area as number) }}> · Area {s.area}</button>
+                )}
                 <span className="sess-status">
                   {' · '}
                   {s.status}
@@ -149,9 +174,19 @@ export function SessionsPanel({ surface }: { surface: Surface }): JSX.Element {
                   Resume
                 </button>
               )}
+              {/* Close = full teardown of an agent chat session (stop + delete files/area). Never the primary. */}
+              {isAgent && !isPrimary && (
+                <button
+                  className="sess-btn danger"
+                  title="Close this agent — stop it and delete its chat + files"
+                  onClick={() => { closeChatSession(s.id); setTimeout(refresh, 400) }}
+                >
+                  Close
+                </button>
+              )}
             </div>
           </div>
-        ))}
+        )})}
       </div>
     </div>
   )

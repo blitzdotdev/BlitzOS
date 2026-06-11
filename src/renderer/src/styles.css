@@ -410,6 +410,29 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: text;
+}
+.sess-title-edit {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface, #fff);
+  border: 1px solid var(--accent, #4493f8);
+  border-radius: 4px;
+  padding: 1px 5px;
+  width: 100%;
+  outline: none;
+}
+.sess-area {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent, #4493f8);
+  cursor: pointer;
+}
+.sess-area:hover {
+  text-decoration: underline;
 }
 .sess-meta {
   font-size: 11px;

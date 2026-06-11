@@ -18,6 +18,7 @@ const ESTABLISH_MS = 8000 // mark an agent's claude session "established" after 
 export function createSessionManager({ host, sessionsDir, emit = () => {}, markWrite = () => {}, rebuildAgentCommand = null }) {
   const live = new Map() // id -> { meta, buf, flushTimer, establishTimer, restartTimer, stopping, unsubData, unsubExit }
   const agentFails = new Map() // id -> consecutive fast-exit count (drives the auto-restart backoff)
+  const stopRequested = new Set() // ids a close/stop requested — so a spawn that RACES the stop is aborted
   let shuttingDown = false // set on shutdown so onExit doesn't auto-restart agents as the app quits
 
   const dirOf = (id) => join(sessionsDir, id)
@@ -93,12 +94,12 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
       // set up the loop then stopped calling tools), and a crash also ends it. Auto-restart it (--resume keeps
       // the conversation; the relay-url file gives the live url), UNLESS it was explicitly stopped or we're
       // shutting down. Back off on rapid failures so a broken agent (auth, etc.) can't hot-loop.
-      if (meta.kind === 'agent' && meta.claudeSessionId && !rec.stopping && !shuttingDown) {
+      if (meta.kind === 'agent' && meta.claudeSessionId && !rec.stopping && !shuttingDown && !stopRequested.has(id)) {
         const ranMs = (meta.endedAt || Date.now()) - (meta.createdAt || meta.endedAt)
         const fails = ranMs < 15000 ? (agentFails.get(id) || 0) + 1 : 0 // a healthy (≥15s) run resets the backoff
         agentFails.set(id, fails)
         const backoff = fails === 0 ? 1500 : Math.min(2000 * 2 ** fails, 60000)
-        rec.restartTimer = setTimeout(() => { if (!shuttingDown && live.get(id) === rec) restartSession(id).catch(() => {}) }, backoff)
+        rec.restartTimer = setTimeout(() => { if (!shuttingDown && live.get(id) === rec && !stopRequested.has(id)) restartSession(id).catch(() => {}) }, backoff)
       }
     })
     return rec
@@ -106,8 +107,9 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
 
   /** Spawn a session. opts: { kind, command, args, cwd, env, cols, rows, title, autonomy, id? } */
   async function spawnSession(opts = {}) {
-    await host.start()
     const id = opts.id || randomUUID()
+    stopRequested.delete(id) // a deliberate (re)spawn supersedes any earlier stop intent for this id
+    await host.start()
     const meta = {
       id,
       kind: opts.kind === 'agent' ? 'agent' : 'pty',
@@ -130,6 +132,10 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
     try { host.remove(id) } catch { /* no such window — fine */ }
     const info = await host.spawn(id, { command: opts.command, cwd: opts.cwd, env: opts.env, cols: meta.cols, rows: meta.rows })
     if (!info) return null // spawn rejected (illegal control char in a field, or the control client died)
+    // A close/stop landed DURING our (multi-tick) spawn — e.g. a flapping agent's auto-restart was already
+    // in-flight when closeChatSession ran. Honor the stop: kill the just-spawned window so a closed session
+    // can't resurrect alongside its now-deleted files. (Cleared at the top for a deliberate re-spawn.)
+    if (stopRequested.has(id)) { try { host.remove(id) } catch { /* gone */ } return null }
     meta.pid = info.pid ?? null
     writeMeta(meta)
     wireSession(id, meta)
@@ -143,6 +149,7 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
     return host.resize(id, cols, rows)
   }
   function stopSession(id) {
+    stopRequested.add(id) // record intent even if there's no live rec yet — aborts a spawn racing this stop
     const r = live.get(id)
     if (r) { r.stopping = true; if (r.restartTimer) { clearTimeout(r.restartTimer); r.restartTimer = null } } // explicit stop ⇒ do NOT auto-restart
     agentFails.delete(id)

@@ -257,6 +257,14 @@
     spawnChatSession: function (title) {
       fetch(API + '/os/chat-session-spawn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: title }) }).catch(function () {})
     },
+    // Close a non-primary chat session (stop its agent + remove its widget/files/area).
+    closeChatSession: function (id) {
+      return postJSON('/os/chat-session-close', { id: id }, { ok: false })
+    },
+    // Rename a chat session (cosmetic title).
+    renameChatSession: function (id, title) {
+      return postJSON('/os/chat-session-rename', { id: id, title: title }, { ok: false })
+    },
     sessionList: function () {
       return postJSON('/os/session-list', {}, { sessions: [] }).then(function (r) { return (r && r.sessions) || [] })
     },

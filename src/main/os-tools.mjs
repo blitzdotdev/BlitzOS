@@ -361,6 +361,31 @@ export function makeOsTools(ops) {
       }
     },
     {
+      path: '/close_chat_session',
+      description:
+        "Close a chat session you previously spawned — stops its agent, removes its chat widget + terminal, deletes its files, and frees its workspace area. Args: {id}. The PRIMARY session '0' (the user's main chat) cannot be closed. Returns { ok } or { ok:false, error }.",
+      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+      handler: ({ body }) => {
+        const id = String(parse(body).id || '')
+        if (!id) return { status: 400, body: { error: 'id required' } }
+        if (id === '0') return { status: 400, body: { error: "cannot close the primary chat session '0'" } }
+        if (typeof ops.closeChatSession !== 'function') return { status: 501, body: { error: 'chat sessions not supported on this transport' } }
+        return ops.closeChatSession(id)
+      }
+    },
+    {
+      path: '/rename_chat_session',
+      description: 'Rename a chat session (cosmetic title shown in the widget + Sessions tray). Args: {id, title}. Returns { ok, title } or { ok:false, error }.',
+      input_schema: { type: 'object', required: ['id', 'title'], properties: { id: { type: 'string' }, title: { type: 'string' } } },
+      handler: ({ body }) => {
+        const b = parse(body)
+        const id = String(b.id || '')
+        if (!id) return { status: 400, body: { error: 'id required' } }
+        if (typeof ops.renameChatSession !== 'function') return { status: 501, body: { error: 'chat sessions not supported on this transport' } }
+        return ops.renameChatSession(id, String(b.title ?? ''))
+      }
+    },
+    {
       path: '/spawn_session',
       description:
         "Start a SESSION — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (claude/codex), a build/test runner, or any long job. The session SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/sessions/. If you are a non-primary session, pass {session:\"<your id>\"} so the terminal opens in YOUR area, not the user's. Args: {command (e.g. 'bash' or \"claude -p '…'\"), kind?:'pty'|'agent', cwd?, title?, cols?, rows?, session?}. Returns { session }.",

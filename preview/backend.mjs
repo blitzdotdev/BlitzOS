@@ -438,7 +438,8 @@ const wsHost = createWorkspaceHost({
   onSurfaces: (surfaces) => (SERVER_MODE ? reconcileSurfaces(surfaces) : undefined),
   defaultMode: 'canvas',
   // A chat session's claude runs in a VISIBLE terminal in its area (no headless brain). null ⇒ BLITZ_AGENT off.
-  launchAgent: launchAgent ? (id, area, title) => launchAgent(id, area, title) : undefined
+  launchAgent: launchAgent ? (id, area, title) => launchAgent(id, area, title) : undefined,
+  stopAgent: (id) => { serverSessionOps.stopSession(id) } // closing a chat session stops its agent (no auto-restart)
 })
 wsHost.hydrateOnBoot()
 
@@ -569,6 +570,8 @@ const serverOps = {
   },
   say: (text, sessionId) => wsHost.appendChat('agent', String(text), sessionId), // append to that session's chat.md + broadcast
   customizeWidget: (name, html, sessionId) => wsHost.customizeWidget(String(name), String(html), sessionId),
+  closeChatSession: (id) => wsHost.closeChatSession(String(id)),
+  renameChatSession: (id, title) => wsHost.renameChatSession(String(id), String(title ?? '')),
   // Open a new chat session: register + surface it; addChatSession launches its claude terminal (launchAgent).
   // focus:true (a USER '+ New') tells the renderer to follow the camera to the new area.
   spawnChatSession: async (title, focus = false) => {
@@ -853,6 +856,20 @@ const server = createServer(async (req, res) => {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
     req.on('end', () => { const b = toolBody(body); Promise.resolve(serverOps.spawnChatSession(b.title != null ? String(b.title) : undefined, true)).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
+    return
+  }
+  // Close a chat session (stop its agent + remove its widget/files/area) — the UI Close button / agent tool.
+  if (path === '/api/os/chat-session-close' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, serverOps.closeChatSession(String(b.id || ''))) })
+    return
+  }
+  // Rename a chat session (cosmetic title) — the UI rename / agent tool.
+  if (path === '/api/os/chat-session-rename' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, serverOps.renameChatSession(String(b.id || ''), String(b.title ?? ''))) })
     return
   }
   if (path === '/api/os/session-list' && req.method === 'POST') {

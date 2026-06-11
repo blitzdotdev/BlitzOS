@@ -3,7 +3,7 @@ import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, setLaunchAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnChatSession } from './osActions'
+import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, setLaunchAgent, setStopAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnChatSession, osCloseChatSession, osRenameChatSession } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronSessionOps, electronActionItems, setSessionGetUrl } from './electron-os-tools'
 import { prepareAgentLaunch } from './agent-session.mjs'
@@ -202,6 +202,8 @@ app.whenReady().then(() => {
   ipcMain.handle('os:session-read', (_e, id: string) => electronSessionOps.readSession(String(id)))
   ipcMain.on('os:session-spawn', (_e, opts: { command?: string; title?: string }) => { void electronSessionOps.spawnSession(opts || {}) })
   ipcMain.on('os:chat-session-spawn', (_e, p?: { title?: string }) => { try { osSpawnChatSession(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
+  ipcMain.handle('os:close-chat-session', (_e, id: string) => { try { return osCloseChatSession(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
+  ipcMain.handle('os:rename-chat-session', (_e, p: { id: string; title: string }) => { try { return osRenameChatSession(String(p?.id), String(p?.title ?? '')) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   ipcMain.handle('os:session-list', () => electronSessionOps.listSessions())
   ipcMain.on('os:session-stop', (_e, id: string) => electronSessionOps.stopSession(String(id)))
   ipcMain.on('os:session-restart', (_e, id: string) => { void electronSessionOps.restartSession(String(id)) })
@@ -237,6 +239,7 @@ app.whenReady().then(() => {
       void electronSessionOps.spawnSession({ id, kind: 'agent', command, cwd: ws, area, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })
     }
     setLaunchAgent(launchAgent)
+    setStopAgent((id) => { electronSessionOps.stopSession(id) }) // closing a chat session stops its agent (no auto-restart)
     // Resume/reattach all chat-session agents once the relay URL is live + survivors adopted. Fire once.
     let resumed = false
     const resumeAll = async (): Promise<void> => {

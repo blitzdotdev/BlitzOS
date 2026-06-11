@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus' | 'session-spawn' | 'session-data' | 'session-exit' | 'action-item' | 'action-item-removed'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus' | 'session-spawn' | 'session-data' | 'session-exit' | 'session-remove' | 'session-rename' | 'action-item' | 'action-item-removed'
   [k: string]: unknown
 }
 
@@ -102,6 +102,14 @@ const api = {
    *  The host broadcasts a `create` for the new chat surface, so it appears without a refresh. */
   spawnChatSession(title?: string): void {
     ipcRenderer.send('os:chat-session-spawn', { title })
+  },
+  /** Close a non-primary chat session: stop its agent + remove its widget, files, and area. */
+  closeChatSession(sessionId: string): Promise<{ ok: boolean; error?: string }> {
+    return (ipcRenderer.invoke('os:close-chat-session', sessionId) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
+  },
+  /** Rename a chat session (cosmetic title). */
+  renameChatSession(sessionId: string, newTitle: string): Promise<{ ok: boolean; error?: string }> {
+    return (ipcRenderer.invoke('os:rename-chat-session', { id: sessionId, title: newTitle }) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
   /** List every session in the active workspace (running + persisted) — for the Sessions tray. */
   sessionList(): Promise<unknown[]> {

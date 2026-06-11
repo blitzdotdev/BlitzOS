@@ -12,6 +12,9 @@ export interface WorkspaceHostAdapter {
   /** Launch (or resume) the claude terminal for a chat/agent session in its area. Wired by each transport
    *  from the shared agent-session core + its session-ops; absent ⇒ no agent auto-launch (BLITZ_AGENT off). */
   launchAgent?: (sessionId: string, area: number, title?: string) => void
+  /** Stop a session's agent terminal (session-ops.stopSession — sets the stopping flag so it won't auto-restart).
+   *  Wired by each transport; used when closing a chat session. */
+  stopAgent?: (sessionId: string) => void
 }
 
 export interface WorkspaceHost {
@@ -42,6 +45,8 @@ export interface WorkspaceHost {
   chatSessionIds(): string[]
   newChatSessionId(): string
   addChatSession(sessionId: string, title?: string, opts?: { focus?: boolean }): Record<string, unknown>
+  closeChatSession(sessionId: string): { ok: boolean; error?: string }
+  renameChatSession(sessionId: string, newTitle: string): { ok: boolean; error?: string; title?: string }
   resumeAgentsOnBoot(): void
   setRelayUrl(url: string | null | undefined): void
   group(name: string, memberIds: string[], x?: number, y?: number, kind?: 'board' | 'folder'): { ok: true; folder: string; moved: number } | { error: string }

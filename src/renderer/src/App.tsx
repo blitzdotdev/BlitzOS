@@ -483,6 +483,19 @@ export default function App(): JSX.Element {
           const its = (panel.props?.items as Array<{ id: string }>) ?? []
           st.updateSurfaceProps(panel.id, { items: its.filter((x) => x.id !== id) })
         }
+      } else if (a.type === 'session-remove') {
+        // A chat session was closed (host removed its widget via the 'close' broadcast + its files). Collapse
+        // the now-empty area: apply the host's recomputed areaCount (clamps currentArea so the camera doesn't
+        // strand on a vanished area). Also drop the session's terminal tab if it's still around.
+        const cur = useDesktop.getState()
+        if (Number.isInteger(a.areaCount) && (a.areaCount as number) < cur.areaCount) cur.setAreaCount(a.areaCount as number)
+        const rid = String(a.id)
+        for (const w of cur.surfaces) {
+          if (w.kind === 'native' && w.component === 'terminal' && w.tabs?.some((t) => t.sessionId === rid)) {
+            const tab = w.tabs.find((t) => t.sessionId === rid)
+            if (tab) st.closeTab(w.id, tab.id)
+          }
+        }
       }
     })
   }, [])

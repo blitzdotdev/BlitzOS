@@ -18,6 +18,7 @@ import {
   createFolder,
   listDir,
   removeSurfaceFile,
+  removeChatSessionFiles,
   ensureSystemRenderer,
   readSystemRenderer,
   writeSystemRenderer,
@@ -302,6 +303,54 @@ export function createWorkspaceHost(a) {
       try { a.launchAgent(id, areaForSession(id)) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) }
     }
   }
+  /** Close a NON-primary chat session: stop its agent (no auto-restart), remove its chat widget surface +
+   *  ALL its files (chat-<id>.md, blitz-<id>-chat.html, .blitzos/sessions/<id>/), and collapse its now-empty
+   *  area (areaCount recomputes DOWN). Primary '0' is never closable. Idempotent. */
+  function closeChatSession(sessionId) {
+    const id = String(sessionId)
+    if (id === '0') return { ok: false, error: 'cannot close the primary chat session' }
+    // SECURITY: a chat-session id is always numeric (newChatSessionId). Reject anything else so a crafted id
+    // (e.g. '..' or '../x') can't path-traverse in removeChatSessionFiles and delete the wrong tree —
+    // close_chat_session is reachable from the UNTRUSTED relay agent.
+    if (!/^[0-9]+$/.test(id)) return { ok: false, error: 'invalid session id' }
+    if (switching) return { ok: false, error: 'switch in progress' }
+    try { a.stopAgent?.(id) } catch (e) { console.error('[workspace] stopAgent failed for', id, e?.message || e) } // sets stopping → no auto-restart
+    removeChatSessionFiles(activeWorkspace, id) // delete the session dir FIRST so chatSessionIds() drops it before we recompute areaCount
+    const sid = chatSurfaceId(id)
+    const areaCount = Math.max(1, maxChatAreaCount())
+    try {
+      const st = a.getState()
+      if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.filter((s) => s && s.id !== sid), areaCount })
+    } catch { /* adapter without getState/setState */ }
+    a.broadcast({ type: 'close', id: sid }) // renderer drops the chat widget (+ its terminal tab — see store.closeChatSession)
+    a.broadcast({ type: 'session-remove', id, areaCount }) // tray re-lists + renderer collapses the empty area
+    return { ok: true }
+  }
+  /** Rename a chat session (cosmetic — the id stays the file/area key). Updates meta + the widget title live. */
+  function renameChatSession(sessionId, newTitle) {
+    const id = String(sessionId)
+    const title = String(newTitle || '').trim()
+    if (!title) return { ok: false, error: 'title required' }
+    // SECURITY: numeric id only — else the meta.json write below (raw join on the id) path-escapes the
+    // workspace (e.g. id '../../../../tmp/evil'). Untrusted-relay reachable via rename_chat_session.
+    if (!/^[0-9]+$/.test(id)) return { ok: false, error: 'invalid session id' }
+    if (switching) return { ok: false, error: 'switch in progress' }
+    try {
+      const mp = join(activeWorkspace, '.blitzos', 'sessions', id, 'meta.json')
+      let m = {}
+      try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
+      mkdirSync(join(mp, '..'), { recursive: true })
+      writeFileSync(mp, JSON.stringify({ ...m, id, kind: m.kind || 'agent', title }, null, 2))
+    } catch (e) { return { ok: false, error: e?.message || 'rename failed' } }
+    const sid = chatSurfaceId(id)
+    try {
+      const st = a.getState()
+      if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.id === sid ? { ...s, title } : s)) })
+    } catch { /* adapter without getState/setState */ }
+    a.broadcast({ type: 'update', id: sid, patch: { title } })
+    a.broadcast({ type: 'session-rename', id, title })
+    return { ok: true, title }
+  }
   /** Publish the CURRENT relay base url to <ws>/.blitzos/relay-url — the file every agent re-reads on each
    *  call, so a reattached agent self-heals onto the fresh url after BlitzOS restarts (no privileged brain to
    *  restart). Called on boot + on every relay url change by both transports. */
@@ -526,6 +575,8 @@ export function createWorkspaceHost(a) {
     chatSessionIds,
     newChatSessionId,
     addChatSession,
+    closeChatSession,
+    renameChatSession,
     resumeAgentsOnBoot,
     setRelayUrl,
     group,

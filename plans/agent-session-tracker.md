@@ -22,6 +22,7 @@ The living checklist for the BlitzOS agent-session work, so nothing is forgotten
 ## 🔴 Bugs found → ✅ FIXED + verified
 - ✅ **Stale relay URL on reattach** — the relay re-mints the URL each run; a reattached agent held a dead url → disconnected. **Fixed:** (a) the bootstrap now inlines `$(cat .blitzos/relay-url)` into every curl (BlitzOS writes that file on every url change) so a running agent self-heals mid-run; (b) on boot we **re-exec** every chat agent on the CURRENT url + `--resume` (reattach alone was unreliable — the agent gave up during downtime). Verified: agents reconnect + reply across 2 restarts, no duplicates.
 - ✅ **`claudeEstablished` crash-loop** (review blocker, live-confirmed: `--session-id <existing>` → "already in use") — established was only set on a live exit, lost on a crash-while-down. **Fixed:** persist it proactively at 8s of healthy uptime + in `restore()`'s adopt-as-exited path → a re-exec always `--resume`s an established id. Verified.
+- ✅ **Agent died + stayed dead** (found during this verification) — `claude -p` exits when its turn ends (even code 0), and the tmux model only re-launched on a BlitzOS restart (lost the headless supervisor). **Fixed (`4611bb5`):** session-manager auto-restarts a dead agent (→ --resume + live url) with backoff, unless explicitly stopped / shutting down; bootstrap hardened to keep an unbroken poll chain. Verified: kill → auto-respawn → reconnect, no hot-loop.
 
 ## 🔧 Remove obsolete / brain references (asked)
 - ⬜ `restartBrain` no-op seam — remove from relay.mjs / relay.d.mts / agentSocket.ts / backend.mjs / index.ts (the new url-file self-heal replaces its purpose).
@@ -30,12 +31,12 @@ The living checklist for the BlitzOS agent-session work, so nothing is forgotten
 - ⬜ `scripts/blitz-brain-poll.sh` — obsolete manual /events poller; remove.
 - ⬜ Stale "brain" comments (perception-core, workspace.mjs, backend.mjs). *(workspace `.workspace/*` notes are agent DATA + gitignored — leave.)*
 
-## 🔧 UX for real user use (assess + fix)
-- ⬜ Name a session from "+ New" (today → "Chat N" / "Agent N"; goal wants named/resumable).
-- ⬜ Close / delete a chat session from the UI (today append-only).
-- ⬜ Sessions tray now lists agents + shells together — confirm Open/Resume/Stop are coherent for agents.
-- ⬜ Discoverability: after "+ New" the camera follows to the new area — make returning obvious.
-- ⬜ Default-off (BLITZ_AGENT unset): sessions persist but no claude runs — is that legible?
+## ✅ UX for real user use — DONE + verified (chromium)
+- ✅ **Close / delete** a chat session — close button on a non-primary chat widget + a tray Close; shared `closeChatSession` stops the agent (no auto-restart), removes the widget + terminal tab + files (`chat-<id>.md`/`blitz-<id>-chat.html`/`.blitzos/sessions/<id>`) + collapses the area. Primary '0' is non-closable (guarded at SurfaceFrame, tray, store, host, tool). Also a `close_chat_session` agent tool.
+- ✅ **Rename** — inline rename in the tray (Enter commits, Escape cancels, blur commits, no double-fire); shared `renameChatSession` updates meta + the widget title live. Also a `rename_chat_session` tool.
+- ✅ **Sessions tray pass** — agent rows show kind + **Area label (jump)** + Open/Stop/Resume/Close.
+- 🔒 **3 security blockers from the review FIXED + verified**: path-traversal in `removeChatSessionFiles` (a crafted id `..` could rmSync the whole `.blitzos`) and in `renameChatSession`'s meta write → both now require a numeric id (rejected: `{ok:false,'invalid session id'}`, `.blitzos` intact, no `/tmp` write); the deferred-restart race (a close mid-`restartSession` could resurrect a closed agent) → a `stopRequested` set aborts a spawn that races a stop.
+- ⬜ (optional, not blocking) Name-on-"+ New" prompt (today auto-named, rename-after works); default-off legibility.
 
 ## 🔧 Electron ↔ server divergence (full audit)
 - 🔧 launchAgent + boot-resume — audited equivalent.

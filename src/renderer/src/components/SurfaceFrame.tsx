@@ -29,6 +29,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
+  const closeChatSession = useDesktop((s) => s.closeChatSession)
   const toggleMaximize = useDesktop((s) => s.toggleMaximize)
   const minimizeSurface = useDesktop((s) => s.minimizeSurface)
   const setActiveTab = useDesktop((s) => s.setActiveTab)
@@ -563,8 +564,14 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         {/* macOS traffic lights: red=close, yellow=minimize, green=zoom. Colored only when active. */}
         <div className="traffic" onPointerDown={stop}>
           {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
-              reconcile (the file still exists), so only offer zoom; delete the file to remove it. */}
-          {!isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
+              reconcile (the file still exists), so only offer zoom; delete the file to remove it.
+              A NON-primary chat widget closes its whole SESSION (stop the agent + delete its files/area);
+              the PRIMARY chat ('0') is pinned + never closable, so it gets no close button. */}
+          {surface.role === 'chat'
+            ? surface.sessionId && String(surface.sessionId) !== '0'
+              ? <button className="tl tl-close" title="Close session — stop this agent and remove its chat" onClick={() => closeChatSession(String(surface.sessionId))} />
+              : null
+            : !isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
           {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />}
           <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
         </div>
