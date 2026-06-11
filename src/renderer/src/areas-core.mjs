@@ -8,7 +8,7 @@
 // windows land in its own area and never disturb the user's primary (area 0).
 
 // Fixed-desktop chrome insets (px): the top titlebar, the left dock, the bottom toolbar, right pad.
-const SIDEBAR = 52
+const SIDEBAR = 64
 const TITLEBAR = 32
 const TOOLBAR = 64
 const RIGHTPAD = 24

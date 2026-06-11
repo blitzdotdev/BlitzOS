@@ -1515,7 +1515,7 @@ button {
   top: 32px;
   left: 0;
   bottom: 0;
-  width: 52px;
+  width: 64px;
   z-index: 1500;
   background: color-mix(in srgb, var(--surface) 78%, transparent);
   border-right: 1px solid var(--hairline);
@@ -1535,10 +1535,10 @@ button {
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  width: 64px;
+  width: 76px;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 12px 0 10px 6px;
+  padding: 12px 0 10px 7px;
   box-sizing: border-box;
 }
 .sidebar-apps::-webkit-scrollbar {
@@ -1564,8 +1564,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   border-radius: var(--radius-button);
   border: none;
   background: var(--surface-raised);
@@ -1594,13 +1594,14 @@ button {
 .sidebar-app.minimized::after {
   content: '';
   position: absolute;
-  right: 5px;
+  left: 50%;
   bottom: 5px;
   width: 8px;
   height: 3px;
   border-radius: 999px;
   background: var(--accent);
   opacity: 0.8;
+  transform: translateX(-50%);
 }
 .sidebar-app.is-minimizing,
 .sidebar-app.is-restoring {
@@ -1617,8 +1618,8 @@ button {
   display: inline-flex;
 }
 .sidebar-app-ic svg {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
 }
 .sidebar-app-label {
   display: none;
