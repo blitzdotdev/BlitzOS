@@ -10,7 +10,7 @@ import { Overview } from './components/Overview'
 import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame } from './components/SurfaceFrame'
 import { PrimarySpace } from './components/PrimarySpace'
-import { Sidebar } from './components/Sidebar'
+import { Sidebar, type SurfaceLauncherKind } from './components/Sidebar'
 import { IconChat, IconSparkle, IconGrid, IconChevronDown } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
@@ -21,6 +21,51 @@ import { ContextMenu } from './components/ContextMenu'
 // desktop). Off by default — integrations now surface as agent-spawned widgets. Flip to re-enable.
 const SHOW_INTEGRATION_CARDS = false
 type DockAnimationPhase = 'minimizing' | 'restoring'
+const WIDGET_PLACEHOLDER_HTML = `
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: var(--blitz-surface);
+    color: var(--blitz-text);
+    font: 14px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .empty {
+    width: min(320px, calc(100% - 44px));
+    display: grid;
+    gap: 12px;
+    text-align: center;
+  }
+  .mark {
+    width: 42px;
+    height: 42px;
+    margin: 0 auto;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    border: 1px solid var(--blitz-hairline);
+    color: var(--blitz-accent);
+    background: color-mix(in srgb, var(--blitz-accent) 10%, transparent);
+    font-size: 20px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 650;
+  }
+  p {
+    margin: 0;
+    color: var(--blitz-text-dim);
+    line-height: 1.45;
+  }
+</style>
+<main class="empty">
+  <div class="mark">&lt;/&gt;</div>
+  <h1>Widget</h1>
+  <p>A sandboxed mini-app can live here. Ask an agent to build one, or use it as a starting point for a custom workspace tool.</p>
+</main>`
 
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
@@ -961,6 +1006,35 @@ export default function App(): JSX.Element {
     createSurface({ kind: 'web', url: 'https://news.ycombinator.com', title: 'Hacker News' })
   }
 
+  function visibleWorldCenter(): { x: number; y: number } {
+    const st = useDesktop.getState()
+    return {
+      x: Math.round((st.viewport.w / 2 - st.transform.x) / st.transform.scale),
+      y: Math.round((st.viewport.h / 2 - st.transform.y) / st.transform.scale)
+    }
+  }
+
+  function createFromLauncher(kind: SurfaceLauncherKind): void {
+    if (kind === 'browser') {
+      addBrowser()
+      return
+    }
+    if (kind === 'note') {
+      createSurface({ kind: 'native', component: 'note', title: 'Note', w: 280, h: 260, props: { text: '', color: 'yellow' } })
+      return
+    }
+    if (kind === 'app') {
+      createSurface({ kind: 'app', title: 'App', w: 520, h: 360 })
+      return
+    }
+    if (kind === 'widget') {
+      createSurface({ kind: 'srcdoc', title: 'Widget', w: 420, h: 300, html: WIDGET_PLACEHOLDER_HTML })
+      return
+    }
+    const c = visibleWorldCenter()
+    makeFolder(kind, c.x, c.y)
+  }
+
   // Capture the CURRENT board's primary-area snapshot and upload it as its workspace thumbnail
   // (best-effort, last-seen). Done before opening the overview and before switching away (while the
   // board we're leaving still has live streamed frames — they're torn down by the switch).
@@ -1149,7 +1223,7 @@ export default function App(): JSX.Element {
 
       <div className="bg" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onContextMenu={onBgContextMenu} />
 
-      <Sidebar onAddBrowser={addBrowser} onRequestRestore={requestRestore} animating={dockAnimations} />
+      <Sidebar onCreateSurface={createFromLauncher} onRequestRestore={requestRestore} animating={dockAnimations} />
 
       <div
         className="world"

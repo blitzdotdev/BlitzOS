@@ -245,6 +245,44 @@ button {
   position: relative;
   background: var(--surface);
 }
+.surface-empty {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 28px;
+  text-align: center;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 42%),
+    var(--surface);
+}
+.surface-empty-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--control) 78%, transparent);
+  color: var(--accent);
+  font-size: 22px;
+}
+.surface-empty h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.15;
+  font-weight: 650;
+}
+.surface-empty p {
+  max-width: 340px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
 
 /* Tabbed windows (terminal): a strip of session tabs between the title bar and the body. Each tab is
    one tmux session; the body renders the active tab. The "+" spawns a new session into a new tab. */
@@ -1350,6 +1388,10 @@ button {
   background: var(--control-hover);
   color: var(--text);
 }
+.sidebar-btn.active {
+  background: var(--control-hover);
+  color: var(--text);
+}
 .sidebar-btn svg {
   width: 18px;
   height: 18px;
@@ -1437,6 +1479,99 @@ button {
   display: none;
 }
 
+.surface-launcher-backdrop {
+  position: fixed;
+  top: 32px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 6400;
+  background: rgb(0 0 0 / 14%);
+  animation: surface-launcher-backdrop-in 150ms var(--ease-out) both;
+}
+.surface-launcher-backdrop.closing {
+  pointer-events: none;
+  animation: surface-launcher-backdrop-out 170ms var(--ease-out) both;
+}
+.surface-launcher {
+  position: fixed;
+  width: 236px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    var(--shadow-lg);
+  backdrop-filter: blur(22px) saturate(1.18);
+  -webkit-backdrop-filter: blur(22px) saturate(1.18);
+  transform-origin: 0 18px;
+  animation: surface-launcher-in 170ms var(--ease-out) both;
+}
+.surface-launcher.closing {
+  animation: surface-launcher-out 150ms var(--ease-out) both;
+}
+.surface-launcher-item {
+  height: 70px;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px 6px;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+.surface-launcher-item:hover {
+  background: var(--control-hover);
+  border-color: var(--hairline);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.surface-launcher-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+}
+.surface-launcher-icon svg {
+  width: 21px;
+  height: 21px;
+}
+.surface-launcher-label {
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.surface-launcher-hint {
+  grid-column: 1 / -1;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 11px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--control) 72%, transparent);
+  font-size: 12px;
+}
+.surface-launcher-hint svg {
+  color: var(--accent);
+}
+
 @keyframes sidebar-dock-target {
   from {
     transform: scale(1);
@@ -1446,9 +1581,55 @@ button {
   }
 }
 
+@keyframes surface-launcher-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes surface-launcher-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes surface-launcher-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes surface-launcher-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.97);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sidebar-app.is-minimizing,
   .sidebar-app.is-restoring {
+    animation: none;
+  }
+  .surface-launcher-backdrop,
+  .surface-launcher-backdrop.closing,
+  .surface-launcher,
+  .surface-launcher.closing {
     animation: none;
   }
 }

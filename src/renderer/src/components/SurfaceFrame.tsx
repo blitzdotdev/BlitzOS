@@ -25,6 +25,16 @@ interface WebviewMethods {
   getURL(): string
 }
 
+function AppEmptyState(): JSX.Element {
+  return (
+    <div className="surface-empty">
+      <div className="surface-empty-icon">▦</div>
+      <h3>App</h3>
+      <p>A Blitz app can appear here. Add a deployed app URL, or ask an agent to create one for this workspace.</p>
+    </div>
+  )
+}
+
 export function SurfaceFrame({
   surface,
   onRequestMinimize,
@@ -487,6 +497,7 @@ export function SurfaceFrame({
           />
         )
       case 'app':
+        if (!surface.url) return <AppEmptyState />
         return (
           <iframe
             title={surface.title}
