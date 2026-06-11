@@ -16,7 +16,9 @@ const TRANSCRIPT_FLUSH_MS = 500 // batch tmux %output so a chatty program doesn'
 const ESTABLISH_MS = 8000 // mark an agent's claude session "established" after this healthy uptime (persisted)
 
 export function createSessionManager({ host, sessionsDir, emit = () => {}, markWrite = () => {}, rebuildAgentCommand = null }) {
-  const live = new Map() // id -> { meta, buf, flushTimer, unsubData, unsubExit }
+  const live = new Map() // id -> { meta, buf, flushTimer, establishTimer, restartTimer, stopping, unsubData, unsubExit }
+  const agentFails = new Map() // id -> consecutive fast-exit count (drives the auto-restart backoff)
+  let shuttingDown = false // set on shutdown so onExit doesn't auto-restart agents as the app quits
 
   const dirOf = (id) => join(sessionsDir, id)
   const metaPath = (id) => join(dirOf(id), 'meta.json')
@@ -52,8 +54,9 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
       try { prev.unsubData && prev.unsubData(); prev.unsubExit && prev.unsubExit() } catch { /* ignore */ }
       if (prev.flushTimer) { clearTimeout(prev.flushTimer); prev.flushTimer = null }
       if (prev.establishTimer) { clearTimeout(prev.establishTimer); prev.establishTimer = null }
+      if (prev.restartTimer) { clearTimeout(prev.restartTimer); prev.restartTimer = null }
     }
-    const rec = { meta, buf: [], flushTimer: null, establishTimer: null, unsubData: null, unsubExit: null }
+    const rec = { meta, buf: [], flushTimer: null, establishTimer: null, restartTimer: null, stopping: false, unsubData: null, unsubExit: null }
     live.set(id, rec)
     // Mark an agent ESTABLISHED proactively after a healthy run (claude has created its --session-id
     // conversation by then), persisting to disk — so a re-exec after a crash/REBOOT (where the live exit
@@ -86,6 +89,17 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
       try { rec.unsubData && rec.unsubData() } catch { /* ignore */ } // drop the host data listener so the closure + buffer can be GC'd
       rec.buf = []
       emit({ type: 'session-exit', id, exitCode, signal })
+      // SUPERVISION: a chat agent should stay alive. `claude -p` exits when its turn ends (even code 0 — it
+      // set up the loop then stopped calling tools), and a crash also ends it. Auto-restart it (--resume keeps
+      // the conversation; the relay-url file gives the live url), UNLESS it was explicitly stopped or we're
+      // shutting down. Back off on rapid failures so a broken agent (auth, etc.) can't hot-loop.
+      if (meta.kind === 'agent' && meta.claudeSessionId && !rec.stopping && !shuttingDown) {
+        const ranMs = (meta.endedAt || Date.now()) - (meta.createdAt || meta.endedAt)
+        const fails = ranMs < 15000 ? (agentFails.get(id) || 0) + 1 : 0 // a healthy (≥15s) run resets the backoff
+        agentFails.set(id, fails)
+        const backoff = fails === 0 ? 1500 : Math.min(2000 * 2 ** fails, 60000)
+        rec.restartTimer = setTimeout(() => { if (!shuttingDown && live.get(id) === rec) restartSession(id).catch(() => {}) }, backoff)
+      }
     })
     return rec
   }
@@ -129,8 +143,10 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
     return host.resize(id, cols, rows)
   }
   function stopSession(id) {
-    host.kill(id)
     const r = live.get(id)
+    if (r) { r.stopping = true; if (r.restartTimer) { clearTimeout(r.restartTimer); r.restartTimer = null } } // explicit stop ⇒ do NOT auto-restart
+    agentFails.delete(id)
+    host.kill(id)
     if (r && r.meta.status === 'running') { r.meta.status = 'stopped'; r.meta.endedAt = Date.now(); writeMeta(r.meta) }
     emit({ type: 'session-stop', id })
     return true
@@ -191,9 +207,18 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
     return [...out.values()]
   }
 
-  function stopAll() { for (const id of live.keys()) host.kill(id) }
+  function stopAll() { shuttingDown = true; for (const id of live.keys()) host.kill(id) }
   // Flush every live session's pending transcript buffer NOW (e.g. on app shutdown, before the 500ms timer).
-  function flushAll() { for (const [id, r] of live) { if (r.flushTimer) { clearTimeout(r.flushTimer); r.flushTimer = null } if (r.establishTimer) { clearTimeout(r.establishTimer); r.establishTimer = null } flushTranscript(id) } }
+  // Also stop supervising (no auto-restart as we tear down) + cancel any pending timers.
+  function flushAll() {
+    shuttingDown = true
+    for (const [id, r] of live) {
+      if (r.flushTimer) { clearTimeout(r.flushTimer); r.flushTimer = null }
+      if (r.establishTimer) { clearTimeout(r.establishTimer); r.establishTimer = null }
+      if (r.restartTimer) { clearTimeout(r.restartTimer); r.restartTimer = null }
+      flushTranscript(id)
+    }
+  }
 
   return { spawnSession, sendToSession, resizeSession, stopSession, restartSession, restore, scrollback, getSession, isLive, listSessions, stopAll, flushAll }
 }

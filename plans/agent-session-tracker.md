@@ -43,9 +43,10 @@ The living checklist for the BlitzOS agent-session work, so nothing is forgotten
 - ⬜ Note: Electron mode can't be live-tested in this sandbox (no display) — verify by code parity + the server live test.
 
 ## Then
-- ⬜ Pre-commit review (running: `rebuild-review`) — apply blockers.
-- ⬜ typecheck + parity + build green; re-verify live (server) in chromium.
-- ⬜ Commit (trailer `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`); USER runs `git push origin master`.
+- ✅ Pre-commit review (`rebuild-review`) — found the claudeEstablished crash-loop (fixed) + warnings (folded in).
+- ✅ typecheck + parity (11 cores) + build green; re-verified live (server) in chromium.
+- ✅ Committed `2826e38` — "agent sessions are serialized tmux terminals in their own areas". USER runs `git push origin master` (ahead 1; 2bc0f59 already on origin).
+- ⬜ Remaining: the UX enhancements above + the Electron live test (no display here — server path verified, Electron structurally identical).
 
 ## Persistent constraints (always)
 NO git reset/checkout/stash · NO placeholders/secrets committed · Opus subagents only (except ultracode) · no drizzle/prisma · no SSH key here (user pushes) · no time estimates · don't say "let me be more honest" · tmux is a hard dep · run prod backup before any remote deploy · after compaction run scripts/extract-session-transcript.sh.
