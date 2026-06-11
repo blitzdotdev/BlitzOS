@@ -116,7 +116,11 @@ function createWindow(): void {
     // so "double-tap ⌘ to toggle pan-mode" works from inside a window.
     let metaDown = false
     let sawOther = false
-    guest.on('before-input-event', (_ev, input) => {
+    guest.on('before-input-event', (ev, input) => {
+      if (forwardTileKeybind(input)) {
+        ev.preventDefault()
+        return
+      }
       if (input.type === 'keyDown') {
         if (input.key === 'Meta') {
           metaDown = true
@@ -129,6 +133,21 @@ function createWindow(): void {
         metaDown = false
       }
     })
+  })
+
+  // Stage keybinds must work no matter WHAT has keyboard focus — the host, a srcdoc iframe (the
+  // chat hub!), or a webview guest. DOM keydown dies the moment a guest focuses, so main intercepts
+  // at before-input-event (host webContents covers all its iframes; each webview guest is hooked in
+  // did-attach-webview above) and forwards over IPC. ⌘T = tile toggle, ⇧⌘T = cycle size.
+  const forwardTileKeybind = (input: Electron.Input): boolean => {
+    if (input.type !== 'keyDown' || input.isAutoRepeat) return false
+    const cmd = process.platform === 'darwin' ? input.meta : input.control
+    if (!cmd || input.alt || input.code !== 'KeyT') return false
+    mainWindow?.webContents.send('os:keybind', { id: 'tile', shift: !!input.shift })
+    return true
+  }
+  mainWindow.webContents.on('before-input-event', (ev, input) => {
+    if (forwardTileKeybind(input)) ev.preventDefault()
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())

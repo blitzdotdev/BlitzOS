@@ -309,6 +309,23 @@ export function openBootJournal(root, mode) {
   }
 }
 
+/** Stage-desktop fields a node carries (plans/blitzos-stage-slot-desktop.md): `slot {col,row,size}`
+ *  (+ slotArea) for tiles pinned to the slot lattice. Off-stage is GEOMETRIC (a surface parked outside
+ *  its area's rect), so no zone field exists. Normalized on write so a hand-edited workspace.json can't
+ *  poison the placer (x/y/w/h stay the rendering truth; slots re-derive them on viewport change). */
+function stageFields(s) {
+  const out = {}
+  if (s.slot && typeof s.slot === 'object') {
+    const col = Math.max(0, Math.round(Number(s.slot.col) || 0))
+    const row = Math.max(0, Math.round(Number(s.slot.row) || 0))
+    const size = typeof s.slot.size === 'string' ? s.slot.size.toLowerCase() : 's'
+    out.slot = { col, row, size }
+    const a = Math.round(Number(s.slotArea) || 0)
+    if (a > 0) out.slotArea = a
+  }
+  return out
+}
+
 /**
  * Serialize osState into the workspace folder. Returns a small summary.
  * @param {string} dir absolute path to the workspace folder.
@@ -345,6 +362,7 @@ export function writeWorkspace(dir, osState) {
         y: Math.round(s.y),
         w: Math.round(s.w),
         h: Math.round(s.h),
+        ...stageFields(s),
         ...(Object.keys(fview).length ? { view: fview } : {})
       })
       order.push({ id: s.id, z: s.z || 0 })
@@ -371,6 +389,7 @@ export function writeWorkspace(dir, osState) {
       w: Math.round(s.w),
       h: Math.round(s.h),
       ...(s.zoom && s.zoom !== 1 ? { zoom: s.zoom } : {}),
+      ...stageFields(s),
       ...(Object.keys(view).length ? { view } : {})
     })
     order.push({ id: s.id, z: s.z || 0 })
@@ -567,7 +586,7 @@ function nodeToSurface(dir, n, z) {
     const name = basename(n.path)
     const view = n.view && typeof n.view === 'object' ? n.view : {}
     const title = typeof view.title === 'string' && view.title ? view.title : name
-    const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || 200, h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z }
+    const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || 200, h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z, ...stageFields(n) }
     if (n.kind === 'dir') {
       let entries = 0
       try {
@@ -599,7 +618,8 @@ function nodeToSurface(dir, n, z) {
     w: Number(n.w) || 240,
     h: Number(n.h) || 240,
     z,
-    ...(n.zoom ? { zoom: clampScale(n.zoom) } : {})
+    ...(n.zoom ? { zoom: clampScale(n.zoom) } : {}),
+    ...stageFields(n)
   }
   if (n.kind === 'note') {
     const noteProps = { text: content, ...(typeof view.color === 'string' ? { color: view.color } : {}) }

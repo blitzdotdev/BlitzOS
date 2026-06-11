@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop, snapTargetFor, primaryRect, nextTerminalName } from '../store'
+import { useDesktop, snapTargetFor, primaryRect, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, areaOfX } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
@@ -60,6 +60,8 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
     poppedOut: boolean // a tiled window has been dragged back out to floating this gesture
   } | null>(null)
   const resize = useRef<{ startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; dir: string } | null>(null)
+  // Slotted-tile drag: the candidate lattice span under the outline ghost (committed on drop).
+  const slotGhost = useRef<{ col: number; row: number } | null>(null)
   const webviewRef = useRef<HTMLWebViewElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -388,6 +390,29 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
     const dx = (e.clientX - d.startX) / t.scale
     const dy = (e.clientY - d.startY) / t.scale
     for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
+    // Slotted tile drag (stage desktop, macOS widget feel): the tile floats under the cursor while an
+    // OUTLINE previews the nearest free span of the lattice — other tiles NEVER move; only the file
+    // layer parts fluidly around the outline. ⌘-drag skips snapping entirely (Apple's escape hatch:
+    // release pops the tile off the lattice, free-form). Edge-tiling is suppressed for tiles.
+    if (d.single && isSlotted && !e.metaKey) {
+      const me = d.items[0]
+      const sl = slotOf(surface)
+      const area = surface.slotArea ?? 0
+      const lat = latticeFor(st.viewport, area)
+      const ghost = nearestFreeSlot(st.surfaces, lat, sl ? sl.size : 's', me.ox + dx + me.ow / 2, me.oy + dy + me.oh / 2, area, surface.id)
+      slotGhost.current = ghost
+      const gr = ghost && sl ? slotRect(lat, ghost.col, ghost.row, sl.size) : null
+      st.setSnapPreview(gr)
+      st.reflowFiles(gr) // fluid: files flow out of the outline's way live
+      st.setDragTarget(null)
+      return
+    }
+    if (d.single && isSlotted) {
+      // ⌘ held: free drag, no ghost — the escape hatch out of the lattice.
+      slotGhost.current = null
+      st.setSnapPreview(null)
+      return
+    }
     // highlight a folder under the cursor as an add-to-folder drop target
     const dragged = new Set(d.items.map((it) => it.id))
     const folder = st.surfaces.find(
@@ -413,6 +438,22 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
     const snap = st.snapPreview
     st.setDragTarget(null)
     st.setSnapPreview(null)
+    // Slotted tile drop: ⌘-release pops it OFF the lattice (free-form, Apple's escape hatch); a normal
+    // release spring-snaps into the outlined span (or back to its own cells — self is excluded from
+    // occupancy, so "didn't really move" is always a valid drop). Files reflow to the settled layout.
+    if (d && d.single && isSlotted) {
+      const sl = slotOf(surface)
+      if (e.metaKey) {
+        st.clearSurfaceSlot(surface.id)
+      } else {
+        const g = slotGhost.current
+        if (g && sl) st.placeSurfaceSlot(surface.id, g.col, g.row, sl.size)
+        else if (sl) st.placeSurfaceSlot(surface.id, sl.col, sl.row, sl.size) // nothing free under the drag — settle home
+      }
+      slotGhost.current = null
+      st.reflowFiles()
+      return
+    }
     if (d && target) st.dropIntoFolder(target, d.items.map((it) => it.id))
     // Apply the tile; remember the floating size in `preSnap` so a later drag pops it back out
     // (macOS). `restore` is cleared so a previously-maximized window's green-zoom isn't stale.
@@ -425,6 +466,13 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
   // macOS-style resize from any side/corner. `dir` is a combination of n/s/e/w; a side handle
   // resizes that edge and moves the opposite edge's position. Works in control mode too (the
   // handles sit above the drag-overlay).
+  // Grid toggle (stage desktop): pop a slotted tile OUT to free-form (pre-slot size restored), or
+  // snap a free window INTO the nearest free span sized to fit it. The discoverable counterpart of
+  // ⌘-drag — this is how a note (or the chat) enters and leaves the lattice.
+  function toggleSlot(): void {
+    useDesktop.getState().toggleSurfaceSlot(surface.id)
+  }
+
   function onResizeDown(e: React.PointerEvent, dir: string): void {
     e.stopPropagation()
     focusSurface(surface.id)
@@ -494,6 +542,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
   const isNote = surface.kind === 'native' && surface.component === 'note'
   const isFolder = surface.kind === 'native' && surface.component === 'folder'
   const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
+  const isSlotted = !!slotOf(surface) // a stage tile: lattice-snapped, fixed-size, never edge-tiles
   const paper = isNote ? (NOTE_PAPER[(surface.props?.color as string) || 'coral'] ?? NOTE_PAPER.coral) : undefined
 
   function body(): JSX.Element {
@@ -591,15 +640,24 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
         width: surface.w,
         height: surface.h,
         ...(surface.minimized ? { display: 'none' } : {}),
+        // Slotted tiles spring-snap into their span (the macOS settle); suspended while dragging so
+        // the tile tracks the cursor 1:1, and resumed on drop for the snap animation. File tiles get
+        // the smooth glide of the fluid layer (they part around tiles like displaced liquid).
+        ...(isSlotted && !isDragging ? { transition: 'left 0.32s cubic-bezier(0.32, 1.23, 0.42, 1), top 0.32s cubic-bezier(0.32, 1.23, 0.42, 1), width 0.32s ease, height 0.32s ease' } : {}),
+        ...(isFileTile && !isDragging ? { transition: 'left 0.4s cubic-bezier(0.22, 1, 0.36, 1), top 0.4s cubic-bezier(0.22, 1, 0.36, 1)' } : {}),
         ...(paper ? { background: paper.bg, color: paper.ink } : {}),
         // The Chat + Agent-activity panels are pinned: a z-band far above any focus-raised
         // window, so the agent (or the user) can never bury the channel/feed they rely on.
+        // A focus floater (L3, human pull-in) sits in its own band just under the pinned panels.
         zIndex:
           surface.role === 'chat' || surface.role === 'activity' || (surface.kind === 'native' && (surface.component === 'chat' || surface.component === 'activity'))
             ? 2_000_000 + surface.z
-            : surface.z
+            : surface.focus
+              ? 1_500_000 + surface.z
+              : surface.z
       }}
       onPointerDown={() => focusSurface(surface.id)}
+      onFocus={() => focusSurface(surface.id)} // a click INTO an iframe/webview focuses the guest, not the host — still raise this window front-most so keybinds target it
       onContextMenu={(e) => {
         // Item 5b: right-click a native surface (note/tile/frame chrome) → annotation menu at that point.
         // web is handled in main (the webview swallows this); srcdoc's sandboxed iframe also swallows it.
@@ -625,6 +683,11 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
           {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />}
           <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
         </div>
+        {!isFileTile && (
+          <button className={`slot-toggle${isSlotted ? ' on' : ''}`} title={isSlotted ? 'Pop out of the grid — free-form, restores its size (⌘T; ⇧⌘T cycles size)' : 'Snap into the widget grid (⌘T)'} onClick={toggleSlot} onPointerDown={stop}>
+            {isSlotted ? '⤢' : '⊞'}
+          </button>
+        )}
         {surface.kind === 'web' || surface.kind === 'app' ? (
           <form className="window-url" onSubmit={go} onPointerDown={stop}>
             <input
@@ -678,8 +741,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
         {body()}
       </div>
       {/* macOS-style resize from all sides + corners; above the drag-overlay so it works in control
-          mode too (#41). The handles avoid the title-bar controls (traffic lights / eye). */}
-      {(['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'] as const).map((dir) => (
+          mode too (#41). The handles avoid the title-bar controls (traffic lights / eye).
+          Slotted tiles have FIXED slot sizes (s/m/l/xl/tall) — no free resize; re-place to change. */}
+      {!isSlotted &&
+        (['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'] as const).map((dir) => (
         <div
           key={dir}
           className={`rsz rsz-${dir}`}

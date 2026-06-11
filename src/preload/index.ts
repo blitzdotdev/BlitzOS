@@ -132,6 +132,13 @@ const api = {
     ipcRenderer.on('agentsocket:url', listener)
     return () => ipcRenderer.removeListener('agentsocket:url', listener)
   },
+  /** App keybinds forwarded from main's before-input-event — they fire regardless of which guest
+   *  (iframe/webview) holds keyboard focus. id 'tile': ⌘T toggle / ⇧⌘T cycle size. */
+  onKeybind(cb: (k: { id: string; shift: boolean }) => void): () => void {
+    const listener = (_e: unknown, k: { id: string; shift: boolean }): void => cb(k)
+    ipcRenderer.on('os:keybind', listener)
+    return () => ipcRenderer.removeListener('os:keybind', listener)
+  },
   /** A bare ⌘ tap forwarded from a focused webview (for double-tap-⌘ pan toggle). */
   onMetaTap(cb: () => void): () => void {
     const listener = (): void => cb()

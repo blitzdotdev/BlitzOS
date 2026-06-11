@@ -63,6 +63,13 @@ export interface Surface {
   tabs?: SurfaceTab[]
   /** Active tab index (default 0). */
   activeTab?: number
+  /** Stage desktop (plans/blitzos-stage-slot-desktop.md). Slotted tile: integer cell on the stage lattice. x/y/w/h are DERIVED from it (stage-core slotRect)
+   *  so rendering/persistence stay unchanged; a viewport change re-derives. Absent = free-form window. */
+  slot?: { col: number; row: number; size: string }
+  /** Which workspace area's lattice the slot lives on (default 0 = the primary). */
+  slotArea?: number
+  /** Focus window (L3): a human-pulled free-form floater above the tile grid; the one free-form exception. */
+  focus?: boolean
 }
 
 export interface Vec2 {

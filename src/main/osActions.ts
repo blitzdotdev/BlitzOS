@@ -21,10 +21,30 @@ export interface SurfaceDescriptor {
   html?: string
   component?: string
   props?: Record<string, unknown>
+  /** A tile on the stage slot lattice — geometry derives from the cell (stage-core). */
+  slot?: { col: number; row: number; size: string }
+  slotArea?: number
 }
 
 export interface OsState {
-  surfaces: Array<{ id: string; kind: string; x: number; y: number; w: number; h: number; title: string; url?: string; component?: string; z?: number; props?: Record<string, unknown> }>
+  surfaces: Array<{
+    id: string
+    kind: string
+    x: number
+    y: number
+    w: number
+    h: number
+    title: string
+    url?: string
+    component?: string
+    z?: number
+    props?: Record<string, unknown>
+    slot?: { col: number; row: number; size: string }
+    slotArea?: number
+    pinned?: boolean
+    sessionId?: string
+    focus?: boolean
+  }>
   camera?: { x: number; y: number; scale: number }
   view?: { cx: number; cy: number }
   mode?: string

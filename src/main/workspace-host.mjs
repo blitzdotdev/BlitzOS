@@ -303,6 +303,10 @@ export function createWorkspaceHost(a) {
       pinned: true,
       sessionId: '0',
       title: 'Chat',
+      // Stage desktop: the hub is a TALL tile (2×3 cells) anchored top-left of the slot lattice —
+      // the renderer derives exact x/y/w/h from the slot at ITS real viewport (these are fallbacks).
+      slot: { col: 0, row: 0, size: 'tall' },
+      preSnap: { w: 520, h: 600 }, // pop-out (slot-toggle) restores the chat's designed free-form size
       x: -720,
       y: -260,
       w: 520,

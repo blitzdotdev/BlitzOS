@@ -99,6 +99,21 @@ export default function App(): JSX.Element {
   // Agent relay connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [showOverview, setShowOverview] = useState(false)
+  // The fluid file layer: whenever the slotted-tile layout (or the viewport, or the file population)
+  // changes, flow the file/dir tiles around the tiles. Signature-keyed so it runs exactly when needed;
+  // live drag parting is handled by SurfaceFrame (reflowFiles(ghost)) — this settles the final layout.
+  const slotSig = useDesktop((s) => {
+    let sig = `${s.viewport.w}x${s.viewport.h}`
+    let files = 0
+    for (const x of s.surfaces) {
+      if (x.slot) sig += `|${x.id}:${x.slot.col},${x.slot.row},${x.slot.size}`
+      else if (x.kind === 'native' && (x.component === 'file' || x.component === 'dir') && !x.groupId && !x.minimized) files++
+    }
+    return sig + `#${files}`
+  })
+  useEffect(() => {
+    if (hydrated.current) useDesktop.getState().reflowFiles()
+  }, [slotSig])
   // Mirror showOverview into a ref so the ASYNC thumbnail capture reads the current value (not a stale
   // closure): it must never run while the overview overlay is mounted, or capturePage saves the gallery
   // itself AS the workspace's thumbnail (the screenshot-of-the-gallery-in-a-tile bug).
@@ -235,6 +250,26 @@ export default function App(): JSX.Element {
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
+  // ⌘T / ⇧⌘T — tile toggle + size cycle on the window the user means: the single selection if there
+  // is one, else the front-most. No editable guard (a ⌘-chord types nothing; a focused note textarea
+  // must not eat it). Reached via os:keybind from main (any focus) or the DOM fallback (server mode).
+  function runTileKeybind(shift: boolean): void {
+    const st = useDesktop.getState()
+    const eligible = (x: Surface): boolean => !x.minimized && !x.groupId && !(x.kind === 'native' && (x.component === 'file' || x.component === 'dir' || x.component === 'folder'))
+    const selected = st.selection.length === 1 ? st.surfaces.find((x) => x.id === st.selection[0] && eligible(x)) : undefined
+    const top = selected ?? st.surfaces.reduce<Surface | null>((best, x) => (eligible(x) && (!best || x.z > best.z) ? x : best), null)
+    if (!top) return
+    if (shift) st.cycleSurfaceSlotSize(top.id, 1)
+    else st.toggleSurfaceSlot(top.id)
+  }
+  useEffect(() => {
+    const off = window.agentOS?.onKeybind?.((k) => {
+      if (k.id === 'tile') runTileKeybind(!!k.shift)
+    })
+    return () => off?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key === '0') {
@@ -285,6 +320,11 @@ export default function App(): JSX.Element {
           ids.forEach((id) => st.closeSurface(id))
           st.clearSelection()
         }
+      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.code === 'KeyT' && !window.agentOS?.onKeybind) {
+        // ⌘T/⇧⌘T DOM fallback for SERVER mode only — in Electron the bind arrives from main's
+        // before-input-event (os:keybind), which works even when an iframe/webview holds focus.
+        e.preventDefault()
+        runTileKeybind(e.shiftKey)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -967,7 +1007,20 @@ export default function App(): JSX.Element {
   })()
 
   return (
-    <div id="root-canvas" ref={rootRef} className={grabMode ? 'grab-mode' : undefined} onDragOver={onDragOver} onDrop={onDrop}>
+    <div
+      id="root-canvas"
+      ref={rootRef}
+      className={grabMode ? 'grab-mode' : undefined}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onPointerDownCapture={() => {
+        // Keyboard-focus reclaim: iframes/webviews swallow window keydown while focused, killing every
+        // app keybind (⌘T etc.). A pointerdown that reaches the HOST at all means the user is now
+        // interacting OUTSIDE the guest — blur it so the next keystroke lands in the app again.
+        const ae = document.activeElement as HTMLElement | null
+        if (ae && (ae.tagName === 'IFRAME' || ae.tagName === 'WEBVIEW')) ae.blur()
+      }}
+    >
       {/* draggable native-window title bar (macOS move/resize) */}
       <div className="titlebar">
         <span className="titlebar-label">BlitzOS</span>

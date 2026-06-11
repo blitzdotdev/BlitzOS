@@ -2541,3 +2541,39 @@ button {
 .annotation-cancel:hover { background: var(--control-hover); }
 .annotation-send { background: var(--info); color: #fff; border-color: transparent; font-weight: 500; }
 .annotation-send:disabled { opacity: 0.4; cursor: default; }
+
+
+/* ---- Stage grid toggle (window bar): snap a window into the lattice / pop a tile out ---- */
+.slot-toggle {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim, var(--text));
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.window:hover .slot-toggle { opacity: 0.75; }
+.slot-toggle:hover { opacity: 1 !important; background: color-mix(in srgb, var(--text) 10%, transparent); }
+.slot-toggle.on { color: var(--accent, #1a73e8); }
+
+/* ---- Universal window-state rings (LAST in the cascade so no variant — notes' paper shadow,
+   folders, file tiles — can swallow them). is-active = the front-most window (one per desktop);
+   is-selected = marquee/multi-selection. Outline, not box-shadow: composes with any variant. ---- */
+.window.is-active {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: -1px;
+}
+.window.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}

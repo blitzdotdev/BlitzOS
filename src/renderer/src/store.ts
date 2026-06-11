@@ -17,6 +17,10 @@ import {
 // Re-exported below so existing `from './store'` importers (capture/App/SurfaceFrame/PrimarySpace) don't churn.
 import { primaryRect, areaStride, areaRect, areaCenterX, areaForSession, areaOfX } from './areas-core.mjs'
 export { primaryRect, areaStride, areaRect, areaCenterX, areaForSession, areaOfX }
+// Stage slot lattice (plans/blitzos-stage-slot-desktop.md): pure shared placer — tiles at integer
+// cells, geometry derived; the SAME module places in main (place_widget) and snaps drags here.
+import { latticeFor, slotRect, cardRect, slotOf, nearestFreeSlot, flowFiles, sizeForDims, occupancy, findSlot, spanOf, SIZE_ORDER } from './stage-core.mjs'
+export { latticeFor, slotRect, cardRect, slotOf, nearestFreeSlot, sizeForDims }
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
@@ -141,6 +145,11 @@ export interface CreateSurfaceInput {
   /** place this surface in a SPECIFIC workspace area (a session-scoped agent → its own area N); when
    *  omitted, it cascades into the current area. Derived from x afterward — never stored on the Surface. */
   area?: number
+  /** Born slotted: a tile on the stage lattice — x/y/w/h are derived from it, never trusted. */
+  slot?: { col: number; row: number; size: string }
+  slotArea?: number
+  /** Born as the free-form focus floater (human pull-in). */
+  focus?: boolean
 }
 
 interface DesktopState {
@@ -180,6 +189,14 @@ interface DesktopState {
   locked: boolean
 
   setViewport: (w: number, h: number) => void
+  /** Stage tiles (slot lattice): commit a tile to a cell / pop it off / flow the file layer. */
+  placeSurfaceSlot: (id: string, col: number, row: number, size?: string, area?: number) => void
+  clearSurfaceSlot: (id: string) => void
+  /** ⊞/⤢ + ⌃⌥Return: snap the window into the nearest free span / pop the tile out (preSnap restore). */
+  toggleSurfaceSlot: (id: string) => void
+  /** ⌃⌥=/−: cycle a tile through SIZE_ORDER, anchored at its cell when the new span fits, else nearest free. */
+  cycleSurfaceSlotSize: (id: string, dir: 1 | -1) => void
+  reflowFiles: (avoid?: { x: number; y: number; w: number; h: number } | null) => void
   setMode: (m: 'desktop' | 'canvas') => void
   setTransform: (t: CanvasTransform) => void
   setControlTransform: (t: CanvasTransform | null) => void
@@ -270,7 +287,140 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   grabMode: false,
   locked: false,
 
-  setViewport: (w, h) => set({ viewport: { w, h } }),
+  setViewport: (w, h) =>
+    set((s) => {
+      // Slotted tiles are lattice-derived: a viewport change moves the lattice, so re-derive every
+      // tile's x/y/w/h from its cell (Apple stores layouts per resolution; we re-anchor — same effect,
+      // no reflow: cells never change, only the lattice origin shifts).
+      const vp = { w, h }
+      const lats = new Map<number, ReturnType<typeof latticeFor>>()
+      const latOf = (a: number): ReturnType<typeof latticeFor> => {
+        let l = lats.get(a)
+        if (!l) {
+          l = latticeFor(vp, a)
+          lats.set(a, l)
+        }
+        return l
+      }
+      let changed = false
+      const surfaces = s.surfaces.map((sf) => {
+        const sl = slotOf(sf)
+        if (!sl) return sf
+        const r = cardRect(latOf(sf.slotArea ?? 0), sl.col, sl.row, sl.size)
+        if (r.x === sf.x && r.y === sf.y && r.w === sf.w && r.h === sf.h) return sf
+        changed = true
+        return { ...sf, x: r.x, y: r.y, w: r.w, h: r.h }
+      })
+      return changed ? { viewport: vp, surfaces } : { viewport: vp }
+    }),
+
+  /** Snap a tile to a lattice cell (drag drop / bar toggle / place_widget update). Geometry derives
+   *  from the cell; never reflows neighbors — the placer only ever offers free spans, this just
+   *  commits one. First snap remembers the free-form size in preSnap so popping out restores it
+   *  (a slot size that squishes a widget — the chat — must never be a one-way door). */
+  placeSurfaceSlot: (id, col, row, size, areaArg) =>
+    set((s) => {
+      const cur = s.surfaces.find((x) => x.id === id)
+      if (!cur) return {}
+      const sz = size || slotOf(cur)?.size || sizeForDims(cur.w, cur.h)
+      const area = Number.isInteger(areaArg) ? (areaArg as number) : (cur.slotArea ?? 0)
+      const r = cardRect(latticeFor(s.viewport, area), col, row, sz)
+      const keepFree = cur.slot ? cur.preSnap : { w: cur.w, h: cur.h }
+      return {
+        surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, slot: { col, row, size: sz }, ...(area > 0 ? { slotArea: area } : { slotArea: undefined }), x: r.x, y: r.y, w: r.w, h: r.h, focus: undefined, ...(keepFree ? { preSnap: keepFree } : {}) } : x))
+      }
+    }),
+
+  /** Pop a tile OFF the lattice (bar toggle / ⌘-drag escape hatch): free-form again, restoring its
+   *  pre-slot size centered where the tile sat (clamped into the area so it never lands off-screen). */
+  clearSurfaceSlot: (id) =>
+    set((s) => {
+      const cur = s.surfaces.find((x) => x.id === id)
+      if (!cur) return {}
+      const free = cur.preSnap ?? { w: cur.w, h: cur.h }
+      const cx = cur.x + cur.w / 2
+      const cy = cur.y + cur.h / 2
+      const p = desktopClamp(cx - free.w / 2, cy - free.h / 2, free.w, free.h, s.viewport, cur.slotArea ?? 0)
+      return {
+        surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, slot: undefined, preSnap: undefined, x: p.x, y: p.y, w: free.w, h: free.h } : x))
+      }
+    }),
+
+  toggleSurfaceSlot: (id) => {
+    const st = get()
+    const cur = st.surfaces.find((x) => x.id === id)
+    if (!cur || (cur.kind === 'native' && (cur.component === 'file' || cur.component === 'dir' || cur.component === 'folder'))) return
+    if (slotOf(cur)) {
+      st.clearSurfaceSlot(id)
+    } else {
+      const area = areaOfX(cur.x + cur.w / 2, st.viewport)
+      const size = sizeForDims(cur.w, cur.h)
+      const slot = nearestFreeSlot(st.surfaces, latticeFor(st.viewport, area), size, cur.x + cur.w / 2, cur.y + cur.h / 2, area, id)
+      if (slot) st.placeSurfaceSlot(id, slot.col, slot.row, size, area)
+    }
+    st.reflowFiles()
+  },
+
+  cycleSurfaceSlotSize: (id, dir) => {
+    const st = get()
+    const cur = st.surfaces.find((x) => x.id === id)
+    const sl = cur && slotOf(cur)
+    if (cur && !sl) {
+      // cycling a FREE window: first press snaps it into the grid (then further presses cycle) —
+      // a no-op here read as "the keybind is broken".
+      st.toggleSurfaceSlot(id)
+      return
+    }
+    if (!cur || !sl) return
+    const area = cur.slotArea ?? 0
+    const lat = latticeFor(st.viewport, area)
+    const occ = occupancy(st.surfaces, area, id, lat)
+    const idx = SIZE_ORDER.indexOf(sl.size)
+    const n = SIZE_ORDER.length
+    // walk the cycle, SKIPPING sizes with no free span anywhere (a crowded stage must not turn the
+    // keybind into a silent no-op — e.g. chat tall -> xl blocked -> land on whatever fits next).
+    for (let step = 1; step < n; step++) {
+      const next = SIZE_ORDER[(idx + (dir > 0 ? step : n - step)) % n]
+      const sp = spanOf(next)
+      // stay anchored at the tile's own cell when the new span fits there (self excluded) …
+      let col = sl.col
+      let row = sl.row
+      let fits = col + sp.c <= lat.cols && row + sp.r <= lat.rows
+      if (fits) {
+        for (let c = col; c < col + sp.c && fits; c++) for (let r = row; r < row + sp.r && fits; r++) if (occ.has(c + ',' + r)) fits = false
+      }
+      // … else the nearest free span to its center — never overlap, never reflow neighbors.
+      if (!fits) {
+        const ns = nearestFreeSlot(st.surfaces, lat, next, cur.x + cur.w / 2, cur.y + cur.h / 2, area, id)
+        if (!ns) continue // this size fits nowhere — skip to the next one
+        col = ns.col
+        row = ns.row
+      }
+      st.placeSurfaceSlot(id, col, row, next, area)
+      st.reflowFiles()
+      return
+    }
+  },
+
+  /** The fluid file layer: flow file/dir tiles around the slotted widgets (macOS desktop-icon feel).
+   *  `avoid` = the in-flight drag ghost's rect so files part around it live. Area 0 only (workspace
+   *  files are root tiles; session areas hold windows, not files). */
+  reflowFiles: (avoid) =>
+    set((s) => {
+      const isFile = (x: Surface): boolean => x.kind === 'native' && (x.component === 'file' || x.component === 'dir') && !x.groupId && !x.minimized
+      const files = s.surfaces.filter(isFile)
+      if (!files.length) return {}
+      const placed = flowFiles(files, s.surfaces, s.viewport, 0, avoid ?? null)
+      const pos = new Map(placed.map((p) => [p.id, p]))
+      let changed = false
+      const surfaces = s.surfaces.map((x) => {
+        const p = pos.get(x.id)
+        if (!p || (p.x === x.x && p.y === x.y)) return x
+        changed = true
+        return { ...x, x: p.x, y: p.y }
+      })
+      return changed ? { surfaces } : {}
+    }),
   setMode: (m) => set({ mode: m }),
   setTransform: (t) => set({ transform: t }),
   setControlTransform: (t) => set({ controlTransform: t }),
@@ -496,7 +646,21 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       ...(input.role ? { role: input.role } : {}),
       ...(input.pinned ? { pinned: input.pinned } : {}),
       ...(input.sessionId != null ? { sessionId: String(input.sessionId) } : {}),
-      ...(input.tabs ? { tabs: input.tabs, activeTab: input.activeTab ?? 0 } : {})
+      ...(input.tabs ? { tabs: input.tabs, activeTab: input.activeTab ?? 0 } : {}),
+      ...(input.focus ? { focus: true } : {})
+    }
+    // Born slotted: the tile's geometry is DERIVED from its lattice cell (stage-core), never the
+    // cascade — so a place_widget create lands exactly on its slot, immune to clamp/stagger drift.
+    if (input.slot && typeof input.slot === 'object') {
+      const sa = Number.isInteger(input.slotArea) ? (input.slotArea as number) : targetArea
+      const lat = latticeFor(st.viewport, sa)
+      const r = cardRect(lat, Number(input.slot.col) || 0, Number(input.slot.row) || 0, String(input.slot.size || 's'))
+      surface.slot = { col: Number(input.slot.col) || 0, row: Number(input.slot.row) || 0, size: String(input.slot.size || 's') }
+      if (sa > 0) surface.slotArea = sa
+      surface.x = r.x
+      surface.y = r.y
+      surface.w = r.w
+      surface.h = r.h
     }
     set((s) => ({ surfaces: [...s.surfaces, surface] }))
     return id
@@ -517,6 +681,33 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         // chat's x from its area using the renderer's REAL viewport (authoritative — the host may have
         // guessed a default vp), then clamp into that area. Single-area / primary case is byte-identical
         // (areaForSession('0')=0, areaCenterX(0)=0 → x=-700). The camera can reach any area (areaCount below).
+        // A slotted tile's geometry derives from its lattice cell at THIS renderer's real viewport
+        // (the persisted x/y may come from a different window size) — slots beat the legacy paths.
+        const sl = slotOf(base)
+        if (sl) {
+          const area = base.slotArea ?? 0
+          const lat0 = latticeFor(s.viewport, area)
+          let { col, row } = sl
+          // The pinned chat hub boots at a HOST-fixed cell (col 0, row 0) — the host can't see free
+          // windows, so if one already covers that span, re-place through the placer instead of
+          // overlapping it (the boot-time twin of the drag-ghost overlap bug).
+          if (base.role === 'chat') {
+            const occ = occupancy(surfaces as Parameters<typeof occupancy>[0], area, base.id, lat0)
+            const sp = spanOf(sl.size)
+            let blocked = false
+            for (let c = col; c < col + sp.c && !blocked; c++) for (let r2 = row; r2 < row + sp.r && !blocked; r2++) if (occ.has(c + ',' + r2)) blocked = true
+            if (blocked) {
+              const ns = findSlot(surfaces as Parameters<typeof findSlot>[0], lat0, sl.size, null, area, base.id)
+              if (ns) {
+                col = ns.col
+                row = ns.row
+                base.slot = { col, row, size: sl.size }
+              }
+            }
+          }
+          const r = cardRect(lat0, col, row, sl.size)
+          return { ...base, x: r.x, y: r.y, w: r.w, h: r.h }
+        }
         if (isRuntimePanel(base)) {
           const area = base.role === 'chat' && base.sessionId != null ? areaForSession(base.sessionId) : 0
           const x = base.role === 'chat' && base.sessionId != null ? Math.round(areaCenterX(area, s.viewport) - 700) : base.x

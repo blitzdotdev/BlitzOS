@@ -13,7 +13,21 @@ import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from '.
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
 // Area grid: a chat session N owns area N. When a session-scoped agent creates a surface, we tag it with
 // {area} so the renderer cascades it into that session's area — isolated from the user's primary (area 0).
-import { areaForSession } from '../renderer/src/areas-core.mjs'
+import { areaForSession, areaRect, areaOfX, DEFAULT_VP } from '../renderer/src/areas-core.mjs'
+// Stage slot lattice (plans/blitzos-stage-slot-desktop.md): the SAME pure placer the renderer uses,
+// so an agent placement and a human drag-snap can never disagree about what is free.
+import { latticeFor, cardRect, findSlot, budgetUsed, stageSummary, sizeForDims, spanOf, STAGE_BUDGET } from '../renderer/src/stage-core.mjs'
+
+// OFF-STAGE = the open infinite canvas OUTSIDE the stage (the bounded per-workspace "area" the user's
+// desktop-mode camera frames). There is no separate hidden pool: a work surface parks below the area,
+// naturally off-screen at scale 1 and revealed when the user zooms out (control mode). Computed
+// geometrically — a surface is offstage iff it has no slot and sits outside its area's rect.
+function isOffstage(s, vp) {
+  if (!s || s.slot) return false
+  const v = vp || DEFAULT_VP
+  const r = areaRect(areaOfX((Number(s.x) || 0) + (Number(s.w) || 0) / 2, v), v)
+  return s.x + s.w <= r.x || s.x >= r.x + r.w || s.y + s.h <= r.y || s.y >= r.y + r.h
+}
 
 function parse(body) {
   try {
@@ -70,9 +84,17 @@ export function serializeStateForAgent(state, integrations) {
       const hint = x.kind === 'web' && x.url ? accountHintFor(x.url, integrations) : null
       return {
         id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
+        // Stage desktop: a slotted surface is ON the user's stage; offstage = parked on the open canvas.
+        ...(x.slot ? { slot: x.slot, ...(x.slotArea ? { slotArea: x.slotArea } : {}) } : {}),
+        ...(isOffstage(x, s.viewport) ? { offstage: true } : {}),
+        ...(x.focus ? { focus: true } : {}),
         ...(hint ? { account_hint: hint } : {})
       }
-    })
+    }),
+    // The user's desktop at a glance: the slot grid, what's tiled, the attention budget, and the
+    // offstage pool (work parked on the canvas around the stage) — reason in slots, never pixels.
+    stage: stageSummary(s.surfaces || [], s.viewport, 0),
+    backstage: (s.surfaces || []).filter((x) => isOffstage(x, s.viewport)).map((x) => ({ id: x.id, kind: x.kind, title: x.title, url: x.url }))
   }
 }
 
@@ -122,6 +144,32 @@ async function provisionBlitzApp(slug) {
  *   integrationStatuses()->[...], connectedProviders()->[...] }
  */
 export function makeOsTools(ops) {
+  // Stage placement (shared by place_widget / bring_to_stage / auto-placed creates): budget-check,
+  // find a free span on the session-area's lattice, derive the tile's world rect. Returns either
+  // { slot, slotArea, rect } or { full } (budget or space) with the occupants so the agent can evict.
+  const placeOnStage = (sizeArg, near, sessionId, dims, pinned) => {
+    const st = ops.getState() || {}
+    const surfaces = st.surfaces || []
+    const area = sessionId != null ? areaForSession(sessionId) : 0
+    const size = typeof sizeArg === 'string' && sizeArg ? sizeArg.toLowerCase() : sizeForDims(dims?.w, dims?.h)
+    const sp = spanOf(size)
+    if (!pinned && budgetUsed(surfaces, area) + sp.c * sp.r > STAGE_BUDGET) {
+      return { full: { error: 'stage_full', reason: 'attention budget', ...stageSummary(surfaces, st.viewport, area) } }
+    }
+    const lat = latticeFor(st.viewport, area)
+    const slot = findSlot(surfaces, lat, size, near || null, area)
+    if (!slot) return { full: { error: 'stage_full', reason: 'no free span for ' + size, ...stageSummary(surfaces, st.viewport, area) } }
+    return { slot: { col: slot.col, row: slot.row, size }, slotArea: area, rect: cardRect(lat, slot.col, slot.row, size) }
+  }
+  // Park a work surface OFF-STAGE: on the open canvas just below the session's area — outside the
+  // user's desktop-mode frame, in plain view when they zoom out. Cascaded so parked windows fan out.
+  const parkOffstage = (sessionId) => {
+    const st = ops.getState() || {}
+    const vp = st.viewport || DEFAULT_VP
+    const r = areaRect(sessionId != null ? areaForSession(sessionId) : 0, vp)
+    const parked = (st.surfaces || []).filter((s) => s && !s.slot && s.y >= r.y + r.h).length % 8
+    return { x: Math.round(r.x + 60 + parked * 64), y: Math.round(r.y + r.h + 100 + parked * 48) }
+  }
   return [
     {
       path: '/create_surface',
@@ -138,20 +186,115 @@ export function makeOsTools(ops) {
         // A session-scoped agent's surface lands in ITS area (the renderer cascades by `area` when no
         // explicit x is given); the primary session '0' → area 0 = today's behavior.
         if (a.session != null) a.area = areaForSession(a.session)
+        // Stage desktop: web/app are WORK surfaces — born OFF-STAGE (parked on the canvas below the
+        // user's stage frame), never on the desktop uninvited; bring_to_stage is the deliberate act
+        // that stages something. srcdoc/native widgets auto-take a free slot (a created widget the
+        // user can't see is useless) and park offstage when the stage is full — the reply says which.
+        let staged = null
+        let offstage = false
+        if (a.kind === 'web' || a.kind === 'app') {
+          if (a.x == null && a.y == null) Object.assign(a, parkOffstage(a.session))
+          offstage = true
+        } else if (!a.slot && !a.role && !a.pinned) {
+          const p = placeOnStage(a.size, a.near, a.session, { w: a.w, h: a.h }, false)
+          if (p.slot) {
+            a.slot = p.slot
+            a.slotArea = p.slotArea
+            staged = p.slot
+          } else {
+            Object.assign(a, parkOffstage(a.session))
+            offstage = true
+          }
+        }
         const id = ops.createSurface(a)
         const ctx = ops.workspaceContext()
-        return { id, workspace: ctx.workspace, workspace_path: ctx.workspace_path, siblings: (ctx.siblings || []).filter((s) => s.id !== id).map((s) => s.title) }
+        return {
+          id,
+          ...(staged ? { slot: staged } : offstage ? { offstage: true, hint: a.kind === 'web' || a.kind === 'app' ? 'parked on the canvas below the stage — bring_to_stage {id} only when the user should SEE it' : 'stage was full — parked below it; bring_to_stage later or evict' } : {}),
+          workspace: ctx.workspace,
+          workspace_path: ctx.workspace_path,
+          siblings: (ctx.siblings || []).filter((s) => s.id !== id).map((s) => s.title)
+        }
       }
     },
     {
       path: '/open_window',
-      description: 'Open a third-party website as a live web surface. Returns its id. If you are a non-primary session, pass {session:"<your id>"} so it opens in YOUR area.',
-      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, session: { type: 'string' } } },
+      description:
+        'Open a third-party website as a live web surface. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame): drive it freely with surface_control/read_window — it is out of their view at their normal zoom, and visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary sessions pass {session:"<your id>"}.',
+      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, title: { type: 'string' }, session: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
         if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
         if (a.session != null) a.area = areaForSession(a.session) // open in the session's own area
-        return { id: ops.openWindow(a) }
+        Object.assign(a, parkOffstage(a.session)) // work surface: off the stage, on the open canvas
+        return { id: ops.openWindow(a), offstage: true }
+      }
+    },
+    {
+      path: '/place_widget',
+      description:
+        "Put a widget on the user's desktop (the STAGE — a slot grid that never overlaps and never reflows). You pick a SIZE + optional position HINT; the OS picks the exact free slot — there is NO x/y. size: s (1x1 square) | m (2x1 wide) | l (2x2 big) | xl (4x2 hero) | tall (2x3, chat-shaped) | xxl (4x4 full-focus — alone it IS the stage). near: 'top-left'|'top-right'|'bottom-left'|'bottom-right'|'center' or another surface's id (lands adjacent). Pass an EXISTING surface id to stage it, OR kind+html/component/props to create directly into the slot. Returns { id, slot } or { error:'stage_full', tiles, budget } — then evict (send_backstage) or queue. The stage is the user's ATTENTION: one widget that lets them act beats N raw windows.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          size: { type: 'string', enum: ['s', 'm', 'l', 'xl', 'tall', 'xxl'] },
+          near: { type: 'string' },
+          session: { type: 'string' },
+          kind: { type: 'string', enum: ['srcdoc', 'native', 'web', 'app'] },
+          html: { type: 'string' },
+          url: { type: 'string' },
+          component: { type: 'string' },
+          props: { type: 'object' },
+          title: { type: 'string' }
+        }
+      },
+      handler: ({ body }) => {
+        const a = parse(body)
+        const st = ops.getState() || {}
+        if (a.id) {
+          const cur = (st.surfaces || []).find((s) => s && s.id === String(a.id))
+          if (!cur) return { status: 404, body: { error: `no surface ${a.id}` } }
+          const p = placeOnStage(a.size, a.near, a.session ?? cur.sessionId, { w: cur.w, h: cur.h }, !!cur.pinned)
+          if (p.full) return { status: 409, body: p.full }
+          const r = ops.updateSurface(String(a.id), { slot: p.slot, slotArea: p.slotArea, focus: null, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h })
+          return r && r.ok === false ? { status: 404, body: { error: r.error } } : { id: String(a.id), slot: p.slot }
+        }
+        if (!a.kind) return { status: 400, body: { error: 'pass an existing id, or kind(+html/component/url) to create into the slot' } }
+        const p = placeOnStage(a.size, a.near, a.session, { w: a.w, h: a.h }, false)
+        if (p.full) return { status: 409, body: p.full }
+        const id = ops.createSurface({ kind: a.kind, html: a.html, url: a.url, component: a.component, props: a.props, title: a.title, slot: p.slot, slotArea: p.slotArea, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h, ...(a.session != null ? { area: areaForSession(a.session) } : {}) })
+        return { id, slot: p.slot }
+      }
+    },
+    {
+      path: '/bring_to_stage',
+      description:
+        "Promote an off-stage surface onto the user's desktop, into a free slot (size defaults to fit; same slot system as place_widget). The deliberate act of asking for the user's attention — do it when they should SEE or ACT on the surface, not for every working window. Args: {id, size?, near?}. Returns { id, slot } or stage_full.",
+      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, size: { type: 'string', enum: ['s', 'm', 'l', 'xl', 'tall', 'xxl'] }, near: { type: 'string' } } },
+      handler: ({ body }) => {
+        const a = parse(body)
+        const st = ops.getState() || {}
+        const cur = (st.surfaces || []).find((s) => s && s.id === String(a.id))
+        if (!cur) return { status: 404, body: { error: `no surface ${a.id}` } }
+        const p = placeOnStage(a.size, a.near, cur.sessionId, { w: cur.w, h: cur.h }, !!cur.pinned)
+        if (p.full) return { status: 409, body: p.full }
+        const r = ops.updateSurface(String(a.id), { slot: p.slot, slotArea: p.slotArea, focus: null, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h })
+        return r && r.ok === false ? { status: 404, body: { error: r.error } } : { id: String(a.id), slot: p.slot }
+      }
+    },
+    {
+      path: '/send_backstage',
+      description:
+        "Move a surface OFF the user's stage: it parks on the open canvas just below their desktop frame (still alive — keep driving it; they see it when they zoom out; bring_to_stage returns it). Use to free stage budget or tidy after a task. Args: {id}.",
+      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+      handler: ({ body }) => {
+        const a = parse(body)
+        const st = ops.getState() || {}
+        const cur = (st.surfaces || []).find((s) => s && s.id === String(a.id))
+        if (!cur) return { status: 404, body: { error: `no surface ${a.id}` } }
+        const r = ops.updateSurface(String(a.id), { slot: null, focus: null, ...parkOffstage(cur.sessionId) })
+        return r && r.ok === false ? { status: 404, body: { error: r.error } } : { ok: true, offstage: true }
       }
     },
     {
