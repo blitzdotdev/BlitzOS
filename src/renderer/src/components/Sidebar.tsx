@@ -18,6 +18,13 @@ type LauncherState = {
   closing?: boolean
 }
 
+type TooltipState = {
+  text: string
+  left: number
+  top: number
+  closing?: boolean
+}
+
 type LauncherItem = {
   kind: SurfaceLauncherKind
   label: string
@@ -40,7 +47,9 @@ export function Sidebar({ onCreateSurface, onRequestRestore, animating = {} }: P
   const closeSurface = useDesktop((s) => s.closeSurface)
   const plusRef = useRef<HTMLButtonElement>(null)
   const launcherCloseTimer = useRef<number | null>(null)
+  const tooltipCloseTimer = useRef<number | null>(null)
   const [launcher, setLauncher] = useState<LauncherState | null>(null)
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const orderRef = useRef<Map<string, number>>(new Map())
   const nextOrder = useRef(0)
   const orderedSurfaces = useMemo(() => {
@@ -66,6 +75,7 @@ export function Sidebar({ onCreateSurface, onRequestRestore, animating = {} }: P
   useEffect(() => {
     return () => {
       if (launcherCloseTimer.current != null) window.clearTimeout(launcherCloseTimer.current)
+      if (tooltipCloseTimer.current != null) window.clearTimeout(tooltipCloseTimer.current)
     }
   }, [])
 
@@ -90,6 +100,25 @@ export function Sidebar({ onCreateSurface, onRequestRestore, animating = {} }: P
     }
     const r = plusRef.current?.getBoundingClientRect()
     setLauncher({ left: Math.round((r?.right ?? 52) + 10), top: Math.round(r?.top ?? 44) })
+  }
+
+  const showTooltip = (target: HTMLElement, text: string): void => {
+    if (tooltipCloseTimer.current != null) {
+      window.clearTimeout(tooltipCloseTimer.current)
+      tooltipCloseTimer.current = null
+    }
+    const r = target.getBoundingClientRect()
+    setTooltip({ text, left: Math.round(r.right + 10), top: Math.round(r.top + r.height / 2) })
+  }
+
+  const hideTooltip = (): void => {
+    if (!tooltip || tooltip.closing) return
+    if (tooltipCloseTimer.current != null) window.clearTimeout(tooltipCloseTimer.current)
+    setTooltip((cur) => (cur ? { ...cur, closing: true } : cur))
+    tooltipCloseTimer.current = window.setTimeout(() => {
+      setTooltip(null)
+      tooltipCloseTimer.current = null
+    }, 120)
   }
 
   const launcherOverlay =
@@ -122,13 +151,31 @@ export function Sidebar({ onCreateSurface, onRequestRestore, animating = {} }: P
       </div>,
       document.body
     )
+  const tooltipOverlay =
+    tooltip &&
+    createPortal(
+      <div className={`sidebar-tooltip${tooltip.closing ? ' closing' : ''}`} style={{ left: tooltip.left, top: tooltip.top }}>
+        {tooltip.text}
+      </div>,
+      document.body
+    )
 
   return (
     <div className="sidebar">
-      <button ref={plusRef} className={`sidebar-btn${launcher ? ' active' : ''}`} title="Create surface" onClick={toggleLauncher}>
+      <button
+        ref={plusRef}
+        className={`sidebar-btn${launcher ? ' active' : ''}`}
+        aria-label="Create surface"
+        onClick={toggleLauncher}
+        onPointerEnter={(e) => showTooltip(e.currentTarget, 'Create surface')}
+        onPointerLeave={hideTooltip}
+        onFocus={(e) => showTooltip(e.currentTarget, 'Create surface')}
+        onBlur={hideTooltip}
+      >
         <IconPlus />
       </button>
       {launcherOverlay}
+      {tooltipOverlay}
       {surfaces.length > 0 && <div className="sidebar-sep" />}
       <div className="sidebar-apps">
         {orderedSurfaces.map((s) => (
@@ -136,7 +183,11 @@ export function Sidebar({ onCreateSurface, onRequestRestore, animating = {} }: P
             key={s.id}
             data-sidebar-sid={s.id}
             className={`sidebar-app${s.minimized ? ' minimized' : ''}${animating[s.id] ? ` is-${animating[s.id]}` : ''}`}
-            title={`${s.title}${s.minimized ? ' (minimized)' : ''} — click to bring forward`}
+            aria-label={s.title}
+            onPointerEnter={(e) => showTooltip(e.currentTarget, s.title)}
+            onPointerLeave={hideTooltip}
+            onFocus={(e) => showTooltip(e.currentTarget, s.title)}
+            onBlur={hideTooltip}
             onClick={() => {
               if (animating[s.id]) return
               if (s.minimized) {
