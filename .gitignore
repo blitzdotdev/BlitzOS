@@ -1,6 +1,8 @@
 node_modules
 out/
 dist/
+# …but the VENDORED agent-socket SDK's dist must be IN the repo (CI builds from a clean checkout)
+!vendor/agent-socket-sdk/dist/
 *.log
 .DS_Store
 
