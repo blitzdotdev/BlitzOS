@@ -41,7 +41,7 @@ export function buildBootstrap(_url, sessionId = '0') {
     "IMPORTANT OVERRIDE for this session: the desktop is ALREADY set up by the user. Do NOT assemble, rearrange, resize, recenter, move, or close ANYTHING on connect or on your own — ignore the manual's 'assemble the desktop on connect' guidance entirely. This is the user's curated, live desktop.",
     `CONTEXT FIRST (you restart often + lose memory): ON CONNECT, before anything, recover your conversation history — call \`list_state\` to get \`workspace_path\`, then with your Bash tool run \`tail -n 60 "$workspace_path/${chatFile}"\`. That file is YOUR FULL chat history with the user and it PERSISTS across your restarts (the /events moment log does NOT — it resets). Read it so you understand follow-ups like 'continue the X thing' or 'go'. If the LAST line is an unanswered user message, act on it now.`,
     `Your ONLY job: respond when the user types in YOUR chat. Poll \`curl -sX POST ${B}/events -d '{"since":0,"wait":0${sess}}'\` once for the live backlog, then set \`since\` to the returned \`latest\` and run the /events long-poll loop FOREVER (wait:25${sess ? `, always including ${sess.slice(1)}` : ''}), responding to each new trigger:'message' and doing EXACTLY what it asks.`,
-    `CRITICAL — STAYING ALIVE: there is NO background process. You are a terminal program that exists ONLY while you are actively running tool calls. The INSTANT you end your turn (stop calling tools, go "idle", or announce you are "watching/listening" and stop) your process EXITS and you go OFFLINE — the user can no longer reach you. So you must keep calling \`/events\` yourself in an UNBROKEN, NEVER-ENDING chain: poll → (handle any message) → poll again → poll again → forever. After EVERY poll, immediately issue the next poll, even if it returned nothing. Do NOT say "I'm now watching" and stop — that kills you. Just keep polling. (If you do die, BlitzOS auto-restarts you, but you lose responsiveness in the gap — so don't stop.)`,
+    `CRITICAL — STAYING REACHABLE: there is NO background process polling for you. The user reaches you ONLY while you are actively calling \`/events\`. The INSTANT you stop (end your turn, go "idle", or announce you are "watching/listening" and then sit waiting) you go DEAF — the user's messages pile up unseen and you appear frozen. So you must keep calling \`/events\` yourself in an UNBROKEN, NEVER-ENDING chain: poll → (handle any message) → poll again → poll again → forever. After EVERY poll, immediately issue the next poll, even if it returned nothing. Do NOT say "I'm now watching" and then stop — that makes you deaf. Just keep polling, forever, no matter what.`,
     `BE VISIBLE — the user must always SEE what you're doing. Reply + progress ONLY via \`curl -sX POST ${B}/say -d '{"text":"…"${sess}}'\` (this lands in YOUR chat). The MOMENT you get a message, /say a one-line acknowledgement of your PLAN, then /say a short note before/after each meaningful step. Never go quiet for more than a few seconds of work without a /say. DO NOTHING unprompted. Going silent, or acting without saying what you're doing, is a FAILURE.`,
     ...(primary
       ? []
@@ -57,12 +57,14 @@ export function shellQuote(s) {
 }
 
 /** The claude argv command string run inside the tmux terminal. mode 'create' → --session-id (first run),
- *  'resume' → --resume (continue the SAME conversation). The prompt is read from the bootstrap FILE so the
- *  command stays single-line (tmux control mode forbids newlines). --dangerously-skip-permissions because
- *  the agent acts unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
+ *  'resume' → --resume (continue the SAME conversation). The bootstrap is the POSITIONAL prompt (read from a
+ *  FILE via "$(cat …)" so the command stays single-line — tmux control mode forbids newlines).
+ *  INTERACTIVE (no -p): claude renders its full TUI in the terminal so the user can WATCH it work — print
+ *  mode (-p) ran silently, leaving the terminal blank. --dangerously-skip-permissions: the agent acts
+ *  unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
 export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile }) {
   const sessionArg = mode === 'resume' ? `--resume ${claudeSid}` : `--session-id ${claudeSid}`
-  return `${cmd} ${sessionArg} --dangerously-skip-permissions -p "$(cat ${shellQuote(bootstrapFile)})"`
+  return `${cmd} ${sessionArg} --dangerously-skip-permissions "$(cat ${shellQuote(bootstrapFile)})"`
 }
 
 /** Read (or mint) this session's persisted claude session-id + whether claude has ESTABLISHED it (so we
