@@ -291,6 +291,17 @@ app.whenReady().then(() => {
   ipcMain.on('os:agent-spawn', (_e, p?: { title?: string }) => { try { osSpawnAgent(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
   ipcMain.handle('os:close-agent', (_e, id: string) => { try { return osCloseAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   ipcMain.handle('os:rename-agent', (_e, p: { id: string; title: string }) => { try { return osRenameAgent(String(p?.id), String(p?.title ?? '')) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
+  // blitz.chat (a per-agent chat widget's own control): 'new' → spawn a fresh agent (returns its id);
+  // 'rename' → retitle an agent. Routes to the SAME osSpawnAgent/osRenameAgent the toolbar uses — the
+  // server mirrors this via the shim's chatControl → /api/os/agent-spawn|agent-rename (no divergence).
+  ipcMain.handle('os:chat-control', (_e, p: { op?: string; args?: { id?: string; title?: string } }) => {
+    try {
+      const op = String(p?.op || ''); const a = p?.args || {}
+      if (op === 'new') return osSpawnAgent(a.title != null ? String(a.title) : undefined, true)
+      if (op === 'rename') return osRenameAgent(String(a.id ?? ''), String(a.title ?? ''))
+      return { ok: false, error: `unknown chat op: ${op}` }
+    } catch (e) { return { ok: false, error: (e as Error)?.message } }
+  })
   ipcMain.handle('os:terminal-list', () => electronTerminalOps.listTerminals())
   ipcMain.on('os:terminal-stop', (_e, id: string) => electronTerminalOps.stopTerminal(String(id)))
   ipcMain.on('os:terminal-remove', (_e, id: string) => electronTerminalOps.removeTerminal(String(id)))

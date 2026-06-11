@@ -11,7 +11,7 @@ type ActionItem = {
   title: string
   detail?: string
   kind: string
-  sessionId?: string
+  agentId?: string
   choices?: string[]
   status: 'pending' | 'done' | 'dismissed'
   createdAt: number

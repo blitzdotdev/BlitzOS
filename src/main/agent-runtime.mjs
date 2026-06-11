@@ -8,8 +8,9 @@
 //   • the claude argv command string (create vs resume), and
 //   • the persisted claude --session-id token (so the SAME conversation continues across restarts).
 // Both transports (Electron + server) import THIS one file — no per-transport fork.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
@@ -81,14 +82,34 @@ export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create',
   return `${cmd} ${sessionArg} --dangerously-skip-permissions "$(cat ${shellQuote(bootstrapFile)})"`
 }
 
+/** Has claude ALREADY created this conversation on disk? claude writes `<configDir>/projects/<encoded-cwd>/
+ *  <session-id>.jsonl` (encoded-cwd = the workspace path with every `/` and `.` turned into `-`; we don't
+ *  relocate CLAUDE_CONFIG_DIR, so configDir defaults to ~/.claude). The session-id is a UUID, so a hit is
+ *  unambiguous. A wrong/exotic encoding just misses → we safely fall back to the timing flag (no regression). */
+function claudeConversationExists(sessionsDir, claudeSessionId) {
+  if (!claudeSessionId) return false
+  try {
+    const wsPath = dirname(dirname(sessionsDir)) // <ws>/.blitzos/sessions → <ws> (claude's cwd)
+    const cfgDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
+    const encoded = wsPath.replace(/[/.]/g, '-')
+    return existsSync(join(cfgDir, 'projects', encoded, `${claudeSessionId}.jsonl`))
+  } catch { return false }
+}
+
 /** Read (or mint) this agent's persisted claude session-id + whether claude has ESTABLISHED it (so we
  *  --resume vs --session-id). Lives in the SAME meta.json the terminal-manager owns — no second file. The
- *  caller persists the id by passing it to spawnTerminal (which writes meta). established flips true only
- *  after a healthy run (terminal-manager sets claudeEstablished on a ≥5s exit), so we never --resume an id
- *  claude never created (which fails 'No conversation found' → a crash loop). */
+ *  caller persists the id by passing it to spawnTerminal (which writes meta). established is true when the
+ *  timing flag is set (terminal-manager sets claudeEstablished after ≥8s uptime / a ≥5s exit) OR — the
+ *  deterministic backstop — when claude's conversation jsonl already exists on disk. The jsonl check closes
+ *  the narrow gap where claude created the session but BlitzOS restarted (and the agent survived in tmux)
+ *  before the establish timer fired: without it that re-exec would run `--session-id <existing>` → claude
+ *  errors "already in use" → crash loop. We still never --resume an id claude never created (no jsonl, flag
+ *  unset → create mode → 'No conversation found' avoided). */
 export function ensureClaudeSessionId(sessionsDir, id) {
   const m = readMeta(sessionsDir, id)
-  return { claudeSessionId: m.claudeSessionId || randomUUID(), established: !!m.claudeEstablished }
+  const claudeSessionId = m.claudeSessionId || randomUUID()
+  const established = !!m.claudeEstablished || claudeConversationExists(sessionsDir, claudeSessionId)
+  return { claudeSessionId, established }
 }
 
 /** Prepare an agent (re)launch: ensure the claude session-id, (re)write the bootstrap file with the CURRENT

@@ -602,7 +602,7 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
 /** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
 export function osSendHydrate(): void {
   if (!wsHost) return
-  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', stageCount: cached.stageCount || 1, workspace: wsHost.active() })
+  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, workspace: wsHost.active() })
 }
 /** Serve a workspace thumbnail by name (the blitz-thumb:// protocol handler in index.ts calls this). */
 export function osReadThumb(name: string): Buffer | null {
