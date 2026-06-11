@@ -13,6 +13,7 @@ import { IconEye } from './Icons'
 import { FolderWidget } from './FolderWidget'
 import { FileWidget, DirWidget } from './FileWidget'
 import { FileManager } from './FileManager'
+import { UnlockWidget } from './UnlockWidget'
 import { NOTE_PAPER } from '../paper'
 
 type BridgeReply = { ok: boolean; data?: unknown; error?: string }
@@ -277,6 +278,22 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
       if (!m || typeof m !== 'object') return
       if (m.type === 'blitz:hello') {
         win.postMessage({ type: 'blitz:init', props: surface.props ?? {} }, '*')
+      } else if (m.type === 'blitz:contextmenu') {
+        // Item 5b: a srcdoc widget forwarded a right-click (its iframe swallowed it). Open the annotation
+        // menu at that point — EXCEPT on runtime panels (chat/activity), where annotating makes no sense.
+        const isPanel = surface.role === 'chat' || surface.role === 'activity'
+        const el = iframeRef.current
+        if (!isPanel && el) {
+          const r = el.getBoundingClientRect()
+          const z = surface.zoom ?? 1
+          const cw = r.width / z
+          const ch = r.height / z // content px (the iframe is CSS-scaled by zoom)
+          const cx = Number((m as { x?: number }).x) || 0
+          const cy = Number((m as { y?: number }).y) || 0
+          if (cw > 0 && ch > 0) {
+            useDesktop.getState().openAnnotationMenu(surface.id, cx / cw, cy / ch, r.left + cx * z, r.top + cy * z)
+          }
+        }
       } else if (m.type === 'blitz:annotation') {
         // Item 5b: the chat hub's grounded reference was clicked → recall the annotation bubble on its
         // surface (fire-and-forget; the ref carries the full annotation so it works after a reload).
@@ -547,6 +564,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
         if (surface.component === 'file') return <FileWidget surface={surface} />
         if (surface.component === 'dir') return <DirWidget surface={surface} />
         if (surface.component === 'files') return <FileManager surface={surface} />
+        if (surface.component === 'unlock') return <UnlockWidget surface={surface} />
         return <div className="native-fallback">unknown widget: {surface.component}</div>
     }
   }

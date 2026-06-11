@@ -80,6 +80,13 @@ export const BRIDGE_SHIM = `<script>
     onProps: function (cb) { propCbs.push(cb); if (ready) try { cb(props); } catch (x) {} },
     ready: function (cb) { if (ready) { try { cb(props); } catch (x) {} } else readyCbs.push(cb); }
   };
+  // Item 5b: a srcdoc widget's sandboxed iframe swallows right-clicks, so the OS never sees them. Forward
+  // the point to the parent (in CONTENT px) so it can open the "Ask the agent about this" annotation menu —
+  // parity with web (main intercepts) + native (React onContextMenu). The parent maps it to the surface.
+  document.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    post({ type: 'blitz:contextmenu', x: e.clientX, y: e.clientY });
+  }, true);
   post({ type: 'blitz:hello' });   // the parent also pushes init on iframe load
 })();
 </script>
