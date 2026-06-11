@@ -20,21 +20,59 @@ function parse(body) {
   }
 }
 
+// Item 7: a CONTENT-AGNOSTIC web-host → integration map, so a web surface's host can be correlated to a
+// CONNECTED account. This is a hint ("an account is connected for this site"), NOT a claim about the
+// surface's actual logged-in account (a webview can be signed into a DIFFERENT account than the OAuth
+// integration) — the agent verifies with read_window before acting AS the account. Suffix-matched, so a
+// subdomain (app.slack.com) or a tenant (acme.atlassian.net) still resolves. No per-site DOM logic.
+const PROVIDER_WEB_HOSTS = {
+  gmail: ['mail.google.com', 'accounts.google.com', 'google.com'],
+  github: ['github.com'],
+  slack: ['slack.com'],
+  jira: ['atlassian.net'],
+  discord: ['discord.com']
+}
+function hostOf(url) {
+  try {
+    return new URL(String(url || '')).host.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+/** A connected integration whose web hosts match this surface's URL → { provider, label, verify:true }. */
+function accountHintFor(url, integrations) {
+  const host = hostOf(url)
+  if (!host || !Array.isArray(integrations)) return null
+  for (const it of integrations) {
+    if (!it || !it.connected) continue
+    const hosts = PROVIDER_WEB_HOSTS[it.id] || []
+    if (hosts.some((h) => host === h || host.endsWith('.' + h))) {
+      return { provider: it.id, label: it.label || null, verify: true }
+    }
+  }
+  return null
+}
+
 // The agent-facing view of desktop state — layout fields + props, but NOT html. srcdoc `html` is omitted
 // (bloat — you DRIVE a widget via props, never re-read its html). props ARE included so the agent can
 // VERIFY a widget's data landed and read its Notepad text (`props.text`) — a srcdoc iframe can't be
 // read_window'd, so list_state.props is the agent's ONLY confirmation path — EXCEPT the chat/activity
 // panels, whose props hold the full transcript (don't leak / bloat). ONE definition so every transport
 // (and the widget list_state tool) returns the IDENTICAL shape — ops.getState() returns raw full state.
-export function serializeStateForAgent(state) {
+// `integrations` (optional) drives the item-7 per-web-surface account_hint (who-am-I correlation).
+export function serializeStateForAgent(state, integrations) {
   const s = state || {}
   const isTranscript = (x) => x.role === 'chat' || x.role === 'activity' || x.component === 'chat' || x.component === 'activity'
   return {
     ...s,
-    surfaces: (s.surfaces || []).map((x) => ({
-      id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
-      ...(isTranscript(x) || !x.props ? {} : { props: x.props })
-    }))
+    surfaces: (s.surfaces || []).map((x) => {
+      const hint = x.kind === 'web' && x.url ? accountHintFor(x.url, integrations) : null
+      return {
+        id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
+        ...(hint ? { account_hint: hint } : {}),
+        ...(isTranscript(x) || !x.props ? {} : { props: x.props })
+      }
+    })
   }
 }
 
@@ -150,8 +188,8 @@ export function makeOsTools(ops) {
     {
       path: '/list_state',
       description:
-        'List the canvas: active workspace, its folder path (workspace_path), and the open surfaces. Local agents author by writing files into workspace_path; check surfaces to judge THIS desktop vs a fresh workspace.',
-      handler: () => serializeStateForAgent(ops.getState())
+        'List the canvas: active workspace, its folder path (workspace_path), and the open surfaces. Local agents author by writing files into workspace_path; check surfaces to judge THIS desktop vs a fresh workspace. A web surface MAY carry account_hint {provider,label,verify} when a connected integration matches its host — a hint that an account exists, NOT proof of the surface\'s logged-in account; read_window to confirm before acting AS it.',
+      handler: () => serializeStateForAgent(ops.getState(), ops.integrationStatuses ? ops.integrationStatuses() : undefined)
     },
     {
       path: '/list_workspaces',
