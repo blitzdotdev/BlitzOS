@@ -33,8 +33,9 @@ the VM never share state.
 1. In the VM, log into GitHub (or just mint a fine-grained PAT with **Contents: read** on the
    repo) and download the latest release zip from
    `https://github.com/blitzdotdev/BlitzOS/releases` → unzip → drag `BlitzOS.app` to
-   `/Applications` → open it (unsigned builds: right-click → Open the first time, or
-   `xattr -dr com.apple.quarantine /Applications/BlitzOS.app`).
+   `/Applications` → open it. Builds are signed + notarized (CI secrets are configured), so
+   Gatekeeper is clean. If you ever grab a PRE-signing build ("BlitzOS is damaged"):
+   `xattr -dr com.apple.quarantine /Applications/BlitzOS.app && codesign --force --deep -s - /Applications/BlitzOS.app`
 2. Give the updater the token (private repo):
    `mkdir -p ~/.blitzos && echo '<PAT>' > ~/.blitzos/github-token`
    (or launch with `GH_TOKEN` exported). Without it the poll logs and skips.
