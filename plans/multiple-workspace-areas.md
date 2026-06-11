@@ -1,5 +1,7 @@
 # Multiple workspace areas (#45) — design
 
+> **⚠️ Vocabulary update (2026-06-11):** "areas" were renamed to **STAGES** (`stageForAgent`, `stageCount`, `stages-core.mjs`, meta field `stage`). Read every "area" below as "stage". The feature **shipped** — stage-per-agent plus the slot lattice (`stage-core.mjs`, `place_widget`/`bring_to_stage`/`send_backstage`); see `plans/blitzos-stage-slot-desktop.md`.
+
 **Status:** design (2026-06-07). The user's explicitly-flagged "next big thing": more than one
 workspace area, like macOS Spaces. Today there is ONE area (`primaryRect`, centered at the world
 origin). Control mode is supposed to show them ALL — so areas must be TILED in world space (separate

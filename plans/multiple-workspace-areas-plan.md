@@ -1,5 +1,7 @@
 # #45 Workspace areas — grounded implementation plan (2026-06-07)
 
+> **⚠️ Vocabulary update (2026-06-11):** "areas" were renamed to **STAGES** (`stageForAgent`, `stageCount`, `stages-core.mjs`). Read "area" as "stage" throughout. Implemented + shipped (stage-per-agent + the slot lattice; see `plans/blitzos-stage-slot-desktop.md`).
+
 Synthesized by a 4-agent workflow that mapped every spatial-fn consumer in the CURRENT (post-window-rewrite)
 code. Design model in `multiple-workspace-areas.md`. **Overriding invariant: at `areaCount===1` every spatial
 computation is byte-identical to today** (no regression to the just-rewritten, GUI-unverified window system).

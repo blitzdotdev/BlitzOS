@@ -1,5 +1,7 @@
 # Session Tape (Feature 3, revised) + Idle Daydreaming (Feature 5) + the Flywheel
 
+> **⚠️ Stale runtime references (2026-06-11):** this doc cites `agent-runner.mjs` as "the live brain supervisor" — it was **DELETED**. There is no single headless brain; each agent is a **visible `claude` tmux terminal** supervised by `terminal-manager.mjs` (command/bootstrap in `agent-runtime.mjs`). The daydreaming "tick wakes the brain" idea still maps onto waking the resident agent; read `agent-runner.mjs` as `terminal-manager.mjs`/`agent-runtime.mjs`.
+
 **Status:** Design (2026-06-07). No core code changed yet.
 **Supersedes (for Feature 3):** the agent-managed `log_event`/`recall` memory design explored earlier this session. That design put "what to remember" judgment *in the agent*. This one is simpler and **more pure-substrate**: BlitzOS passively records everything; the agent does nothing special.
 **Companion docs:** `agent-os-dynamic-architecture.md` (the substrate, §0 locked decisions, P0–P6), `guardian-angel-blitzos.md` (Feature 3 ≈ GA-1 preference flywheel; Feature 5 ≈ GA-4 daydreaming). This doc is the implementable filling-in of those two slots, plus the loop that joins them.
