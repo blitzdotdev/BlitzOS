@@ -26,12 +26,32 @@ interface WebviewMethods {
   getURL(): string
 }
 
+function AppEmptyState(): JSX.Element {
+  return (
+    <div className="surface-empty">
+      <div className="surface-empty-icon">▦</div>
+      <h3>App</h3>
+      <p>A Blitz app can appear here. Add a deployed app URL, or ask an agent to create one for this workspace.</p>
+    </div>
+  )
+}
+
 // memo: the camera tween (⌘⌘ zoom-out, pan/zoom) re-renders App ~60×/sec, which re-creates every
 // SurfaceFrame element. Their `surface` prop keeps a stable reference when only the transform changes,
 // so memo lets React skip re-running each (webview-bearing) frame per animation tick. A surface's own
 // store subscriptions (z/selection/drag) still re-render it independently — memo only gates the
-// parent-driven churn, so behavior is unchanged.
-export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
+// parent-driven churn (brandon-ui's dock-animation props ride along; they only change per-gesture).
+export const SurfaceFrame = memo(function SurfaceFrame({
+  surface,
+  onRequestMinimize,
+  onRequestToggleMaximize,
+  restoring = false
+}: {
+  surface: Surface
+  onRequestMinimize?: (id: string) => void
+  onRequestToggleMaximize?: (id: string) => void
+  restoring?: boolean
+}): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
@@ -543,6 +563,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
   const isFolder = surface.kind === 'native' && surface.component === 'folder'
   const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
   const isSlotted = !!slotOf(surface) // a stage tile: lattice-snapped, fixed-size, never edge-tiles
+  const needsFocusCatcher = !isActive && !isControl && (surface.kind === 'web' || surface.kind === 'app' || surface.kind === 'srcdoc')
   const paper = isNote ? (NOTE_PAPER[(surface.props?.color as string) || 'coral'] ?? NOTE_PAPER.coral) : undefined
 
   function body(): JSX.Element {
@@ -573,6 +594,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
           />
         )
       case 'app':
+        if (!surface.url) return <AppEmptyState />
         return (
           <iframe
             title={surface.title}
@@ -645,6 +667,9 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
         // the smooth glide of the fluid layer (they part around tiles like displaced liquid).
         ...(isSlotted && !isDragging ? { transition: 'left 0.32s cubic-bezier(0.32, 1.23, 0.42, 1), top 0.32s cubic-bezier(0.32, 1.23, 0.42, 1), width 0.32s ease, height 0.32s ease' } : {}),
         ...(isFileTile && !isDragging ? { transition: 'left 0.4s cubic-bezier(0.22, 1, 0.36, 1), top 0.4s cubic-bezier(0.22, 1, 0.36, 1)' } : {}),
+        // brandon-ui dock restore: the surface is mounted (for measurement) but hidden while the
+        // genie animation plays a clone from the dock; unhidden when the phase ends.
+        ...(restoring ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {}),
         ...(paper ? { background: paper.bg, color: paper.ink } : {}),
         // The Chat + Agent-activity panels are pinned: a z-band far above any focus-raised
         // window, so the agent (or the user) can never bury the channel/feed they rely on.
@@ -680,8 +705,8 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
           {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
               reconcile (the file still exists), so only offer zoom; delete the file to remove it. */}
           {!isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
-          {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />}
-          <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
+          {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => (onRequestMinimize ? onRequestMinimize(surface.id) : minimizeSurface(surface.id))} />}
+          <button className="tl tl-max" title="Zoom" onClick={() => (onRequestToggleMaximize ? onRequestToggleMaximize(surface.id) : toggleMaximize(surface.id))} />
         </div>
         {!isFileTile && (
           <button className={`slot-toggle${isSlotted ? ' on' : ''}`} title={isSlotted ? 'Pop out of the grid — free-form, restores its size (⌘T; ⇧⌘T cycles size)' : 'Snap into the widget grid (⌘T)'} onClick={toggleSlot} onPointerDown={stop}>
@@ -739,6 +764,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({ surface }: { surface: S
         style={{ position: 'relative', ...(isNote ? { background: 'transparent' } : {}) }}
       >
         {body()}
+        {needsFocusCatcher && <div className="window-focus-catcher" onPointerDown={() => focusSurface(surface.id)} />}
       </div>
       {/* macOS-style resize from all sides + corners; above the drag-overlay so it works in control
           mode too (#41). The handles avoid the title-bar controls (traffic lights / eye).

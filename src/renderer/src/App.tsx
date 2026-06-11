@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useDesktop, viewTransform, areaRect, areaForSession, areaCenterX, nextTerminalName, type CreateSurfaceInput } from './store'
 import { pushSessionData, pushSessionExit } from './sessionStream'
 import type { Surface, CanvasTransform } from './types'
@@ -10,7 +11,7 @@ import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame } from './components/SurfaceFrame'
 import { AnnotationLayer } from './components/AnnotationLayer'
 import { PrimarySpace } from './components/PrimarySpace'
-import { Sidebar } from './components/Sidebar'
+import { Sidebar, type SurfaceLauncherKind } from './components/Sidebar'
 import { IconChat, IconSparkle, IconGrid, IconChevronDown } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
@@ -20,6 +21,178 @@ import { ContextMenu } from './components/ContextMenu'
 // Legacy always-on integration cards on the canvas (they stacked at origin and clutter the agent-driven
 // desktop). Off by default — integrations now surface as agent-spawned widgets. Flip to re-enable.
 const SHOW_INTEGRATION_CARDS = false
+type DockAnimationPhase = 'minimizing' | 'restoring'
+const WIDGET_PLACEHOLDER_HTML = `
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: var(--blitz-surface);
+    color: var(--blitz-text);
+    font: 14px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .empty {
+    width: min(320px, calc(100% - 44px));
+    display: grid;
+    gap: 12px;
+    text-align: center;
+  }
+  .mark {
+    width: 42px;
+    height: 42px;
+    margin: 0 auto;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    border: 1px solid var(--blitz-hairline);
+    color: var(--blitz-accent);
+    background: color-mix(in srgb, var(--blitz-accent) 10%, transparent);
+    font-size: 20px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 650;
+  }
+  p {
+    margin: 0;
+    color: var(--blitz-text-dim);
+    line-height: 1.45;
+  }
+</style>
+<main class="empty">
+  <div class="mark">&lt;/&gt;</div>
+  <h1>Widget</h1>
+  <p>A sandboxed mini-app can live here. Ask an agent to build one, or use it as a starting point for a custom workspace tool.</p>
+</main>`
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+}
+
+function findByData(name: string, value: string): HTMLElement | null {
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[${name}]`))) {
+    if (el.getAttribute(name) === value) return el
+  }
+  return null
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+}
+
+async function animateDockMotion(
+  el: HTMLElement,
+  dock: HTMLElement,
+  worldScale: number,
+  phase: DockAnimationPhase
+): Promise<(() => void) | null> {
+  if (!el.animate) return null
+  const from = el.getBoundingClientRect()
+  const to = dock.getBoundingClientRect()
+  if (!from.width || !from.height || !to.width || !to.height) return null
+
+  const scale = Math.max(0.06, Math.min(0.18, Math.min(to.width / from.width, to.height / from.height)))
+  const safeScale = Math.max(0.001, worldScale || 1)
+  const dx = (to.left + to.width / 2 - (from.left + from.width / 2)) / safeScale
+  const dy = (to.top + to.height / 2 - (from.top + from.height / 2)) / safeScale
+  const dockTransform = `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`
+  const shown = { transform: 'translate3d(0px, 0px, 0) scale(1)', opacity: 1 }
+  const docked = { transform: dockTransform, opacity: 0.18 }
+  const keyframes = phase === 'minimizing' ? [shown, docked] : [docked, shown]
+  const first = keyframes[0]
+  const previous = {
+    transform: el.style.transform,
+    opacity: el.style.opacity,
+    transformOrigin: el.style.transformOrigin,
+    willChange: el.style.willChange,
+    pointerEvents: el.style.pointerEvents,
+    zIndex: el.style.zIndex,
+    visibility: el.style.visibility
+  }
+
+  // For restore, the real surface is mounted but hidden for measurement. Apply the docked
+  // first frame while it is still hidden, then reveal it, so it cannot flash at full size.
+  el.style.transform = String(first.transform)
+  el.style.opacity = String(first.opacity)
+  el.style.visibility = 'visible'
+  el.style.transformOrigin = 'center center'
+  el.style.willChange = 'transform, opacity'
+  el.style.pointerEvents = 'none'
+  el.style.zIndex = '3000000'
+
+  const animation = el.animate(keyframes, {
+    duration: phase === 'minimizing' ? 320 : 300,
+    easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+    fill: 'forwards'
+  })
+
+  await new Promise<void>((resolve) => {
+    animation.onfinish = () => resolve()
+    animation.oncancel = () => resolve()
+  })
+
+  return () => {
+    animation.cancel()
+    el.style.transform = previous.transform
+    el.style.opacity = previous.opacity
+    el.style.transformOrigin = previous.transformOrigin
+    el.style.willChange = previous.willChange
+    el.style.pointerEvents = phase === 'restoring' ? '' : previous.pointerEvents
+    el.style.zIndex = previous.zIndex
+    el.style.visibility = phase === 'restoring' ? '' : previous.visibility
+  }
+}
+
+type SurfaceRect = Pick<Surface, 'x' | 'y' | 'w' | 'h'>
+
+async function animateSurfaceGeometryMotion(
+  el: HTMLElement,
+  from: SurfaceRect
+): Promise<(() => void) | null> {
+  if (!el.animate) return null
+  if (!from.w || !from.h) return null
+
+  const previous = {
+    willChange: el.style.willChange,
+    pointerEvents: el.style.pointerEvents,
+    zIndex: el.style.zIndex
+  }
+
+  const to = {
+    left: el.style.left,
+    top: el.style.top,
+    width: el.style.width,
+    height: el.style.height
+  }
+  if (!to.left || !to.top || !to.width || !to.height) return null
+
+  el.style.willChange = 'left, top, width, height'
+  el.style.pointerEvents = 'none'
+  el.style.zIndex = '3000000'
+
+  const animation = el.animate(
+    [
+      { left: `${from.x}px`, top: `${from.y}px`, width: `${from.w}px`, height: `${from.h}px` },
+      to
+    ],
+    { duration: 300, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' }
+  )
+
+  await new Promise<void>((resolve) => {
+    animation.onfinish = () => resolve()
+    animation.oncancel = () => resolve()
+  })
+
+  return () => {
+    animation.cancel()
+    el.style.willChange = previous.willChange
+    el.style.pointerEvents = previous.pointerEvents
+    el.style.zIndex = previous.zIndex
+  }
+}
 
 // The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
 // hydrate so a fresh workspace gets one (it then persists as a file); idempotent on a restored board.
@@ -92,6 +265,10 @@ export default function App(): JSX.Element {
   const selection = useDesktop((s) => s.selection)
   const createSurface = useDesktop((s) => s.createSurface)
   const setIntegrations = useDesktop((s) => s.setIntegrations)
+  const minimizeSurface = useDesktop((s) => s.minimizeSurface)
+  const updateSurface = useDesktop((s) => s.updateSurface)
+  const focusAndZoom = useDesktop((s) => s.focusAndZoom)
+  const toggleMaximize = useDesktop((s) => s.toggleMaximize)
 
   const [connecting, setConnecting] = useState<string | null>(null)
   const [aiUrl, setAiUrl] = useState<string | null>(null)
@@ -133,10 +310,13 @@ export default function App(): JSX.Element {
   // Right-click desktop menu (New Folder / New Board). wx/wy = the world position to place the new folder.
   const [menu, setMenu] = useState<{ x: number; y: number; wx: number; wy: number } | null>(null)
   const annotationMenu = useDesktop((s) => s.annotationMenu) // item 5b: surface right-click annotation menu
+  const [dockAnimations, setDockAnimations] = useState<Record<string, DockAnimationPhase>>({})
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
+  const dockAnimationIds = useRef<Set<string>>(new Set())
+  const rectAnimationIds = useRef<Set<string>>(new Set())
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   // Phase 2: true once the backend has sent (or declined) a hydrate. The state-push is
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
@@ -928,6 +1108,35 @@ export default function App(): JSX.Element {
     createSurface({ kind: 'web', url: 'https://news.ycombinator.com', title: 'Hacker News' })
   }
 
+  function visibleWorldCenter(): { x: number; y: number } {
+    const st = useDesktop.getState()
+    return {
+      x: Math.round((st.viewport.w / 2 - st.transform.x) / st.transform.scale),
+      y: Math.round((st.viewport.h / 2 - st.transform.y) / st.transform.scale)
+    }
+  }
+
+  function createFromLauncher(kind: SurfaceLauncherKind): void {
+    if (kind === 'browser') {
+      addBrowser()
+      return
+    }
+    if (kind === 'note') {
+      createSurface({ kind: 'native', component: 'note', title: 'Note', w: 280, h: 260, props: { text: '', color: 'yellow' } })
+      return
+    }
+    if (kind === 'app') {
+      createSurface({ kind: 'app', title: 'App', w: 520, h: 360 })
+      return
+    }
+    if (kind === 'widget') {
+      createSurface({ kind: 'srcdoc', title: 'Widget', w: 420, h: 300, html: WIDGET_PLACEHOLDER_HTML })
+      return
+    }
+    const c = visibleWorldCenter()
+    makeFolder(kind, c.x, c.y)
+  }
+
   // Capture the CURRENT board's primary-area snapshot and upload it as its workspace thumbnail
   // (best-effort, last-seen). Done before opening the overview and before switching away (while the
   // board we're leaving still has live streamed frames — they're torn down by the switch).
@@ -998,6 +1207,113 @@ export default function App(): JSX.Element {
     else createSurface(chatSurfaceInput([]))
   }
 
+  function setDockAnimation(id: string, phase: DockAnimationPhase | null): void {
+    if (phase) dockAnimationIds.current.add(id)
+    else dockAnimationIds.current.delete(id)
+    setDockAnimations((cur) => {
+      const next = { ...cur }
+      if (phase) next[id] = phase
+      else delete next[id]
+      return next
+    })
+  }
+
+  async function requestMinimize(id: string): Promise<void> {
+    if (dockAnimationIds.current.has(id) || rectAnimationIds.current.has(id)) return
+    const surf = useDesktop.getState().surfaces.find((s) => s.id === id)
+    if (!surf || surf.minimized) return
+    if (prefersReducedMotion()) {
+      minimizeSurface(id)
+      return
+    }
+
+    const el = findByData('data-sid', id)
+    const dock = findByData('data-sidebar-sid', id)
+    if (!el || !dock) {
+      minimizeSurface(id)
+      return
+    }
+
+    setDockAnimation(id, 'minimizing')
+    let cleanup: (() => void) | null = null
+    try {
+      cleanup = await animateDockMotion(el, dock, useDesktop.getState().transform.scale, 'minimizing')
+      minimizeSurface(id)
+    } finally {
+      cleanup?.()
+      setDockAnimation(id, null)
+    }
+  }
+
+  async function requestRestore(id: string): Promise<void> {
+    if (dockAnimationIds.current.has(id) || rectAnimationIds.current.has(id)) return
+    const surf = useDesktop.getState().surfaces.find((s) => s.id === id)
+    if (!surf) return
+    if (!surf.minimized) {
+      focusAndZoom(id)
+      return
+    }
+    if (prefersReducedMotion()) {
+      updateSurface(id, { minimized: false })
+      focusAndZoom(id)
+      return
+    }
+
+    setDockAnimation(id, 'restoring')
+    updateSurface(id, { minimized: false })
+    focusAndZoom(id)
+    await nextPaint()
+
+    const el = findByData('data-sid', id)
+    const dock = findByData('data-sidebar-sid', id)
+    if (!el || !dock) {
+      setDockAnimation(id, null)
+      return
+    }
+
+    let cleanup: (() => void) | null = null
+    try {
+      cleanup = await animateDockMotion(el, dock, useDesktop.getState().transform.scale, 'restoring')
+    } finally {
+      cleanup?.()
+      setDockAnimation(id, null)
+    }
+  }
+
+  async function requestToggleMaximize(id: string): Promise<void> {
+    if (dockAnimationIds.current.has(id) || rectAnimationIds.current.has(id)) return
+    const surf = useDesktop.getState().surfaces.find((s) => s.id === id)
+    if (!surf || surf.minimized) return
+    if (prefersReducedMotion()) {
+      toggleMaximize(id)
+      return
+    }
+
+    const el = findByData('data-sid', id)
+    if (!el) {
+      toggleMaximize(id)
+      return
+    }
+
+    rectAnimationIds.current.add(id)
+    const from = { x: surf.x, y: surf.y, w: surf.w, h: surf.h }
+    flushSync(() => toggleMaximize(id))
+
+    const nextEl = findByData('data-sid', id)
+    if (!nextEl) {
+      rectAnimationIds.current.delete(id)
+      return
+    }
+
+    let cleanup: (() => void) | null = null
+    try {
+      cleanup = await animateSurfaceGeometryMotion(nextEl, from)
+    } finally {
+      cleanup?.()
+      rectAnimationIds.current.delete(id)
+    }
+  }
+
   const active = integrations.find((i) => i.id === connecting) ?? null
   const openFolder = surfaces.find((s) => s.kind === 'native' && s.component === 'folder' && s.props?.open)
   // Pending action-items count → the toolbar Inbox badge (so the human notices tasks even when the inbox is buried).
@@ -1028,7 +1344,7 @@ export default function App(): JSX.Element {
 
       <div className="bg" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onContextMenu={onBgContextMenu} />
 
-      <Sidebar onAddBrowser={addBrowser} />
+      <Sidebar onCreateSurface={createFromLauncher} onRequestRestore={requestRestore} animating={dockAnimations} />
 
       <div
         className="world"
@@ -1048,7 +1364,15 @@ export default function App(): JSX.Element {
           integrations.map((it) => <IntegrationWidget key={it.id} integration={it} onConnect={setConnecting} />)}
         {surfaces.map((s) =>
           // folder members live only inside the folder — unless "peeked" open onto the desktop
-          s.groupId && !s.peek ? null : <SurfaceFrame key={s.id} surface={s} />
+          s.groupId && !s.peek ? null : (
+            <SurfaceFrame
+              key={s.id}
+              surface={s}
+              onRequestMinimize={requestMinimize}
+              onRequestToggleMaximize={requestToggleMaximize}
+              restoring={dockAnimations[s.id] === 'restoring'}
+            />
+          )
         )}
         {/* Item 5b: spatial annotations pin to surfaces (in-world so they pan/zoom with their surface). */}
         <AnnotationLayer />

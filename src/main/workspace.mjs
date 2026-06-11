@@ -77,7 +77,7 @@ function safeAreaCount(n) {
 function nodeKind(s) {
   if (s && s.role === 'chat') return null // the system chat is a srcdoc whose UI=blitz-chat.html + data=chat.md; never a node
   if (s && s.role === 'note') return 'note' // a note rendered via blitz-note.html still persists as its .md content file
-  if (s.kind === 'web' || s.kind === 'app') return 'web' // app folds to web (both serialize to a .weblink; no distinct 'app' node kind)
+  if (s.kind === 'web' || s.kind === 'app') return s.kind // both serialize to .weblink, but app needs its renderer kind preserved
   if (s.kind === 'srcdoc') return 'srcdoc'
   if (s.kind === 'native' && s.component === 'note') return 'note'
   if (s.kind === 'native' && s.component === 'file') return 'file' // a real file on disk (#37)
@@ -123,13 +123,14 @@ function hostOf(url) {
   }
 }
 
-// The content file (extension, desired basename, body bytes) for a node kind. nodeKind folds
-// 'app' into 'web', so only note/web/srcdoc reach here.
+// The content file (extension, desired basename, body bytes) for a node kind.
+// web and app share the .weblink payload, but remain distinct renderer kinds.
 function contentFor(kind, s) {
   switch (kind) {
     case 'note':
       return { ext: 'md', name: slug(s.title, 'note'), body: String(s.props?.text ?? '') }
     case 'web':
+    case 'app':
       return { ext: 'weblink', name: slug(hostOf(s.url) || s.title, 'link'), body: JSON.stringify({ url: s.url || '' }, null, 2) + '\n' }
     case 'srcdoc':
       return { ext: 'html', name: slug(s.title, 'panel'), body: String(s.html ?? '') }

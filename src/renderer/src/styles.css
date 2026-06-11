@@ -248,6 +248,44 @@ button {
   position: relative;
   background: var(--surface);
 }
+.surface-empty {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 28px;
+  text-align: center;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 42%),
+    var(--surface);
+}
+.surface-empty-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--control) 78%, transparent);
+  color: var(--accent);
+  font-size: 22px;
+}
+.surface-empty h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.15;
+  font-weight: 650;
+}
+.surface-empty p {
+  max-width: 340px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
 
 /* Tabbed windows (terminal): a strip of session tabs between the title bar and the body. Each tab is
    one tmux session; the body renders the active tab. The "+" spawns a new session into a new tab. */
@@ -627,6 +665,13 @@ button {
 /* Control mode: the whole card is a drag handle (content not interactive — like Mission Control). */
 .drag-overlay.control {
   top: 0;
+}
+.window-focus-catcher {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: transparent;
+  cursor: default;
 }
 
 /* File + folder tiles (#37): a real workspace file / subfolder shown on the canvas. */
@@ -1353,6 +1398,10 @@ button {
   background: var(--control-hover);
   color: var(--text);
 }
+.sidebar-btn.active {
+  background: var(--control-hover);
+  color: var(--text);
+}
 .sidebar-btn svg {
   width: 18px;
   height: 18px;
@@ -1376,6 +1425,7 @@ button {
 }
 .sidebar-app {
   flex: 0 0 auto;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1388,11 +1438,45 @@ button {
   cursor: pointer;
   padding: 0;
   box-shadow: inset 0 1px 0 var(--edge-highlight);
-  transition: background var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 .sidebar-app:hover {
   background: var(--control-hover);
   color: var(--text);
+}
+.sidebar-app.minimized {
+  opacity: 0.68;
+  background: color-mix(in srgb, var(--surface-raised) 64%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.sidebar-app.minimized::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 8px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0.8;
+}
+.sidebar-app.is-minimizing,
+.sidebar-app.is-restoring {
+  opacity: 1;
+  color: var(--text);
+  background: var(--control-hover);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 8px 24px color-mix(in srgb, var(--accent) 16%, transparent);
+  animation: sidebar-dock-target 760ms var(--ease-out) infinite alternate;
 }
 .sidebar-app-ic {
   display: inline-flex;
@@ -1403,6 +1487,213 @@ button {
 }
 .sidebar-app-label {
   display: none;
+}
+.sidebar-tooltip {
+  position: fixed;
+  z-index: 6600;
+  transform: translateY(-50%);
+  max-width: min(320px, calc(100vw - 84px));
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    var(--shadow-md);
+  backdrop-filter: blur(18px) saturate(1.16);
+  -webkit-backdrop-filter: blur(18px) saturate(1.16);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.25;
+  animation: sidebar-tooltip-in 90ms var(--ease-out) both;
+}
+.sidebar-tooltip.closing {
+  animation: sidebar-tooltip-out 120ms var(--ease-out) both;
+}
+
+.surface-launcher-backdrop {
+  position: fixed;
+  top: 32px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 6400;
+  background: rgb(0 0 0 / 22%);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: surface-launcher-backdrop-in 150ms var(--ease-out) both;
+}
+.surface-launcher-backdrop.closing {
+  pointer-events: none;
+  animation: surface-launcher-backdrop-out 170ms var(--ease-out) both;
+}
+.surface-launcher {
+  position: fixed;
+  width: 236px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    var(--shadow-lg);
+  backdrop-filter: blur(22px) saturate(1.18);
+  -webkit-backdrop-filter: blur(22px) saturate(1.18);
+  transform-origin: 0 18px;
+  animation: surface-launcher-in 170ms var(--ease-out) both;
+}
+.surface-launcher.closing {
+  animation: surface-launcher-out 150ms var(--ease-out) both;
+}
+.surface-launcher-item {
+  height: 70px;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px 6px;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+.surface-launcher-item:hover {
+  background: var(--control-hover);
+  border-color: var(--hairline);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.surface-launcher-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+}
+.surface-launcher-icon svg {
+  width: 21px;
+  height: 21px;
+}
+.surface-launcher-label {
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.surface-launcher-hint {
+  grid-column: 1 / -1;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 11px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--control) 72%, transparent);
+  font-size: 12px;
+}
+.surface-launcher-hint svg {
+  color: var(--accent);
+}
+
+@keyframes sidebar-dock-target {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes sidebar-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translate(3px, -50%) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, -50%) scale(1);
+  }
+}
+
+@keyframes sidebar-tooltip-out {
+  from {
+    opacity: 1;
+    transform: translate(0, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(3px, -50%) scale(0.98);
+  }
+}
+
+@keyframes surface-launcher-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes surface-launcher-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes surface-launcher-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes surface-launcher-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-app.is-minimizing,
+  .sidebar-app.is-restoring {
+    animation: none;
+  }
+  .surface-launcher-backdrop,
+  .surface-launcher-backdrop.closing,
+  .surface-launcher,
+  .surface-launcher.closing,
+  .sidebar-tooltip,
+  .sidebar-tooltip.closing {
+    animation: none;
+  }
 }
 
 /* Integration widgets (ground plane). */
