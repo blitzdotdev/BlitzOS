@@ -34,5 +34,14 @@ EXCLUSIONS (never rename — same as before): CDP `sessionId`/`CdpSession`, Elec
 - Drive suite green: `drive-terminals`, `drive-newchat`, `drive-areas`(→stage), `drive-tabs`, `verify-real`, + the branch's `test-stage-core`/`test-stage-e2e`/`drive-stages`.
 - **`.mjs` runtime-seam audit** (typecheck can't see these): backend↔workspace-host method names, the bootstrap scope payload, event-type strings, the slot-tool ops wired in BOTH transports. (Same class of seam I hand-fixed in the rename.)
 
+## EXECUTED — merged + verified (commit `e83f7c4`, a true merge: parents `a88f96a` + `b47dca1`)
+Workflow (24 agents): materialize → resolve 19 conflicts + 4 modify/delete → reconcile 49 slot-subsystem additions → typecheck/parity/build repair loop (green). Then my `.mjs`/runtime-seam audit + hand-fixes typecheck couldn't catch:
+- Aligned store actions to stage vocab: `goToArea`→`goToStage`, `setAreaCount`→`setStageCount`, `setCurrentArea`→`setCurrentStage`.
+- Fixed `RuntimePanel` reading the now-gone `s.area` → `s.stage` (publicMeta emits `stage`); labels `Area`→`Stage`, css `.run-area`→`.run-stage`.
+- Completed `drive-stages` cleanup (settle delay so its fire-and-forget `terminalRemove` lands).
+- Verified seams: `stageForAgent` exported + no `stageForSession` callers; `spawnTerminal({stage})` in backend+os-tools; zero session-rename leftovers; hub dropped (workspace-host: "There is NO chat hub — each agent has its OWN chat widget"); slot tools reuse `createSurface`/`moveSurface` (no transport gap).
+
+Live (server, Home): backend boots clean; agent resumed; over the relay — chat PING→PONG, `read_terminal` marker, `spawn_agent`, and the NEW `place_widget` (returns a slot `{col,row,size}`) all work; per-agent chat, no hub. Tests: **test-stage-core 238/0, test-stage-e2e 24/0**, drive-{terminals,newchat,tabs,stages} + verify-real all PASS and leave Home clean. typecheck + parity (11) + build green.
+
 ## Caveat
-`git fetch` fails here (no access) → working against the CACHED `origin/agent-runtime-moments`. The user may have newer branch commits; re-check if a fetch becomes possible.
+`git fetch` failed here (no access) → merged the CACHED `origin/agent-runtime-moments` (tip `b47dca1`). If you have newer branch commits, re-merge those deltas. **User pushes `git push origin master`.**
