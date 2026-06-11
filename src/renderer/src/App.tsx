@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { useDesktop, viewTransform, areaRect, areaForSession, areaCenterX, nextTerminalName, type CreateSurfaceInput } from './store'
+import { useDesktop, viewTransform, stageRect, stageForSession, stageCenterX, nextTerminalName, type CreateSurfaceInput } from './store'
 import { pushSessionData, pushSessionExit } from './sessionStream'
 import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
@@ -256,8 +256,8 @@ export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
   const mode = useDesktop((s) => s.mode)
-  const areaCount = useDesktop((s) => s.areaCount)
-  const currentArea = useDesktop((s) => s.currentArea)
+  const stageCount = useDesktop((s) => s.stageCount)
+  const currentStage = useDesktop((s) => s.currentStage)
   const integrations = useDesktop((s) => s.integrations)
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
@@ -347,7 +347,7 @@ export default function App(): JSX.Element {
     animRef.current = requestAnimationFrame(step)
   }
   // Double-tap ⌘ toggles "Control mode" (the zoomed-out bird's-eye): animate the camera to the
-  // control viewport on enter and back to the locked primary-area view on exit. Both modes exist in
+  // control viewport on enter and back to the locked primary-stage view on exit. Both modes exist in
   // BOTH transports (Electron + server/Chrome); normal mode is the default everywhere.
   function toggleControlMode(): void {
     const st = useDesktop.getState()
@@ -357,33 +357,33 @@ export default function App(): JSX.Element {
     if (next === 'canvas') {
       // Entering control mode: ALWAYS the gentle default zoom-out (controlScale 0.7), never a stale
       // remembered camera — the human wants a consistent gentle bird's-eye, not whatever it was left at.
-      const target = viewTransform('canvas', st.viewport, st.currentArea, st.areaCount)
+      const target = viewTransform('canvas', st.viewport, st.currentStage, st.stageCount)
       st.setMode('canvas')
       animateTransform(target)
     } else {
-      // Leaving control mode: animate back to the view-locked CURRENT area. controlTransform was
+      // Leaving control mode: animate back to the view-locked CURRENT stage. controlTransform was
       // already kept current by every pan/zoom/center in canvas mode, so there's nothing to capture
       // here (capturing st.transform now could grab a mid-animation frame — the ISSUE-3 trap).
       st.setMode('desktop')
-      animateTransform(viewTransform('desktop', st.viewport, st.currentArea, st.areaCount))
+      animateTransform(viewTransform('desktop', st.viewport, st.currentStage, st.stageCount))
     }
   }
 
-  // Switch to an adjacent workspace area (#45). In normal mode the camera animates to the new area
-  // (each area locks to the same on-screen desktop region); in control mode the bird's-eye already
-  // shows every area, so we only move the highlight. No-op past the ends.
-  function switchArea(delta: number): void {
+  // Switch to an adjacent workspace stage (#45). In normal mode the camera animates to the new stage
+  // (each stage locks to the same on-screen desktop region); in control mode the bird's-eye already
+  // shows every stage, so we only move the highlight. No-op past the ends.
+  function switchStage(delta: number): void {
     const st = useDesktop.getState()
-    const next = Math.max(0, Math.min(st.areaCount - 1, st.currentArea + delta))
-    if (next === st.currentArea) return
+    const next = Math.max(0, Math.min(st.stageCount - 1, st.currentStage + delta))
+    if (next === st.currentStage) return
     st.setCurrentArea(next)
-    if (st.mode === 'desktop') animateTransform(viewTransform('desktop', st.viewport, next, st.areaCount))
+    if (st.mode === 'desktop') animateTransform(viewTransform('desktop', st.viewport, next, st.stageCount))
   }
-  // Add a new (empty) area to the right and go to it (re-fits the bird's-eye in control mode).
-  function addAreaAndGo(): void {
+  // Add a new (empty) stage to the right and go to it (re-fits the bird's-eye in control mode).
+  function addStageAndGo(): void {
     useDesktop.getState().addArea()
     const now = useDesktop.getState()
-    animateTransform(viewTransform(now.mode, now.viewport, now.currentArea, now.areaCount))
+    animateTransform(viewTransform(now.mode, now.viewport, now.currentStage, now.stageCount))
   }
 
   useEffect(() => {
@@ -472,22 +472,22 @@ export default function App(): JSX.Element {
           useDesktop.getState().undoLayout()
         }
       } else if (e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        // Cmd + ← / → : switch BlitzOS workspace area (#45). Ctrl + ← / → is intentionally NOT bound — it's
+        // Cmd + ← / → : switch BlitzOS workspace stage (#45). Ctrl + ← / → is intentionally NOT bound — it's
         // the macOS "switch desktop/Space" shortcut, left free so the user can swap real desktops (their way
-        // out of fullscreen). Skip when typing, and when there's only one area.
+        // out of fullscreen). Skip when typing, and when there's only one stage.
         const ae = document.activeElement as HTMLElement | null
         const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
-        if (!editable && useDesktop.getState().areaCount > 1) {
+        if (!editable && useDesktop.getState().stageCount > 1) {
           e.preventDefault()
-          switchArea(e.key === 'ArrowLeft' ? -1 : 1)
+          switchStage(e.key === 'ArrowLeft' ? -1 : 1)
         }
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'n' || e.key === 'N')) {
-        // Cmd/Ctrl + N : add a new workspace area and jump to it (#45). Skip when typing in a field.
+        // Cmd/Ctrl + N : add a new workspace stage and jump to it (#45). Skip when typing in a field.
         const ae = document.activeElement as HTMLElement | null
         const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
         if (!editable) {
           e.preventDefault()
-          addAreaAndGo()
+          addStageAndGo()
         }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         // Delete / ⌫ closes the selected surfaces (when not typing in a field).
@@ -594,7 +594,7 @@ export default function App(): JSX.Element {
         const surfs = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
         // Control mode is a transient view toggle, never persisted — always boot the normal desktop.
-        st.hydrate(surfs, cam, 'desktop', Number(a.areaCount) || 1)
+        st.hydrate(surfs, cam, 'desktop', Number(a.stageCount) || 1)
         ensureNotepad()
         hydrated.current = true
         if (typeof a.workspace === 'string') {
@@ -607,7 +607,7 @@ export default function App(): JSX.Element {
         // reconnect's hydrate still can't clobber the new board.
         const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        st.hydrate(sf, cm, 'desktop', Number(a.areaCount) || 1)
+        st.hydrate(sf, cm, 'desktop', Number(a.stageCount) || 1)
         ensureNotepad()
         hydrated.current = true // a switch is also a valid first hydrate — don't depend on a prior 'hydrate'
         if (typeof a.workspace === 'string') {
@@ -625,27 +625,27 @@ export default function App(): JSX.Element {
         if (surf && (surf.kind === 'web' || surf.kind === 'app')) surf.shared = true
         // Dedupe by id: a 'create' (e.g. a new chat session) can race a hydrate that already brought it.
         if (surf && surf.id && st.surfaces.some((s) => s.id === surf.id)) return
-        // A NEW chat session owns its own area N. Recompute its x from the area with the renderer's REAL
-        // viewport (the host may have used a default vp), so its widget lands precisely in area N.
+        // A NEW chat session owns its own stage N. Recompute its x from the stage with the renderer's REAL
+        // viewport (the host may have used a default vp), so its widget lands precisely in stage N.
         const isNewChat = hydrated.current && surf && surf.role === 'chat' && surf.sessionId != null
-        const chatArea = isNewChat ? areaForSession(surf.sessionId as string) : 0
-        if (isNewChat && chatArea > 0) {
-          // area tags it for createSurface's clamp (else it clamps to the CURRENT area); x sets the precise
-          // left-of-center spot in area N using the real viewport.
-          surf.area = chatArea
-          surf.x = Math.round(areaCenterX(chatArea, useDesktop.getState().viewport) - 700)
+        const chatStage = isNewChat ? stageForSession(surf.sessionId as string) : 0
+        if (isNewChat && chatStage > 0) {
+          // stage tags it for createSurface's clamp (else it clamps to the CURRENT stage); x sets the precise
+          // left-of-center spot in stage N using the real viewport.
+          surf.stage = chatStage
+          surf.x = Math.round(stageCenterX(chatStage, useDesktop.getState().viewport) - 700)
         }
         st.createSurface(surf)
-        if (isNewChat && chatArea > 0) {
-          // ALWAYS grow areaCount so the new area exists + is navigable (whether a user or an agent spawned it).
+        if (isNewChat && chatStage > 0) {
+          // ALWAYS grow stageCount so the new stage exists + is navigable (whether a user or an agent spawned it).
           const cur = useDesktop.getState()
-          if (chatArea + 1 > cur.areaCount) cur.setAreaCount(chatArea + 1)
+          if (chatStage + 1 > cur.stageCount) cur.setAreaCount(chatStage + 1)
           // Follow the camera ONLY for a USER '+ New' (a.focus) — so "+ New" visibly opens the new agent's
           // workspace — never for an agent's spawn_chat_session (a background agent must not yank the user's view).
           if (a.focus) {
             const now = useDesktop.getState()
-            now.setCurrentArea(chatArea)
-            animateTransform(viewTransform(now.mode, now.viewport, chatArea, now.areaCount))
+            now.setCurrentArea(chatStage)
+            animateTransform(viewTransform(now.mode, now.viewport, chatStage, now.stageCount))
           }
         }
       }
@@ -727,8 +727,8 @@ export default function App(): JSX.Element {
         // A session was created (by an agent or the user), or re-adopted on restore. Sessions live as
         // TABS in a terminal window — add this one as a tab (idempotent). Covers both live spawns and
         // the restore() replay that brings back tmux survivors after a restart.
-        const sess = (a.session ?? {}) as { title?: string; area?: number | null }
-        ensureTerminalTab(String(a.id), sess.title || 'Terminal', sess.area)
+        const sess = (a.session ?? {}) as { title?: string; stage?: number | null }
+        ensureTerminalTab(String(a.id), sess.title || 'Terminal', sess.stage ?? (sess as { area?: number | null }).area)
       } else if (a.type === 'action-item') {
         // An agent pushed (or updated/resolved) an action item the human must do → the Inbox surface.
         const item = a.item as { id?: string; status?: string } | undefined
@@ -763,8 +763,8 @@ export default function App(): JSX.Element {
     Promise.resolve(api?.sessionList?.() ?? [])
       .then((list) => {
         if (cancelled || !Array.isArray(list)) return
-        for (const s of list as Array<{ id?: string; title?: string; status?: string; area?: number | null }>) {
-          if (s && s.id && s.status === 'running') ensureTerminalTab(String(s.id), s.title || 'Terminal', s.area)
+        for (const s of list as Array<{ id?: string; title?: string; status?: string; stage?: number | null }>) {
+          if (s && s.id && s.status === 'running') ensureTerminalTab(String(s.id), s.title || 'Terminal', s.stage ?? (s as { area?: number | null }).area)
         }
       })
       .catch(() => {})
@@ -845,7 +845,7 @@ export default function App(): JSX.Element {
         component: s.component,
         role: s.role,
         // Carry the chat session id so a per-session chat survives the round-trip (osState → a later
-        // hydrate): without it the surface would lose its area on the next connect and snap back to area 0.
+        // hydrate): without it the surface would lose its stage on the next connect and snap back to stage 0.
         sessionId: s.sessionId,
         // Chat + Agent-activity panels are pinned always-on-top — the agent must not cover them
         pinned: isRuntimePanel(s)
@@ -862,9 +862,9 @@ export default function App(): JSX.Element {
       }
       // camera = the WORLD point at screen center + scale (viewport-independent, so it restores
       // correctly on a different screen size — view.cx/cy are exactly that world point).
-      // #45: also push the area count + which area is active + the CURRENT area's world rect, so the
-      // agent (list_state) places surfaces in the area the human is looking at, not blindly at origin.
-      const currentAreaRect = areaRect(st.currentArea, st.viewport)
+      // #45: also push the stage count + which stage is active + the CURRENT stage's world rect, so the
+      // agent (list_state) places surfaces in the stage the human is looking at, not blindly at origin.
+      const currentStageRect = stageRect(st.currentStage, st.viewport)
       window.agentOS?.sendState({
         workspace: activeWsRef.current ?? undefined,
         surfaces,
@@ -872,9 +872,9 @@ export default function App(): JSX.Element {
         view,
         mode: st.mode,
         camera: { x: view.cx, y: view.cy, scale },
-        areaCount: st.areaCount,
-        currentArea: st.currentArea,
-        currentAreaRect
+        stageCount: st.stageCount,
+        currentStage: st.currentStage,
+        currentStageRect
       })
     }
     push()
@@ -894,8 +894,8 @@ export default function App(): JSX.Element {
     let lastT = useDesktop.getState().transform
     let lastVp = useDesktop.getState().viewport
     let lastMode = useDesktop.getState().mode
-    let lastArea = useDesktop.getState().currentArea
-    let lastAreaCount = useDesktop.getState().areaCount
+    let lastArea = useDesktop.getState().currentStage
+    let lastAreaCount = useDesktop.getState().stageCount
     const scheduleCamera = (): void => {
       if (timer) return
       timer = setTimeout(() => {
@@ -907,10 +907,10 @@ export default function App(): JSX.Element {
       if (state.surfaces !== lastS) {
         lastS = state.surfaces
         push() // surface set changed — reflect it at once
-      } else if (state.areaCount !== lastAreaCount || state.currentArea !== lastArea) {
-        // an area switch / add changes which area the agent should target — reflect it at once
-        lastArea = state.currentArea
-        lastAreaCount = state.areaCount
+      } else if (state.stageCount !== lastAreaCount || state.currentStage !== lastArea) {
+        // an stage switch / add changes which stage the agent should target — reflect it at once
+        lastArea = state.currentStage
+        lastAreaCount = state.stageCount
         push()
       } else if (state.transform !== lastT || state.viewport !== lastVp || state.mode !== lastMode) {
         lastT = state.transform
@@ -1048,7 +1048,7 @@ export default function App(): JSX.Element {
   }
 
   // The Chat panel docks to the LEFT of whatever the user is currently looking at,
-  // so it opens visible (and stays out of the area where the agent puts windows).
+  // so it opens visible (and stays out of the stage where the agent puts windows).
   function chatSurfaceInput(messages: Array<{ role: string; text: string }>): CreateSurfaceInput {
     const st = useDesktop.getState()
     const { scale, x: tx, y: ty } = st.transform
@@ -1073,8 +1073,8 @@ export default function App(): JSX.Element {
   // Open/focus a session's terminal tab (idempotent). Shared by the live session-spawn action,
   // resume-on-load, and the Sessions tray — the placement + add-tab-or-create logic lives in the
   // store action so all three callers stay in sync.
-  function ensureTerminalTab(sid: string, title: string, area?: number | null): void {
-    useDesktop.getState().openSession(sid, title || 'Terminal', area)
+  function ensureTerminalTab(sid: string, title: string, stage?: number | null): void {
+    useDesktop.getState().openSession(sid, title || 'Terminal', stage)
   }
 
   // The Action-items inbox docks TOP-RIGHT of the current view (out of the way of chat/activity which
@@ -1137,7 +1137,7 @@ export default function App(): JSX.Element {
     makeFolder(kind, c.x, c.y)
   }
 
-  // Capture the CURRENT board's primary-area snapshot and upload it as its workspace thumbnail
+  // Capture the CURRENT board's primary-stage snapshot and upload it as its workspace thumbnail
   // (best-effort, last-seen). Done before opening the overview and before switching away (while the
   // board we're leaving still has live streamed frames — they're torn down by the switch).
   async function captureCurrent(): Promise<void> {
@@ -1399,13 +1399,13 @@ export default function App(): JSX.Element {
             <IconChevronDown size={13} />
           </button>
         )}
-        {/* Workspace areas (#45): the indicator appears once there's more than one. Create a new area
-            with Cmd/Ctrl + N; switch areas with Cmd/Ctrl + ← →. */}
-        {areaCount > 1 && (
-          <span className="area-ctl" title="Workspace areas — ⌘N new · ⌘← ⌘→ switch">
-            <button className="area-arrow" disabled={currentArea <= 0} onClick={() => switchArea(-1)} title="Previous area">‹</button>
-            <span className="area-ind">Area {currentArea + 1}/{areaCount}</span>
-            <button className="area-arrow" disabled={currentArea >= areaCount - 1} onClick={() => switchArea(1)} title="Next area">›</button>
+        {/* Workspace stages (#45): the indicator appears once there's more than one. Create a new stage
+            with Cmd/Ctrl + N; switch stages with Cmd/Ctrl + ← →. */}
+        {stageCount > 1 && (
+          <span className="stage-ctl" title="Workspace stages — ⌘N new · ⌘← ⌘→ switch">
+            <button className="stage-arrow" disabled={currentStage <= 0} onClick={() => switchStage(-1)} title="Previous stage">‹</button>
+            <span className="stage-ind">Stage {currentStage + 1}/{stageCount}</span>
+            <button className="stage-arrow" disabled={currentStage >= stageCount - 1} onClick={() => switchStage(1)} title="Next stage">›</button>
           </span>
         )}
         <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} title="Jump to your primary chat" onClick={openChat}>

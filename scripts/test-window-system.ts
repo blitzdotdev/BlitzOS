@@ -1,7 +1,7 @@
 // Headless verification of the macOS-faithful window system (no display needed): exercises the REAL
 // store.ts — snapTargetFor (no full-screen, halves + corners), applyReconcile (live geometry kept),
 // and the control-mode viewport memory. Run via scripts/test-window-system.sh (esbuild-bundled).
-import { snapTargetFor, primaryRect, viewTransform, areaRect, areaStride, useDesktop } from '../src/renderer/src/store'
+import { snapTargetFor, primaryRect, viewTransform, stageRect, stageStride, useDesktop } from '../src/renderer/src/store'
 import type { Surface } from '../src/renderer/src/types'
 
 let failures = 0
@@ -34,20 +34,20 @@ const tl = snapTargetFor(r.x + 2, r.y + 2, vp)
 ok('top-left corner → top-left QUARTER', !!tl && tl.x === Math.round(r.x) && tl.y === Math.round(r.y) && tl.h < Math.round(r.h) - 10, tl)
 const br = snapTargetFor(r.x + r.w - 2, r.y + r.h - 2, vp)
 ok('bottom-right corner → bottom-right QUARTER', !!br && br.x > cx - 2 && br.y > cy - 2, br)
-// No target ever fills the whole area (would be a full-screen snap).
+// No target ever fills the whole stage (would be a full-screen snap).
 const samples = [
   [cx, r.y + 2], [cx, r.y + r.h - 2], [r.x + 2, cy], [r.x + r.w - 2, cy],
   [r.x + 2, r.y + 2], [r.x + r.w - 2, r.y + 2], [r.x + 2, r.y + r.h - 2], [r.x + r.w - 2, r.y + r.h - 2]
 ] as const
 const anyFull = samples.map(([x, y]) => snapTargetFor(x, y, vp)).some((t) => t && Math.abs(t.w - Math.round(r.w)) < 2 && Math.abs(t.h - Math.round(r.h)) < 2)
-ok('NO sampled edge/corner yields a full-area (full-screen) tile', !anyFull)
+ok('NO sampled edge/corner yields a full-stage (full-screen) tile', !anyFull)
 
 console.log('\napplyReconcile — keeps LIVE geometry (no revert-to-original):')
 const store = useDesktop.getState()
 // Seed a file-backed surface as if hydrated from disk at (0,0,400,300).
 const seeded: Surface = { id: 'note-1', kind: 'native', component: 'note', x: 0, y: 0, w: 400, h: 300, z: 5, title: 'n', props: { text: 'hello' } }
 store.hydrate([seeded], { x: 0, y: 0, scale: 1 }, 'desktop')
-// User drags it (clamped to the primary area) and focuses it (z bumps). Capture the LIVE position.
+// User drags it (clamped to the primary stage) and focuses it (z bumps). Capture the LIVE position.
 useDesktop.getState().moveSurface('note-1', 250, 90)
 useDesktop.getState().focusSurface('note-1')
 const moved = useDesktop.getState().surfaces.find((s) => s.id === 'note-1')!
@@ -140,15 +140,15 @@ const before = JSON.stringify(useDesktop.getState().controlTransform)
 useDesktop.getState().panBy(5, 5)
 ok('panBy in desktop mode leaves controlTransform untouched', JSON.stringify(useDesktop.getState().controlTransform) === before)
 
-console.log('\n#45 workspace areas — step 1: area-aware spatial fns, byte-identical at areaCount===1:')
+console.log('\n#45 workspace stages — step 1: stage-aware spatial fns, byte-identical at stageCount===1:')
 {
-  const stride = areaStride(vp)
+  const stride = stageStride(vp)
   const eqRect = (a: { x: number; y: number; w: number; h: number } | null, b: { x: number; y: number; w: number; h: number } | null) =>
     !!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h
-  // THE invariant: areaRect(0) is field-for-field primaryRect, and the stride is the area width + gap.
-  ok('areaRect(0,vp) deep-equals primaryRect(vp)', eqRect(areaRect(0, vp), primaryRect(vp)), { areaRect0: areaRect(0, vp), primaryRect: r })
-  ok('areaStride(vp) === primaryRect(vp).w + 1200', stride === r.w + 1200, stride)
-  // every existing 3-arg snapTargetFor call equals its area=0 form (the default path is the old path).
+  // THE invariant: stageRect(0) is field-for-field primaryRect, and the stride is the stage width + gap.
+  ok('stageRect(0,vp) deep-equals primaryRect(vp)', eqRect(stageRect(0, vp), primaryRect(vp)), { areaRect0: stageRect(0, vp), primaryRect: r })
+  ok('stageStride(vp) === primaryRect(vp).w + 1200', stride === r.w + 1200, stride)
+  // every existing 3-arg snapTargetFor call equals its stage=0 form (the default path is the old path).
   // NB: some samples (top/bottom-center) correctly return null from BOTH — null===null counts as identical.
   const allSamplesIdentical = samples.every(([x, y]) => {
     const a = snapTargetFor(x, y, vp)
@@ -156,85 +156,85 @@ console.log('\n#45 workspace areas — step 1: area-aware spatial fns, byte-iden
     return (a === null && b === null) || eqRect(a, b)
   })
   ok('snapTargetFor(x,y,vp) === snapTargetFor(x,y,vp,0) for all 8 samples', allSamplesIdentical)
-  // viewTransform collapses to today's values at area 0 / count 1
+  // viewTransform collapses to today's values at stage 0 / count 1
   const vtD = viewTransform('desktop', vp)
   const vtD01 = viewTransform('desktop', vp, 0, 1)
   ok('viewTransform(desktop) === (desktop,0,1)', JSON.stringify(vtD) === JSON.stringify(vtD01), { vtD, vtD01 })
   const vtC = viewTransform('canvas', vp)
   const vtC01 = viewTransform('canvas', vp, 0, 1)
   ok('viewTransform(canvas) === (canvas,0,1) and scale===0.7', JSON.stringify(vtC) === JSON.stringify(vtC01) && vtC.scale === 0.7, { vtC })
-  // areas are same-size, one stride apart
-  ok('areaRect(1).x - areaRect(0).x === stride', areaRect(1, vp).x - areaRect(0, vp).x === stride)
-  ok('areaRect(1).w === areaRect(0).w', areaRect(1, vp).w === areaRect(0, vp).w)
+  // stages are same-size, one stride apart
+  ok('stageRect(1).x - stageRect(0).x === stride', stageRect(1, vp).x - stageRect(0, vp).x === stride)
+  ok('stageRect(1).w === stageRect(0).w', stageRect(1, vp).w === stageRect(0, vp).w)
 
-  // fresh single-area state
+  // fresh single-stage state
   useDesktop.getState().hydrate([], { x: 0, y: 0, scale: 1 }, 'desktop')
-  ok('fresh hydrate → areaCount===1 && currentArea===0', useDesktop.getState().areaCount === 1 && useDesktop.getState().currentArea === 0)
+  ok('fresh hydrate → stageCount===1 && currentStage===0', useDesktop.getState().stageCount === 1 && useDesktop.getState().currentStage === 0)
 
   // setCurrentArea / setAreaCount / addArea clamping
   useDesktop.getState().setAreaCount(2)
-  ok('setAreaCount(2) → areaCount===2', useDesktop.getState().areaCount === 2)
+  ok('setAreaCount(2) → stageCount===2', useDesktop.getState().stageCount === 2)
   useDesktop.getState().setCurrentArea(5)
-  ok('setCurrentArea(5) clamps to 1 (areaCount-1)', useDesktop.getState().currentArea === 1)
+  ok('setCurrentArea(5) clamps to 1 (stageCount-1)', useDesktop.getState().currentStage === 1)
   useDesktop.getState().setCurrentArea(-3)
-  ok('setCurrentArea(-3) clamps to 0', useDesktop.getState().currentArea === 0)
+  ok('setCurrentArea(-3) clamps to 0', useDesktop.getState().currentStage === 0)
   useDesktop.getState().setCurrentArea(0)
   useDesktop.getState().addArea()
-  ok('addArea from {count2,cur0} → {count3,cur2}', useDesktop.getState().areaCount === 3 && useDesktop.getState().currentArea === 2)
+  ok('addArea from {count2,cur0} → {count3,cur2}', useDesktop.getState().stageCount === 3 && useDesktop.getState().currentStage === 2)
   useDesktop.getState().setAreaCount(0)
-  ok('setAreaCount(0) floors to 1 and clamps currentArea to 0', useDesktop.getState().areaCount === 1 && useDesktop.getState().currentArea === 0)
+  ok('setAreaCount(0) floors to 1 and clamps currentStage to 0', useDesktop.getState().stageCount === 1 && useDesktop.getState().currentStage === 0)
 
-  // CONTROL fits all areas; NORMAL locks each area to the same on-screen anchor
-  const cxAnchor = viewTransform('desktop', vp, 0, 2).x // area-0 desktop camera x (the anchor t.x)
+  // CONTROL fits all stages; NORMAL locks each stage to the same on-screen anchor
+  const cxAnchor = viewTransform('desktop', vp, 0, 2).x // stage-0 desktop camera x (the anchor t.x)
   const a1 = viewTransform('desktop', vp, 1, 2)
-  const a1CenterScreenX = (areaRect(1, vp).x + r.w / 2) * 1 + a1.x // screen = world*scale + t
-  const a0CenterScreenX = (areaRect(0, vp).x + r.w / 2) * 1 + cxAnchor
-  ok('desktop: area-1 center maps to the SAME screen x as area-0 center (area lock)', Math.abs(a1CenterScreenX - a0CenterScreenX) < 0.001, { a1CenterScreenX, a0CenterScreenX })
+  const a1CenterScreenX = (stageRect(1, vp).x + r.w / 2) * 1 + a1.x // screen = world*scale + t
+  const a0CenterScreenX = (stageRect(0, vp).x + r.w / 2) * 1 + cxAnchor
+  ok('desktop: stage-1 center maps to the SAME screen x as stage-0 center (stage lock)', Math.abs(a1CenterScreenX - a0CenterScreenX) < 0.001, { a1CenterScreenX, a0CenterScreenX })
   const vtC2 = viewTransform('canvas', vp, 0, 2)
-  ok('canvas: 2 areas zoom out (scale < single-area 0.7)', vtC2.scale < 0.7, vtC2.scale)
+  ok('canvas: 2 stages zoom out (scale < single-stage 0.7)', vtC2.scale < 0.7, vtC2.scale)
   const unionCenterScreenX = (((2 - 1) * stride) / 2) * vtC2.scale + vtC2.x
-  ok('canvas: the tiled-row center maps to the area anchor screen x', Math.abs(unionCenterScreenX - vtC.x) < 0.001, { unionCenterScreenX, anchor: vtC.x })
+  ok('canvas: the tiled-row center maps to the stage anchor screen x', Math.abs(unionCenterScreenX - vtC.x) < 0.001, { unionCenterScreenX, anchor: vtC.x })
 
-  // macOS free drag: moveSurface lets a window move FREELY outside the area (off left/right/bottom);
-  // the ONLY constraint is the title bar can't go above the area top (y >= primaryRect.y).
+  // macOS free drag: moveSurface lets a window move FREELY outside the stage (off left/right/bottom);
+  // the ONLY constraint is the title bar can't go above the stage top (y >= primaryRect.y).
   const surf: Surface = { id: 's', kind: 'native', component: 'note', x: 0, y: 0, w: 300, h: 200, z: 5, title: 's', props: {} }
   useDesktop.getState().hydrate([surf], { x: 0, y: 0, scale: 1 }, 'desktop', 2)
   useDesktop.getState().moveSurface('s', 99999, 50) // far off the right edge — must be ALLOWED, not clamped
-  ok('moveSurface allows free x far outside the area (no horizontal clamp)', useDesktop.getState().surfaces.find((q) => q.id === 's')!.x === 99999, useDesktop.getState().surfaces.find((q) => q.id === 's')!.x)
+  ok('moveSurface allows free x far outside the stage (no horizontal clamp)', useDesktop.getState().surfaces.find((q) => q.id === 's')!.x === 99999, useDesktop.getState().surfaces.find((q) => q.id === 's')!.x)
   useDesktop.getState().moveSurface('s', -99999, 99999) // far off the left + bottom — x free, y free downward
   const sm = useDesktop.getState().surfaces.find((q) => q.id === 's')!
   ok('moveSurface allows free x off the left + free y downward (off-bottom)', sm.x === -99999 && sm.y === 99999, { x: sm.x, y: sm.y })
   useDesktop.getState().moveSurface('s', 10, primaryRect(vp).y - 500) // try to push the title bar ABOVE the top
-  ok('moveSurface clamps the title bar to the area top (y >= primaryRect.y) — #29 preserved', useDesktop.getState().surfaces.find((q) => q.id === 's')!.y === primaryRect(vp).y, useDesktop.getState().surfaces.find((q) => q.id === 's')!.y)
+  ok('moveSurface clamps the title bar to the stage top (y >= primaryRect.y) — #29 preserved', useDesktop.getState().surfaces.find((q) => q.id === 's')!.y === primaryRect(vp).y, useDesktop.getState().surfaces.find((q) => q.id === 's')!.y)
 
-  // toggleMaximize fills the CURRENT area
+  // toggleMaximize fills the CURRENT stage
   useDesktop.getState().hydrate([surf], { x: 0, y: 0, scale: 1 }, 'desktop', 2)
   useDesktop.getState().setCurrentArea(1)
   useDesktop.getState().toggleMaximize('s')
-  ok('toggleMaximize fills areaRect(1) (x === areaRect(1).x + 8 inset)', useDesktop.getState().surfaces.find((q) => q.id === 's')!.x === areaRect(1, vp).x + 8, useDesktop.getState().surfaces.find((q) => q.id === 's')!.x)
+  ok('toggleMaximize fills stageRect(1) (x === stageRect(1).x + 8 inset)', useDesktop.getState().surfaces.find((q) => q.id === 's')!.x === stageRect(1, vp).x + 8, useDesktop.getState().surfaces.find((q) => q.id === 's')!.x)
   useDesktop.getState().hydrate([surf], { x: 0, y: 0, scale: 1 }, 'desktop', 2)
   useDesktop.getState().setCurrentArea(0)
   useDesktop.getState().toggleMaximize('s')
-  ok('REGRESSION: toggleMaximize area 0 fills primaryRect (x === primaryRect.x + 8)', useDesktop.getState().surfaces.find((q) => q.id === 's')!.x === primaryRect(vp).x + 8, useDesktop.getState().surfaces.find((q) => q.id === 's')!.x)
+  ok('REGRESSION: toggleMaximize stage 0 fills primaryRect (x === primaryRect.x + 8)', useDesktop.getState().surfaces.find((q) => q.id === 's')!.x === primaryRect(vp).x + 8, useDesktop.getState().surfaces.find((q) => q.id === 's')!.x)
 
-  // hydrate restores areaCount (default 1 for old folders / invalid values)
+  // hydrate restores stageCount (default 1 for old folders / invalid values)
   useDesktop.getState().hydrate([], { x: 0, y: 0, scale: 1 }, 'desktop', 4)
-  ok('hydrate areaCount=4 → areaCount===4, currentArea===0', useDesktop.getState().areaCount === 4 && useDesktop.getState().currentArea === 0)
+  ok('hydrate stageCount=4 → stageCount===4, currentStage===0', useDesktop.getState().stageCount === 4 && useDesktop.getState().currentStage === 0)
   useDesktop.getState().hydrate([], { x: 0, y: 0, scale: 1 }, 'desktop')
-  ok('hydrate areaCount omitted → defaults to 1', useDesktop.getState().areaCount === 1)
+  ok('hydrate stageCount omitted → defaults to 1', useDesktop.getState().stageCount === 1)
   useDesktop.getState().hydrate([], { x: 0, y: 0, scale: 1 }, 'desktop', 0)
-  ok('hydrate areaCount=0 (invalid) → floors to 1', useDesktop.getState().areaCount === 1)
+  ok('hydrate stageCount=0 (invalid) → floors to 1', useDesktop.getState().stageCount === 1)
 
-  // review fix: a runtime chat/activity panel left in another area is pulled back into area 0 on boot
-  // (the agent conversation must be reachable); a CONTENT surface in another area is NOT moved.
-  const chatPanel: Surface = { id: 'chat', kind: 'native', component: 'chat', x: areaRect(1, vp).x + 40, y: 0, w: 360, h: 460, z: 3, title: 'Chat', props: {} }
+  // review fix: a runtime chat/activity panel left in another stage is pulled back into stage 0 on boot
+  // (the agent conversation must be reachable); a CONTENT surface in another stage is NOT moved.
+  const chatPanel: Surface = { id: 'chat', kind: 'native', component: 'chat', x: stageRect(1, vp).x + 40, y: 0, w: 360, h: 460, z: 3, title: 'Chat', props: {} }
   useDesktop.getState().hydrate([chatPanel], { x: 0, y: 0, scale: 1 }, 'desktop', 2)
   const ch = useDesktop.getState().surfaces.find((q) => q.id === 'chat')!
-  ok('hydrate pulls a runtime panel from area 1 back inside area 0', ch.x >= primaryRect(vp).x && ch.x <= primaryRect(vp).x + primaryRect(vp).w - 360, ch.x)
-  const note2: Surface = { id: 'nn', kind: 'native', component: 'note', x: areaRect(1, vp).x + 40, y: 0, w: 300, h: 200, z: 2, title: 'n', props: {} }
+  ok('hydrate pulls a runtime panel from stage 1 back inside stage 0', ch.x >= primaryRect(vp).x && ch.x <= primaryRect(vp).x + primaryRect(vp).w - 360, ch.x)
+  const note2: Surface = { id: 'nn', kind: 'native', component: 'note', x: stageRect(1, vp).x + 40, y: 0, w: 300, h: 200, z: 2, title: 'n', props: {} }
   useDesktop.getState().hydrate([note2], { x: 0, y: 0, scale: 1 }, 'desktop', 2)
   const nn = useDesktop.getState().surfaces.find((q) => q.id === 'nn')!
-  ok('hydrate does NOT move a content surface out of its area', nn.x === areaRect(1, vp).x + 40, nn.x)
+  ok('hydrate does NOT move a content surface out of its stage', nn.x === stageRect(1, vp).x + 40, nn.x)
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)

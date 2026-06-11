@@ -60,7 +60,7 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
     ...(primary
       ? []
       : [
-          `YOUR WINDOWS LIVE IN YOUR OWN AREA (separate from the user's primary desktop). On EVERY surface-opening call — create_surface, open_window, and spawn_session — you MUST include "session":"${sessionId}" so the window opens in YOUR area and never disturbs the user. Do NOT pass an explicit x/y unless repositioning a window within your own area. Open your terminal and all work windows this way.`
+          `YOUR WINDOWS LIVE IN YOUR OWN AREA (separate from the user's primary desktop). On EVERY surface-opening call — create_surface, open_window, and spawn_session — you MUST include "session":"${sessionId}" so the window opens in YOUR stage and never disturbs the user. Do NOT pass an explicit x/y unless repositioning a window within your own stage. Open your terminal and all work windows this way.`
         ])
   ].join('\n')
 }

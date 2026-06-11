@@ -239,16 +239,16 @@ let osState = { surfaces: [] }
 let agentUrl = null
 let relay = null // the SHARED relay handle ({ getUrl, isOnline, stop }) — same module Electron uses (no divergence)
 // Agent sessions run as VISIBLE tmux terminals (no headless brain). launchAgent (the workspace-host seam)
-// starts a chat session's claude in a terminal in its area, over the same relay; the session-manager
+// starts a chat session's claude in a terminal in its stage, over the same relay; the session-manager
 // persists + reattaches it. Gated by BLITZ_AGENT (=claude or a custom command); null ⇒ no auto-launch.
 const agentCmd = process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT
 const launchAgent = process.env.BLITZ_AGENT
-  ? (id, area, title) => {
+  ? (id, stage, title) => {
       const ws = wsHost.activePath()
       if (!ws || !agentUrl) return // not ready (no workspace / relay url yet) — boot resume retries
       const sessionsDir = join(ws, '.blitzos', 'sessions')
       const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir, id, url: agentUrl, cmd: agentCmd })
-      Promise.resolve(serverSessionOps.spawnSession({ id, kind: 'agent', command, cwd: ws, area, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })).catch(() => {})
+      Promise.resolve(serverSessionOps.spawnSession({ id, kind: 'agent', command, cwd: ws, stage, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })).catch(() => {})
     }
   : null
 const sseClients = new Set()
@@ -451,8 +451,8 @@ const wsHost = createWorkspaceHost({
   broadcast,
   onSurfaces: (surfaces) => (SERVER_MODE ? reconcileSurfaces(surfaces) : undefined),
   defaultMode: 'canvas',
-  // A chat session's claude runs in a VISIBLE terminal in its area (no headless brain). null ⇒ BLITZ_AGENT off.
-  launchAgent: launchAgent ? (id, area, title) => launchAgent(id, area, title) : undefined
+  // A chat session's claude runs in a VISIBLE terminal in its stage (no headless brain). null ⇒ BLITZ_AGENT off.
+  launchAgent: launchAgent ? (id, stage, title) => launchAgent(id, stage, title) : undefined
 })
 
 // 2C/2D parity with Electron (osActions): main is AUTHORITATIVE-ON-WRITE for agent mutations — apply each
@@ -679,7 +679,7 @@ const serverOps = {
   },
   customizeWidget: (name, html, sessionId) => wsHost.customizeWidget(String(name), String(html), sessionId),
   // Open a new chat session: register + surface it; addChatSession launches its claude terminal (launchAgent).
-  // focus:true (a USER '+ New') tells the renderer to follow the camera to the new area.
+  // focus:true (a USER '+ New') tells the renderer to follow the camera to the new stage.
   spawnChatSession: async (title, focus = false) => {
     const id = wsHost.newChatSessionId()
     wsHost.addChatSession(id, title, { focus })
@@ -915,7 +915,7 @@ const server = createServer(async (req, res) => {
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
     res.write(
-      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', areaCount: osState.areaCount || 1, workspace: wsHost.active() })}\n\n`
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', stageCount: osState.stageCount || 1, workspace: wsHost.active() })}\n\n`
     )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))
@@ -1276,7 +1276,7 @@ const server = createServer(async (req, res) => {
   }
 
   // POST /api/os/workspace/thumb { workspace, dataUrl } — the renderer uploads a captured snapshot of
-  // the primary area (a data:image/jpeg) as that workspace's thumbnail (last-seen, Mission-Control
+  // the primary stage (a data:image/jpeg) as that workspace's thumbnail (last-seen, Mission-Control
   // style). Stored at .blitzos/state/thumb.jpg (gitignored, agent-read-denied), overwritten each time.
   if (path === '/api/os/workspace/thumb' && req.method === 'POST') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
@@ -1298,7 +1298,7 @@ const server = createServer(async (req, res) => {
     })
     return
   }
-  // GET /api/os/workspace/thumb?name=X — serve the cached primary-area thumbnail (404 if none yet).
+  // GET /api/os/workspace/thumb?name=X — serve the cached primary-stage thumbnail (404 if none yet).
   // NOTE: a thumbnail is RENDERED PIXELS of the board (can contain third-party page content), served
   // under the same posture as the other /api/os routes — sameSiteOnly + the tunnel's CF Access gate,
   // no per-route bearer. Tighten to a bearer before any GA / public (non-CF-Access) deploy.
@@ -1389,7 +1389,7 @@ server.listen(PORT, '127.0.0.1', () => {
   initServerMode()
   // Phase 3: watch the workspace folder so external file edits (agent/Finder/git) reflect live.
   wsHost.startWatch()
-  // Boot agents: each chat session's claude runs in a VISIBLE tmux terminal in its area. Survivors are
+  // Boot agents: each chat session's claude runs in a VISIBLE tmux terminal in its stage. Survivors are
   // reattached (tmux outlives the process); only the DEAD ones are re-exec'd with --resume of their persisted
   // session id. Opt-in via BLITZ_AGENT (off by default — continuous LLM use has a cost). The relay URL is
   // minted async, so poll until it's up, then resume once (after survivors are adopted, to avoid double-launch).

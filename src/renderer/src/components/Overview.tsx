@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 // Mission Control overview: every workspace as a screen-shaped tile (16:10) showing its last-seen
-// primary-area snapshot. Responsive grid — quantized integer columns from container WIDTH (capped
+// primary-stage snapshot. Responsive grid — quantized integer columns from container WIDTH (capped
 // 2..5), fluid cell width, height locked 16:10, overflow scrolls vertically. (Researched from how
 // Netflix sizes its rows + the CSS auto-fill/ResizeObserver playbook.)
 

@@ -8,7 +8,7 @@
 // what the scan found — a web-first life puts the Workflows card in the hero slot (projects
 // yields), a meeting-heavy life gets the Schedule card, and when FDA is off the unlock card
 // keeps slot I. Cards whose section is empty return null and simply don't exist. World coords:
-// the primary area is centered on the origin, so the board hugs (0,0) and goToPrimary frames it.
+// the primary stage is centered on the origin, so the board hugs (0,0) and goToPrimary frames it.
 
 // The grid must FIT the renderer's primary rect or creation clamps it into view and columns
 // overlap (observed live at 1440×900: rect ≈ 1364×798, i.e. x∈[-682,682], y∈[-399,399]).

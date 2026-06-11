@@ -11,9 +11,9 @@ export interface WorkspaceHostAdapter {
   broadcast(obj: unknown): void
   onSurfaces?: (surfaces: unknown[]) => Promise<unknown> | void
   defaultMode?: 'canvas' | 'desktop'
-  /** Launch (or resume) the claude terminal for a chat/agent session in its area. Wired by each transport
+  /** Launch (or resume) the claude terminal for a chat/agent session in its stage. Wired by each transport
    *  from the shared agent-session core + its session-ops; absent ⇒ no agent auto-launch (BLITZ_AGENT off). */
-  launchAgent?: (sessionId: string, area: number, title?: string) => void
+  launchAgent?: (sessionId: string, stage: number, title?: string) => void
 }
 
 export interface WorkspaceHost {

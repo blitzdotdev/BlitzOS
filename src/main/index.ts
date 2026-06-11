@@ -309,7 +309,7 @@ app.whenReady().then(() => {
   setSessionGetUrl(() => getAgentSocketUrl()) // so a dead agent's re-exec rebuilds its command with the live url
 
   // Agent sessions run as VISIBLE tmux terminals (no headless brain). A chat session's claude runs in a
-  // terminal in its area, connected over the relay, /saying into its chat thread; the session-manager
+  // terminal in its stage, connected over the relay, /saying into its chat thread; the session-manager
   // persists + reattaches it, and boot resumes the dead ones with --resume. Enabled when an agent command
   // exists: BLITZ_AGENT (a custom command, or '1' for claude) OR a login-shell-resolved `claude` CLI —
   // the resident-brain/onboarding decision (plans/onboarding-case-file.md): zero-setup when claude exists.
@@ -320,13 +320,13 @@ app.whenReady().then(() => {
     // drops off the next respawn automatically.
     setBootTaskProvider((id: string) => (String(id) === '0' ? interviewBootTask() : null))
     const sessionsDirOf = (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'sessions') : null }
-    const launchAgent = (id: string, area: number, title?: string): void => {
+    const launchAgent = (id: string, stage: number, title?: string): void => {
       const ws = osWorkspaceContext().workspace_path
       const sessionsDir = sessionsDirOf()
       const url = getAgentSocketUrl()
       if (!ws || !sessionsDir || !url) return // not ready (no workspace / relay url yet) — boot resume retries
       const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir, id, url, cmd: agentCmd })
-      void electronSessionOps.spawnSession({ id, kind: 'agent', command, cwd: ws, area, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })
+      void electronSessionOps.spawnSession({ id, kind: 'agent', command, cwd: ws, stage, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })
     }
     setLaunchAgent(launchAgent)
     // Resume/reattach all chat-session agents once the relay URL is live + survivors adopted. Fire once.

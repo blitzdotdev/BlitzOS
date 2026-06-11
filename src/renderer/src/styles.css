@@ -94,7 +94,7 @@ button {
   will-change: transform;
 }
 
-/* Window-snap preview: where a dragged window will dock (full / half / quarter of the primary area). */
+/* Window-snap preview: where a dragged window will dock (full / half / quarter of the primary stage). */
 .snap-preview {
   position: absolute;
   z-index: 1500000; /* above normal windows, below the pinned chat/activity band (2,000,000) */
@@ -117,7 +117,7 @@ button {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
   z-index: 1;
 }
-/* The active area among several (#45) — solid, brighter frame so you can see which desktop you're on. */
+/* The active stage among several (#45) — solid, brighter frame so you can see which desktop you're on. */
 .primary-space.is-current {
   border-style: solid;
   border-color: color-mix(in srgb, var(--accent) 75%, transparent);
@@ -1339,25 +1339,25 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Workspace-area control (#45): prev/next arrows + indicator + add. Compact, inline in the toolbar. */
-.area-ctl {
+/* Stage control (#45): prev/next arrows + indicator + add. Compact, inline in the toolbar. */
+.stage-ctl {
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
-.area-ctl .area-ind {
+.stage-ctl .stage-ind {
   font-size: 12px;
   color: var(--text-secondary);
   padding: 0 4px;
   white-space: nowrap;
 }
-.area-ctl .area-arrow,
-.area-ctl .area-add {
+.stage-ctl .stage-arrow,
+.stage-ctl .stage-add {
   padding: 5px 9px;
   line-height: 1;
   font-size: 14px;
 }
-.area-ctl button:disabled {
+.stage-ctl button:disabled {
   opacity: 0.4;
   cursor: default;
 }

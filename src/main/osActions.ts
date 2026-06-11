@@ -23,7 +23,7 @@ export interface SurfaceDescriptor {
   props?: Record<string, unknown>
   /** A tile on the stage slot lattice — geometry derives from the cell (stage-core). */
   slot?: { col: number; row: number; size: string }
-  slotArea?: number
+  slotStage?: number
 }
 
 export interface OsState {
@@ -40,7 +40,7 @@ export interface OsState {
     z?: number
     props?: Record<string, unknown>
     slot?: { col: number; row: number; size: string }
-    slotArea?: number
+    slotStage?: number
     pinned?: boolean
     sessionId?: string
     focus?: boolean
@@ -48,11 +48,11 @@ export interface OsState {
   camera?: { x: number; y: number; scale: number }
   view?: { cx: number; cy: number }
   mode?: string
-  // #45 workspace areas: how many tiled desktops + which is active + the current one's world rect (so
-  // the agent places surfaces in the area the human is looking at, not blindly at the origin).
-  areaCount?: number
-  currentArea?: number
-  currentAreaRect?: { x: number; y: number; w: number; h: number }
+  // #45 workspace stages: how many tiled desktops + which is active + the current one's world rect (so
+  // the agent places surfaces in the stage the human is looking at, not blindly at the origin).
+  stageCount?: number
+  currentStage?: number
+  currentStageRect?: { x: number; y: number; w: number; h: number }
   workspace?: string
   // The active workspace's absolute folder path (~/Blitz/<name>). The filesystem IS the canvas: a LOCAL
   // agent authors surfaces by writing files INTO this folder (.html=panel, .md=note, .weblink=web) and the
@@ -131,9 +131,9 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     broadcast: (obj) => getWin()?.webContents.send('os:action', obj),
     onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
-    // A chat session's claude runs in a VISIBLE terminal in its area; index.ts wires this from the shared
+    // A chat session's claude runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
     // agent-session core + the session-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
-    launchAgent: (id, area, title) => launchAgentHook?.(id, area, title)
+    launchAgent: (id, stage, title) => launchAgentHook?.(id, stage, title)
   })
   wsHost.hydrateOnBoot()
   wsHost.startWatch()
@@ -453,8 +453,8 @@ export function setOnChatActivity(fn: (sessionId: string, spawn: boolean) => voi
 // tmux terminal. osActions handles the workspace-side (mint id + hub registration); addChatSession then
 // calls launchAgent via the host adapter. index.ts registers this when an agent command is available
 // (BLITZ_AGENT, or a detected `claude` CLI).
-let launchAgentHook: ((sessionId: string, area: number, title?: string) => void) | null = null
-export function setLaunchAgent(fn: (sessionId: string, area: number, title?: string) => void): void {
+let launchAgentHook: ((sessionId: string, stage: number, title?: string) => void) | null = null
+export function setLaunchAgent(fn: (sessionId: string, stage: number, title?: string) => void): void {
   launchAgentHook = fn
 }
 /** Ensure a session's agent is up WITHOUT a chat message — the onboarding director uses this to start
@@ -636,7 +636,7 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
 /** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
 export function osSendHydrate(): void {
   if (!wsHost) return
-  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', areaCount: cached.areaCount || 1, workspace: wsHost.active() })
+  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', stageCount: cached.stageCount || 1, workspace: wsHost.active() })
 }
 /** Serve a workspace thumbnail by name (the blitz-thumb:// protocol handler in index.ts calls this). */
 export function osReadThumb(name: string): Buffer | null {
@@ -651,7 +651,7 @@ export function osFlushWorkspace(): void {
   wsHost?.flush()
   wsHost?.stopWatch()
 }
-/** Capture the primary area (1440x900, centered) of the current board → store as `name`'s thumbnail. */
+/** Capture the primary stage (1440x900, centered) of the current board → store as `name`'s thumbnail. */
 async function osCaptureThumb(name: string): Promise<{ ok: boolean; error?: string }> {
   const win = getWin()
   if (!win || !wsHost) return { ok: false }

@@ -46,7 +46,7 @@ for (let trial = 0; trial < 200; trial++) {
     const near = rnd() < 0.3 ? ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'center'][Math.floor(rnd() * 5)] : null
     const slot = findSlot(surfaces, lat, size, near, 0)
     if (!slot) break
-    surfaces.push({ id: 's' + n++, slot: { ...slot, size }, slotArea: 0 })
+    surfaces.push({ id: 's' + n++, slot: { ...slot, size }, slotStage: 0 })
     // overlap invariant: total occupied cells === sum of spans (no double-booked cell)
     const occ = occupancy(surfaces, 0)
     const sum = surfaces.reduce((a, s) => a + spanOf(s.slot.size).c * spanOf(s.slot.size).r, 0)
@@ -79,7 +79,7 @@ console.log(`fuzz: 200 fill trials done`)
   const br = findSlot([], lat, 's', 'bottom-right', 0)
   ok(br.col === lat.cols - 1 && br.row === lat.rows - 1, 'bottom-right hint lands bottom-right')
   // near a surface id: adjacent placement
-  const anchor = { id: 'anchor', slot: { col: 3, row: 1, size: 's' }, slotArea: 0 }
+  const anchor = { id: 'anchor', slot: { col: 3, row: 1, size: 's' }, slotStage: 0 }
   const adj = findSlot([anchor], lat, 's', 'anchor', 0)
   const d = Math.abs(adj.col - 3) + Math.abs(adj.row - 1)
   ok(d === 1, `near:id places adjacent (dist ${d})`)
@@ -90,7 +90,7 @@ console.log(`fuzz: 200 fill trials done`)
   const c2 = slotRect(lat, 2, 1, 's')
   const hit = nearestFreeSlot([], lat, 's', c2.x + 90, c2.y + 90, 0)
   ok(hit.col === 2 && hit.row === 1, 'nearestFreeSlot picks the cell under the point')
-  const occupied = [{ id: 'x', slot: { col: 2, row: 1, size: 's' }, slotArea: 0 }]
+  const occupied = [{ id: 'x', slot: { col: 2, row: 1, size: 's' }, slotStage: 0 }]
   const next = nearestFreeSlot(occupied, lat, 's', c2.x + 90, c2.y + 90, 0)
   ok(!(next.col === 2 && next.row === 1), 'occupied cell is never offered')
   const dd = Math.abs(next.col - 2) + Math.abs(next.row - 1)
@@ -99,7 +99,7 @@ console.log(`fuzz: 200 fill trials done`)
 
 // ---- drag exclusion: a tile may re-snap into its own cells ----
 {
-  const me = { id: 'me', slot: { col: 1, row: 1, size: 'l' }, slotArea: 0 }
+  const me = { id: 'me', slot: { col: 1, row: 1, size: 'l' }, slotStage: 0 }
   const sameSpot = nearestFreeSlot([me], lat, 'l', slotRect(lat, 1, 1, 'l').x + 180, slotRect(lat, 1, 1, 'l').y + 180, 0, 'me')
   ok(sameSpot && sameSpot.col === 1 && sameSpot.row === 1, 'excludeId lets a tile drop back onto itself')
 }
@@ -107,9 +107,9 @@ console.log(`fuzz: 200 fill trials done`)
 // ---- budget: pinned exempt, non-pinned counted ----
 {
   const surfaces = [
-    { id: 'chat', pinned: true, slot: { col: 0, row: 0, size: 'tall' }, slotArea: 0 },
-    { id: 'w1', slot: { col: 2, row: 0, size: 'l' }, slotArea: 0 },
-    { id: 'w2', slot: { col: 4, row: 0, size: 's' }, slotArea: 0 }
+    { id: 'chat', pinned: true, slot: { col: 0, row: 0, size: 'tall' }, slotStage: 0 },
+    { id: 'w1', slot: { col: 2, row: 0, size: 'l' }, slotStage: 0 },
+    { id: 'w2', slot: { col: 4, row: 0, size: 's' }, slotStage: 0 }
   ]
   ok(budgetUsed(surfaces, 0) === 5, `pinned exempt from budget (got ${budgetUsed(surfaces, 0)})`)
   const sum = stageSummary(surfaces, VP, 0)
@@ -118,18 +118,18 @@ console.log(`fuzz: 200 fill trials done`)
   ok(sum.free_cells === sum.grid.cols * sum.grid.rows - 11, `free_cells accounts spans: tall6+l4+s1=11 (got ${sum.free_cells})`)
 }
 
-// ---- area isolation: slots in area 1 do not occupy area 0 ----
+// ---- stage isolation: slots in stage 1 do not occupy stage 0 ----
 {
-  const surfaces = [{ id: 'a1', slot: { col: 0, row: 0, size: 'xl' }, slotArea: 1 }]
-  ok(occupancy(surfaces, 0).size === 0, 'area-1 tile occupies nothing in area 0')
-  ok(occupancy(surfaces, 1).size === 8, 'area-1 tile occupies its own area')
+  const surfaces = [{ id: 'a1', slot: { col: 0, row: 0, size: 'xl' }, slotStage: 1 }]
+  ok(occupancy(surfaces, 0).size === 0, 'stage-1 tile occupies nothing in stage 0')
+  ok(occupancy(surfaces, 1).size === 8, 'stage-1 tile occupies its own stage')
 }
 
-// ---- file flow: never under a widget, inside the area, deterministic ----
+// ---- file flow: never under a widget, inside the stage, deterministic ----
 {
   const widgets = [
-    { id: 'w', slot: { col: lat.cols - 2, row: 0, size: 'l' }, slotArea: 0 },
-    { id: 'c', pinned: true, slot: { col: 0, row: 0, size: 'tall' }, slotArea: 0 }
+    { id: 'w', slot: { col: lat.cols - 2, row: 0, size: 'l' }, slotStage: 0 },
+    { id: 'c', pinned: true, slot: { col: 0, row: 0, size: 'tall' }, slotStage: 0 }
   ]
   const files = Array.from({ length: 12 }, (_, i) => ({ id: 'f' + i, w: 160, h: 150 }))
   const placed = flowFiles(files, widgets, VP, 0)
@@ -161,7 +161,7 @@ console.log(`fuzz: 200 fill trials done`)
 
 // ---- REGRESSION (2026-06-11 video #2): a MINIMIZED tile must not reserve cells (the dead zone) ----
 {
-  const chat = { id: 'chat', pinned: true, minimized: true, slot: { col: 0, row: 0, size: 'tall' }, slotArea: 0 }
+  const chat = { id: 'chat', pinned: true, minimized: true, slot: { col: 0, row: 0, size: 'tall' }, slotStage: 0 }
   ok(occupancy([chat], 0, null, lat).size === 0, 'minimized tile frees its span (no dead zone)')
   const tl = nearestFreeSlot([chat], lat, 's', slotRect(lat, 0, 0, 's').x + 90, slotRect(lat, 0, 0, 's').y + 90, 0)
   ok(tl && tl.col === 0 && tl.row === 0, 'top-left is placeable while the chat is minimized')
@@ -169,7 +169,7 @@ console.log(`fuzz: 200 fill trials done`)
   const sum = stageSummary([chat], VP, 0)
   ok(sum.tiles.length === 0 && sum.free_cells === sum.grid.cols * sum.grid.rows, 'summary: minimized tile not on the stage')
   // foldered (groupId) tiles release cells the same way
-  const grouped = { id: 'g', slot: { col: 0, row: 0, size: 'l' }, slotArea: 0, groupId: 'folder1' }
+  const grouped = { id: 'g', slot: { col: 0, row: 0, size: 'l' }, slotStage: 0, groupId: 'folder1' }
   ok(occupancy([grouped], 0, null, lat).size === 0, 'foldered tile frees its span')
   // visible again -> occupies again
   ok(occupancy([{ ...chat, minimized: false }], 0, null, lat).size === 6, 'restored tile re-occupies (6 cells tall)')

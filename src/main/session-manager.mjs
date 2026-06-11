@@ -27,10 +27,10 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
   const publicMeta = (m) => ({
     id: m.id, kind: m.kind, title: m.title, command: m.command, cwd: m.cwd, status: m.status,
     pid: m.pid, exitCode: m.exitCode, autonomy: m.autonomy, createdAt: m.createdAt, endedAt: m.endedAt || null, cols: m.cols, rows: m.rows,
-    // The workspace area this terminal belongs to (the spawning chat session's area). Persisted so a
-    // restart restores an agent's terminal into its area. null = unscoped (a human spawn) → the renderer
-    // opens it in the current area, today's behavior.
-    area: Number.isInteger(m.area) ? m.area : null
+    // The workspace stage this terminal belongs to (the spawning chat session's stage). Persisted so a
+    // restart restores an agent's terminal into its stage. null = unscoped (a human spawn) → the renderer
+    // opens it in the current stage, today's behavior.
+    stage: Number.isInteger(m.stage) ? m.stage : Number.isInteger(m.area) ? m.area : null // ?? area: pre-rename session meta
   })
 
   function writeMeta(meta) {
@@ -115,7 +115,7 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
       command: opts.command || null,
       cwd: opts.cwd || null,
       autonomy: opts.autonomy || 'auto',
-      area: Number.isInteger(opts.area) ? opts.area : null, // the spawning chat session's area; null = human spawn → current area
+      stage: Number.isInteger(opts.stage) ? opts.stage : null, // the spawning chat session's stage; null = human spawn → current stage
       status: 'running', pid: null, exitCode: null, signal: null,
       createdAt: Date.now(), endedAt: null,
       cols: opts.cols || 120, rows: opts.rows || 40,
@@ -162,7 +162,7 @@ export function createSessionManager({ host, sessionsDir, emit = () => {}, markW
     // --resume), not the stale one baked at create. A plain shell — or a generic spawn_session kind:'agent'
     // with its own command (no claudeSessionId) — re-runs its original command verbatim.
     const command = (meta.kind === 'agent' && meta.claudeSessionId && rebuildAgentCommand && rebuildAgentCommand(meta)) || meta.command
-    return spawnSession({ id, kind: meta.kind, command, cwd: meta.cwd, title: meta.title, autonomy: meta.autonomy, cols: meta.cols, rows: meta.rows, area: meta.area, claudeSessionId: meta.claudeSessionId, claudeEstablished: meta.claudeEstablished })
+    return spawnSession({ id, kind: meta.kind, command, cwd: meta.cwd, title: meta.title, autonomy: meta.autonomy, cols: meta.cols, rows: meta.rows, stage: meta.stage ?? meta.area, claudeSessionId: meta.claudeSessionId, claudeEstablished: meta.claudeEstablished })
   }
 
   /** Reattach-on-boot: adopt tmux windows that SURVIVED a restart, re-read their meta, re-wire streams. */

@@ -67,8 +67,8 @@ function safeUrl(u) {
   const s = String(u || '')
   return /^https?:\/\//i.test(s) ? s : '' // never hydrate javascript:/data:/file: into a web surface
 }
-// Number of workspace areas (#45). Default 1 for old folders / missing / invalid (NaN/0/negative).
-function safeAreaCount(n) {
+// Number of workspace stages (#45). Default 1 for old folders / missing / invalid (NaN/0/negative).
+function safeStageCount(n) {
   return Number.isInteger(n) && n > 0 ? n : 1
 }
 
@@ -311,8 +311,8 @@ export function openBootJournal(root, mode) {
 }
 
 /** Stage-desktop fields a node carries (plans/blitzos-stage-slot-desktop.md): `slot {col,row,size}`
- *  (+ slotArea) for tiles pinned to the slot lattice. Off-stage is GEOMETRIC (a surface parked outside
- *  its area's rect), so no zone field exists. Normalized on write so a hand-edited workspace.json can't
+ *  (+ slotStage) for tiles pinned to the slot lattice. Off-stage is GEOMETRIC (a surface parked outside
+ *  its stage's rect), so no zone field exists. Normalized on write so a hand-edited workspace.json can't
  *  poison the placer (x/y/w/h stay the rendering truth; slots re-derive them on viewport change). */
 function stageFields(s) {
   const out = {}
@@ -321,8 +321,8 @@ function stageFields(s) {
     const row = Math.max(0, Math.round(Number(s.slot.row) || 0))
     const size = typeof s.slot.size === 'string' ? s.slot.size.toLowerCase() : 's'
     out.slot = { col, row, size }
-    const a = Math.round(Number(s.slotArea) || 0)
-    if (a > 0) out.slotArea = a
+    const a = Math.round(Number(s.slotStage ?? s.slotArea) || 0) // ?? slotArea: pre-rename nodes
+    if (a > 0) out.slotStage = a
   }
   return out
 }
@@ -417,15 +417,15 @@ export function writeWorkspace(dir, osState) {
       ? { x: Math.round(cam.x || 0), y: Math.round(cam.y || 0), scale: Math.round(cam.scale * 1000) / 1000 }
       : { x: 0, y: 0, scale: 1 }
 
-  // Number of workspace areas (#45 — bounded desktops tiled left→right). Default 1; floor invalid values.
-  const areaCount = Number.isInteger(osState?.areaCount) && osState.areaCount > 0 ? osState.areaCount : 1
+  // Number of workspace stages (#45 — bounded desktops tiled left→right). Default 1; floor invalid values.
+  const stageCount = Number.isInteger(osState?.stageCount) && osState.stageCount > 0 ? osState.stageCount : 1
   const ws = {
     version: VERSION,
     id: wsId || randomUUID(),
     kind: 'blitzos.workspace',
     camera,
     mode: osState?.mode === 'desktop' ? 'desktop' : 'canvas',
-    areaCount,
+    stageCount,
     stack,
     nodes
   }
@@ -674,7 +674,7 @@ export function readWorkspace(dir) {
     seq++
     if (s) surfaces.push(s)
   }
-  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', areaCount: safeAreaCount(ws.areaCount) }
+  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', stageCount: safeStageCount(ws.stageCount ?? ws.areaCount) } // ?? areaCount: pre-rename folders
 }
 
 // Which loose root files auto-surface as new nodes on reconcile, and as what kind. Conservative
@@ -981,13 +981,13 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   }
   const camera = safeCamera(ws.camera)
   const mode = ws.mode === 'desktop' ? 'desktop' : 'canvas'
-  const areaCount = safeAreaCount(ws.areaCount) // preserve the area count across a reconcile (never collapse)
+  const stageCount = safeStageCount(ws.stageCount ?? ws.areaCount) // ?? areaCount: pre-rename folders; preserve across reconcile
 
   if (changed) {
-    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, areaCount, stack: surfaces.map((s) => s.id), nodes: alive }
+    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stageCount, stack: surfaces.map((s) => s.id), nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
-  return { surfaces, camera, mode, areaCount, changed, knownIds }
+  return { surfaces, camera, mode, stageCount, changed, knownIds }
 }
 
 // ---- cross-workspace surface addressing (item 4): a surface id lives in exactly one workspace folder.
@@ -1531,7 +1531,7 @@ export function listWorkspaces(root) {
         /* unreadable — leave 0 */
       }
     }
-    let thumbTs = 0 // mtime of the cached primary-area thumbnail (0 = none) — used to cache-bust the tile
+    let thumbTs = 0 // mtime of the cached primary-stage thumbnail (0 = none) — used to cache-bust the tile
     try {
       thumbTs = statSync(join(p, '.blitzos', 'state', 'thumb.jpg')).mtimeMs
     } catch {

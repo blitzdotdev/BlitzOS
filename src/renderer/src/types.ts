@@ -41,7 +41,7 @@ export interface Surface {
   /** A system surface the OS owns (e.g. 'chat' — a srcdoc widget backed by blitz-chat.html + chat.md).
    *  Pinned + never serialized as a node. */
   role?: string
-  /** the chat session this surface belongs to (a per-session chat widget); session N lives in area N. */
+  /** the chat session this surface belongs to (a per-session chat widget); session N lives in stage N. */
   sessionId?: string
   /** Always-on-top (chat/activity) — kept above normal windows regardless of z. */
   pinned?: boolean
@@ -66,8 +66,8 @@ export interface Surface {
   /** Stage desktop (plans/blitzos-stage-slot-desktop.md). Slotted tile: integer cell on the stage lattice. x/y/w/h are DERIVED from it (stage-core slotRect)
    *  so rendering/persistence stay unchanged; a viewport change re-derives. Absent = free-form window. */
   slot?: { col: number; row: number; size: string }
-  /** Which workspace area's lattice the slot lives on (default 0 = the primary). */
-  slotArea?: number
+  /** Which workspace stage's lattice the slot lives on (default 0 = the primary). */
+  slotStage?: number
   /** Focus window (L3): a human-pulled free-form floater above the tile grid; the one free-form exception. */
   focus?: boolean
 }

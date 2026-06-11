@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { makeOsToolsByPath } from '../src/main/os-tools.mjs'
 import { writeWorkspace, readWorkspace } from '../src/main/workspace.mjs'
 import { latticeFor, cardRect, slotOf, spanOf, occupancy, STAGE_BUDGET } from '../src/renderer/src/stage-core.mjs'
-import { areaRect } from '../src/renderer/src/areas-core.mjs'
+import { stageRect } from '../src/renderer/src/stages-core.mjs'
 
 let pass = 0
 let fail = 0
@@ -22,7 +22,7 @@ const ok = (c, m) => {
 
 const dir = mkdtempSync(join(tmpdir(), 'stage-e2e-'))
 const VP = { w: 1600, h: 1000 }
-const osState = { surfaces: [], viewport: VP, camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop', areaCount: 1 }
+const osState = { surfaces: [], viewport: VP, camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop', stageCount: 1 }
 let nextId = 1
 
 // Store-faithful ops: createSurface derives slotted geometry from the cell exactly like the renderer
@@ -33,10 +33,10 @@ const ops = {
     const s = { id, kind: a.kind, x: a.x ?? 0, y: a.y ?? 0, w: a.w ?? 240, h: a.h ?? 240, z: nextId, title: a.title || a.url || a.kind, url: a.url, html: a.html, component: a.component, props: a.props || {} }
     if (a.pinned) s.pinned = true
     if (a.slot) {
-      const area = Number.isInteger(a.slotArea) ? a.slotArea : 0
-      const r = cardRect(latticeFor(VP, area), a.slot.col, a.slot.row, a.slot.size)
+      const stage = Number.isInteger(a.slotStage) ? a.slotStage : 0
+      const r = cardRect(latticeFor(VP, stage), a.slot.col, a.slot.row, a.slot.size)
       s.slot = { ...a.slot }
-      if (area > 0) s.slotArea = area
+      if (stage > 0) s.slotStage = stage
       Object.assign(s, r)
     }
     osState.surfaces.push(s)
@@ -76,16 +76,16 @@ const call = async (path, body) => {
   return r && r.status ? { __status: r.status, ...(r.body || {}) } : r
 }
 
-// ---- 1. web/app are born OFF-STAGE: parked on the canvas outside the area rect ----
+// ---- 1. web/app are born OFF-STAGE: parked on the canvas outside the stage rect ----
 const outsideArea = (s) => {
-  const r = areaRect(0, VP)
+  const r = stageRect(0, VP)
   return s.x + s.w <= r.x || s.x >= r.x + r.w || s.y + s.h <= r.y || s.y >= r.y + r.h
 }
 {
   const r = await call('/create_surface', { kind: 'web', url: 'https://example.com', title: 'Ex' })
   ok(r.offstage === true && /below the stage/.test(r.hint || ''), 'create web -> offstage + hint')
   const s = osState.surfaces.find((x) => x.id === r.id)
-  ok(!s.slot && outsideArea(s), 'web surface parked OUTSIDE the stage frame (below the area)')
+  ok(!s.slot && outsideArea(s), 'web surface parked OUTSIDE the stage frame (below the stage)')
   const w = await call('/open_window', { url: 'https://news.ycombinator.com' })
   ok(w.offstage === true && outsideArea(osState.surfaces.find((x) => x.id === w.id)), 'open_window -> parked offstage')
 }
@@ -113,7 +113,7 @@ const outsideArea = (s) => {
   const occ = occupancy(osState.surfaces, 0)
   const sum = osState.surfaces.reduce((n, s) => {
     const sl = slotOf(s)
-    if (!sl || (s.slotArea ?? 0) !== 0) return n
+    if (!sl || (s.slotStage ?? 0) !== 0) return n
     const sp = spanOf(sl.size)
     return n + sp.c * sp.r
   }, 0)
@@ -140,7 +140,7 @@ const outsideArea = (s) => {
 {
   const victim = osState.surfaces.find((s) => s.slot && !s.pinned)
   const r1 = await call('/send_backstage', { id: victim.id })
-  ok(r1.ok && r1.offstage && !victim.slot && outsideArea(victim), 'send_backstage clears the slot + parks below the area')
+  ok(r1.ok && r1.offstage && !victim.slot && outsideArea(victim), 'send_backstage clears the slot + parks below the stage')
   const r2 = await call('/bring_to_stage', { id: victim.id, size: 's' })
   ok(r2.slot && victim.slot && !outsideArea(victim), 'bring_to_stage re-slots it inside the stage')
 }

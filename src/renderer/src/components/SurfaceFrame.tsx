@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop, snapTargetFor, primaryRect, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, areaOfX } from '../store'
+import { useDesktop, snapTargetFor, primaryRect, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, stageOfX } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
@@ -417,9 +417,9 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     if (d.single && isSlotted && !e.metaKey) {
       const me = d.items[0]
       const sl = slotOf(surface)
-      const area = surface.slotArea ?? 0
-      const lat = latticeFor(st.viewport, area)
-      const ghost = nearestFreeSlot(st.surfaces, lat, sl ? sl.size : 's', me.ox + dx + me.ow / 2, me.oy + dy + me.oh / 2, area, surface.id)
+      const stage = surface.slotStage ?? 0
+      const lat = latticeFor(st.viewport, stage)
+      const ghost = nearestFreeSlot(st.surfaces, lat, sl ? sl.size : 's', me.ox + dx + me.ow / 2, me.oy + dy + me.oh / 2, stage, surface.id)
       slotGhost.current = ghost
       const gr = ghost && sl ? slotRect(lat, ghost.col, ghost.row, sl.size) : null
       st.setSnapPreview(gr)
@@ -439,10 +439,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       (w) => w.component === 'folder' && !dragged.has(w.id) && wx >= w.x && wx <= w.x + w.w && wy >= w.y && wy <= w.y + w.h
     )
     st.setDragTarget(folder ? folder.id : null)
-    // Snap preview (BOTH modes, #42): dragging a single window so the cursor reaches a primary-area
+    // Snap preview (BOTH modes, #42): dragging a single window so the cursor reaches a primary-stage
     // side/corner shows where it will tile on release (left|right half / quarter — never full-screen).
     // Suppressed over a folder target and for file/dir tiles (they aren't windows).
-    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport, st.currentArea, st.mode) : null)
+    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport, st.currentStage, st.mode) : null)
   }
   function onBarUp(e: React.PointerEvent): void {
     try {
@@ -533,10 +533,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       if (r.dir.includes('n')) ny = r.origY + r.origH - MINH // keep the bottom edge anchored
       nh = MINH
     }
-    // macOS-faithful resize: a window may extend freely BEYOND the area (off the sides/bottom), just
+    // macOS-faithful resize: a window may extend freely BEYOND the stage (off the sides/bottom), just
     // like free dragging — the ONLY constraint in normal mode is that a top-edge (n/nw/ne) resize can't
-    // push the title bar above the area's top (so it stays grabbable — the #29 invariant). All areas
-    // share the same top, so it's area-independent.
+    // push the title bar above the stage's top (so it stays grabbable — the #29 invariant). All stages
+    // share the same top, so it's stage-independent.
     const st0 = useDesktop.getState()
     if (st0.mode === 'desktop') {
       const topY = primaryRect(st0.viewport).y

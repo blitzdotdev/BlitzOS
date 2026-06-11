@@ -19,8 +19,8 @@ export interface SessionMeta {
   endedAt: number | null
   cols: number
   rows: number
-  /** the workspace area this terminal belongs to (session N → area N); null = unscoped (human spawn). */
-  area?: number | null
+  /** the workspace stage this terminal belongs to (session N → stage N); null = unscoped (human spawn). */
+  stage?: number | null
   /** agent sessions only: persisted claude --session-id token + whether claude has established it. */
   claudeSessionId?: string
   claudeEstablished?: boolean
@@ -37,7 +37,7 @@ export interface SpawnSessionOpts {
   title?: string
   autonomy?: Autonomy
   id?: string
-  area?: number | null
+  stage?: number | null
   claudeSessionId?: string
   claudeEstablished?: boolean
 }

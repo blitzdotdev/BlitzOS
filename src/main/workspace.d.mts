@@ -12,8 +12,8 @@ export interface HydratedWorkspace {
   surfaces: Array<Record<string, unknown>>
   camera: { x: number; y: number; scale: number }
   mode: 'desktop' | 'canvas'
-  /** #45: number of tiled workspace areas (1 for old folders / missing / invalid). */
-  areaCount: number
+  /** #45: number of tiled workspace stages (1 for old folders / missing / invalid). */
+  stageCount: number
 }
 
 /** Reconstruct surface descriptors from a workspace folder (inverse of writeWorkspace). */
@@ -58,7 +58,7 @@ export interface WorkspaceEntry {
   path: string
   nodeCount: number
   updatedAt: number
-  /** mtime (ms) of the cached primary-area thumbnail, 0 if none (cache-busts the overview tile). */
+  /** mtime (ms) of the cached primary-stage thumbnail, 0 if none (cache-busts the overview tile). */
   thumbTs: number
 }
 

@@ -48,11 +48,11 @@ export interface OsState {
   mode?: 'desktop' | 'canvas'
   /** Raw camera transform — persisted to workspace.json (Phase 1). */
   camera?: { x: number; y: number; scale: number }
-  /** #45 workspace areas: count of tiled desktops (persisted), the active one, and its world rect (so
-   *  the agent places surfaces in the area the human is on). currentArea/currentAreaRect are live-only. */
-  areaCount?: number
-  currentArea?: number
-  currentAreaRect?: { x: number; y: number; w: number; h: number }
+  /** #45 workspace stages: count of tiled desktops (persisted), the active one, and its world rect (so
+   *  the agent places surfaces in the stage the human is on). currentStage/currentStageRect are live-only. */
+  stageCount?: number
+  currentStage?: number
+  currentStageRect?: { x: number; y: number; w: number; h: number }
   /** Which workspace this state belongs to — lets the backend drop a stale push after a switch. */
   workspace?: string
 }

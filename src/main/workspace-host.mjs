@@ -37,9 +37,9 @@ import {
   findSurfaceWorkspace,
   relocateSurface
 } from './workspace.mjs'
-// Area grid: a chat session N owns area N (areaForSession), so its chat widget + the windows its agent
-// opens land in area N — isolated from the user's primary (area 0). Shared with the renderer (one grid).
-import { areaForSession, areaCenterX, DEFAULT_VP } from '../renderer/src/areas-core.mjs'
+// Stage grid: a chat session N owns stage N (stageForSession), so its chat widget + the windows its agent
+// opens land in stage N — isolated from the user's primary (stage 0). Shared with the renderer (one grid).
+import { stageForSession, stageCenterX, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 // The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
 import { writeRelayUrl } from './agent-session.mjs'
 
@@ -100,7 +100,7 @@ export function createWorkspaceHost(a) {
   let watchers = []
 
   const active = () => basename(activeWorkspace)
-  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode, areaCount: 1 })
+  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode, stageCount: 1 })
 
   function flush() {
     if (writeTimer) {
@@ -241,8 +241,8 @@ export function createWorkspaceHost(a) {
   // session is an AGENT — a claude running in its own tmux terminal (launchAgent) that /says into ITS
   // transcript. The OS appends each message and broadcasts {type:'chat', sessionId, messages}.
   // The chat UI is ONE hub surface ('chat') holding EVERY session — a sidebar switches threads
-  // client-side (this branch's model; master briefly had a chat surface per session+area). Agents
-  // themselves still get per-session AREAS for their windows/terminals.
+  // client-side (this branch's model; master briefly had a chat surface per session+stage). Agents
+  // themselves still get per-session STAGES for their windows/terminals.
   const CHAT_HUB_ID = 'chat'
   const chatSurfaceId = () => CHAT_HUB_ID
   const chatStatus = {} // sessionId -> '' | 'thinking' (true while the agent is working that session)
@@ -264,7 +264,7 @@ export function createWorkspaceHost(a) {
     } catch { /* no sessions dir */ }
     return ids
   }
-  /** The viewport last pushed by a renderer (for area-math placement); a default until the first push. */
+  /** The viewport last pushed by a renderer (for stage-math placement); a default until the first push. */
   function viewportOf() {
     try { const st = a.getState(); if (st && st.viewport && st.viewport.w) return st.viewport } catch { /* no state */ }
     return DEFAULT_VP
@@ -316,11 +316,11 @@ export function createWorkspaceHost(a) {
       props: chatHubProps()
     }
   }
-  /** The minimum areaCount needed for every chat session to have its area (max chat-session id + 1) —
-   *  agents' windows/terminals live in per-session areas even though the chat UI is one hub. */
-  function maxChatAreaCount() {
+  /** The minimum stageCount needed for every chat session to have its stage (max chat-session id + 1) —
+   *  agents' windows/terminals live in per-session stages even though the chat UI is one hub. */
+  function maxChatStageCount() {
     let max = 1
-    for (const id of chatSessionIds()) max = Math.max(max, areaForSession(id) + 1)
+    for (const id of chatSessionIds()) max = Math.max(max, stageForSession(id) + 1)
     return max
   }
   /** The chat surfaces in this workspace — exactly ONE hub (it holds every session's thread). */
@@ -332,38 +332,38 @@ export function createWorkspaceHost(a) {
     for (const id of chatSessionIds()) { const n = Number(id); if (Number.isInteger(n) && n > max) max = n }
     return String(max + 1)
   }
-  /** Register a new chat session: write its meta (kind:'agent', its area), grow areaCount so its area
+  /** Register a new chat session: write its meta (kind:'agent', its stage), grow stageCount so its stage
    *  exists, launch its claude terminal (launchAgent seam, when wired), and re-push the hub so it appears
    *  in the sidebar. Idempotent — re-adding an existing session just refreshes meta + hub. opts.focus is
    *  accepted for parity with the per-surface model (the hub switches threads client-side, so no camera move). */
   function addChatSession(sessionId, title, opts = {}) {
     void opts
     const id = String(sessionId)
-    const area = areaForSession(id)
+    const stage = stageForSession(id)
     const name = title || (id === '0' ? 'Chat' : `Chat ${id}`)
     // Persist the session RECORD up front (kind:'agent') so the chat session survives a restart even when no
     // claude is auto-launched (BLITZ_AGENT off). launchAgent (below) will overwrite this with the full live
-    // meta when it spawns the terminal; both keep the same id/kind/title/area, so chatSessionIds() finds it.
+    // meta when it spawns the terminal; both keep the same id/kind/title/stage, so chatSessionIds() finds it.
     try {
       const dir = join(activeWorkspace, '.blitzos', 'sessions', id)
       mkdirSync(dir, { recursive: true })
       const mp = join(dir, 'meta.json')
       let m = {}
       try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
-      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, area, createdAt: m.createdAt || Date.now() }, null, 2))
+      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, stage, createdAt: m.createdAt || Date.now() }, null, 2))
     } catch { /* best-effort: the session still works in-memory this run */ }
     try {
       const st = a.getState()
       if (st && Array.isArray(st.surfaces)) {
-        // Grow areaCount so this session's area exists + is navigable (persisted via writeWorkspace) —
+        // Grow stageCount so this session's stage exists + is navigable (persisted via writeWorkspace) —
         // the agent's terminal + windows land there even though its chat thread lives in the hub.
-        const areaCount = Math.max(Number(st.areaCount) || 1, area + 1)
-        a.setState({ ...st, areaCount })
+        const stageCount = Math.max(Number(st.stageCount) || 1, stage + 1)
+        a.setState({ ...st, stageCount })
       }
     } catch { /* adapter without getState/setState */ }
     pushChatHub()
-    // Launch the agent in a VISIBLE terminal in its area (only when a launcher is wired — BLITZ_AGENT on).
-    try { a.launchAgent?.(id, area, name) } catch (e) { console.error('[workspace] launchAgent failed:', e?.message || e) }
+    // Launch the agent in a VISIBLE terminal in its stage (only when a launcher is wired — BLITZ_AGENT on).
+    try { a.launchAgent?.(id, stage, name) } catch (e) { console.error('[workspace] launchAgent failed:', e?.message || e) }
     return { id }
   }
   /** Set a session's title (the agent auto-names; the human can rename) and re-push the hub sidebar. */
@@ -399,7 +399,7 @@ export function createWorkspaceHost(a) {
   function resumeAgentsOnBoot() {
     if (typeof a.launchAgent !== 'function') return
     for (const id of chatSessionIds()) {
-      try { a.launchAgent(id, areaForSession(id)) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) }
+      try { a.launchAgent(id, stageForSession(id)) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) }
     }
   }
   /** Publish the CURRENT relay base url to <ws>/.blitzos/relay-url — the file every agent re-reads on each
@@ -512,14 +512,14 @@ export function createWorkspaceHost(a) {
       // activity feed still lives in .blitzos/state/panels.json. Merge both back on boot.
       migrateChatToFile() // seed chat.md from an old panels.json transcript, once
       const panels = readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')
-      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', areaCount: 1 }
+      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', stageCount: 1 }
       const surfaces = [...base.surfaces, ...buildChatSurfaces(), ...panels]
-      // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted areaCount > 1 isn't lost on an
-      // empty workspace — the hydrate senders read cached.areaCount, which would otherwise stay undefined→1.
-      // areaCount self-heals to fit every chat session's area (max chat id + 1), so an old workspace whose
-      // areaCount wasn't bumped — or a hand-added session — still lands its widget in a reachable area.
-      const areaCount = Math.max(base.areaCount ?? 1, maxChatAreaCount())
-      a.setState({ surfaces, camera: base.camera, mode: base.mode, areaCount })
+      // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted stageCount > 1 isn't lost on an
+      // empty workspace — the hydrate senders read cached.stageCount, which would otherwise stay undefined→1.
+      // stageCount self-heals to fit every chat session's stage (max chat id + 1), so an old workspace whose
+      // stageCount wasn't bumped — or a hand-added session — still lands its widget in a reachable stage.
+      const stageCount = Math.max(base.stageCount ?? 1, maxChatStageCount())
+      a.setState({ surfaces, camera: base.camera, mode: base.mode, stageCount })
       if (surfaces.length) console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
     } catch (e) {
       console.error('[workspace] hydrate failed:', e?.message || e)
@@ -559,12 +559,12 @@ export function createWorkspaceHost(a) {
       // activity panel — never carry the previous workspace's over.
       migrateChatToFile()
       const surfaces = [...next.surfaces, ...buildChatSurfaces(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
-      const areaCount = Math.max(next.areaCount ?? 1, maxChatAreaCount()) // self-heal for the destination's chat sessions
-      a.setState({ surfaces, camera: next.camera, mode: next.mode, areaCount, view: { cx: next.camera.x, cy: next.camera.y } })
+      const stageCount = Math.max(next.stageCount ?? 1, maxChatStageCount()) // self-heal for the destination's chat sessions
+      a.setState({ surfaces, camera: next.camera, mode: next.mode, stageCount, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
       rememberActive() // boot returns the user HERE, not to the default
-      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, areaCount, workspace: name })
+      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, stageCount, workspace: name })
       console.log(`[workspace] switched → ${name}`)
       return { status: 200, body: { ok: true, active: name } }
     } finally {
