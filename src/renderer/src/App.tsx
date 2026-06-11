@@ -441,18 +441,32 @@ export default function App(): JSX.Element {
     ;(window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })
   }
 
-  function toggleAdvanced(): void {
+  function positionAdvancedPopover(): AdvancedPopoverPosition | null {
     const r = advancedButtonRef.current?.getBoundingClientRect()
-    if (r) {
-      const popoverWidth = 286
-      setAdvancedPosition({
-        left: Math.max(12, Math.min(window.innerWidth - popoverWidth - 12, Math.round(r.left + r.width / 2 - popoverWidth / 2))),
-        top: Math.max(44, Math.round(r.top - 146))
-      })
+    if (!r) return null
+    const popoverWidth = 286
+    return {
+      left: Math.max(12, Math.min(window.innerWidth - popoverWidth - 12, Math.round(r.left + r.width / 2 - popoverWidth / 2))),
+      top: Math.max(44, Math.round(r.top - 146))
     }
+  }
+
+  function toggleAdvanced(): void {
+    const nextPosition = positionAdvancedPopover()
+    if (nextPosition) setAdvancedPosition(nextPosition)
     setShowAi(false)
     setShowAdvanced((v) => !v)
   }
+
+  useEffect(() => {
+    if (!showAdvanced) return
+    const onResize = (): void => {
+      const nextPosition = positionAdvancedPopover()
+      if (nextPosition) setAdvancedPosition(nextPosition)
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [showAdvanced])
 
   // Smoothly tween the camera (used when entering/leaving control mode).
   function animateTransform(target: CanvasTransform, dur = 320): void {

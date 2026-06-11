@@ -73,6 +73,17 @@ export function SurfaceLauncherButton({ onCreateSurface, buttonProps }: Props): 
     }
   }, [launcher])
 
+  useEffect(() => {
+    if (!launcher || launcher.closing) return
+    const onResize = (): void => {
+      const el = launcherRef.current
+      const next = positionLauncher(el?.offsetWidth || 236, el?.offsetHeight || 260)
+      setLauncher((cur) => (cur && !cur.closing ? { ...cur, ...next } : cur))
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [launcher])
+
   const closeLauncher = (): void => {
     if (!launcher || launcher.closing) return
     if (launcherCloseTimer.current != null) window.clearTimeout(launcherCloseTimer.current)
