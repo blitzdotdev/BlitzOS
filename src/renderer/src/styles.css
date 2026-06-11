@@ -3021,17 +3021,17 @@ button {
 /* ---- Stage grid toggle (window bar): snap a window into the lattice / pop a tile out ---- */
 .slot-toggle {
   flex: 0 0 auto;
-  width: 22px;
-  height: 18px;
+  width: 28px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-left: 2px;
+  margin-left: 4px;
   border: none;
-  border-radius: 5px;
+  border-radius: 7px;
   background: transparent;
   color: var(--text-dim, var(--text));
-  font-size: 12px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
