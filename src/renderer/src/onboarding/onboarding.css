@@ -1,5 +1,5 @@
-/* Onboarding / boot — a light, frosted-wallpaper "OS boot" over the desktop.
-   Consumes tokens.css; forces light via [data-theme='light'] on .onb. */
+/* Onboarding / boot — a frosted-wallpaper "OS boot" over the desktop.
+   Consumes tokens.css and inherits the root appearance theme. */
 
 .onb {
   position: fixed;
@@ -12,7 +12,7 @@
   font-family: var(--font-ui);
   color: var(--text);
   /* fallback gradient when no wallpaper resolves */
-  background: radial-gradient(125% 100% at 50% 0%, #fdfdfc 0%, #ececea 55%, #e2e2df 100%);
+  background: radial-gradient(125% 100% at 50% 0%, var(--surface) 0%, var(--canvas) 100%);
   animation: onbFade var(--dur-slow) var(--ease-out);
   transition:
     opacity 1.05s var(--ease-in-out),
@@ -91,8 +91,7 @@
   transform: scale(1.12);
 }
 
-/* frost: lighten + unify so text stays legible and the feel reads "light" even over
-   a dark wallpaper (kept translucent so the wallpaper's color/texture shows through). */
+/* frost: unify the wallpaper so text stays legible in the selected appearance. */
 .onb-veil {
   position: absolute;
   inset: 0;
@@ -101,6 +100,19 @@
     rgba(255, 255, 255, 0.8) 0%,
     rgba(255, 255, 255, 0.66) 45%,
     rgba(255, 255, 255, 0.78) 100%
+  );
+}
+
+[data-theme='dark'] .onb-wall {
+  filter: blur(64px) saturate(1.05) brightness(0.58);
+}
+
+[data-theme='dark'] .onb-veil {
+  background: linear-gradient(
+    180deg,
+    rgba(29, 32, 35, 0.88) 0%,
+    rgba(29, 32, 35, 0.76) 45%,
+    rgba(29, 32, 35, 0.9) 100%
   );
 }
 
@@ -132,7 +144,7 @@
   width: 200px;
   height: 3px;
   border-radius: var(--radius-pill);
-  background: rgba(0, 0, 0, 0.1);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
   overflow: hidden;
 }
 .boot-bar-fill {

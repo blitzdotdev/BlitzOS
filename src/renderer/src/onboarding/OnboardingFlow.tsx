@@ -29,7 +29,7 @@ export function OnboardingFlow({ onComplete }: { onComplete: () => void }): JSX.
   }
 
   return (
-    <div className={`onb${leaving ? ' out' : ''}`} data-theme="light">
+    <div className={`onb${leaving ? ' out' : ''}`}>
       <div className="onb-wall" style={wallpaper ? { backgroundImage: `url("${wallpaper}")` } : undefined} />
       <div className="onb-aurora">
         <i className="a1" />
