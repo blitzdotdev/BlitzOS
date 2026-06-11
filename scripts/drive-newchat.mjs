@@ -1,6 +1,6 @@
-// CDP driver for the "+ New" chat-session launcher button (the UI path for spawn_chat_session).
+// CDP driver for the "+ New" agent launcher button (the UI path for spawn_chat_session).
 // Clicks the toolbar "+ New" button and asserts a NEW chat surface (data-sid="chat-<id>") appears live
-// over SSE — i.e. the renderer→shim→/api/os/chat-session-spawn→host broadcast path works end-to-end.
+// over SSE — i.e. the renderer→shim→/api/os/agent-spawn→host broadcast path works end-to-end.
 //   node scripts/drive-newchat.mjs [url]
 // Delta-based: tolerates chat sessions left over from prior runs (asserts +1, never an absolute count).
 import { spawn } from 'node:child_process'
@@ -65,7 +65,7 @@ async function main() {
 
   const before = await chatCount()
   console.log(`baseline chat surfaces: ${before}  (${JSON.stringify(await chatIds())})`)
-  check(await evalJs(`return typeof window.agentOS?.spawnChatSession === 'function'`), 'window.agentOS.spawnChatSession is exposed')
+  check(await evalJs(`return typeof window.agentOS?.spawnAgent === 'function'`), 'window.agentOS.spawnAgent is exposed')
   check(await evalJs(`return !!Array.from(document.querySelectorAll('.toolbar button')).find(b=>/\\+ New/.test(b.textContent||''))`), 'the "+ New" toolbar button is present')
 
   console.log('\n[click] + New chat button')

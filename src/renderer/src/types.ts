@@ -6,12 +6,12 @@ export interface CanvasTransform {
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
-/** A tab inside a tabbed window. Terminal windows hold one SESSION per tab. */
+/** A tab inside a tabbed window. Terminal windows hold one TERMINAL per tab. */
 export interface SurfaceTab {
   id: string
   title: string
-  /** terminal tab → the session id it renders */
-  sessionId?: string
+  /** terminal tab → the terminal id it renders */
+  terminalId?: string
 }
 
 /**
@@ -41,8 +41,8 @@ export interface Surface {
   /** A system surface the OS owns (e.g. 'chat' — a srcdoc widget backed by blitz-chat.html + chat.md).
    *  Pinned + never serialized as a node. */
   role?: string
-  /** the chat session this surface belongs to (a per-session chat widget); session N lives in area N. */
-  sessionId?: string
+  /** the agent this surface belongs to (a per-agent chat widget); agent N lives in area N. */
+  agentId?: string
   /** Always-on-top (chat/activity) — kept above normal windows regardless of z. */
   pinned?: boolean
   /** content zoom factor (web: webview zoom; app/srcdoc: CSS scale). default 1 */
@@ -59,7 +59,7 @@ export interface Surface {
   groupId?: string
   /** A folder member temporarily "opened" onto the desktop (still a member; not ungrouped). */
   peek?: boolean
-  /** Tabbed window: content tabs in one frame (terminal windows hold a session per tab). Absent = a normal single window. */
+  /** Tabbed window: content tabs in one frame (terminal windows hold a terminal per tab). Absent = a normal single window. */
   tabs?: SurfaceTab[]
   /** Active tab index (default 0). */
   activeTab?: number

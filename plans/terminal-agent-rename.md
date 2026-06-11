@@ -100,5 +100,23 @@ The agent **chat** files (`chat.md`, `chat-<id>.md`, `blitz-chat.html`, `blitz-<
 ## Verification gates
 `npm run typecheck` · `node scripts/check-parity.mjs` · `npm run build` · live chromium + the read_terminal functional test.
 
+## EXECUTED (2026-06-11) — done + live-verified
+Engine+migration → 9 file-owner passes → typecheck/parity/build repair loop (all green). Then a manual seam pass for the runtime `.mjs` mismatches typecheck can't catch:
+- backend.mjs serverOps `spawnChatSession/closeChatSession/renameChatSession` → `spawnAgent/closeAgent/renameAgent` (calling `wsHost.{newAgentId,addAgent,closeAgent,renameAgent}`) + the agent-spawn/close/rename routes.
+- agent-runtime.mjs bootstrap wire payload `"session":` → `"agent":` (+ instruction `spawn_session`→`open_terminal`, "You are session"→"You are agent").
+- osActions.ts `os:user-message` reads `agentId` (was `sessionId`).
+- workspace-host.mjs `isRuntimeLike` `component:'sessions'` → `'runtime'`.
+- drive-newchat.mjs `spawnChatSession`→`spawnAgent`.
+Final sweep: zero stray old identifiers/routes/channels/components remain (only legit excluded `claudeSessionId`/CDP/`sessionFile`/`.blitzos/sessions` migration refs).
+
+Live (server, Home workspace):
+- Migration ran lossless: `.blitzos/sessions`→`.blitzos/terminals`; `terminals/0/meta.json` kept `kind:"agent"` + `claudeSessionId` + `claudeEstablished` → agent 0 `--resume`d and answered chat (PONG-RENAME-3321).
+- Terminal spawn→write→`read_terminal` returns the marker ✓; `list_terminals` shows `kind:terminal` vs `kind:agent` ✓; manual `## Terminals & Agents` section + tools.json serve `open_terminal/read_terminal/...` ✓.
+- UX (chromium): toolbar = Home · **+ Terminal** · **+ Agent** · **Go to chat** · **Terminals & Agents** · Inbox · Connect AI · Agent online. Old `+ New`/`⌗ Terminal`/`▤ Sessions` gone.
+
+NUANCE (not a code defect): the **resumed** agent 0 read the terminal via a `tmux capture-pane` shortcut (it's co-located) and still believes terminals are "not exposed through the surface API" — stale tool knowledge from before the rename. A FRESH agent fetches the updated manual + tools.json and will use `read_terminal`. (If desired, nudge the running agent to re-fetch its manual.)
+
+OUT-OF-SCOPE follow-ups noted: the supervisor-hook refactor; live widget-title update on `agent-rename` (tray already refreshes; chat-widget title not yet); the parked areas→stages / chat-hub merge reconciliation.
+
 ## Note on the agent-runtime-moments merge (parked)
 The branch independently renamed **areas→"stages"** + moved to a single **chat-hub**. This rename (session→terminal/agent) is orthogonal and will compound that merge. Decide the stages/hub reconciliation separately when we return to the merge.

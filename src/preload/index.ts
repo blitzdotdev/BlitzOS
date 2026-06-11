@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus' | 'session-spawn' | 'session-data' | 'session-exit' | 'session-remove' | 'session-rename' | 'action-item' | 'action-item-removed'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed'
   [k: string]: unknown
 }
 
@@ -84,44 +84,44 @@ const api = {
   reportWebview(surfaceId: string, wcid: number): void {
     ipcRenderer.send('os:webview', { surfaceId, wcid })
   },
-  /** Session terminal I/O — the user typing/resizing/repainting a SessionTerminal (mirrors sendState). */
-  sessionInput(id: string, data: string): void {
-    ipcRenderer.send('os:session-input', { id, data })
+  /** Terminal I/O — the user typing/resizing/repainting a TerminalView (mirrors sendState). */
+  terminalInput(id: string, data: string): void {
+    ipcRenderer.send('os:terminal-input', { id, data })
   },
-  sessionResize(id: string, cols: number, rows: number): void {
-    ipcRenderer.send('os:session-resize', { id, cols, rows })
+  terminalResize(id: string, cols: number, rows: number): void {
+    ipcRenderer.send('os:terminal-resize', { id, cols, rows })
   },
-  sessionRead(id: string): Promise<string> {
-    return ipcRenderer.invoke('os:session-read', id) as Promise<string>
+  terminalRead(id: string): Promise<string> {
+    return ipcRenderer.invoke('os:terminal-read', id) as Promise<string>
   },
-  /** Open a new session from the UI (a "+ Terminal" button) — the backend emits session-spawn which auto-opens its terminal. */
-  sessionSpawn(opts: { command?: string; title?: string }): void {
-    ipcRenderer.send('os:session-spawn', opts)
+  /** Open a new terminal from the UI (a "+ Terminal" button) — the backend emits terminal-spawn which auto-opens its terminal. */
+  terminalSpawn(opts: { command?: string; title?: string }): void {
+    ipcRenderer.send('os:terminal-spawn', opts)
   },
-  /** Open a NEW chat session from the UI (a "+ Chat" button) — a fresh peer agent + its own chat widget.
+  /** Open a NEW agent from the UI (a "+ Agent" button) — a fresh peer agent + its own chat widget.
    *  The host broadcasts a `create` for the new chat surface, so it appears without a refresh. */
-  spawnChatSession(title?: string): void {
-    ipcRenderer.send('os:chat-session-spawn', { title })
+  spawnAgent(title?: string): void {
+    ipcRenderer.send('os:agent-spawn', { title })
   },
-  /** Close a non-primary chat session: stop its agent + remove its widget, files, and area. */
-  closeChatSession(sessionId: string): Promise<{ ok: boolean; error?: string }> {
-    return (ipcRenderer.invoke('os:close-chat-session', sessionId) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
+  /** Close a non-primary agent: stop its terminal + remove its widget, files, and area. */
+  closeAgent(agentId: string): Promise<{ ok: boolean; error?: string }> {
+    return (ipcRenderer.invoke('os:close-agent', agentId) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
-  /** Rename a chat session (cosmetic title). */
-  renameChatSession(sessionId: string, newTitle: string): Promise<{ ok: boolean; error?: string }> {
-    return (ipcRenderer.invoke('os:rename-chat-session', { id: sessionId, title: newTitle }) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
+  /** Rename an agent (cosmetic title). */
+  renameAgent(agentId: string, newTitle: string): Promise<{ ok: boolean; error?: string }> {
+    return (ipcRenderer.invoke('os:rename-agent', { id: agentId, title: newTitle }) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
-  /** List every session in the active workspace (running + persisted) — for the Sessions tray. */
-  sessionList(): Promise<unknown[]> {
-    return (ipcRenderer.invoke('os:session-list') as Promise<unknown[]>).catch(() => [])
+  /** List every terminal in the active workspace (running + persisted) — for the Terminals & Agents tray. */
+  terminalList(): Promise<unknown[]> {
+    return (ipcRenderer.invoke('os:terminal-list') as Promise<unknown[]>).catch(() => [])
   },
-  /** Stop (kill) a session by id. */
-  sessionStop(id: string): void {
-    ipcRenderer.send('os:session-stop', id)
+  /** Stop (kill) a terminal by id. */
+  terminalStop(id: string): void {
+    ipcRenderer.send('os:terminal-stop', id)
   },
-  /** Re-spawn a dead session from its persisted meta (one-click resume) — emits session-spawn. */
-  sessionRestart(id: string): void {
-    ipcRenderer.send('os:session-restart', id)
+  /** Re-spawn a dead terminal from its persisted meta (one-click resume) — emits terminal-spawn. */
+  terminalRestart(id: string): void {
+    ipcRenderer.send('os:terminal-restart', id)
   },
   /** Action-items inbox (human side): list / resolve (tick) / clear a resolved item. */
   actionList(status?: string): Promise<unknown[]> {
@@ -169,9 +169,9 @@ const api = {
   getWallpaper(): Promise<string | null> {
     return ipcRenderer.invoke('os:wallpaper')
   },
-  /** The user typed a message to a chat session's agent (sessionId '0' = the primary chat). */
-  sendMessage(text: string, sessionId = '0'): void {
-    ipcRenderer.send('os:user-message', { text, sessionId })
+  /** The user typed a message to an agent (agentId '0' = the primary chat). */
+  sendMessage(text: string, agentId = '0'): void {
+    ipcRenderer.send('os:user-message', { text, agentId })
   },
   /** Ask main to (re)send the persisted canvas as a hydrate, once our onAction listener is up. */
   requestHydrate(): void {

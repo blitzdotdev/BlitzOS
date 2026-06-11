@@ -9,12 +9,12 @@ export interface WorkspaceHostAdapter {
   broadcast(obj: unknown): void
   onSurfaces?: (surfaces: unknown[]) => Promise<unknown> | void
   defaultMode?: 'canvas' | 'desktop'
-  /** Launch (or resume) the claude terminal for a chat/agent session in its area. Wired by each transport
-   *  from the shared agent-session core + its session-ops; absent ⇒ no agent auto-launch (BLITZ_AGENT off). */
-  launchAgent?: (sessionId: string, area: number, title?: string) => void
-  /** Stop a session's agent terminal (session-ops.stopSession — sets the stopping flag so it won't auto-restart).
-   *  Wired by each transport; used when closing a chat session. */
-  stopAgent?: (sessionId: string) => void
+  /** Launch (or resume) the claude terminal for an agent in its area. Wired by each transport
+   *  from the shared agent-runtime core + its terminal-ops; absent ⇒ no agent auto-launch (BLITZ_AGENT off). */
+  launchAgent?: (agentId: string, area: number, title?: string) => void
+  /** Stop an agent's terminal (terminal-ops.stopTerminal — sets the stopping flag so it won't auto-restart).
+   *  Wired by each transport; used when closing an agent. */
+  stopAgent?: (agentId: string) => void
 }
 
 export interface WorkspaceHost {
@@ -39,14 +39,14 @@ export interface WorkspaceHost {
   newFolder(name: string, kind: 'board' | 'folder' | undefined, x: number, y: number): { ok: true; folder: string } | { error: string }
   listDir(rel: string): { path: string; entries: Array<{ name: string; dir: boolean; ext: string; size: number; isImage: boolean; path: string }>; total: number; truncated: boolean } | null
   closeSurfaceFile(id: string): { ok: boolean; removed?: string; error?: string; skipped?: string }
-  appendChat(role: 'user' | 'agent', text: string, sessionId?: string): Array<{ role: string; text: string; ts: number }>
-  customizeWidget(name: string, html: string, sessionId?: string): { ok: boolean; rel?: string; error?: string }
+  appendChat(role: 'user' | 'agent', text: string, agentId?: string): Array<{ role: string; text: string; ts: number }>
+  customizeWidget(name: string, html: string, agentId?: string): { ok: boolean; rel?: string; error?: string }
   systemUi(name: string): string | null
-  chatSessionIds(): string[]
-  newChatSessionId(): string
-  addChatSession(sessionId: string, title?: string, opts?: { focus?: boolean }): Record<string, unknown>
-  closeChatSession(sessionId: string): { ok: boolean; error?: string }
-  renameChatSession(sessionId: string, newTitle: string): { ok: boolean; error?: string; title?: string }
+  agentIds(): string[]
+  newAgentId(): string
+  addAgent(agentId: string, title?: string, opts?: { focus?: boolean }): Record<string, unknown>
+  closeAgent(agentId: string): { ok: boolean; error?: string }
+  renameAgent(agentId: string, newTitle: string): { ok: boolean; error?: string; title?: string }
   resumeAgentsOnBoot(): void
   setRelayUrl(url: string | null | undefined): void
   group(name: string, memberIds: string[], x?: number, y?: number, kind?: 'board' | 'folder'): { ok: true; folder: string; moved: number } | { error: string }

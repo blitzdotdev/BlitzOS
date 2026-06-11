@@ -4,8 +4,8 @@ import { useDesktop, snapTargetFor, primaryRect, nextTerminalName } from '../sto
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
-import { SessionTerminal } from './SessionTerminal'
-import { SessionsPanel } from './SessionsPanel'
+import { TerminalView } from './TerminalView'
+import { RuntimePanel } from './RuntimePanel'
 import { InboxPanel } from './InboxPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
 import { UI_KIT } from '../widget-ui-kit'
@@ -29,7 +29,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
-  const closeChatSession = useDesktop((s) => s.closeChatSession)
+  const closeAgent = useDesktop((s) => s.closeAgent)
   const toggleMaximize = useDesktop((s) => s.toggleMaximize)
   const minimizeSurface = useDesktop((s) => s.minimizeSurface)
   const setActiveTab = useDesktop((s) => s.setActiveTab)
@@ -235,10 +235,10 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
       )
   }
-  // blitz.sendMessage — the widget sends a message to ITS session's agent. The session id rides from the
-  // surface (props.sessionId, set by the host per chat session) so each chat widget routes to its own agent.
+  // blitz.sendMessage — the widget sends a message to ITS agent. The agent id rides from the surface
+  // (props.agentId, set by the host per agent) so each chat widget routes to its own agent.
   function serveMessage(win: Window, reqId: string, text: string): Promise<void> {
-    window.agentOS?.sendMessage?.(String(text), String(surface.props?.sessionId ?? '0'))
+    window.agentOS?.sendMessage?.(String(text), String(surface.props?.agentId ?? '0'))
     return Promise.resolve(postRes(win, reqId, { ok: true }))
   }
   // blitz.listDir — the widget lists a workspace folder (the file-manager widget).
@@ -509,11 +509,11 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         if (surface.component === 'terminal') {
           const tabs = surface.tabs || []
           const active = tabs[Math.min(Math.max(surface.activeTab || 0, 0), Math.max(0, tabs.length - 1))]
-          const sid = active?.sessionId || (surface.props?.sessionId as string) || ''
-          // key by session id so switching tabs remounts the terminal onto the new session (scrollback re-fetched)
-          return <SessionTerminal key={sid} surface={{ ...surface, props: { sessionId: sid } }} />
+          const tid = active?.terminalId || (surface.props?.terminalId as string) || ''
+          // key by terminal id so switching tabs remounts the view onto the new terminal (scrollback re-fetched)
+          return <TerminalView key={tid} surface={{ ...surface, props: { terminalId: tid } }} />
         }
-        if (surface.component === 'sessions') return <SessionsPanel surface={surface} />
+        if (surface.component === 'runtime') return <RuntimePanel surface={surface} />
         if (surface.component === 'inbox') return <InboxPanel surface={surface} />
         if (surface.component === 'file') return <FileWidget surface={surface} />
         if (surface.component === 'dir') return <DirWidget surface={surface} />
@@ -565,11 +565,11 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         <div className="traffic" onPointerDown={stop}>
           {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
               reconcile (the file still exists), so only offer zoom; delete the file to remove it.
-              A NON-primary chat widget closes its whole SESSION (stop the agent + delete its files/area);
-              the PRIMARY chat ('0') is pinned + never closable, so it gets no close button. */}
+              A NON-primary chat widget's red light DELETES its agent (stop it + delete its chat + files/area);
+              the PRIMARY chat ('0') is pinned + never deletable, so it gets no close button. */}
           {surface.role === 'chat'
-            ? surface.sessionId && String(surface.sessionId) !== '0'
-              ? <button className="tl tl-close" title="Close session — stop this agent and remove its chat" onClick={() => closeChatSession(String(surface.sessionId))} />
+            ? surface.agentId && String(surface.agentId) !== '0'
+              ? <button className="tl tl-close" title="Delete agent" onClick={() => closeAgent(String(surface.agentId))} />
               : null
             : !isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
           {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />}
@@ -604,7 +604,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
                 title="Close tab"
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (t.sessionId) (window.agentOS as unknown as { sessionStop?: (id: string) => void })?.sessionStop?.(t.sessionId)
+                  if (t.terminalId) (window.agentOS as unknown as { terminalStop?: (id: string) => void })?.terminalStop?.(t.terminalId)
                   closeTab(surface.id, t.id)
                 }}
               >
@@ -614,8 +614,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
           ))}
           <button
             className="wtab-add"
-            title="New session tab"
-            onClick={() => (window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })}
+            title="New terminal tab"
+            onClick={() => (window.agentOS as unknown as { terminalSpawn?: (o: object) => void })?.terminalSpawn?.({ command: 'bash', title: nextTerminalName() })}
           >
             +
           </button>

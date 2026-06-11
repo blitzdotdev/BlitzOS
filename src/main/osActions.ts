@@ -72,10 +72,10 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     broadcast: (obj) => getWin()?.webContents.send('os:action', obj),
     onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
-    // A chat session's claude runs in a VISIBLE terminal in its area; index.ts wires this from the shared
-    // agent-session core + the session-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
+    // An agent's claude runs in a VISIBLE terminal in its area; index.ts wires this from the shared
+    // agent-runtime core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
     launchAgent: (id, area, title) => launchAgentHook?.(id, area, title),
-    // Stop a session's agent (when closing it) — index.ts wires this to session-ops.stopSession.
+    // Stop an agent (when closing it) — index.ts wires this to terminal-ops.stopTerminal.
     stopAgent: (id) => stopAgentHook?.(id)
   })
   wsHost.hydrateOnBoot()
@@ -125,12 +125,12 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   })
   // The human typed a message to the agent in the in-canvas Chat.
   ipcMain.on('os:user-message', (_e, payload: unknown) => {
-    // payload is { text, sessionId } (object) — tolerate a bare string (older renderer) → session '0'.
+    // payload is { text, agentId } (object) — tolerate a bare string (older renderer) → agent '0'.
     const text = typeof payload === 'string' ? payload : String((payload as { text?: unknown })?.text ?? '')
-    const sid = payload && typeof payload === 'object' && (payload as { sessionId?: unknown }).sessionId != null ? String((payload as { sessionId?: unknown }).sessionId) : '0'
+    const aid = payload && typeof payload === 'object' && (payload as { agentId?: unknown }).agentId != null ? String((payload as { agentId?: unknown }).agentId) : '0'
     if (text.trim()) {
-      wsHost?.appendChat('user', text, sid) // write to that session's chat.md + echo to its widget
-      emitUserMessage(text, sid) // wake ONLY that session's agent (trigger:'message')
+      wsHost?.appendChat('user', text, aid) // write to that agent's chat.md + echo to its widget
+      emitUserMessage(text, aid) // wake ONLY that agent (trigger:'message')
     }
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
@@ -197,7 +197,7 @@ function send(type: string, payload: Record<string, unknown> = {}): void {
   getWin()?.webContents.send('os:action', { type, ...payload })
 }
 
-/** Send an arbitrary os:action to the renderer — the Electron emit seam for shared cores (e.g. session events). */
+/** Send an arbitrary os:action to the renderer — the Electron emit seam for shared cores (e.g. terminal events). */
 export function osBroadcast(action: Record<string, unknown>): void {
   getWin()?.webContents.send('os:action', action)
 }
@@ -244,46 +244,46 @@ export function osCloseSurface(id: string): void {
 export function osGoToPrimary(): void {
   send('goToPrimary')
 }
-/** Agent → user: append a chat message to a session's chat.md and broadcast it to that session's widget. */
-export function osSay(text: string, sessionId = '0'): void {
-  wsHost?.appendChat('agent', text, sessionId)
+/** Agent → user: append a chat message to an agent's chat.md and broadcast it to that agent's widget. */
+export function osSay(text: string, agentId = '0'): void {
+  wsHost?.appendChat('agent', text, agentId)
 }
-/** The agent customizes a session's widget UI (blitz-[<id>-]<name>.html) — currently 'chat'. Live-reloads. */
-export function osCustomizeWidget(name: string, html: string, sessionId = '0'): { ok: boolean; rel?: string; error?: string } {
-  return wsHost ? wsHost.customizeWidget(String(name), String(html), sessionId) : { ok: false, error: 'no workspace host' }
+/** The agent customizes an agent's widget UI (blitz-[<id>-]<name>.html) — currently 'chat'. Live-reloads. */
+export function osCustomizeWidget(name: string, html: string, agentId = '0'): { ok: boolean; rel?: string; error?: string } {
+  return wsHost ? wsHost.customizeWidget(String(name), String(html), agentId) : { ok: false, error: 'no workspace host' }
 }
 /** Read a built-in widget's current UI source (workspace file or shipped default) — read-before-edit. */
 export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
 }
-// index.ts owns the relay url + session-ops, so it registers HOW to launch a chat session's claude in a
-// tmux terminal. osActions handles the workspace-side (mint id + surface the widget); addChatSession then
+// index.ts owns the relay url + terminal-ops, so it registers HOW to launch an agent's claude in a
+// tmux terminal. osActions handles the workspace-side (mint id + surface the widget); addAgent then
 // calls launchAgent via the host adapter. Gated: index.ts only registers this when BLITZ_AGENT is set.
-let launchAgentHook: ((sessionId: string, area: number, title?: string) => void) | null = null
-export function setLaunchAgent(fn: (sessionId: string, area: number, title?: string) => void): void {
+let launchAgentHook: ((agentId: string, area: number, title?: string) => void) | null = null
+export function setLaunchAgent(fn: (agentId: string, area: number, title?: string) => void): void {
   launchAgentHook = fn
 }
-let stopAgentHook: ((sessionId: string) => void) | null = null
-export function setStopAgent(fn: (sessionId: string) => void): void {
+let stopAgentHook: ((agentId: string) => void) | null = null
+export function setStopAgent(fn: (agentId: string) => void): void {
   stopAgentHook = fn
 }
-/** Open a new chat session: mint its id, register + live-surface its chat widget; addChatSession launches
- *  its claude terminal (via the launchAgent seam). focus:true (a USER '+ New') follows the camera to it. */
-export function osSpawnChatSession(title?: string, focus = false): { id: string; title: string } {
+/** Open a new agent: mint its id, register + live-surface its chat widget; addAgent launches
+ *  its claude terminal (via the launchAgent seam). focus:true (a USER '+ Agent') follows the camera to it. */
+export function osSpawnAgent(title?: string, focus = false): { id: string; title: string } {
   if (!wsHost) throw new Error('no workspace host')
-  const id = wsHost.newChatSessionId()
-  wsHost.addChatSession(id, title, { focus })
+  const id = wsHost.newAgentId()
+  wsHost.addAgent(id, title, { focus })
   return { id, title: title || `Chat ${id}` }
 }
-/** Close a non-primary chat session (stop its agent + remove its widget/files/area). */
-export function osCloseChatSession(sessionId: string): { ok: boolean; error?: string } {
-  return wsHost ? wsHost.closeChatSession(sessionId) : { ok: false, error: 'no workspace host' }
+/** Close a non-primary agent (stop its claude + remove its widget/files/area). */
+export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
+  return wsHost ? wsHost.closeAgent(agentId) : { ok: false, error: 'no workspace host' }
 }
-/** Rename a chat session (cosmetic title). */
-export function osRenameChatSession(sessionId: string, newTitle: string): { ok: boolean; error?: string; title?: string } {
-  return wsHost ? wsHost.renameChatSession(sessionId, newTitle) : { ok: false, error: 'no workspace host' }
+/** Rename an agent (cosmetic title). */
+export function osRenameAgent(agentId: string, newTitle: string): { ok: boolean; error?: string; title?: string } {
+  return wsHost ? wsHost.renameAgent(agentId, newTitle) : { ok: false, error: 'no workspace host' }
 }
-/** Boot: re-exec the claude terminal for every chat session on the current relay url (+ --resume). */
+/** Boot: re-exec the claude terminal for every agent on the current relay url (+ --resume). */
 export function osResumeAgentsOnBoot(): void {
   wsHost?.resumeAgentsOnBoot()
 }

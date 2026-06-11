@@ -4,7 +4,7 @@
 //
 // Area i is centered at i*areaStride in world space; area 0 is centered at the world origin, so
 // areaRect(0,vp) is field-for-field identical to primaryRect(vp) — the invariant that keeps the
-// single-area path byte-identical. A chat session N owns area N (areaForSession), so a session's
+// single-area path byte-identical. An agent N owns area N (areaForAgent), so an agent's
 // windows land in its own area and never disturb the user's primary (area 0).
 
 // Fixed-desktop chrome insets (px): the top titlebar, the left dock, the bottom toolbar, right pad.
@@ -38,21 +38,21 @@ export function areaRect(i, vp) {
   return { x: i * areaStride(vp) - r.w / 2, y: -r.h / 2, w: r.w, h: r.h }
 }
 
-/** World x of area i's center — the anchor for placing a session's windows inside its own area. */
+/** World x of area i's center — the anchor for placing an agent's windows inside its own area. */
 export function areaCenterX(i, vp) {
   const r = areaRect(i, vp)
   return r.x + r.w / 2
 }
 
-/** A chat session's area index = its integer id: session '0' → area 0 (the user's primary), '1' → 1, …
+/** An agent's area index = its integer id: agent '0' → area 0 (the user's primary), '1' → 1, …
  *  Non-numeric / falsy ids map to area 0 (so a stray call never escapes the user's area). */
-export function areaForSession(sessionId) {
-  const n = Number(sessionId)
+export function areaForAgent(agentId) {
+  const n = Number(agentId)
   return Number.isInteger(n) && n > 0 ? n : 0
 }
 
 /** Which area a world point falls in — area centers are at i*areaStride, so round(centerX/stride). Used to
- *  find an existing window already in a target area (e.g. dock a session's terminal into ITS area). */
+ *  find an existing window already in a target area (e.g. dock an agent's terminal into ITS area). */
 export function areaOfX(centerX, vp) {
   const i = Math.round(centerX / areaStride(vp))
   return i > 0 ? i : 0

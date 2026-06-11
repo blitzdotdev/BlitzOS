@@ -1,7 +1,7 @@
-// agent-session.mjs — the SHARED core that turns a workspace session into a BlitzOS agent.
+// agent-runtime.mjs — the SHARED core that turns a workspace terminal into a BlitzOS agent.
 //
-// There is no privileged headless "brain" anymore: an agent session is just a tmux terminal (owned by
-// session-manager.mjs) whose command runs `claude` pointed at the agent-socket relay. The claude process
+// There is no privileged headless "brain" anymore: an agent is just a tmux terminal (owned by
+// terminal-manager.mjs) whose command runs `claude` pointed at the agent-socket relay. The claude process
 // is VISIBLE (you watch it work), survives a BlitzOS restart (tmux), and /says clean replies into its chat
 // widget over the unchanged agent-socket contract. This module owns the only agent-specific bits:
 //   • the bootstrap prompt (the served blitzos-agents.md is the source of truth; this is a thin pointer),
@@ -30,12 +30,12 @@ export const RELAY_URL_FILE = '.blitzos/relay-url'
 export function buildBootstrap(_url, sessionId = '0') {
   const primary = !sessionId || String(sessionId) === '0'
   const chatFile = primary ? 'chat.md' : `chat-${sessionId}.md`
-  const sess = primary ? '' : `,"session":"${sessionId}"` // non-primary agents MUST scope /events + /say to their session
+  const sess = primary ? '' : `,"agent":"${sessionId}"` // non-primary agents MUST scope /events + /say to their agent id
   const B = '"$(cat ' + RELAY_URL_FILE + ')"' // every URL is built fresh from the file on each curl
   return [
     primary
       ? 'You are the primary chat agent of BlitzOS, an agent OS the user watches live. BlitzOS makes NO decisions; YOU decide everything.'
-      : `You are session "${sessionId}" — one of several independent agents in BlitzOS (an agent OS). You serve ONLY your own chat; other sessions have their own agents.`,
+      : `You are agent "${sessionId}" — one of several independent agents in BlitzOS (an agent OS). You serve ONLY your own chat; other agents have their own chats.`,
     `YOUR AGENT-SOCKET BASE URL IS VOLATILE — it changes every time BlitzOS restarts. NEVER hardcode it. Build EVERY url FRESH from the file ${RELAY_URL_FILE} (in your cwd): write each call as \`curl -sX POST ${B}/<tool> -H 'content-type: application/json' -d '{…}'\`. The \`$(cat …)\` re-reads your CURRENT base on each call, so you stay connected across restarts. If ANY curl fails (connection error / app_offline / 404), it almost always means BlitzOS restarted and minted a new url — just retry; the inlined \`$(cat …)\` already picks up the fresh one.`,
     `Your full operating manual is ${B}/agents.md. Fetch it FIRST (with your Bash tool: \`curl -s ${B}/agents.md\`) and FOLLOW it. If the fetch fails, retry; do not act blind.`,
     "IMPORTANT OVERRIDE for this session: the desktop is ALREADY set up by the user. Do NOT assemble, rearrange, resize, recenter, move, or close ANYTHING on connect or on your own — ignore the manual's 'assemble the desktop on connect' guidance entirely. This is the user's curated, live desktop.",
@@ -46,7 +46,7 @@ export function buildBootstrap(_url, sessionId = '0') {
     ...(primary
       ? []
       : [
-          `YOUR WINDOWS LIVE IN YOUR OWN AREA (separate from the user's primary desktop). On EVERY surface-opening call — create_surface, open_window, and spawn_session — you MUST include "session":"${sessionId}" so the window opens in YOUR area and never disturbs the user. Do NOT pass an explicit x/y unless repositioning a window within your own area. Open your terminal and all work windows this way.`
+          `YOUR WINDOWS LIVE IN YOUR OWN AREA (separate from the user's primary desktop). On EVERY surface-opening call — create_surface, open_window, and open_terminal — you MUST include "agent":"${sessionId}" so the window opens in YOUR area and never disturbs the user. Do NOT pass an explicit x/y unless repositioning a window within your own area. Open your terminal and all work windows this way.`
         ])
   ].join('\n')
 }
@@ -67,10 +67,10 @@ export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create',
   return `${cmd} ${sessionArg} --dangerously-skip-permissions "$(cat ${shellQuote(bootstrapFile)})"`
 }
 
-/** Read (or mint) this session's persisted claude session-id + whether claude has ESTABLISHED it (so we
- *  --resume vs --session-id). Lives in the SAME meta.json the session-manager owns — no second file. The
- *  caller persists the id by passing it to spawnSession (which writes meta). established flips true only
- *  after a healthy run (session-manager sets claudeEstablished on a ≥5s exit), so we never --resume an id
+/** Read (or mint) this agent's persisted claude session-id + whether claude has ESTABLISHED it (so we
+ *  --resume vs --session-id). Lives in the SAME meta.json the terminal-manager owns — no second file. The
+ *  caller persists the id by passing it to spawnTerminal (which writes meta). established flips true only
+ *  after a healthy run (terminal-manager sets claudeEstablished on a ≥5s exit), so we never --resume an id
  *  claude never created (which fails 'No conversation found' → a crash loop). */
 export function ensureClaudeSessionId(sessionsDir, id) {
   const m = readMeta(sessionsDir, id)
@@ -78,8 +78,8 @@ export function ensureClaudeSessionId(sessionsDir, id) {
 }
 
 /** Prepare an agent (re)launch: ensure the claude session-id, (re)write the bootstrap file with the CURRENT
- *  relay url, and build the command. Returns { command, claudeSessionId } for session-manager.spawnSession.
- *  Used by BOTH the new-session launch (workspace-host launchAgent) AND the re-exec path (restartSession's
+ *  relay url, and build the command. Returns { command, claudeSessionId } for terminal-manager.spawnTerminal.
+ *  Used by BOTH the new-agent launch (workspace-host launchAgent) AND the re-exec path (restartTerminal's
  *  rebuildAgentCommand) — one definition, no divergence. */
 export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
   const { claudeSessionId, established } = ensureClaudeSessionId(sessionsDir, id)

@@ -1,11 +1,11 @@
-// tmux-host.mjs — the session host, backed by tmux CONTROL MODE. This is the keystone of the
-// multi-agent OS: a session is a real terminal running a command (a shell, `claude`/`codex` in a
+// tmux-host.mjs — the terminal host, backed by tmux CONTROL MODE. This is the keystone of the
+// multi-agent OS: a terminal is a real terminal running a command (a shell, `claude`/`codex` in a
 // real TTY, a build/test runner). tmux (not an in-process PTY) is the backend on purpose:
-//   • sessions SURVIVE a BlitzOS restart/crash (the tmux server outlives the app; we reattach),
-//   • the user can `tmux attach` from their own terminal into the exact session BlitzOS shows,
+//   • terminals SURVIVE a BlitzOS restart/crash (the tmux server outlives the app; we reattach),
+//   • the user can `tmux attach` from their own terminal into the exact terminal BlitzOS shows,
 //   • control mode is a plain stdin/stdout protocol — NO native addon / electron-rebuild.
 // One tmux server (private socket under <workspace>/.blitzos/tmux), one tmux session, and each
-// BlitzOS session is a tmux WINDOW multiplexed over ONE `tmux -C` control client. Protocol facts
+// BlitzOS terminal is a tmux WINDOW multiplexed over ONE `tmux -C` control client. Protocol facts
 // here were empirically verified against tmux 3.6 (see project memory), not assumed.
 import { spawn as cpSpawn, execFileSync } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
@@ -17,7 +17,7 @@ const toHex = (str) => Buffer.from(str, 'utf8').toString('hex').match(/../g)?.jo
 
 /**
  * @param {{ socketPath:string, sessionName?:string, cols?:number, rows?:number, tmuxTmpdir?:string }} cfg
- * @returns a host whose interface matches what session-manager expects (spawn/write/resize/kill/onData/onExit/…)
+ * @returns a host whose interface matches what terminal-manager expects (spawn/write/resize/kill/onData/onExit/…)
  */
 export function createTmuxHost(cfg) {
   const SOCK = cfg.socketPath
@@ -32,7 +32,7 @@ export function createTmuxHost(cfg) {
   let client = null // the control-client child process
   let lineBuf = ''
   let ready = null
-  const sessions = new Map() // blitzId -> { id, window, pane, pid, cols, rows, exited, exitCode, ring:[], ringBytes, dataL:Set, exitL:Set }
+  const terminals = new Map() // blitzId -> { id, window, pane, pid, cols, rows, exited, exitCode, ring:[], ringBytes, dataL:Set, exitL:Set }
   const byPane = new Map() // pane (%N) -> blitzId
   const cmdQueue = [] // FIFO of { resolve, reject } awaiting a %begin..%end block
   let curReply = null // { lines:[], error:false }
@@ -50,13 +50,13 @@ export function createTmuxHost(cfg) {
 
   function routeOutput(pane, data) {
     const id = byPane.get(pane); if (!id) return
-    const rec = sessions.get(id); if (!rec) return
+    const rec = terminals.get(id); if (!rec) return
     rec.ring.push(data); rec.ringBytes += data.length
     while (rec.ringBytes > SCROLLBACK_BYTES && rec.ring.length > 1) rec.ringBytes -= rec.ring.shift().length
     for (const l of rec.dataL) { try { l(data) } catch { /* a bad listener must not kill the stream */ } }
   }
   function windowClosed(win) {
-    for (const rec of sessions.values()) {
+    for (const rec of terminals.values()) {
       if (rec.window === win && !rec.exited) {
         rec.exited = true; rec.endedAt = Date.now()
         for (const l of rec.exitL) { try { l({ exitCode: rec.exitCode ?? 0, signal: null }) } catch { /* ignore */ } }
@@ -82,7 +82,7 @@ export function createTmuxHost(cfg) {
       windowClosed('@' + ln.trim().split('@')[1]); return
     }
     // %window-add / %session-changed / %layout-change — not load-bearing. NB: %exit means the CONTROL
-    // CLIENT is detaching, NOT that sessions died — the windows survive in the tmux server, so do NOT
+    // CLIENT is detaching, NOT that terminals died — the windows survive in the tmux server, so do NOT
     // mark them exited here (client.on('exit') resets connection state so a later start() reattaches).
   }
 
@@ -107,17 +107,17 @@ export function createTmuxHost(cfg) {
       })
       // NB: do NOT `set -g window-size manual` — verified to crash the tmux 3.6 server on the next
       // new-window. Windows follow the control client's size; resize() adjusts it via refresh-client.
-      // The default window (index 0) new-session creates is NOT a BlitzOS session — name it so adopt
-      // skips it. Target index 0 explicitly (NOT the active window — on reattach that's a real session).
+      // The default window (index 0) new-session creates is NOT a BlitzOS terminal — name it so adopt
+      // skips it. Target index 0 explicitly (NOT the active window — on reattach that's a real terminal).
       sendRaw(`rename-window -t ${SESSION}:0 __blitzroot__`)
       setTimeout(resolve, 250) // let the session/control handshake settle
     })
     return ready
   }
 
-  /** Spawn a session = a tmux window named with the blitz id; returns its info once tmux assigns the pane. */
+  /** Spawn a terminal = a tmux window named with the blitz id; returns its info once tmux assigns the pane. */
   async function spawn(id, opts = {}) {
-    if (sessions.get(id) && !sessions.get(id).exited) return info(id)
+    if (terminals.get(id) && !terminals.get(id).exited) return info(id)
     await start()
     const cols = opts.cols || DEF_COLS, rows = opts.rows || DEF_ROWS
     const args = ['new-window', '-t', SESSION, '-n', id, '-P', '-F', '#{window_id} #{pane_id} #{pane_pid}']
@@ -133,7 +133,7 @@ export function createTmuxHost(cfg) {
     // A %error reply (e.g. bad cwd) yields no valid "@N %N" line — DON'T register a zombie that looks alive.
     if (!/^@\d+$/.test(window || '') || !/^%\d+$/.test(pane || '')) { console.error('[tmux-host] new-window failed:', reply.join(' ').slice(0, 140)); return null }
     const rec = { id, window, pane, pid: Number(pid) || null, cols, rows, exited: false, exitCode: null, endedAt: null, startedAt: Date.now(), ring: [], ringBytes: 0, dataL: new Set(), exitL: new Set() }
-    sessions.set(id, rec); byPane.set(pane, id)
+    terminals.set(id, rec); byPane.set(pane, id)
     if (cols !== DEF_COLS || rows !== DEF_ROWS) resize(id, cols, rows)
     return info(id)
   }
@@ -141,38 +141,38 @@ export function createTmuxHost(cfg) {
   // Fire-and-forget a control command; its %begin/%end reply is consumed by a no-op queue slot so the FIFO stays aligned.
   function sendRaw(cmd) { if (!client) return false; client.stdin.write(cmd + '\n'); cmdQueue.push({ resolve() {}, reject() {} }); return true }
   function write(id, data) {
-    const rec = sessions.get(id); if (!rec || rec.exited || !client) return false
+    const rec = terminals.get(id); if (!rec || rec.exited || !client) return false
     const hex = toHex(String(data)); if (!hex) return true
     return sendRaw(`send-keys -t ${rec.pane} -H ${hex}`)
   }
   function resize(id, cols, rows) {
-    const rec = sessions.get(id); if (!rec || rec.exited || !client) return false
+    const rec = terminals.get(id); if (!rec || rec.exited || !client) return false
     rec.cols = cols; rec.rows = rows
     // Windows follow the control client's size (per-window manual sizing crashes tmux 3.6); resize the client.
     return sendRaw(`refresh-client -C ${cols | 0}x${rows | 0}`)
   }
   function kill(id) {
-    const rec = sessions.get(id); if (!rec) return false
+    const rec = terminals.get(id); if (!rec) return false
     try { tmuxSync(['kill-window', '-t', rec.window]) } catch { /* already gone */ }
     if (!rec.exited) windowClosed(rec.window)
     return true
   }
-  function remove(id) { kill(id); const rec = sessions.get(id); if (rec) byPane.delete(rec.pane); sessions.delete(id) }
+  function remove(id) { kill(id); const rec = terminals.get(id); if (rec) byPane.delete(rec.pane); terminals.delete(id) }
 
   function onData(id, cb, { replay = true } = {}) {
-    const rec = sessions.get(id); if (!rec) return () => {}
+    const rec = terminals.get(id); if (!rec) return () => {}
     if (replay && rec.ring.length) { try { cb(rec.ring.join('')) } catch { /* ignore */ } }
     rec.dataL.add(cb); return () => rec.dataL.delete(cb)
   }
   function onExit(id, cb) {
-    const rec = sessions.get(id); if (!rec) return () => {}
+    const rec = terminals.get(id); if (!rec) return () => {}
     if (rec.exited) { try { cb({ exitCode: rec.exitCode ?? 0, signal: null }) } catch { /* ignore */ } return () => {} }
     rec.exitL.add(cb); return () => rec.exitL.delete(cb)
   }
-  const scrollback = (id) => { const r = sessions.get(id); return r ? r.ring.join('') : '' }
-  const has = (id) => sessions.has(id)
-  const info = (id) => { const r = sessions.get(id); return r ? { id: r.id, pid: r.pid, window: r.window, pane: r.pane, cols: r.cols, rows: r.rows, exited: r.exited, exitCode: r.exitCode, startedAt: r.startedAt, endedAt: r.endedAt || null } : null }
-  const list = () => [...sessions.values()].map((r) => info(r.id))
+  const scrollback = (id) => { const r = terminals.get(id); return r ? r.ring.join('') : '' }
+  const has = (id) => terminals.has(id)
+  const info = (id) => { const r = terminals.get(id); return r ? { id: r.id, pid: r.pid, window: r.window, pane: r.pane, cols: r.cols, rows: r.rows, exited: r.exited, exitCode: r.exitCode, startedAt: r.startedAt, endedAt: r.endedAt || null } : null }
+  const list = () => [...terminals.values()].map((r) => info(r.id))
 
   /** Reattach-on-boot: query the live tmux server for windows (named with blitz ids) and re-register them. */
   async function adoptExisting() {
@@ -182,19 +182,19 @@ export function createTmuxHost(cfg) {
     const adopted = []
     for (const ln of out.trim().split('\n').filter(Boolean)) {
       const [window, pane, name, pid, dead, deadStatus] = ln.trim().split(/\s+/)
-      if (!name || name === '__blitzroot__' || sessions.has(name)) continue
+      if (!name || name === '__blitzroot__' || terminals.has(name)) continue
       const isDead = dead === '1' // a lingering dead pane (remain-on-exit) — adopt as EXITED, not live, so it doesn't stick at "running"
       const rec = { id: name, window, pane, pid: Number(pid) || null, cols: DEF_COLS, rows: DEF_ROWS, exited: isDead, exitCode: isDead ? (Number(deadStatus) || 0) : null, endedAt: isDead ? Date.now() : null, startedAt: Date.now(), ring: [], ringBytes: 0, dataL: new Set(), exitL: new Set() }
       // seed the ring from the survivor's scrollback so a reconnecting renderer repaints
       try { rec.ring.push(tmuxSync(['capture-pane', '-p', '-e', '-t', window])); rec.ringBytes = rec.ring[0].length } catch { /* ignore */ }
-      sessions.set(name, rec); byPane.set(pane, name); adopted.push(name)
+      terminals.set(name, rec); byPane.set(pane, name); adopted.push(name)
     }
     return adopted
   }
 
-  function stop() { try { client && client.kill('SIGTERM') } catch { /* ignore */ } } // sessions SURVIVE
-  function killServer() { try { tmuxSync(['kill-server']) } catch { /* ignore */ } } // sessions DIE
-  function stopAll() { for (const id of [...sessions.keys()]) kill(id) }
+  function stop() { try { client && client.kill('SIGTERM') } catch { /* ignore */ } } // terminals SURVIVE
+  function killServer() { try { tmuxSync(['kill-server']) } catch { /* ignore */ } } // terminals DIE
+  function stopAll() { for (const id of [...terminals.keys()]) kill(id) }
 
   return { start, spawn, write, resize, kill, remove, onData, onExit, scrollback, has, info, list, adoptExisting, stop, killServer, stopAll }
 }

@@ -11,9 +11,9 @@
 // localhost is trusted; relay + server are untrusted (gate page content to surfaces the user shared).
 import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from './widget-catalog.mjs'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
-// Area grid: a chat session N owns area N. When a session-scoped agent creates a surface, we tag it with
-// {area} so the renderer cascades it into that session's area — isolated from the user's primary (area 0).
-import { areaForSession } from '../renderer/src/areas-core.mjs'
+// Area grid: agent N owns area N. When an agent-scoped call creates a surface, we tag it with
+// {area} so the renderer cascades it into that agent's area — isolated from the user's primary (area 0).
+import { areaForAgent } from '../renderer/src/areas-core.mjs'
 
 function parse(body) {
   try {
@@ -31,7 +31,14 @@ export function serializeStateForAgent(state) {
   const s = state || {}
   return {
     ...s,
-    surfaces: (s.surfaces || []).map((x) => ({ id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned }))
+    surfaces: (s.surfaces || []).map((x) => {
+      const out = { id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned }
+      // chat surfaces advertise which agent they host; a terminal surface advertises which
+      // read_terminal(id) ids it holds (one entry per tab) so an agent can read each.
+      if (x.agentId != null) out.agentId = x.agentId
+      if (x.component === 'terminal') out.terminals = (x.tabs || []).map((t) => ({ id: t.terminalId, title: t.title }))
+      return out
+    })
   }
 }
 
@@ -68,18 +75,18 @@ export function makeOsTools(ops) {
     {
       path: '/create_surface',
       description:
-        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html, native takes component+props. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary session, pass {session:"<your id>"} so it opens in YOUR area (do NOT also pass x/y unless repositioning within your area).',
+        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html, native takes component+props. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary agent, pass {agent:"<your id>"} so it opens in YOUR area (do NOT also pass x/y unless repositioning within your area).',
       input_schema: {
         type: 'object',
         required: ['kind'],
-        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' }, session: { type: 'string' } }
+        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' }, agent: { type: 'string' } }
       },
       handler: ({ body }) => {
         const a = parse(body)
         if (!a.kind) return { status: 400, body: { error: 'kind required' } }
-        // A session-scoped agent's surface lands in ITS area (the renderer cascades by `area` when no
-        // explicit x is given); the primary session '0' → area 0 = today's behavior.
-        if (a.session != null) a.area = areaForSession(a.session)
+        // An agent-scoped surface lands in ITS area (the renderer cascades by `area` when no
+        // explicit x is given); the primary agent '0' → area 0 = today's behavior.
+        if (a.agent != null) a.area = areaForAgent(a.agent)
         const id = ops.createSurface(a)
         const ctx = ops.workspaceContext()
         return { id, workspace: ctx.workspace, workspace_path: ctx.workspace_path, siblings: (ctx.siblings || []).filter((s) => s.id !== id).map((s) => s.title) }
@@ -87,12 +94,12 @@ export function makeOsTools(ops) {
     },
     {
       path: '/open_window',
-      description: 'Open a third-party website as a live web surface. Returns its id. If you are a non-primary session, pass {session:"<your id>"} so it opens in YOUR area.',
-      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, session: { type: 'string' } } },
+      description: 'Open a third-party website as a live web surface. Returns its id. If you are a non-primary agent, pass {agent:"<your id>"} so it opens in YOUR area.',
+      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, agent: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
         if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
-        if (a.session != null) a.area = areaForSession(a.session) // open in the session's own area
+        if (a.agent != null) a.area = areaForAgent(a.agent) // open in the agent's own area
         return { id: ops.openWindow(a) }
       }
     },
@@ -182,7 +189,7 @@ export function makeOsTools(ops) {
     {
       path: '/new_app',
       description:
-        "Provision a real blitz.dev app (SQLite+R2+auth, edge-deployed) for a DELIVERABLE the user will keep/ship (landing page, site, app, dashboard — even if v1 looks static); not for session scaffolding (→ srcdoc). Returns { preview_url, claim_url, agents_md, slug }. Then author files and PRESENT as one `app` surface per page/variation, tiled (canvas = the gallery, never an in-app chooser). Speed-first: build what's asked, offer backends. Working rules in the doctrine's 'Build deliverables on blitz.dev'. Args { slug } (a-z 0-9 -).",
+        "Provision a real blitz.dev app (SQLite+R2+auth, edge-deployed) for a DELIVERABLE the user will keep/ship (landing page, site, app, dashboard — even if v1 looks static); not for scratch scaffolding (→ srcdoc). Returns { preview_url, claim_url, agents_md, slug }. Then author files and PRESENT as one `app` surface per page/variation, tiled (canvas = the gallery, never an in-app chooser). Speed-first: build what's asked, offer backends. Working rules in the doctrine's 'Build deliverables on blitz.dev'. Args { slug } (a-z 0-9 -).",
       input_schema: { type: 'object', required: ['slug'], properties: { slug: { type: 'string', description: 'unique project slug, a-z 0-9 -' }, title: { type: 'string' } } },
       handler: async ({ body }) => {
         const slug = String(parse(body).slug || '')
@@ -305,37 +312,37 @@ export function makeOsTools(ops) {
       path: '/events',
       description:
         "Long-poll the user's activity, coalesced into framed 'moments' (batched ~15s; flushed immediately on navigation or going idle after acting). Each moment carries a snapshot of the surface so you can react without a second read: {seq,surfaceId,url,title,trigger,signals,user[],snapshot}. THE AUTONOMY LOOP: start since=0, loop with since=latest and wait=25; on each moment decide whether to act, then build/arrange surfaces to help.",
-      input_schema: { type: 'object', properties: { since: { type: 'number' }, wait: { type: 'number' }, session: { type: 'string' } } },
+      input_schema: { type: 'object', properties: { since: { type: 'number' }, wait: { type: 'number' }, agent: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)
         const since = Number(a.since) || 0
         const wait = Math.min(Math.max(a.wait == null ? 25 : Number(a.wait) || 0, 0), 25)
-        // `session` scopes the stream to ONE chat session's messages (default '0' = primary chat).
-        const events = await waitForEvents(since, wait * 1000, a.session != null ? String(a.session) : '0')
+        // `agent` scopes the stream to ONE agent's chat messages (default '0' = primary chat).
+        const events = await waitForEvents(since, wait * 1000, a.agent != null ? String(a.agent) : '0')
         return { events, latest: latestSeq(), reminder: EVENTS_REMINDER }
       }
     },
     {
       path: '/say',
       description:
-        "Send a chat message to the USER — it appears in their in-canvas Chat panel. Use this to reply when a moment has trigger:'message' (the user typed to you), or to proactively tell them something. Plain text. If you are a non-primary session, pass {session:'<your id>'} so it lands in YOUR chat.",
-      input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, session: { type: 'string' } } },
+        "Send a chat message to the USER — it appears in their in-canvas Chat panel. Use this to reply when a moment has trigger:'message' (the user typed to you), or to proactively tell them something. Plain text. If you are a non-primary agent, pass {agent:'<your id>'} so it lands in YOUR chat.",
+      input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, agent: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
         const text = String(b.text || '')
         if (!text) return { status: 400, body: { error: 'text required' } }
-        ops.say(text, b.session != null ? String(b.session) : '0')
+        ops.say(text, b.agent != null ? String(b.agent) : '0')
         return { ok: true }
       }
     },
     {
       path: '/customize_widget',
       description:
-        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Read the current source with get_system_ui first. Args: {name, html, session? (which chat session's widget; default '0')}.",
-      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' }, session: { type: 'string' } } },
+        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Read the current source with get_system_ui first. Args: {name, html, agent? (which agent's chat widget; default '0')}.",
+      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' }, agent: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
-        const r = ops.customizeWidget(String(b.name || ''), String(b.html || ''), b.session != null ? String(b.session) : '0')
+        const r = ops.customizeWidget(String(b.name || ''), String(b.html || ''), b.agent != null ? String(b.agent) : '0')
         return r.ok ? { ok: true, file: r.rel } : { status: 400, body: { error: r.error || 'failed' } }
       }
     },
@@ -349,99 +356,99 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/spawn_chat_session',
+      path: '/spawn_agent',
       description:
-        "Open a NEW chat session — a fresh peer agent with its OWN chat widget (a `chat-<id>.md` transcript + window), reachable over this same relay. The new agent is independent: messages typed into ITS widget go only to it, and its `say`s land only in its widget (no cross-talk with you or other sessions). Use this to spin up a parallel agent for a separate task/conversation. Args: {title?}. Returns { session:{id,title} }.",
+        "Spawn a NEW agent — a fresh peer agent with its OWN chat widget (a `chat-<id>.md` transcript + window), reachable over this same relay. The new agent is independent: messages typed into ITS widget go only to it, and its `say`s land only in its widget (no cross-talk with you or other agents). Use this to spin up a parallel agent for a separate task/conversation. Args: {title?}. Returns { agent:{id,title} }.",
       input_schema: { type: 'object', properties: { title: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)
-        if (typeof ops.spawnChatSession !== 'function') return { status: 501, body: { error: 'chat sessions not supported on this transport' } }
-        const session = await ops.spawnChatSession(a.title != null ? String(a.title) : undefined)
-        return { session }
+        if (typeof ops.spawnAgent !== 'function') return { status: 501, body: { error: 'agents not supported on this transport' } }
+        const agent = await ops.spawnAgent(a.title != null ? String(a.title) : undefined)
+        return { agent }
       }
     },
     {
-      path: '/close_chat_session',
+      path: '/close_agent',
       description:
-        "Close a chat session you previously spawned — stops its agent, removes its chat widget + terminal, deletes its files, and frees its workspace area. Args: {id}. The PRIMARY session '0' (the user's main chat) cannot be closed. Returns { ok } or { ok:false, error }.",
+        "Close an agent you previously spawned — stops it, removes its chat widget + terminal, deletes its files, and frees its workspace area. Args: {id}. The PRIMARY agent '0' (the user's main chat) cannot be closed. Returns { ok } or { ok:false, error }.",
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
       handler: ({ body }) => {
         const id = String(parse(body).id || '')
         if (!id) return { status: 400, body: { error: 'id required' } }
-        if (id === '0') return { status: 400, body: { error: "cannot close the primary chat session '0'" } }
-        if (typeof ops.closeChatSession !== 'function') return { status: 501, body: { error: 'chat sessions not supported on this transport' } }
-        return ops.closeChatSession(id)
+        if (id === '0') return { status: 400, body: { error: "cannot close the primary agent '0'" } }
+        if (typeof ops.closeAgent !== 'function') return { status: 501, body: { error: 'agents not supported on this transport' } }
+        return ops.closeAgent(id)
       }
     },
     {
-      path: '/rename_chat_session',
-      description: 'Rename a chat session (cosmetic title shown in the widget + Sessions tray). Args: {id, title}. Returns { ok, title } or { ok:false, error }.',
+      path: '/rename_agent',
+      description: 'Rename an agent (cosmetic title shown in the widget + Terminals & Agents tray). Args: {id, title}. Returns { ok, title } or { ok:false, error }.',
       input_schema: { type: 'object', required: ['id', 'title'], properties: { id: { type: 'string' }, title: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
         const id = String(b.id || '')
         if (!id) return { status: 400, body: { error: 'id required' } }
-        if (typeof ops.renameChatSession !== 'function') return { status: 501, body: { error: 'chat sessions not supported on this transport' } }
-        return ops.renameChatSession(id, String(b.title ?? ''))
+        if (typeof ops.renameAgent !== 'function') return { status: 501, body: { error: 'agents not supported on this transport' } }
+        return ops.renameAgent(id, String(b.title ?? ''))
       }
     },
     {
-      path: '/spawn_session',
+      path: '/open_terminal',
       description:
-        "Start a SESSION — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (claude/codex), a build/test runner, or any long job. The session SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/sessions/. If you are a non-primary session, pass {session:\"<your id>\"} so the terminal opens in YOUR area, not the user's. Args: {command (e.g. 'bash' or \"claude -p '…'\"), kind?:'pty'|'agent', cwd?, title?, cols?, rows?, session?}. Returns { session }.",
-      input_schema: { type: 'object', properties: { command: { type: 'string' }, kind: { type: 'string', enum: ['pty', 'agent'] }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' }, session: { type: 'string' } } },
+        "Open a TERMINAL — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (claude/codex), a build/test runner, or any long job. The terminal SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/terminals/. If you are a non-primary agent, pass {agent:\"<your id>\"} so the terminal opens in YOUR area, not the user's. Args: {command (e.g. 'bash' or \"claude -p '…'\"), cwd?, title?, cols?, rows?, agent?}. Returns { terminal }.",
+      input_schema: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' }, agent: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)
-        // A session-scoped agent's terminal opens in ITS area; an unscoped call leaves area undefined so
+        // An agent-scoped terminal opens in ITS area; an unscoped call leaves area undefined so
         // the renderer opens it in the current area (today's behavior for the primary agent + human spawns).
-        const area = a.session != null ? areaForSession(a.session) : undefined
-        const session = await ops.spawnSession({ command: a.command, kind: a.kind, cwd: a.cwd, title: a.title, cols: a.cols, rows: a.rows, area })
-        return { session }
+        const area = a.agent != null ? areaForAgent(a.agent) : undefined
+        const terminal = await ops.spawnTerminal({ command: a.command, cwd: a.cwd, title: a.title, cols: a.cols, rows: a.rows, area })
+        return { terminal }
       }
     },
     {
-      path: '/list_sessions',
-      description: 'List the sessions in this workspace (running + persisted): id, kind, title, command, status, pid.',
-      handler: () => ({ sessions: ops.listSessions() })
+      path: '/list_terminals',
+      description: 'List the terminals in this workspace (running + persisted): id, kind, title, command, status, pid.',
+      handler: () => ({ terminals: ops.listTerminals() })
     },
     {
-      path: '/send_to_session',
-      description: "Send input to a session's terminal — keystrokes/commands as raw text. Include a trailing newline to submit (e.g. data:'git status\\n'). Args: {id, data}.",
+      path: '/send_to_terminal',
+      description: "Send input to a terminal — keystrokes/commands as raw text. Include a trailing newline to submit (e.g. data:'git status\\n'). Args: {id, data}.",
       input_schema: { type: 'object', required: ['id', 'data'], properties: { id: { type: 'string' }, data: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
         if (!a.id) return { status: 400, body: { error: 'id required' } }
-        return { ok: ops.sendToSession(String(a.id), String(a.data ?? '')) }
+        return { ok: ops.sendToTerminal(String(a.id), String(a.data ?? '')) }
       }
     },
     {
-      path: '/read_session',
-      description: "Read a session's current terminal output (scrollback) — to see what a shell/agent/build produced. Args: {id}. Returns { text }.",
+      path: '/read_terminal',
+      description: "Read a terminal's current output (scrollback) — to see what a shell/agent/build produced. Args: {id}. Returns { text }.",
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
       handler: ({ body }) => {
         const id = String(parse(body).id || '')
         if (!id) return { status: 400, body: { error: 'id required' } }
-        return { text: ops.readSession(id) }
+        return { text: ops.readTerminal(id) }
       }
     },
     {
-      path: '/stop_session',
-      description: 'Stop (kill) a session by id. Args: {id}.',
+      path: '/close_terminal',
+      description: 'Close (kill) a terminal by id. Args: {id}.',
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
       handler: ({ body }) => {
         const id = String(parse(body).id || '')
         if (!id) return { status: 400, body: { error: 'id required' } }
-        return { ok: ops.stopSession(id) }
+        return { ok: ops.stopTerminal(id) }
       }
     },
     {
       path: '/request_action',
       description:
-        "Ask the HUMAN to do something only they can — sign in, scan a QR, approve a send, choose an option. Surfaces as a checkable card in their Action-items inbox (NOT a chat wall). Use this instead of /say for anything that needs a human action. When they tick it, you're woken via /events with trigger:'action' {kind:'action-resolved', id, title, resolution}. Args: {title, detail?, kind?:'task'|'signin'|'approve'|'choose'|'scan'|'info', sessionId?, choices?:[string] (for kind:'choose'), id? (pass to UPDATE an existing item)}. Returns { item }.",
-      input_schema: { type: 'object', required: ['title'], properties: { title: { type: 'string' }, detail: { type: 'string' }, kind: { type: 'string', enum: ['task', 'signin', 'approve', 'choose', 'scan', 'info'] }, sessionId: { type: 'string' }, choices: { type: 'array', items: { type: 'string' } }, id: { type: 'string' } } },
+        "Ask the HUMAN to do something only they can — sign in, scan a QR, approve a send, choose an option. Surfaces as a checkable card in their Action-items inbox (NOT a chat wall). Use this instead of /say for anything that needs a human action. When they tick it, you're woken via /events with trigger:'action' {kind:'action-resolved', id, title, resolution}. Args: {title, detail?, kind?:'task'|'signin'|'approve'|'choose'|'scan'|'info', agentId?, choices?:[string] (for kind:'choose'), id? (pass to UPDATE an existing item)}. Returns { item }.",
+      input_schema: { type: 'object', required: ['title'], properties: { title: { type: 'string' }, detail: { type: 'string' }, kind: { type: 'string', enum: ['task', 'signin', 'approve', 'choose', 'scan', 'info'] }, agentId: { type: 'string' }, choices: { type: 'array', items: { type: 'string' } }, id: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
-        const item = ops.requestAction({ title: a.title, detail: a.detail, kind: a.kind, sessionId: a.sessionId, choices: a.choices, id: a.id })
+        const item = ops.requestAction({ title: a.title, detail: a.detail, kind: a.kind, agentId: a.agentId, choices: a.choices, id: a.id })
         return item ? { item } : { status: 400, body: { error: 'title required (or no active workspace)' } }
       }
     },

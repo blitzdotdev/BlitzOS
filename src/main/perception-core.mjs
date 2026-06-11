@@ -32,16 +32,16 @@ let seq = 0
 const MAX = 1000
 const waiters = []
 
-// Per-session visibility (one agent per session): a chat 'message' moment is PRIVATE to its session, so each
-// session's agent only sees + answers ITS chat. All OTHER (activity/canvas) moments go to the PRIMARY
-// session ('0') only — the desktop-watcher — so spawning N chat agents doesn't wake them all on canvas
+// Per-agent visibility (per agent): a chat 'message' moment is PRIVATE to its agent, so each
+// agent only sees + answers ITS chat. All OTHER (activity/canvas) moments go to the PRIMARY
+// agent ('0') only — the desktop-watcher — so spawning N chat agents doesn't wake them all on canvas
 // churn. seq stays a single global counter, so an agent's `since` cursor advances past filtered moments.
-function visibleTo(moment, sessionId) {
-  const sid = String(sessionId || '0')
-  // A chat 'message' and an 'action' (e.g. an action-item the human resolved) are PRIVATE to the session
-  // they target — only that session's agent is woken. So a non-primary session that called request_action
-  // is woken when ITS item is resolved (the moment carries sessionId; generic surface actions default to '0').
-  if (moment.trigger === 'message' || moment.trigger === 'action') return String(moment.sessionId || '0') === sid
+function visibleTo(moment, agentId) {
+  const sid = String(agentId || '0')
+  // A chat 'message' and an 'action' (e.g. an action-item the human resolved) are PRIVATE to the agent
+  // they target — only that agent is woken. So a non-primary agent that called request_action
+  // is woken when ITS item is resolved (the moment carries agentId; generic surface actions default to '0').
+  if (moment.trigger === 'message' || moment.trigger === 'action') return String(moment.agentId || '0') === sid
   return sid === '0'
 }
 
@@ -149,7 +149,7 @@ function flush(surfaceId, trigger) {
   if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
   for (const w of waiters.splice(0)) {
     clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId)))
+    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.agentId)))
   }
 }
 
@@ -176,9 +176,9 @@ export function emitSurfaceAction(surfaceId, action) {
     seq: ++seq,
     ts: Date.now(),
     surfaceId,
-    // route this action to the session it targets (action-items carry the requesting session's id);
+    // route this action to the agent it targets (action-items carry the requesting agent's id);
     // generic surface actions have none → '0' (the primary watcher), preserving prior behavior.
-    sessionId: String((action && action.sessionId) || '0'),
+    agentId: String((action && action.agentId) || '0'),
     trigger: 'action',
     windowMs: 0,
     signals: { action: 1 },
@@ -189,7 +189,7 @@ export function emitSurfaceAction(surfaceId, action) {
   if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
   for (const w of waiters.splice(0)) {
     clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId)))
+    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.agentId)))
   }
 }
 
@@ -199,14 +199,14 @@ export function emitSurfaceAction(surfaceId, action) {
  * direct message ALWAYS warrants a response (unlike passive activity moments). Not
  * redacted over the relay (the user authored it for the agent).
  */
-export function emitUserMessage(text, sessionId = '0') {
+export function emitUserMessage(text, agentId = '0') {
   const msg = String(text || '').slice(0, 2000)
-  const sid = String(sessionId || '0')
+  const sid = String(agentId || '0')
   const moment = {
     seq: ++seq,
     ts: Date.now(),
     surfaceId: sid === '0' ? 'chat' : `chat-${sid}`,
-    sessionId: sid, // routes this message to ONLY this session's agent (visibleTo)
+    agentId: sid, // routes this message to ONLY this agent (visibleTo)
     trigger: 'message',
     windowMs: 0,
     signals: { message: 1 },
@@ -217,24 +217,24 @@ export function emitUserMessage(text, sessionId = '0') {
   if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
   for (const w of waiters.splice(0)) {
     clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId)))
+    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.agentId)))
   }
 }
 
-/** Long-poll for a session: resolve immediately if there are moments visible to `sessionId` after
- *  `since`, else wait up to maxMs. Each session only sees its own messages (+ activity for the primary). */
-export function waitForEvents(since, maxMs, sessionId = '0') {
-  const have = LOG.filter((m) => m.seq > since && visibleTo(m, sessionId))
+/** Long-poll for an agent: resolve immediately if there are moments visible to `agentId` after
+ *  `since`, else wait up to maxMs. Each agent only sees its own messages (+ activity for the primary). */
+export function waitForEvents(since, maxMs, agentId = '0') {
+  const have = LOG.filter((m) => m.seq > since && visibleTo(m, agentId))
   if (have.length > 0 || maxMs <= 0) return Promise.resolve(have)
   return new Promise((resolve) => {
     const w = {
       since,
-      sessionId,
+      agentId,
       resolve,
       timer: setTimeout(() => {
         const i = waiters.indexOf(w)
         if (i >= 0) waiters.splice(i, 1)
-        resolve(LOG.filter((m) => m.seq > since && visibleTo(m, sessionId)))
+        resolve(LOG.filter((m) => m.seq > since && visibleTo(m, agentId)))
       }, maxMs)
     }
     waiters.push(w)

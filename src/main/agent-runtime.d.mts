@@ -1,4 +1,4 @@
-// Types for the shared agent-session core (agent-session.mjs).
+// Types for the shared agent-runtime core (agent-runtime.mjs).
 export function buildBootstrap(url: string, sessionId?: string): string
 export function shellQuote(s: string): string
 export function buildClaudeCommand(opts: { cmd?: string; claudeSid: string; mode?: 'create' | 'resume'; bootstrapFile: string }): string

@@ -11,11 +11,11 @@ import {
   WIDGET_H,
   isRuntimePanel
 } from './types'
-// The area-grid geometry (insets, primaryRect, areaStride, areaRect, areaCenterX, areaForSession) lives
+// The area-grid geometry (insets, primaryRect, areaStride, areaRect, areaCenterX, areaForAgent) lives
 // in the shared areas-core so the renderer and the main-process cores share ONE definition (no divergence).
 // Re-exported below so existing `from './store'` importers (capture/App/SurfaceFrame/PrimarySpace) don't churn.
-import { primaryRect, areaStride, areaRect, areaCenterX, areaForSession, areaOfX } from './areas-core.mjs'
-export { primaryRect, areaStride, areaRect, areaCenterX, areaForSession, areaOfX }
+import { primaryRect, areaStride, areaRect, areaCenterX, areaForAgent, areaOfX } from './areas-core.mjs'
+export { primaryRect, areaStride, areaRect, areaCenterX, areaForAgent, areaOfX }
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
@@ -128,15 +128,15 @@ export interface CreateSurfaceInput {
   props?: Record<string, unknown>
   /** P0: agent may read this surface's content over the relay (auto-true for agent-opened web/app). */
   shared?: boolean
-  /** tabbed windows (terminal): a session per tab. */
+  /** tabbed windows (terminal): a terminal per tab. */
   tabs?: SurfaceTab[]
   activeTab?: number
-  /** system runtime surface (e.g. a chat session widget: role:'chat', pinned). */
+  /** system runtime surface (e.g. an agent chat widget: role:'chat', pinned). */
   role?: string
   pinned?: boolean
-  /** the chat session this surface belongs to (a per-session chat widget). */
-  sessionId?: string
-  /** place this surface in a SPECIFIC workspace area (a session-scoped agent → its own area N); when
+  /** the agent this surface belongs to (a per-agent chat widget). */
+  agentId?: string
+  /** place this surface in a SPECIFIC workspace area (an agent → its own area N); when
    *  omitted, it cascades into the current area. Derived from x afterward — never stored on the Surface. */
   area?: number
 }
@@ -175,7 +175,7 @@ interface DesktopState {
   setControlTransform: (t: CanvasTransform | null) => void
   setCurrentArea: (i: number) => void
   setAreaCount: (n: number) => void
-  /** Jump the camera to a workspace area (set currentArea + retarget the view) — e.g. the Sessions tray's "Area N". */
+  /** Jump the camera to a workspace area (set currentArea + retarget the view) — e.g. the Runtime tray's "Area N". */
   goToArea: (area: number) => void
   addArea: () => void
   panBy: (dx: number, dy: number) => void
@@ -214,14 +214,14 @@ interface DesktopState {
   addTab: (id: string, tab: SurfaceTab) => void
   setActiveTab: (id: string, index: number) => void
   closeTab: (id: string, tabId: string) => void
-  // Open (or focus) a session's terminal tab: activate it if it's already a tab, else add it to the
+  // Open (or focus) a terminal tab: activate it if it's already a tab, else add it to the
   // existing terminal window, else open the first terminal window. The one shared seam for the live
-  // session-spawn action, resume-on-load, and the Sessions tray's "Open" — so a session is in one tab.
-  openSession: (sessionId: string, title: string, area?: number | null) => void
-  // Close a non-primary chat session (stop its agent + remove its widget/files/area, via the host) and drop
+  // terminal-spawn action, resume-on-load, and the Runtime tray's "Open" — so a terminal is in one tab.
+  openTerminal: (terminalId: string, title: string, area?: number | null) => void
+  // Close a non-primary agent (stop it + remove its widget/files/area, via the host) and drop
   // its chat surface + terminal tab locally. Rename updates the title live. Both no-op on the primary '0'.
-  closeChatSession: (sessionId: string) => void
-  renameChatSession: (sessionId: string, newTitle: string) => void
+  closeAgent: (agentId: string) => void
+  renameAgent: (agentId: string, newTitle: string) => void
   // Layout undo: the agent auto-applies layouts; the human reverts with Cmd+Z.
   snapshotLayout: () => void
   undoLayout: () => void
@@ -444,7 +444,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   createSurface: (input) => {
     get().snapshotLayout()
     // Stable, unique id (Phase 0 of the workspaces design): survives serialization +
-    // restart, so layout/consent can key off it. zCounter is now ONLY the session
+    // restart, so layout/consent can key off it. zCounter is now ONLY the surface
     // z-order allocator, never identity. (UUIDv4 here; ULID is a deferred sortable swap.)
     const id = input.id ?? crypto.randomUUID()
     const size = defaultSize(input.kind)
@@ -452,7 +452,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     const h = input.h ?? size.h
     const st = get()
     // cascade if no explicit position (macOS-style stagger), centered on the TARGET area: input.area when
-    // given (a session-scoped agent's surface → its own area, isolating it from the user) else currentArea.
+    // given (an agent's surface → its own area, isolating it from the user) else currentArea.
     // area 0 ⇒ the world origin ⇒ byte-identical to before; a later area shifts the cascade by its offset.
     const targetArea = Number.isInteger(input.area) ? (input.area as number) : st.currentArea
     const n = st.surfaces.length % 7
@@ -478,11 +478,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       component: input.component,
       props: input.props ?? {},
       shared: input.shared,
-      // preserve system-surface fields so a broadcast 'create' (e.g. a new chat session) keeps its
-      // role/pinned/sessionId — without these a created chat widget would lose role:'chat' and not render.
+      // preserve system-surface fields so a broadcast 'create' (e.g. a new agent) keeps its
+      // role/pinned/agentId — without these a created chat widget would lose role:'chat' and not render.
       ...(input.role ? { role: input.role } : {}),
       ...(input.pinned ? { pinned: input.pinned } : {}),
-      ...(input.sessionId != null ? { sessionId: String(input.sessionId) } : {}),
+      ...(input.agentId != null ? { agentId: String(input.agentId) } : {}),
       ...(input.tabs ? { tabs: input.tabs, activeTab: input.activeTab ?? 0 } : {})
     }
     set((s) => ({ surfaces: [...s.surfaces, surface] }))
@@ -499,14 +499,14 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const nAreas = Number.isInteger(areaCount) && (areaCount as number) > 0 ? (areaCount as number) : 1
       const restored: Surface[] = surfaces.map((w) => {
         const base = { zoom: 1, props: {}, ...w, z: w.z ?? ++zCounter } as Surface
-        // Runtime chat/activity panels persist absolute x/y. A per-session chat lives in ITS OWN area
-        // (area N for session N); the activity feed + the primary chat live in area 0. Recompute a session
+        // Runtime chat/activity panels persist absolute x/y. A per-agent chat lives in ITS OWN area
+        // (area N for agent N); the activity feed + the primary chat live in area 0. Recompute an agent
         // chat's x from its area using the renderer's REAL viewport (authoritative — the host may have
         // guessed a default vp), then clamp into that area. Single-area / primary case is byte-identical
-        // (areaForSession('0')=0, areaCenterX(0)=0 → x=-700). The camera can reach any area (areaCount below).
+        // (areaForAgent('0')=0, areaCenterX(0)=0 → x=-700). The camera can reach any area (areaCount below).
         if (isRuntimePanel(base)) {
-          const area = base.role === 'chat' && base.sessionId != null ? areaForSession(base.sessionId) : 0
-          const x = base.role === 'chat' && base.sessionId != null ? Math.round(areaCenterX(area, s.viewport) - 700) : base.x
+          const area = base.role === 'chat' && base.agentId != null ? areaForAgent(base.agentId) : 0
+          const x = base.role === 'chat' && base.agentId != null ? Math.round(areaCenterX(area, s.viewport) - 700) : base.x
           const p = desktopClamp(x, base.y, base.w, base.h, s.viewport, area)
           return { ...base, x: p.x, y: p.y }
         }
@@ -531,16 +531,16 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => {
       // Runtime-only surfaces NOT backed by a workspace file (nodeKind returns null for them), so they're
       // never in the reconciled `incoming` set — keep the LIVE ones or a reconcile would wipe them. Covers
-      // the chat/activity panels, in-memory folders, AND the session surfaces (terminal windows + the
-      // Sessions tray), which are reconstructed from live sessions, never persisted as nodes.
+      // the chat/activity panels, in-memory folders, AND the runtime surfaces (terminal windows + the
+      // Runtime tray), which are reconstructed from live terminals, never persisted as nodes.
       const isRuntime = (w: Surface): boolean =>
         w.role === 'chat' ||
         w.role === 'activity' ||
-        (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder' || w.component === 'terminal' || w.component === 'sessions' || w.component === 'inbox'))
+        (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder' || w.component === 'terminal' || w.component === 'runtime' || w.component === 'inbox'))
       const keepRuntime = s.surfaces.filter(isRuntime)
       const localById = new Map(s.surfaces.map((w) => [w.id, w]))
       // A reconcile's `incoming` can echo back runtime-only surfaces (the host keeps un-persisted state
-      // like an open terminal/sessions/folder). Those are preserved via keepRuntime from the LIVE store,
+      // like an open terminal/runtime/folder). Those are preserved via keepRuntime from the LIVE store,
       // so they must be EXCLUDED from fileBacked here — otherwise the surface lands in `restored` twice
       // (once from incoming, once from keepRuntime), a duplicate React key. Worse, the duplicate is then
       // pushed back, re-echoed, and re-doubled on the next reconcile — an exponential blow-up that floods
@@ -610,7 +610,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       surfaces: s.surfaces.map((it) => (it.id === id ? { ...it, zoom: clamp(zoom, 0.3, 3) } : it))
     })),
 
-  // ---- tabbed windows (terminal windows hold a session per tab) ----
+  // ---- tabbed windows (terminal windows hold a terminal per tab) ----
   addTab: (id, tab) =>
     set((s) => ({
       surfaces: s.surfaces.map((w) => {
@@ -633,12 +633,12 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       if (!tabs.length) return { surfaces: s.surfaces.filter((x) => x.id !== id) } // last tab closed → close the window
       return { surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, tabs, activeTab: clamp(w.activeTab || 0, 0, tabs.length - 1) } : x)) }
     }),
-  openSession: (sessionId, title, area) => {
+  openTerminal: (terminalId, title, area) => {
     const s = get()
     // Already a tab somewhere? activate it + raise its window (idempotent — no duplicate tab).
     for (const w of s.surfaces) {
       if (w.kind === 'native' && w.component === 'terminal') {
-        const idx = (w.tabs || []).findIndex((t) => t.sessionId === sessionId)
+        const idx = (w.tabs || []).findIndex((t) => t.terminalId === terminalId)
         if (idx >= 0) {
           get().setActiveTab(w.id, idx)
           get().focusSurface(w.id)
@@ -646,45 +646,45 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         }
       }
     }
-    // Dock the session's terminal in ITS area: an agent's session carries an area (so its terminal stays
-    // out of the user's area); a human spawn has none → the current area, today's behavior. Add to a
+    // Dock the terminal in ITS area: an agent's terminal carries an area (so it stays out of the user's
+    // area); a human spawn has none → the current area, today's behavior. Add to a
     // terminal window ALREADY in that area, else open one there (createSurface honors the `area` hint).
     const want = Number.isInteger(area) ? (area as number) : s.currentArea
     const term = s.surfaces.find(
       (w) => w.kind === 'native' && w.component === 'terminal' && areaOfX(w.x + (w.w || 0) / 2, s.viewport) === want
     )
-    if (term) get().addTab(term.id, { id: sessionId, title, sessionId })
-    else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, area: want, tabs: [{ id: sessionId, title, sessionId }], activeTab: 0 })
+    if (term) get().addTab(term.id, { id: terminalId, title, terminalId })
+    else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, area: want, tabs: [{ id: terminalId, title, terminalId }], activeTab: 0 })
   },
 
-  closeChatSession: (sessionId) => {
-    const id = String(sessionId)
+  closeAgent: (agentId) => {
+    const id = String(agentId)
     if (id === '0') return // the primary chat is never closed
-    // Tell the host to stop the agent + delete the session's files/area (it broadcasts a 'close' for the chat
-    // widget + a 'session-remove'). Optimistically drop the chat surface + the agent's terminal TAB locally
+    // Tell the host to stop the agent + delete the agent's files/area (it broadcasts a 'close' for the chat
+    // widget + an 'agent-remove'). Optimistically drop the chat surface + the agent's terminal TAB locally
     // (the host can't reach a renderer-only tab) so the UI updates instantly.
-    void (window.agentOS as unknown as { closeChatSession?: (s: string) => Promise<unknown> })?.closeChatSession?.(id)
+    void (window.agentOS as unknown as { closeAgent?: (s: string) => Promise<unknown> })?.closeAgent?.(id)
     set((s) => {
-      let surfaces = s.surfaces.filter((w) => !(w.role === 'chat' && String(w.sessionId ?? '') === id))
+      let surfaces = s.surfaces.filter((w) => !(w.role === 'chat' && String(w.agentId ?? '') === id))
       surfaces = surfaces
         .map((w) => {
           if (w.kind !== 'native' || w.component !== 'terminal' || !w.tabs) return w
-          const tabs = w.tabs.filter((t) => t.sessionId !== id)
+          const tabs = w.tabs.filter((t) => t.terminalId !== id)
           return tabs.length === w.tabs.length ? w : { ...w, tabs, activeTab: clamp(w.activeTab || 0, 0, Math.max(0, tabs.length - 1)) }
         })
         .filter((w) => !(w.kind === 'native' && w.component === 'terminal' && w.tabs && w.tabs.length === 0)) // drop an emptied terminal window
       return { surfaces }
     })
   },
-  renameChatSession: (sessionId, newTitle) => {
-    const id = String(sessionId)
+  renameAgent: (agentId, newTitle) => {
+    const id = String(agentId)
     const title = String(newTitle || '').trim()
     if (!title) return
-    void (window.agentOS as unknown as { renameChatSession?: (s: string, t: string) => Promise<unknown> })?.renameChatSession?.(id, title)
+    void (window.agentOS as unknown as { renameAgent?: (s: string, t: string) => Promise<unknown> })?.renameAgent?.(id, title)
     set((s) => ({
       surfaces: s.surfaces.map((w) => {
-        if (w.role === 'chat' && String(w.sessionId ?? '') === id) return { ...w, title }
-        if (w.kind === 'native' && w.component === 'terminal' && w.tabs) return { ...w, tabs: w.tabs.map((t) => (t.sessionId === id ? { ...t, title } : t)) }
+        if (w.role === 'chat' && String(w.agentId ?? '') === id) return { ...w, title }
+        if (w.kind === 'native' && w.component === 'terminal' && w.tabs) return { ...w, tabs: w.tabs.map((t) => (t.terminalId === id ? { ...t, title } : t)) }
         return w
       })
     }))
@@ -790,7 +790,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     })
 }))
 
-/** Default name for a UI-spawned terminal session — "Terminal N", N counting existing terminal tabs,
+/** Default name for a UI-spawned terminal — "Terminal N", N counting existing terminal tabs,
  *  so the "+ Terminal" toolbar button and the tab strip's "+" produce distinct, readable tab names
  *  instead of every tab reading "Terminal". (Agent/tool spawns name themselves from the command.) */
 export function nextTerminalName(): string {
