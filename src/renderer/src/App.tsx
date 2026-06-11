@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FocusEvent, PointerEvent } from 'react'
+import type { FocusEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useDesktop, viewTransform, areaRect, areaForSession, areaCenterX, nextTerminalName, type CreateSurfaceInput } from './store'
 import { pushSessionData, pushSessionExit } from './sessionStream'
@@ -332,6 +332,7 @@ export default function App(): JSX.Element {
   const toolbarTipWarmTimer = useRef<number | null>(null)
   const toolbarTipWarm = useRef(false)
   const toolbarTipVisible = useRef(false)
+  const toolbarTipSuppressFocus = useRef(false)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [toolbarTooltip, setToolbarTooltip] = useState<ToolbarTooltip | null>(null)
   const [aiCopied, setAiCopied] = useState(false)
@@ -393,6 +394,7 @@ export default function App(): JSX.Element {
     onPointerLeave: () => void
     onFocus: (e: FocusEvent<HTMLElement>) => void
     onBlur: () => void
+    onKeyDown: (e: ReactKeyboardEvent<HTMLElement>) => void
   } {
     return {
       'aria-label': text,
@@ -406,10 +408,22 @@ export default function App(): JSX.Element {
         if (toolbarTipWarm.current || toolbarTipVisible.current) show()
         else toolbarTipShowTimer.current = window.setTimeout(show, 1000)
       },
-      onPointerDown: closeToolbarTooltip,
+      onPointerDown: () => {
+        toolbarTipSuppressFocus.current = true
+        closeToolbarTooltip()
+      },
       onPointerLeave: closeToolbarTooltip,
-      onFocus: (e) => openToolbarTooltip(e.currentTarget, text),
-      onBlur: closeToolbarTooltip
+      onFocus: (e) => {
+        if (toolbarTipSuppressFocus.current) {
+          toolbarTipSuppressFocus.current = false
+          return
+        }
+        openToolbarTooltip(e.currentTarget, text)
+      },
+      onBlur: closeToolbarTooltip,
+      onKeyDown: (e) => {
+        if (e.key === 'Enter' || e.key === ' ') closeToolbarTooltip()
+      }
     }
   }
 
