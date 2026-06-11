@@ -174,6 +174,9 @@ console.log('4) tiny lattice — shrink first, then park off-stage below the fra
   ok(parked.every((c) => c.y >= r.y + r.h && typeof c.w === 'number' && typeof c.h === 'number'), 'parked cards sit BELOW the stage frame with real dims')
   const { clash } = cellsOf(staged)
   ok(!clash, 'no overlaps even under pressure')
+  // backstage is a clean grid too: no parked card may overlap another (the 64px-cascade pile bug)
+  const rectClash = parked.some((a, i) => parked.some((b, j) => j > i && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h))
+  ok(!rectClash, 'parked cards never overlap each other')
   ok(staged.every((c) => ['s', 'm', 'l', 'tall', 'xl', 'xxl'].includes(c.slot.size)), 'staged sizes are legal spans')
 }
 

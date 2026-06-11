@@ -9,6 +9,8 @@
 // here were empirically verified against tmux 3.6 (see project memory), not assumed.
 import { spawn as cpSpawn, execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { StringDecoder } from 'node:string_decoder'
 
 const SCROLLBACK_BYTES = 256 * 1024
@@ -20,12 +22,21 @@ const toHex = (str) => Buffer.from(str, 'utf8').toString('hex').match(/../g)?.jo
  * @param {{ socketPath:string, sessionName?:string, cols?:number, rows?:number, tmuxTmpdir?:string }} cfg
  * @returns a host whose interface matches what session-manager expects (spawn/write/resize/kill/onData/onExit/…)
  */
-/** Resolve the tmux binary a PACKAGED app can use (GUI PATH lacks homebrew): env override →
- *  well-known locations → the user's login shell. Cached; null = not installed anywhere. */
+/** Resolve the tmux binary. The BUNDLED portable tmux wins (ships in Resources/bin — the user never
+ *  installs anything); env override beats it for power users; then well-known locations and the
+ *  login shell as legacy fallbacks. Cached; null = nothing anywhere (effectively impossible now). */
 let resolvedTmux
 export function resolveTmuxBin() {
   if (resolvedTmux !== undefined) return resolvedTmux
-  const cands = [process.env.BLITZ_TMUX_BIN, '/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'].filter(Boolean)
+  const here = dirname(fileURLToPath(import.meta.url))
+  const cands = [
+    process.env.BLITZ_TMUX_BIN,
+    typeof process.resourcesPath === 'string' ? join(process.resourcesPath, 'bin', 'tmux') : null, // packaged
+    join(here, '..', '..', 'vendor', 'bin', 'tmux'), // dev repo layout (out/main/../../vendor)
+    '/opt/homebrew/bin/tmux',
+    '/usr/local/bin/tmux',
+    '/usr/bin/tmux'
+  ].filter(Boolean)
   resolvedTmux = cands.find((p) => { try { return existsSync(p) } catch { return false } }) || null
   if (!resolvedTmux) {
     try { resolvedTmux = execFileSync('/bin/zsh', ['-lc', 'command -v tmux'], { encoding: 'utf8', timeout: 8000 }).trim() || null } catch { resolvedTmux = null }

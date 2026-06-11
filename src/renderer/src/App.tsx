@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { useDesktop, viewTransform, stageRect, stageForSession, stageCenterX, nextTerminalName, type CreateSurfaceInput } from './store'
+import { useDesktop, viewTransform, stageRect, stageForSession, stageCenterX, nextTerminalName, latticeFor, nearestFreeSlot, type CreateSurfaceInput } from './store'
 import { pushSessionData, pushSessionExit } from './sessionStream'
 import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
@@ -201,10 +201,16 @@ function ensureNotepad(): void {
   // memory; the manual + the dynamic-boot instruction both rely on it existing, incl. server mode).
   const st = useDesktop.getState()
   if (st.surfaces.some((s) => s.kind === 'native' && s.component === 'note' && s.title === 'Notepad')) return
+  // Born SLOTTED (an s tile near the stage's bottom-right), never a free float over the middle of
+  // the desktop; a packed lattice parks it below the stage frame instead.
+  const lat = latticeFor(st.viewport, st.currentStage)
+  const r = stageRect(st.currentStage, st.viewport)
+  const slot = nearestFreeSlot(st.surfaces, lat, 's', r.x + r.w - 90, r.y + r.h - 90, st.currentStage)
   st.createSurface({
     kind: 'native',
     component: 'note',
     title: 'Notepad',
+    ...(slot ? { slot: { col: slot.col, row: slot.row, size: 's' }, slotStage: st.currentStage } : { x: Math.round(r.x + 40), y: Math.round(r.y + r.h + 360) }),
     props: {
       text: '# Notepad\n\nShared working memory for you and BlitzOS. The agent keeps context and notes here; you can edit it too.\n',
       color: 'yellow'
@@ -1066,21 +1072,24 @@ export default function App(): JSX.Element {
 
   // The Agent-activity feed docks to the TOP-LEFT of the view (above the centered chat).
   function activitySurfaceInput(events: Array<{ at: number; text: string }>): CreateSurfaceInput {
+    // BACKSTAGE by default: the feed must never pop a window onto the user's desktop — it parks on
+    // the canvas just below the stage frame (right side, clear of parked terminals/cards), visible
+    // when the user zooms out to watch the agent work.
     const st = useDesktop.getState()
-    const { scale, x: tx, y: ty } = st.transform
+    const r = stageRect(st.currentStage, st.viewport)
     const W = 320
     const H = 200
-    const x = Math.round(-tx / scale + 24)
-    const y = Math.round(-ty / scale + 24)
-    return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x, y, props: { events } }
+    return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x: Math.round(r.x + r.w - W - 40), y: Math.round(r.y + r.h + 140), props: { events } }
   }
 
-  // Open/focus a session's terminal tab (idempotent). This path is PROGRAMMATIC (the live
-  // session-spawn action + resume-on-load), so a fresh terminal window parks BACKSTAGE instead of
-  // landing on the user's tiles; the Sessions tray calls store.openSession directly (no park) since
-  // that's the human asking to SEE it.
+  // PROGRAMMATIC session events (live spawn + resume-on-load) do NOT open a terminal window —
+  // an agent waking up must never put a window on the user's desktop uninvited. If a terminal
+  // already shows this session, just activate its tab; otherwise the session runs headless and
+  // the Sessions tray (or the agent, deliberately) opens it when someone wants to LOOK.
   function ensureTerminalTab(sid: string, title: string, stage?: number | null): void {
-    useDesktop.getState().openSession(sid, title || 'Terminal', stage, { park: true })
+    const st = useDesktop.getState()
+    const shown = st.surfaces.some((w) => w.kind === 'native' && w.component === 'terminal' && (w.tabs || []).some((t) => t.sessionId === sid))
+    if (shown) st.openSession(sid, title || 'Terminal', stage)
   }
 
   // The Action-items inbox docks TOP-RIGHT of the current view (out of the way of chat/activity which

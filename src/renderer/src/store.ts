@@ -242,7 +242,7 @@ interface DesktopState {
   // Open (or focus) a session's terminal tab: activate it if it's already a tab, else add it to the
   // existing terminal window, else open the first terminal window. The one shared seam for the live
   // session-spawn action, resume-on-load, and the Sessions tray's "Open" — so a session is in one tab.
-  openSession: (sessionId: string, title: string, stage?: number | null, opts?: { park?: boolean }) => void
+  openSession: (sessionId: string, title: string, stage?: number | null) => void
   // Layout undo: the agent auto-applies layouts; the human reverts with Cmd+Z.
   snapshotLayout: () => void
   undoLayout: () => void
@@ -846,7 +846,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       if (!tabs.length) return { surfaces: s.surfaces.filter((x) => x.id !== id) } // last tab closed → close the window
       return { surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, tabs, activeTab: clamp(w.activeTab || 0, 0, tabs.length - 1) } : x)) }
     }),
-  openSession: (sessionId, title, stage, opts) => {
+  openSession: (sessionId, title, stage) => {
     const s = get()
     // Already a tab somewhere? activate it + raise its window (idempotent — no duplicate tab).
     for (const w of s.surfaces) {
@@ -870,17 +870,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       get().addTab(term.id, { id: sessionId, title, sessionId })
       return
     }
-    // PROGRAMMATIC spawns (boot resume, an agent session waking) are WORK surfaces: they park
-    // BACKSTAGE (the canvas below the stage frame, like web work windows) instead of landing on
-    // the user's tiles uninvited. A user-initiated open (Sessions tray) stays front and center.
-    const park = opts?.park
-      ? (() => {
-          const r = stageRect(want, s.viewport)
-          const n = s.surfaces.filter((w) => w.kind === 'native' && w.component === 'terminal').length % 5
-          return { x: Math.round(r.x + 40 + n * 56), y: Math.round(r.y + r.h + 140 + n * 48) }
-        })()
-      : {}
-    get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, stage: want, ...park, tabs: [{ id: sessionId, title, sessionId }], activeTab: 0 })
+    get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, stage: want, tabs: [{ id: sessionId, title, sessionId }], activeTab: 0 })
   },
 
   toggleMaximize: (id) => {

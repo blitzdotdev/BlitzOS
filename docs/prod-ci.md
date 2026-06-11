@@ -39,10 +39,10 @@ the VM never share state.
 2. Give the updater the token (private repo):
    `mkdir -p ~/.blitzos && echo '<PAT>' > ~/.blitzos/github-token`
    (or launch with `GH_TOKEN` exported). Without it the poll logs and skips.
-3. **Brain prerequisites** (the AI in the chat): install the Claude Code CLI and tmux in the VM —
-   `brew install tmux` and the `claude` CLI from claude.com/code (verify `claude` + `tmux` work in
-   a terminal, then relaunch BlitzOS). Without them the app runs but the chat tells you exactly
-   what's missing instead of answering.
+3. **Brain prerequisite** (the AI in the chat): install the Claude Code CLI in the VM (from
+   claude.com/code; verify `claude` works in a terminal, then relaunch BlitzOS). That's the ONLY
+   dependency — the terminal runtime (tmux) ships inside the app. If `claude` is missing the chat
+   tells you exactly that instead of going silent.
 4. That's it — every push to your branch produces a release; within 30 min (or on next launch)
    the VM offers the update.
 

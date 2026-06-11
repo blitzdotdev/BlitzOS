@@ -18,6 +18,11 @@ files:
   - scripts/onboarding-scan.mjs
   - src/main/blitzos-onboarding.md
   - src/main/blitzos-interview.md
+extraResources:
+  # Portable tmux (arm64, static libevent + system curses, Developer-ID signed): the agent-terminal
+  # runtime ships WITH the app — the user never installs dependencies (docs/prod-ci.md).
+  - from: vendor/bin/tmux
+    to: bin/tmux
 asarUnpack:
   - scripts/onboarding-scan.mjs
   - src/main/blitzos-onboarding.md

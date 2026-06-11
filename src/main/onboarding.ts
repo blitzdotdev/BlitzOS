@@ -151,10 +151,21 @@ function writeBoard(wsPath: string, board: BoardFile): void {
   writeFileSync(join(onboardingDir(wsPath), 'board.json'), JSON.stringify(board, null, 2))
 }
 
-/** Live surfaces + viewport for lattice occupancy (the pinned chat hub already holds a span). */
+/** Live surfaces + viewport for lattice occupancy (the pinned chat hub already holds a span).
+ *  Viewport falls back to the real window content size — planning against DEFAULT_VP when the
+ *  renderer hasn't pushed yet would place slots on a lattice BIGGER than the real one (observed:
+ *  out-of-bounds rows rendering as a pile). */
 function liveStage(): { surfaces: StagedSurface[]; viewport: { w: number; h: number } | null } {
   const st = osGetState() as { surfaces?: StagedSurface[]; viewport?: { w: number; h: number } }
-  return { surfaces: st.surfaces || [], viewport: st.viewport || null }
+  let viewport = st.viewport || null
+  if (!viewport) {
+    const win = mainWindow?.()
+    if (win && !win.isDestroyed()) {
+      const b = win.getContentBounds()
+      viewport = { w: b.width, h: b.height }
+    }
+  }
+  return { surfaces: st.surfaces || [], viewport }
 }
 
 /** Re-ensure path (cached board): slot the unlock card against the LIVE lattice; a full stage

@@ -170,9 +170,18 @@ const cellsOf = (size) => {
   const sp = spanOf(size)
   return sp.c * sp.r
 }
-// When even the chosen span doesn't fit the fragmented lattice, shrink one step at a time. m is
-// the floor (every widget still reads as a gist at m); below that the card goes BACKSTAGE.
-const SHRINK = { xxl: 'xl', xl: 'l', tall: 'l', l: 'm', m: null }
+// When even the chosen span doesn't fit the fragmented lattice, shrink one step at a time, down
+// to s (every widget renders a gist at s, and s tiles soak up the 1-wide orphan column a 7-col
+// lattice strands). The unlock card floors at m (its consent copy needs the room). Below the
+// floor, the card goes BACKSTAGE.
+const SHRINK = { xxl: 'xl', xl: 'l', tall: 'l', l: 'm', m: 's', s: null }
+const FLOOR = { unlock: 'm' }
+const shrinkFrom = (role, size) => {
+  const next = SHRINK[size]
+  if (!next) return null
+  if (FLOOR[role] && size === FLOOR[role]) return null
+  return next
+}
 // Composition hints (findSlot's near ranking) — shape without coordinates.
 const NEAR_OF = {
   profile: 'top-left',
@@ -215,10 +224,14 @@ export function findUnlockSlot(surfaces, viewport = null) {
   return null
 }
 
-/** Off-stage parking spot below the stage frame (mirrors the os-tools parkOffstage cascade). */
+/** Off-stage parking below the stage frame: a clean GRID spaced by the card's own footprint —
+ *  parked cards must never overlap each other (the cascade-by-64px pile read as clutter). */
 function parkSpot(vp, i) {
   const r = stageRect(0, vp)
-  return { x: Math.round(r.x + 60 + (i % 8) * 64), y: Math.round(r.y + r.h + 100 + (i % 8) * 48) }
+  const cell = sizePx('m')
+  const col = i % 3
+  const row = Math.floor(i / 3)
+  return { x: Math.round(r.x + 40 + col * (cell.w + 24)), y: Math.round(r.y + r.h + 140 + row * (cell.h + 24)) }
 }
 
 /**
@@ -288,7 +301,7 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null } = {}) {
     while (size) {
       at = findSlot(occupied, lat, size, NEAR_OF[role] || 'center', 0)
       if (at) break
-      size = SHRINK[size] // fragmentation: step down before giving up
+      size = shrinkFrom(role, size) // fragmentation: step down (to the role's floor) before giving up
     }
     if (at) {
       card.slot = { col: at.col, row: at.row, size }
