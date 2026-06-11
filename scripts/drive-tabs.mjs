@@ -79,45 +79,47 @@ async function main() {
   await evalJs(`window.agentOS.terminalSpawn({ command: 'bash', title: 'shell-3' })`)
   await delay(2500)
 
-  // assert: ONE terminal window, THREE tabs
-  const termCount = await evalJs(`document.querySelectorAll('.window-tabs').length`)
-  const tabCount = await evalJs(`document.querySelectorAll('.window-tabs .wtab').length`)
-  const tabTitles = await evalJs(`Array.from(document.querySelectorAll('.window-tabs .wtab .wtab-title')).map(e=>e.textContent)`)
-  const activeIdx = await evalJs(`(()=>{const t=Array.from(document.querySelectorAll('.window-tabs .wtab'));return t.findIndex(e=>e.classList.contains('active'))})()`)
-  console.log('terminal windows:', termCount, '| tabs:', tabCount, '| titles:', JSON.stringify(tabTitles), '| active idx:', activeIdx)
+  // We scope every assertion to OUR shell-N tabs (title prefix 'shell-'), because agents now auto-show
+  // their own terminals as tabs (an agent IS a terminal you watch work), so the canvas can hold other
+  // terminal windows/tabs we didn't create. The 3 shells must still collapse into ONE window.
+  const SHELL = `(t)=>/^shell-/.test((t.querySelector('.wtab-title')||{}).textContent||'')`
+  // window that holds our shell tabs + its total tab count + how many of those are shells
+  const winInfo = `(()=>{const wins=[...document.querySelectorAll('.window-tabs')];const w=wins.find(w=>[...w.querySelectorAll('.wtab')].some(${SHELL}));if(!w)return{winsWithShell:0,winTabs:0,shellCount:0,shellTitles:[]};const tabs=[...w.querySelectorAll('.wtab')];return{winsWithShell:wins.filter(w=>[...w.querySelectorAll('.wtab')].some(${SHELL})).length,winTabs:tabs.length,shellCount:tabs.filter(${SHELL}).length,shellTitles:tabs.filter(${SHELL}).map(t=>(t.querySelector('.wtab-title')||{}).textContent)}})()`
+
+  const i1 = await evalJs(winInfo)
+  console.log('shells:', i1.shellCount, '| in N windows:', i1.winsWithShell, '| titles:', JSON.stringify(i1.shellTitles), '| window total tabs:', i1.winTabs)
   await shot('1-three-tabs')
 
-  // switch to the FIRST tab and confirm the active class moves + body shows it
-  console.log('clicking tab 0…')
-  await evalJs(`document.querySelectorAll('.window-tabs .wtab')[0].click()`)
+  // switch to OUR shell-1 tab (by title, not index — the window may also hold the agent tab) and confirm active
+  console.log('clicking shell-1…')
+  await evalJs(`(()=>{const t=[...document.querySelectorAll('.window-tabs .wtab')].find(t=>(t.querySelector('.wtab-title')||{}).textContent==='shell-1');t&&t.click()})()`)
   await delay(1500)
-  const activeAfter = await evalJs(`(()=>{const t=Array.from(document.querySelectorAll('.window-tabs .wtab'));return t.findIndex(e=>e.classList.contains('active'))})()`)
-  console.log('active idx after clicking tab 0:', activeAfter)
+  const shell1Active = await evalJs(`(()=>{const t=[...document.querySelectorAll('.window-tabs .wtab')].find(t=>(t.querySelector('.wtab-title')||{}).textContent==='shell-1');return !!(t&&t.classList.contains('active'))})()`)
+  console.log('shell-1 active after click:', shell1Active)
   await shot('2-tab0-active')
 
-  // close the MIDDLE tab via its ✕ and confirm count drops to 2
-  console.log('closing tab 1 (the ✕)…')
-  await evalJs(`(()=>{const t=document.querySelectorAll('.window-tabs .wtab');const c=t[1].querySelector('.wtab-close');c.click()})()`)
+  // close shell-2 via its ✕ and confirm our shell count drops to 2
+  console.log('closing shell-2 (the ✕)…')
+  await evalJs(`(()=>{const t=[...document.querySelectorAll('.window-tabs .wtab')].find(t=>(t.querySelector('.wtab-title')||{}).textContent==='shell-2');t&&t.querySelector('.wtab-close').click()})()`)
   await delay(1500)
-  const tabCount2 = await evalJs(`document.querySelectorAll('.window-tabs .wtab').length`)
-  const titles2 = await evalJs(`Array.from(document.querySelectorAll('.window-tabs .wtab .wtab-title')).map(e=>e.textContent)`)
-  console.log('tabs after close:', tabCount2, '| titles:', JSON.stringify(titles2))
+  const i2 = await evalJs(winInfo)
+  console.log('shells after close:', i2.shellCount, '| titles:', JSON.stringify(i2.shellTitles))
   await shot('3-after-close')
 
-  // use the "+" to spawn a new tab
+  // use the "+" on OUR shells' window to spawn a new tab; that window's total tab count grows by 1
   console.log('clicking the + to add a tab…')
-  await evalJs(`document.querySelector('.window-tabs .wtab-add').click()`)
+  await evalJs(`(()=>{const wins=[...document.querySelectorAll('.window-tabs')];const w=wins.find(w=>[...w.querySelectorAll('.wtab')].some(${SHELL}));w&&w.querySelector('.wtab-add').click()})()`)
   await delay(2500)
-  const tabCount3 = await evalJs(`document.querySelectorAll('.window-tabs .wtab').length`)
-  console.log('tabs after +:', tabCount3)
+  const i3 = await evalJs(winInfo)
+  console.log('window total tabs after +:', i3.winTabs, '(was', i2.winTabs + ')')
   await shot('4-after-add')
 
-  // cleanup: remove every terminal this run spawned so the workspace is left as found (only the agent).
+  // cleanup: remove every terminal this run spawned so the workspace is left as found (only the agents).
   console.log('\n[cleanup] removing spawned terminals')
   await evalJs(`(async()=>{const ts=(await window.agentOS.terminalList()).filter(s=>s.kind==='terminal'); for(const t of ts){try{window.agentOS.terminalRemove(t.id)}catch{}} return ts.length})()`)
 
-  // result summary
-  const ok = termCount === 1 && tabCount === 3 && activeAfter === 0 && tabCount2 === 2 && tabCount3 === 3
+  // result summary — scoped to our shells: 3 shells in ONE window, switch works, close→2, + grows the window
+  const ok = i1.shellCount === 3 && i1.winsWithShell === 1 && shell1Active && i2.shellCount === 2 && i3.winTabs === i2.winTabs + 1
   console.log(ok ? '\nPASS ✓ tabs behave correctly' : '\nFAIL ✗ see numbers above')
   ws.close()
   cleanup(ok ? 0 : 2)

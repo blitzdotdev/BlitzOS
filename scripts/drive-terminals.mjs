@@ -130,14 +130,14 @@ async function main() {
   await shot('4-after-new')
 
   // --- 6. resume-on-reload: reload the page, tabs reappear from live terminals ---
-  // Only kind:'terminal' auto-tabs into the Terminal window; an AGENT's raw terminal is opt-in
-  // (its chat widget is the primary surface), so it is intentionally NOT reconstructed as a tab.
+  // EVERY live terminal auto-tabs on reload — plain shells AND agents (an agent is a terminal you watch
+  // claude work in). Tabs are renderer-only, reconstructed from terminalList(); the count must round-trip.
   logln('\n[6] resume on reload')
-  const runningBefore = await evalJs(`return (await window.agentOS.terminalList()).filter(s=>s.status==='running' && s.kind==='terminal').length`)
+  const runningBefore = await evalJs(`return (await window.agentOS.terminalList()).filter(s=>s.status==='running').length`)
   await send('Page.navigate', { url }, sessionId) // hard reload (CDP sessionId, foreign — keep)
   await delay(6500)
   const tabsAfterReload = await evalJs(`return document.querySelectorAll('.window-tabs .wtab').length`)
-  check(tabsAfterReload === runningBefore, `tabs reconstructed on reload: ${tabsAfterReload} tabs == ${runningBefore} running terminals (agents excluded — not auto-tabbed)`)
+  check(tabsAfterReload === runningBefore, `tabs reconstructed on reload: ${tabsAfterReload} tabs == ${runningBefore} running terminals (incl agents)`)
   await shot('5-after-reload')
 
   // --- cleanup: REMOVE every terminal this run created (delete the record, don't just stop) so the workspace
