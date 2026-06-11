@@ -23,7 +23,7 @@ export const UI_KIT = `<style>
   --blitz-hairline:rgba(0,0,0,.10); --blitz-radius:10px; --blitz-radius-sm:7px;
   --blitz-font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
 }
-html,body{margin:0;height:100%;background:var(--blitz-bg);color:var(--blitz-text);font-family:var(--blitz-font);font-size:13px}
+html,body{margin:0;min-height:100%;background:var(--blitz-bg);color:var(--blitz-text);font-family:var(--blitz-font);font-size:13px}
 body{display:flex;flex-direction:column;overflow:auto}
 *{box-sizing:border-box}
 </style>
