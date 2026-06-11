@@ -60,4 +60,10 @@ export interface TmuxHost {
   stopAll(): void
 }
 
+/** Resolve the tmux binary for a packaged app (env → well-known paths → login shell). Null = not installed. */
+export function resolveTmuxBin(): string | null
 export function createTmuxHost(cfg: TmuxHostConfig): TmuxHost
+
+/** Absolute path to the tmux binary (BLITZ_TMUX_BIN → well-known paths → login shell), cached;
+ *  null = not installed. */
+export function resolveTmuxBin(): string | null

@@ -72,23 +72,22 @@ const FIXTURE = {
   gaps: ['Autonomy preference, act vs ask?', 'Goals for the quarter']
 }
 
-console.log('1) engineer fixture, FDA off, chat hub on stage — slotted tiles, sizes by content')
+console.log('1) engineer fixture, FDA off, chat hub on stage — FIT-FIRST: everything staged compact, growth into leftovers')
 {
   const plan = buildBoardPlan(FIXTURE, { surfaces: [CHAT_HUB], viewport: VP })
   const roles = plan.map((c) => c.role)
   ok(roles.join(',') === 'profile,projects,rhythm,gaps,unlock,workflows,people,voice,sessions', `priority order incl. the unlock reservation (got ${roles.join(',')})`)
-  ok(plan.every((c) => c.slot || c.offstage), 'every card is either a slotted tile or explicitly parked')
+  ok(plan.every((c) => c.slot), 'fit-first: at the default viewport EVERY card is a slotted tile, zero parked')
   const staged = plan.filter((c) => c.slot)
   const { clash } = cellsOf([CHAT_HUB, ...staged])
   ok(!clash, `no span overlaps another tile or the chat hub${clash ? ` (${clash})` : ''}`)
   const lat = latticeFor(VP, 0)
   ok(staged.every((c) => c.slot.col >= 0 && c.slot.row >= 0 && c.slot.col + spanOf(c.slot.size).c <= lat.cols && c.slot.row + spanOf(c.slot.size).r <= lat.rows), 'every span sits inside the lattice')
-  ok(at(plan, 'profile').slot.size === 'l', 'profile is l (the centerpiece breathes)')
-  ok(at(plan, 'projects').slot.size === 'xl', 'projects is the xl hero (dossier grid needs columns)')
-  ok(at(plan, 'rhythm').slot.size === 'l', 'rhythm is l (the punchcard needs width)')
-  ok(at(plan, 'workflows').slot && at(plan, 'workflows').slot.size === 'l', 'workflows with 3 items is l (list fits)')
-  ok(at(plan, 'people').slot.size === 'm', 'people with 2 names is m (a strip, not a grid)')
-  ok(at(plan, 'gaps').slot.size === 'm', 'gaps with 3 items is m')
+  ok(at(plan, 'profile').slot.size === 'l', 'profile grew to l (priority upgrade into free cells)')
+  ok(at(plan, 'projects').slot.size === 'xl', 'projects grew to the xl hero (free cells allowed it)')
+  ok(at(plan, 'workflows').slot.size === 'm', 'workflows with 3 items stays a gist tile (m)')
+  ok(at(plan, 'people').slot.size === 'm', 'people with 2 names stays m')
+  ok(at(plan, 'gaps').slot.size === 'm', 'gaps with 3 items stays m')
   ok(at(plan, 'unlock') && at(plan, 'unlock').native === 'unlock' && at(plan, 'unlock').slot, 'unlock card is part of the plan, slotted right after gaps')
   ok(at(plan, 'gaps').props.items.some((g) => g.q === 'The personal layer'), 'gaps includes the FDA unlock teaser when locked')
   ok(at(plan, 'rhythm').props.topApps[0].n === 40, 'rhythm falls back to launch counts when knowledgeC is locked')
@@ -120,6 +119,7 @@ console.log('2) FDA on, meeting-heavy — schedule joins, unlock stays out of th
   }
   const plan = buildBoardPlan(fdaScan, { surfaces: [CHAT_HUB], viewport: VP })
   ok(!at(plan, 'unlock'), 'no unlock card when FDA is already granted')
+  ok(plan.every((c) => c.slot), 'all ten cards staged (fit-first)')
   ok(at(plan, 'schedule') && at(plan, 'schedule').slot.size === 'm', 'schedule with 3 events is m')
   ok(/\w{3} \d{2}:\d{2}/.test(at(plan, 'schedule').props.items[0].time), 'schedule items carry weekday+time')
   ok(at(plan, 'people').props.items[0].sub === 'texts with you', 'messages-joined person labeled by via')

@@ -1075,11 +1075,12 @@ export default function App(): JSX.Element {
     return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x, y, props: { events } }
   }
 
-  // Open/focus a session's terminal tab (idempotent). Shared by the live session-spawn action,
-  // resume-on-load, and the Sessions tray — the placement + add-tab-or-create logic lives in the
-  // store action so all three callers stay in sync.
+  // Open/focus a session's terminal tab (idempotent). This path is PROGRAMMATIC (the live
+  // session-spawn action + resume-on-load), so a fresh terminal window parks BACKSTAGE instead of
+  // landing on the user's tiles; the Sessions tray calls store.openSession directly (no park) since
+  // that's the human asking to SEE it.
   function ensureTerminalTab(sid: string, title: string, stage?: number | null): void {
-    useDesktop.getState().openSession(sid, title || 'Terminal', stage)
+    useDesktop.getState().openSession(sid, title || 'Terminal', stage, { park: true })
   }
 
   // The Action-items inbox docks TOP-RIGHT of the current view (out of the way of chat/activity which
