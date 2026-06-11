@@ -26,6 +26,7 @@ const SHOW_INTEGRATION_CARDS = false
 type DockAnimationPhase = 'minimizing' | 'restoring'
 type ToolbarTooltip = { text: string; left: number; top: number }
 type AdvancedPopoverPosition = { left: number; top: number }
+type AnimationSourceRect = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
 const WIDGET_PLACEHOLDER_HTML = `
 <style>
   body {
@@ -83,19 +84,26 @@ function findByData(name: string, value: string): HTMLElement | null {
   return null
 }
 
+function sourceRectFromElement(el: Element | null): AnimationSourceRect | null {
+  if (!el) return null
+  const r = el.getBoundingClientRect()
+  if (!r.width || !r.height) return null
+  return { left: r.left, top: r.top, width: r.width, height: r.height }
+}
+
 function nextPaint(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
 }
 
-async function animateDockMotion(
+async function animateDockMotionFromRect(
   el: HTMLElement,
-  dock: HTMLElement,
+  target: AnimationSourceRect,
   worldScale: number,
   phase: DockAnimationPhase
 ): Promise<(() => void) | null> {
   if (!el.animate) return null
   const from = el.getBoundingClientRect()
-  const to = dock.getBoundingClientRect()
+  const to = target
   if (!from.width || !from.height || !to.width || !to.height) return null
 
   const scale = Math.max(0.06, Math.min(0.18, Math.min(to.width / from.width, to.height / from.height)))
@@ -148,6 +156,16 @@ async function animateDockMotion(
     el.style.zIndex = previous.zIndex
     el.style.visibility = phase === 'restoring' ? '' : previous.visibility
   }
+}
+
+async function animateDockMotion(
+  el: HTMLElement,
+  dock: HTMLElement,
+  worldScale: number,
+  phase: DockAnimationPhase
+): Promise<(() => void) | null> {
+  const r = dock.getBoundingClientRect()
+  return animateDockMotionFromRect(el, { left: r.left, top: r.top, width: r.width, height: r.height }, worldScale, phase)
 }
 
 type SurfaceRect = Pick<Surface, 'x' | 'y' | 'w' | 'h'>
@@ -331,6 +349,9 @@ export default function App(): JSX.Element {
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
   const dockAnimationIds = useRef<Set<string>>(new Set())
   const rectAnimationIds = useRef<Set<string>>(new Set())
+  const pendingTerminalSource = useRef<{ rect: AnimationSourceRect; at: number } | null>(null)
+  const pendingFolderSource = useRef<{ rect: AnimationSourceRect; at: number } | null>(null)
+  const pendingChatSource = useRef<{ rect: AnimationSourceRect; at: number } | null>(null)
   const toolbarTipShowTimer = useRef<number | null>(null)
   const toolbarTipWarmTimer = useRef<number | null>(null)
   const toolbarTipWarm = useRef(false)
@@ -437,7 +458,8 @@ export default function App(): JSX.Element {
     setAiCopied(true)
   }
 
-  function openTerminalSession(): void {
+  function openTerminalSession(source?: AnimationSourceRect | null): void {
+    if (source) pendingTerminalSource.current = { rect: source, at: performance.now() }
     ;(window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })
   }
 
@@ -758,13 +780,41 @@ export default function App(): JSX.Element {
       } else if (a.type === 'reconcile') {
         // External folder change (dropped/edited/removed files) — merge live, keeping the camera +
         // the runtime chat/activity panels. Only once we already have a canvas (post first hydrate).
-        if (hydrated.current) st.applyReconcile(Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : [])
+        if (hydrated.current) {
+          const incoming = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
+          const pending = pendingFolderSource.current
+          const source = pending && performance.now() - pending.at < 5000 ? pending.rect : null
+          if (source) pendingFolderSource.current = null
+          if (source && !prefersReducedMotion()) {
+            let createdId: string | null = null
+            flushSync(() => {
+              const before = new Set(useDesktop.getState().surfaces.map((s) => s.id))
+              st.applyReconcile(incoming)
+              const created = useDesktop.getState().surfaces.find((s) => !before.has(s.id) && s.kind === 'native' && s.component === 'dir')
+              if (created) {
+                createdId = created.id
+                setDockAnimation(created.id, 'restoring')
+              }
+            })
+            if (createdId) void animateSurfaceOpenFrom(createdId, source, true)
+          } else {
+            st.applyReconcile(incoming)
+          }
+        }
       } else if (a.type === 'create') {
         const surf = a.surface as CreateSurfaceInput
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
         if (surf && (surf.kind === 'web' || surf.kind === 'app')) surf.shared = true
+        const pendingChat = pendingChatSource.current
+        const chatSource = pendingChat && performance.now() - pendingChat.at < 5000 ? pendingChat.rect : null
+        if (chatSource) pendingChatSource.current = null
+        const existingSurface = surf && surf.id ? st.surfaces.find((s) => s.id === surf.id) : undefined
         // Dedupe by id: a 'create' (e.g. a new chat session) can race a hydrate that already brought it.
-        if (surf && surf.id && st.surfaces.some((s) => s.id === surf.id)) return
+        // Exception: toolbar-restored chat can intentionally re-broadcast the existing hub; animate it.
+        if (existingSurface) {
+          if (chatSource && surf.role === 'chat') restoreOrFocusFromSource(existingSurface.id, chatSource)
+          return
+        }
         // A NEW chat session owns its own area N. Recompute its x from the area with the renderer's REAL
         // viewport (the host may have used a default vp), so its widget lands precisely in area N.
         const isNewChat = hydrated.current && surf && surf.role === 'chat' && surf.sessionId != null
@@ -775,7 +825,17 @@ export default function App(): JSX.Element {
           surf.area = chatArea
           surf.x = Math.round(areaCenterX(chatArea, useDesktop.getState().viewport) - 700)
         }
-        const createdId = st.createSurface(surf)
+        const shouldAnimateChat = !!(chatSource && surf?.role === 'chat' && !prefersReducedMotion())
+        let createdId = ''
+        if (shouldAnimateChat) {
+          flushSync(() => {
+            createdId = st.createSurface(surf)
+            setDockAnimation(createdId, 'restoring')
+          })
+          void animateSurfaceOpenFrom(createdId, chatSource, true)
+        } else {
+          createdId = st.createSurface(surf)
+        }
         if (isNewChat && chatArea > 0) {
           // ALWAYS grow areaCount so the new area exists + is navigable (whether a user or an agent spawned it).
           const cur = useDesktop.getState()
@@ -870,7 +930,24 @@ export default function App(): JSX.Element {
         // TABS in a terminal window — add this one as a tab (idempotent). Covers both live spawns and
         // the restore() replay that brings back tmux survivors after a restart.
         const sess = (a.session ?? {}) as { title?: string; area?: number | null }
-        ensureTerminalTab(String(a.id), sess.title || 'Terminal', sess.area)
+        const pending = pendingTerminalSource.current
+        const source = pending && performance.now() - pending.at < 5000 ? pending.rect : null
+        if (source) pendingTerminalSource.current = null
+        if (source && !prefersReducedMotion()) {
+          let createdId: string | null = null
+          flushSync(() => {
+            const before = new Set(useDesktop.getState().surfaces.filter((s) => s.kind === 'native' && s.component === 'terminal').map((s) => s.id))
+            ensureTerminalTab(String(a.id), sess.title || 'Terminal', sess.area)
+            const created = useDesktop.getState().surfaces.find((s) => s.kind === 'native' && s.component === 'terminal' && !before.has(s.id))
+            if (created) {
+              createdId = created.id
+              setDockAnimation(created.id, 'restoring')
+            }
+          })
+          if (createdId) void animateSurfaceOpenFrom(createdId, source, true)
+        } else {
+          ensureTerminalTab(String(a.id), sess.title || 'Terminal', sess.area)
+        }
       } else if (a.type === 'action-item') {
         // An agent pushed (or updated/resolved) an action item the human must do → the Inbox surface.
         const item = a.item as { id?: string; status?: string } | undefined
@@ -1124,8 +1201,13 @@ export default function App(): JSX.Element {
     setMenu({ x: e.clientX, y: e.clientY, wx: Math.round((e.clientX - t.x) / t.scale), wy: Math.round((e.clientY - t.y) / t.scale) })
   }
   // New EMPTY folder (files) or board (windows+widgets) at the click point.
-  function makeFolder(kind: 'folder' | 'board', wx: number, wy: number): void {
-    void window.agentOS?.newFolder?.(kind === 'board' ? 'Board' : 'Folder', kind, wx, wy)
+  function makeFolder(kind: 'folder' | 'board', wx: number, wy: number, source?: AnimationSourceRect | null): void {
+    if (source) pendingFolderSource.current = { rect: source, at: performance.now() }
+    const req = window.agentOS?.newFolder?.(kind === 'board' ? 'Board' : 'Folder', kind, wx, wy)
+    if (!req) pendingFolderSource.current = null
+    void Promise.resolve(req).then((r) => {
+      if (!r?.ok) pendingFolderSource.current = null
+    })
   }
   // Group the current selection into a real folder (files) or board (windows/widgets stay live + splay).
   function groupSelectionInto(kind: 'folder' | 'board'): void {
@@ -1233,9 +1315,9 @@ export default function App(): JSX.Element {
     }
   }
 
-  function addBrowser(): void {
+  function addBrowser(source?: AnimationSourceRect | null): void {
     // let the store cascade + clamp onto the desktop
-    createSurface({ kind: 'web', url: 'https://www.google.com', title: 'Google' })
+    createSurfaceFromSource({ kind: 'web', url: 'https://www.google.com', title: 'Google' }, source)
   }
 
   function visibleWorldCenter(): { x: number; y: number } {
@@ -1246,25 +1328,25 @@ export default function App(): JSX.Element {
     }
   }
 
-  function createFromLauncher(kind: SurfaceLauncherKind): void {
+  function createFromLauncher(kind: SurfaceLauncherKind, source?: AnimationSourceRect | null): void {
     if (kind === 'browser') {
-      addBrowser()
+      addBrowser(source)
       return
     }
     if (kind === 'note') {
-      createSurface({ kind: 'native', component: 'note', title: 'Note', w: 280, h: 260, props: { text: '', color: 'yellow' } })
+      createSurfaceFromSource({ kind: 'native', component: 'note', title: 'Note', w: 280, h: 260, props: { text: '', color: 'yellow' } }, source)
       return
     }
     if (kind === 'app') {
-      createSurface({ kind: 'app', title: 'App', w: 520, h: 360 })
+      createSurfaceFromSource({ kind: 'app', title: 'App', w: 520, h: 360 }, source)
       return
     }
     if (kind === 'widget') {
-      createSurface({ kind: 'srcdoc', title: 'Widget', w: 420, h: 300, html: WIDGET_PLACEHOLDER_HTML })
+      createSurfaceFromSource({ kind: 'srcdoc', title: 'Widget', w: 420, h: 300, html: WIDGET_PLACEHOLDER_HTML }, source)
       return
     }
     const c = visibleWorldCenter()
-    makeFolder(kind, c.x, c.y)
+    makeFolder(kind, c.x, c.y, source)
   }
 
   // Capture the CURRENT board's primary-area snapshot and upload it as its workspace thumbnail
@@ -1305,11 +1387,12 @@ export default function App(): JSX.Element {
 
   // The Sessions tray: a glanceable list of every session in the workspace. Docks to the left of the
   // current view (like Chat); focus it if it's already open.
-  function openSessions(): void {
+  function openSessions(source?: AnimationSourceRect | null): void {
     const st = useDesktop.getState()
     const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'sessions')
     if (existing) {
-      st.focusSurface(existing.id)
+      if (existing.minimized) restoreOrFocusFromSource(existing.id, source)
+      else st.focusSurface(existing.id)
       return
     }
     const { scale, x: tx, y: ty } = st.transform
@@ -1317,29 +1400,31 @@ export default function App(): JSX.Element {
     const H = 420
     const x = Math.round(-tx / scale + 24)
     const y = Math.round((st.viewport.h / 2 - ty) / scale - H / 2)
-    st.createSurface({ kind: 'native', component: 'sessions', title: 'Sessions', w: W, h: H, x, y })
+    createSurfaceFromSource({ kind: 'native', component: 'sessions', title: 'Sessions', w: W, h: H, x, y }, source)
   }
 
   // The Action-items inbox: focus it if open, else create it empty (the agent fills it via request_action).
-  function openInbox(): void {
+  function openInbox(source?: AnimationSourceRect | null): void {
     const st = useDesktop.getState()
     const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'inbox')
-    if (existing) st.focusSurface(existing.id)
-    else st.createSurface(inboxSurfaceInput([]))
+    if (existing) {
+      if (existing.minimized) restoreOrFocusFromSource(existing.id, source)
+      else st.focusSurface(existing.id)
+    } else createSurfaceFromSource(inboxSurfaceInput([]), source)
   }
 
-  function openChat(): void {
+  function openChat(source?: AnimationSourceRect | null): void {
     const st = useDesktop.getState()
     // The toolbar should always open the host-hydrated srcdoc chat hub (blitz-chat.html),
     // not the retired native ChatPanel fallback.
     const hub = findChatHub(st.surfaces)
     if (hub) {
-      if (hub.minimized) st.updateSurface(hub.id, { minimized: false })
-      st.focusAndZoom(hub.id)
+      restoreOrFocusFromSource(hub.id, source)
       return
     }
     // If the user closed the runtime hub, ask main/workspace-host to rebuild the same srcdoc chat
     // surface boot/switch install. No native ChatPanel fallback.
+    if (source) pendingChatSource.current = { rect: source, at: performance.now() }
     void window.agentOS?.restoreChatHub?.()
   }
 
@@ -1352,6 +1437,58 @@ export default function App(): JSX.Element {
       else delete next[id]
       return next
     })
+  }
+
+  async function animateSurfaceOpenFrom(id: string, source: AnimationSourceRect | null | undefined, alreadyMarked = false): Promise<void> {
+    if (!source || prefersReducedMotion()) return
+    if (!alreadyMarked && (dockAnimationIds.current.has(id) || rectAnimationIds.current.has(id))) return
+    if (!alreadyMarked) setDockAnimation(id, 'restoring')
+    await nextPaint()
+
+    const el = findByData('data-sid', id)
+    if (!el) {
+      setDockAnimation(id, null)
+      return
+    }
+
+    let cleanup: (() => void) | null = null
+    try {
+      cleanup = await animateDockMotionFromRect(el, source, useDesktop.getState().transform.scale, 'restoring')
+    } finally {
+      cleanup?.()
+      setDockAnimation(id, null)
+    }
+  }
+
+  function createSurfaceFromSource(input: CreateSurfaceInput, source?: AnimationSourceRect | null): string {
+    if (!source || prefersReducedMotion()) return createSurface(input)
+    let id = ''
+    flushSync(() => {
+      id = createSurface(input)
+      setDockAnimation(id, 'restoring')
+    })
+    void animateSurfaceOpenFrom(id, source, true)
+    return id
+  }
+
+  function restoreOrFocusFromSource(id: string, source?: AnimationSourceRect | null): void {
+    const surf = useDesktop.getState().surfaces.find((s) => s.id === id)
+    if (!surf) return
+    if (!surf.minimized) {
+      focusAndZoom(id)
+      return
+    }
+    if (!source || prefersReducedMotion()) {
+      updateSurface(id, { minimized: false })
+      focusAndZoom(id)
+      return
+    }
+    flushSync(() => {
+      setDockAnimation(id, 'restoring')
+      updateSurface(id, { minimized: false })
+      focusAndZoom(id)
+    })
+    void animateSurfaceOpenFrom(id, source, true)
   }
 
   async function requestMinimize(id: string): Promise<void> {
@@ -1548,11 +1685,11 @@ export default function App(): JSX.Element {
         </div>
         <div className="toolbar toolbar-main">
           <SurfaceLauncherButton onCreateSurface={createFromLauncher} buttonProps={toolbarTip('Create surface')} />
-          <button onClick={openChat} {...toolbarTip('Primary chat')}>
+          <button onClick={(e) => openChat(sourceRectFromElement(e.currentTarget))} {...toolbarTip('Primary chat')}>
             <IconChat size={15} /> Chat
           </button>
           <button
-            onClick={openInbox}
+            onClick={(e) => openInbox(sourceRectFromElement(e.currentTarget))}
             {...toolbarTip('Action items from your agent')}
           >
             <IconInbox size={15} /> Inbox
@@ -1602,9 +1739,10 @@ export default function App(): JSX.Element {
           >
             <button
               className="advanced-action"
-              onClick={() => {
+              onClick={(e) => {
+                const source = sourceRectFromElement(advancedButtonRef.current) ?? sourceRectFromElement(e.currentTarget)
                 setShowAdvanced(false)
-                openSessions()
+                openSessions(source)
               }}
             >
               <IconSessions size={17} />
@@ -1615,9 +1753,10 @@ export default function App(): JSX.Element {
             </button>
             <button
               className="advanced-action"
-              onClick={() => {
+              onClick={(e) => {
+                const source = sourceRectFromElement(advancedButtonRef.current) ?? sourceRectFromElement(e.currentTarget)
                 setShowAdvanced(false)
-                openTerminalSession()
+                openTerminalSession(source)
               }}
             >
               <IconTerminal size={17} />

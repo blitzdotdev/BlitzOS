@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { IconBoard, IconCode, IconFolder, IconGlobe, IconGrid, IconNote, IconPlus, IconSparkle } from './Icons'
 
 export type SurfaceLauncherKind = 'browser' | 'note' | 'app' | 'widget' | 'folder' | 'board'
+type AnimationSourceRect = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
 
 type LauncherState = {
   left: number
@@ -27,7 +28,7 @@ const LAUNCHER_ITEMS: LauncherItem[] = [
 ]
 
 interface Props {
-  onCreateSurface: (kind: SurfaceLauncherKind) => void
+  onCreateSurface: (kind: SurfaceLauncherKind, source?: AnimationSourceRect | null) => void
   buttonProps?: ButtonHTMLAttributes<HTMLButtonElement>
 }
 
@@ -121,7 +122,8 @@ export function SurfaceLauncherButton({ onCreateSurface, buttonProps }: Props): 
               key={it.kind}
               className="surface-launcher-item"
               onClick={() => {
-                onCreateSurface(it.kind)
+                const r = buttonRef.current?.getBoundingClientRect()
+                onCreateSurface(it.kind, r ? { left: r.left, top: r.top, width: r.width, height: r.height } : null)
                 closeLauncher()
               }}
             >
