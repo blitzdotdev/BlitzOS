@@ -14,7 +14,7 @@ import { AnnotationLayer } from './components/AnnotationLayer'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
 import { SurfaceLauncherButton, type SurfaceLauncherKind } from './components/SurfaceLauncherButton'
-import { IconChat, IconSparkle, IconGrid, IconChevronDown } from './components/Icons'
+import { IconChat, IconSparkle, IconGrid, IconChevronDown, IconCheck } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
@@ -334,6 +334,7 @@ export default function App(): JSX.Element {
   const toolbarTipVisible = useRef(false)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [toolbarTooltip, setToolbarTooltip] = useState<ToolbarTooltip | null>(null)
+  const [aiCopied, setAiCopied] = useState(false)
   // Phase 2: true once the backend has sent (or declined) a hydrate. The state-push is
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
   // restored canvas before hydration arrives.
@@ -343,6 +344,14 @@ export default function App(): JSX.Element {
   // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
   const activeWsRef = useRef<string | null>(null)
   const animRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!showAi) setAiCopied(false)
+  }, [showAi])
+
+  useEffect(() => {
+    setAiCopied(false)
+  }, [aiUrl])
 
   useEffect(() => {
     return () => {
@@ -402,6 +411,12 @@ export default function App(): JSX.Element {
       onFocus: (e) => openToolbarTooltip(e.currentTarget, text),
       onBlur: closeToolbarTooltip
     }
+  }
+
+  async function copyAiUrl(): Promise<void> {
+    if (!aiUrl) return
+    await navigator.clipboard?.writeText(aiUrl)
+    setAiCopied(true)
   }
 
   // Smoothly tween the camera (used when entering/leaving control mode).
@@ -1485,7 +1500,7 @@ export default function App(): JSX.Element {
           <button onClick={openChat} {...toolbarTip('Primary chat')}>
             <IconChat size={15} /> Chat
           </button>
-          <button onClick={() => setShowAi((v) => !v)} {...toolbarTip('URL for your agent')}>
+          <button onClick={() => setShowAi((v) => !v)} {...toolbarTip('Connection URL for your agent')}>
             <span className="connect-ai-icon" style={{ color: aiUrl ? 'var(--positive, #3fb950)' : 'var(--text-muted)' }}>
               <IconSparkle size={17} />
             </span>
@@ -1544,8 +1559,8 @@ export default function App(): JSX.Element {
                 </p>
                 <div className="hud-row">
                   <input className="hud-input" readOnly value={aiUrl} onFocus={(e) => e.currentTarget.select()} />
-                  <button className="btn primary" onClick={() => navigator.clipboard?.writeText(aiUrl)}>
-                    Copy
+                  <button className={`btn primary hud-copy${aiCopied ? ' copied' : ''}`} onClick={() => void copyAiUrl()} aria-label={aiCopied ? 'Copied' : 'Copy URL'}>
+                    {aiCopied ? <IconCheck size={18} /> : 'Copy'}
                   </button>
                 </div>
               </>

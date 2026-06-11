@@ -32,6 +32,11 @@ export const IconClose = (p: P): JSX.Element => (
     <path d="M6 6l12 12M18 6L6 18" />
   </Svg>
 )
+export const IconCheck = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M5 12.5l4.2 4.2L19 6.8" />
+  </Svg>
+)
 export const IconEye = (p: P): JSX.Element => (
   <Svg {...p}>
     <path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12Z" />
