@@ -75,6 +75,9 @@ that can never cost more than one push. **Claim the project to stop the TTL.**
 
 ## teenybase/blitz.dev API lessons (hard-won, keep)
 
+> The full platform contract + operational runbook lives in `plans/blitz-dev-api-contract.md` —
+> this section is the telemetry-relevant subset.
+
 - Runtime config validation is STRICTER than save-time build: every table needs `extensions: []`
   even when empty, and **the runtime uses the COMMITTED config** — schema/config changes need
   `POST /commit` (which also runs `@migration.sql`); code-only worker changes go live on save.
