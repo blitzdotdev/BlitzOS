@@ -167,10 +167,6 @@ export function Sidebar({ onCreateSurface, onRequestRestore, animating = {} }: P
         className={`sidebar-btn${launcher ? ' active' : ''}`}
         aria-label="Create surface"
         onClick={toggleLauncher}
-        onPointerEnter={(e) => showTooltip(e.currentTarget, 'Create surface')}
-        onPointerLeave={hideTooltip}
-        onFocus={(e) => showTooltip(e.currentTarget, 'Create surface')}
-        onBlur={hideTooltip}
       >
         <IconPlus />
       </button>
