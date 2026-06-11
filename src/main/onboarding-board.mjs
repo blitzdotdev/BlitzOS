@@ -1,30 +1,22 @@
 // The PURE half of the onboarding director (plans/onboarding-case-file.md P1): scan.json → a
-// board plan (which template widgets, where, with what props). No Electron, no fs — so the seed
-// test (scripts/test-onboarding-seed.mjs) runs it under plain node, and a future server-mode
-// onboarding can bind the same plan to its own ops. onboarding.ts owns the impure half (the scan
-// child, surface creation, FDA poll).
+// board plan (which template widgets, at what SLOT SIZE, with what props). No Electron, no fs —
+// so the seed test (scripts/test-onboarding-seed.mjs) runs it under plain node, and a future
+// server-mode onboarding can bind the same plan to its own ops. onboarding.ts owns the impure
+// half (the scan child, surface creation, FDA poll).
 //
-// ADAPTIVE SLOTS: fixed cards own their slot; the flex slots (B = hero, F, I) are assigned by
-// what the scan found — a web-first life puts the Workflows card in the hero slot (projects
-// yields), a meeting-heavy life gets the Schedule card, and when FDA is off the unlock card
-// keeps slot I. Cards whose section is empty return null and simply don't exist. World coords:
-// the primary stage is centered on the origin, so the board hugs (0,0) and goToPrimary frames it.
-
-// The grid must FIT the renderer's primary rect or creation clamps it into view and columns
-// overlap (observed live at 1440×900: rect ≈ 1364×798, i.e. x∈[-682,682], y∈[-399,399]).
-// 1320×780 fits the 14" default; smaller screens clamp gracefully (≤60px drift).
-const SLOTS = {
-  A: { x: -660, y: -390, w: 420, h: 260 }, // top-left — profile
-  B: { x: -225, y: -390, w: 450, h: 360 }, // top-center HERO — projects, or workflows when web-first
-  C: { x: 240, y: -390, w: 420, h: 380 }, // top-right — gaps
-  D: { x: -660, y: -115, w: 420, h: 280 }, // left-mid — rhythm
-  E: { x: -225, y: -15, w: 450, h: 220 }, // center — toolbox
-  F: { x: 240, y: 5, w: 420, h: 190 }, // right-mid — flex
-  G: { x: -660, y: 180, w: 420, h: 210 }, // left-bottom — voice
-  H: { x: -225, y: 220, w: 450, h: 170 }, // center-bottom — sessions
-  I: { x: 240, y: 210, w: 420, h: 180 } // right-bottom — flex; the unlock card's slot when FDA is off
-}
-export const UNLOCK_POS = SLOTS.I
+// STAGE LATTICE (plans/blitzos-stage-slot-desktop.md): the board is placed on the same slot grid
+// the agents use — sizes are chosen PER CARD FROM ITS CONTENT (a punchcard needs width → l; a
+// dossier grid is the hero → xl; 8 workflow rows are list-shaped → tall), then findSlot picks the
+// exact free span against the LIVE surfaces (the pinned chat hub already holds a tall span). A
+// card that can't fit shrinks one size at a time down to m; if the lattice is genuinely full it
+// PARKS off-stage below the stage frame (alive, zoom-out visible, bring_to_stage-able) — tiles
+// never overlap and never reflow, so there is no pixel math and no clamp dance to fight.
+// Composition is steered with `near` hints, not coordinates; webFirst puts Workflows first in
+// line for the prime spans (projects yields). The onboarding board deliberately saturates the
+// stage past the agents' soft STAGE_BUDGET (it IS the user's first desktop); the hard cap is the
+// lattice itself, and the resident brain is expected to curate it down from there.
+import { latticeFor, findSlot, sizePx } from '../renderer/src/stage-core.mjs'
+import { stageRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 
 const fmtHour = (h) => `${String(h).padStart(2, '0')}:00`
 const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -145,7 +137,7 @@ const BUILDERS = {
 }
 
 const WIDGET_OF = { profile: 'profile', projects: 'dossiers', workflows: 'workflows', schedule: 'timeline', rhythm: 'rhythm', voice: 'quotes', sessions: 'timeline', people: 'dossiers', gaps: 'gaps' }
-const TITLE_OF = { profile: 'Case File', projects: 'Projects', workflows: 'Web workflows', schedule: 'Coming up', rhythm: 'Working rhythm', voice: 'In their own words', sessions: 'Recent sessions', people: 'Known associates', gaps: 'Open questions' }
+const TITLE_OF = { profile: 'Case File', projects: 'Projects', workflows: 'Web workflows', schedule: 'Coming up', rhythm: 'Working rhythm', voice: 'In their own words', sessions: 'Recent sessions', people: 'Known associates', gaps: 'Open questions', unlock: 'Unlock the personal layer' }
 
 // Every card samples its accent from the Blitz paper palette (design-system §3) — varied across
 // the board, stable per role. The UI kit applies props.accent/accentInk to --blitz-accent.
@@ -160,6 +152,42 @@ const ACCENT_OF = {
   people: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
   gaps: { accent: '#E8C71D', accentInk: '#2A2400' } // marker — highlighter over the unknowns
 }
+
+// ---- slot sizing: the right span for the card's CONTENT, not a fixed grid ----
+// profile is the centerpiece and breathes (l). The dossier grid needs columns (xl: 4 wide).
+// The punchcard needs 24 cells of width (l minimum). List cards scale with their item count:
+// a 2-item list is a wide strip (m), a long one is portrait (tall) or big (l).
+const count = (p) => ((p && p.items) || []).length
+const SIZE_FOR = {
+  profile: () => 'l',
+  projects: () => 'xl',
+  workflows: (p) => (count(p) >= 6 ? 'tall' : 'l'),
+  schedule: (p) => (count(p) >= 5 ? 'l' : 'm'),
+  rhythm: () => 'l',
+  people: (p) => (count(p) >= 4 ? 'l' : 'm'),
+  voice: (p) => (count(p) >= 3 ? 'l' : 'm'),
+  sessions: () => 'm',
+  gaps: (p) => (count(p) >= 4 ? 'l' : 'm'),
+  unlock: () => 'l'
+}
+// When the preferred span doesn't fit, shrink one step at a time. m is the content floor
+// (no board card reads at s = 164px); below that the card parks off-stage instead.
+const SHRINK = { xxl: 'xl', xl: 'l', tall: 'l', l: 'm', m: null }
+// Composition hints (findSlot's near ranking) — shape without coordinates.
+const NEAR_OF = {
+  profile: 'top-left',
+  projects: 'top-left',
+  workflows: 'top-right',
+  schedule: 'center',
+  rhythm: 'bottom-left',
+  people: 'center',
+  voice: 'bottom-left',
+  sessions: 'bottom-right',
+  gaps: 'top-right',
+  unlock: 'top-right'
+}
+
+export const UNLOCK_SIZE = 'l'
 
 export function unlockCardProps(appName) {
   return {
@@ -176,8 +204,33 @@ export function unlockCardProps(appName) {
   }
 }
 
-/** scan.json → resolved, PLACED widget-card plan (spawn order = narrative order). */
-export function buildBoardPlan(scan) {
+/** A free span for the unlock card against LIVE surfaces (the cached-board re-ensure path).
+ *  Shrinks l→m; null when the stage is truly full (caller parks it). */
+export function findUnlockSlot(surfaces, viewport = null) {
+  const lat = latticeFor(viewport || DEFAULT_VP, 0)
+  for (let size = UNLOCK_SIZE; size; size = SHRINK[size]) {
+    const at = findSlot(surfaces || [], lat, size, NEAR_OF.unlock, 0)
+    if (at) return { slot: { col: at.col, row: at.row, size }, slotStage: 0 }
+  }
+  return null
+}
+
+/** Off-stage parking spot below the stage frame (mirrors the os-tools parkOffstage cascade). */
+function parkSpot(vp, i) {
+  const r = stageRect(0, vp)
+  return { x: Math.round(r.x + 60 + (i % 8) * 64), y: Math.round(r.y + r.h + 100 + (i % 8) * 48) }
+}
+
+/**
+ * scan.json → resolved, PLACED card plan. Spawn order = priority order (what wins the prime
+ * spans, and the assembly the human watches). Pass the LIVE surfaces so occupancy includes the
+ * pinned chat hub and anything else already on stage 0.
+ * Returns cards as either { slot:{col,row,size}, slotStage:0 } (staged tiles) or
+ * { offstage:true, x, y, w, h } (parked below the stage, brain can bring_to_stage later).
+ * The unlock card is part of the plan when FDA is off (role 'unlock', native) so it gets
+ * placement priority right after the gaps card — the director merges appName into its props.
+ */
+export function buildBoardPlan(scan, { surfaces = [], viewport = null } = {}) {
   const props = {}
   for (const role of Object.keys(BUILDERS)) {
     try {
@@ -186,29 +239,45 @@ export function buildBoardPlan(scan) {
       props[role] = null // a malformed scan section skips its card, never kills the board
     }
   }
-  // Placement: fixed slots, then the flex slots by what the scan says this life looks like.
-  const placement = { profile: 'A', gaps: 'C', rhythm: 'D', voice: 'G', sessions: 'H' }
-  const placed = new Set(Object.keys(placement))
   const webFirst = !!(scan.web && scan.web.webFirst && props.workflows)
   const hero = webFirst ? 'workflows' : ['projects', 'workflows', 'schedule'].find((r) => props[r])
-  if (hero) {
-    placement[hero] = 'B'
-    placed.add(hero)
-  }
-  const flexSlots = scan.meta.fda ? ['E', 'F', 'I'] : ['E', 'F'] // FDA off → the unlock card owns slot I
-  for (const slot of flexSlots) {
-    const next = ['schedule', 'people', 'workflows', 'projects'].find((r) => props[r] && !placed.has(r))
-    if (!next) break
-    placement[next] = slot
-    placed.add(next)
-  }
-  const ORDER = ['profile', hero, 'rhythm', 'voice', 'sessions'].concat(flexSlots.map((sl) => Object.keys(placement).find((r) => placement[r] === sl))).concat(['gaps'])
+  const fdaOff = !(scan.meta && scan.meta.fda)
+  if (fdaOff) props.unlock = {} // placement reservation; the director supplies the real props
+  const ORDER = ['profile', hero, 'rhythm', 'gaps', ...(fdaOff ? ['unlock'] : []), 'workflows', 'people', 'schedule', 'voice', 'sessions', 'projects']
+
+  const vp = viewport || DEFAULT_VP
+  const lat = latticeFor(vp, 0)
+  const occupied = [...(surfaces || [])] // live tiles (chat hub) + cards as we place them
   const plan = []
   const emitted = new Set()
+  let parked = 0
   for (const role of ORDER) {
-    if (!role || emitted.has(role) || !props[role] || !placement[role]) continue
+    if (!role || emitted.has(role) || !props[role]) continue
     emitted.add(role)
-    plan.push({ role, widget: WIDGET_OF[role], title: TITLE_OF[role], ...SLOTS[placement[role]], props: { ...props[role], ...(ACCENT_OF[role] || {}) } })
+    const card = {
+      role,
+      ...(role === 'unlock' ? { native: 'unlock' } : { widget: WIDGET_OF[role] }),
+      title: TITLE_OF[role],
+      props: { ...props[role], ...(ACCENT_OF[role] || {}) }
+    }
+    let size = SIZE_FOR[role] ? SIZE_FOR[role](props[role]) : 'm'
+    let at = null
+    while (size) {
+      at = findSlot(occupied, lat, size, NEAR_OF[role] || 'center', 0)
+      if (at) break
+      size = SHRINK[size]
+    }
+    if (at) {
+      card.slot = { col: at.col, row: at.row, size }
+      card.slotStage = 0
+      occupied.push({ id: 'plan:' + role, slot: card.slot, slotStage: 0 })
+    } else {
+      // lattice full: park below the stage, alive and zoom-out visible — never overlap a tile
+      const px = sizePx(SIZE_FOR[role] ? SIZE_FOR[role](props[role]) : 'm')
+      Object.assign(card, { offstage: true, ...parkSpot(vp, parked), w: px.w, h: px.h })
+      parked++
+    }
+    plan.push(card)
   }
   return plan
 }

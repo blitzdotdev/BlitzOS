@@ -14,7 +14,8 @@
     "check": "npm run typecheck && npm run parity && npm run build",
     "onboard": "node scripts/onboarding-scan.mjs --no-fda --prompt src/main/blitzos-onboarding.md --out -",
     "onboard:fda": "node scripts/onboarding-scan.mjs --prompt src/main/blitzos-onboarding.md --out -",
-    "onboard:scan": "node scripts/onboarding-scan.mjs --out -"
+    "onboard:scan": "node scripts/onboarding-scan.mjs --out -",
+    "dist": "bash scripts/dist-mac.sh"
   },
   "dependencies": {
     "@agent-socket/sdk": "file:./vendor/agent-socket-sdk",
@@ -29,6 +30,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "electron": "^31.4.0",
+    "electron-builder": "^26.15.2",
     "electron-vite": "^2.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

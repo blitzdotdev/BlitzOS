@@ -1,0 +1,35 @@
+# BlitzOS packaging (docs/prod-ci.md). Dead-simple by design: one arm64 zip artifact.
+# Signing: electron-builder picks the "Developer ID Application" identity from the keychain
+# (local: your login keychain; CI: the imported temp keychain) — or builds UNSIGNED when
+# CSC_IDENTITY_AUTO_DISCOVERY=false (the updater's xattr-strip keeps unsigned builds usable).
+# Notarization is opt-in via -c.mac.notarize=true (scripts/dist-mac.sh + CI add it when creds exist).
+appId: dev.blitz.os
+productName: BlitzOS
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+  # The widget library + shipped system renderers are read at runtime THROUGH Electron's
+  # asar-patched fs (BLITZ_WIDGETS_DIR defaults to appPath/widgets) — inside the asar is fine.
+  - widgets/**
+  # The onboarding scan runs as a CHILD process (plain node — no asar fs), so these also ship
+  # UNPACKED below; onboarding.ts swaps app.asar -> app.asar.unpacked when packaged.
+  - scripts/onboarding-scan.mjs
+  - src/main/blitzos-onboarding.md
+  - src/main/blitzos-interview.md
+asarUnpack:
+  - scripts/onboarding-scan.mjs
+  - src/main/blitzos-onboarding.md
+  - src/main/blitzos-interview.md
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: zip
+      arch: [arm64]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  extendInfo:
+    # the scan reads user data (Branch B/A) and the app drives local automation
+    NSAppleEventsUsageDescription: BlitzOS automates apps on your behalf.
+npmRebuild: false

@@ -847,6 +847,11 @@ export default function App(): JSX.Element {
         // Carry the chat session id so a per-session chat survives the round-trip (osState → a later
         // hydrate): without it the surface would lose its stage on the next connect and snap back to stage 0.
         sessionId: s.sessionId,
+        // Lattice membership must survive the round-trip too: workspace.mjs stageFields persists
+        // slot/slotStage from THIS push — dropping them here silently demoted every tile to a free
+        // window on the next flush (observed: the seeded case-file board lost its slots).
+        slot: s.slot,
+        slotStage: s.slotStage,
         // Chat + Agent-activity panels are pinned always-on-top — the agent must not cover them
         pinned: isRuntimePanel(s)
       }))

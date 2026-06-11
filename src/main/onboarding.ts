@@ -10,18 +10,21 @@
 // poll the TCC probe (the app's own FDA, which the scan child inherits), and on grant re-scan and
 // visibly deepen the board (real focus time, Messages/Mail cadence), then retire the card.
 //
-// TODO(packaging): app.getAppPath()/scripts assumes the repo layout (dev). A packaged build must
-// ship scripts/onboarding-scan.mjs unpacked and resolve it from resources.
 import { app, ipcMain, shell, type BrowserWindow } from 'electron'
 import { execFileSync, spawn } from 'node:child_process'
+
+// Repo root in dev; app.asar.UNPACKED in a packaged build — the scan runs as a PLAIN-NODE child
+// (no asar fs), so electron-builder.yml ships scripts/onboarding-scan.mjs + the prompt .md files
+// asarUnpack'd and we resolve them there.
+const appRoot = (): string => app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked')
 import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain } from './osActions'
 import { waitForEvents, latestSeq } from './events'
 import { getWidgetSource } from './widget-catalog.mjs'
-import { buildBoardPlan, unlockCardProps, UNLOCK_POS } from './onboarding-board.mjs'
-import type { ScanJson } from './onboarding-board.mjs'
+import { buildBoardPlan, unlockCardProps, findUnlockSlot } from './onboarding-board.mjs'
+import type { ScanJson, StagedSurface } from './onboarding-board.mjs'
 import { runCannedInterview } from './onboarding-interview.mjs'
 
 const WS_NAME = 'case-file'
@@ -83,7 +86,7 @@ function runScan(wsPath: string): Promise<ScanJson | null> {
   return new Promise((resolve) => {
     const dir = onboardingDir(wsPath)
     mkdirSync(dir, { recursive: true })
-    const script = join(app.getAppPath(), 'scripts', 'onboarding-scan.mjs')
+    const script = join(appRoot(), 'scripts', 'onboarding-scan.mjs')
     const jsonPath = join(dir, 'scan.json')
     if (!existsSync(script)) {
       progress({ phase: 'error', error: 'scan script not found' })
@@ -92,7 +95,7 @@ function runScan(wsPath: string): Promise<ScanJson | null> {
     }
     // --prompt prepends the interviewer instructions, so context.md = the brain's full briefing
     // (rules + scan) in one read. Missing prompt file (packaged build) just degrades to scan-only.
-    const promptMd = join(app.getAppPath(), 'src', 'main', 'blitzos-onboarding.md')
+    const promptMd = join(appRoot(), 'src', 'main', 'blitzos-onboarding.md')
     const child = spawn(
       process.execPath,
       [script, '--quiet', '--progress', '--out', join(dir, 'context.md'), '--json', jsonPath, ...(existsSync(promptMd) ? ['--prompt', promptMd] : [])],
@@ -148,23 +151,35 @@ function writeBoard(wsPath: string, board: BoardFile): void {
   writeFileSync(join(onboardingDir(wsPath), 'board.json'), JSON.stringify(board, null, 2))
 }
 
+/** Live surfaces + viewport for lattice occupancy (the pinned chat hub already holds a span). */
+function liveStage(): { surfaces: StagedSurface[]; viewport: { w: number; h: number } | null } {
+  const st = osGetState() as { surfaces?: StagedSurface[]; viewport?: { w: number; h: number } }
+  return { surfaces: st.surfaces || [], viewport: st.viewport || null }
+}
+
+/** Re-ensure path (cached board): slot the unlock card against the LIVE lattice; a full stage
+ *  degrades to a free-floating window (floats above tiles, never overlaps them). */
 function spawnUnlockCard(): string {
-  return osCreateSurface({ kind: 'native', component: 'unlock', title: 'Unlock the personal layer', ...UNLOCK_POS, props: unlockCardProps(fdaAppName()) })
+  const live = liveStage()
+  const at = findUnlockSlot(live.surfaces, live.viewport)
+  return osCreateSurface({ kind: 'native', component: 'unlock', title: 'Unlock the personal layer', ...(at || {}), props: unlockCardProps(fdaAppName()) })
 }
 
 async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
   const board: BoardFile = { v: 1, seededAt: Date.now(), fdaAtSeed: scan.meta.fda, ids: {} }
-  const plan = buildBoardPlan(scan)
+  const plan = buildBoardPlan(scan, liveStage())
   progress({ phase: 'seeding', cards: plan.length })
   for (const card of plan) {
-    const widget = getWidgetSource(card.widget)
-    if (!widget) continue
-    board.ids[card.role] = osCreateSurface({ kind: 'srcdoc', html: widget.html, title: card.title, x: card.x, y: card.y, w: card.w, h: card.h, props: card.props })
+    // staged cards carry slot/slotStage (tiles on the lattice); parked ones carry x/y/w/h below the stage
+    const place = card.slot ? { slot: card.slot, slotStage: card.slotStage } : { x: card.x, y: card.y, w: card.w, h: card.h }
+    if (card.native === 'unlock') {
+      board.ids.unlock = osCreateSurface({ kind: 'native', component: 'unlock', title: card.title, ...place, props: unlockCardProps(fdaAppName()) })
+    } else {
+      const widget = getWidgetSource(card.widget as string)
+      if (!widget) continue
+      board.ids[card.role] = osCreateSurface({ kind: 'srcdoc', html: widget.html, title: card.title, ...place, props: card.props })
+    }
     await sleep(170) // staggered assembly — the human watches the board build
-  }
-  if (!scan.meta.fda) {
-    board.ids.unlock = spawnUnlockCard()
-    await sleep(170)
   }
   writeBoard(wsPath, board)
   osGoToPrimary()
@@ -199,7 +214,7 @@ function writeInterview(wsPath: string, st: InterviewState): void {
 function ensureInterviewArtifacts(wsPath: string): void {
   const dir = onboardingDir(wsPath)
   mkdirSync(dir, { recursive: true })
-  const duty = join(app.getAppPath(), 'src', 'main', 'blitzos-interview.md')
+  const duty = join(appRoot(), 'src', 'main', 'blitzos-interview.md')
   try {
     if (existsSync(duty)) writeFileSync(join(dir, 'interview.md'), readFileSync(duty, 'utf8'))
   } catch {
@@ -305,6 +320,7 @@ async function deepen(wsPath: string): Promise<void> {
     return
   }
   for (const card of buildBoardPlan(scan)) {
+    if (card.role === 'unlock') continue // its lifecycle is the granted→retire arc below
     const id = board.ids[card.role]
     if (id) osUpdateSurface(id, { props: card.props })
   }
@@ -316,7 +332,7 @@ async function deepen(wsPath: string): Promise<void> {
     delete board.ids.unlock
   }
   writeBoard(wsPath, board)
-  osSay('Full Disk Access granted — the personal layer is on the board: real screen time, Messages cadence, Mail correspondents, Safari.')
+  osSay('Full Disk Access granted. The personal layer is on the board: real screen time, Messages cadence, Mail correspondents, Safari.')
   progress({ phase: 'deepened' })
 }
 

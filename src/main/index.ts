@@ -19,6 +19,7 @@ import { registerWidgets } from './widgets'
 import { startSessionPersistence } from './persistence'
 import { registerWallpaperIpc } from './wallpaper'
 import { registerOnboarding, interviewBootTask, claudeCliPath } from './onboarding'
+import { initUpdater } from './update'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -245,6 +246,7 @@ app.whenReady().then(() => {
 
   // Onboarding director (P1): local scan → Case File workspace → template board → FDA unlock loop.
   registerOnboarding(() => mainWindow)
+  initUpdater() // OTA poll (packaged builds only — no-op in dev)
 
   // #51 general provider-access substrate: route write-approval cards to the renderer, and accept the
   // human's approve/deny/consent back. Reads need none of this; only WRITES surface a card.
