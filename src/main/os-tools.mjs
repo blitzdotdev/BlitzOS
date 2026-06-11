@@ -37,6 +37,38 @@ function parse(body) {
   }
 }
 
+// Telemetry seam: ONE observer sees every tool call across every transport. A no-op until the host
+// (telemetry.ts) sets it; must never be able to break a tool call.
+let toolTap = null
+export function setToolTap(fn) {
+  toolTap = fn
+}
+function instrument(t) {
+  return {
+    ...t,
+    handler: async (ctx) => {
+      const start = Date.now()
+      let status = 200
+      try {
+        const out = await t.handler(ctx)
+        if (out && typeof out === 'object' && typeof out.status === 'number' && 'body' in out) status = out.status
+        return out
+      } catch (e) {
+        status = 500
+        throw e
+      } finally {
+        if (toolTap) {
+          try {
+            toolTap({ path: t.path, transport: ctx?.transport, ms: Date.now() - start, status })
+          } catch {
+            /* the tap must never break the tool */
+          }
+        }
+      }
+    }
+  }
+}
+
 // Item 7: a CONTENT-AGNOSTIC web-host → integration map, so a web surface's host can be correlated to a
 // CONNECTED account. This is a hint ("an account is connected for this site"), NOT a claim about the
 // surface's actual logged-in account (a webview can be signed into a DIFFERENT account than the OAuth
@@ -563,6 +595,21 @@ export function makeOsTools(ops) {
       }
     },
     {
+      path: '/user_say',
+      description:
+        "TEST/DEV syscall (localhost transport ONLY — rejected over the relay): enter a chat message AS THE USER through the exact same path as the human composer (appends '### user' to the session's chat.md, wakes that session's brain with a message moment, spawns it on demand). Exists so a co-located test agent can drive BlitzOS like a real user; an external agent must never be able to forge user input. Args: {text, session?}.",
+      input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, session: { type: 'string' } } },
+      handler: ({ body, transport }) => {
+        if (transport !== 'localhost') return { status: 403, body: { error: 'user_say is localhost-only (trusted co-located test path)' } }
+        if (!ops.userMessage) return { status: 400, body: { error: 'user_say not available in this transport' } }
+        const b = parse(body)
+        const text = String(b.text || '')
+        if (!text.trim()) return { status: 400, body: { error: 'text required' } }
+        ops.userMessage(text, b.session != null ? String(b.session) : '0')
+        return { ok: true }
+      }
+    },
+    {
       path: '/customize_widget',
       description:
         "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. The Chat is a HUB: onProps gives { sessions:[{id,title,status}], threads:{<id>:[{role,text}]}, status:{<id>:'thinking'} }; send with blitz.sendMessage(text, sessionId) and manage sessions with blitz.chat('new'|'rename', args). Agent messages may embed markdown images / inline <svg> / a ```blitz-ui {type,prompt,options} card. Use the --blitz-* light tokens. Read the current source with get_system_ui first. Args: {name, html, session?}.",
@@ -697,7 +744,7 @@ export function makeOsTools(ops) {
         return { ok: ops.resolveAction(String(a.id), a.resolution ? String(a.resolution) : 'done') }
       }
     }
-  ]
+  ].map(instrument)
 }
 
 /** Build the registry + a path lookup for a runtime's ops (the localhost dispatcher needs the by-path map). */

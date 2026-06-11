@@ -6,6 +6,7 @@ import { dropConsent } from './widgets'
 import { ingestSignals, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName, appendChatMessage, resolveWorkspace } from './workspace.mjs'
+import { tel } from './telemetry'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -128,7 +129,10 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
       cached = s as OsState
       reconcilePending(cached) // confirm/expire optimistic agent creates against the authoritative push
     },
-    broadcast: (obj) => getWin()?.webContents.send('os:action', obj),
+    broadcast: (obj) => {
+      tel('act', obj) // telemetry: the renderer's entire feed = the replayable content stream
+      getWin()?.webContents.send('os:action', obj)
+    },
     onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
     // A chat session's claude runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
@@ -181,7 +185,20 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.on('os:state', (_e, state: OsState) => {
-    if (state && Array.isArray(state.surfaces)) wsHost?.onStatePush(state)
+    if (state && Array.isArray(state.surfaces)) {
+      wsHost?.onStatePush(state)
+      // telemetry: a compact layout keyframe (~every 20s, not every push) — replay resyncs from these;
+      // content fidelity comes from the 'act' stream, so heavy props are deliberately dropped here.
+      if (Date.now() - lastStateKeyframe > 20_000) {
+        lastStateKeyframe = Date.now()
+        const s = state as unknown as { mode?: unknown; surfaces: Array<Record<string, unknown>> }
+        tel('state', {
+          mode: s.mode,
+          n: s.surfaces.length,
+          surfaces: s.surfaces.map((x) => ({ id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, title: x.title, url: x.url, slot: x.slot }))
+        })
+      }
+    }
   })
   ipcMain.on('os:webview', (_e, m: { surfaceId: string; wcid: number }) => {
     if (m && m.surfaceId) {
@@ -207,11 +224,7 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     // payload is { text, sessionId } (object) — tolerate a bare string (older renderer) → session '0'.
     const text = typeof payload === 'string' ? payload : String((payload as { text?: unknown })?.text ?? '')
     const sid = payload && typeof payload === 'object' && (payload as { sessionId?: unknown }).sessionId != null ? String((payload as { sessionId?: unknown }).sessionId) : '0'
-    if (text.trim()) {
-      wsHost?.appendChat('user', text, sid) // write to that session's chat.md + echo to its widget
-      emitUserMessage(text, sid) // wake ONLY that session's agent (trigger:'message')
-      onChatActivity?.(sid, true) // on-demand: spawn this session's brain if it isn't running, and keep it alive
-    }
+    osUserMessage(text, sid)
   })
   // The human placed a spatial annotation on a surface + asked about that point (item 5b). The question
   // lands in chat (so it reads as a normal turn the agent answers) AND wakes the agent with a surface-
@@ -434,6 +447,17 @@ export function osSay(text: string, sessionId = '0', workspace?: string): void {
   wsHost?.appendChat('agent', text, sessionId)
   onChatActivity?.(String(sessionId), false) // keep an EXISTING local brain alive through long work; never spawn
 }
+/** USER → agent: enter a chat message exactly as the human composer does (append '### user' to that
+ *  session's chat.md + echo to its widget, wake the session's agent with a 'message' moment, and spawn
+ *  its brain on demand). The renderer IPC and the localhost-only `user_say` test syscall both land here,
+ *  so programmatic user input is indistinguishable from typed input — the test rig's input path. */
+export function osUserMessage(text: string, sessionId = '0'): void {
+  if (!text.trim()) return
+  const sid = String(sessionId)
+  wsHost?.appendChat('user', text, sid) // write to that session's chat.md + echo to its widget
+  emitUserMessage(text, sid) // wake ONLY that session's agent (trigger:'message')
+  onChatActivity?.(sid, true) // on-demand: spawn this session's brain if it isn't running, and keep it alive
+}
 /** The agent customizes a session's widget UI (blitz-[<id>-]<name>.html) — currently 'chat'. Live-reloads. */
 export function osCustomizeWidget(name: string, html: string, sessionId = '0'): { ok: boolean; rel?: string; error?: string } {
   return wsHost ? wsHost.customizeWidget(String(name), String(html), sessionId) : { ok: false, error: 'no workspace host' }
@@ -442,6 +466,7 @@ export function osCustomizeWidget(name: string, html: string, sessionId = '0'): 
 export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
 }
+let lastStateKeyframe = 0
 // Chat activity hook (legacy seam, kept for liveness signals): a USER MESSAGE (spawn=true) may bring an
 // agent up; an AGENT REPLY (spawn=false) only re-arms liveness — it must NEVER spawn one, or an EXTERNAL
 // agent driving over the relay (whose /say also lands in osSay) would conscript a duplicate and both answer.

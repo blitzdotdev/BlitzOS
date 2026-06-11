@@ -17,6 +17,7 @@ import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
 // Keep web surfaces logged in across quit/relaunch (cookie/localStorage flush + unload).
 import { startSessionPersistence } from './persistence'
+import { initTelemetry } from './telemetry'
 import { registerWallpaperIpc } from './wallpaper'
 import { registerOnboarding, interviewBootTask, claudeCliPath } from './onboarding'
 import { initUpdater, openBuildPicker, isDevMachine } from './update'
@@ -195,6 +196,11 @@ app.whenReady().then(() => {
   // the shared workspace host (hydrate/persist/switch/list/create/thumb) — the SAME module the server
   // backend uses, so workspaces are one feature across both modes.
   initOsActions(() => mainWindow)
+
+  // Session telemetry (plans/blitzos-telemetry.md): events + frames → the replay dashboard. Off unless
+  // ~/.blitzos/telemetry.json exists; BLITZ_TELEMETRY=0 kills it. After initOsActions so the taps see
+  // a wired control plane; before everything else so boot-time errors are captured.
+  initTelemetry(() => mainWindow)
 
   // Claim the root + read the previous run's dirty bit (announced below once the control plane is up,
   // so a watching agent's /events long-poll can actually deliver the moment).

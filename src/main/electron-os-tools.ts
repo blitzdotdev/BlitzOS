@@ -21,6 +21,7 @@ import {
   osReadWindow,
   osControlSurface,
   osSay,
+  osUserMessage,
   osCustomizeWidget,
   osSpawnChatSession,
   osRenameChatSession,
@@ -63,6 +64,8 @@ export const electronOps = {
   readWindow: (id: string, script?: string) => osReadWindow(id, script),
   controlSurface: (id: string, action: unknown) => osControlSurface(id, action as Parameters<typeof osControlSurface>[1]),
   say: (text: string, sessionId?: string, workspace?: string) => osSay(text, sessionId, workspace),
+  // user_say (localhost-only test syscall): programmatic user input through the human composer's exact path
+  userMessage: (text: string, sessionId?: string) => osUserMessage(text, sessionId),
   customizeWidget: (name: string, html: string, sessionId?: string) => osCustomizeWidget(name, html, sessionId),
   spawnChatSession: (title?: string) => osSpawnChatSession(title),
   renameChatSession: (sessionId: string, title: string) => osRenameChatSession(sessionId, title),

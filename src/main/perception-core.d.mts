@@ -21,6 +21,8 @@ export function isContentShared(surfaceId: string): boolean
 export function dropContentShare(surfaceId: string): void
 export function redactMoment(m: BlitzMoment): BlitzMoment
 export function ingestSignals(surfaceId: string, raw: Array<Record<string, unknown>>): void
+/** Telemetry seam: observe every emitted moment. No-op until set; never breaks the emit path. */
+export function setMomentTap(fn: ((moment: Record<string, unknown>) => void) | null): void
 export function latestSeq(): number
 export function emitSurfaceAction(surfaceId: string, action: Record<string, unknown>): void
 export function emitUserMessage(text: string, sessionId?: string): void

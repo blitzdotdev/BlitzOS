@@ -159,10 +159,24 @@ function armSelectFlush(surfaceId) {
   selectTimers.set(surfaceId, t)
 }
 
+// Telemetry seam: ONE observer sees every emitted moment (the agent's eyes, recorded). No-op until
+// the host sets it; must never be able to break the emit path.
+let momentTap = null
+export function setMomentTap(fn) {
+  momentTap = fn
+}
+
 /** Append a finished moment to the LOG and wake every long-poll waiter (each gets the slice it may
  *  see, per visibleTo). The ONE place moments enter the stream — every emitter funnels here so the
  *  ring cap + waiter wake can never drift between emitters. */
 function emit(moment) {
+  if (momentTap) {
+    try {
+      momentTap(moment)
+    } catch {
+      /* the tap must never break perception */
+    }
+  }
   if (!moment.workspace) {
     const ws = currentWorkspace()
     if (ws) moment.workspace = ws // stamp ONCE at the funnel — every emitter inherits the scoping
