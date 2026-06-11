@@ -11,6 +11,10 @@ export interface AgentRunnerOpts {
   sessionId?: string
   /** Active workspace folder — where the custom claude session id is persisted (.blitzos/sessions/<id>/meta.json). */
   getWorkspacePath?: () => string | null | undefined
+  /** Optional standing duty, re-read per spawn (null/undefined = none). The text is injected into the
+   *  brain's bootstrap prompt and explicitly licenses unprompted action for its scope (e.g. the
+   *  onboarding interview). Owned by the caller — the runner stays policy-free. */
+  getBootTask?: () => string | null | undefined
 }
 
 /** A handle to the running brain supervisor. */

@@ -17,7 +17,11 @@
 
 export const UI_KIT = `<style>
 :root{
-  --blitz-accent:#1a1b1d; --blitz-accent-ink:#ffffff; /* TEMP neutral (was coral #f4673b) — matches the OS accent */
+  --blitz-accent:#1a1b1d; --blitz-accent-ink:#ffffff; /* default neutral — a widget recolors itself via props.accent (script below) */
+  /* The Blitz paper palette (plans/agent-os-design-system.md §3) — the distribution cards sample
+     their accents from. Muted, light-theme-safe; coral is the signature. */
+  --blitz-coral:#FF8D61; --blitz-terracotta:#924B2F; --blitz-sage:#7FA98C; --blitz-slate:#5B78AA;
+  --blitz-dust:#7FA0C8; --blitz-mauve:#493839; --blitz-tan:#A78B6A; --blitz-marker:#E8C71D;
   --blitz-bg:#ececea; --blitz-surface:#ffffff; --blitz-surface-2:#f1f1ee;
   --blitz-text:#1a1b1d; --blitz-text-dim:#797c7f;
   --blitz-hairline:rgba(0,0,0,.10); --blitz-radius:10px; --blitz-radius-sm:7px;
@@ -33,6 +37,17 @@ body.blitz-app{height:100%;display:flex;flex-direction:column;overflow:hidden}
 <script>
 (function(){
   if (window.__blitzUIKit) return; window.__blitzUIKit = true;
+  // Universal per-widget theming: ANY widget spawned with props.accent (+ optional props.accentInk)
+  // recolors its --blitz-accent — so a board can sample each card from the palette with zero
+  // per-widget code. Rides the same blitz:init/blitz:props messages the bridge shim consumes.
+  window.addEventListener('message', function(ev){
+    var d = ev && ev.data; if (!d || (d.type !== 'blitz:init' && d.type !== 'blitz:props')) return;
+    var p = d.props || {};
+    if (p.accent) {
+      document.documentElement.style.setProperty('--blitz-accent', String(p.accent));
+      document.documentElement.style.setProperty('--blitz-accent-ink', String(p.accentInk || '#ffffff'));
+    }
+  });
   function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else if(k==='html') n.innerHTML=attrs[k]; else n.setAttribute(k, attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
   function shadow(host, css, html){ var sr=host.attachShadow({mode:'open'}); sr.innerHTML='<style>'+css+'</style>'+(html||'<slot></slot>'); return sr; }
 

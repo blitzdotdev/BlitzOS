@@ -129,7 +129,7 @@ export function createWorkspaceHost(a) {
       // isRuntime predicate in store.ts applyReconcile — the two run the same reconcile contract and any
       // drift is exactly the divergence the parity guard exists to prevent. terminal/sessions/inbox are
       // reconstructed from session/action-item events on load, so they're kept across a reconcile here too.
-      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'terminal' || s.component === 'sessions' || s.component === 'inbox'))
+      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'terminal' || s.component === 'sessions' || s.component === 'inbox' || s.component === 'unlock'))
       const reconciledIds = new Set(r.surfaces.map((s) => s.id))
       const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
       const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))

@@ -257,6 +257,28 @@ const api = {
     thumbUrl: (name: string, ts?: number) => `blitz-thumb://t/?name=${encodeURIComponent(name)}${ts ? `&t=${ts}` : ''}`
   } as WorkspacesApi,
 
+  // Onboarding (P1 director): start the scan+board flow, stream real scan progress to the boot
+  // screen, and drive the FDA tutorial-unlock card.
+  onboarding: {
+    start(): Promise<{ ok: boolean; cached?: boolean }> {
+      return ipcRenderer.invoke('onboarding:start')
+    },
+    fdaStatus(): Promise<{ fda: boolean; appName: string }> {
+      return ipcRenderer.invoke('onboarding:fda-status')
+    },
+    openFdaSettings(): Promise<{ ok: boolean; appName: string }> {
+      return ipcRenderer.invoke('onboarding:open-fda-settings')
+    },
+    dismissUnlock(): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:dismiss-unlock')
+    },
+    onProgress(cb: (p: Record<string, unknown>) => void): () => void {
+      const listener = (_e: unknown, p: Record<string, unknown>): void => cb(p)
+      ipcRenderer.on('onboarding:progress', listener)
+      return () => ipcRenderer.removeListener('onboarding:progress', listener)
+    }
+  },
+
   integrations: {
     list(): Promise<IntegrationStatus[]> {
       return ipcRenderer.invoke('integrations:list')

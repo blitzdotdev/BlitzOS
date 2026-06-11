@@ -414,6 +414,11 @@ let onChatActivity: ((sessionId: string, spawn: boolean) => void) | null = null
 export function setOnChatActivity(fn: (sessionId: string, spawn: boolean) => void): void {
   onChatActivity = fn
 }
+/** Spawn (or keep alive) a session's brain WITHOUT a chat message — the onboarding director uses
+ *  this to start the resident interviewer at board-ready (its standing duty rides the boot task). */
+export function osKickBrain(sessionId = '0'): void {
+  onChatActivity?.(String(sessionId), true)
+}
 // The human hit Stop on a session. index.ts owns the brain processes, so it registers the KILLER here and
 // osStopChatSession fires it. Kept separate from onChatActivity so a stop can never be misread as activity
 // (which would re-arm the idle timer instead of tearing the brain down).

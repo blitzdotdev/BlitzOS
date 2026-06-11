@@ -27,7 +27,7 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms))
  *  source of truth for identity, the /events loop, every tool, window management, and the
  *  design language, so this stays a thin pointer to it and does NOT restate behavior
  *  (a second copy here would drift from the doc). */
-function brainPrompt(url, sessionId = '0', marker = BRAIN_MARKER) {
+function brainPrompt(url, sessionId = '0', marker = BRAIN_MARKER, bootTask = null) {
   const base = url.replace(/\/agents\.md$/, '')
   const primary = !sessionId || String(sessionId) === '0'
   const chatFile = primary ? 'chat.md' : `chat-${sessionId}.md`
@@ -43,6 +43,9 @@ function brainPrompt(url, sessionId = '0', marker = BRAIN_MARKER) {
     `$BASE = ${base} ; every tool is POST $BASE/<tool> with a JSON body; use curl for every call.`,
     "IMPORTANT OVERRIDE for this session: the desktop is ALREADY set up by the user. Do NOT assemble, rearrange, resize, recenter, move, or close ANYTHING on connect or on your own — ignore the manual's 'assemble the desktop on connect' guidance entirely. This is the user's curated, live desktop.",
     `CONTEXT FIRST (you respawn often + lose in-memory context): ON CONNECT, before anything, recover your conversation history — call \`list_state\` to get \`workspace_path\`, then with your Bash tool run \`tail -n 200 "$workspace_path/${chatFile}"\`. That file is YOUR chat history with the user and it PERSISTS across your restarts (the /events moment log does NOT — it resets). Read it so you understand follow-ups like 'continue the X thing' or 'go'. If the LAST line is an unanswered user message, act on it now.`,
+    // The OS can hand the brain ONE standing duty (e.g. the onboarding interview). The duty text is
+    // owned by whoever set it (the runner stays policy-free); it explicitly licenses unprompted action.
+    ...(bootTask ? [`STANDING DUTY — sanctioned by the OS, do it FIRST after recovering context (it OVERRIDES the do-nothing-unprompted rule below until it is done, and only for its own scope): ${bootTask}`] : []),
     `Your ONLY job: respond when the user types in YOUR chat. Poll \`POST $BASE/events {"since":0,"wait":0${sess}}\` once for the live backlog, then set \`since\` to the returned \`latest\` and run the /events long-poll loop FOREVER (wait:25${sess ? `, always including ${sess.slice(1)}` : ''}), responding to each new trigger:'message' and doing EXACTLY what it asks.`,
     `BE VISIBLE — the user must always SEE what you're doing. Reply + progress ONLY via \`POST $BASE/say {"text":"…"${sess}}\` (this lands in YOUR chat). The MOMENT you get a message, /say a one-line acknowledgement of your PLAN, then /say a short note before/after each meaningful step. Never go quiet for more than a few seconds of work without a /say. NEVER exit or stop the loop on your own — if a poll returns nothing, immediately poll again. DO NOTHING unprompted. Going silent, or acting without saying what you're doing, is a FAILURE.`
   ].join('\n')
@@ -65,7 +68,7 @@ function killStaleBrains(marker = BRAIN_MARKER) {
  *   cmd: the agent binary ('claude' default). label: log prefix.
  * @returns {() => void} stop function.
  */
-export function startAgentRunner({ getUrl, cmd = 'claude', label = 'agent-runner', sessionId = '0', getWorkspacePath } = {}) {
+export function startAgentRunner({ getUrl, cmd = 'claude', label = 'agent-runner', sessionId = '0', getWorkspacePath, getBootTask } = {}) {
   let stopped = false
   let child = null
   let fastFails = 0
@@ -102,9 +105,10 @@ export function startAgentRunner({ getUrl, cmd = 'claude', label = 'agent-runner
       }
       const startedAt = Date.now()
       const ws = getWorkspacePath && getWorkspacePath() // run the agent IN the workspace (cwd) — required for --resume + coherent file/list_state
+      const bootTask = typeof getBootTask === 'function' ? getBootTask() : null // re-read per spawn: a finished duty drops off the next prompt
       await new Promise((resolve) => {
         try {
-          child = spawn(cmd, ['-p', brainPrompt(url, sessionId, marker), ...sessionArgs(), '--dangerously-skip-permissions'], {
+          child = spawn(cmd, ['-p', brainPrompt(url, sessionId, marker, bootTask), ...sessionArgs(), '--dangerously-skip-permissions'], {
             cwd: ws || undefined,
             stdio: ['ignore', 'ignore', 'ignore']
           })

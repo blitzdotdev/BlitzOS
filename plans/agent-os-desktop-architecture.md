@@ -1,6 +1,8 @@
 # Agent OS Desktop: Architecture & Build Plan
 
 > **⚠️ Superseded for the vision by [`agent-os-dynamic-architecture.md`](agent-os-dynamic-architecture.md)** (2026-06-05) — the dynamic, AI-driven OS architecture (resident brain, perception→moments→wake loop, suggest-&-confirm autonomy, persistence/profile, attention/follow) + the phased roadmap. This doc remains useful for the original surface/canvas slice rationale.
+>
+> **⚠️ Navigation model superseded by [`blitzos-stage-slot-desktop.md`](blitzos-stage-slot-desktop.md)** (2026-06-10) — the human-facing infinite pan/zoom canvas is replaced by a fixed macOS-style slotted desktop (Stage) + an off-screen agent work zone (Backstage); widgets never reflow, agents place by slot, never by pixels.
 
 **Status:** Building. Prototype slice #1 (canvas + live windows) in progress.
 **Date:** 2026-06-03

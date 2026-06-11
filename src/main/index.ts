@@ -18,6 +18,7 @@ import { startAgentRunner } from './agent-runner.mjs'
 // Keep web surfaces logged in across quit/relaunch (cookie/localStorage flush + unload).
 import { startSessionPersistence } from './persistence'
 import { registerWallpaperIpc } from './wallpaper'
+import { registerOnboarding, interviewBootTask, claudeCliPath } from './onboarding'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -223,6 +224,9 @@ app.whenReady().then(() => {
   // Onboarding/boot frosted backdrop: serve the user's macOS wallpaper to the renderer.
   registerWallpaperIpc()
 
+  // Onboarding director (P1): local scan → Case File workspace → template board → FDA unlock loop.
+  registerOnboarding(() => mainWindow)
+
   // #51 general provider-access substrate: route write-approval cards to the renderer, and accept the
   // human's approve/deny/consent back. Reads need none of this; only WRITES surface a card.
   setProviderBroadcast((a) => mainWindow?.webContents.send('os:action', a))
@@ -292,14 +296,18 @@ app.whenReady().then(() => {
   // re-spawned brain continues exactly where it left off. BLITZ_AGENT only overrides the COMMAND now — it no
   // longer gates existence. Supervision (never decisions) stays here; the agent is the brain.
   const IDLE_MS = 8 * 60 * 1000
-  const brainCmd = (): string => (process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : 'claude')
+  // BLITZ_AGENT overrides the command; else the login-shell-resolved `claude` (GUI PATH often lacks
+  // /opt/homebrew/bin, so a bare 'claude' can fail in packaged/Finder launches while the CLI exists).
+  const brainCmd = (): string => (process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : claudeCliPath() || 'claude')
   const brains = new Map<string, { runner: { stop: () => void; restart: () => void }; idle: ReturnType<typeof setTimeout> | null }>()
   const ensureBrain = (sessionId: string, spawn: boolean): void => {
     const id = String(sessionId)
     let b = brains.get(id)
     if (!b) {
       if (!spawn) return // an agent reply (spawn=false) only keeps an EXISTING brain alive — never starts one
-      const runner = startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: brainCmd(), label: 'chat-' + id, sessionId: id, getWorkspacePath: () => osWorkspaceContext().workspace_path })
+      // Session '0' (the primary) carries the onboarding-interview standing duty while it's pending —
+      // re-read per spawn, so finishing the interview drops it from the next prompt automatically.
+      const runner = startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: brainCmd(), label: 'chat-' + id, sessionId: id, getWorkspacePath: () => osWorkspaceContext().workspace_path, getBootTask: id === '0' ? interviewBootTask : undefined })
       b = { runner, idle: null }
       brains.set(id, b)
       console.log(`[brain ${id}] spawned on demand`)

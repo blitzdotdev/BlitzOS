@@ -559,7 +559,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const isRuntime = (w: Surface): boolean =>
         w.role === 'chat' ||
         w.role === 'activity' ||
-        (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder' || w.component === 'terminal' || w.component === 'sessions' || w.component === 'inbox'))
+        (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder' || w.component === 'terminal' || w.component === 'sessions' || w.component === 'inbox' || w.component === 'unlock'))
       const keepRuntime = s.surfaces.filter(isRuntime)
       const localById = new Map(s.surfaces.map((w) => [w.id, w]))
       // A reconcile's `incoming` can echo back runtime-only surfaces (the host keeps un-persisted state

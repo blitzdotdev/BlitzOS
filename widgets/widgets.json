@@ -35,6 +35,48 @@
     "version": 1
   },
   {
+    "name": "profile",
+    "description": "Thinking-widget. An identity/header card for ONE subject — big name, key facts as labelled chips, optional note. The centerpiece of a dossier/case-file board. Drive with update_surface{props:{kicker?,name,sub?,facts?:[{k,v}],note?}}.",
+    "needs": [],
+    "props": { "title": "Profile" },
+    "version": 1
+  },
+  {
+    "name": "rhythm",
+    "description": "Thinking-widget. A week×hour activity punchcard (heat grid) + top time-sinks as bars. For WHEN something happens — work rhythm, usage, cadence. Drive with update_surface{props:{punch:{'<weekday0-6>:<hour0-23>':n},peakHours?:[h..],activeWeekdays?:[names],topApps?:[{app,secs?|n?}],note?}}.",
+    "needs": [],
+    "props": { "title": "Rhythm" },
+    "version": 1
+  },
+  {
+    "name": "toolbox",
+    "description": "Thinking-widget. An inventory of chips in labelled sections — tools, tags, skills, ingredients, any flat sets; high-count items emphasize themselves. Drive with update_surface{props:{sections:[{label,items:[{name,n?}]}]}}.",
+    "needs": [],
+    "props": { "title": "Toolbox" },
+    "version": 1
+  },
+  {
+    "name": "quotes",
+    "description": "Thinking-widget. Verbatim pull-quotes with source tags — a voice/evidence card for showing EXACTLY what someone said or wrote. Drive with update_surface{props:{items:[{text,source?}],note?}}.",
+    "needs": [],
+    "props": { "title": "Quotes" },
+    "version": 1
+  },
+  {
+    "name": "workflows",
+    "description": "Thinking-widget. The web tools someone lives in, as rows with one-click Open (spawns the site as a live web surface via open_window). For surfacing/importing a person's browser-based workflow. Drive with update_surface{props:{items:[{name,host,n?,integration?}],note?}}.",
+    "needs": [],
+    "props": { "title": "Workflows" },
+    "version": 1
+  },
+  {
+    "name": "gaps",
+    "description": "Thinking-widget. Open questions / missing evidence as dashed empty slots — externalizes what is NOT known yet; flip a slot with done:true when answered. Drive with update_surface{props:{items:[{q,hint?,done?}],note?}}.",
+    "needs": [],
+    "props": { "title": "Gaps" },
+    "version": 1
+  },
+  {
     "name": "discord-servers",
     "description": "Your Discord servers (guilds) as a live grid — icons, names, owner badge; click to open in Discord.",
     "needs": ["discord"],

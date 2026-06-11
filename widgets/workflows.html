@@ -1,0 +1,55 @@
+<!doctype html><meta charset="utf-8"><title>Workflows</title>
+<!-- Thinking-widget: the web tools someone lives in — each row opens as a live surface here.
+     Drive with update_surface{props:{items:[{name,host,n?,integration?}],note?}}. -->
+<style>
+  .wrap{padding:11px 13px}
+  .row{display:flex;align-items:center;gap:11px;padding:8px 9px;border:1px solid var(--blitz-hairline);border-radius:var(--blitz-radius);background:var(--blitz-surface-2);margin-bottom:7px}
+  .row:last-of-type{margin-bottom:2px}
+  .av{flex:0 0 30px;height:30px;border-radius:9px;display:grid;place-items:center;font:700 13px var(--blitz-font);background:var(--blitz-surface);border:1px solid var(--blitz-hairline);position:relative;overflow:hidden}
+  .av img{width:20px;height:20px;display:block}
+  .av b{position:absolute;inset:0;display:none;place-items:center}
+  .av.fb{border:none}
+  .av.fb img{display:none}
+  .av.fb b{display:grid}
+  .nm{flex:1;min-width:0}
+  .nm b{font-size:12.5px;font-weight:600;display:block}
+  .nm .h{font:10px ui-monospace,monospace;color:var(--blitz-text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+  .badge{font:9px ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--blitz-accent);border:1px solid var(--blitz-accent);border-radius:999px;padding:2px 7px;white-space:nowrap}
+  .open{border:none;border-radius:999px;background:var(--blitz-accent);color:var(--blitz-bg);font:600 11px var(--blitz-font);padding:6px 13px;cursor:pointer}
+  .open:hover{opacity:.85}
+  .note{font-size:11px;color:var(--blitz-text-dim);margin-top:9px;line-height:1.45}
+  .wrap.intro .row{animation:in .3s both}
+  .wrap.intro .row:nth-child(2){animation-delay:.05s}.wrap.intro .row:nth-child(3){animation-delay:.1s}.wrap.intro .row:nth-child(4){animation-delay:.15s}.wrap.intro .row:nth-child(5){animation-delay:.2s}.wrap.intro .row:nth-child(6){animation-delay:.25s}
+  @keyframes in{from{opacity:0;transform:translateX(-6px)}}
+</style>
+<blitz-titlebar><span id="hd">Workflows</span></blitz-titlebar>
+<div class="wrap" id="wrap"></div>
+<script>
+  // props: { title?, items:[{name, host, n?, color?, integration?}], note? } — Open spawns the site
+  // as a live web surface beside this card (blitz.tool open_window); `integration` marks an OS OAuth
+  // provider the agent can offer to connect. Icon = the site's real favicon; if it can't load, a
+  // brand-colored letter tile (item.color) takes over.
+  const SAMPLE={title:'Workflows',items:[
+    {name:'A web tool',host:'tool.example.com',n:120,color:'#5B78AA'},
+    {name:'Another',host:'app.example.com',n:60,integration:'example',color:'#7FA98C'}]}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  const inkFor=c=>{try{const v=parseInt(String(c).slice(1),16),L=.299*((v>>16)&255)+.587*((v>>8)&255)+.114*(v&255);return L>150?'#1a1b1d':'#fff'}catch(e){return '#fff'}}
+  function render(d){
+    document.getElementById('hd').textContent=d.title||'Workflows'
+    const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
+    w.innerHTML=(d.items||[]).map((it,i)=>{
+      const c=it.color||'#5B78AA'
+      return '<div class="row"><div class="av" id="av'+i+'"><img src="https://icons.duckduckgo.com/ip3/'+esc(it.host||'')+'.ico" alt=""><b style="background:'+esc(c)+';color:'+inkFor(c)+'">'+esc(String(it.name||'?')[0].toUpperCase())+'</b></div><div class="nm"><b>'+esc(it.name)+'</b><span class="h">'+esc(it.host||'')+'</span></div>'+(it.integration?'<span class="badge">connectable</span>':'')+'<button class="open" data-i="'+i+'">Open</button></div>'
+    }).join('')
+      +(d.note?'<div class="note">'+esc(d.note)+'</div>':'')
+    w.querySelectorAll('.av img').forEach(img=>{img.addEventListener('error',()=>img.parentElement.classList.add('fb'))})
+    w.querySelectorAll('.open').forEach(b=>b.addEventListener('click',()=>{
+      const it=(data.items||[])[+b.dataset.i]; if(!it||!it.host)return
+      b.textContent='Opening…';setTimeout(()=>{b.textContent='Open'},2500)
+      if(window.blitz&&window.blitz.tool)window.blitz.tool('open_window',{url:'https://'+it.host,title:it.name})
+    }))
+  }
+  render(data)
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
+</script>
