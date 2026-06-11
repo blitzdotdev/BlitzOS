@@ -54,11 +54,12 @@ export function SurfaceLauncherButton({ onCreateSurface, buttonProps }: Props): 
   }, [])
 
   const positionLauncher = (menuWidth: number, menuHeight: number): LauncherState => {
-    const toolbar = buttonRef.current?.closest('.toolbar-main') as HTMLElement | null
-    const r = toolbar?.getBoundingClientRect() ?? buttonRef.current?.getBoundingClientRect()
-    const gap = 28
+    const r = buttonRef.current?.getBoundingClientRect()
+    const toolbarShell = buttonRef.current?.closest('.toolbar-shell') as HTMLElement | null
+    const toolbarTop = toolbarShell?.getBoundingClientRect().top ?? r?.top
+    const gap = 14
     const left = Math.max(12, Math.min(window.innerWidth - menuWidth - 12, Math.round((r?.left ?? window.innerWidth / 2) + (r?.width ?? 0) / 2 - menuWidth / 2)))
-    const top = Math.max(44, Math.round((r?.top ?? window.innerHeight - 72) - menuHeight - gap))
+    const top = Math.max(44, Math.round((toolbarTop ?? window.innerHeight - 72) - menuHeight - gap))
     return { left, top }
   }
 

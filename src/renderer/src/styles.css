@@ -2138,9 +2138,9 @@ button {
   z-index: 1600;
 }
 .hud {
-  position: absolute;
+  position: fixed;
   bottom: 74px;
-  left: 50%;
+  left: 50vw;
   transform: translateX(-50%);
   width: 480px;
   max-width: 92vw;
