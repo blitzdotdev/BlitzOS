@@ -118,5 +118,10 @@ NUANCE (not a code defect): the **resumed** agent 0 read the terminal via a `tmu
 
 OUT-OF-SCOPE follow-ups noted: the supervisor-hook refactor; live widget-title update on `agent-rename` (tray already refreshes; chat-widget title not yet); the parked areas→stages / chat-hub merge reconciliation.
 
+## FOLLOW-UP DONE (cleanup + reliable tests, commit `cd19983`)
+- **`removeTerminal(id)`** — the missing prune primitive (stop only killed-but-kept a dead "Resume" row; closeAgent left an exited ghost). Kills if live + deletes the `.blitzos/terminals/<id>` record + in-memory entry (id-shape guarded; never '0'). Wired NO-divergence: terminal-manager+terminal-ops(+.d.mts), backend `/api/os/terminal-remove`, Electron `os:terminal-remove`, preload `terminalRemove`, agentos-shim, + a **Remove** button on dead terminal rows in the tray. `closeAgent`'s stopAgent seam now → `removeTerminal` (no ghost).
+- **`remove_terminal` agent tool** — TODO/next: expose removeTerminal as an agent-facing tool (mirrors close_terminal=stop) so an agent can prune terminals it spawned for a job; document in blitzos-agents.md.
+- **Reliable self-cleaning drive suite** — `scripts/drive-{terminals,newchat,areas,tabs}.mjs` + `verify-real.mjs` all updated to the renamed tools/labels, made flake-free (reset-to-clean-slate, per-title targeting, poll-until-settled, delta assertions) and self-cleaning (each removes what it spawned). All PASS on repeat; Home stays at the primary agent only. typecheck + parity (11) + build green.
+
 ## Note on the agent-runtime-moments merge (parked)
 The branch independently renamed **areas→"stages"** + moved to a single **chat-hub**. This rename (session→terminal/agent) is orthogonal and will compound that merge. Decide the stages/hub reconciliation separately when we return to the merge.

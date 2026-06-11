@@ -1,5 +1,7 @@
 # Agent-Session Rebuild — Master Tracker
 
+> **VOCABULARY UPDATE (2026-06-11):** "session" was deeply renamed to **Terminal / Agent** (one primitive: a Terminal; an Agent = a Terminal running claude + chat). Everything below that says "session" is the OLD vocabulary. The rename + UX split + agent-reads-terminal + `removeTerminal` + a reliable self-cleaning drive suite all shipped — see **`plans/terminal-agent-rename.md`** (commits `ae0bc3a`, `cd19983`) and `4c0c641` (visible-TUI fix). Remaining: optional `remove_terminal` agent tool; the parked `agent-runtime-moments` merge (branch renamed areas→stages + chat-hub — a real reconciliation).
+
 The living checklist for the BlitzOS agent-session work, so nothing is forgotten. Status: ✅ done · 🔧 in progress · ⬜ todo · 🔴 bug.
 
 ## The standing goal (/goal — active)

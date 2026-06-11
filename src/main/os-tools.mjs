@@ -433,12 +433,22 @@ export function makeOsTools(ops) {
     },
     {
       path: '/close_terminal',
-      description: 'Close (kill) a terminal by id. Args: {id}.',
+      description: 'Stop (kill) a terminal by id — its program ends but it stays in the tray as RESUMABLE. To fully delete it (e.g. a throwaway you spawned for a finished job), use remove_terminal instead. Args: {id}.',
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
       handler: ({ body }) => {
         const id = String(parse(body).id || '')
         if (!id) return { status: 400, body: { error: 'id required' } }
         return { ok: ops.stopTerminal(id) }
+      }
+    },
+    {
+      path: '/remove_terminal',
+      description: 'Permanently remove a terminal by id — kill it AND delete its saved record so it leaves the tray (NOT resumable). Use this to clean up a terminal you spawned for a job once you are done with it. The primary agent terminal cannot be removed. Args: {id}.',
+      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+      handler: ({ body }) => {
+        const id = String(parse(body).id || '')
+        if (!id) return { status: 400, body: { error: 'id required' } }
+        return { ok: ops.removeTerminal(id) }
       }
     },
     {

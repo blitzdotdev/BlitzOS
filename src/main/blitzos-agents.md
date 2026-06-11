@@ -89,7 +89,8 @@ Terminal tools:
 - list_terminals — every terminal in this workspace (running + persisted): `{ terminals:[{ id, kind, title, command, status, pid }] }`. `kind:'agent'` = a claude+chat agent, `kind:'terminal'` = a plain program.
 - send_to_terminal { id, data } — write raw input/keystrokes. Include a trailing newline to submit (e.g. `data:'git status\n'`). Returns { ok }.
 - read_terminal { id } — read the terminal's current output (scrollback). Returns { text }.
-- close_terminal { id } — kill the terminal by id. Returns { ok }.
+- close_terminal { id } — STOP (kill) the terminal but keep it in the tray as RESUMABLE. Returns { ok }.
+- remove_terminal { id } — PERMANENTLY remove the terminal (kill + delete its record; not resumable). Use this to clean up a throwaway terminal you spawned once the job is done. Returns { ok }.
 
 Agent (peer-chat) lifecycle:
 - spawn_agent { title? } — start a NEW peer agent: a fresh claude with its OWN `chat-<id>.md` transcript + chat widget over this same relay. It's independent — its chat and `say`s never cross-talk with you. Returns { agent:{ id, title } }.
