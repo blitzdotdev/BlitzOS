@@ -26,9 +26,15 @@
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
   function render(d){
     const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
+    // size-adaptive: two open questions + a count as the gist (m tile), the full list when bigger
+    const items=d.items||[]
+    const max=window.innerHeight<220?2:items.length
+    const more=items.length-max
     w.innerHTML='<div class="lb">'+esc(d.title||'Open questions')+'</div>'
-      +(d.items||[]).map(g=>'<div class="g'+(g.done?' done':'')+'"><div class="mark">'+(g.done?'✓':'?')+'</div><div><div class="q">'+esc(g.q)+'</div>'+(g.hint?'<div class="h">'+esc(g.hint)+'</div>':'')+'</div></div>').join('')
+      +items.slice(0,max).map(g=>'<div class="g'+(g.done?' done':'')+'"><div class="mark">'+(g.done?'✓':'?')+'</div><div><div class="q">'+esc(g.q)+'</div>'+(g.hint&&max>2?'<div class="h">'+esc(g.hint)+'</div>':'')+'</div></div>').join('')
+      +(more>0?'<div class="g"><div class="mark" style="border:none;color:var(--blitz-text-dim)">+</div><div class="q" style="color:var(--blitz-text-dim);font-weight:500">'+more+' more</div></div>':'')
   }
   render(data)
+  window.addEventListener('resize',()=>render(data))
   if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
 </script>

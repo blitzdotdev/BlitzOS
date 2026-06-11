@@ -21,9 +21,13 @@
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
   function render(d){
     const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
-    const max=window.innerHeight>380?3:2
-    w.innerHTML='<div class="mark">“</div>'+(d.items||[]).slice(0,max).map(q=>'<div class="q"><div class="t">'+esc(q.text)+'</div>'+(q.source?'<div class="src">'+esc(q.source)+'</div>':'')+'</div>').join('')
+    // size-adaptive: one clamped quote as the gist (m tile), more as the tile grows / pops out
+    const H=window.innerHeight
+    const max=H<220?1:H>380?3:2
+    const clamp=H<220?'display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden':''
+    w.innerHTML='<div class="mark">“</div>'+(d.items||[]).slice(0,max).map(q=>'<div class="q"><div class="t" style="'+clamp+'">'+esc(q.text)+'</div>'+(q.source?'<div class="src">'+esc(q.source)+'</div>':'')+'</div>').join('')
   }
   render(data)
+  window.addEventListener('resize',()=>render(data))
   if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
 </script>

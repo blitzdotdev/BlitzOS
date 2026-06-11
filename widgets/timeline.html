@@ -32,8 +32,15 @@
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
   function render(d){
     document.getElementById('hd').textContent=d.title||'Timeline'
-    const tl=document.getElementById('tl');tl.classList.toggle('intro',!__p);__p=true;tl.innerHTML=(d.items||[]).map(e=>'<div class="ev'+(e.now?' now':'')+'"><div class="dt"></div><div class="tm">'+esc(e.time)+'</div><div class="ti">'+esc(e.title)+'</div>'+(e.detail?'<div class="de">'+esc(e.detail)+'</div>':'')+'</div>').join('')
+    // size-adaptive: two events as the gist (m tile), more as the tile grows / pops out
+    const H=window.innerHeight
+    const max=H<220?2:H>460?9:5
+    const items=(d.items||[]).slice(0,max)
+    const compact=H<220
+    const tl=document.getElementById('tl');tl.classList.toggle('intro',!__p);__p=true
+    tl.innerHTML=items.map(e=>'<div class="ev'+(e.now?' now':'')+'"><div class="dt"></div><div class="tm">'+esc(e.time)+'</div><div class="ti">'+esc(e.title)+'</div>'+(e.detail&&!compact?'<div class="de">'+esc(e.detail)+'</div>':'')+'</div>').join('')
   }
   render(data)
+  window.addEventListener('resize',()=>render(data))
   if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
 </script>

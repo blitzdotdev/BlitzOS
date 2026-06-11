@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnChatSession } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnChatSession, setOnChatActivity } from './osActions'
 import { emitSystemMoment } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -20,6 +20,7 @@ import { startSessionPersistence } from './persistence'
 import { registerWallpaperIpc } from './wallpaper'
 import { registerOnboarding, interviewBootTask, claudeCliPath } from './onboarding'
 import { initUpdater, openBuildPicker, isDevMachine } from './update'
+import { resolveTmuxBin } from './tmux-host.mjs'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -326,6 +327,35 @@ app.whenReady().then(() => {
   // exists: BLITZ_AGENT (a custom command, or '1' for claude) OR a login-shell-resolved `claude` CLI —
   // the resident-brain/onboarding decision (plans/onboarding-case-file.md): zero-setup when claude exists.
   const agentCmd = process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : claudeCliPath() || (process.env.BLITZ_AGENT === '1' ? 'claude' : null)
+  // PRE-FLIGHT: the brain = a claude CLI inside a tmux terminal. If either is missing on this Mac
+  // (fresh VM; packaged GUI apps also don't get homebrew's PATH — both resolvers use the login
+  // shell), the worst failure mode is SILENCE: the user types into chat and nothing ever answers
+  // (the 2026-06-11 VM report). Say what's missing in the chat — at boot, and again whenever they
+  // send a message while it's still broken.
+  const missingRuntime = (): string[] => {
+    const m: string[] = []
+    if (!agentCmd) m.push('the Claude Code CLI (`claude`) — install it from https://claude.com/code, make sure `claude` works in your terminal')
+    if (!resolveTmuxBin()) m.push('tmux — run `brew install tmux` (my agent terminals run inside it)')
+    return m
+  }
+  {
+    const missing = missingRuntime()
+    if (missing.length) {
+      console.error('[brain] runtime prerequisites missing:', missing.join(' | '))
+      const notice = (sid: string): void =>
+        osSay(`I can't respond yet — this Mac is missing what my brain runs on:\n${missing.map((x) => `- ${x}`).join('\n')}\n\nInstall the above, then relaunch BlitzOS and I'll pick your messages up.`, sid)
+      setTimeout(() => notice('0'), 7000) // after the workspace + chat hub hydrate
+      // Answer (throttled) every message sent while broken — silence is never an acceptable reply.
+      const lastNotice = new Map<string, number>()
+      setOnChatActivity((sid, spawn) => {
+        if (!spawn) return
+        const now = Date.now()
+        if (now - (lastNotice.get(sid) || 0) < 60_000) return
+        lastNotice.set(sid, now)
+        setTimeout(() => notice(sid), 400) // after their message lands in the thread
+      })
+    }
+  }
   if (agentCmd) {
     // Session '0' carries the onboarding-interview standing duty while it's pending — the provider is
     // re-read on EVERY (re)launch (prepareAgentLaunch rewrites bootstrap.txt), so a finished interview

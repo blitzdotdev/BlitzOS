@@ -18,6 +18,12 @@
   .ap .t{flex:0 0 auto;font:9.5px ui-monospace,monospace;color:var(--blitz-text-dim)}
   .wrap.intro .c{animation:in .5s both}
   @keyframes in{from{opacity:0}}
+  /* gist mode (an m/s tile): the punchcard + peaks line only — apps need an l span */
+  @media (max-height:219px){
+    .wrap{padding:11px 13px 9px}
+    .lb{margin-bottom:7px}
+    .apps{display:none !important}
+  }
 </style>
 <div class="wrap" id="wrap">
   <div class="lb" id="lb">Rhythm</div>

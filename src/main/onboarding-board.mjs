@@ -15,7 +15,7 @@
 // line for the prime spans (projects yields). The onboarding board deliberately saturates the
 // stage past the agents' soft STAGE_BUDGET (it IS the user's first desktop); the hard cap is the
 // lattice itself, and the resident brain is expected to curate it down from there.
-import { latticeFor, findSlot, sizePx } from '../renderer/src/stage-core.mjs'
+import { latticeFor, findSlot, sizePx, spanOf } from '../renderer/src/stage-core.mjs'
 import { stageRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 
 const fmtHour = (h) => `${String(h).padStart(2, '0')}:00`
@@ -146,25 +146,32 @@ const ACCENT_OF = {
   gaps: { accent: '#E8C71D', accentInk: '#2A2400' } // marker — highlighter over the unknowns
 }
 
-// ---- slot sizing: the right span for the card's CONTENT, not a fixed grid ----
-// profile is the centerpiece and breathes (l). The dossier grid needs columns (xl: 4 wide).
-// The punchcard needs 24 cells of width (l minimum). List cards scale with their item count:
-// a 2-item list is a wide strip (m), a long one is portrait (tall) or big (l).
+// ---- slot sizing: FIT-FIRST, then grow into leftover space ----
+// Every widget is responsive (gist at m, detail at bigger spans / popped out), so the planner's
+// job is to get EVERY card on the stage first: all cards start compact (m; the unlock card l —
+// its consent copy needs the height), and only then are upgrades granted in priority order while
+// free cells remain. This is the inverse of "ideal size then overflow": clutter never beats fit.
 const count = (p) => ((p && p.items) || []).length
-const SIZE_FOR = {
-  profile: () => 'l',
-  projects: () => 'xl',
-  workflows: (p) => (count(p) >= 6 ? 'tall' : 'l'),
-  schedule: (p) => (count(p) >= 5 ? 'l' : 'm'),
-  rhythm: () => 'l',
-  people: (p) => (count(p) >= 4 ? 'l' : 'm'),
-  voice: (p) => (count(p) >= 3 ? 'l' : 'm'),
-  sessions: () => 'm',
-  gaps: (p) => (count(p) >= 4 ? 'l' : 'm'),
-  unlock: () => 'l'
+const COMPACT = { unlock: 'l' } // everything else starts at m
+// Upgrade wishlist, in priority order. Each is granted only if the card's content earns it AND
+// the lattice still has the cells. cost = added cells over the current size.
+const GROWS = [
+  { role: 'projects', to: 'xl', want: (p) => count(p) >= 3 },
+  { role: 'profile', to: 'l', want: () => true },
+  { role: 'rhythm', to: 'l', want: (p) => Object.keys((p && p.punch) || {}).length > 12 },
+  { role: 'workflows', to: 'tall', want: (p) => count(p) >= 6 },
+  { role: 'workflows', to: 'l', want: (p) => count(p) >= 4 },
+  { role: 'people', to: 'l', want: (p) => count(p) >= 4 },
+  { role: 'voice', to: 'l', want: (p) => count(p) >= 3 },
+  { role: 'schedule', to: 'l', want: (p) => count(p) >= 5 },
+  { role: 'gaps', to: 'l', want: (p) => count(p) >= 4 }
+]
+const cellsOf = (size) => {
+  const sp = spanOf(size)
+  return sp.c * sp.r
 }
-// When the preferred span doesn't fit, shrink one step at a time. m is the content floor
-// (no board card reads at s = 164px); below that the card parks off-stage instead.
+// When even the chosen span doesn't fit the fragmented lattice, shrink one step at a time. m is
+// the floor (every widget still reads as a gist at m); below that the card goes BACKSTAGE.
 const SHRINK = { xxl: 'xl', xl: 'l', tall: 'l', l: 'm', m: null }
 // Composition hints (findSlot's near ranking) — shape without coordinates.
 const NEAR_OF = {
@@ -241,6 +248,29 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null } = {}) {
   const vp = viewport || DEFAULT_VP
   const lat = latticeFor(vp, 0)
   const occupied = [...(surfaces || [])] // live tiles (chat hub) + cards as we place them
+
+  // Fit-first sizing: count the lattice cells already taken (the chat hub's span included), start
+  // every present card compact, then grant upgrades in priority order while free cells remain.
+  const present = ORDER.filter((r, i) => r && ORDER.indexOf(r) === i && props[r])
+  let usedCells = 0
+  for (const s of occupied) {
+    const sl = s && s.slot
+    if (sl && (s.slotStage ?? 0) === 0 && !s.minimized && !s.groupId) usedCells += cellsOf(sl.size)
+  }
+  const sizes = {}
+  for (const r of present) {
+    sizes[r] = COMPACT[r] || 'm'
+    usedCells += cellsOf(sizes[r])
+  }
+  let free = lat.cols * lat.rows - usedCells
+  for (const g of GROWS) {
+    if (!present.includes(g.role) || !g.want(props[g.role])) continue
+    const cost = cellsOf(g.to) - cellsOf(sizes[g.role])
+    if (cost <= 0 || cost > free) continue
+    sizes[g.role] = g.to
+    free -= cost
+  }
+
   const plan = []
   const emitted = new Set()
   let parked = 0
@@ -253,20 +283,21 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null } = {}) {
       title: TITLE_OF[role],
       props: { ...props[role], ...(ACCENT_OF[role] || {}) }
     }
-    let size = SIZE_FOR[role] ? SIZE_FOR[role](props[role]) : 'm'
+    let size = sizes[role] || 'm'
     let at = null
     while (size) {
       at = findSlot(occupied, lat, size, NEAR_OF[role] || 'center', 0)
       if (at) break
-      size = SHRINK[size]
+      size = SHRINK[size] // fragmentation: step down before giving up
     }
     if (at) {
       card.slot = { col: at.col, row: at.row, size }
       card.slotStage = 0
       occupied.push({ id: 'plan:' + role, slot: card.slot, slotStage: 0 })
     } else {
-      // lattice full: park below the stage, alive and zoom-out visible — never overlap a tile
-      const px = sizePx(SIZE_FOR[role] ? SIZE_FOR[role](props[role]) : 'm')
+      // truly no span left: BACKSTAGE — parked on the canvas below the stage frame, alive and
+      // zoom-out visible, never overlapping a tile; the brain can bring_to_stage it later
+      const px = sizePx('m')
       Object.assign(card, { offstage: true, ...parkSpot(vp, parked), w: px.w, h: px.h })
       parked++
     }

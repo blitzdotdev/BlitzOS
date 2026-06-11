@@ -13,6 +13,11 @@
   .wrap.intro .ch{animation:in .3s both}
   .wrap.intro .ch:nth-child(2n){animation-delay:.04s}.wrap.intro .ch:nth-child(3n){animation-delay:.08s}
   @keyframes in{from{opacity:0;transform:scale(.92)}}
+  /* gist mode (an m/s tile): the first section only — pop out for the full inventory */
+  @media (max-height:219px){
+    .wrap{padding:11px 13px}
+    .sec:nth-child(n+2){display:none}
+  }
 </style>
 <div class="wrap" id="wrap"></div>
 <script>

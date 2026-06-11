@@ -34,8 +34,17 @@
   function ring(v){const r=16,c=2*Math.PI*r,off=c*(1-(v||0)/100);return '<div class="ring"><svg width="38" height="38"><circle cx="19" cy="19" r="'+r+'" fill="none" stroke="var(--blitz-hairline)" stroke-width="3.5"/><circle cx="19" cy="19" r="'+r+'" fill="none" stroke="var(--blitz-accent)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="'+c+'" stroke-dashoffset="'+off+'" style="transition:stroke-dashoffset .6s"/></svg><span class="v">'+(v==null?'—':v)+'</span></div>'}
   function render(d){
     document.getElementById('hd').textContent=d.title||'Dossiers'
-    const g=document.getElementById('grid');g.classList.toggle('intro',!__p);__p=true;g.innerHTML=(d.items||[]).map(it=>'<div class="card"><div class="top"><div class="nm"><b>'+esc(it.name)+'</b>'+(it.sub?'<span class="s">'+esc(it.sub)+'</span>':'')+'</div>'+(it.score!=null?ring(it.score):'')+'</div>'+(it.stats?'<div class="stats">'+it.stats.map(s=>'<div class="st"><div class="k">'+esc(s.k)+'</div><div class="n">'+esc(s.n)+'</div></div>').join('')+'</div>':'')+(it.tags?'<div class="tags">'+it.tags.map(t=>'<span class="tg">'+esc(t)+'</span>').join('')+'</div>':'')+'</div>').join('')
+    const g=document.getElementById('grid');g.classList.toggle('intro',!__p);__p=true
+    // size-adaptive gist (m tile): name chips with a score figure — pop out for the full cards
+    if(window.innerHeight<220){
+      g.style.display='flex';g.style.flexWrap='wrap';g.style.gap='6px';g.style.alignContent='flex-start'
+      g.innerHTML=(d.items||[]).map(it=>'<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:var(--blitz-surface-2);font-size:11.5px;font-weight:600">'+(it.score!=null?'<b style="font:700 10px ui-monospace,monospace;color:var(--blitz-accent)">'+it.score+'</b>':'')+esc(it.name)+'</span>').join('')
+      return
+    }
+    g.style.display='';g.style.flexWrap='';g.style.gap='';g.style.alignContent=''
+    g.innerHTML=(d.items||[]).map(it=>'<div class="card"><div class="top"><div class="nm"><b>'+esc(it.name)+'</b>'+(it.sub?'<span class="s">'+esc(it.sub)+'</span>':'')+'</div>'+(it.score!=null?ring(it.score):'')+'</div>'+(it.stats?'<div class="stats">'+it.stats.map(s=>'<div class="st"><div class="k">'+esc(s.k)+'</div><div class="n">'+esc(s.n)+'</div></div>').join('')+'</div>':'')+(it.tags?'<div class="tags">'+it.tags.map(t=>'<span class="tg">'+esc(t)+'</span>').join('')+'</div>':'')+'</div>').join('')
   }
   render(data)
+  window.addEventListener('resize',()=>render(data))
   if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
 </script>
