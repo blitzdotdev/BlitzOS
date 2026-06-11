@@ -8,6 +8,7 @@
 // BlitzOS session is a tmux WINDOW multiplexed over ONE `tmux -C` control client. Protocol facts
 // here were empirically verified against tmux 3.6 (see project memory), not assumed.
 import { spawn as cpSpawn, execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { StringDecoder } from 'node:string_decoder'
 
 const SCROLLBACK_BYTES = 256 * 1024
@@ -19,6 +20,19 @@ const toHex = (str) => Buffer.from(str, 'utf8').toString('hex').match(/../g)?.jo
  * @param {{ socketPath:string, sessionName?:string, cols?:number, rows?:number, tmuxTmpdir?:string }} cfg
  * @returns a host whose interface matches what session-manager expects (spawn/write/resize/kill/onData/onExit/…)
  */
+/** Resolve the tmux binary a PACKAGED app can use (GUI PATH lacks homebrew): env override →
+ *  well-known locations → the user's login shell. Cached; null = not installed anywhere. */
+let resolvedTmux
+export function resolveTmuxBin() {
+  if (resolvedTmux !== undefined) return resolvedTmux
+  const cands = [process.env.BLITZ_TMUX_BIN, '/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'].filter(Boolean)
+  resolvedTmux = cands.find((p) => { try { return existsSync(p) } catch { return false } }) || null
+  if (!resolvedTmux) {
+    try { resolvedTmux = execFileSync('/bin/zsh', ['-lc', 'command -v tmux'], { encoding: 'utf8', timeout: 8000 }).trim() || null } catch { resolvedTmux = null }
+  }
+  return resolvedTmux
+}
+
 export function createTmuxHost(cfg) {
   const SOCK = cfg.socketPath
   const SESSION = cfg.sessionName || 'blitz'
@@ -26,8 +40,13 @@ export function createTmuxHost(cfg) {
   const DEF_ROWS = cfg.rows || 40
   const ENV = { ...process.env, ...(cfg.tmuxTmpdir ? { TMUX_TMPDIR: cfg.tmuxTmpdir } : {}) }
   // The tmux binary — overridable so the packaged app can point at a BUNDLED tmux (extraResources)
-  // instead of relying on one on PATH. Defaults to BLITZ_TMUX_BIN or `tmux`.
-  const TMUX = cfg.tmuxBin || process.env.BLITZ_TMUX_BIN || 'tmux'
+  // instead of relying on one on PATH. Resolution order: cfg/env override → well-known install
+  // locations → the user's login-shell PATH (a packaged GUI app gets the bare system PATH, which
+  // has no homebrew — the claudeCliPath problem). NULL = tmux not installed: the host DEGRADES
+  // (sessions/terminals unavailable) instead of crashing main with an uncaught spawn ENOENT —
+  // the VM-boot crash of 2026-06-11.
+  const TMUX = cfg.tmuxBin || resolveTmuxBin()
+  if (!TMUX) console.error('[tmux-host] tmux not found (brew install tmux) — agent terminals are disabled this run')
 
   let client = null // the control-client child process
   let lineBuf = ''
@@ -37,7 +56,7 @@ export function createTmuxHost(cfg) {
   const cmdQueue = [] // FIFO of { resolve, reject } awaiting a %begin..%end block
   let curReply = null // { lines:[], error:false }
 
-  const tmuxSync = (args) => execFileSync(TMUX, ['-S', SOCK, ...args], { env: ENV, stdio: ['ignore', 'pipe', 'pipe'] }).toString()
+  const tmuxSync = (args) => (TMUX ? execFileSync(TMUX, ['-S', SOCK, ...args], { env: ENV, stdio: ['ignore', 'pipe', 'pipe'] }).toString() : '')
 
   // Send a control-mode command and resolve with its reply lines (between %begin/%end).
   function command(cmd) {
@@ -89,8 +108,20 @@ export function createTmuxHost(cfg) {
   /** Connect the control client (create the session if absent, else attach — idempotent, enables reattach). */
   function start() {
     if (ready) return ready
+    if (!TMUX) {
+      ready = Promise.resolve() // disabled host: every op below no-ops against a null client
+      return ready
+    }
     ready = new Promise((resolve) => {
       client = cpSpawn(TMUX, ['-S', SOCK, '-C', 'new-session', '-A', '-s', SESSION, '-x', String(DEF_COLS), '-y', String(DEF_ROWS)], { env: ENV, stdio: ['pipe', 'pipe', 'ignore'] })
+      // ENOENT (and any other spawn failure) arrives as an async 'error' event — without this handler
+      // it becomes an UNCAUGHT main-process exception (the "JavaScript error in the main process"
+      // dialog on a tmux-less machine). Log, drop the client, and let boot continue degraded.
+      client.on('error', (e) => {
+        console.error('[tmux-host] tmux unavailable:', e?.message || e)
+        client = null
+        resolve()
+      })
       // A UTF-8 StringDecoder (per connection) buffers a multibyte char split across stdout chunks — tmux
       // passes high UTF-8 bytes RAW in %output, so a plain per-chunk d.toString() would corrupt TUI frames.
       const dec = new StringDecoder('utf8')
@@ -213,5 +244,5 @@ function quoteArg(a) {
 
 // Is tmux runnable? Returns its version string (e.g. "tmux 3.6") or null. Used for a startup preflight.
 export function tmuxAvailable(bin) {
-  try { return execFileSync(bin || process.env.BLITZ_TMUX_BIN || 'tmux', ['-V'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() } catch { return null }
+  try { return execFileSync(bin || resolveTmuxBin() || 'tmux', ['-V'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() } catch { return null }
 }

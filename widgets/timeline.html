@@ -3,7 +3,8 @@
 <style>
   :root{--ac:var(--blitz-accent,#1a1b1d);--bg:var(--blitz-bg,#fff);--sf:var(--blitz-surface,#f5f5f3);
         --tx:var(--blitz-text,#1a1b1d);--dim:var(--blitz-text-dim,#8a8d90);--line:var(--blitz-hairline,rgba(0,0,0,.09))}
-  .wrap{padding:16px}
+  .wrap{padding:14px 16px}
+  .lb{font:600 9px ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--ac);margin-bottom:11px}
   .tl{position:relative;margin-left:6px;padding-left:22px}
   .tl:before{content:'';position:absolute;left:4px;top:4px;bottom:8px;width:2px;background:var(--line)}
   .ev{position:relative;padding-bottom:16px}
@@ -18,8 +19,7 @@
   .ev .ti{font-weight:600;font-size:13px;margin:2px 0 1px}
   .ev .de{font-size:12px;color:var(--dim)}
 </style>
-<blitz-titlebar><span id="hd">Timeline</span></blitz-titlebar>
-<div class="wrap"><div class="tl" id="tl"></div></div>
+<div class="wrap"><div class="lb" id="hd">Timeline</div><div class="tl" id="tl"></div></div>
 <script>
   // props: { title?, items:[{time, title, detail?, now?:bool}] }
   const SAMPLE={title:'Timeline',items:[
@@ -27,7 +27,7 @@
     {time:'step 2',title:'Second event',detail:'what happened'},
     {time:'step 3',title:'Third event',detail:'what happened'},
     {time:'now',title:'In progress',detail:'happening now',now:true},
-    {time:'—',title:'Next up',detail:'pending'}]}
+    {time:'next',title:'Next up',detail:'pending'}]}
   let data=SAMPLE, __p=false
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
   function render(d){

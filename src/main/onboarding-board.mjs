@@ -36,9 +36,10 @@ const VIA_STAT = { commits: 'Commits', messages: 'Messages', mail: 'Emails', mee
 
 // ---- card builders (role → props | null). Placement is resolved separately. ----
 const BUILDERS = {
+  // Widget language: no prose on cards — notes are gone; identity is a tiny label + the content.
   profile: (s) => ({
     title: 'Case File',
-    kicker: 'BlitzOS · case file',
+    kicker: 'Case file',
     name: s.identity.name || 'Unknown subject',
     sub: [s.identity.computer, `${s.meta.spanDays} days of evidence`, `${(s.meta.nText + s.meta.nEvents).toLocaleString()} signals`].filter(Boolean).join(' · '),
     facts: [
@@ -49,8 +50,7 @@ const BUILDERS = {
       { k: 'Apps', v: String(s.facts.installedApps) }
     ]
       .filter(Boolean)
-      .slice(0, 4),
-    note: 'Compiled from a local, read-only scan of this Mac. Nothing left the machine. This board is the OS’s working model of you: edit it and it learns.'
+      .slice(0, 4)
   }),
   projects: (s) => {
     const max = Math.max(...s.projects.map((p) => p.prompts), 1)
@@ -70,13 +70,7 @@ const BUILDERS = {
   workflows: (s) => {
     const items = ((s.web && s.web.workflow) || []).map((w) => ({ name: w.name, host: w.host, n: w.n, ...(w.color ? { color: w.color } : {}), ...(w.integration ? { integration: w.integration } : {}) }))
     if (items.length < 3) return null
-    return {
-      title: s.web.webFirst ? 'Where your work lives' : 'Web workflows',
-      items,
-      note: s.web.webFirst
-        ? 'Most of your life is in the browser. Open any of these as a live surface here; the OS can connect the marked ones and act in them with you.'
-        : 'Your web tools. Open any as a live surface here.'
-    }
+    return { title: s.web.webFirst ? 'Where your work lives' : 'Web workflows', items }
   },
   schedule: (s) => {
     const up = (s.calendar && s.calendar.upcoming) || []
@@ -101,12 +95,12 @@ const BUILDERS = {
       topApps: apps,
       heatLo: '#7FA0C8', // dusty blue → coral: quiet hours cool, intense hours warm (never monochrome)
       heatHi: '#FF8D61',
-      ...(s.meta.fda ? {} : { note: 'launch counts only; real focus time is locked' })
+      ...(s.meta.fda ? {} : { note: 'launch counts only' })
     }
   },
   voice: (s) =>
     s.voice.length
-      ? { title: 'In their own words', items: s.voice.slice(0, 4).map((v) => ({ text: v.text, source: v.source })), note: 'verbatim, found locally. This is how the OS will learn to write as you.' }
+      ? { title: 'In their own words', items: s.voice.slice(0, 4).map((v) => ({ text: v.text, source: v.source })) }
       : null,
   sessions: (s) =>
     s.sessions.length
@@ -130,9 +124,8 @@ const BUILDERS = {
     title: 'Open questions',
     items: [
       ...s.gaps.map((q) => ({ q })),
-      ...(s.meta.fda ? [] : [{ q: 'The personal layer', hint: 'Messages cadence, Mail, Calendar, Safari and real screen time, locked until Full Disk Access' }])
-    ],
-    note: 'what the OS cannot learn by looking. The interview starts here.'
+      ...(s.meta.fda ? [] : [{ q: 'The personal layer', hint: 'Messages, Mail, Calendar, Safari and screen time, locked until Full Disk Access' }])
+    ]
   })
 }
 

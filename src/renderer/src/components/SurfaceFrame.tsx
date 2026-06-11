@@ -563,6 +563,11 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const isFolder = surface.kind === 'native' && surface.component === 'folder'
   const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
   const isSlotted = !!slotOf(surface) // a stage tile: lattice-snapped, fixed-size, never edge-tiles
+  // System panels (the pinned chat/activity hubs) keep the full window bar even when slotted —
+  // hiding it would cost their close/minimize controls. Everything else slotted gets WIDGET chrome:
+  // no bar at all, just an invisible top drag-grip + the pop-out toggle in the far right corner.
+  const isSystemPanel = surface.role === 'chat' || surface.role === 'activity' || (surface.kind === 'native' && (surface.component === 'chat' || surface.component === 'activity'))
+  const widgetChrome = isSlotted && !isSystemPanel
   const needsFocusCatcher = !isActive && !isControl && (surface.kind === 'web' || surface.kind === 'app' || surface.kind === 'srcdoc')
   // A direct click/focus means THIS is the window the user is acting on: raise it AND drop any stale
   // marquee selection that doesn't include it — ⌘T/⇧⌘T target "the single selection else the
@@ -708,40 +713,54 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         useDesktop.getState().openAnnotationMenu(surface.id, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, e.clientX, e.clientY)
       }}
     >
-      <div
-        className="window-bar"
-        onPointerDown={onBarDown}
-        onPointerMove={onBarMove}
-        onPointerUp={onBarUp}
-        onPointerCancel={onBarUp}
-      >
-        {/* macOS traffic lights: red=close, yellow=minimize, green=zoom. Colored only when active. */}
-        <div className="traffic" onPointerDown={stop}>
-          {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
-              reconcile (the file still exists), so only offer zoom; delete the file to remove it. */}
-          {!isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
-          {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => (onRequestMinimize ? onRequestMinimize(surface.id) : minimizeSurface(surface.id))} />}
-          <button className="tl tl-max" title="Zoom" onClick={() => (onRequestToggleMaximize ? onRequestToggleMaximize(surface.id) : toggleMaximize(surface.id))} />
-        </div>
-        {!isFileTile && (
-          <button className={`slot-toggle${isSlotted ? ' on' : ''}`} title={isSlotted ? 'Pop out of the grid — free-form, restores its size (⌘T; ⇧⌘T cycles size)' : 'Snap into the widget grid (⌘T)'} onClick={toggleSlot} onPointerDown={stop}>
-            {isSlotted ? '⤢' : '⊞'}
+      {widgetChrome ? (
+        <>
+          {/* macOS-widget chrome: the tile IS the widget — no window bar. An invisible grip strip
+              along the top keeps the full drag gesture set (move, ⌘-drag, drag-to-pop-out all ride
+              the same bar handlers), and the pop-in/out toggle floats in the far right corner. */}
+          <div className="tile-grip" onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerCancel={onBarUp} />
+          <button className="tile-toggle" title="Pop out of the grid — free-form, restores its size (⌘T; ⇧⌘T cycles size)" onClick={toggleSlot} onPointerDown={stop}>
+            ⤢
           </button>
-        )}
-        {surface.kind === 'web' || surface.kind === 'app' ? (
-          <form className="window-url" onSubmit={go} onPointerDown={stop}>
-            <input
-              value={draft}
-              spellCheck={false}
-              placeholder="url…"
-              onChange={(e) => setDraft(e.target.value)}
-              onPointerDown={stop}
-            />
-          </form>
-        ) : (
-          <div className="window-bar-fill" />
-        )}
-      </div>
+        </>
+      ) : (
+        <div
+          className="window-bar"
+          onPointerDown={onBarDown}
+          onPointerMove={onBarMove}
+          onPointerUp={onBarUp}
+          onPointerCancel={onBarUp}
+        >
+          {/* macOS traffic lights: red=close, yellow=minimize, green=zoom. Colored only when active. */}
+          <div className="traffic" onPointerDown={stop}>
+            {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
+                reconcile (the file still exists), so only offer zoom; delete the file to remove it. */}
+            {!isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
+            {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => (onRequestMinimize ? onRequestMinimize(surface.id) : minimizeSurface(surface.id))} />}
+            <button className="tl tl-max" title="Zoom" onClick={() => (onRequestToggleMaximize ? onRequestToggleMaximize(surface.id) : toggleMaximize(surface.id))} />
+          </div>
+          {surface.kind === 'web' || surface.kind === 'app' ? (
+            <form className="window-url" onSubmit={go} onPointerDown={stop}>
+              <input
+                value={draft}
+                spellCheck={false}
+                placeholder="url…"
+                onChange={(e) => setDraft(e.target.value)}
+                onPointerDown={stop}
+              />
+            </form>
+          ) : (
+            <div className="window-bar-fill" />
+          )}
+          {/* the snap/pop toggle lives at the RIGHT END of the bar (it mirrors the widget-chrome
+              corner toggle, so the control is always in the same place). */}
+          {!isFileTile && (
+            <button className={`slot-toggle${isSlotted ? ' on' : ''}`} title={isSlotted ? 'Pop out of the grid — free-form, restores its size (⌘T; ⇧⌘T cycles size)' : 'Snap into the widget grid (⌘T)'} onClick={toggleSlot} onPointerDown={stop}>
+              {isSlotted ? '⤢' : '⊞'}
+            </button>
+          )}
+        </div>
+      )}
       {surface.component === 'terminal' && surface.tabs && (
         <div className="window-tabs" onPointerDown={stop}>
           {surface.tabs.map((t, i) => (

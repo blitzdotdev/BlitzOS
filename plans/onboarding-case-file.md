@@ -77,6 +77,17 @@ The same wake loop (`/events` moments) runs from first boot forever; what change
 - **P2 — the resident brain, v1 (its first behavior is the interview).** The GA loop (CLI backend first, gateway second) + disclosure card + questions-on-the-board + live revision loop + canned-question fallback tier. The brain does not exit after the interview — it stays resident on the wake loop.
 - **P3 — the gradient.** Wardrobe card, editable-card polish, annotation-pinned questions, opportunistic-elicitation etiquette, and the **originate** mode: spare-initiative proposals via action-items + speculative surfaces, with disposition-as-feedback into the case file.
 
+## TODO (user, 2026-06-11): frontload quit-and-relaunch permissions in a Dia-style pre-board screen
+
+Permission grants that force BlitzOS to QUIT AND RESTART (TCC grants that only apply on relaunch —
+screen recording, accessibility/automation; FDA's rescan is live but its Settings round-trip belongs
+with them) must NOT live mid-experience as board cards: a restart mid-board kills the magic and the
+cached-board re-entry papers over it. Move them to the FRONT — a traditional, Dia-inspired onboarding
+screen (full-screen, warm, one permission per step with the why + a single button) BEFORE the scan/
+dissolve, so every restart happens before the user has any board state to lose. The unlock-card flow
+stays only for grants that apply live. (Dia's own onboarding does exactly this: permissions first,
+product second.)
+
 ## Open spikes (resolve during P1/P2, none block starting)
 
 1. **TCC attribution in dev:** FDA grants attach to the responsible process — packaged `BlitzOS.app` is clean, but `npm run dev` runs Electron's binary; verify the scan child-process inherits the right TCC identity in both, and what the Settings pane shows the user to enable. (The CLI doc's "grant your terminal" guidance does not transfer.)

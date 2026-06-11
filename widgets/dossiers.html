@@ -1,8 +1,9 @@
 <!doctype html><meta charset="utf-8"><title>Dossiers</title>
 <!-- Thinking-widget: a grid of scored entity cards. Drive with update_surface{props:{items}}. -->
 <style>
-  .wrap{padding:13px}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:10px}
+  .wrap{padding:13px 14px}
+  .lb{font:600 9px ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--blitz-accent);margin-bottom:10px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px}
   .card{border:1px solid var(--blitz-hairline);border-radius:var(--blitz-radius);background:var(--blitz-surface-2);padding:13px;transition:transform .15s,box-shadow .15s}
   .grid.intro .card{animation:in .3s}
   @keyframes in{from{opacity:0;transform:translateY(6px)}}
@@ -20,8 +21,7 @@
   .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
   .tg{font:10px ui-monospace,monospace;padding:3px 7px;border-radius:999px;background:var(--blitz-surface);border:1px solid var(--blitz-hairline);color:var(--blitz-text-dim)}
 </style>
-<blitz-titlebar><span id="hd">Dossiers</span></blitz-titlebar>
-<div class="wrap"><div class="grid" id="grid"></div></div>
+<div class="wrap"><div class="lb" id="hd">Dossiers</div><div class="grid" id="grid"></div></div>
 <script>
   // props: { title?, items:[{name, sub?, score?(0-100), stats?:[{k,n}], tags?:[..]}] }
   const SAMPLE={title:'Dossiers',items:[

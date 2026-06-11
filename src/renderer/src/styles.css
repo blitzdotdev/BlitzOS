@@ -2856,6 +2856,48 @@ button {
 .window:hover .slot-toggle { opacity: 0.75; }
 .slot-toggle:hover { opacity: 1 !important; background: color-mix(in srgb, var(--text) 10%, transparent); }
 .slot-toggle.on { color: var(--accent, #1a73e8); }
+/* sits at the right end of the bar now — breathe against the window edge, not the traffic lights */
+.slot-toggle { margin-left: 0; margin-right: 4px; }
+
+/* ---- macOS-widget chrome for slotted tiles (no window bar) ----
+   The grip is an invisible drag strip along the tile's top — the widget's own titlebar shows
+   through it, so the tile drags "by its titlebar" exactly like a macOS desktop widget (move,
+   ⌘-drag, drag-to-pop-out all work). The pop-out toggle floats in the far right corner: faint
+   at rest, clear on hover, never part of a bar. ---- */
+.tile-grip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 30px; /* leave the corner to the toggle */
+  height: 26px;
+  z-index: 5;
+  cursor: grab;
+}
+.tile-grip:active {
+  cursor: grabbing;
+}
+.tile-toggle {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim, var(--text));
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.3;
+  z-index: 6;
+  transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.window:hover .tile-toggle { opacity: 0.8; }
+.tile-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--text) 10%, transparent); }
 
 /* ---- Universal window-state rings (LAST in the cascade so no variant — notes' paper shadow,
    folders, file tiles — can swallow them). is-active = the front-most window (one per desktop);
