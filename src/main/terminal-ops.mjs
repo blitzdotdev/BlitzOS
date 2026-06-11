@@ -98,6 +98,8 @@ export function makeTerminalOps({ getWorkspacePath, emit = () => {}, markWrite =
     resizeTerminal: (id, cols, rows) => { const m = mgrFor(); return m ? m.resizeTerminal(id, cols, rows) : false },
     readTerminal: (id) => { const m = mgrFor(); return m ? m.scrollback(id) : '' },
     stopTerminal: (id) => { const m = mgrFor(); return m ? m.stopTerminal(id) : false },
+    /** Permanently remove a terminal (kill if live + delete its persisted record) so it leaves the tray. Never '0'. */
+    removeTerminal: (id) => { const m = mgrFor(); return m ? m.removeTerminal(id) : false },
     /** Re-spawn a dead terminal from its persisted meta (one-click resume of an exited/stopped terminal). */
     restartTerminal: (id) => { const m = mgrFor(); return m ? m.restartTerminal(id) : Promise.resolve(null) },
     /** Flush transcripts + close every control client on shutdown (terminals SURVIVE in their tmux servers). */

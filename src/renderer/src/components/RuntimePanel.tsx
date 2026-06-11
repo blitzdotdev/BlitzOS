@@ -25,6 +25,7 @@ type TerminalMeta = {
 type TerminalApi = {
   terminalList?: () => Promise<unknown[]>
   terminalStop?: (id: string) => void
+  terminalRemove?: (id: string) => void
   terminalRestart?: (id: string) => void
   terminalSpawn?: (opts: { command?: string; title?: string }) => void
   spawnAgent?: (title?: string) => void
@@ -152,16 +153,28 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
               )}
             </>
           ) : (
-            <button
-              className="run-btn"
-              title="Resume — re-run this from its saved command"
-              onClick={() => {
-                tapi().terminalRestart?.(s.id)
-                setTimeout(refresh, 400)
-              }}
-            >
-              Resume
-            </button>
+            <>
+              <button
+                className="run-btn"
+                title="Resume — re-run this from its saved command"
+                onClick={() => {
+                  tapi().terminalRestart?.(s.id)
+                  setTimeout(refresh, 400)
+                }}
+              >
+                Resume
+              </button>
+              {/* Remove = prune a dead terminal from the tray (delete its saved record). Terminals only; agents use Delete agent. */}
+              {!isAgent && (
+                <button
+                  className="run-btn danger"
+                  title="Remove this terminal from the tray (delete its saved record)"
+                  onClick={() => { tapi().terminalRemove?.(s.id); setTimeout(refresh, 300) }}
+                >
+                  Remove
+                </button>
+              )}
+            </>
           )}
           {/* Delete agent = full teardown (stop + delete its chat + files/area). Never the primary. */}
           {isAgent && !isPrimary && (

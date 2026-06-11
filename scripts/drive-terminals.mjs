@@ -69,8 +69,17 @@ async function main() {
   // CHANGES (a spawn adds exactly one tab, the tray gains exactly one row) and that OUR titles appear —
   // never absolute counts, which a shared backend can't guarantee.
   const tabCount = () => evalJs(`return document.querySelectorAll('.window-tabs .wtab').length`)
+
+  // --- 0. RESET to a clean slate: remove every non-agent terminal (running + dead) so titles are unique and
+  // counts are deterministic on every run (the agent '0' is never removable). This is what makes the test reliable. ---
+  logln('[0] reset — remove all terminals (keep the agent)')
+  const removed = await evalJs(`const ts=(await window.agentOS.terminalList()).filter(s=>s.kind==='terminal'); for (const t of ts){ try{ window.agentOS.terminalRemove(t.id) }catch{} } return ts.length`)
+  logln(`  removed ${removed} pre-existing terminal(s)`)
+  await delay(2500)
+  await send('Page.navigate', { url }, sessionId) // reload so the tab strip reflects the clean slate
+  await delay(6000)
   const baseTabs = await tabCount()
-  logln(`baseline tabs (pre-existing/resumed): ${baseTabs}`)
+  logln(`baseline tabs after reset: ${baseTabs}`)
 
   // --- 1. spawn 2 terminals, confirm +2 tabs ---
   logln('\n[1] spawn 2 terminals')
@@ -90,20 +99,23 @@ async function main() {
   check(titles.includes('work-A') && titles.includes('work-B'), `tray lists the spawned terminals work-A/B (got ${JSON.stringify(titles)})`)
   await shot('1-tray-2-running')
 
-  // --- 3. Stop the first running terminal from the tray ---
+  // Target the work-A row BY TITLE — robust to the Agents/Terminals grouping, row order, and dead rows from prior runs.
+  const findRow = (t) => `Array.from(document.querySelectorAll('.runtime-panel .run-row')).find(r=>{const e=r.querySelector('.run-title');return e&&e.textContent==='${t}'})`
+
+  // --- 3. Stop the work-A terminal from the tray ---
   logln('\n[3] Stop a terminal from the tray')
-  await evalJs(`const r=document.querySelector('.runtime-panel .run-row'); const b=Array.from(r.querySelectorAll('.run-btn')).find(x=>/Stop/.test(x.textContent)); b&&b.click(); return 1`)
+  await evalJs(`const r=${findRow('work-A')}; const b=r&&Array.from(r.querySelectorAll('.run-btn')).find(x=>/Stop/.test(x.textContent)); b&&b.click(); return 1`)
   await delay(3000)
-  const runningAfterStop = await evalJs(`return Array.from(document.querySelectorAll('.runtime-panel .run-row')).filter(r=>r.querySelector('.run-btn') && /Resume/.test(r.textContent)).length`)
-  check(runningAfterStop >= 1, `a stopped terminal now offers Resume (got ${runningAfterStop})`)
+  const workAResumable = await evalJs(`const r=${findRow('work-A')}; return !!r && /Resume/.test(r.textContent)`)
+  check(workAResumable, 'the stopped work-A terminal now offers Resume')
   await shot('2-after-stop')
 
-  // --- 4. Resume it ---
+  // --- 4. Resume work-A ---
   logln('\n[4] Resume the stopped terminal')
-  await evalJs(`const r=Array.from(document.querySelectorAll('.runtime-panel .run-row')).find(r=>/Resume/.test(r.textContent)); const b=Array.from(r.querySelectorAll('.run-btn')).find(x=>/Resume/.test(x.textContent)); b&&b.click(); return 1`)
+  await evalJs(`const r=${findRow('work-A')}; const b=r&&Array.from(r.querySelectorAll('.run-btn')).find(x=>/Resume/.test(x.textContent)); b&&b.click(); return 1`)
   await delay(3500)
-  const resumeLeft = await evalJs(`return Array.from(document.querySelectorAll('.runtime-panel .run-row')).filter(r=>/Resume/.test(r.textContent)).length`)
-  check(resumeLeft === 0, `no terminal is dead after Resume (got ${resumeLeft} still resumable)`)
+  const workARunningAgain = await evalJs(`const r=${findRow('work-A')}; return !!r && !/Resume/.test(r.textContent)`)
+  check(workARunningAgain, 'work-A is running again after Resume (no Resume button)')
   await shot('3-after-resume')
 
   // --- 5. "+ Terminal" names the next terminal "Terminal N" and adds exactly one tab ---
@@ -118,13 +130,20 @@ async function main() {
   await shot('4-after-new')
 
   // --- 6. resume-on-reload: reload the page, tabs reappear from live terminals ---
+  // Only kind:'terminal' auto-tabs into the Terminal window; an AGENT's raw terminal is opt-in
+  // (its chat widget is the primary surface), so it is intentionally NOT reconstructed as a tab.
   logln('\n[6] resume on reload')
-  const runningBefore = await evalJs(`return (await window.agentOS.terminalList()).filter(s=>s.status==='running').length`)
+  const runningBefore = await evalJs(`return (await window.agentOS.terminalList()).filter(s=>s.status==='running' && s.kind==='terminal').length`)
   await send('Page.navigate', { url }, sessionId) // hard reload (CDP sessionId, foreign — keep)
   await delay(6500)
   const tabsAfterReload = await evalJs(`return document.querySelectorAll('.window-tabs .wtab').length`)
-  check(tabsAfterReload === runningBefore, `tabs reconstructed on reload: ${tabsAfterReload} tabs == ${runningBefore} running terminals`)
+  check(tabsAfterReload === runningBefore, `tabs reconstructed on reload: ${tabsAfterReload} tabs == ${runningBefore} running terminals (agents excluded — not auto-tabbed)`)
   await shot('5-after-reload')
+
+  // --- cleanup: REMOVE every terminal this run created (delete the record, don't just stop) so the workspace
+  // is left exactly as found — only the agent remains. This is why the test works every time. ---
+  logln('\n[cleanup] removing spawned terminals')
+  await evalJs(`const ts = (await window.agentOS.terminalList()).filter(s=>s.kind==='terminal'); for (const t of ts) { try { window.agentOS.terminalRemove(t.id) } catch {} } return ts.length`)
 
   logln(fails.length ? `\nFAIL ✗ ${fails.length} check(s): ${fails.join(' | ')}` : '\nPASS ✓ all terminal-UX checks')
   ws.close()

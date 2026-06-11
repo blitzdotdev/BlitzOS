@@ -8,6 +8,7 @@ export interface TerminalOps {
   resizeTerminal(id: string, cols: number, rows: number): boolean
   readTerminal(id: string): string
   stopTerminal(id: string): boolean
+  removeTerminal(id: string): boolean
   /** Re-spawn a dead terminal from its persisted meta (one-click resume). */
   restartTerminal(id: string): Promise<TerminalMeta | null>
   /** A terminal's current record (live or persisted), or null — tells a reattached survivor from a dead one. */

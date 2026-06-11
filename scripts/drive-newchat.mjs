@@ -1,5 +1,5 @@
-// CDP driver for the "+ New" agent launcher button (the UI path for spawn_chat_session).
-// Clicks the toolbar "+ New" button and asserts a NEW chat surface (data-sid="chat-<id>") appears live
+// CDP driver for the "+ Agent" agent launcher button (the UI path for spawn_agent).
+// Clicks the toolbar "+ Agent" button and asserts a NEW chat surface (data-sid="chat-<id>") appears live
 // over SSE — i.e. the renderer→shim→/api/os/agent-spawn→host broadcast path works end-to-end.
 //   node scripts/drive-newchat.mjs [url]
 // Delta-based: tolerates chat sessions left over from prior runs (asserts +1, never an absolute count).
@@ -66,10 +66,10 @@ async function main() {
   const before = await chatCount()
   console.log(`baseline chat surfaces: ${before}  (${JSON.stringify(await chatIds())})`)
   check(await evalJs(`return typeof window.agentOS?.spawnAgent === 'function'`), 'window.agentOS.spawnAgent is exposed')
-  check(await evalJs(`return !!Array.from(document.querySelectorAll('.toolbar button')).find(b=>/\\+ New/.test(b.textContent||''))`), 'the "+ New" toolbar button is present')
+  check(await evalJs(`return !!Array.from(document.querySelectorAll('.toolbar button')).find(b=>/\\+ Agent/.test(b.textContent||''))`), 'the "+ Agent" toolbar button is present')
 
-  console.log('\n[click] + New chat button')
-  await evalJs(`const b=Array.from(document.querySelectorAll('.toolbar button')).find(x=>/\\+ New/.test(x.textContent||'')); if(!b) throw new Error('button not found'); b.click(); return 1`)
+  console.log('\n[click] + Agent button')
+  await evalJs(`const b=Array.from(document.querySelectorAll('.toolbar button')).find(x=>/\\+ Agent/.test(x.textContent||'')); if(!b) throw new Error('button not found'); b.click(); return 1`)
   await delay(4500) // host mints id, writes meta, broadcasts create → new surface mounts
 
   const after = await chatCount()
@@ -78,7 +78,13 @@ async function main() {
   check(ids.some((s) => /^chat-\d+$/.test(s)), `a chat-<id> session surface exists (got ${JSON.stringify(ids)})`)
   await shot('after-click')
 
-  console.log(fails.length ? `\nFAIL ✗ ${fails.length}: ${fails.join(' | ')}` : '\nPASS ✓ "+ New" launcher works')
+  // cleanup: close every non-primary agent this run spawned (closeAgent deletes its chat + files + area;
+  // the primary 'chat'/agent '0' is never closable) so repeated runs leave the workspace as found.
+  console.log('\n[cleanup] closing spawned agents')
+  await evalJs(`const ids=Array.from(document.querySelectorAll('[data-sid^="chat-"]')).map(e=>e.getAttribute('data-sid').replace('chat-','')).filter(id=>id&&id!=='0'); for (const id of ids){ try{ window.agentOS.closeAgent(id) }catch{} } return ids.length`)
+  await delay(1500)
+
+  console.log(fails.length ? `\nFAIL ✗ ${fails.length}: ${fails.join(' | ')}` : '\nPASS ✓ "+ Agent" launcher works')
   ws.close()
   cleanup(fails.length ? 2 : 0)
 }

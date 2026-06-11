@@ -8,7 +8,7 @@
 // Shared core: both transports bind it with their own seams (the only differences): the tmux `host`,
 // the `terminalsDir`, `emit` (server: SSE broadcast; Electron: webContents.send), and `markWrite`
 // (tell the workspace watcher a write is the OS's own so it doesn't reconcile itself).
-import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -162,6 +162,26 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     emit({ type: 'terminal-stop', id })
     return true
   }
+  /** Permanently FORGET a terminal: kill it if live, then delete its persisted dir + in-memory record so it
+   *  stops appearing in the tray (a plain shell becomes dead-but-resumable on stop; remove is how you prune it).
+   *  NEVER the primary agent ('0'). The id-shape guard blocks path traversal (ids are uuids or numeric). */
+  function removeTerminal(id) {
+    if (id === '0' || !/^[a-zA-Z0-9_-]+$/.test(String(id))) return false // primary is never removable; reject unsafe ids
+    const r = live.get(id)
+    if (r) {
+      r.stopping = true
+      if (r.restartTimer) { clearTimeout(r.restartTimer); r.restartTimer = null }
+      try { r.unsubData && r.unsubData(); r.unsubExit && r.unsubExit() } catch { /* ignore */ }
+      live.delete(id)
+    }
+    stopRequested.add(id)
+    agentFails.delete(id)
+    try { host.kill(id) } catch { /* may already be dead */ }
+    try { host.remove(id) } catch { /* ignore */ }
+    try { rmSync(dirOf(id), { recursive: true, force: true }); markWrite(dirOf(id)) } catch { /* best-effort */ }
+    emit({ type: 'terminal-stop', id })
+    return true
+  }
   /** Re-spawn a terminal from its persisted meta (an `agent` that ended, or a manual restart). */
   async function restartTerminal(id) {
     const r = live.get(id)
@@ -231,5 +251,5 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     }
   }
 
-  return { spawnTerminal, sendToTerminal, resizeTerminal, stopTerminal, restartTerminal, restore, scrollback, getTerminal, isLive, listTerminals, stopAll, flushAll }
+  return { spawnTerminal, sendToTerminal, resizeTerminal, stopTerminal, removeTerminal, restartTerminal, restore, scrollback, getTerminal, isLive, listTerminals, stopAll, flushAll }
 }

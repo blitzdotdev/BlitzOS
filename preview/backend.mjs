@@ -439,7 +439,7 @@ const wsHost = createWorkspaceHost({
   defaultMode: 'canvas',
   // An agent's claude runs in a VISIBLE terminal in its area (no headless brain). null ⇒ BLITZ_AGENT off.
   launchAgent: launchAgent ? (id, area, title) => launchAgent(id, area, title) : undefined,
-  stopAgent: (id) => { serverTerminalOps.stopTerminal(id) } // closing an agent stops its terminal (no auto-restart)
+  stopAgent: (id) => { serverTerminalOps.removeTerminal(id) } // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
 })
 wsHost.hydrateOnBoot()
 
@@ -882,6 +882,13 @@ const server = createServer(async (req, res) => {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
     req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverTerminalOps.stopTerminal(String(b.id || '')) }) })
+    return
+  }
+  // Permanently remove a (dead or live) terminal from the tray — prune it from the workspace. Never the agent.
+  if (path === '/api/os/terminal-remove' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverTerminalOps.removeTerminal(String(b.id || '')) }) })
     return
   }
   if (path === '/api/os/terminal-restart' && req.method === 'POST') {

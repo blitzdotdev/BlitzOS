@@ -206,6 +206,7 @@ app.whenReady().then(() => {
   ipcMain.handle('os:rename-agent', (_e, p: { id: string; title: string }) => { try { return osRenameAgent(String(p?.id), String(p?.title ?? '')) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   ipcMain.handle('os:terminal-list', () => electronTerminalOps.listTerminals())
   ipcMain.on('os:terminal-stop', (_e, id: string) => electronTerminalOps.stopTerminal(String(id)))
+  ipcMain.on('os:terminal-remove', (_e, id: string) => electronTerminalOps.removeTerminal(String(id)))
   ipcMain.on('os:terminal-restart', (_e, id: string) => { void electronTerminalOps.restartTerminal(String(id)) })
 
   // Action-items inbox (human side): list / resolve / clear.
@@ -239,7 +240,7 @@ app.whenReady().then(() => {
       void electronTerminalOps.spawnTerminal({ id, kind: 'agent', command, cwd: ws, area, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })
     }
     setLaunchAgent(launchAgent)
-    setStopAgent((id) => { electronTerminalOps.stopTerminal(id) }) // closing an agent stops its claude (no auto-restart)
+    setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its claude terminal record (no auto-restart, no exited ghost)
     // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
     let resumed = false
     const resumeAll = async (): Promise<void> => {

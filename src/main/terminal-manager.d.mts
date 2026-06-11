@@ -66,6 +66,7 @@ export interface TerminalManager {
   sendToTerminal(id: string, data: string): boolean
   resizeTerminal(id: string, cols: number, rows: number): boolean
   stopTerminal(id: string): boolean
+  removeTerminal(id: string): boolean
   restartTerminal(id: string): Promise<TerminalMeta | null>
   /** Reattach-on-boot: adopt tmux windows that survived a restart; returns adopted ids. */
   restore(): Promise<string[]>

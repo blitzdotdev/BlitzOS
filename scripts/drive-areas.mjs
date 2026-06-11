@@ -90,9 +90,9 @@ async function main() {
   }
 
   console.log('\n[2] spawn a NEW chat session via relay → its chat lands in its own area')
-  const spawned = await relay('spawn_chat_session', { title: 'Area Test Agent' })
-  const newId = spawned && spawned.session && String(spawned.session.id)
-  check(!!newId, `spawn_chat_session returned an id (${newId})`)
+  const spawned = await relay('spawn_agent', { title: 'Area Test Agent' })
+  const newId = spawned && spawned.agent && String(spawned.agent.id)
+  check(!!newId, `spawn_agent returned an id (${newId})`)
   await delay(4000)
   const m2 = await areaMap()
   const newChatSid = `chat-${newId}`
@@ -101,29 +101,43 @@ async function main() {
   console.log('\n[3] that session opens a surface + a terminal → both land in ITS area, not the user\'s')
   let surfId = null
   for (let i = 0; i < 3 && !surfId; i++) {
-    const created = await relay('create_surface', { kind: 'srcdoc', html: '<h1>agent work window</h1>', session: newId })
+    const created = await relay('create_surface', { kind: 'srcdoc', html: '<h1>agent work window</h1>', agent: newId })
     surfId = created && created.id
     if (!surfId) await delay(1500) // transient relay hiccup — retry
   }
-  check(!!surfId, `create_surface {session:${newId}} returned an id (${surfId})`)
-  await relay('spawn_session', { command: 'bash', title: `area${newId}-shell`, session: newId })
-  await delay(5000)
-  const m3 = await areaMap()
-  console.log('  area map after work: ' + JSON.stringify(m3))
-  check(surfId && m3[surfId] === Number(newId), `agent-created surface in area ${newId} (got ${surfId ? m3[surfId] : 'n/a'})`)
-  // the terminal surface id is dynamic; find any terminal-bearing surface NOT in area 0 that is in area newId.
-  const termAreas = await evalJs(`
+  check(!!surfId, `create_surface {agent:${newId}} returned an id (${surfId})`)
+  await relay('open_terminal', { command: 'bash', title: `area${newId}-shell`, agent: newId })
+  // POLL until the canvas settles — a single fixed delay flaked (the new surface/terminal hadn't registered
+  // its position yet, reading area `undefined`). Retry up to ~12s for all three conditions to hold.
+  const termAreasExpr = `
     const out=[]; for (const el of document.querySelectorAll('[data-sid]')) {
       if (el.querySelector('.window-tabs') || (el.textContent||'').includes('Terminal')) {
         const left=parseFloat(el.style.left||'0'); const w=el.offsetWidth||0; out.push(Math.round((left+w/2)/${stride}));
       }
-    } return out;`)
+    } return out;`
+  let m3 = {}, surfArea, termAreas = []
+  for (let i = 0; i < 10; i++) {
+    await delay(1200)
+    m3 = await areaMap()
+    surfArea = surfId ? m3[surfId] : undefined
+    termAreas = await evalJs(termAreasExpr)
+    if (surfArea === Number(newId) && termAreas.includes(Number(newId)) && m3['chat'] === 0) break
+  }
+  console.log('  area map after work: ' + JSON.stringify(m3))
+  check(surfId && surfArea === Number(newId), `agent-created surface in area ${newId} (got ${surfArea})`)
   console.log('  terminal-window areas: ' + JSON.stringify(termAreas))
   check(termAreas.includes(Number(newId)), `a terminal window is in area ${newId} (got ${JSON.stringify(termAreas)})`)
   check(m3['chat'] === 0, `the user's primary chat is STILL in area 0 (undisturbed) (got ${m3['chat']})`)
 
   await shot('after')
-  console.log(fails.length ? `\nFAIL ✗ ${fails.length}: ${fails.join(' | ')}` : '\nPASS ✓ area-per-session isolation verified')
+
+  // cleanup: close the agent this run spawned (close_agent deletes its chat + files + area) AND remove the
+  // terminal it opened into that area, so Home is left exactly as found (only the primary agent).
+  console.log('\n[cleanup] closing the spawned agent + removing its terminal')
+  if (newId) { try { await relay('close_agent', { id: newId }) } catch { /* ignore */ } }
+  try { await evalJs(`const ts=(await window.agentOS.terminalList()).filter(s=>s.kind==='terminal'); for(const t of ts){try{window.agentOS.terminalRemove(t.id)}catch{}} return ts.length`) } catch { /* ignore */ }
+
+  console.log(fails.length ? `\nFAIL ✗ ${fails.length}: ${fails.join(' | ')}` : '\nPASS ✓ area-per-agent isolation verified')
   ws.close()
   cleanup(fails.length ? 2 : 0)
 }

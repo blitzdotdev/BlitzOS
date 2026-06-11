@@ -271,6 +271,9 @@
     terminalStop: function (id) {
       fetch(API + '/os/terminal-stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
     },
+    terminalRemove: function (id) {
+      fetch(API + '/os/terminal-remove', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
+    },
     terminalRestart: function (id) {
       // Re-spawn a dead terminal — the backend emits terminal-spawn, which re-opens its terminal tab.
       fetch(API + '/os/terminal-restart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})

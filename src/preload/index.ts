@@ -119,6 +119,10 @@ const api = {
   terminalStop(id: string): void {
     ipcRenderer.send('os:terminal-stop', id)
   },
+  /** Permanently remove a terminal from the tray (kill if live + delete its record). Never the primary agent. */
+  terminalRemove(id: string): void {
+    ipcRenderer.send('os:terminal-remove', id)
+  },
   /** Re-spawn a dead terminal from its persisted meta (one-click resume) — emits terminal-spawn. */
   terminalRestart(id: string): void {
     ipcRenderer.send('os:terminal-restart', id)
