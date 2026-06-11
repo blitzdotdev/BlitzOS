@@ -71,7 +71,10 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     },
     broadcast: (obj) => getWin()?.webContents.send('os:action', obj),
     onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
-    defaultMode: 'canvas' // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
+    defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
+    // A chat session's claude runs in a VISIBLE terminal in its area; index.ts wires this from the shared
+    // agent-session core + the session-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
+    launchAgent: (id, area, title) => launchAgentHook?.(id, area, title)
   })
   wsHost.hydrateOnBoot()
   wsHost.startWatch()
@@ -251,24 +254,28 @@ export function osCustomizeWidget(name: string, html: string, sessionId = '0'): 
 export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
 }
-// index.ts owns process supervision (the agent-runner + relay url), so it registers HOW to start a chat
-// session's agent. osActions handles the workspace-side (mint id + surface the widget) and delegates the
-// agent spawn through this hook — keeping the agent-runner wiring in one place (parity with backend.mjs).
-let spawnChatAgent: ((sessionId: string) => void) | null = null
-export function setSpawnChatAgent(fn: (sessionId: string) => void): void {
-  spawnChatAgent = fn
+// index.ts owns the relay url + session-ops, so it registers HOW to launch a chat session's claude in a
+// tmux terminal. osActions handles the workspace-side (mint id + surface the widget); addChatSession then
+// calls launchAgent via the host adapter. Gated: index.ts only registers this when BLITZ_AGENT is set.
+let launchAgentHook: ((sessionId: string, area: number, title?: string) => void) | null = null
+export function setLaunchAgent(fn: (sessionId: string, area: number, title?: string) => void): void {
+  launchAgentHook = fn
 }
-/** Open a new chat session: mint its id, register + live-surface its chat widget, then spawn its agent. */
-export function osSpawnChatSession(title?: string): { id: string; title: string } {
+/** Open a new chat session: mint its id, register + live-surface its chat widget; addChatSession launches
+ *  its claude terminal (via the launchAgent seam). focus:true (a USER '+ New') follows the camera to it. */
+export function osSpawnChatSession(title?: string, focus = false): { id: string; title: string } {
   if (!wsHost) throw new Error('no workspace host')
   const id = wsHost.newChatSessionId()
-  wsHost.addChatSession(id, title)
-  spawnChatAgent?.(id)
+  wsHost.addChatSession(id, title, { focus })
   return { id, title: title || `Chat ${id}` }
 }
-/** The chat sessions in the active workspace (always '0' + any persisted agent sessions) — for boot-resume. */
-export function osChatSessionIds(): string[] {
-  return wsHost ? wsHost.chatSessionIds() : ['0']
+/** Boot: re-exec the claude terminal for every chat session on the current relay url (+ --resume). */
+export function osResumeAgentsOnBoot(): void {
+  wsHost?.resumeAgentsOnBoot()
+}
+/** Publish the current relay url to .blitzos/relay-url so reattached agents self-heal onto it (no brain to restart). */
+export function osSetRelayUrl(url: string | null | undefined): void {
+  wsHost?.setRelayUrl(url)
 }
 /** #52: group surfaces into a REAL folder on disk (mkdir + mv their files into a subdir), via the shared
  *  workspace host. Returns the host result. The reconcile that follows surfaces the new folder as a tile. */

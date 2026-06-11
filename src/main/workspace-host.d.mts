@@ -9,6 +9,9 @@ export interface WorkspaceHostAdapter {
   broadcast(obj: unknown): void
   onSurfaces?: (surfaces: unknown[]) => Promise<unknown> | void
   defaultMode?: 'canvas' | 'desktop'
+  /** Launch (or resume) the claude terminal for a chat/agent session in its area. Wired by each transport
+   *  from the shared agent-session core + its session-ops; absent ⇒ no agent auto-launch (BLITZ_AGENT off). */
+  launchAgent?: (sessionId: string, area: number, title?: string) => void
 }
 
 export interface WorkspaceHost {
@@ -38,7 +41,9 @@ export interface WorkspaceHost {
   systemUi(name: string): string | null
   chatSessionIds(): string[]
   newChatSessionId(): string
-  addChatSession(sessionId: string, title?: string): Record<string, unknown>
+  addChatSession(sessionId: string, title?: string, opts?: { focus?: boolean }): Record<string, unknown>
+  resumeAgentsOnBoot(): void
+  setRelayUrl(url: string | null | undefined): void
   group(name: string, memberIds: string[], x?: number, y?: number, kind?: 'board' | 'folder'): { ok: true; folder: string; moved: number } | { error: string }
   consent(): { surfaces: string[]; providers: string[] }
   persistConsent(c: { surfaces?: string[]; providers?: string[] }): void

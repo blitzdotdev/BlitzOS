@@ -11,6 +11,9 @@
 // localhost is trusted; relay + server are untrusted (gate page content to surfaces the user shared).
 import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from './widget-catalog.mjs'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
+// Area grid: a chat session N owns area N. When a session-scoped agent creates a surface, we tag it with
+// {area} so the renderer cascades it into that session's area — isolated from the user's primary (area 0).
+import { areaForSession } from '../renderer/src/areas-core.mjs'
 
 function parse(body) {
   try {
@@ -65,15 +68,18 @@ export function makeOsTools(ops) {
     {
       path: '/create_surface',
       description:
-        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html, native takes component+props. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace).',
+        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html, native takes component+props. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary session, pass {session:"<your id>"} so it opens in YOUR area (do NOT also pass x/y unless repositioning within your area).',
       input_schema: {
         type: 'object',
         required: ['kind'],
-        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' } }
+        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' }, session: { type: 'string' } }
       },
       handler: ({ body }) => {
         const a = parse(body)
         if (!a.kind) return { status: 400, body: { error: 'kind required' } }
+        // A session-scoped agent's surface lands in ITS area (the renderer cascades by `area` when no
+        // explicit x is given); the primary session '0' → area 0 = today's behavior.
+        if (a.session != null) a.area = areaForSession(a.session)
         const id = ops.createSurface(a)
         const ctx = ops.workspaceContext()
         return { id, workspace: ctx.workspace, workspace_path: ctx.workspace_path, siblings: (ctx.siblings || []).filter((s) => s.id !== id).map((s) => s.title) }
@@ -81,11 +87,12 @@ export function makeOsTools(ops) {
     },
     {
       path: '/open_window',
-      description: 'Open a third-party website as a live web surface. Returns its id.',
-      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' } } },
+      description: 'Open a third-party website as a live web surface. Returns its id. If you are a non-primary session, pass {session:"<your id>"} so it opens in YOUR area.',
+      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, session: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
         if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
+        if (a.session != null) a.area = areaForSession(a.session) // open in the session's own area
         return { id: ops.openWindow(a) }
       }
     },
@@ -356,11 +363,14 @@ export function makeOsTools(ops) {
     {
       path: '/spawn_session',
       description:
-        "Start a SESSION — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (claude/codex), a build/test runner, or any long job. The session SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/sessions/. Args: {command (e.g. 'bash' or \"claude -p '…'\"), kind?:'pty'|'agent', cwd?, title?, cols?, rows?}. Returns { session }.",
-      input_schema: { type: 'object', properties: { command: { type: 'string' }, kind: { type: 'string', enum: ['pty', 'agent'] }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' } } },
+        "Start a SESSION — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (claude/codex), a build/test runner, or any long job. The session SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/sessions/. If you are a non-primary session, pass {session:\"<your id>\"} so the terminal opens in YOUR area, not the user's. Args: {command (e.g. 'bash' or \"claude -p '…'\"), kind?:'pty'|'agent', cwd?, title?, cols?, rows?, session?}. Returns { session }.",
+      input_schema: { type: 'object', properties: { command: { type: 'string' }, kind: { type: 'string', enum: ['pty', 'agent'] }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' }, session: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)
-        const session = await ops.spawnSession({ command: a.command, kind: a.kind, cwd: a.cwd, title: a.title, cols: a.cols, rows: a.rows })
+        // A session-scoped agent's terminal opens in ITS area; an unscoped call leaves area undefined so
+        // the renderer opens it in the current area (today's behavior for the primary agent + human spawns).
+        const area = a.session != null ? areaForSession(a.session) : undefined
+        const session = await ops.spawnSession({ command: a.command, kind: a.kind, cwd: a.cwd, title: a.title, cols: a.cols, rows: a.rows, area })
         return { session }
       }
     },

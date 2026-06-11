@@ -33,7 +33,7 @@ import { makeWidgetToolRunner, makeWidgetToolHandlers } from '../src/main/widget
 // supplies its own primitive ops (broadcast + headless-Chromium) so there is no server/Electron tool difference.
 import { makeOsTools } from '../src/main/os-tools.mjs'
 import { capturedScopes } from '../src/main/provider-specs.mjs'
-// Shared perception kernel + resident brain — the SAME modules the Electron main runs,
+// Shared perception kernel — the SAME modules the Electron main runs,
 // so server mode gets the autonomy loop with no duplicated code.
 // waitForEvents/latestSeq/redactMoment/EVENTS_REMINDER/isContentShared are consumed INSIDE the shared
 // os-tools.mjs registry now (same module instance) — backend.mjs keeps only what its own HTTP routes + ingest use.
@@ -45,9 +45,9 @@ import {
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
-import { startAgentRunner } from '../src/main/agent-runner.mjs'
+import { prepareAgentLaunch } from '../src/main/agent-session.mjs'
 // The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
-// the relay can't diverge between the two modes again. Only the adapter (publish url/status, restart brain) differs.
+// the relay can't diverge between the two modes again. Only the adapter (publish url/status) differs.
 import { startRelay } from '../src/main/relay.mjs'
 // Shared "Agent activity" feed — the SAME module the Electron relay uses; only `emit` differs (SSE here).
 import { withActivity } from '../src/main/activity.mjs'
@@ -234,18 +234,19 @@ let osState = { surfaces: [] }
 // after broadcast + reconcileSurfaces exist). The renderer adopts it via a `hydrate` on SSE connect.
 let agentUrl = null
 let relay = null // the SHARED relay handle ({ getUrl, isOnline, stop }) — same module Electron uses (no divergence)
-let brainRunner = null // the supervised brain handle ({ stop, restart }) — restarted when the relay URL changes
-// Per-session chat agents (#1+). #0 is the brainRunner above; #1,#2… each get their OWN supervised claude
-// over the SAME relay, scoped to their session id (its /events + /say carry session:'<id>'). One map keeps
-// us from double-spawning a session's agent.
-const chatRunners = new Map() // sessionId -> { stop, restart }
-function chatAgentCmd() { return process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : 'claude' }
-/** Ensure a supervised agent is running for chat session `id`. Idempotent; '0' is the brainRunner. */
-function ensureChatAgent(sessionId) {
-  const id = String(sessionId)
-  if (id === '0' || chatRunners.has(id)) return
-  chatRunners.set(id, startAgentRunner({ getUrl: () => agentUrl, cmd: chatAgentCmd(), label: 'chat-' + id, sessionId: id, getWorkspacePath: () => wsHost.activePath() }))
-}
+// Agent sessions run as VISIBLE tmux terminals (no headless brain). launchAgent (the workspace-host seam)
+// starts a chat session's claude in a terminal in its area, over the same relay; the session-manager
+// persists + reattaches it. Gated by BLITZ_AGENT (=claude or a custom command); null ⇒ no auto-launch.
+const agentCmd = process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT
+const launchAgent = process.env.BLITZ_AGENT
+  ? (id, area, title) => {
+      const ws = wsHost.activePath()
+      if (!ws || !agentUrl) return // not ready (no workspace / relay url yet) — boot resume retries
+      const sessionsDir = join(ws, '.blitzos', 'sessions')
+      const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir, id, url: agentUrl, cmd: agentCmd })
+      Promise.resolve(serverSessionOps.spawnSession({ id, kind: 'agent', command, cwd: ws, area, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })).catch(() => {})
+    }
+  : null
 const sseClients = new Set()
 // Widget data consent: `${surfaceId}:${provider}` the human approved (via the
 // renderer prompt). The data route 403s until the pair is here — a widget can't
@@ -304,7 +305,7 @@ async function initServerMode() {
     console.log('[agent-os backend] SERVER MODE on — web surfaces are live + CDP-controllable')
     // Perception parity: inject the SAME in-page sensors (INJECT) into each server
     // browser target via CDP and drain them into the SAME moment coalescer, so server
-    // mode produces the moment stream over /events. The connected agent is the brain;
+    // mode produces the moment stream over /events. The connected agents drive the OS;
     // BlitzOS ships NO in-process decision logic.
     startServerPerception()
     // Phase 2: spin up server targets for any web surfaces restored from the workspace, so a
@@ -435,7 +436,9 @@ const wsHost = createWorkspaceHost({
   },
   broadcast,
   onSurfaces: (surfaces) => (SERVER_MODE ? reconcileSurfaces(surfaces) : undefined),
-  defaultMode: 'canvas'
+  defaultMode: 'canvas',
+  // A chat session's claude runs in a VISIBLE terminal in its area (no headless brain). null ⇒ BLITZ_AGENT off.
+  launchAgent: launchAgent ? (id, area, title) => launchAgent(id, area, title) : undefined
 })
 wsHost.hydrateOnBoot()
 
@@ -566,11 +569,11 @@ const serverOps = {
   },
   say: (text, sessionId) => wsHost.appendChat('agent', String(text), sessionId), // append to that session's chat.md + broadcast
   customizeWidget: (name, html, sessionId) => wsHost.customizeWidget(String(name), String(html), sessionId),
-  // Open a new chat session: register + surface it (host), then supervise ITS agent over the same relay.
-  spawnChatSession: async (title) => {
+  // Open a new chat session: register + surface it; addChatSession launches its claude terminal (launchAgent).
+  // focus:true (a USER '+ New') tells the renderer to follow the camera to the new area.
+  spawnChatSession: async (title, focus = false) => {
     const id = wsHost.newChatSessionId()
-    wsHost.addChatSession(id, title)
-    ensureChatAgent(id)
+    wsHost.addChatSession(id, title, { focus })
     return { id, title: title || `Chat ${id}` }
   },
   systemUi: (name) => wsHost.systemUi(String(name)),
@@ -595,7 +598,7 @@ const serverOps = {
 
 // Session ops — the SHARED workspace-keyed lifecycle (session-ops.mjs). Server seam: the active
 // workspace folder + the SSE broadcast emit. Electron binds the SAME makeSessionOps with its own seam.
-const serverSessionOps = makeSessionOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast })
+const serverSessionOps = makeSessionOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast, getUrl: () => agentUrl, agentCmd: agentCmd || 'claude' })
 Object.assign(serverOps, serverSessionOps)
 
 // Action-items inbox — the SAME shared core Electron binds. Server seam: active workspace + SSE
@@ -605,7 +608,7 @@ Object.assign(serverOps, serverActionItems)
 
 // Start the agent-socket relay via the SHARED lifecycle module (relay.mjs) — connect + self-heal + watchdog +
 // status all live there now (one impl, Electron too). The server only supplies its tools + the adapter: how to
-// publish the URL/status to the browser (SSE broadcast) and how to restart its brain.
+// publish the URL/status to the browser (SSE broadcast); URL changes refresh .blitzos/relay-url.
 function startServerRelay() {
   relay = startRelay(
     {
@@ -628,11 +631,11 @@ function startServerRelay() {
     {
       onUrl: (u) => {
         agentUrl = u
+        wsHost.setRelayUrl(u) // publish to .blitzos/relay-url so reattached agents self-heal onto the fresh url
         broadcast({ __agentUrl: agentUrl })
         console.log('[agent-os backend] agent-socket paste URL (drive the preview from any AI chat):\n  ' + agentUrl)
       },
-      onStatus: (online) => broadcast({ type: 'agentStatus', online, agentUrl, brain: !!process.env.BLITZ_AGENT }),
-      restartBrain: () => brainRunner && brainRunner.restart()
+      onStatus: (online) => broadcast({ type: 'agentStatus', online, agentUrl, agent: !!process.env.BLITZ_AGENT })
     }
   )
 }
@@ -645,10 +648,10 @@ const server = createServer(async (req, res) => {
     return json(res, 200, {
       ok: true,
       redirectUri: REDIRECT_URI,
-      // relay + brain health, so `curl /api/health` (or start-all's doctor) can tell if the agent path is live
+      // relay + agent health, so `curl /api/health` (or start-all's doctor) can tell if the agent path is live
       relayOnline: !!(relay && relay.isOnline()),
       agentUrl,
-      brain: !!process.env.BLITZ_AGENT,
+      agent: !!process.env.BLITZ_AGENT,
       workspace: wsHost.active()
     })
   if (path === '/api/integrations' && req.method === 'GET') return json(res, 200, statuses())
@@ -794,9 +797,9 @@ const server = createServer(async (req, res) => {
     })
     res.write(': connected\n\n')
     if (agentUrl) res.write(`data: ${JSON.stringify({ __agentUrl: agentUrl })}\n\n`)
-    // Send the current relay/brain status immediately so the toolbar pill shows online/offline on first
+    // Send the current relay/agent status immediately so the toolbar pill shows online/offline on first
     // paint (don't make a fresh tab wait up to 20s for the next watchdog tick).
-    res.write(`data: ${JSON.stringify({ type: 'agentStatus', online: !!(relay && relay.isOnline()), agentUrl, brain: !!process.env.BLITZ_AGENT })}\n\n`)
+    res.write(`data: ${JSON.stringify({ type: 'agentStatus', online: !!(relay && relay.isOnline()), agentUrl, agent: !!process.env.BLITZ_AGENT })}\n\n`)
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
     res.write(
@@ -849,7 +852,7 @@ const server = createServer(async (req, res) => {
   if (path === '/api/os/chat-session-spawn' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
-    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverOps.spawnChatSession(b.title != null ? String(b.title) : undefined)).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverOps.spawnChatSession(b.title != null ? String(b.title) : undefined, true)).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
     return
   }
   if (path === '/api/os/session-list' && req.method === 'POST') {
@@ -1256,15 +1259,23 @@ server.listen(PORT, '127.0.0.1', () => {
   initServerMode()
   // Phase 3: watch the workspace folder so external file edits (agent/Finder/git) reflect live.
   wsHost.startWatch()
-  // Boot + supervise the brain: spawn the agent against the live relay URL and keep it
-  // alive (auto-restart on exit), so a brain is always watching. Opt-in via BLITZ_AGENT
-  // (=claude or a custom command); off by default (continuous LLM use has a cost).
+  // Boot agents: each chat session's claude runs in a VISIBLE tmux terminal in its area. Survivors are
+  // reattached (tmux outlives the process); only the DEAD ones are re-exec'd with --resume of their persisted
+  // session id. Opt-in via BLITZ_AGENT (off by default — continuous LLM use has a cost). The relay URL is
+  // minted async, so poll until it's up, then resume once (after survivors are adopted, to avoid double-launch).
   if (process.env.BLITZ_AGENT) {
-    brainRunner = startAgentRunner({ getUrl: () => agentUrl, cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, label: 'server-agent', sessionId: '0', getWorkspacePath: () => wsHost.activePath() })
+    let resumed = false
+    let tries = 0
+    const t = setInterval(() => {
+      if (!agentUrl) { if (++tries > 150) clearInterval(t); return } // cap ~2min so we don't poll forever if the relay never connects
+      clearInterval(t)
+      if (resumed) return
+      resumed = true
+      Promise.resolve(serverSessionOps.whenRestored())
+        .catch(() => {})
+        .then(() => wsHost.resumeAgentsOnBoot())
+    }, 800)
   }
-  // Resume agents for any chat sessions opened in a previous run (their meta persists in the workspace),
-  // so a restart re-attaches every session's claude — not just the primary. #0 is handled above.
-  for (const id of wsHost.chatSessionIds()) if (id !== '0') ensureChatAgent(id)
   // (the relay self-heal + watchdog + status heartbeat now live in the shared relay.mjs — see startServerRelay)
 })
 
@@ -1278,8 +1289,7 @@ async function gracefulExit() {
   // created/moved right before quit lands on disk — otherwise hydrate restores the stale state.
   wsHost.flush()
   wsHost.stopWatch() // close fs watchers (handle hygiene)
-  try { serverSessionOps.stopHosts() } catch { /* ignore */ } // flush session transcripts + close tmux control clients (sessions survive)
-  for (const r of chatRunners.values()) { try { r.stop() } catch { /* ignore */ } } // stop per-session chat agents (sessions persist; agents re-attach on next boot)
+  try { serverSessionOps.stopHosts() } catch { /* ignore */ } // flush transcripts + close tmux control clients; the agents' terminals SURVIVE (reattached next boot)
   try {
     if (host) await host.stop()
   } catch {

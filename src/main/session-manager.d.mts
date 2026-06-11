@@ -19,6 +19,11 @@ export interface SessionMeta {
   endedAt: number | null
   cols: number
   rows: number
+  /** the workspace area this terminal belongs to (session N → area N); null = unscoped (human spawn). */
+  area?: number | null
+  /** agent sessions only: persisted claude --session-id token + whether claude has established it. */
+  claudeSessionId?: string
+  claudeEstablished?: boolean
 }
 
 export interface SpawnSessionOpts {
@@ -32,6 +37,9 @@ export interface SpawnSessionOpts {
   title?: string
   autonomy?: Autonomy
   id?: string
+  area?: number | null
+  claudeSessionId?: string
+  claudeEstablished?: boolean
 }
 
 export interface SessionEvent {
@@ -49,6 +57,8 @@ export interface SessionManagerDeps {
   emit?: (ev: SessionEvent) => void
   /** Tell the workspace watcher a write is the OS's own, so it doesn't reconcile itself. */
   markWrite?: (path: string) => void
+  /** Rebuild a dead AGENT session's command (fresh relay url + --resume) on re-exec; null ⇒ shell verbatim. */
+  rebuildAgentCommand?: ((meta: SessionMeta) => string | null) | null
 }
 
 export interface SessionManager {
@@ -61,6 +71,8 @@ export interface SessionManager {
   restore(): Promise<string[]>
   scrollback(id: string): string
   getSession(id: string): SessionMeta | null
+  /** Whether a session is wired to a live tmux window THIS run (a survivor adopted by restore, or fresh). */
+  isLive(id: string): boolean
   listSessions(): SessionMeta[]
   stopAll(): void
 }

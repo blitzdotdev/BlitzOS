@@ -3,13 +3,13 @@ import { join } from 'path'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, setSpawnChatAgent, osChatSessionIds, osSpawnChatSession } from './osActions'
+import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, setLaunchAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnChatSession } from './osActions'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
-import { electronSessionOps, electronActionItems } from './electron-os-tools'
+import { electronSessionOps, electronActionItems, setSessionGetUrl } from './electron-os-tools'
+import { prepareAgentLaunch } from './agent-session.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
-import { startAgentRunner } from './agent-runner.mjs'
 // Keep web surfaces logged in across quit/relaunch (cookie/localStorage flush + unload).
 import { startSessionPersistence } from './persistence'
 import { registerWallpaperIpc } from './wallpaper'
@@ -201,7 +201,7 @@ app.whenReady().then(() => {
   ipcMain.on('os:session-resize', (_e, p: { id: string; cols: number; rows: number }) => electronSessionOps.resizeSession(String(p?.id), Number(p?.cols) || 80, Number(p?.rows) || 24))
   ipcMain.handle('os:session-read', (_e, id: string) => electronSessionOps.readSession(String(id)))
   ipcMain.on('os:session-spawn', (_e, opts: { command?: string; title?: string }) => { void electronSessionOps.spawnSession(opts || {}) })
-  ipcMain.on('os:chat-session-spawn', (_e, p?: { title?: string }) => { try { osSpawnChatSession(p?.title != null ? String(p.title) : undefined) } catch { /* no workspace host yet */ } })
+  ipcMain.on('os:chat-session-spawn', (_e, p?: { title?: string }) => { try { osSpawnChatSession(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
   ipcMain.handle('os:session-list', () => electronSessionOps.listSessions())
   ipcMain.on('os:session-stop', (_e, id: string) => electronSessionOps.stopSession(String(id)))
   ipcMain.on('os:session-restart', (_e, id: string) => { void electronSessionOps.restartSession(String(id)) })
@@ -216,31 +216,40 @@ app.whenReady().then(() => {
 
   // Remote agent path: connect to the agent-socket relay (SHARED self-healing lifecycle in relay.mjs — same
   // module the server uses, so it can't diverge) and mint a paste-able URL so any AI chat can drive BlitzOS.
-  // restartBrain is threaded so a relay reconnect (new URL) restarts the brain instead of leaving it on a dead
-  // URL. The connected agent is the BRAIN; BlitzOS ships NO in-process decision logic — pure substrate.
-  let electronBrain: { stop: () => void; restart: () => void } | null = null
-  startAgentSocket(() => mainWindow, () => electronBrain?.restart())
+  // On every URL change we refresh .blitzos/relay-url so the running agent terminals (which re-read it per
+  // call) self-heal onto the fresh url — no privileged brain to restart.
+  startAgentSocket(() => mainWindow, (url) => osSetRelayUrl(url))
+  setSessionGetUrl(() => getAgentSocketUrl()) // so a dead agent's re-exec rebuilds its command with the live url
 
-  // Boot + supervise the brain: spawn the agent and auto-restart it on exit, so a brain
-  // is always watching. Opt-in via BLITZ_AGENT (=claude or a custom command). This is
-  // process supervision, not decision-making — the agent remains the sole decider.
+  // Agent sessions run as VISIBLE tmux terminals (no headless brain). Opt-in via BLITZ_AGENT (=claude or a
+  // custom command). When set, wire launchAgent: a chat session's claude runs in a terminal in its area,
+  // connected over the same relay, /saying into its chat widget. The session-manager persists + reattaches
+  // it; on boot we resume the dead ones with --resume (survivors stay live). BLITZ_AGENT unset ⇒ no launch.
   if (process.env.BLITZ_AGENT) {
-    electronBrain = startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT, sessionId: '0', getWorkspacePath: () => osWorkspaceContext().workspace_path })
+    const agentCmd = process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT
+    const sessionsDirOf = (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'sessions') : null }
+    const launchAgent = (id: string, area: number, title?: string): void => {
+      const ws = osWorkspaceContext().workspace_path
+      const sessionsDir = sessionsDirOf()
+      const url = getAgentSocketUrl()
+      if (!ws || !sessionsDir || !url) return // not ready (no workspace / relay url yet) — boot resume retries
+      const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir, id, url, cmd: agentCmd })
+      void electronSessionOps.spawnSession({ id, kind: 'agent', command, cwd: ws, area, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })
+    }
+    setLaunchAgent(launchAgent)
+    // Resume/reattach all chat-session agents once the relay URL is live + survivors adopted. Fire once.
+    let resumed = false
+    const resumeAll = async (): Promise<void> => {
+      if (resumed || !getAgentSocketUrl()) return
+      resumed = true
+      try { await electronSessionOps.whenRestored() } catch { /* ignore */ }
+      osResumeAgentsOnBoot()
+    }
+    // The URL is minted async after the relay connects; poll until it's up (capped ~2min), then resume once.
+    let tries = 0
+    const t = setInterval(() => { if (getAgentSocketUrl()) { clearInterval(t); void resumeAll() } else if (++tries > 150) clearInterval(t) }, 800)
+    app.on('before-quit', () => clearInterval(t))
   }
-
-  // Per-session chat agents (#1+): each opened chat session gets its OWN supervised claude over the same
-  // relay, scoped to its id. osActions mints the id + surfaces the widget, then calls this hook to spawn the
-  // agent (process supervision stays here, with the relay url). #0 is electronBrain above.
-  const chatRunners = new Map<string, { stop: () => void; restart: () => void }>()
-  const chatAgentCmd = (): string => (process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : 'claude')
-  const ensureChatAgent = (sessionId: string): void => {
-    const id = String(sessionId)
-    if (id === '0' || chatRunners.has(id)) return
-    chatRunners.set(id, startAgentRunner({ getUrl: () => getAgentSocketUrl(), cmd: chatAgentCmd(), label: 'chat-' + id, sessionId: id, getWorkspacePath: () => osWorkspaceContext().workspace_path }))
-  }
-  setSpawnChatAgent(ensureChatAgent)
-  // Resume agents for chat sessions opened in a previous run (their meta persists in the workspace).
-  for (const id of osChatSessionIds()) if (id !== '0') ensureChatAgent(id)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

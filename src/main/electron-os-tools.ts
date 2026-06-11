@@ -60,10 +60,16 @@ export const electronOps = {
   connectedProviders: () => connectedProviders()
 } as Record<string, (...args: never[]) => unknown>
 
+// The current relay url, injected by index.ts (the top-level wirer) to avoid an import cycle with
+// agentSocket (which imports OS_TOOLS from here). Used to rebuild an agent's command on re-exec.
+let sessionGetUrl: (() => string | null) | null = null
+export function setSessionGetUrl(fn: () => string | null): void { sessionGetUrl = fn }
+
 // Session ops — the SHARED workspace-keyed lifecycle (session-ops.mjs). Electron seam: the active
 // workspace folder + the os:action emit. The server binds the SAME makeSessionOps with its own seam,
 // so the multi-agent session model can't diverge between the two modes.
-export const electronSessionOps = makeSessionOps({ getWorkspacePath: () => osWorkspaceContext().workspace_path, emit: osBroadcast })
+const AGENT_CMD = process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : 'claude'
+export const electronSessionOps = makeSessionOps({ getWorkspacePath: () => osWorkspaceContext().workspace_path, emit: osBroadcast, getUrl: () => sessionGetUrl?.() ?? null, agentCmd: AGENT_CMD })
 Object.assign(electronOps, electronSessionOps)
 
 // Action-items inbox — same shared-core pattern. emitMoment wakes the watching agent (a perception
