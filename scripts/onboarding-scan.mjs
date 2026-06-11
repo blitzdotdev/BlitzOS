@@ -10,14 +10,22 @@
 //     Safari, configured Accounts.
 //
 // PRINCIPLES: local-only (no network), read-only (SQLite copied + opened immutable),
-// the ONLY permission prompt is FDA, secrets hard-excluded + redacted, contacts hashed,
-// comms summary-only unless --comms-content. Zero npm deps — shells out to macOS binaries.
+// the ONLY permission prompt is FDA, secrets hard-excluded + redacted, comms summary-only
+// unless --comms-content. Contacts: handles are joined to "First L." names via the local
+// AddressBook (so the people picture is human); handles with NO AddressBook match stay hashed.
+// Zero npm deps — shells out to macOS binaries.
 //
 // USAGE: node scripts/onboarding-scan.mjs [--out PATH|-] [--prompt FILE]
 //   [--no-fda|--assume-fda] [--comms-content] [--notes-bodies] [--window 90]
 //   [--budget 4200] [--halflife 21] [--max-domains 20] [--max-apps 20] [--max-files 20]
 //   [--max-sessions 28] [--no-verbatim] [--stochastic] [--quiet]
+//   [--json PATH|-] [--progress]
 // Default --out: ~/.blitzos/fs/journal/onboarding-context.md
+//
+// --json PATH   additionally write the distilled view as structured JSON (same sections,
+//               same redaction/caps as the markdown — for the onboarding board + agents).
+// --progress    emit machine-readable `@progress {json}` lines on stderr (per-source
+//               start/done + phases) so a host (the BlitzOS boot screen) can show real stages.
 
 import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, writeFileSync, mkdtempSync, copyFileSync, rmSync, openSync, readSync, closeSync, accessSync, constants } from 'node:fs'
 import { join, basename, dirname } from 'node:path'
@@ -48,7 +56,7 @@ const CFG = {
   topProjects: 14, topEntities: 24, topDirectives: 24, voiceSamples: 8,
   verbatim: true, stochastic: false, quiet: false,
   commsContent: false, notesBodies: false, fda: null /* null=detect, true/false=override */,
-  promptFile: null,
+  promptFile: null, json: null, progress: false,
   out: join(HOME, '.blitzos', 'fs', 'journal', 'onboarding-context.md')
 }
 function parseArgs(argv) {
@@ -59,6 +67,8 @@ function parseArgs(argv) {
     const str = (set) => { const v = nx(); if (v !== undefined) set(v) }
     const num = (set) => { const v = nx(); if (v !== undefined && !isNaN(+v)) set(+v) }
     if (a === '--out') str((v) => { CFG.out = v })
+    else if (a === '--json') str((v) => { CFG.json = v })
+    else if (a === '--progress') CFG.progress = true
     else if (a === '--prompt') str((v) => { CFG.promptFile = v })
     else if (a === '--budget') num((v) => { CFG.tokenBudget = v })
     else if (a === '--halflife') num((v) => { CFG.halflifeDays = v })
@@ -96,6 +106,8 @@ function printHelp() {
     '  --assume-fda      force Branch A sources on',
     '  --comms-content   include verbatim Messages/Mail text (default: summary-only)',
     '  --window N        lookback days for history/usage (default 90)',
+    '  --json PATH|-     also write the distilled view as structured JSON (board/agent input)',
+    '  --progress        emit @progress {json} stage lines on stderr (for a host UI)',
     '  --quiet           suppress progress logs',
     '',
     'Local-only, read-only, secrets excluded, contacts hashed. macOS only. See plans/ONBOARDING-FLOW.md.',
@@ -103,6 +115,9 @@ function printHelp() {
   ].join('\n'))
 }
 const log = (...a) => { if (!CFG.quiet) process.stderr.write(a.join(' ') + '\n') }
+// Machine-readable stage lines for a host UI (one JSON object per line, prefixed so a
+// reader can split them from human logs on the same stderr stream).
+const emitProgress = (obj) => { if (CFG.progress) process.stderr.write('@progress ' + JSON.stringify(obj) + '\n') }
 
 // ---- security: files we NEVER open, and in-text redaction ----------------------------
 const SECRET_RE = /(^|[._-])(auth|credentials?|secret|token|env|global-state)\b|\bLogin Data\b|\bCookies\b|\bWeb Data\b|\blogins\.json\b|\bkey[34]\.db\b|\.(pem|key|p12|keychain|keychain-db)$|(^|\/)\.env|(^|\/)id_(rsa|ed25519|ecdsa|dsa)\b|\.aws\/credentials|gh\/hosts\.yml/i
@@ -213,11 +228,21 @@ function newCtx() {
     text: [],      // {source, ts, text, project?, sessionId?}  → voice/directive/entity mining
     events: [],    // {source, ts, kind, key, durSec?, meta?}    → cadence + frequency
     collab: new Map(),  // label → count                         → collaborators (gaps suppression)
+    collabVia: new Map(), // label → how we know them ('commits'|'messages'|'mail'|'meetings'|'documents') — first source wins
+    contactNames: new Map(), // normalized email / last-10-digits → "First L." (AddressBook join, FDA)
+    calendar: { upcoming: [], meetingsPerWeek: 0 }, // {title,start,allDay,attendees}
+    census: [],    // {kind, n} — document-type census (what this person MAKES; mdfind, no permission)
     appUse: new Map(),  // app → launch count (Spotlight, Branch-B proxy for knowledgeC time)
     tooling: new Map(), // tool/pkg → count
-    facts: { installedApps: [], dockApps: [], loginItems: [], accounts: [], gitRepos: [], editorExtensions: [], brewLeaves: [], locale: {}, defaultBrowser: null },
+    facts: { installedApps: [], dockApps: [], loginItems: [], accounts: [], gitRepos: [], editorExtensions: [], brewLeaves: [], locale: {}, defaultBrowser: null, gitName: null, computerName: null, fullName: null },
     authored: []   // {kind, name, text}  → verbatim self-authored prefs
   }
+}
+// People aggregate: count + remember HOW we know them (the board's people card shows the via).
+function bumpPerson(ctx, label, n, via) {
+  if (!label) return
+  bump(ctx.collab, label, n)
+  if (via && !ctx.collabVia.has(label)) ctx.collabVia.set(label, via)
 }
 function pushText(ctx, source, ts, text, extra = {}) {
   const t = clamp(clean(text), 2000); if (!t || isTrivial(t)) return
@@ -323,18 +348,26 @@ function srcSpotlightFiles(ctx) {
   if (!out.trim()) out = sh('/usr/bin/mdfind', ['kMDItemLastUsedDate >= $time.this_year'], { timeout: 12_000 })
   const paths = out.split('\n').filter(Boolean).filter((p) => !/\/(Library|node_modules|\.git|Caches)\//.test(p)).slice(0, CFG.maxFiles * 6)
   let n = 0
+  let authors = 0
+  const meName = (sh('git', ['config', '--global', 'user.name']) || '').trim().toLowerCase()
   for (const p of paths.slice(0, 140)) {
-    const m = sh('/usr/bin/mdls', ['-name', 'kMDItemLastUsedDate', '-name', 'kMDItemUseCount', '-name', 'kMDItemContentType', '-name', 'kMDItemDisplayName', p], { timeout: 4000 })
+    const m = sh('/usr/bin/mdls', ['-name', 'kMDItemLastUsedDate', '-name', 'kMDItemUseCount', '-name', 'kMDItemContentType', '-name', 'kMDItemDisplayName', '-name', 'kMDItemAuthors', p], { timeout: 4000 })
     if (!m) continue
     const used = (m.match(/kMDItemLastUsedDate\s*=\s*(.+)/) || [])[1]
     const useCount = +((m.match(/kMDItemUseCount\s*=\s*(\d+)/) || [])[1] || 0)
     const type = (m.match(/kMDItemContentType\s*=\s*"?([^"\n]+)"?/) || [])[1] || ''
     const ts = used && used !== '(null)' ? Date.parse(used) : 0
+    // document authors → people (who they make things with — works for non-engineers)
+    const authBlock = (m.match(/kMDItemAuthors\s*=\s*\(([^)]*)\)/) || [])[1] || ''
+    for (const am of authBlock.matchAll(/"([^"]{2,40})"/g)) {
+      const nm = am[1].trim()
+      if (nm && !nm.includes('@') && nm.toLowerCase() !== meName && /^[A-Za-z][\w .'-]+$/.test(nm)) { bumpPerson(ctx, nm, 1, 'documents'); authors++ }
+    }
     if (/\.app$/.test(p) || /application-bundle/.test(type)) { bump(ctx.appUse, basename(p).replace(/\.app$/, ''), useCount || 1); continue }
     if (!inWindow(ts)) continue
     pushEvent(ctx, 'spotlight', ts, 'file', basename(p), { meta: { useCount, type: type.trim() } }); n++
   }
-  log(`· spotlight files: ${n}`)
+  log(`· spotlight files: ${n}${authors ? `, ${authors} doc-author credits` : ''}`)
 }
 function srcInstalledApps(ctx) {
   const dirs = ['/Applications', join(HOME, 'Applications'), '/System/Applications']
@@ -393,7 +426,9 @@ function srcGit(ctx) {
     for (const e of ents) if (e.isDirectory() && !/^\.|node_modules|Library|vendor|\.repos/.test(e.name)) walk(join(dir, e.name), depth + 1)
   }
   for (const r of roots) if (existsSync(r)) walk(r, 0)
-  const me = (sh('git', ['config', '--global', 'user.email']) + '\n' + sh('git', ['config', '--global', 'user.name'])).toLowerCase()
+  const gitName = sh('git', ['config', '--global', 'user.name']).trim()
+  if (gitName) ctx.facts.gitName = gitName
+  const me = (sh('git', ['config', '--global', 'user.email']) + '\n' + gitName).toLowerCase()
   let own = 0
   for (const repo of repos) {
     ctx.facts.gitRepos.push(basename(repo))
@@ -403,8 +438,8 @@ function srcGit(ctx) {
     for (const ln of log2.split('\n')) { if (!ln) continue; const parts = ln.split('|'); const at = +parts[0] * 1000, an = parts[1] || '', ae = (parts[2] || '').toLowerCase(), s = parts.slice(3).join('|')
       const mine = me.includes(ae) || (an && me.includes(an.toLowerCase()))
       if (mine) { if (s) { pushText(ctx, 'commit', at, s); own++ } }
-      else if (an) bump(ctx.collab, an)
-      const co = s.match(/Co-authored-by:\s*([^<]+)/i); if (co) bump(ctx.collab, co[1].trim())
+      else if (an) bumpPerson(ctx, an, 1, 'commits')
+      const co = s.match(/Co-authored-by:\s*([^<]+)/i); if (co) bumpPerson(ctx, co[1].trim(), 1, 'commits')
     }
   }
   log(`· git: ${repos.length} repos, ${own} own commits, ${ctx.collab.size} collaborators`)
@@ -441,12 +476,34 @@ function srcDownloads(ctx) {
   if (n) log(`· downloads: ${n} origins`)
 }
 function statTs(p) { try { return statSync(p).mtimeMs } catch { return Date.now() } }
+// Document-type census via Spotlight counts (NO permission): what does this person MAKE?
+// The cheapest de-engineering of Branch B — slides/design/docs volumes profile the profession.
+const CENSUS_BUCKETS = [
+  ['documents', ['org.openxmlformats.wordprocessingml.document', 'com.apple.iwork.pages.sffpages']],
+  ['slides', ['org.openxmlformats.presentationml.presentation', 'com.apple.iwork.keynote.sffkey']],
+  ['spreadsheets', ['org.openxmlformats.spreadsheetml.sheet', 'com.apple.iwork.numbers.sffnumbers']],
+  ['PDFs', ['com.adobe.pdf']],
+  ['design files', ['com.adobe.photoshop-image', 'com.bohemiancoding.sketch.drawing', 'com.adobe.illustrator.ai-image']]
+]
+function srcDocCensus(ctx) {
+  for (const [kind, utis] of CENSUS_BUCKETS) {
+    let n = 0
+    for (const u of utis) {
+      const out = sh('/usr/bin/mdfind', ['-count', `kMDItemContentType == "${u}" && kMDItemContentModificationDate >= $time.this_year`], { timeout: 8000 })
+      n += +out.trim() || 0
+    }
+    if (n) ctx.census.push({ kind, n })
+  }
+  if (ctx.census.length) log('· census: ' + ctx.census.map((c) => `${c.kind} ${c.n}`).join(', '))
+}
 function srcLocale(ctx) {
   ctx.facts.locale = {
     locale: sh('/usr/bin/defaults', ['read', '-g', 'AppleLocale']).trim(),
     measurement: sh('/usr/bin/defaults', ['read', '-g', 'AppleMeasurementUnits']).trim(),
     firstWeekday: sh('/usr/bin/defaults', ['read', '-g', 'AppleFirstWeekday']).trim()
   }
+  ctx.facts.computerName = sh('/usr/sbin/scutil', ['--get', 'ComputerName']).trim() || null
+  ctx.facts.fullName = sh('/usr/bin/id', ['-F']).trim() || null // the account's full name (NSFullUserName)
 }
 
 // ====================================================================================
@@ -468,8 +525,13 @@ function srcMessages(ctx) {
   const db = join(HOME, 'Library/Messages/chat.db')
   // summary: per-contact counts + is_from_me ratio + range
   const summ = sqliteQuery(db, 'SELECT h.id id, COUNT(*) n, SUM(m.is_from_me) mine, MIN(m.date) mn, MAX(m.date) mx FROM message m JOIN handle h ON h.ROWID=m.handle_id GROUP BY h.id ORDER BY n DESC LIMIT 40')
-  let contacts = 0
-  for (const r of summ) { if (!r.id) continue; bump(ctx.collab, hashContact(r.id), +r.n || 1); contacts++ }
+  let contacts = 0, named = 0
+  for (const r of summ) {
+    if (!r.id) continue
+    const nm = contactName(ctx, r.id) // AddressBook join (srcContacts ran first) — unmatched stays hashed
+    if (nm) named++
+    bumpPerson(ctx, nm || hashContact(r.id), +r.n || 1, 'messages'); contacts++
+  }
   // cadence: sent-message timestamps
   const sent = sqliteQuery(db, 'SELECT m.date date FROM message m WHERE m.is_from_me=1 AND m.date>0 ORDER BY m.date DESC LIMIT 2000')
   for (const r of sent) { const ms = messagesTime(r.date); if (ms) pushEvent(ctx, 'imessage', ms, 'msg', 'sent') }
@@ -482,13 +544,19 @@ function srcMessages(ctx) {
     const other = sqliteQuery(db, 'SELECT m.text text,m.date date FROM message m WHERE m.is_from_me=0 AND m.text IS NOT NULL AND length(m.text)>25 ORDER BY m.date DESC LIMIT 200')
     for (const r of other.slice(0, 40)) pushText(ctx, 'imessage(other)', messagesTime(r.date), r.text)
   }
-  log(`· messages: ${contacts} contacts, cadence${CFG.commsContent ? ` + ${v} self samples (+other content)` : ' only (text behind --comms-content)'}`)
+  log(`· messages: ${contacts} contacts (${named} named via AddressBook), cadence${CFG.commsContent ? ` + ${v} self samples (+other content)` : ' only (text behind --comms-content)'}`)
 }
 function srcMail(ctx) {
   let idx; try { idx = readdirSync(join(HOME, 'Library/Mail')).filter((d) => /^V\d+$/.test(d)).map((d) => join(HOME, 'Library/Mail', d, 'MailData', 'Envelope Index')).find(existsSync) } catch {}
   if (!idx) { log('  · mail: no Envelope Index'); return }
   const corr = sqliteQuery(idx, 'SELECT a.address addr, COUNT(*) n FROM messages m JOIN addresses a ON a.ROWID=m.sender GROUP BY a.address ORDER BY n DESC LIMIT 40')
-  for (const r of corr) { if (!r.addr) continue; const dom = (String(r.addr).split('@')[1] || hashContact(r.addr)); bump(ctx.collab, dom.startsWith('[') ? dom : '@' + dom, +r.n || 1) }
+  for (const r of corr) {
+    if (!r.addr) continue
+    const nm = contactName(ctx, r.addr) // named correspondent beats a bare domain
+    if (nm) { bumpPerson(ctx, nm, +r.n || 1, 'mail'); continue }
+    const dom = (String(r.addr).split('@')[1] || hashContact(r.addr))
+    bumpPerson(ctx, dom.startsWith('[') ? dom : '@' + dom, +r.n || 1, 'mail')
+  }
   const subs = sqliteQuery(idx, 'SELECT s.subject subject, m.date_received dr FROM messages m JOIN subjects s ON s.ROWID=m.subject ORDER BY m.date_received DESC LIMIT 600')
   // subjects feed aggregated topics by default (agg:true → entities only, never verbatim);
   // they become verbatim-eligible only under --comms-content.
@@ -506,6 +574,60 @@ function srcNotes(ctx) {
     if (r.body) { const text = gunzipText(r.body); if (text && text.length > 8) { pushText(ctx, CFG.notesBodies ? 'note-body' : 'note', ms, text, CFG.notesBodies ? {} : { agg: true }); bodies++ } }
   }
   log(`· notes: ${n} titles, ${bodies} bodies → topics${CFG.notesBodies ? ' (verbatim)' : ' (aggregated)'}`)
+}
+// AddressBook → handle→name map ("First L."), so Messages/Mail/Calendar people get human names
+// instead of hashes. Runs BEFORE messages/mail/calendar (SOURCES order). FDA tier.
+function srcContacts(ctx) {
+  const root = join(HOME, 'Library/Application Support/AddressBook')
+  const dirs = [root]
+  try { for (const d of readdirSync(join(root, 'Sources'))) dirs.push(join(root, 'Sources', d)) } catch {}
+  let nE = 0, nP = 0
+  for (const d of dirs) {
+    const db = join(d, 'AddressBook-v22.abcddb'); if (!existsSync(db)) continue
+    const names = new Map()
+    for (const r of sqliteQuery(db, 'SELECT Z_PK pk, ZFIRSTNAME f, ZLASTNAME l, ZORGANIZATION org FROM ZABCDRECORD WHERE ZFIRSTNAME IS NOT NULL OR ZORGANIZATION IS NOT NULL')) {
+      const nm = r.f ? String(r.f).trim() + (r.l ? ' ' + String(r.l).trim()[0] + '.' : '') : clamp(String(r.org || '').trim(), 24)
+      if (nm) names.set(r.pk, nm)
+    }
+    for (const e of sqliteQuery(db, 'SELECT ZADDRESS a, ZOWNER o FROM ZABCDEMAILADDRESS')) {
+      const nm = names.get(e.o); if (nm && e.a) { ctx.contactNames.set(String(e.a).toLowerCase().trim(), nm); nE++ }
+    }
+    for (const p of sqliteQuery(db, 'SELECT ZFULLNUMBER a, ZOWNER o FROM ZABCDPHONENUMBER')) {
+      const nm = names.get(p.o); const digits = String(p.a || '').replace(/\D/g, '')
+      if (nm && digits.length >= 7) { ctx.contactNames.set(digits.slice(-10), nm); nP++ }
+    }
+  }
+  if (nE + nP) log(`· contacts: ${nE} emails + ${nP} phones joinable`)
+}
+function contactName(ctx, handle) {
+  const h = String(handle || '').trim(); if (!h) return null
+  if (h.includes('@')) return ctx.contactNames.get(h.toLowerCase()) || null
+  const digits = h.replace(/\D/g, '')
+  return digits.length >= 7 ? ctx.contactNames.get(digits.slice(-10)) || null : null
+}
+// Calendar (group container CalendarStore schema, NOT Core Data): upcoming events, meeting
+// density, attendees→people. The universal projects/people/rhythm source for non-engineers.
+function srcCalendar(ctx) {
+  const db = join(HOME, 'Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb')
+  if (!existsSync(db)) { log('  · calendar: no db'); return }
+  const nowCF = Math.floor(Date.now() / 1000) - MAC2001
+  const live = "summary IS NOT NULL AND due_date IS NULL AND (hidden IS NULL OR hidden=0)" // events, not reminders/hidden
+  const up = sqliteQuery(db, `SELECT summary s, start_date sd, all_day ad, has_attendees ha FROM CalendarItem WHERE ${live} AND start_date BETWEEN ${nowCF} AND ${nowCF + 14 * 86400} ORDER BY start_date LIMIT 40`)
+  for (const r of up) { const ms = cf2001(r.sd); if (ms) ctx.calendar.upcoming.push({ title: clamp(redact(r.s), 60), start: ms, allDay: !!r.ad, attendees: !!r.ha }) }
+  const meet = sqliteQuery(db, `SELECT COUNT(*) n FROM CalendarItem WHERE ${live} AND has_attendees=1 AND start_date BETWEEN ${nowCF - 90 * 86400} AND ${nowCF}`)
+  ctx.calendar.meetingsPerWeek = Math.round(((+(meet[0] && meet[0].n) || 0) / (90 / 7)) * 10) / 10
+  // past events feed the rhythm punchcard
+  for (const r of sqliteQuery(db, `SELECT start_date sd FROM CalendarItem WHERE ${live} AND all_day=0 AND start_date BETWEEN ${nowCF - CFG.windowDays * 86400} AND ${nowCF} LIMIT 1500`)) {
+    const ms = cf2001(r.sd); if (ms) pushEvent(ctx, 'calendar', ms, 'event', 'cal')
+  }
+  // attendees → people (calendar's own Identity names; bare emails fall back to the contacts join)
+  const att = sqliteQuery(db, `SELECT i.first_name f, i.last_name l, i.display_name dn, p.email e, COUNT(*) n FROM Participant p LEFT JOIN Identity i ON i.ROWID=p.identity_id JOIN CalendarItem c ON c.ROWID=p.owner_id WHERE (p.is_self IS NULL OR p.is_self=0) AND c.start_date > ${nowCF - 90 * 86400} GROUP BY COALESCE(i.display_name, p.email) ORDER BY n DESC LIMIT 24`)
+  let people = 0
+  for (const r of att) {
+    const nm = (r.f ? String(r.f).trim() + (r.l ? ' ' + String(r.l).trim()[0] + '.' : '') : null) || (r.dn ? clamp(redact(r.dn), 40) : null) || contactName(ctx, r.e)
+    if (nm) { bumpPerson(ctx, nm, +r.n || 1, 'meetings'); people++ }
+  }
+  log(`· calendar: ${ctx.calendar.upcoming.length} upcoming, ~${ctx.calendar.meetingsPerWeek}/wk meetings, ${people} attendees`)
 }
 function srcAccounts(ctx) {
   let files; try { files = readdirSync(join(HOME, 'Library/Accounts')).filter((f) => /^Accounts\d*\.sqlite$/.test(f)).map((f) => join(HOME, 'Library/Accounts', f)) } catch { return }
@@ -530,11 +652,14 @@ const SOURCES = [
   { id: 'git', tier: 'none', run: srcGit },
   { id: 'editor', tier: 'none', run: srcEditor },
   { id: 'downloads', tier: 'none', run: srcDownloads },
+  { id: 'census', tier: 'none', run: srcDocCensus },
   { id: 'locale', tier: 'none', run: srcLocale },
   { id: 'knowledgeC', tier: 'fda', run: srcKnowledgeC },
   { id: 'safari', tier: 'fda', run: srcSafari },
+  { id: 'contacts', tier: 'fda', run: srcContacts }, // MUST run before messages/mail/calendar (name join)
   { id: 'messages', tier: 'fda', run: srcMessages },
   { id: 'mail', tier: 'fda', run: srcMail },
+  { id: 'calendar', tier: 'fda', run: srcCalendar },
   { id: 'notes', tier: 'fda', run: srcNotes },
   { id: 'accounts', tier: 'fda', run: srcAccounts }
 ]
@@ -542,6 +667,55 @@ const SOURCES = [
 // ---- aggregation ---------------------------------------------------------------------
 function bump(map, k, n = 1) { if (!k) return; map.set(k, (map.get(k) || 0) + n) }
 function topN(map, n) { return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, n) }
+
+// Curated workflow-SaaS map: which browsing domains are TOOLS (not reading). Suffix-matched, so
+// app.slack.com / x.atlassian.net resolve. `integration` = a BlitzOS OAuth provider id when one exists.
+const WORKFLOW_SITES = {
+  'mail.google.com': { name: 'Gmail', integration: 'gmail', color: '#EA4335' },
+  'calendar.google.com': { name: 'Google Calendar', color: '#4285F4' },
+  'docs.google.com': { name: 'Google Docs', color: '#4285F4' },
+  'sheets.google.com': { name: 'Google Sheets', color: '#0F9D58' },
+  'drive.google.com': { name: 'Google Drive', color: '#FBBC04' },
+  'notion.so': { name: 'Notion', color: '#191919' },
+  'linear.app': { name: 'Linear', color: '#5E6AD2' },
+  'figma.com': { name: 'Figma', color: '#A259FF' },
+  'github.com': { name: 'GitHub', integration: 'github', color: '#24292F' },
+  'slack.com': { name: 'Slack', integration: 'slack', color: '#611F69' },
+  'discord.com': { name: 'Discord', integration: 'discord', color: '#5865F2' },
+  'atlassian.net': { name: 'Jira', integration: 'jira', color: '#0052CC' },
+  'trello.com': { name: 'Trello', color: '#0079BF' },
+  'asana.com': { name: 'Asana', color: '#F06A6A' },
+  'airtable.com': { name: 'Airtable', color: '#FCB400' },
+  'miro.com': { name: 'Miro', color: '#050038' },
+  'canva.com': { name: 'Canva', color: '#00C4CC' },
+  'x.com': { name: 'X', color: '#0F1419' },
+  'twitter.com': { name: 'X', color: '#0F1419' },
+  'linkedin.com': { name: 'LinkedIn', color: '#0A66C2' },
+  'chatgpt.com': { name: 'ChatGPT', color: '#10A37F' },
+  'claude.ai': { name: 'Claude', color: '#D97757' },
+  'overleaf.com': { name: 'Overleaf', color: '#138A07' },
+  'salesforce.com': { name: 'Salesforce', color: '#00A1E0' },
+  'hubspot.com': { name: 'HubSpot', color: '#FF7A59' },
+  'stripe.com': { name: 'Stripe', color: '#635BFF' },
+  'vercel.com': { name: 'Vercel', color: '#171717' },
+  'supabase.com': { name: 'Supabase', color: '#3ECF8E' },
+  'shopify.com': { name: 'Shopify', color: '#96BF48' }
+}
+function matchWorkflow(topDomains) {
+  const hits = new Map() // name → {host, name, n, color, integration?}
+  for (const [host, w] of topDomains) {
+    for (const key of Object.keys(WORKFLOW_SITES)) {
+      if (host === key || host.endsWith('.' + key)) {
+        const site = WORKFLOW_SITES[key]
+        const prev = hits.get(site.name)
+        const n = Math.round(w) + (prev ? prev.n : 0)
+        hits.set(site.name, { host: prev ? prev.host : host, name: site.name, n, color: site.color, ...(site.integration ? { integration: site.integration } : {}) })
+        break
+      }
+    }
+  }
+  return [...hits.values()].sort((a, b) => b.n - a.n).slice(0, 8)
+}
 
 function selfAuthored(ctx) {
   const out = ctx.authored.slice()
@@ -562,21 +736,27 @@ function analyze(ctx, now) {
   const topApps = new Map(), topDomains = new Map()
   const directives = [], corrections = [], voice = []
   const seenPrompt = new Set()
+  const punch = new Map() // 'weekday:hour' → n (joint distribution for a rhythm punchcard)
   let tsMin = Infinity, tsMax = 0
-  const stamp = (ts) => { if (ts && inWindow(ts)) { tsMin = Math.min(tsMin, ts); tsMax = Math.max(tsMax, ts); bump(hours, new Date(ts).getHours()); bump(weekdays, new Date(ts).getDay()) } }
+  const stamp = (ts) => { if (ts && inWindow(ts)) { tsMin = Math.min(tsMin, ts); tsMax = Math.max(tsMax, ts); const d = new Date(ts); bump(hours, d.getHours()); bump(weekdays, d.getDay()); bump(punch, d.getDay() + ':' + d.getHours()) } }
 
-  // events → cadence, apps, domains, files
+  // events → cadence, apps, domains, files (+ visit volume for the web-first heuristic)
   const files = []
+  let visits = 0
   for (const e of ctx.events) {
     stamp(e.ts)
     if (e.kind === 'app') bump(topApps, e.key, e.durSec || 0)
-    else if (e.kind === 'visit' || e.kind === 'bookmark') topDomains.set(e.key, (topDomains.get(e.key) || 0) + recencyWeight(e.ts, now))
+    else if (e.kind === 'visit' || e.kind === 'bookmark') { topDomains.set(e.key, (topDomains.get(e.key) || 0) + recencyWeight(e.ts, now)); if (e.kind === 'visit') visits++ }
     else if (e.kind === 'file') files.push(e)
   }
+  // dev-signal volume (the engineer tells): agent prompts, commits, shell — for web-first detection
+  const DEV_SOURCES = new Set(['claude', 'codex', 'hermes', 'openclaw', 'commit', 'shell'])
+  let devText = 0
   // text → mining
   let docId = 0
   for (const r of text) {
     stamp(r.ts)
+    if (DEV_SOURCES.has(r.source)) devText++
     // per-record doc id for TF-IDF: agent prompts group by their real session; agg records
     // (page titles, note bodies, mail subjects) each count as their own document, so a term's
     // document-frequency reflects how widespread (= generic) it is
@@ -608,10 +788,11 @@ function analyze(ctx, now) {
   const topFiles = files.sort((a, b) => (b.meta?.useCount || 0) - (a.meta?.useCount || 0) || b.ts - a.ts).slice(0, CFG.maxFiles)
   const byW = (a, b) => b.w - a.w
   return {
-    nText: text.length, nEvents: ctx.events.length, tsMin, tsMax, totalSess,
-    projects, domains, hours, weekdays, entityRanked, topApps, appUse: ctx.appUse, topDomains, topFiles,
+    nText: text.length, nEvents: ctx.events.length, tsMin, tsMax, totalSess, visits, devText,
+    projects, domains, hours, weekdays, punch, entityRanked, topApps, appUse: ctx.appUse, topDomains, topFiles,
     directives: directives.sort(byW), corrections: corrections.sort(byW), voice: voice.sort(byW),
-    collab: ctx.collab, tooling: ctx.tooling, facts: ctx.facts
+    collab: ctx.collab, collabVia: ctx.collabVia, calendar: ctx.calendar, census: ctx.census,
+    tooling: ctx.tooling, facts: ctx.facts
   }
 }
 
@@ -666,7 +847,8 @@ function render(A, sessions, authored, now, fdaOn) {
   if (A.topApps.size) add(`- Top apps by focus time: ${topN(A.topApps, 6).map(([a, s]) => `${String(a).split('.').pop()} (${fmtDur(s)})`).join(', ')}.`)
   else if (A.appUse && A.appUse.size) add(`- Top apps by launches: ${topN(A.appUse, 6).map(([a, n]) => `${a} (${n}×)`).join(', ')}.`)
   add(`- Peak hours (local): ${peakHours(A.hours) || '?'}. Most active: ${topN(A.weekdays, 3).map(([d]) => WD[d]).join(', ') || '?'}.`)
-  if (A.collab.size) add(`- ${A.collab.size} recurring contacts/collaborators (Messages + Mail + git history).`)
+  if (A.collab.size) add(`- ${A.collab.size} recurring contacts/collaborators (Messages + Mail + Calendar + git + doc authors; named via AddressBook when possible).`)
+  if (A.calendar.meetingsPerWeek || A.calendar.upcoming.length) add(`- Calendar: ~${A.calendar.meetingsPerWeek}/wk meetings; ${A.calendar.upcoming.length} events in the next 14d.`)
   add(`- Active span ~${spanDays}d.`)
   add('')
 
@@ -679,6 +861,7 @@ function render(A, sessions, authored, now, fdaOn) {
   if (A.tooling.size) tline.push(`CLI tools/hosts: ${topN(A.tooling, 16).map(([t, n]) => `${t} (${n})`).join(', ')}.`)
   if (A.facts.accounts.length) tline.push(`Configured accounts: ${[...new Set(A.facts.accounts)].slice(0, 12).join(', ')}.`)
   if (A.facts.loginItems.length) tline.push(`Login items: ${A.facts.loginItems.slice(0, 12).join(', ')}.`)
+  if (A.census.length) tline.push(`Makes (modified this year): ${A.census.map((c) => `${c.n} ${c.kind}`).join(', ')}.`)
   if (A.facts.installedApps.length) tline.push(`${A.facts.installedApps.length} apps installed.`)
   if (tline.length) { add('## Apps & tooling'); const pT = cap(0.10); for (const l of tline) if (!pT('- ' + l)) break; add('') }
 
@@ -690,6 +873,8 @@ function render(A, sessions, authored, now, fdaOn) {
   if (projs.length) pD('Projects (by prompt volume): ' + projs.map(([p, n]) => `\`${p}\` (${n})`).join(', ') + '.')
   if (repoSet.length) pD('Repos / dirs on disk + recents: ' + repoSet.map((r) => `\`${r}\``).join(', ') + '.')
   if (A.topDomains.size) pD('Top web domains: ' + topN(A.topDomains, CFG.maxDomains).map(([d]) => d).join(', ') + '.')
+  const wf = matchWorkflow(A.topDomains)
+  if (wf.length) pD(`Web workflow tools: ${wf.map((w) => w.name).join(', ')}.${A.visits > 400 && A.devText < 150 ? ' **Web-first user** — their work lives in the browser; consider importing/integrating these.' : ''}`)
   if (A.domains.size) pD('Inferred stack: ' + topN(A.domains, 16).map(([d, n]) => `${d} (${n})`).join(', ') + '.')
   add('')
 
@@ -767,30 +952,119 @@ function gaps(A) {
     ['People & collaborators they work with (teammates, clients, reviewers)', !haveCollab],
     ['Daily rhythm & when NOT to interrupt (focus blocks, meetings)', !haveCadence],
     // always genuinely-unknowable from any local corpus:
-    ['Autonomy preference — how much should BlitzOS act vs. ask before acting?', true],
+    ['How much should BlitzOS act on its own vs. ask before acting?', true],
     ['Risk tolerance & what must always be confirmed (sends, deletes, money, deploys)', true],
-    ['Goals for the quarter — what is worth doing now?', true]
+    ['What is worth doing this quarter?', true]
   ]
   return checks.filter(([, ask]) => ask).map(([q]) => `- ${q}`).join('\n')
 }
 
+// The human's NAME, not their handle: "Minjune's MacBook Pro" → "Minjune" (people name their
+// Macs possessively by default), else the account full name (`id -F`, when it isn't just the
+// login), else the git user.name (often a handle — last resort).
+function humanName(facts) {
+  const m = String(facts.computerName || '').match(/^(.+?)[’']s\b/)
+  if (m && m[1].trim().length >= 2) return m[1].trim()
+  const full = String(facts.fullName || '').trim()
+  if (full && full.toLowerCase() !== String(process.env.USER || '').toLowerCase()) return full
+  return facts.gitName || null
+}
+
+// ---- structured JSON (the onboarding board's input) -----------------------------------
+// Same distilled sections + the same redaction/caps as the markdown render — never raw ctx.
+// Everything here passed through clean()/redact()/clamp() (or hashContact) on its way in.
+function buildJson(A, sessions, authored, now, fdaOn) {
+  const spanDays = Math.max(1, Math.round((A.tsMax - A.tsMin) / DAY))
+  const pairs = (m, n, ka, kb) => topN(m, n).map(([k, v]) => ({ [ka]: k, [kb]: v }))
+  const personKind = (label) => (label.startsWith('[contact-') ? 'hashed' : label.startsWith('@') ? 'domain' : 'name')
+  // voice: same source-diversity rule as the markdown (≤3 per source class), roomier cap
+  const voice = []; const perSrc = new Map()
+  for (const v of A.voice) {
+    if (voice.length >= CFG.voiceSamples * 2) break
+    if (v.source.includes('(other)')) continue
+    const cls = v.source.replace(/-search$/, '')
+    if ((perSrc.get(cls) || 0) >= 3) continue
+    voice.push({ text: clamp(v.text, 220), source: v.source }); bump(perSrc, cls)
+  }
+  return {
+    meta: {
+      v: 2, generatedAt: now, fda: fdaOn, spanDays, nText: A.nText, nEvents: A.nEvents,
+      fdaLocked: fdaOn ? [] : SOURCES.filter((s) => s.tier === 'fda').map((s) => s.id)
+    },
+    identity: { name: humanName(A.facts), handle: A.facts.gitName, computer: A.facts.computerName, locale: A.facts.locale, defaultBrowser: A.facts.defaultBrowser },
+    cadence: {
+      peakHours: topN(A.hours, 3).map(([h]) => +h).sort((a, b) => a - b),
+      activeWeekdays: topN(A.weekdays, 3).map(([d]) => WD[d]),
+      hours: Object.fromEntries(A.hours), weekdays: Object.fromEntries(A.weekdays),
+      punch: Object.fromEntries(A.punch),
+      topApps: pairs(A.topApps, 8, 'app', 'secs'),
+      appLaunches: pairs(A.appUse, 8, 'app', 'n')
+    },
+    projects: pairs(A.projects, CFG.topProjects, 'name', 'prompts'),
+    repos: [...new Set(A.facts.gitRepos)].slice(0, CFG.topProjects),
+    stack: pairs(A.domains, 16, 'name', 'n'),
+    domains: topN(A.topDomains, CFG.maxDomains).map(([d, w]) => ({ host: d, w: +(+w).toFixed(2) })),
+    tooling: pairs(A.tooling, 16, 'tool', 'n'),
+    people: topN(A.collab, 24).map(([label, n]) => ({ label, n, kind: personKind(label), via: A.collabVia.get(label) || null })),
+    calendar: { upcoming: A.calendar.upcoming.slice(0, 10), meetingsPerWeek: A.calendar.meetingsPerWeek },
+    census: A.census,
+    web: {
+      // web-first = heavy browsing, thin local/dev footprint → their life is in the browser
+      webFirst: A.visits > 400 && A.devText < 150,
+      visits: A.visits,
+      devSignals: A.devText,
+      workflow: matchWorkflow(A.topDomains)
+    },
+    topics: A.entityRanked.slice(0, CFG.topEntities).map(([t, n]) => ({ t, n })),
+    directives: A.directives.slice(0, CFG.topDirectives).map((d) => ({ text: clamp(d.text, CFG.perPromptMaxChars), source: d.source })),
+    corrections: A.corrections.slice(0, CFG.topDirectives).map((c) => ({ text: clamp(c.text, CFG.perPromptMaxChars), source: c.source })),
+    voice,
+    sessions: sessions.slice(0, 14).map((s) => ({ title: clamp(s.title, 80), agent: s.agent, last: s.last || 0, project: s.project ? basename(s.project) : null })),
+    files: A.topFiles.map((f) => ({ name: f.key, useCount: f.meta?.useCount || 0 })),
+    authored: authored.slice(0, 10).map((a) => ({ kind: a.kind, name: a.name, text: clamp(redact(a.text), 600) })),
+    facts: {
+      dock: A.facts.dockApps.slice(0, 12), installedApps: A.facts.installedApps.length,
+      accounts: [...new Set(A.facts.accounts)].slice(0, 12), editorExtensions: A.facts.editorExtensions.slice(0, 16),
+      brewLeaves: A.facts.brewLeaves.slice(0, 24), loginItems: A.facts.loginItems.slice(0, 12)
+    },
+    gaps: gaps(A).split('\n').map((l) => l.replace(/^- /, '')).filter(Boolean)
+  }
+}
+
 // ---- main ----------------------------------------------------------------------------
+const SRC_LABELS = {
+  claude: 'your Claude sessions', codex: 'your Codex history', agents: 'other AI agents',
+  chromium: 'Chrome history', firefox: 'Firefox history', spotlight: 'recent files',
+  apps: 'installed apps', dock: 'your Dock', loginItems: 'login items',
+  defaultBrowser: 'default browser', shell: 'shell history', git: 'git repositories',
+  editor: 'editor projects', downloads: 'downloads', census: 'what you make', locale: 'system locale',
+  knowledgeC: 'app focus time', safari: 'Safari history', contacts: 'your address book',
+  messages: 'Messages cadence', mail: 'Mail correspondents', calendar: 'your calendar',
+  notes: 'Notes', accounts: 'configured accounts'
+}
 function main() {
   parseArgs(process.argv.slice(2))
   const now = Date.now()
   const fdaOn = hasFDA()
   log(`\n● Branch B (always)${fdaOn ? ' + Branch A (FDA granted)' : ' only — FDA OFF'}`)
+  const active = SOURCES.filter((src) => src.tier !== 'fda' || fdaOn)
+  emitProgress({ phase: 'begin', fda: fdaOn, sources: active.length })
   const ctx = newCtx()
   const timings = []
-  for (const src of SOURCES) {
-    if (src.tier === 'fda' && !fdaOn) continue
+  let i = 0
+  for (const src of active) {
+    i++
+    emitProgress({ phase: 'source', id: src.id, label: SRC_LABELS[src.id] || src.id, i, n: active.length })
+    const before = ctx.text.length + ctx.events.length
     const t0 = Date.now()
     try { src.run(ctx) } catch (e) { log(`! ${src.id} failed: ${(e.message || '').slice(0, 80)}`) }
     timings.push([src.id, Date.now() - t0])
+    emitProgress({ phase: 'source-done', id: src.id, i, n: active.length, ms: Date.now() - t0, signals: ctx.text.length + ctx.events.length - before })
   }
   log('\n⏱ per-source ms (slowest first): ' + timings.sort((a, b) => b[1] - a[1]).map(([id, ms]) => `${id} ${ms}`).join(', '))
-  if (!ctx.text.length && !ctx.events.length && !ctx.facts.installedApps.length) { log('Nothing found to scan.'); process.exit(0) }
+  if (!ctx.text.length && !ctx.events.length && !ctx.facts.installedApps.length) { emitProgress({ phase: 'done', empty: true, fda: fdaOn }); log('Nothing found to scan.'); process.exit(0) }
 
+  emitProgress({ phase: 'analyze' })
   const A = analyze(ctx, now)
   const sessions = selectSessions(ctx.text, now)
   const authored = selfAuthored(ctx)
@@ -799,7 +1073,14 @@ function main() {
     let preamble = ''; try { preamble = readFileSync(CFG.promptFile, 'utf8').trimEnd() } catch (e) { log(`! could not read --prompt ${CFG.promptFile}: ${e.message}`) }
     if (preamble) { const bar = '='.repeat(70); doc = `${preamble}\n\n${bar}\n# SCANNED CONTEXT (your prior — inferences, not facts)\n${bar}\n\n${doc}` }
   }
-  if (CFG.out === '-') process.stdout.write(doc + '\n')
+  if (CFG.json) {
+    const payload = JSON.stringify(buildJson(A, sessions, authored, now, fdaOn), null, 2)
+    if (CFG.json === '-') process.stdout.write(payload + '\n')
+    else { mkdirSync(dirname(CFG.json), { recursive: true }); writeFileSync(CFG.json, payload); log(`✓ wrote scan json → ${CFG.json}`) }
+  }
+  // if both sinks are stdout, the json already went there — don't interleave two documents
+  if (CFG.out === '-') { if (CFG.json !== '-') process.stdout.write(doc + '\n') }
   else { mkdirSync(dirname(CFG.out), { recursive: true }); writeFileSync(CFG.out, doc); log(`\n✓ wrote ${doc.length} chars (~${Math.ceil(doc.length / 4)} tokens) → ${CFG.out}`) }
+  emitProgress({ phase: 'done', out: CFG.out, json: CFG.json || null, fda: fdaOn })
 }
 main()

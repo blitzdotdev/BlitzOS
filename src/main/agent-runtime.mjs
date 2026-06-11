@@ -10,7 +10,7 @@
 // Both transports (Electron + server) import THIS one file — no per-transport fork.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
 const metaPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'meta.json')
@@ -23,14 +23,25 @@ function readMeta(sessionsDir, id) { try { return JSON.parse(readFileSync(metaPa
 // re-reads the live url on each call and a reattached agent self-heals after a restart. Single source of truth.
 export const RELAY_URL_FILE = '.blitzos/relay-url'
 
+// Optional per-session STANDING DUTY (e.g. the onboarding interview): a policy-free seam — the transport
+// registers a provider, and prepareAgentLaunch re-reads it on EVERY (re)launch (bootstrap.txt is rewritten),
+// so a finished duty drops off the next respawn automatically. The duty TEXT is owned by whoever set it.
+let bootTaskProvider = null
+export function setBootTaskProvider(fn) {
+  bootTaskProvider = typeof fn === 'function' ? fn : null
+}
+
 /** The agent's BOOTSTRAP prompt (written to a file, run via `claude -p "$(cat …)"`). The served manual
  *  (blitzos-agents.md) is the SINGLE source of truth for identity, the /events loop, every tool, window
  *  management, and the design language — this stays a thin pointer and does NOT restate behavior. Multi-line
  *  is fine: it lives in a file, so it never touches the tmux control-mode command line (which rejects LF). */
-export function buildBootstrap(_url, sessionId = '0') {
+export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace = null) {
   const primary = !sessionId || String(sessionId) === '0'
   const chatFile = primary ? 'chat.md' : `chat-${sessionId}.md`
-  const sess = primary ? '' : `,"agent":"${sessionId}"` // non-primary agents MUST scope /events + /say to their agent id
+  // v2 bleed fix: an agent is PINNED to its workspace — every /events + /say carries it, so a
+  // background workspace's agent never sees (or answers into) another workspace's chat.
+  const wsPin = workspace ? `,"workspace":"${String(workspace).replace(/"/g, '')}"` : ''
+  const sess = (primary ? '' : `,"agent":"${sessionId}"`) + wsPin // non-primary agents MUST scope /events + /say to their agent id
   const B = '"$(cat ' + RELAY_URL_FILE + ')"' // every URL is built fresh from the file on each curl
   return [
     primary
@@ -40,13 +51,16 @@ export function buildBootstrap(_url, sessionId = '0') {
     `Your full operating manual is ${B}/agents.md. Fetch it FIRST (with your Bash tool: \`curl -s ${B}/agents.md\`) and FOLLOW it. If the fetch fails, retry; do not act blind.`,
     "IMPORTANT OVERRIDE for this session: the desktop is ALREADY set up by the user. Do NOT assemble, rearrange, resize, recenter, move, or close ANYTHING on connect or on your own — ignore the manual's 'assemble the desktop on connect' guidance entirely. This is the user's curated, live desktop.",
     `CONTEXT FIRST (you restart often + lose memory): ON CONNECT, before anything, recover your conversation history — call \`list_state\` to get \`workspace_path\`, then with your Bash tool run \`tail -n 60 "$workspace_path/${chatFile}"\`. That file is YOUR FULL chat history with the user and it PERSISTS across your restarts (the /events moment log does NOT — it resets). Read it so you understand follow-ups like 'continue the X thing' or 'go'. If the LAST line is an unanswered user message, act on it now.`,
+    // The OS can hand a session ONE standing duty (e.g. the onboarding interview); the duty text licenses
+    // unprompted action for its own scope and is re-read per (re)launch, so a finished duty disappears.
+    ...(bootTask ? [`STANDING DUTY — sanctioned by the OS, do it FIRST after recovering context (it OVERRIDES the do-nothing-unprompted rule below until it is done, and only for its own scope): ${bootTask}`] : []),
     `Your ONLY job: respond when the user types in YOUR chat. Poll \`curl -sX POST ${B}/events -d '{"since":0,"wait":0${sess}}'\` once for the live backlog, then set \`since\` to the returned \`latest\` and run the /events long-poll loop FOREVER (wait:25${sess ? `, always including ${sess.slice(1)}` : ''}), responding to each new trigger:'message' and doing EXACTLY what it asks.`,
     `CRITICAL — STAYING REACHABLE: there is NO background process polling for you. The user reaches you ONLY while you are actively calling \`/events\`. The INSTANT you stop (end your turn, go "idle", or announce you are "watching/listening" and then sit waiting) you go DEAF — the user's messages pile up unseen and you appear frozen. So you must keep calling \`/events\` yourself in an UNBROKEN, NEVER-ENDING chain: poll → (handle any message) → poll again → poll again → forever. After EVERY poll, immediately issue the next poll, even if it returned nothing. Do NOT say "I'm now watching" and then stop — that makes you deaf. Just keep polling, forever, no matter what.`,
     `BE VISIBLE — the user must always SEE what you're doing. Reply + progress ONLY via \`curl -sX POST ${B}/say -d '{"text":"…"${sess}}'\` (this lands in YOUR chat). The MOMENT you get a message, /say a one-line acknowledgement of your PLAN, then /say a short note before/after each meaningful step. Never go quiet for more than a few seconds of work without a /say. DO NOTHING unprompted. Going silent, or acting without saying what you're doing, is a FAILURE.`,
     ...(primary
       ? []
       : [
-          `YOUR WINDOWS LIVE IN YOUR OWN AREA (separate from the user's primary desktop). On EVERY surface-opening call — create_surface, open_window, and open_terminal — you MUST include "agent":"${sessionId}" so the window opens in YOUR area and never disturbs the user. Do NOT pass an explicit x/y unless repositioning a window within your own area. Open your terminal and all work windows this way.`
+          `YOUR WINDOWS LIVE IN YOUR OWN STAGE (separate from the user's primary desktop). On EVERY surface-opening call — create_surface, open_window, and open_terminal — you MUST include "agent":"${sessionId}" so the window opens in YOUR stage and never disturbs the user. Do NOT pass an explicit x/y unless repositioning a window within your own stage. Open your terminal and all work windows this way.`
         ])
   ].join('\n')
 }
@@ -84,9 +98,15 @@ export function ensureClaudeSessionId(sessionsDir, id) {
 export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
   const { claudeSessionId, established } = ensureClaudeSessionId(sessionsDir, id)
   const file = bootstrapPath(sessionsDir, id)
+  let bootTask = null
+  try {
+    bootTask = bootTaskProvider ? bootTaskProvider(String(id)) : null
+  } catch { /* a broken provider never blocks a launch */ }
+  // sessionsDir = <workspace>/.blitzos/sessions → the workspace NAME pins this agent (v2 bleed fix).
+  const workspace = basename(dirname(dirname(sessionsDir)))
   try {
     mkdirSync(sessionDir(sessionsDir, id), { recursive: true })
-    writeFileSync(file, buildBootstrap(url, id))
+    writeFileSync(file, buildBootstrap(url, id, bootTask, workspace))
     writeRelayUrl(dirname(sessionsDir), url) // <ws>/.blitzos/relay-url — the live base the agent re-reads per call
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
   return {

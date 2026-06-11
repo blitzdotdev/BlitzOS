@@ -85,10 +85,12 @@ function defaultChromium() {
 
 /**
  * Launch the host. `onFrame(surfaceId, base64Jpeg, metadata)` is called for every
- * screencast frame (already acked). Returns surface lifecycle + a `session(id)`
- * that yields a control-core CdpSession for that surface.
+ * screencast frame (already acked). `onNavigated(surfaceId, url)` is called on every
+ * cross-document MAIN-frame navigation commit AFTER the surface's boot load (the host-side
+ * nav sensor — the in-page one dies with the document). Returns surface lifecycle + a
+ * `session(id)` that yields a control-core CdpSession for that surface.
  */
-export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
+export async function startBrowserHost({ onFrame, onNavigated, chromiumPath } = {}) {
   const bin = chromiumPath || defaultChromium()
   // Reuse the persistent profile. Clear any stale singleton locks left by an unclean prior
   // exit (a SIGKILL leaves these behind and a fresh Chromium would refuse the profile).
@@ -178,6 +180,30 @@ export async function startBrowserHost({ onFrame, chromiumPath } = {}) {
   const sessionToSurface = new Map() // target sessionId -> surfaceId
 
   client.onEvent(async (m) => {
+    if (m.method === 'Page.frameNavigated' && m.sessionId) {
+      // Cross-document commit on the MAIN frame (subframes carry parentId). The in-page sensor can
+      // never report these — the navigation destroys the page (and its undrained signal buffer) and
+      // the re-injected sensor initializes to the new URL — so the host is the nav authority. SPA
+      // route changes (Page.navigatedWithinDocument) stay with the in-page href poll: no double-
+      // count. Skip each surface's boot navigation (the createSurface/initial-url load; for an
+      // about:blank boot, the first real load that gives the surface its content counts as boot):
+      // only subsequent navigations are user/agent moves.
+      const f = m.params && m.params.frame
+      if (f && !f.parentId && f.url !== 'about:blank') {
+        const sid = sessionToSurface.get(m.sessionId)
+        const s = sid ? surfaces.get(sid) : null
+        if (s) {
+          if (!s.sawBootNav) s.sawBootNav = true
+          else if (onNavigated) {
+            try {
+              onNavigated(sid, f.url)
+            } catch {
+              /* listener error must not kill the CDP dispatcher */
+            }
+          }
+        }
+      }
+    }
     if (m.method === 'Page.screencastFrame' && m.sessionId) {
       // ACK FIRST — Chrome stops producing frames after kMaxScreencastFramesInFlight (2)
       // until acked; skipping this freezes the stream (not a crash).

@@ -89,9 +89,12 @@ button {
   height: 0;
   transform-origin: 0 0;
   z-index: 1;
+  /* Promote to its own compositor layer so camera pan/zoom (and the ⌘⌘ zoom-out tween) only
+     re-composites this layer instead of repainting it — keeps the animation off the main thread. */
+  will-change: transform;
 }
 
-/* Window-snap preview: where a dragged window will dock (full / half / quarter of the primary area). */
+/* Window-snap preview: where a dragged window will dock (full / half / quarter of the primary stage). */
 .snap-preview {
   position: absolute;
   z-index: 1500000; /* above normal windows, below the pinned chat/activity band (2,000,000) */
@@ -114,7 +117,7 @@ button {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
   z-index: 1;
 }
-/* The active area among several (#45) — solid, brighter frame so you can see which desktop you're on. */
+/* The active stage among several (#45) — solid, brighter frame so you can see which desktop you're on. */
 .primary-space.is-current {
   border-style: solid;
   border-color: color-mix(in srgb, var(--accent) 75%, transparent);
@@ -244,6 +247,44 @@ button {
   flex: 1 1 auto;
   position: relative;
   background: var(--surface);
+}
+.surface-empty {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 28px;
+  text-align: center;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 42%),
+    var(--surface);
+}
+.surface-empty-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--control) 78%, transparent);
+  color: var(--accent);
+  font-size: 22px;
+}
+.surface-empty h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.15;
+  font-weight: 650;
+}
+.surface-empty p {
+  max-width: 340px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 /* Tabbed windows (terminal): a strip of terminal tabs between the title bar and the body. Each tab is
@@ -460,7 +501,7 @@ button {
   width: 100%;
   outline: none;
 }
-.run-area {
+.run-stage {
   background: none;
   border: none;
   padding: 0;
@@ -468,7 +509,7 @@ button {
   color: var(--accent, #4493f8);
   cursor: pointer;
 }
-.run-area:hover {
+.run-stage:hover {
   text-decoration: underline;
 }
 .run-meta {
@@ -681,6 +722,13 @@ button {
 /* Control mode: the whole card is a drag handle (content not interactive — like Mission Control). */
 .drag-overlay.control {
   top: 0;
+}
+.window-focus-catcher {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: transparent;
+  cursor: default;
 }
 
 /* File + folder tiles (#37): a real workspace file / subfolder shown on the canvas. */
@@ -1348,25 +1396,25 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Workspace-area control (#45): prev/next arrows + indicator + add. Compact, inline in the toolbar. */
-.area-ctl {
+/* Stage control (#45): prev/next arrows + indicator + add. Compact, inline in the toolbar. */
+.stage-ctl {
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
-.area-ctl .area-ind {
+.stage-ctl .stage-ind {
   font-size: 12px;
   color: var(--text-secondary);
   padding: 0 4px;
   white-space: nowrap;
 }
-.area-ctl .area-arrow,
-.area-ctl .area-add {
+.stage-ctl .stage-arrow,
+.stage-ctl .stage-add {
   padding: 5px 9px;
   line-height: 1;
   font-size: 14px;
 }
-.area-ctl button:disabled {
+.stage-ctl button:disabled {
   opacity: 0.4;
   cursor: default;
 }
@@ -1407,6 +1455,10 @@ button {
   background: var(--control-hover);
   color: var(--text);
 }
+.sidebar-btn.active {
+  background: var(--control-hover);
+  color: var(--text);
+}
 .sidebar-btn svg {
   width: 18px;
   height: 18px;
@@ -1430,6 +1482,7 @@ button {
 }
 .sidebar-app {
   flex: 0 0 auto;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1442,11 +1495,45 @@ button {
   cursor: pointer;
   padding: 0;
   box-shadow: inset 0 1px 0 var(--edge-highlight);
-  transition: background var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 .sidebar-app:hover {
   background: var(--control-hover);
   color: var(--text);
+}
+.sidebar-app.minimized {
+  opacity: 0.68;
+  background: color-mix(in srgb, var(--surface-raised) 64%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.sidebar-app.minimized::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 8px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0.8;
+}
+.sidebar-app.is-minimizing,
+.sidebar-app.is-restoring {
+  opacity: 1;
+  color: var(--text);
+  background: var(--control-hover);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 8px 24px color-mix(in srgb, var(--accent) 16%, transparent);
+  animation: sidebar-dock-target 760ms var(--ease-out) infinite alternate;
 }
 .sidebar-app-ic {
   display: inline-flex;
@@ -1457,6 +1544,213 @@ button {
 }
 .sidebar-app-label {
   display: none;
+}
+.sidebar-tooltip {
+  position: fixed;
+  z-index: 6600;
+  transform: translateY(-50%);
+  max-width: min(320px, calc(100vw - 84px));
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    var(--shadow-md);
+  backdrop-filter: blur(18px) saturate(1.16);
+  -webkit-backdrop-filter: blur(18px) saturate(1.16);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.25;
+  animation: sidebar-tooltip-in 90ms var(--ease-out) both;
+}
+.sidebar-tooltip.closing {
+  animation: sidebar-tooltip-out 120ms var(--ease-out) both;
+}
+
+.surface-launcher-backdrop {
+  position: fixed;
+  top: 32px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 6400;
+  background: rgb(0 0 0 / 22%);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: surface-launcher-backdrop-in 150ms var(--ease-out) both;
+}
+.surface-launcher-backdrop.closing {
+  pointer-events: none;
+  animation: surface-launcher-backdrop-out 170ms var(--ease-out) both;
+}
+.surface-launcher {
+  position: fixed;
+  width: 236px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    var(--shadow-lg);
+  backdrop-filter: blur(22px) saturate(1.18);
+  -webkit-backdrop-filter: blur(22px) saturate(1.18);
+  transform-origin: 0 18px;
+  animation: surface-launcher-in 170ms var(--ease-out) both;
+}
+.surface-launcher.closing {
+  animation: surface-launcher-out 150ms var(--ease-out) both;
+}
+.surface-launcher-item {
+  height: 70px;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px 6px;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+.surface-launcher-item:hover {
+  background: var(--control-hover);
+  border-color: var(--hairline);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.surface-launcher-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+}
+.surface-launcher-icon svg {
+  width: 21px;
+  height: 21px;
+}
+.surface-launcher-label {
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.surface-launcher-hint {
+  grid-column: 1 / -1;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 11px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--control) 72%, transparent);
+  font-size: 12px;
+}
+.surface-launcher-hint svg {
+  color: var(--accent);
+}
+
+@keyframes sidebar-dock-target {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes sidebar-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translate(3px, -50%) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, -50%) scale(1);
+  }
+}
+
+@keyframes sidebar-tooltip-out {
+  from {
+    opacity: 1;
+    transform: translate(0, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(3px, -50%) scale(0.98);
+  }
+}
+
+@keyframes surface-launcher-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes surface-launcher-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes surface-launcher-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes surface-launcher-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-app.is-minimizing,
+  .sidebar-app.is-restoring {
+    animation: none;
+  }
+  .surface-launcher-backdrop,
+  .surface-launcher-backdrop.closing,
+  .surface-launcher,
+  .surface-launcher.closing,
+  .sidebar-tooltip,
+  .sidebar-tooltip.closing {
+    animation: none;
+  }
 }
 
 /* Integration widgets (ground plane). */
@@ -2158,6 +2452,118 @@ button {
   border-color: var(--positive);
 }
 
+/* Mission-Control delete: a hover-revealed X on each non-current tile + an in-place destructive confirm.
+   The cell wraps the tile button and these siblings, so the X is never a <button> inside a <button>. */
+.ovr-cell {
+  position: relative;
+  min-width: 0;
+}
+
+.ovr-cell > .ovr-tile {
+  width: 100%;
+}
+
+.ovr-del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--canvas) 75%, transparent);
+  color: var(--text-dim, var(--text));
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  backdrop-filter: blur(6px);
+  transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.ovr-cell:hover .ovr-del,
+.ovr-del:focus-visible {
+  opacity: 1;
+}
+
+.ovr-del:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+
+.ovr-del:disabled {
+  cursor: default;
+  opacity: 0;
+}
+
+.ovr-confirm {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  padding: 16px;
+  border-radius: var(--radius-button);
+  background: color-mix(in srgb, var(--surface) 95%, transparent);
+  border: 2px solid var(--danger);
+  backdrop-filter: blur(8px);
+  z-index: 2;
+}
+
+.ovr-confirm-title {
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.ovr-confirm-body {
+  color: var(--text-dim, var(--text));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ovr-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ovr-confirm-btn {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: var(--radius-button);
+  border: 1px solid var(--divider);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out);
+}
+
+.ovr-confirm-btn.cancel:hover:not(:disabled) {
+  border-color: var(--control-hover);
+}
+
+.ovr-confirm-btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.ovr-confirm-btn.danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.ovr-confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .ovr-thumb img {
   width: 100%;
   height: 100%;
@@ -2432,4 +2838,90 @@ button {
 .fm-meta {
   font-size: 10px;
   color: var(--text-muted);
+}
+
+/* ── Item 5b: spatial annotations (aqua speech bubble + composer + posted text) ─────────────── */
+/* Rendered inside the world container; each marker counter-scales to stay a constant size at any zoom. */
+.annotation { pointer-events: none; }
+.annotation > * { pointer-events: auto; }
+
+/* The posted question, in a speech bubble next to the aqua marker. */
+.annotation-bubble {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  padding: 9px 11px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.annotation-bubble-text { white-space: pre-wrap; word-break: break-word; }
+.annotation-bubble-x {
+  position: absolute; top: -8px; right: -8px;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 1px solid var(--hairline); background: var(--surface);
+  color: var(--text-muted); font-size: 13px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-sm);
+}
+.annotation-bubble-x:hover { color: var(--danger); }
+
+/* The drafting composer. */
+.annotation-input {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 9px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.annotation-input textarea {
+  resize: none; border: none; outline: none; background: transparent;
+  color: var(--text); font: inherit; font-size: 13px; line-height: 1.45; width: 100%;
+}
+.annotation-input textarea::placeholder { color: var(--text-tertiary); }
+.annotation-input-row { display: flex; justify-content: flex-end; gap: 6px; }
+.annotation-input-row button {
+  border: 1px solid var(--hairline); border-radius: 7px; padding: 4px 11px;
+  font-size: 12px; cursor: pointer; background: var(--control);
+}
+.annotation-cancel { color: var(--text-muted); }
+.annotation-cancel:hover { background: var(--control-hover); }
+.annotation-send { background: var(--info); color: #fff; border-color: transparent; font-weight: 500; }
+.annotation-send:disabled { opacity: 0.4; cursor: default; }
+
+
+/* ---- Stage grid toggle (window bar): snap a window into the lattice / pop a tile out ---- */
+.slot-toggle {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim, var(--text));
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.window:hover .slot-toggle { opacity: 0.75; }
+.slot-toggle:hover { opacity: 1 !important; background: color-mix(in srgb, var(--text) 10%, transparent); }
+.slot-toggle.on { color: var(--accent, #1a73e8); }
+
+/* ---- Universal window-state rings (LAST in the cascade so no variant — notes' paper shadow,
+   folders, file tiles — can swallow them). is-active = the front-most window (one per desktop);
+   is-selected = marquee/multi-selection. Outline, not box-shadow: composes with any variant. ---- */
+.window.is-active {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: -1px;
+}
+.window.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
 }

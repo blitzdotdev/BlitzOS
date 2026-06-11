@@ -30,12 +30,17 @@ import {
   markWrite,
   listWorkspaces,
   createWorkspace,
+  deleteWorkspace,
   resolveWorkspace,
-  safeName
+  safeName,
+  readRootState,
+  patchRootState,
+  findSurfaceWorkspace,
+  relocateSurface
 } from './workspace.mjs'
-// Area grid: an agent N owns area N (areaForAgent), so its chat widget + the windows it
-// opens land in area N — isolated from the user's primary (area 0). Shared with the renderer (one grid).
-import { areaForAgent, areaCenterX, DEFAULT_VP } from '../renderer/src/areas-core.mjs'
+// Stage grid: an agent N owns stage N (stageForAgent), so its chat widget + the windows it
+// opens land in stage N — isolated from the user's primary (stage 0). Shared with the renderer (one grid).
+import { stageForAgent, stageCenterX, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 // The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
 import { writeRelayUrl } from './agent-runtime.mjs'
 
@@ -49,6 +54,8 @@ import { writeRelayUrl } from './agent-runtime.mjs'
  * @param {(surfaces:any[]) => (Promise<any>|void)} [a.onSurfaces]  realize web surfaces (server: spin/tear
  *        headless targets; Electron: no-op, the renderer owns <webview>s)
  * @param {'canvas'|'desktop'} [a.defaultMode]  blank-workspace mode (server: canvas, Electron: desktop)
+ * @param {boolean} [a.explicitInitial]  true when initialName was PINNED by the user (BLITZ_WORKSPACE):
+ *        skip the boot-where-you-left-off preference and honor the pin.
  */
 export function createWorkspaceHost(a) {
   const root = resolve(a.root)
@@ -61,6 +68,16 @@ export function createWorkspaceHost(a) {
     console.error(`[workspace] initial name ${JSON.stringify(initialName)} invalid — using 'Home'`)
     initialName = 'Home'
   }
+  // Boot where the user left off: the persisted last-active workspace wins over the default unless the
+  // caller passed an EXPLICIT pin (BLITZ_WORKSPACE). Falls through to initialName if it no longer exists.
+  if (!a.explicitInitial) {
+    try {
+      const last = readRootState(root).lastActiveWorkspace
+      if (typeof last === 'string' && safeName(last) && resolveWorkspace(root, last, { mustExist: true })) initialName = last
+    } catch {
+      /* root state unreadable — the default stands */
+    }
+  }
   if (listWorkspaces(root).length === 0) {
     try {
       createWorkspace(root, initialName)
@@ -69,6 +86,14 @@ export function createWorkspaceHost(a) {
     }
   }
   let activeWorkspace = resolveWorkspace(root, initialName, { mustExist: true }) || join(root, initialName)
+  const rememberActive = () => {
+    try {
+      patchRootState(root, { lastActiveWorkspace: basename(activeWorkspace) })
+    } catch {
+      /* best-effort — boot preference only */
+    }
+  }
+  rememberActive()
 
   let switching = false
   let writeTimer = null
@@ -76,7 +101,7 @@ export function createWorkspaceHost(a) {
   let watchers = []
 
   const active = () => basename(activeWorkspace)
-  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode, areaCount: 1 })
+  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode, stageCount: 1 })
 
   function flush() {
     if (writeTimer) {
@@ -111,7 +136,8 @@ export function createWorkspaceHost(a) {
       // isRuntime predicate in store.ts applyReconcile — the two run the same reconcile contract and any
       // drift is exactly the divergence the parity guard exists to prevent. terminal/runtime/inbox are
       // reconstructed from terminal/action-item events on load, so they're kept across a reconcile here too.
-      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'terminal' || s.component === 'runtime' || s.component === 'inbox'))
+      // `unlock` is the runtime-only onboarding FDA card (must be in BOTH isRuntime predicates — see store.ts).
+      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'terminal' || s.component === 'runtime' || s.component === 'inbox' || s.component === 'unlock'))
       const reconciledIds = new Set(r.surfaces.map((s) => s.id))
       const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
       const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))
@@ -192,11 +218,31 @@ export function createWorkspaceHost(a) {
     return removeSurfaceFile(activeWorkspace, String(id))
   }
 
+  // Item 4: which OTHER workspace holds this surface id (so an op on a non-active id can NAME where it is).
+  function locateSurface(id) {
+    return findSurfaceWorkspace(root, String(id), activeWorkspace)
+  }
+  // Item 4: BRING a surface from another workspace INTO the active one — the "I just want this one window
+  // here" path. Moves its content file across folders (id preserved), inserts it into the live state, and
+  // persists. Returns { ok, from, id } or { ok:false, notFound }.
+  function bringSurfaceHere(id, x, y) {
+    if (switching) return { ok: false, error: 'switch in progress' }
+    const r = relocateSurface(root, activeWorkspace, String(id), { x, y })
+    if (!r) return { ok: false, notFound: true }
+    const st = a.getState()
+    const surfaces = [...(st.surfaces || []), r.surface]
+    a.setState({ ...st, surfaces })
+    Promise.resolve(onSurfaces(surfaces)).catch(() => {})
+    a.broadcast({ type: 'create', surface: r.surface })
+    flush() // persist the destination now (durable) — the source already lost the file + node
+    return { ok: true, from: r.fromName, id: r.surface.id }
+  }
+
   // ---- The system Chat: a srcdoc widget per AGENT whose UI is blitz-[<id>-]chat.html (customizable)
   // and whose transcript is chat[-<id>].md. Agent '0' is the primary chat (legacy names, pinned). Each
   // agent is a claude running in its own tmux terminal (launchAgent) that /says into ITS
   // transcript. The OS appends each message and broadcasts {type:'chat', agentId, messages}; the widget
-  // just renders props.messages.
+  // just renders props.messages. There is NO chat hub — each agent has its OWN chat widget.
   const chatSurfaceId = (agentId = '0') => (!agentId || String(agentId) === '0' ? 'chat' : `chat-${agentId}`)
   /** The chat-bearing agents: always '0' (primary) + any .blitzos/terminals/<id> that is an AGENT (its
    *  terminal runs a BlitzOS claude → it has a chat widget). 'chat' is the legacy kind from before agents
@@ -221,7 +267,7 @@ export function createWorkspaceHost(a) {
     } catch { /* no terminals dir */ }
     return ids
   }
-  /** The viewport last pushed by a renderer (for area-math placement); a default until the first push. */
+  /** The viewport last pushed by a renderer (for stage-math placement); a default until the first push. */
   function viewportOf() {
     try { const st = a.getState(); if (st && st.viewport && st.viewport.w) return st.viewport } catch { /* no state */ }
     return DEFAULT_VP
@@ -231,10 +277,10 @@ export function createWorkspaceHost(a) {
     ensureSystemRenderer(activeWorkspace, 'chat', agentId)
     const primary = !agentId || String(agentId) === '0'
     const w = 360
-    // Agent N owns area N: anchor its chat at the SAME relative spot in ITS area that the primary chat
-    // sits at in area 0 (left-of-center, −700 from the area center). areaCenterX(0)=0 → primary x=−700,
-    // byte-identical to before; agent N's chat sits at the same on-screen place when you switch to area N.
-    const x = Math.round(areaCenterX(areaForAgent(agentId), viewportOf()) - 700)
+    // Agent N owns stage N: anchor its chat at the SAME relative spot in ITS stage that the primary chat
+    // sits at in stage 0 (left-of-center, −700 from the stage center). stageCenterX(0)=0 → primary x=−700,
+    // byte-identical to before; agent N's chat sits at the same on-screen place when you switch to stage N.
+    const x = Math.round(stageCenterX(stageForAgent(agentId), viewportOf()) - 700)
     return {
       id: chatSurfaceId(agentId),
       kind: 'srcdoc',
@@ -251,10 +297,10 @@ export function createWorkspaceHost(a) {
       props: { messages: readChatMessages(activeWorkspace, 400, agentId), agentId: String(agentId) }
     }
   }
-  /** The minimum areaCount needed for every agent to have its area (max agent id + 1). */
-  function maxAgentAreaCount() {
+  /** The minimum stageCount needed for every agent to have its stage (max agent id + 1). */
+  function maxAgentStageCount() {
     let max = 1
-    for (const id of agentIds()) max = Math.max(max, areaForAgent(id) + 1)
+    for (const id of agentIds()) max = Math.max(max, stageForAgent(id) + 1)
     return max
   }
   /** Every agent's chat surface (primary + spawned agents) — built on hydrate/switch. */
@@ -271,35 +317,35 @@ export function createWorkspaceHost(a) {
    *  re-adding an existing agent just refreshes its surface. launchAgent (the seam below) starts its claude terminal. */
   function addAgent(agentId, title, opts = {}) {
     const id = String(agentId)
-    const area = areaForAgent(id)
+    const stage = stageForAgent(id)
     const name = title || (id === '0' ? 'Chat' : `Chat ${id}`)
     // Persist the agent RECORD up front (kind:'agent') so the agent survives a restart even when no
     // claude is auto-launched (BLITZ_AGENT off). launchAgent (below) will overwrite this with the full live
-    // meta when it spawns the terminal; both keep the same id/kind/title/area, so agentIds() finds it.
+    // meta when it spawns the terminal; both keep the same id/kind/title/stage, so agentIds() finds it.
     try {
       const dir = join(agentDir(), id) // canonical `.blitzos/terminals`, or the legacy dir if migration hasn't run yet
       mkdirSync(dir, { recursive: true })
       const mp = join(dir, 'meta.json')
       let m = {}
       try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
-      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, area, createdAt: m.createdAt || Date.now() }, null, 2))
+      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, stage, createdAt: m.createdAt || Date.now() }, null, 2))
     } catch { /* best-effort: the surface still works in-memory this run */ }
     const surface = buildAgentSurface(id)
     try {
       const st = a.getState()
       if (st && Array.isArray(st.surfaces)) {
         const without = st.surfaces.filter((s) => !(s && s.id === surface.id))
-        // Grow areaCount so this agent's area exists + is navigable (persisted via writeWorkspace). The
+        // Grow stageCount so this agent's stage exists + is navigable (persisted via writeWorkspace). The
         // renderer also bumps on the 'create' below, then pushes it back — this keeps osState correct meanwhile.
-        const areaCount = Math.max(Number(st.areaCount) || 1, area + 1)
-        a.setState({ ...st, surfaces: [...without, surface], areaCount })
+        const stageCount = Math.max(Number(st.stageCount) || 1, stage + 1)
+        a.setState({ ...st, surfaces: [...without, surface], stageCount })
       }
     } catch { /* adapter without getState/setState */ }
-    // focus:true (a USER '+ New') tells the renderer to follow the camera to the new area; an AGENT's
+    // focus:true (a USER '+ New') tells the renderer to follow the camera to the new stage; an AGENT's
     // spawn_agent leaves it false so a background agent never yanks the user's view.
     a.broadcast({ type: 'create', surface, focus: !!opts.focus })
-    // Launch the agent in a VISIBLE terminal in its area (only when a launcher is wired — BLITZ_AGENT on).
-    try { a.launchAgent?.(id, area, name) } catch (e) { console.error('[workspace] launchAgent failed:', e?.message || e) }
+    // Launch the agent in a VISIBLE terminal in its stage (only when a launcher is wired — BLITZ_AGENT on).
+    try { a.launchAgent?.(id, stage, name) } catch (e) { console.error('[workspace] launchAgent failed:', e?.message || e) }
     return surface
   }
   /** Boot: (re)launch the claude terminal for EVERY agent with the CURRENT relay url + --resume of its
@@ -310,12 +356,12 @@ export function createWorkspaceHost(a) {
   function resumeAgentsOnBoot() {
     if (typeof a.launchAgent !== 'function') return
     for (const id of agentIds()) {
-      try { a.launchAgent(id, areaForAgent(id)) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) }
+      try { a.launchAgent(id, stageForAgent(id)) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) }
     }
   }
   /** Close a NON-primary agent: stop it (no auto-restart), remove its chat widget surface +
    *  ALL its files (chat-<id>.md, blitz-<id>-chat.html, .blitzos/terminals/<id>/), and collapse its now-empty
-   *  area (areaCount recomputes DOWN). Primary '0' is never closable. Idempotent. */
+   *  stage (stageCount recomputes DOWN). Primary '0' is never closable. Idempotent. */
   function closeAgent(agentId) {
     const id = String(agentId)
     if (id === '0') return { ok: false, error: 'cannot close the primary agent' }
@@ -325,18 +371,18 @@ export function createWorkspaceHost(a) {
     if (!/^[0-9]+$/.test(id)) return { ok: false, error: 'invalid agent id' }
     if (switching) return { ok: false, error: 'switch in progress' }
     try { a.stopAgent?.(id) } catch (e) { console.error('[workspace] stopAgent failed for', id, e?.message || e) } // sets stopping → no auto-restart
-    removeAgentFiles(activeWorkspace, id) // delete the agent dir FIRST so agentIds() drops it before we recompute areaCount
+    removeAgentFiles(activeWorkspace, id) // delete the agent dir FIRST so agentIds() drops it before we recompute stageCount
     const sid = chatSurfaceId(id)
-    const areaCount = Math.max(1, maxAgentAreaCount())
+    const stageCount = Math.max(1, maxAgentStageCount())
     try {
       const st = a.getState()
-      if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.filter((s) => s && s.id !== sid), areaCount })
+      if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.filter((s) => s && s.id !== sid), stageCount })
     } catch { /* adapter without getState/setState */ }
     a.broadcast({ type: 'close', id: sid }) // renderer drops the chat widget (+ its terminal tab — see store.closeAgent)
-    a.broadcast({ type: 'agent-remove', id, areaCount }) // tray re-lists + renderer collapses the empty area
+    a.broadcast({ type: 'agent-remove', id, stageCount }) // tray re-lists + renderer collapses the empty stage
     return { ok: true }
   }
-  /** Rename an agent (cosmetic — the id stays the file/area key). Updates meta + the widget title live. */
+  /** Rename an agent (cosmetic — the id stays the file/stage key). Updates meta + the widget title live. */
   function renameAgent(agentId, newTitle) {
     const id = String(agentId)
     const title = String(newTitle || '').trim()
@@ -378,8 +424,8 @@ export function createWorkspaceHost(a) {
   }
   /** Append a chat message to an AGENT's transcript and broadcast it so that agent's widget re-renders.
    *  role 'user' (the human typed) | 'agent' (a `say`). agentId defaults to '0' (the primary chat). */
-  function appendChat(role, text, agentId = '0') {
-    appendChatMessage(activeWorkspace, role, text, agentId)
+  function appendChat(role, text, agentId = '0', meta) {
+    appendChatMessage(activeWorkspace, role, text, agentId, meta)
     const messages = readChatMessages(activeWorkspace, 400, agentId)
     const sid = chatSurfaceId(agentId)
     // Keep osState's chat surface current so a FRESH hydrate (a page refresh / new SSE connect) shows the
@@ -467,14 +513,14 @@ export function createWorkspaceHost(a) {
       // activity feed still lives in .blitzos/state/panels.json. Merge both back on boot.
       migrateChatToFile() // seed chat.md from an old panels.json transcript, once
       const panels = readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')
-      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', areaCount: 1 }
+      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', stageCount: 1 }
       const surfaces = [...base.surfaces, ...buildAgentSurfaces(), ...panels]
-      // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted areaCount > 1 isn't lost on an
-      // empty workspace — the hydrate senders read cached.areaCount, which would otherwise stay undefined→1.
-      // areaCount self-heals to fit every agent's area (max agent id + 1), so an old workspace whose
-      // areaCount wasn't bumped — or a hand-added agent — still lands its widget in a reachable area.
-      const areaCount = Math.max(base.areaCount ?? 1, maxAgentAreaCount())
-      a.setState({ surfaces, camera: base.camera, mode: base.mode, areaCount })
+      // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted stageCount > 1 isn't lost on an
+      // empty workspace — the hydrate senders read cached.stageCount, which would otherwise stay undefined→1.
+      // stageCount self-heals to fit every agent's stage (max agent id + 1), so an old workspace whose
+      // stageCount wasn't bumped — or a hand-added agent — still lands its widget in a reachable stage.
+      const stageCount = Math.max(base.stageCount ?? 1, maxAgentStageCount())
+      a.setState({ surfaces, camera: base.camera, mode: base.mode, stageCount })
       if (surfaces.length) console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
     } catch (e) {
       console.error('[workspace] hydrate failed:', e?.message || e)
@@ -514,11 +560,12 @@ export function createWorkspaceHost(a) {
       // activity panel — never carry the previous workspace's over.
       migrateChatToFile()
       const surfaces = [...next.surfaces, ...buildAgentSurfaces(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
-      const areaCount = Math.max(next.areaCount ?? 1, maxAgentAreaCount()) // self-heal for the destination's agents
-      a.setState({ surfaces, camera: next.camera, mode: next.mode, areaCount, view: { cx: next.camera.x, cy: next.camera.y } })
+      const stageCount = Math.max(next.stageCount ?? 1, maxAgentStageCount()) // self-heal for the destination's agents
+      a.setState({ surfaces, camera: next.camera, mode: next.mode, stageCount, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
-      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, areaCount, workspace: name })
+      rememberActive() // boot returns the user HERE, not to the default
+      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, stageCount, workspace: name })
       console.log(`[workspace] switched → ${name}`)
       return { status: 200, body: { ok: true, active: name } }
     } finally {
@@ -569,6 +616,37 @@ export function createWorkspaceHost(a) {
     }
   }
 
+  /** Delete a workspace + its folder. POLICY GUARDS live here (the serializer just removes the dir):
+   *   - never the LAST workspace (the app must always have one to be in);
+   *   - if it's the ACTIVE one, switch to another FIRST (newest other) so we never rm the live folder
+   *     out from under the running host — only then delete the now-inactive dir.
+   *  Returns { ok, active } or { error }. */
+  async function removeWorkspace(rawName) {
+    if (switching) return { ok: false, error: 'switch in progress' }
+    const name = safeName(rawName)
+    if (!name) return { ok: false, error: 'invalid workspace name' }
+    const all = listWorkspaces(root)
+    if (!all.some((w) => w.name === name)) return { ok: false, error: 'no such workspace' }
+    if (all.length <= 1) return { ok: false, error: 'cannot delete the last workspace' }
+    if (basename(activeWorkspace) === name) {
+      const other = all.find((w) => w.name !== name) // listWorkspaces is newest-first → most-recent other
+      const sw = await performSwitch(other.name)
+      if (sw.status !== 200) return { ok: false, error: `could not switch away before delete: ${sw.body?.error || 'switch failed'}` }
+    }
+    try {
+      deleteWorkspace(root, name)
+    } catch (e) {
+      return { ok: false, error: e?.message || 'delete failed' }
+    }
+    // Renderers re-list on their own (the Overview re-fetches), but broadcast so any other open view refreshes.
+    try {
+      a.broadcast({ type: 'workspaces-changed', active: basename(activeWorkspace) })
+    } catch {
+      /* best-effort */
+    }
+    return { ok: true, active: basename(activeWorkspace) }
+  }
+
   return {
     active,
     activePath: () => activeWorkspace,
@@ -579,6 +657,8 @@ export function createWorkspaceHost(a) {
     newFolder,
     listDir: listDirInWorkspace,
     closeSurfaceFile,
+    locateSurface,
+    bringSurfaceHere,
     appendChat,
     customizeWidget,
     systemUi,
@@ -610,6 +690,7 @@ export function createWorkspaceHost(a) {
     stopWatch,
     list: () => listWorkspaces(root),
     create: (name) => createWorkspace(root, name),
+    removeWorkspace,
     writeThumb,
     readThumb,
     readWorkspaceFile

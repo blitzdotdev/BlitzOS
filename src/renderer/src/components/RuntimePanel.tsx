@@ -20,7 +20,7 @@ type TerminalMeta = {
   exitCode: number | null
   createdAt: number
   endedAt: number | null
-  area?: number | null
+  stage?: number | null
 }
 type TerminalApi = {
   terminalList?: () => Promise<unknown[]>
@@ -57,7 +57,7 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
   const openTerminal = useDesktop((s) => s.openTerminal)
   const closeAgent = useDesktop((s) => s.closeAgent)
   const renameAgent = useDesktop((s) => s.renameAgent)
-  const goToArea = useDesktop((s) => s.goToArea)
+  const goToStage = useDesktop((s) => s.goToStage)
   void surface
 
   const refresh = useCallback(() => {
@@ -97,7 +97,7 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
     const isAgent = s.kind === 'agent'
     const isPrimary = isAgent && s.id === '0'
     return (
-      <div key={s.id} className="run-row" onDoubleClick={() => openTerminal(s.id, s.title, s.area)}>
+      <div key={s.id} className="run-row" onDoubleClick={() => openTerminal(s.id, s.title, s.stage)}>
         <span className="run-dot" style={{ background: statusColor(s) }} title={s.status} />
         <span className="run-ico" title={isAgent ? 'Agent' : 'Terminal'}>
           {isAgent ? <IconChat size={13} /> : <IconCode size={13} />}
@@ -121,8 +121,8 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
           )}
           <div className="run-meta">
             <span className="run-kind">{isPrimary ? 'Agent · primary' : isAgent ? 'Agent' : 'Terminal'}</span>
-            {Number.isInteger(s.area) && (
-              <button className="run-area" title={`Go to area ${s.area}`} onClick={(e) => { e.stopPropagation(); goToArea(s.area as number) }}> · Area {s.area}</button>
+            {Number.isInteger(s.stage) && (
+              <button className="run-stage" title={`Go to stage ${s.stage}`} onClick={(e) => { e.stopPropagation(); goToStage(s.stage as number) }}> · Stage {s.stage}</button>
             )}
             <span className="run-status">
               {' · '}
@@ -136,7 +136,7 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
         <div className="run-actions">
           {s.status === 'running' ? (
             <>
-              <button className="run-btn" title={isAgent ? "Show this agent's terminal" : "Show this terminal"} onClick={() => openTerminal(s.id, s.title, s.area)}>
+              <button className="run-btn" title={isAgent ? "Show this agent's terminal" : "Show this terminal"} onClick={() => openTerminal(s.id, s.title, s.stage)}>
                 Open
               </button>
               {!isPrimary && (

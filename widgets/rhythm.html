@@ -1,0 +1,67 @@
+<!doctype html><meta charset="utf-8"><title>Rhythm</title>
+<!-- Thinking-widget: a week×hour activity punchcard + top time-sinks. For WHEN something
+     happens. Drive with update_surface{props:{punch:{'<weekday0-6>:<hour0-23>':n}, peakHours?,
+     activeWeekdays?, topApps?:[{app,secs?|n?}], note?}}. -->
+<style>
+  .wrap{padding:14px 16px}
+  .grid{display:grid;grid-template-columns:26px repeat(24,1fr);gap:2px;align-items:center}
+  .wd{font:9px ui-monospace,monospace;color:var(--blitz-text-dim);text-align:right;padding-right:4px}
+  .c{aspect-ratio:1;border-radius:2px;min-width:6px}
+  .c0{background:var(--blitz-surface-2);border:1px solid var(--blitz-hairline)}
+  .hx{font:8px ui-monospace,monospace;color:var(--blitz-text-dim);text-align:center;padding-top:3px}
+  .peak{margin:12px 0 0;font-size:11.5px;color:var(--blitz-text-dim)}
+  .peak b{color:var(--blitz-text);font-weight:600}
+  .apps{margin-top:12px;border-top:1px dashed var(--blitz-hairline);padding-top:10px}
+  .ap{display:flex;align-items:center;gap:8px;margin:5px 0}
+  .ap .nm{flex:0 0 96px;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ap .bar{flex:1;height:6px;border-radius:99px;background:var(--blitz-surface-2);overflow:hidden}
+  .ap .bar i{display:block;height:100%;background:var(--blitz-accent);border-radius:99px;transition:width .6s}
+  .ap .t{flex:0 0 auto;font:10px ui-monospace,monospace;color:var(--blitz-text-dim)}
+  .wrap.intro .c{animation:in .5s both}
+  @keyframes in{from{opacity:0}}
+</style>
+<blitz-titlebar><span id="hd">Rhythm</span></blitz-titlebar>
+<div class="wrap" id="wrap">
+  <div class="grid" id="grid"></div>
+  <div class="peak" id="peak"></div>
+  <div class="apps" id="apps" style="display:none"></div>
+</div>
+<script>
+  // props: { title?, punch:{'d:h':n}, peakHours?:[..], activeWeekdays?:[..], topApps?:[{app,secs|n}],
+  //          heatLo?, heatHi?, note? } — cells ramp cool→warm (heatLo→heatHi), never monochrome.
+  const SAMPLE={title:'Rhythm',punch:(()=>{const p={};for(let d=0;d<7;d++)for(let h=8;h<23;h++)if((d+h)%3)p[d+':'+h]=((d*7+h)%9)+1;return p})(),peakHours:[10,15,21],activeWeekdays:['Tue','Wed','Thu']}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  const WD=['S','M','T','W','T','F','S']
+  const fmtH=h=>String(h).padStart(2,'0')+':00'
+  const fmtDur=s=>{const h=s/3600;return h>=1?h.toFixed(h>=10?0:1)+'h':Math.round(s/60)+'m'}
+  const lerpHex=(a,b,t)=>{const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16)
+    const ch=s=>[(s>>16)&255,(s>>8)&255,s&255];const[ar,ag,ab]=ch(pa),[br,bg,bb]=ch(pb)
+    return 'rgb('+Math.round(ar+(br-ar)*t)+','+Math.round(ag+(bg-ag)*t)+','+Math.round(ab+(bb-ab)*t)+')'}
+  function render(d){
+    document.getElementById('hd').textContent=d.title||'Rhythm'
+    const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
+    const lo=d.heatLo||'#7FA0C8',hi=d.heatHi||'#FF8D61'
+    const p=d.punch||{};let max=1;for(const k in p)max=Math.max(max,p[k])
+    let html=''
+    for(let dd=0;dd<7;dd++){
+      html+='<div class="wd">'+WD[dd]+'</div>'
+      for(let h=0;h<24;h++){const n=p[dd+':'+h]||0,t=Math.sqrt(n/max)
+        html+=n?'<div class="c" style="background:'+lerpHex(lo,hi,t)+';opacity:'+(.35+.65*t).toFixed(2)+'"></div>':'<div class="c c0"></div>'}
+    }
+    html+='<div></div>'+Array.from({length:24},(_,h)=>'<div class="hx">'+(h%6===0?h:'')+'</div>').join('')
+    document.getElementById('grid').innerHTML=html
+    const bits=[]
+    if(d.peakHours&&d.peakHours.length)bits.push('Peaks <b>'+d.peakHours.map(fmtH).join(' · ')+'</b>')
+    if(d.activeWeekdays&&d.activeWeekdays.length)bits.push('most active <b>'+d.activeWeekdays.map(esc).join(', ')+'</b>')
+    if(d.note)bits.push(esc(d.note))
+    document.getElementById('peak').innerHTML=bits.join(' · ')
+    const apps=document.getElementById('apps'),items=d.topApps||[]
+    apps.style.display=items.length?'':'none'
+    if(items.length){const mx=Math.max(...items.map(a=>a.secs||a.n||0),1)
+      apps.innerHTML=items.slice(0,6).map(a=>{const v=a.secs||a.n||0
+        return '<div class="ap"><span class="nm">'+esc(String(a.app).split('.').pop())+'</span><span class="bar"><i style="width:'+Math.round(100*v/mx)+'%"></i></span><span class="t">'+(a.secs?fmtDur(a.secs):v+'×')+'</span></div>'}).join('')}
+  }
+  render(data)
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.punch){data=p;render(p)}})
+</script>

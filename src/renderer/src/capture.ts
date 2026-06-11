@@ -8,7 +8,7 @@ import type { Surface } from './types'
 // data:-URL frame draw, so readable); notes / panels / srcdoc draw as titled cards (their content
 // isn't compositable here). Returns null if there's nothing meaningful to capture.
 
-// The thumbnail captures the PRIMARY AREA (the on-screen desktop region). The area is screen-sized
+// The thumbnail captures the PRIMARY AREA (the on-screen desktop region). The stage is screen-sized
 // (dynamic), so the exact rect + scale are computed per call from the live viewport.
 const THUMB_W = 480
 

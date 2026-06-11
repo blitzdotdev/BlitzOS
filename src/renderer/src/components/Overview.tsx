@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 // Mission Control overview: every workspace as a screen-shaped tile (16:10) showing its last-seen
-// primary-area snapshot. Responsive grid — quantized integer columns from container WIDTH (capped
+// primary-stage snapshot. Responsive grid — quantized integer columns from container WIDTH (capped
 // 2..5), fluid cell width, height locked 16:10, overflow scrolls vertically. (Researched from how
 // Netflix sizes its rows + the CSS auto-fill/ResizeObserver playbook.)
 
@@ -45,6 +45,7 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null) // the name being switched to, or 'create'
   const [failed, setFailed] = useState<Set<string>>(new Set()) // workspaces whose thumb img failed to load
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null) // workspace name pending delete confirmation
   const gridRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -129,6 +130,25 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
     }
   }
 
+  // Delete a workspace + its folder (human-confirmed). The main process guards the active/last cases; we
+  // only offer the X on non-active tiles when there's more than one, so this is always a safe, other-than-
+  // current workspace. On success, re-list so the tile disappears.
+  async function remove(name: string): Promise<void> {
+    if (busy) return
+    setError(null)
+    setBusy(name)
+    const r = await window.agentOS?.workspaces?.delete(name)
+    if (!r || !r.ok) {
+      setError((r && r.error) || 'could not delete workspace')
+      setBusy(null)
+      setConfirmDelete(null)
+      return
+    }
+    setConfirmDelete(null)
+    setBusy(null)
+    await refresh()
+  }
+
   const thumbUrl = window.agentOS?.workspaces?.thumbUrl
 
   return (
@@ -164,24 +184,57 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
               const isBusy = busy === w.name
               const src = w.thumbTs && thumbUrl ? thumbUrl(w.name, w.thumbTs) : null
               const showImg = !!src && !failed.has(w.name)
+              const canDelete = !isActive && (list?.length ?? 0) > 1 // never the current one, never the last one
+              const confirming = confirmDelete === w.name
               return (
-                <button key={w.name} className={`ovr-tile${isActive ? ' on' : ''}`} disabled={!!busy} onClick={() => void open(w.name)} title={isActive ? `${w.name} (current)` : `Open ${w.name}`}>
-                  <div className="ovr-thumb">
-                    {showImg ? (
-                      <img src={src as string} alt="" loading="lazy" onError={() => setFailed((f) => new Set(f).add(w.name))} />
-                    ) : (
-                      <div className="ovr-thumb-empty">no preview yet</div>
-                    )}
-                    {isBusy && <div className="ovr-thumb-busy">opening…</div>}
-                  </div>
-                  <div className="ovr-meta">
-                    <span className="ovr-dot" />
-                    <span className="ovr-name">{w.name}</span>
-                    <span className="ovr-sub">
-                      {isActive ? 'current' : `${w.nodeCount} window${w.nodeCount === 1 ? '' : 's'}${w.updatedAt ? ` · ${relTime(w.updatedAt)}` : ''}`}
-                    </span>
-                  </div>
-                </button>
+                <div key={w.name} className="ovr-cell">
+                  <button className={`ovr-tile${isActive ? ' on' : ''}`} disabled={!!busy} onClick={() => void open(w.name)} title={isActive ? `${w.name} (current)` : `Open ${w.name}`}>
+                    <div className="ovr-thumb">
+                      {showImg ? (
+                        <img src={src as string} alt="" loading="lazy" onError={() => setFailed((f) => new Set(f).add(w.name))} />
+                      ) : (
+                        <div className="ovr-thumb-empty">no preview yet</div>
+                      )}
+                      {isBusy && !confirming && <div className="ovr-thumb-busy">opening…</div>}
+                    </div>
+                    <div className="ovr-meta">
+                      <span className="ovr-dot" />
+                      <span className="ovr-name">{w.name}</span>
+                      <span className="ovr-sub">
+                        {isActive ? 'current' : `${w.nodeCount} window${w.nodeCount === 1 ? '' : 's'}${w.updatedAt ? ` · ${relTime(w.updatedAt)}` : ''}`}
+                      </span>
+                    </div>
+                  </button>
+                  {canDelete && !confirmDelete && (
+                    <button
+                      className="ovr-del"
+                      disabled={!!busy}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setError(null)
+                        setConfirmDelete(w.name)
+                      }}
+                      title={`Delete ${w.name}`}
+                      aria-label={`Delete ${w.name}`}
+                    >
+                      ×
+                    </button>
+                  )}
+                  {confirming && (
+                    <div className="ovr-confirm" onClick={(e) => e.stopPropagation()}>
+                      <div className="ovr-confirm-title">Delete “{w.name}”?</div>
+                      <div className="ovr-confirm-body">Permanently removes this workspace and its folder — every window, file, and chat in it. This can’t be undone.</div>
+                      <div className="ovr-confirm-actions">
+                        <button className="ovr-confirm-btn cancel" disabled={isBusy} onClick={() => setConfirmDelete(null)}>
+                          Cancel
+                        </button>
+                        <button className="ovr-confirm-btn danger" disabled={isBusy} onClick={() => void remove(w.name)}>
+                          {isBusy ? 'Deleting…' : 'Delete'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )
             })}
           </div>

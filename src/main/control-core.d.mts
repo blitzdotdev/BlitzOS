@@ -8,7 +8,10 @@ export type ControlAction =
   | { action: 'key'; key: string }
   | { action: 'screenshot' }
 
-export type ControlResult = { ok: true; result?: unknown } | { ok: false; error: string }
+/** `effect` (2B): the action's observed outcome — a typed field's value back, or url/dom-change after a
+ *  click/key — so the agent can verify in-band that the act landed, without a second screenshot. */
+export type ControlEffect = { value?: string; typedInto?: string; urlChanged?: boolean; domChanged?: boolean; url?: string; focused?: { tag: string; type?: string | null; name?: string | null } }
+export type ControlResult = { ok: true; result?: unknown; effect?: ControlEffect } | { ok: false; error: string }
 
 /** Minimal CDP session: the only thing the control core needs from a transport. */
 export interface CdpSession {

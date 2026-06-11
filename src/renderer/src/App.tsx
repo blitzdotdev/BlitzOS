@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { useDesktop, viewTransform, areaRect, areaForAgent, areaCenterX, nextTerminalName, type CreateSurfaceInput } from './store'
+import { flushSync } from 'react-dom'
+import { useDesktop, viewTransform, stageRect, stageForAgent, stageCenterX, nextTerminalName, type CreateSurfaceInput } from './store'
 import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
@@ -8,8 +9,9 @@ import { ConnectPanel } from './components/ConnectPanel'
 import { Overview } from './components/Overview'
 import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame } from './components/SurfaceFrame'
+import { AnnotationLayer } from './components/AnnotationLayer'
 import { PrimarySpace } from './components/PrimarySpace'
-import { Sidebar } from './components/Sidebar'
+import { Sidebar, type SurfaceLauncherKind } from './components/Sidebar'
 import { IconChat, IconSparkle, IconCode, IconGrid, IconChevronDown } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
@@ -19,6 +21,178 @@ import { ContextMenu } from './components/ContextMenu'
 // Legacy always-on integration cards on the canvas (they stacked at origin and clutter the agent-driven
 // desktop). Off by default — integrations now surface as agent-spawned widgets. Flip to re-enable.
 const SHOW_INTEGRATION_CARDS = false
+type DockAnimationPhase = 'minimizing' | 'restoring'
+const WIDGET_PLACEHOLDER_HTML = `
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: var(--blitz-surface);
+    color: var(--blitz-text);
+    font: 14px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .empty {
+    width: min(320px, calc(100% - 44px));
+    display: grid;
+    gap: 12px;
+    text-align: center;
+  }
+  .mark {
+    width: 42px;
+    height: 42px;
+    margin: 0 auto;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    border: 1px solid var(--blitz-hairline);
+    color: var(--blitz-accent);
+    background: color-mix(in srgb, var(--blitz-accent) 10%, transparent);
+    font-size: 20px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 650;
+  }
+  p {
+    margin: 0;
+    color: var(--blitz-text-dim);
+    line-height: 1.45;
+  }
+</style>
+<main class="empty">
+  <div class="mark">&lt;/&gt;</div>
+  <h1>Widget</h1>
+  <p>A sandboxed mini-app can live here. Ask an agent to build one, or use it as a starting point for a custom workspace tool.</p>
+</main>`
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+}
+
+function findByData(name: string, value: string): HTMLElement | null {
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[${name}]`))) {
+    if (el.getAttribute(name) === value) return el
+  }
+  return null
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+}
+
+async function animateDockMotion(
+  el: HTMLElement,
+  dock: HTMLElement,
+  worldScale: number,
+  phase: DockAnimationPhase
+): Promise<(() => void) | null> {
+  if (!el.animate) return null
+  const from = el.getBoundingClientRect()
+  const to = dock.getBoundingClientRect()
+  if (!from.width || !from.height || !to.width || !to.height) return null
+
+  const scale = Math.max(0.06, Math.min(0.18, Math.min(to.width / from.width, to.height / from.height)))
+  const safeScale = Math.max(0.001, worldScale || 1)
+  const dx = (to.left + to.width / 2 - (from.left + from.width / 2)) / safeScale
+  const dy = (to.top + to.height / 2 - (from.top + from.height / 2)) / safeScale
+  const dockTransform = `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`
+  const shown = { transform: 'translate3d(0px, 0px, 0) scale(1)', opacity: 1 }
+  const docked = { transform: dockTransform, opacity: 0.18 }
+  const keyframes = phase === 'minimizing' ? [shown, docked] : [docked, shown]
+  const first = keyframes[0]
+  const previous = {
+    transform: el.style.transform,
+    opacity: el.style.opacity,
+    transformOrigin: el.style.transformOrigin,
+    willChange: el.style.willChange,
+    pointerEvents: el.style.pointerEvents,
+    zIndex: el.style.zIndex,
+    visibility: el.style.visibility
+  }
+
+  // For restore, the real surface is mounted but hidden for measurement. Apply the docked
+  // first frame while it is still hidden, then reveal it, so it cannot flash at full size.
+  el.style.transform = String(first.transform)
+  el.style.opacity = String(first.opacity)
+  el.style.visibility = 'visible'
+  el.style.transformOrigin = 'center center'
+  el.style.willChange = 'transform, opacity'
+  el.style.pointerEvents = 'none'
+  el.style.zIndex = '3000000'
+
+  const animation = el.animate(keyframes, {
+    duration: phase === 'minimizing' ? 320 : 300,
+    easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+    fill: 'forwards'
+  })
+
+  await new Promise<void>((resolve) => {
+    animation.onfinish = () => resolve()
+    animation.oncancel = () => resolve()
+  })
+
+  return () => {
+    animation.cancel()
+    el.style.transform = previous.transform
+    el.style.opacity = previous.opacity
+    el.style.transformOrigin = previous.transformOrigin
+    el.style.willChange = previous.willChange
+    el.style.pointerEvents = phase === 'restoring' ? '' : previous.pointerEvents
+    el.style.zIndex = previous.zIndex
+    el.style.visibility = phase === 'restoring' ? '' : previous.visibility
+  }
+}
+
+type SurfaceRect = Pick<Surface, 'x' | 'y' | 'w' | 'h'>
+
+async function animateSurfaceGeometryMotion(
+  el: HTMLElement,
+  from: SurfaceRect
+): Promise<(() => void) | null> {
+  if (!el.animate) return null
+  if (!from.w || !from.h) return null
+
+  const previous = {
+    willChange: el.style.willChange,
+    pointerEvents: el.style.pointerEvents,
+    zIndex: el.style.zIndex
+  }
+
+  const to = {
+    left: el.style.left,
+    top: el.style.top,
+    width: el.style.width,
+    height: el.style.height
+  }
+  if (!to.left || !to.top || !to.width || !to.height) return null
+
+  el.style.willChange = 'left, top, width, height'
+  el.style.pointerEvents = 'none'
+  el.style.zIndex = '3000000'
+
+  const animation = el.animate(
+    [
+      { left: `${from.x}px`, top: `${from.y}px`, width: `${from.w}px`, height: `${from.h}px` },
+      to
+    ],
+    { duration: 300, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' }
+  )
+
+  await new Promise<void>((resolve) => {
+    animation.onfinish = () => resolve()
+    animation.oncancel = () => resolve()
+  })
+
+  return () => {
+    animation.cancel()
+    el.style.willChange = previous.willChange
+    el.style.pointerEvents = previous.pointerEvents
+    el.style.zIndex = previous.zIndex
+  }
+}
 
 // The shared Notepad note BlitzOS keeps as working memory (human + agent r/w). Ensured after each
 // hydrate so a fresh workspace gets one (it then persists as a file); idempotent on a restored board.
@@ -82,8 +256,8 @@ export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
   const mode = useDesktop((s) => s.mode)
-  const areaCount = useDesktop((s) => s.areaCount)
-  const currentArea = useDesktop((s) => s.currentArea)
+  const stageCount = useDesktop((s) => s.stageCount)
+  const currentStage = useDesktop((s) => s.currentStage)
   const integrations = useDesktop((s) => s.integrations)
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
@@ -91,6 +265,10 @@ export default function App(): JSX.Element {
   const selection = useDesktop((s) => s.selection)
   const createSurface = useDesktop((s) => s.createSurface)
   const setIntegrations = useDesktop((s) => s.setIntegrations)
+  const minimizeSurface = useDesktop((s) => s.minimizeSurface)
+  const updateSurface = useDesktop((s) => s.updateSurface)
+  const focusAndZoom = useDesktop((s) => s.focusAndZoom)
+  const toggleMaximize = useDesktop((s) => s.toggleMaximize)
 
   const [connecting, setConnecting] = useState<string | null>(null)
   const [aiUrl, setAiUrl] = useState<string | null>(null)
@@ -98,18 +276,47 @@ export default function App(): JSX.Element {
   // Agent relay connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [showOverview, setShowOverview] = useState(false)
+  // The fluid file layer: whenever the slotted-tile layout (or the viewport, or the file population)
+  // changes, flow the file/dir tiles around the tiles. Signature-keyed so it runs exactly when needed;
+  // live drag parting is handled by SurfaceFrame (reflowFiles(ghost)) — this settles the final layout.
+  const slotSig = useDesktop((s) => {
+    let sig = `${s.viewport.w}x${s.viewport.h}`
+    let files = 0
+    for (const x of s.surfaces) {
+      if (x.slot) sig += `|${x.id}:${x.slot.col},${x.slot.row},${x.slot.size}`
+      else if (x.kind === 'native' && (x.component === 'file' || x.component === 'dir') && !x.groupId && !x.minimized) files++
+    }
+    return sig + `#${files}`
+  })
+  useEffect(() => {
+    if (hydrated.current) useDesktop.getState().reflowFiles()
+  }, [slotSig])
+  // Mirror showOverview into a ref so the ASYNC thumbnail capture reads the current value (not a stale
+  // closure): it must never run while the overview overlay is mounted, or capturePage saves the gallery
+  // itself AS the workspace's thumbnail (the screenshot-of-the-gallery-in-a-tile bug).
+  const showOverviewRef = useRef(false)
+  useEffect(() => {
+    showOverviewRef.current = showOverview
+  }, [showOverview])
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
   // #51: pending write-approvals the agent requested (provider.call writes) — the human OKs or denies each.
   // A QUEUE (not a single slot) so concurrent writes don't overwrite each other's card (review fix); we
   // show the oldest and pop it on answer. Keyed by id, matching provider-bridge's pending Map.
   const [providerApprovals, setProviderApprovals] = useState<Array<{ id: string; summary: string; risk: string }>>([])
+  // Item 3: a web guest asked for a sensitive browser permission (camera, location, …) — show the human a
+  // real Allow/Block prompt (browser parity), remembered per-origin.
+  const [permissionPrompts, setPermissionPrompts] = useState<Array<{ id: string; origin: string; permission: string; surfaceId: string | null }>>([])
   // Right-click desktop menu (New Folder / New Board). wx/wy = the world position to place the new folder.
   const [menu, setMenu] = useState<{ x: number; y: number; wx: number; wy: number } | null>(null)
+  const annotationMenu = useDesktop((s) => s.annotationMenu) // item 5b: surface right-click annotation menu
+  const [dockAnimations, setDockAnimations] = useState<Record<string, DockAnimationPhase>>({})
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
+  const dockAnimationIds = useRef<Set<string>>(new Set())
+  const rectAnimationIds = useRef<Set<string>>(new Set())
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   // Phase 2: true once the backend has sent (or declined) a hydrate. The state-push is
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
@@ -140,7 +347,7 @@ export default function App(): JSX.Element {
     animRef.current = requestAnimationFrame(step)
   }
   // Double-tap ⌘ toggles "Control mode" (the zoomed-out bird's-eye): animate the camera to the
-  // control viewport on enter and back to the locked primary-area view on exit. Both modes exist in
+  // control viewport on enter and back to the locked primary-stage view on exit. Both modes exist in
   // BOTH transports (Electron + server/Chrome); normal mode is the default everywhere.
   function toggleControlMode(): void {
     const st = useDesktop.getState()
@@ -150,33 +357,33 @@ export default function App(): JSX.Element {
     if (next === 'canvas') {
       // Entering control mode: ALWAYS the gentle default zoom-out (controlScale 0.7), never a stale
       // remembered camera — the human wants a consistent gentle bird's-eye, not whatever it was left at.
-      const target = viewTransform('canvas', st.viewport, st.currentArea, st.areaCount)
+      const target = viewTransform('canvas', st.viewport, st.currentStage, st.stageCount)
       st.setMode('canvas')
       animateTransform(target)
     } else {
-      // Leaving control mode: animate back to the view-locked CURRENT area. controlTransform was
+      // Leaving control mode: animate back to the view-locked CURRENT stage. controlTransform was
       // already kept current by every pan/zoom/center in canvas mode, so there's nothing to capture
       // here (capturing st.transform now could grab a mid-animation frame — the ISSUE-3 trap).
       st.setMode('desktop')
-      animateTransform(viewTransform('desktop', st.viewport, st.currentArea, st.areaCount))
+      animateTransform(viewTransform('desktop', st.viewport, st.currentStage, st.stageCount))
     }
   }
 
-  // Switch to an adjacent workspace area (#45). In normal mode the camera animates to the new area
-  // (each area locks to the same on-screen desktop region); in control mode the bird's-eye already
-  // shows every area, so we only move the highlight. No-op past the ends.
-  function switchArea(delta: number): void {
+  // Switch to an adjacent workspace stage (#45). In normal mode the camera animates to the new stage
+  // (each stage locks to the same on-screen desktop region); in control mode the bird's-eye already
+  // shows every stage, so we only move the highlight. No-op past the ends.
+  function switchStage(delta: number): void {
     const st = useDesktop.getState()
-    const next = Math.max(0, Math.min(st.areaCount - 1, st.currentArea + delta))
-    if (next === st.currentArea) return
-    st.setCurrentArea(next)
-    if (st.mode === 'desktop') animateTransform(viewTransform('desktop', st.viewport, next, st.areaCount))
+    const next = Math.max(0, Math.min(st.stageCount - 1, st.currentStage + delta))
+    if (next === st.currentStage) return
+    st.setCurrentStage(next)
+    if (st.mode === 'desktop') animateTransform(viewTransform('desktop', st.viewport, next, st.stageCount))
   }
-  // Add a new (empty) area to the right and go to it (re-fits the bird's-eye in control mode).
-  function addAreaAndGo(): void {
+  // Add a new (empty) stage to the right and go to it (re-fits the bird's-eye in control mode).
+  function addStageAndGo(): void {
     useDesktop.getState().addArea()
     const now = useDesktop.getState()
-    animateTransform(viewTransform(now.mode, now.viewport, now.currentArea, now.areaCount))
+    animateTransform(viewTransform(now.mode, now.viewport, now.currentStage, now.stageCount))
   }
 
   useEffect(() => {
@@ -223,6 +430,26 @@ export default function App(): JSX.Element {
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
+  // ⌘T / ⇧⌘T — tile toggle + size cycle on the window the user means: the single selection if there
+  // is one, else the front-most. No editable guard (a ⌘-chord types nothing; a focused note textarea
+  // must not eat it). Reached via os:keybind from main (any focus) or the DOM fallback (server mode).
+  function runTileKeybind(shift: boolean): void {
+    const st = useDesktop.getState()
+    const eligible = (x: Surface): boolean => !x.minimized && !x.groupId && !(x.kind === 'native' && (x.component === 'file' || x.component === 'dir' || x.component === 'folder'))
+    const selected = st.selection.length === 1 ? st.surfaces.find((x) => x.id === st.selection[0] && eligible(x)) : undefined
+    const top = selected ?? st.surfaces.reduce<Surface | null>((best, x) => (eligible(x) && (!best || x.z > best.z) ? x : best), null)
+    if (!top) return
+    if (shift) st.cycleSurfaceSlotSize(top.id, 1)
+    else st.toggleSurfaceSlot(top.id)
+  }
+  useEffect(() => {
+    const off = window.agentOS?.onKeybind?.((k) => {
+      if (k.id === 'tile') runTileKeybind(!!k.shift)
+    })
+    return () => off?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key === '0') {
@@ -245,22 +472,22 @@ export default function App(): JSX.Element {
           useDesktop.getState().undoLayout()
         }
       } else if (e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        // Cmd + ← / → : switch BlitzOS workspace area (#45). Ctrl + ← / → is intentionally NOT bound — it's
+        // Cmd + ← / → : switch BlitzOS workspace stage (#45). Ctrl + ← / → is intentionally NOT bound — it's
         // the macOS "switch desktop/Space" shortcut, left free so the user can swap real desktops (their way
-        // out of fullscreen). Skip when typing, and when there's only one area.
+        // out of fullscreen). Skip when typing, and when there's only one stage.
         const ae = document.activeElement as HTMLElement | null
         const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
-        if (!editable && useDesktop.getState().areaCount > 1) {
+        if (!editable && useDesktop.getState().stageCount > 1) {
           e.preventDefault()
-          switchArea(e.key === 'ArrowLeft' ? -1 : 1)
+          switchStage(e.key === 'ArrowLeft' ? -1 : 1)
         }
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'n' || e.key === 'N')) {
-        // Cmd/Ctrl + N : add a new workspace area and jump to it (#45). Skip when typing in a field.
+        // Cmd/Ctrl + N : add a new workspace stage and jump to it (#45). Skip when typing in a field.
         const ae = document.activeElement as HTMLElement | null
         const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
         if (!editable) {
           e.preventDefault()
-          addAreaAndGo()
+          addStageAndGo()
         }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         // Delete / ⌫ closes the selected surfaces (when not typing in a field).
@@ -273,6 +500,11 @@ export default function App(): JSX.Element {
           ids.forEach((id) => st.closeSurface(id))
           st.clearSelection()
         }
+      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.code === 'KeyT' && !window.agentOS?.onKeybind) {
+        // ⌘T/⇧⌘T DOM fallback for SERVER mode only — in Electron the bind arrives from main's
+        // before-input-event (os:keybind), which works even when an iframe/webview holds focus.
+        e.preventDefault()
+        runTileKeybind(e.shiftKey)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -362,7 +594,7 @@ export default function App(): JSX.Element {
         const surfs = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
         // Control mode is a transient view toggle, never persisted — always boot the normal desktop.
-        st.hydrate(surfs, cam, 'desktop', Number(a.areaCount) || 1)
+        st.hydrate(surfs, cam, 'desktop', Number(a.stageCount) || 1)
         ensureNotepad()
         hydrated.current = true
         if (typeof a.workspace === 'string') {
@@ -375,7 +607,7 @@ export default function App(): JSX.Element {
         // reconnect's hydrate still can't clobber the new board.
         const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        st.hydrate(sf, cm, 'desktop', Number(a.areaCount) || 1)
+        st.hydrate(sf, cm, 'desktop', Number(a.stageCount) || 1)
         ensureNotepad()
         hydrated.current = true // a switch is also a valid first hydrate — don't depend on a prior 'hydrate'
         if (typeof a.workspace === 'string') {
@@ -393,27 +625,27 @@ export default function App(): JSX.Element {
         if (surf && (surf.kind === 'web' || surf.kind === 'app')) surf.shared = true
         // Dedupe by id: a 'create' (e.g. a new agent) can race a hydrate that already brought it.
         if (surf && surf.id && st.surfaces.some((s) => s.id === surf.id)) return
-        // A NEW agent owns its own area N. Recompute its x from the area with the renderer's REAL
-        // viewport (the host may have used a default vp), so its widget lands precisely in area N.
+        // A NEW agent owns its own stage N. Recompute its x from the stage with the renderer's REAL
+        // viewport (the host may have used a default vp), so its widget lands precisely in stage N.
         const isNewChat = hydrated.current && surf && surf.role === 'chat' && surf.agentId != null
-        const chatArea = isNewChat ? areaForAgent(surf.agentId as string) : 0
-        if (isNewChat && chatArea > 0) {
-          // area tags it for createSurface's clamp (else it clamps to the CURRENT area); x sets the precise
-          // left-of-center spot in area N using the real viewport.
-          surf.area = chatArea
-          surf.x = Math.round(areaCenterX(chatArea, useDesktop.getState().viewport) - 700)
+        const chatStage = isNewChat ? stageForAgent(surf.agentId as string) : 0
+        if (isNewChat && chatStage > 0) {
+          // stage tags it for createSurface's clamp (else it clamps to the CURRENT stage); x sets the precise
+          // left-of-center spot in stage N using the real viewport.
+          surf.stage = chatStage
+          surf.x = Math.round(stageCenterX(chatStage, useDesktop.getState().viewport) - 700)
         }
         st.createSurface(surf)
-        if (isNewChat && chatArea > 0) {
-          // ALWAYS grow areaCount so the new area exists + is navigable (whether a user or an agent spawned it).
+        if (isNewChat && chatStage > 0) {
+          // ALWAYS grow stageCount so the new stage exists + is navigable (whether a user or an agent spawned it).
           const cur = useDesktop.getState()
-          if (chatArea + 1 > cur.areaCount) cur.setAreaCount(chatArea + 1)
+          if (chatStage + 1 > cur.stageCount) cur.setStageCount(chatStage + 1)
           // Follow the camera ONLY for a USER '+ Agent' (a.focus) — so "+ Agent" visibly opens the new agent's
           // workspace — never for an agent's spawn_agent (a background agent must not yank the user's view).
           if (a.focus) {
             const now = useDesktop.getState()
-            now.setCurrentArea(chatArea)
-            animateTransform(viewTransform(now.mode, now.viewport, chatArea, now.areaCount))
+            now.setCurrentStage(chatStage)
+            animateTransform(viewTransform(now.mode, now.viewport, chatStage, now.stageCount))
           }
         }
       }
@@ -424,6 +656,29 @@ export default function App(): JSX.Element {
           const card = { id: String(req.id), summary: String(req.summary || 'a provider write'), risk: String(req.risk || 'write') }
           setProviderApprovals((q) => (q.some((c) => c.id === card.id) ? q : [...q, card])) // enqueue (dedupe by id)
         }
+      }
+      else if (a.type === 'surface-contextmenu') {
+        // Item 5b: a WEB guest's right-click (main intercepts it — the webview swallows React's onContextMenu).
+        // params x/y are guest-viewport CSS px; map to a percent of the surface so the annotation anchors,
+        // and to screen px (via the live camera) so the menu opens at the cursor.
+        const st = useDesktop.getState()
+        const sid = String(a.surfaceId || '')
+        const surf = st.surfaces.find((s) => s.id === sid)
+        if (surf) {
+          const gx = Number(a.x) || 0
+          const gy = Number(a.y) || 0
+          const xPct = surf.w ? gx / surf.w : 0.5
+          const yPct = surf.h ? gy / surf.h : 0.5
+          const { x: tx, y: ty, scale } = st.transform
+          const sx = tx + (surf.x + gx) * scale
+          const sy = ty + (surf.y + gy) * scale
+          st.openAnnotationMenu(sid, xPct, yPct, sx, sy)
+        }
+      }
+      else if (a.type === 'permission-request') {
+        // A web guest requested a sensitive permission (item 3). Enqueue a real Allow/Block prompt.
+        const id = a.id ? String(a.id) : ''
+        if (id) setPermissionPrompts((q) => (q.some((p) => p.id === id) ? q : [...q, { id, origin: String(a.origin || ''), permission: String(a.permission || ''), surfaceId: a.surfaceId ? String(a.surfaceId) : null }]))
       }
       else if (a.type === 'move') st.moveSurface(String(a.id), Number(a.x), Number(a.y))
       else if (a.type === 'update') st.updateSurface(String(a.id), (a.patch ?? {}) as Partial<Surface>)
@@ -441,9 +696,10 @@ export default function App(): JSX.Element {
           st.updateSurfaceProps(chat.id, { messages: a.messages as Array<{ role: string; text: string }> })
         } else {
           const text = String(a.text ?? '')
-          if (!text) return
-          const msgs = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
-          st.updateSurfaceProps(chat.id, { messages: [...msgs, { role: 'agent', text }].slice(-200) })
+          if (text) {
+            const prev = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
+            st.updateSurfaceProps(chat.id, { messages: [...prev, { role: 'agent', text }].slice(-200) })
+          }
         }
       } else if (a.type === 'agentStatus') {
         // Backend heartbeat: is the agent's relay link up? Drives the toolbar status pill.
@@ -471,8 +727,8 @@ export default function App(): JSX.Element {
         // TABS in a terminal window — add this one as a tab (idempotent). Covers both live spawns and
         // the restore() replay that brings back tmux survivors after a restart. An AGENT's raw terminal is
         // opt-in (its chat is primary), so ensureTerminalTab auto-tabs only a plain terminal (kind 'terminal').
-        const term = (a.terminal ?? {}) as { title?: string; area?: number | null; kind?: string }
-        if (term.kind !== 'agent') ensureTerminalTab(String(a.id), term.title || 'Terminal', term.area)
+        const term = (a.terminal ?? {}) as { title?: string; stage?: number | null; area?: number | null; kind?: string }
+        if (term.kind !== 'agent') ensureTerminalTab(String(a.id), term.title || 'Terminal', term.stage ?? term.area)
       } else if (a.type === 'action-item') {
         // An agent pushed (or updated/resolved) an action item the human must do → the Inbox surface.
         const item = a.item as { id?: string; status?: string } | undefined
@@ -486,10 +742,11 @@ export default function App(): JSX.Element {
         }
       } else if (a.type === 'agent-remove') {
         // An agent was deleted (host removed its widget via the 'close' broadcast + its files). Collapse
-        // the now-empty area: apply the host's recomputed areaCount (clamps currentArea so the camera doesn't
-        // strand on a vanished area). Also drop the agent's terminal tab if it's still around.
+        // the now-empty stage: apply the host's recomputed stageCount (clamps currentStage so the camera
+        // doesn't strand on a vanished stage). Also drop the agent's terminal tab if it's still around.
         const cur = useDesktop.getState()
-        if (Number.isInteger(a.areaCount) && (a.areaCount as number) < cur.areaCount) cur.setAreaCount(a.areaCount as number)
+        const removeCount = Number.isInteger(a.stageCount) ? (a.stageCount as number) : (a.areaCount as number) // tolerate legacy `areaCount`
+        if (Number.isInteger(removeCount) && removeCount < cur.stageCount) cur.setStageCount(removeCount)
         const rid = String(a.id)
         for (const w of cur.surfaces) {
           if (w.kind === 'native' && w.component === 'terminal' && w.tabs?.some((t) => t.terminalId === rid)) {
@@ -521,8 +778,8 @@ export default function App(): JSX.Element {
     Promise.resolve(api?.terminalList?.() ?? [])
       .then((list) => {
         if (cancelled || !Array.isArray(list)) return
-        for (const s of list as Array<{ id?: string; title?: string; status?: string; kind?: string; area?: number | null }>) {
-          if (s && s.id && s.status === 'running' && s.kind !== 'agent') ensureTerminalTab(String(s.id), s.title || 'Terminal', s.area)
+        for (const s of list as Array<{ id?: string; title?: string; status?: string; kind?: string; stage?: number | null; area?: number | null }>) {
+          if (s && s.id && s.status === 'running' && s.kind !== 'agent') ensureTerminalTab(String(s.id), s.title || 'Terminal', s.stage ?? s.area)
         }
       })
       .catch(() => {})
@@ -603,7 +860,7 @@ export default function App(): JSX.Element {
         component: s.component,
         role: s.role,
         // Carry the agent id so a per-agent chat survives the round-trip (osState → a later hydrate):
-        // without it the surface would lose its area on the next connect and snap back to area 0.
+        // without it the surface would lose its stage on the next connect and snap back to stage 0.
         agentId: s.agentId,
         // Chat + Agent-activity panels are pinned always-on-top — the agent must not cover them
         pinned: isRuntimePanel(s)
@@ -620,9 +877,9 @@ export default function App(): JSX.Element {
       }
       // camera = the WORLD point at screen center + scale (viewport-independent, so it restores
       // correctly on a different screen size — view.cx/cy are exactly that world point).
-      // #45: also push the area count + which area is active + the CURRENT area's world rect, so the
-      // agent (list_state) places surfaces in the area the human is looking at, not blindly at origin.
-      const currentAreaRect = areaRect(st.currentArea, st.viewport)
+      // #45: also push the stage count + which stage is active + the CURRENT stage's world rect, so the
+      // agent (list_state) places surfaces in the stage the human is looking at, not blindly at origin.
+      const currentStageRect = stageRect(st.currentStage, st.viewport)
       window.agentOS?.sendState({
         workspace: activeWsRef.current ?? undefined,
         surfaces,
@@ -630,9 +887,9 @@ export default function App(): JSX.Element {
         view,
         mode: st.mode,
         camera: { x: view.cx, y: view.cy, scale },
-        areaCount: st.areaCount,
-        currentArea: st.currentArea,
-        currentAreaRect
+        stageCount: st.stageCount,
+        currentStage: st.currentStage,
+        currentStageRect
       })
     }
     push()
@@ -652,8 +909,8 @@ export default function App(): JSX.Element {
     let lastT = useDesktop.getState().transform
     let lastVp = useDesktop.getState().viewport
     let lastMode = useDesktop.getState().mode
-    let lastArea = useDesktop.getState().currentArea
-    let lastAreaCount = useDesktop.getState().areaCount
+    let lastArea = useDesktop.getState().currentStage
+    let lastAreaCount = useDesktop.getState().stageCount
     const scheduleCamera = (): void => {
       if (timer) return
       timer = setTimeout(() => {
@@ -665,10 +922,10 @@ export default function App(): JSX.Element {
       if (state.surfaces !== lastS) {
         lastS = state.surfaces
         push() // surface set changed — reflect it at once
-      } else if (state.areaCount !== lastAreaCount || state.currentArea !== lastArea) {
-        // an area switch / add changes which area the agent should target — reflect it at once
-        lastArea = state.currentArea
-        lastAreaCount = state.areaCount
+      } else if (state.stageCount !== lastAreaCount || state.currentStage !== lastArea) {
+        // an stage switch / add changes which stage the agent should target — reflect it at once
+        lastArea = state.currentStage
+        lastAreaCount = state.stageCount
         push()
       } else if (state.transform !== lastT || state.viewport !== lastVp || state.mode !== lastMode) {
         lastT = state.transform
@@ -806,7 +1063,7 @@ export default function App(): JSX.Element {
   }
 
   // The Chat panel docks to the LEFT of whatever the user is currently looking at,
-  // so it opens visible (and stays out of the area where the agent puts windows).
+  // so it opens visible (and stays out of the stage where the agent puts windows).
   function chatSurfaceInput(messages: Array<{ role: string; text: string }>): CreateSurfaceInput {
     const st = useDesktop.getState()
     const { scale, x: tx, y: ty } = st.transform
@@ -831,8 +1088,8 @@ export default function App(): JSX.Element {
   // Open/focus a terminal tab (idempotent). Shared by the live terminal-spawn action, resume-on-load,
   // and the Runtime tray — the placement + add-tab-or-create logic lives in the store action so all
   // three callers stay in sync.
-  function ensureTerminalTab(tid: string, title: string, area?: number | null): void {
-    useDesktop.getState().openTerminal(tid, title || 'Terminal', area)
+  function ensureTerminalTab(tid: string, title: string, stage?: number | null): void {
+    useDesktop.getState().openTerminal(tid, title || 'Terminal', stage)
   }
 
   // The Action-items inbox docks TOP-RIGHT of the current view (out of the way of chat/activity which
@@ -866,10 +1123,43 @@ export default function App(): JSX.Element {
     createSurface({ kind: 'web', url: 'https://news.ycombinator.com', title: 'Hacker News' })
   }
 
-  // Capture the CURRENT board's primary-area snapshot and upload it as its workspace thumbnail
+  function visibleWorldCenter(): { x: number; y: number } {
+    const st = useDesktop.getState()
+    return {
+      x: Math.round((st.viewport.w / 2 - st.transform.x) / st.transform.scale),
+      y: Math.round((st.viewport.h / 2 - st.transform.y) / st.transform.scale)
+    }
+  }
+
+  function createFromLauncher(kind: SurfaceLauncherKind): void {
+    if (kind === 'browser') {
+      addBrowser()
+      return
+    }
+    if (kind === 'note') {
+      createSurface({ kind: 'native', component: 'note', title: 'Note', w: 280, h: 260, props: { text: '', color: 'yellow' } })
+      return
+    }
+    if (kind === 'app') {
+      createSurface({ kind: 'app', title: 'App', w: 520, h: 360 })
+      return
+    }
+    if (kind === 'widget') {
+      createSurface({ kind: 'srcdoc', title: 'Widget', w: 420, h: 300, html: WIDGET_PLACEHOLDER_HTML })
+      return
+    }
+    const c = visibleWorldCenter()
+    makeFolder(kind, c.x, c.y)
+  }
+
+  // Capture the CURRENT board's primary-stage snapshot and upload it as its workspace thumbnail
   // (best-effort, last-seen). Done before opening the overview and before switching away (while the
   // board we're leaving still has live streamed frames — they're torn down by the switch).
   async function captureCurrent(): Promise<void> {
+    // Hard guard: the board is snapshotted in openOverview BEFORE the overlay mounts (the only moment the
+    // canvas is the visible top layer). If the overview is already up, bail — capturePage would otherwise
+    // save the overlay itself as this workspace's thumbnail.
+    if (showOverviewRef.current) return
     const name = activeWsRef.current
     const ws = window.agentOS?.workspaces
     if (!name || !ws) return
@@ -889,7 +1179,9 @@ export default function App(): JSX.Element {
     setShowOverview(true)
   }
   async function switchWorkspace(name: string): Promise<{ ok: boolean; error?: string }> {
-    await captureCurrent() // snapshot the board we're leaving BEFORE its targets are torn down
+    // Don't capture here: this only runs from the OPEN overview, so the board we're leaving is obscured by
+    // the overlay. openOverview already snapshotted it before the overlay mounted, and that thumb is still
+    // current (the workspace can't change while you're sitting in the overview).
     const r = await window.agentOS?.workspaces?.switch(name)
     // success → the {type:'switch'} broadcast swaps the canvas + closes the overview; a 409 (lock) /
     // 404 / 500 resolves {error} (getJSON never throws) → signal it so the overview clears "opening…".
@@ -930,6 +1222,113 @@ export default function App(): JSX.Element {
     else createSurface(chatSurfaceInput([]))
   }
 
+  function setDockAnimation(id: string, phase: DockAnimationPhase | null): void {
+    if (phase) dockAnimationIds.current.add(id)
+    else dockAnimationIds.current.delete(id)
+    setDockAnimations((cur) => {
+      const next = { ...cur }
+      if (phase) next[id] = phase
+      else delete next[id]
+      return next
+    })
+  }
+
+  async function requestMinimize(id: string): Promise<void> {
+    if (dockAnimationIds.current.has(id) || rectAnimationIds.current.has(id)) return
+    const surf = useDesktop.getState().surfaces.find((s) => s.id === id)
+    if (!surf || surf.minimized) return
+    if (prefersReducedMotion()) {
+      minimizeSurface(id)
+      return
+    }
+
+    const el = findByData('data-sid', id)
+    const dock = findByData('data-sidebar-sid', id)
+    if (!el || !dock) {
+      minimizeSurface(id)
+      return
+    }
+
+    setDockAnimation(id, 'minimizing')
+    let cleanup: (() => void) | null = null
+    try {
+      cleanup = await animateDockMotion(el, dock, useDesktop.getState().transform.scale, 'minimizing')
+      minimizeSurface(id)
+    } finally {
+      cleanup?.()
+      setDockAnimation(id, null)
+    }
+  }
+
+  async function requestRestore(id: string): Promise<void> {
+    if (dockAnimationIds.current.has(id) || rectAnimationIds.current.has(id)) return
+    const surf = useDesktop.getState().surfaces.find((s) => s.id === id)
+    if (!surf) return
+    if (!surf.minimized) {
+      focusAndZoom(id)
+      return
+    }
+    if (prefersReducedMotion()) {
+      updateSurface(id, { minimized: false })
+      focusAndZoom(id)
+      return
+    }
+
+    setDockAnimation(id, 'restoring')
+    updateSurface(id, { minimized: false })
+    focusAndZoom(id)
+    await nextPaint()
+
+    const el = findByData('data-sid', id)
+    const dock = findByData('data-sidebar-sid', id)
+    if (!el || !dock) {
+      setDockAnimation(id, null)
+      return
+    }
+
+    let cleanup: (() => void) | null = null
+    try {
+      cleanup = await animateDockMotion(el, dock, useDesktop.getState().transform.scale, 'restoring')
+    } finally {
+      cleanup?.()
+      setDockAnimation(id, null)
+    }
+  }
+
+  async function requestToggleMaximize(id: string): Promise<void> {
+    if (dockAnimationIds.current.has(id) || rectAnimationIds.current.has(id)) return
+    const surf = useDesktop.getState().surfaces.find((s) => s.id === id)
+    if (!surf || surf.minimized) return
+    if (prefersReducedMotion()) {
+      toggleMaximize(id)
+      return
+    }
+
+    const el = findByData('data-sid', id)
+    if (!el) {
+      toggleMaximize(id)
+      return
+    }
+
+    rectAnimationIds.current.add(id)
+    const from = { x: surf.x, y: surf.y, w: surf.w, h: surf.h }
+    flushSync(() => toggleMaximize(id))
+
+    const nextEl = findByData('data-sid', id)
+    if (!nextEl) {
+      rectAnimationIds.current.delete(id)
+      return
+    }
+
+    let cleanup: (() => void) | null = null
+    try {
+      cleanup = await animateSurfaceGeometryMotion(nextEl, from)
+    } finally {
+      cleanup?.()
+      rectAnimationIds.current.delete(id)
+    }
+  }
+
   const active = integrations.find((i) => i.id === connecting) ?? null
   const openFolder = surfaces.find((s) => s.kind === 'native' && s.component === 'folder' && s.props?.open)
   // Pending action-items count → the toolbar Inbox badge (so the human notices tasks even when the inbox is buried).
@@ -939,7 +1338,20 @@ export default function App(): JSX.Element {
   })()
 
   return (
-    <div id="root-canvas" ref={rootRef} className={grabMode ? 'grab-mode' : undefined} onDragOver={onDragOver} onDrop={onDrop}>
+    <div
+      id="root-canvas"
+      ref={rootRef}
+      className={grabMode ? 'grab-mode' : undefined}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onPointerDownCapture={() => {
+        // Keyboard-focus reclaim: iframes/webviews swallow window keydown while focused, killing every
+        // app keybind (⌘T etc.). A pointerdown that reaches the HOST at all means the user is now
+        // interacting OUTSIDE the guest — blur it so the next keystroke lands in the app again.
+        const ae = document.activeElement as HTMLElement | null
+        if (ae && (ae.tagName === 'IFRAME' || ae.tagName === 'WEBVIEW')) ae.blur()
+      }}
+    >
       {/* draggable native-window title bar (macOS move/resize) */}
       <div className="titlebar">
         <span className="titlebar-label">BlitzOS</span>
@@ -947,7 +1359,7 @@ export default function App(): JSX.Element {
 
       <div className="bg" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onContextMenu={onBgContextMenu} />
 
-      <Sidebar onAddBrowser={addBrowser} />
+      <Sidebar onCreateSurface={createFromLauncher} onRequestRestore={requestRestore} animating={dockAnimations} />
 
       <div
         className="world"
@@ -967,8 +1379,18 @@ export default function App(): JSX.Element {
           integrations.map((it) => <IntegrationWidget key={it.id} integration={it} onConnect={setConnecting} />)}
         {surfaces.map((s) =>
           // folder members live only inside the folder — unless "peeked" open onto the desktop
-          s.groupId && !s.peek ? null : <SurfaceFrame key={s.id} surface={s} />
+          s.groupId && !s.peek ? null : (
+            <SurfaceFrame
+              key={s.id}
+              surface={s}
+              onRequestMinimize={requestMinimize}
+              onRequestToggleMaximize={requestToggleMaximize}
+              restoring={dockAnimations[s.id] === 'restoring'}
+            />
+          )
         )}
+        {/* Item 5b: spatial annotations pin to surfaces (in-world so they pan/zoom with their surface). */}
+        <AnnotationLayer />
       </div>
 
       {mode === 'canvas' && (
@@ -992,13 +1414,13 @@ export default function App(): JSX.Element {
             <IconChevronDown size={13} />
           </button>
         )}
-        {/* Workspace areas (#45): the indicator appears once there's more than one. Create a new area
-            with Cmd/Ctrl + N; switch areas with Cmd/Ctrl + ← →. */}
-        {areaCount > 1 && (
-          <span className="area-ctl" title="Workspace areas — ⌘N new · ⌘← ⌘→ switch">
-            <button className="area-arrow" disabled={currentArea <= 0} onClick={() => switchArea(-1)} title="Previous area">‹</button>
-            <span className="area-ind">Area {currentArea + 1}/{areaCount}</span>
-            <button className="area-arrow" disabled={currentArea >= areaCount - 1} onClick={() => switchArea(1)} title="Next area">›</button>
+        {/* Workspace stages (#45): the indicator appears once there's more than one. Create a new stage
+            with Cmd/Ctrl + N; switch stages with Cmd/Ctrl + ← →. */}
+        {stageCount > 1 && (
+          <span className="stage-ctl" title="Workspace stages — ⌘N new · ⌘← ⌘→ switch">
+            <button className="stage-arrow" disabled={currentStage <= 0} onClick={() => switchStage(-1)} title="Previous stage">‹</button>
+            <span className="stage-ind">Stage {currentStage + 1}/{stageCount}</span>
+            <button className="stage-arrow" disabled={currentStage >= stageCount - 1} onClick={() => switchStage(1)} title="Next stage">›</button>
           </span>
         )}
         <button
@@ -1117,6 +1539,21 @@ export default function App(): JSX.Element {
         />
       )}
 
+      {/* Item 5b: right-click on a surface → "Ask the agent about this" at the clicked point. */}
+      {annotationMenu && (
+        <ContextMenu
+          x={annotationMenu.sx}
+          y={annotationMenu.sy}
+          onClose={() => useDesktop.getState().closeAnnotationMenu()}
+          items={[
+            {
+              label: '💬 Ask the agent about this',
+              onClick: () => useDesktop.getState().startAnnotation(annotationMenu.surfaceId, annotationMenu.xPct, annotationMenu.yPct)
+            }
+          ]}
+        />
+      )}
+
       {/* #51: the agent asked to perform a WRITE on a connected account — the human must approve it
           (per-call, request-bound). Reads never reach here. The OLDEST pending card shows; answering it
           pops it and reveals the next, so concurrent writes each get their own decision (review fix). */}
@@ -1132,6 +1569,29 @@ export default function App(): JSX.Element {
               <div className="consent-actions">
                 <button className="btn ghost" onClick={() => { window.agentOS?.denyProviderCall?.(card.id); pop() }}>Deny</button>
                 <button className="btn primary" onClick={() => { window.agentOS?.approveProviderCall?.(card.id); pop() }}>Allow</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Item 3: a web guest asked for a sensitive permission — browser-parity Allow/Block, remembered
+          per-origin. Oldest first; answering pops it and reveals the next. */}
+      {permissionPrompts.length > 0 && (() => {
+        const p = permissionPrompts[0]
+        const pop = (): void => setPermissionPrompts((q) => q.filter((x) => x.id !== p.id))
+        const decide = (allow: boolean): void => { window.agentOS?.decidePermission?.(p.id, allow, true); pop() }
+        const LABELS: Record<string, string> = { media: 'use your camera and microphone', geolocation: 'know your location', notifications: 'show notifications', 'clipboard-read': 'read your clipboard', midiSysex: 'use your MIDI devices', 'display-capture': 'capture your screen', 'window-management': 'manage your windows' }
+        const what = LABELS[p.permission] || `use "${p.permission}"`
+        const host = (() => { try { return new URL(p.origin).host } catch { return p.origin || 'A site' } })()
+        return (
+          <div className="consent" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="consent-card">
+              <h4>Allow <b>{host}</b> to {what}?</h4>
+              <p>This site is asking for a browser permission, like in a normal browser. Your choice is remembered for this site.{permissionPrompts.length > 1 ? ` (${permissionPrompts.length - 1} more pending)` : ''}</p>
+              <div className="consent-actions">
+                <button className="btn ghost" onClick={() => decide(false)}>Block</button>
+                <button className="btn primary" onClick={() => decide(true)}>Allow</button>
               </div>
             </div>
           </div>

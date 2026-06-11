@@ -12,8 +12,8 @@ export interface HydratedWorkspace {
   surfaces: Array<Record<string, unknown>>
   camera: { x: number; y: number; scale: number }
   mode: 'desktop' | 'canvas'
-  /** #45: number of tiled workspace areas (1 for old folders / missing / invalid). */
-  areaCount: number
+  /** #45: number of tiled workspace stages (1 for old folders / missing / invalid). */
+  stageCount: number
 }
 
 /** Reconstruct surface descriptors from a workspace folder (inverse of writeWorkspace). */
@@ -58,7 +58,7 @@ export interface WorkspaceEntry {
   path: string
   nodeCount: number
   updatedAt: number
-  /** mtime (ms) of the cached primary-area thumbnail, 0 if none (cache-busts the overview tile). */
+  /** mtime (ms) of the cached primary-stage thumbnail, 0 if none (cache-busts the overview tile). */
   thumbTs: number
 }
 
@@ -68,8 +68,58 @@ export function safeName(name: unknown): string | null
 /** Resolve a name to a realpath-jailed absolute path under root (or null). */
 export function resolveWorkspace(root: string, name: string, opts: { mustExist: boolean }): string | null
 
+/** Append one chat message to a workspace folder's chat[-<sessionId>].md (path-based; any workspace). */
+export function appendChatMessage(dir: string, role: 'user' | 'agent', text: string, sessionId?: string, meta?: Record<string, unknown>): void
+
 /** List workspace folders under root, newest-edited first. */
 export function listWorkspaces(root: string): WorkspaceEntry[]
 
 /** Create + scaffold a new workspace. Throws Error with .code 'EINVAL' | 'EEXIST'. */
 export function createWorkspace(root: string, name: string): { name: string; path: string }
+
+/** Delete a workspace folder (rm -rf, realpath-jailed). Throws Error with .code 'EINVAL' | 'ENOENT'. */
+export function deleteWorkspace(root: string, name: string): { name: string }
+
+// ---- cross-workspace surface addressing (item 4) ----
+/** Locate which workspace holds surface `id` (skipping `exceptDir`). Null if not found. */
+export function findSurfaceWorkspace(root: string, id: string, exceptDir?: string): { name: string; dir: string; node: Record<string, unknown> } | null
+/** Move surface `id` from its workspace INTO destDir (file move + node transfer, id preserved). Returns
+ *  the reconstructed descriptor + source name, or null if not elsewhere / unmovable. */
+export function relocateSurface(root: string, destDir: string, id: string, placeAt?: { x?: number; y?: number }): { surface: Record<string, unknown>; fromName: string } | null
+
+// ---- machine-global root state (<root>/.blitzos/state.json): the OS runtime journal ----
+
+export interface BootRecord {
+  pid: number
+  mode: string
+  bootedAt: number
+  heartbeatAt: number
+  cleanShutdown: boolean
+}
+export interface RootState {
+  lastActiveWorkspace?: string
+  boot?: BootRecord
+  [k: string]: unknown
+}
+export function readRootState(root: string): RootState
+/** Shallow top-level merge + atomic write. Pass a whole sub-object to replace it. */
+export function patchRootState(root: string, patch: Partial<RootState>): RootState
+
+// ---- per-origin browser permission decisions (machine-global, in the root journal) ----
+export type PermissionDecision = 'granted' | 'denied'
+export function readPermissions(root: string): Record<string, Record<string, PermissionDecision>>
+export function getPermission(root: string, origin: string, permission: string): PermissionDecision | null
+export function setPermission(root: string, origin: string, permission: string, decision: PermissionDecision): void
+
+export interface BootJournal {
+  /** Previous run died without a clean shutdown (crash / SIGKILL / power loss). */
+  dirty: boolean
+  /** Previous record's pid is still alive: another BlitzOS owns this root right now (not a crash). */
+  concurrent: boolean
+  lastAliveAt: number | null
+  prev: BootRecord | null
+  /** Call as the LAST step of a graceful quit ("clean" = state was flushed first). */
+  markClean(): void
+}
+/** Read the dirty bit, claim the root with a fresh record, start the 60s heartbeat. */
+export function openBootJournal(root: string, mode: string): BootJournal

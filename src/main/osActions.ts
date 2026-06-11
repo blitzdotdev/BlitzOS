@@ -3,9 +3,9 @@ import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
-import { ingestSignals, emitSurfaceAction, emitUserMessage, setContentShare, dropContentShare, INJECT, DRAIN } from './events'
+import { ingestSignals, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
-import { safeName } from './workspace.mjs'
+import { safeName, appendChatMessage, resolveWorkspace } from './workspace.mjs'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -21,18 +21,38 @@ export interface SurfaceDescriptor {
   html?: string
   component?: string
   props?: Record<string, unknown>
+  /** A tile on the stage slot lattice — geometry derives from the cell (stage-core). */
+  slot?: { col: number; row: number; size: string }
+  slotStage?: number
 }
 
 export interface OsState {
-  surfaces: Array<{ id: string; kind: string; x: number; y: number; w: number; h: number; title: string; url?: string; component?: string; z?: number; props?: Record<string, unknown> }>
+  surfaces: Array<{
+    id: string
+    kind: string
+    x: number
+    y: number
+    w: number
+    h: number
+    title: string
+    url?: string
+    component?: string
+    z?: number
+    props?: Record<string, unknown>
+    slot?: { col: number; row: number; size: string }
+    slotStage?: number
+    pinned?: boolean
+    agentId?: string
+    focus?: boolean
+  }>
   camera?: { x: number; y: number; scale: number }
   view?: { cx: number; cy: number }
   mode?: string
-  // #45 workspace areas: how many tiled desktops + which is active + the current one's world rect (so
-  // the agent places surfaces in the area the human is looking at, not blindly at the origin).
-  areaCount?: number
-  currentArea?: number
-  currentAreaRect?: { x: number; y: number; w: number; h: number }
+  // #45 workspace stages: how many tiled desktops + which is active + the current one's world rect (so
+  // the agent places surfaces in the stage the human is looking at, not blindly at the origin).
+  stageCount?: number
+  currentStage?: number
+  currentStageRect?: { x: number; y: number; w: number; h: number }
   workspace?: string
   // The active workspace's absolute folder path (~/Blitz/<name>). The filesystem IS the canvas: a LOCAL
   // agent authors surfaces by writing files INTO this folder (.html=panel, .md=note, .weblink=web) and the
@@ -42,6 +62,38 @@ export interface OsState {
 
 let getWin: () => BrowserWindow | null = () => null
 let cached: OsState = { surfaces: [] }
+// The workspaces root this process runs on (~/Blitz unless overridden) — index.ts needs it for the
+// boot journal (root-level runtime state lives at <root>/.blitzos/state.json).
+let wsRoot = ''
+// 2C/2D: main is AUTHORITATIVE-ON-WRITE for agent mutations. Each create/update/move/close is applied
+// to `cached` immediately (so a create→operate in the same tick — faster than the renderer round-trip —
+// resolves, and so existence checks are exact), then the IPC is sent for the renderer to reflect. The
+// renderer stays the authority: its next `os:state` push replaces `cached` wholesale, reconciling away
+// any optimistic drift. `pendingCreates` covers the window before that first echo. Content/existence
+// changes (create/update/close) also force a durable flush so an `ok` ack means the write survives a
+// crash — the gap that lost a note this session.
+const pendingCreates = new Map<string, number>()
+const PENDING_TTL = 10_000
+function surfaceExists(id: string): boolean {
+  return pendingCreates.has(id) || (cached.surfaces || []).some((s) => s.id === id)
+}
+/** Reconcile optimistic creates against an authoritative renderer snapshot: confirmed (now in the push)
+ *  or stale (renderer never echoed within the TTL) → forget. */
+function reconcilePending(s: OsState): void {
+  const now = Date.now()
+  for (const [id, t] of pendingCreates) {
+    if ((s.surfaces || []).some((x) => x.id === id) || now - t > PENDING_TTL) pendingCreates.delete(id)
+  }
+}
+/** Persist `cached` NOW (not on the 500ms debounce) so an agent write is durable at ack time. Guarded
+ *  against a mid-switch flush (the host owns the folder then) and best-effort (durability, never a throw). */
+function durableFlush(): void {
+  try {
+    if (wsHost && !wsHost.isSwitching()) wsHost.flush()
+  } catch {
+    /* best-effort */
+  }
+}
 // The SHARED workspace host (created in initOsActions, once app paths exist) — the SAME module the
 // server backend uses, so workspaces are ONE feature across both modes. Electron adapter: broadcast =
 // os:action IPC; web surfaces are <webview>s the renderer owns (onSurfaces no-op); mode 'desktop'.
@@ -62,19 +114,26 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
       : join(app.getPath('home'), 'Blitz')
   let initialName = process.env.BLITZ_WORKSPACE ? basename(resolve(process.env.BLITZ_WORKSPACE)) : 'Home'
   if (!safeName(initialName)) initialName = 'Home'
+  wsRoot = root
+  // v2 bleed fix: every perception moment is stamped with the workspace that was active when it
+  // happened, so workspace-pinned agents (/events {workspace}) never see another desktop's activity.
+  setWorkspaceProvider(() => wsHost?.active() || null)
   wsHost = createWorkspaceHost({
     root,
     initialName,
+    // a BLITZ_WORKSPACE pin beats boot-where-you-left-off; a bare root override does not
+    explicitInitial: !!process.env.BLITZ_WORKSPACE,
     getState: () => cached,
     setState: (s) => {
       cached = s as OsState
+      reconcilePending(cached) // confirm/expire optimistic agent creates against the authoritative push
     },
     broadcast: (obj) => getWin()?.webContents.send('os:action', obj),
     onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
-    // An agent's claude runs in a VISIBLE terminal in its area; index.ts wires this from the shared
+    // An agent's claude runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
     // agent-runtime core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
-    launchAgent: (id, area, title) => launchAgentHook?.(id, area, title),
+    launchAgent: (id, stage, title) => launchAgentHook?.(id, stage, title),
     // Stop an agent (when closing it) — index.ts wires this to terminal-ops.stopTerminal.
     stopAgent: (id) => stopAgentHook?.(id)
   })
@@ -98,6 +157,15 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     return r.status === 200 ? { ok: true, active: r.body.active } : { ok: false, error: r.body.error }
   })
   ipcMain.handle('workspace:capture', (_e, name: string) => osCaptureThumb(name))
+  // Delete a workspace + its folder (human-only, from Mission Control; never an agent tool — destructive).
+  // The host guards the active/last cases and switches away first if needed.
+  ipcMain.handle('workspace:delete', async (_e, name: string) => {
+    try {
+      return await wsHost!.removeWorkspace(name)
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message || 'delete failed' }
+    }
+  })
   // The renderer pulls its hydrate once its onAction listener is mounted (race-free; absorbs the
   // teammate's request-hydrate, replacing the old main-push on did-finish-load).
   ipcMain.on('workspace:request-hydrate', () => osSendHydrate())
@@ -109,6 +177,7 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     if (m && m.surfaceId) {
       webviewIds.set(m.surfaceId, m.wcid)
       ensureCapture(m.surfaceId)
+      ensureNavEmitter(m.surfaceId, m.wcid)
     }
   })
   // A srcdoc surface fired an action back (e.g. "approve" in a triage panel).
@@ -133,6 +202,20 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
       emitUserMessage(text, aid) // wake ONLY that agent (trigger:'message')
     }
   })
+  // The human placed a spatial annotation on a surface + asked about that point (item 5b). The question
+  // lands in chat (so it reads as a normal turn the agent answers) AND wakes the agent with a surface-
+  // anchored 'annotation' moment carrying the point. Routes to the primary watcher ('0').
+  ipcMain.on('os:annotate', (_e, p: { id?: unknown; surfaceId?: unknown; text?: unknown; xPct?: unknown; yPct?: unknown }) => {
+    const surfaceId = String(p?.surfaceId ?? '')
+    const text = String(p?.text ?? '').trim()
+    if (!surfaceId || !text) return
+    const xPct = Number(p?.xPct) || 0
+    const yPct = Number(p?.yPct) || 0
+    // The chat message carries the full annotation ref (id + surface + point) so a click recalls the
+    // bubble even after a reload; the agent gets the surface-anchored moment.
+    wsHost?.appendChat('user', text, '0', { id: String(p?.id ?? ''), surfaceId, xPct, yPct })
+    emitAnnotation(surfaceId, text, { xPct, yPct })
+  })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
   ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {
     const wcid = webviewIds.get(surfaceId)
@@ -156,6 +239,26 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
 // the guest is gone.
 
 const captureIntervals = new Map<string, ReturnType<typeof setInterval>>()
+
+// Host-side hard-navigation sensor. A real CROSS-DOCUMENT navigation destroys the page — and
+// with it the in-page sensor and its undrained signal buffer — before the 600ms href poll can
+// report it; the sensor re-injected on the new page initializes lastHref to the NEW url, so
+// in-page detection only ever catches SAME-document (SPA) route changes. Main is the authority
+// for cross-document navs: emit the nav signal from did-navigate so "flush immediately on
+// navigation" holds for ordinary link clicks too. Registration arrives on dom-ready — after the
+// initial load's did-navigate — so every event seen here is a real subsequent navigation (link,
+// redirect, reload), never the boot load. The pre-nav buffer (e.g. the causing click) dies with
+// the page: accepted — the nav moment records the transition, and the re-injected sensor's
+// baseline `content` push refreshes the snapshot on the next drain.
+const navWired = new Set<number>()
+function ensureNavEmitter(surfaceId: string, wcid: number): void {
+  if (navWired.has(wcid)) return
+  const wc = webContents.fromId(wcid)
+  if (!wc || wc.isDestroyed()) return
+  navWired.add(wcid)
+  wc.on('did-navigate', (_e, url) => ingestSignals(surfaceId, [{ type: 'nav', url, t: Date.now() }]))
+  wc.once('destroyed', () => navWired.delete(wcid))
+}
 
 function ensureCapture(surfaceId: string): void {
   // (re)install the listener; idempotent within a page, fresh after a navigation
@@ -187,7 +290,20 @@ const DEFAULT_READ = `(() => {
 /** Run JS inside a web surface and return the (JSON-serializable) result. */
 export async function osReadWindow(id: string, script?: string): Promise<unknown> {
   const wcid = webviewIds.get(id)
-  if (wcid == null) throw new Error(`surface ${id} has no readable web content yet`)
+  if (wcid == null) {
+    const kind = cached.surfaces.find((s) => s.id === id)?.kind
+    if (kind === 'srcdoc' || kind === 'native')
+      throw new Error(
+        `surface ${id} is a sandboxed ${kind} widget — read_window only works on \`web\` surfaces. To verify a widget's data, read its props from list_state, not its DOM.`
+      )
+    // Item 4: a web surface in ANOTHER workspace isn't live (not rendered) — name where it is so the agent
+    // brings it here (move_surface) or switches, then it becomes readable.
+    if (!surfaceExists(id)) {
+      const found = wsHost ? wsHost.locateSurface(id) : null
+      if (found) throw new Error(`surface ${id} is in workspace "${found.name}", not the active one — move_surface it here (or switch_workspace "${found.name}") to make it live, then read it`)
+    }
+    throw new Error(`surface ${id} has no readable web content yet`)
+  }
   const wc = webContents.fromId(wcid)
   if (!wc || wc.isDestroyed()) throw new Error(`web content for ${id} is gone`)
   return wc.executeJavaScript(script && script.trim() ? script : DEFAULT_READ, true)
@@ -213,7 +329,14 @@ export function osCreateSurface(desc: SurfaceDescriptor): string {
   // nothing the agent didn't pick — auto-share web/app so it can read/control what it
   // opened. Surfaces the USER opens stay private until they share (the P0 gate).
   if (desc.kind === 'web' || desc.kind === 'app') setContentShare(id, true)
-  send('create', { surface: { ...desc, id } })
+  const surface = { ...desc, id }
+  // Authoritative-on-write: record it now (existence is exact for an immediate operate) + persist so a
+  // freshly-created surface survives a crash before the renderer's echo. The renderer reconciles geometry/z
+  // on its next push; writeIfChanged makes the re-persist a no-op.
+  pendingCreates.set(id, Date.now())
+  cached = { ...cached, surfaces: [...(cached.surfaces || []), surface as OsState['surfaces'][number]] }
+  send('create', { surface })
+  durableFlush()
   return id
 }
 
@@ -229,23 +352,73 @@ export function osOpenWindow(p: {
   return osCreateSurface({ kind: 'web', ...p })
 }
 
-export function osMoveSurface(id: string, x: number, y: number): void {
-  send('move', { id, x, y })
+/** Result of an agent surface mutation — `ok:false` when the target id is not in the active workspace,
+ *  so the tool layer returns a TRUE error instead of a silent no-op (2C). */
+export interface MutationResult {
+  ok: boolean
+  error?: string
+}
+// Item 4: when an id isn't in the active workspace, locate it elsewhere and turn the dead-end into a
+// navigable instruction — the agent decides (per its own policy): pull JUST this window here
+// (move_surface, which brings it), or switch_workspace for that whole desktop.
+function noSuch(id: string): MutationResult {
+  const found = wsHost ? wsHost.locateSurface(id) : null
+  if (found) return { ok: false, error: `surface "${id}" is in workspace "${found.name}", not the active one — move_surface it (to bring just this window here) or switch_workspace "${found.name}" (for that whole desktop)` }
+  return { ok: false, error: `no surface "${id}" in any workspace` }
+}
+
+export function osMoveSurface(id: string, x: number, y: number): MutationResult {
+  if (!surfaceExists(id)) {
+    // Not here — but if it lives in another workspace, move_surface MEANS "bring it here + place it"
+    // (the agent wants just this one window). Preserves the id so the agent's handle keeps working.
+    const r = wsHost ? wsHost.bringSurfaceHere(id, x, y) : null
+    if (r && r.ok) return { ok: true }
+    return noSuch(id)
+  }
+  cached = { ...cached, surfaces: (cached.surfaces || []).map((s) => (s.id === id ? { ...s, x, y } : s)) }
+  send('move', { id, x, y }) // geometry rides the normal persist debounce — a lost move is harmless
+  return { ok: true }
 }
 /** Patch an existing surface (e.g. update a srcdoc's html, a note's text, geometry). */
-export function osUpdateSurface(id: string, patch: Record<string, unknown>): void {
+export function osUpdateSurface(id: string, patch: Record<string, unknown>): MutationResult {
+  if (!surfaceExists(id)) return noSuch(id)
+  // Apply the SAME merge the renderer does (props deep-merge, other fields assign) so the durable flush
+  // persists exactly what the agent set — this is the note-memory write whose loss we're fixing.
+  const props = patch.props as Record<string, unknown> | undefined
+  cached = {
+    ...cached,
+    surfaces: (cached.surfaces || []).map((s) => (s.id === id ? { ...s, ...patch, props: { ...(s.props || {}), ...(props || {}) } } : s))
+  }
   send('update', { id, patch })
+  durableFlush()
+  return { ok: true }
 }
-export function osCloseSurface(id: string): void {
+export function osCloseSurface(id: string): MutationResult {
+  if (!surfaceExists(id)) return noSuch(id)
   dropConsent(id)
   dropContentShare(id)
+  pendingCreates.delete(id)
+  cached = { ...cached, surfaces: (cached.surfaces || []).filter((s) => s.id !== id) }
   send('close', { id })
+  durableFlush() // persist the removal so a crash can't resurrect it from a stale workspace.json
+  return { ok: true }
 }
 export function osGoToPrimary(): void {
   send('goToPrimary')
 }
-/** Agent → user: append a chat message to an agent's chat.md and broadcast it to that agent's widget. */
-export function osSay(text: string, agentId = '0'): void {
+/** Agent → user: append a chat message to an agent's chat.md and broadcast it to that agent's widget.
+ *  `workspace` (v2 bleed fix) routes a PINNED agent's say to ITS OWN workspace's transcript: when it
+ *  names a workspace that is not the active one, the message is appended to that folder's chat file
+ *  directly (no broadcast — its widgets aren't live; they hydrate the transcript on switch-in). */
+export function osSay(text: string, agentId = '0', workspace?: string): void {
+  if (workspace && wsHost && workspace !== wsHost.active()) {
+    const dir = wsRoot ? resolveWorkspace(wsRoot, workspace, { mustExist: true }) : null
+    if (dir) {
+      appendChatMessage(dir, 'agent', text, String(agentId))
+      return
+    }
+    // unknown workspace name → fall through to the active chat rather than silently dropping the message
+  }
   wsHost?.appendChat('agent', text, agentId)
 }
 /** The agent customizes an agent's widget UI (blitz-[<id>-]<name>.html) — currently 'chat'. Live-reloads. */
@@ -259,13 +432,20 @@ export function osSystemUi(name: string): string | null {
 // index.ts owns the relay url + terminal-ops, so it registers HOW to launch an agent's claude in a
 // tmux terminal. osActions handles the workspace-side (mint id + surface the widget); addAgent then
 // calls launchAgent via the host adapter. Gated: index.ts only registers this when BLITZ_AGENT is set.
-let launchAgentHook: ((agentId: string, area: number, title?: string) => void) | null = null
-export function setLaunchAgent(fn: (agentId: string, area: number, title?: string) => void): void {
+let launchAgentHook: ((agentId: string, stage: number, title?: string) => void) | null = null
+export function setLaunchAgent(fn: (agentId: string, stage: number, title?: string) => void): void {
   launchAgentHook = fn
 }
 let stopAgentHook: ((agentId: string) => void) | null = null
 export function setStopAgent(fn: (agentId: string) => void): void {
   stopAgentHook = fn
+}
+/** Ensure an agent is up WITHOUT a chat message — the onboarding director uses this to start the
+ *  resident interviewer at board-ready (its standing duty rides the bootstrap). Re-execs via the tmux
+ *  launcher (replaces any stale terminal); no-op when no launcher is wired (no claude CLI / BLITZ_AGENT). */
+export function osKickBrain(agentId = '0'): void {
+  const id = String(agentId)
+  launchAgentHook?.(id, id === '0' ? 0 : 0)
 }
 /** Open a new agent: mint its id, register + live-surface its chat widget; addAgent launches
  *  its claude terminal (via the launchAgent seam). focus:true (a USER '+ Agent') follows the camera to it. */
@@ -275,7 +455,7 @@ export function osSpawnAgent(title?: string, focus = false): { id: string; title
   wsHost.addAgent(id, title, { focus })
   return { id, title: title || `Chat ${id}` }
 }
-/** Close a non-primary agent (stop its claude + remove its widget/files/area). */
+/** Close a non-primary agent (stop its claude + remove its widget/files/stage). */
 export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
   return wsHost ? wsHost.closeAgent(agentId) : { ok: false, error: 'no workspace host' }
 }
@@ -380,6 +560,21 @@ export function osLoadConsent(): { surfaces: string[]; providers: string[] } {
 export function osPersistConsent(c: { surfaces?: string[]; providers?: string[] }): void {
   wsHost?.persistConsent(c)
 }
+/** The workspaces root this process runs on (set by initOsActions; '' before init). */
+export function osWorkspacesRoot(): string {
+  return wsRoot
+}
+/** Reverse-map a guest's WebContents to its surface id (anchors a permission prompt to the requesting
+ *  surface). Null for the desktop renderer or an unregistered guest. */
+export function osSurfaceIdForWebContents(wc: { id: number } | null | undefined): string | null {
+  if (!wc || wc.id == null) return null
+  for (const [sid, wcid] of webviewIds) if (wcid === wc.id) return sid
+  return null
+}
+/** Absolute path of the active workspace folder (where a guest download lands), or null before init. */
+export function osActiveWorkspaceDir(): string | null {
+  return wsHost ? wsHost.activePath() : null
+}
 export function osGetState(): OsState {
   // Thread the active workspace identity + absolute folder PATH into every state read, so the agent always
   // knows which desktop it's on and WHERE to write files to author surfaces (the filesystem is the canvas).
@@ -407,7 +602,7 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
 /** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
 export function osSendHydrate(): void {
   if (!wsHost) return
-  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', areaCount: cached.areaCount || 1, workspace: wsHost.active() })
+  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', stageCount: cached.stageCount || 1, workspace: wsHost.active() })
 }
 /** Serve a workspace thumbnail by name (the blitz-thumb:// protocol handler in index.ts calls this). */
 export function osReadThumb(name: string): Buffer | null {
@@ -422,7 +617,7 @@ export function osFlushWorkspace(): void {
   wsHost?.flush()
   wsHost?.stopWatch()
 }
-/** Capture the primary area (1440x900, centered) of the current board → store as `name`'s thumbnail. */
+/** Capture the primary stage (1440x900, centered) of the current board → store as `name`'s thumbnail. */
 async function osCaptureThumb(name: string): Promise<{ ok: boolean; error?: string }> {
   const win = getWin()
   if (!win || !wsHost) return { ok: false }

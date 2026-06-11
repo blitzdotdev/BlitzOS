@@ -32,11 +32,26 @@ let seq = 0
 const MAX = 1000
 const waiters = []
 
+// WORKSPACE scoping (v2 of the cross-workspace bleed fix): every moment is stamped with the workspace
+// that was ACTIVE when it was emitted (the provider is registered by each transport's host wiring), and
+// a waiter that declares its workspace only sees that workspace's moments. Agent ids repeat across
+// workspaces ('0' everywhere), so without this a background workspace's agent answers the active one's
+// chat. An unscoped waiter (no workspace declared — legacy callers, trusted local tools) sees everything.
+let workspaceProvider = null
+export function setWorkspaceProvider(fn) {
+  workspaceProvider = typeof fn === 'function' ? fn : null
+}
+function currentWorkspace() {
+  try { return workspaceProvider ? workspaceProvider() || null : null } catch { return null }
+}
+
 // Per-agent visibility (per agent): a chat 'message' moment is PRIVATE to its agent, so each
 // agent only sees + answers ITS chat. All OTHER (activity/canvas) moments go to the PRIMARY
 // agent ('0') only — the desktop-watcher — so spawning N chat agents doesn't wake them all on canvas
 // churn. seq stays a single global counter, so an agent's `since` cursor advances past filtered moments.
-function visibleTo(moment, agentId) {
+function visibleTo(moment, agentId, workspace) {
+  // A moment belongs to ONE workspace; an agent pinned to a workspace never sees another's moments.
+  if (workspace && moment.workspace && String(moment.workspace) !== String(workspace)) return false
   const sid = String(agentId || '0')
   // A chat 'message' and an 'action' (e.g. an action-item the human resolved) are PRIVATE to the agent
   // they target — only that agent is woken. So a non-primary agent that called request_action
@@ -66,10 +81,12 @@ export function dropContentShare(surfaceId) {
 /** Strip page-derived content from a moment, leaving only metadata the relay may see
  *  (surface identity + activity counts; url/title are already exposed via list_state). */
 export function redactMoment(m) {
-  // A 'message' moment is text the user typed TO the agent (the in-canvas chat) — it
-  // is consent by construction, not scraped page content, so it crosses the relay intact.
-  if (m.trigger === 'message') return m
-  return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, url: m.url, title: m.title, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: [] }
+  // A 'message' (in-canvas chat) or 'connector' (the user wired/removed an integration) moment is
+  // consent by construction, not scraped page content, so it crosses the relay intact.
+  if (m.trigger === 'message' || m.trigger === 'connector') return m
+  // keep the workspace stamp (v2 scoping): filtering is server-side, but the agent should still SEE
+  // which workspace a moment belongs to (self-awareness + debugging), redacted or not.
+  return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, url: m.url, title: m.title, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: [], ...(m.workspace ? { workspace: m.workspace } : {}) }
 }
 
 /** A short human-readable line for a raw user signal (for the moment's `user` list). */
@@ -116,15 +133,64 @@ export function ingestSignals(surfaceId, raw) {
       if (p.user[p.user.length - 1] !== line) p.user.push(line) // drop consecutive dupes
       if (p.user.length > 8) p.user.splice(0, p.user.length - 8)
     }
+    // Flush CLASSES (item 5a): nav + idle are genuine transitions → flush IMMEDIATELY. `select` is NOT —
+    // a human highlighting text while reading fires a mouseup-select per phrase (measured: ~30 in 30s),
+    // and flushing each one buried the agent in a firehose + rate-limited the watcher. So `select`
+    // DEBOUNCES: a burst merges into ONE "looking at this" moment ~2.5s after the highlighting stops
+    // (or sooner if a nav/idle flush carries it). Routine input/click still ride the ~15s batch.
     if (type === 'nav') p.significant = 'nav'
-    else if (type === 'select' && p.significant !== 'nav') p.significant = 'select'
-    else if (type === 'idle' && p.significant !== 'nav' && p.significant !== 'select') p.significant = 'idle'
+    else if (type === 'idle' && p.significant !== 'nav') p.significant = 'idle'
+    else if (type === 'select') armSelectFlush(surfaceId)
   }
   lastCtx.set(surfaceId, ctx)
-  if (p && p.significant) flush(surfaceId, p.significant)
+  if (p && p.significant) flush(surfaceId, p.significant) // nav/idle only — select rides its debounce
+}
+
+// Per-surface debounce so a run of selections collapses to one moment (5a).
+const SELECT_DEBOUNCE_MS = 2500
+const selectTimers = new Map()
+function armSelectFlush(surfaceId) {
+  const prev = selectTimers.get(surfaceId)
+  if (prev) clearTimeout(prev)
+  const t = setTimeout(() => {
+    selectTimers.delete(surfaceId)
+    flush(surfaceId, 'select')
+  }, SELECT_DEBOUNCE_MS)
+  if (t.unref) t.unref()
+  selectTimers.set(surfaceId, t)
+}
+
+/** Append a finished moment to the LOG and wake every long-poll waiter (each gets the slice it may
+ *  see, per visibleTo). The ONE place moments enter the stream — every emitter funnels here so the
+ *  ring cap + waiter wake can never drift between emitters. */
+function emit(moment) {
+  if (!moment.workspace) {
+    const ws = currentWorkspace()
+    if (ws) moment.workspace = ws // stamp ONCE at the funnel — every emitter inherits the scoping
+  }
+  LOG.push(moment)
+  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
+  // Wake ONLY the waiters that can SEE this moment — the rest keep sleeping (an invisible moment
+  // must not early-resolve a pinned agent's long-poll with an empty slice).
+  const keep = []
+  for (const w of waiters.splice(0)) {
+    if (visibleTo(moment, w.agentId, w.workspace)) {
+      clearTimeout(w.timer)
+      w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.agentId, w.workspace)))
+    } else {
+      keep.push(w)
+    }
+  }
+  waiters.push(...keep)
 }
 
 function flush(surfaceId, trigger) {
+  // any pending select-debounce is consumed by THIS flush (its selects are in the batch) — cancel it (5a)
+  const st = selectTimers.get(surfaceId)
+  if (st) {
+    clearTimeout(st)
+    selectTimers.delete(surfaceId)
+  }
   const p = pending.get(surfaceId)
   if (!p) return
   pending.delete(surfaceId)
@@ -133,7 +199,7 @@ function flush(surfaceId, trigger) {
   if (!p.hasUser) return
   const ctx = lastCtx.get(surfaceId) || {}
   const now = Date.now()
-  const moment = {
+  emit({
     seq: ++seq,
     ts: now,
     surfaceId,
@@ -144,13 +210,7 @@ function flush(surfaceId, trigger) {
     signals: p.signals,
     user: p.user,
     snapshot: ctx.snapshot
-  }
-  LOG.push(moment)
-  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
-  for (const w of waiters.splice(0)) {
-    clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.agentId)))
-  }
+  })
 }
 
 // Batch timer: emit a moment for any surface whose window has aged past BATCH_MS
@@ -172,7 +232,7 @@ export function latestSeq() {
  * the watching agent is woken to act.
  */
 export function emitSurfaceAction(surfaceId, action) {
-  const moment = {
+  emit({
     seq: ++seq,
     ts: Date.now(),
     surfaceId,
@@ -184,13 +244,7 @@ export function emitSurfaceAction(surfaceId, action) {
     signals: { action: 1 },
     user: ['UI action: ' + JSON.stringify(action).slice(0, 180)],
     action
-  }
-  LOG.push(moment)
-  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
-  for (const w of waiters.splice(0)) {
-    clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.agentId)))
-  }
+  })
 }
 
 /**
@@ -202,7 +256,7 @@ export function emitSurfaceAction(surfaceId, action) {
 export function emitUserMessage(text, agentId = '0') {
   const msg = String(text || '').slice(0, 2000)
   const sid = String(agentId || '0')
-  const moment = {
+  emit({
     seq: ++seq,
     ts: Date.now(),
     surfaceId: sid === '0' ? 'chat' : `chat-${sid}`,
@@ -212,29 +266,70 @@ export function emitUserMessage(text, agentId = '0') {
     signals: { message: 1 },
     user: [`user message: "${msg.slice(0, 400)}"`],
     message: msg
-  }
-  LOG.push(moment)
-  if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
-  for (const w of waiters.splice(0)) {
-    clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.agentId)))
-  }
+  })
+}
+
+/** A connector (integration) was wired up or removed — wake the agent so it learns live. Like a chat
+ *  message this is consent-by-construction (the user clicked connect), so it crosses the relay intact. */
+export function emitConnectorChange(provider, connected) {
+  const name = String(provider || 'a connector')
+  const verb = connected ? 'connected' : 'disconnected'
+  emit({ seq: ++seq, ts: Date.now(), surfaceId: 'system', trigger: 'connector', windowMs: 0, signals: { connector: 1 }, user: [`connector ${verb}: ${name}`] })
+}
+
+/** The human placed a spatial ANNOTATION on a surface and asked the agent about that exact spot (item
+ *  5b). A direct, surface-anchored question — ALWAYS warrants a response (like a chat message), carrying
+ *  the surface id + the point (xPct/yPct) + a snapshot, so the agent can answer about precisely what the
+ *  human pointed at. Consent-by-construction (the human authored it for the agent) → crosses the relay. */
+export function emitAnnotation(surfaceId, text, anchor, snapshot) {
+  const msg = String(text || '').slice(0, 2000)
+  emit({
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId: String(surfaceId || ''),
+    trigger: 'annotation',
+    windowMs: 0,
+    signals: { annotation: 1 },
+    user: [`annotated this surface: "${msg.slice(0, 200)}"`],
+    message: msg,
+    anchor: anchor && typeof anchor === 'object' ? { xPct: Number(anchor.xPct) || 0, yPct: Number(anchor.yPct) || 0 } : undefined,
+    snapshot: snapshot ? String(snapshot).slice(0, 600) : undefined
+  })
+}
+
+/** An OS-level event both inhabitants should know about — today a crash recovery; later an update,
+ *  a restore, a relay re-mint. Content-agnostic: BlitzOS reports WHAT happened, the agent decides
+ *  significance. Routed like connector moments (the primary watcher); `say`/chat.md carries it to
+ *  the human and into every brain's boot memory. */
+export function emitSystemMoment(kind, line, detail) {
+  emit({
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId: 'system',
+    trigger: 'system',
+    windowMs: 0,
+    signals: { system: 1 },
+    user: [String(line || kind || 'system event')],
+    system: { kind: String(kind || 'event'), ...(detail && typeof detail === 'object' ? detail : {}) }
+  })
 }
 
 /** Long-poll for an agent: resolve immediately if there are moments visible to `agentId` after
- *  `since`, else wait up to maxMs. Each agent only sees its own messages (+ activity for the primary). */
-export function waitForEvents(since, maxMs, agentId = '0') {
-  const have = LOG.filter((m) => m.seq > since && visibleTo(m, agentId))
+ *  `since`, else wait up to maxMs. Each agent only sees its own messages (+ activity for the primary).
+ *  `workspace` (optional) pins the waiter: it then sees ONLY that workspace's moments. */
+export function waitForEvents(since, maxMs, agentId = '0', workspace = null) {
+  const have = LOG.filter((m) => m.seq > since && visibleTo(m, agentId, workspace))
   if (have.length > 0 || maxMs <= 0) return Promise.resolve(have)
   return new Promise((resolve) => {
     const w = {
       since,
       agentId,
+      workspace,
       resolve,
       timer: setTimeout(() => {
         const i = waiters.indexOf(w)
         if (i >= 0) waiters.splice(i, 1)
-        resolve(LOG.filter((m) => m.seq > since && visibleTo(m, agentId)))
+        resolve(LOG.filter((m) => m.seq > since && visibleTo(m, agentId, workspace)))
       }, maxMs)
     }
     waiters.push(w)
@@ -248,6 +343,13 @@ export function waitForEvents(since, maxMs, agentId = '0') {
 // MutationObserver: async loads + DOM updates), and idle-after-activity. Each signal
 // carries a `digest` (text snapshot) where useful. Idempotent per page (re-injectable
 // after navigation); self-cleans when drained by a gone surface.
+//
+// NOTE on navigation: the in-page href poll below only ever catches SAME-document (SPA)
+// route changes — a CROSS-document navigation destroys the page (and its undrained signal
+// buffer) before the poll/drain can run, and the sensor re-injected on the new page boots
+// with lastHref already at the new URL. Hard navs are therefore emitted HOST-side into the
+// same coalescer by each runtime: Electron from `did-navigate` (osActions.ts
+// ensureNavEmitter), server from `Page.frameNavigated` (browser-host.mjs onNavigated).
 export const INJECT = `(() => {
   if (window.__blitzCap) return 'present';
   window.__blitzCap = true;

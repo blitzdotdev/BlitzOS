@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed'
+  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed'
   [k: string]: unknown
 }
 
@@ -48,11 +48,11 @@ export interface OsState {
   mode?: 'desktop' | 'canvas'
   /** Raw camera transform — persisted to workspace.json (Phase 1). */
   camera?: { x: number; y: number; scale: number }
-  /** #45 workspace areas: count of tiled desktops (persisted), the active one, and its world rect (so
-   *  the agent places surfaces in the area the human is on). currentArea/currentAreaRect are live-only. */
-  areaCount?: number
-  currentArea?: number
-  currentAreaRect?: { x: number; y: number; w: number; h: number }
+  /** #45 workspace stages: count of tiled desktops (persisted), the active one, and its world rect (so
+   *  the agent places surfaces in the stage the human is on). currentStage/currentStageRect are live-only. */
+  stageCount?: number
+  currentStage?: number
+  currentStageRect?: { x: number; y: number; w: number; h: number }
   /** Which workspace this state belongs to — lets the backend drop a stale push after a switch. */
   workspace?: string
 }
@@ -64,6 +64,7 @@ export interface WorkspacesApi {
   list(): Promise<{ workspaces: Array<{ name: string; nodeCount: number; updatedAt: number; thumbTs: number }>; active: string }>
   create(name: string): Promise<{ ok: boolean; name?: string; error?: string }>
   switch(name: string): Promise<{ ok: boolean; active?: string; error?: string }>
+  delete(name: string): Promise<{ ok: boolean; active?: string; error?: string }>
   thumbUrl(name: string, ts?: number): string
   thumb?(name: string, dataUrl: string): Promise<{ ok?: boolean; error?: string }>
   captureThumb?(name: string): Promise<{ ok: boolean; error?: string }>
@@ -103,7 +104,7 @@ const api = {
   spawnAgent(title?: string): void {
     ipcRenderer.send('os:agent-spawn', { title })
   },
-  /** Close a non-primary agent: stop its terminal + remove its widget, files, and area. */
+  /** Close a non-primary agent: stop its terminal + remove its widget, files, and stage. */
   closeAgent(agentId: string): Promise<{ ok: boolean; error?: string }> {
     return (ipcRenderer.invoke('os:close-agent', agentId) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
@@ -143,6 +144,13 @@ const api = {
     ipcRenderer.on('agentsocket:url', listener)
     return () => ipcRenderer.removeListener('agentsocket:url', listener)
   },
+  /** App keybinds forwarded from main's before-input-event — they fire regardless of which guest
+   *  (iframe/webview) holds keyboard focus. id 'tile': ⌘T toggle / ⇧⌘T cycle size. */
+  onKeybind(cb: (k: { id: string; shift: boolean }) => void): () => void {
+    const listener = (_e: unknown, k: { id: string; shift: boolean }): void => cb(k)
+    ipcRenderer.on('os:keybind', listener)
+    return () => ipcRenderer.removeListener('os:keybind', listener)
+  },
   /** A bare ⌘ tap forwarded from a focused webview (for double-tap-⌘ pan toggle). */
   onMetaTap(cb: () => void): () => void {
     const listener = (): void => cb()
@@ -176,6 +184,15 @@ const api = {
   /** The user typed a message to an agent (agentId '0' = the primary chat). */
   sendMessage(text: string, agentId = '0'): void {
     ipcRenderer.send('os:user-message', { text, agentId })
+  },
+  /** Item 5b: the human placed a spatial annotation on a surface + asked about that point. Lands in chat
+   *  + wakes the agent with a surface-anchored moment carrying the point. */
+  annotate(p: { id: string; surfaceId: string; text: string; xPct: number; yPct: number }): void {
+    ipcRenderer.send('os:annotate', p)
+  },
+  /** A per-agent chat widget manages itself via blitz.chat: op 'new' → { id } of a fresh agent; 'rename' → set its title. */
+  chatControl(op: string, args: Record<string, unknown>): Promise<unknown> {
+    return ipcRenderer.invoke('os:chat-control', { op, args })
   },
   /** Ask main to (re)send the persisted canvas as a hydrate, once our onAction listener is up. */
   requestHydrate(): void {
@@ -213,6 +230,10 @@ const api = {
   },
   grantProviderConsent(provider: string, allow: boolean): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('os:provider-consent', provider, allow)
+  },
+  // Item 3: the human answered a web guest's Allow/Block permission prompt (geolocation, camera, …).
+  decidePermission(id: string, allow: boolean, remember: boolean): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('os:permission-decide', id, allow, remember)
   },
   // #52: group surfaces into a REAL folder on disk (mkdir + mv). Server mode overrides this in the shim.
   // kind:'board' → a '.board' on-canvas folder (windows/widgets splay live); else a normal file folder.
@@ -255,9 +276,32 @@ const api = {
     list: () => ipcRenderer.invoke('workspace:list'),
     create: (name: string) => ipcRenderer.invoke('workspace:create', name),
     switch: (name: string) => ipcRenderer.invoke('workspace:switch', name),
+    delete: (name: string) => ipcRenderer.invoke('workspace:delete', name),
     captureThumb: (name: string) => ipcRenderer.invoke('workspace:capture', name),
     thumbUrl: (name: string, ts?: number) => `blitz-thumb://t/?name=${encodeURIComponent(name)}${ts ? `&t=${ts}` : ''}`
   } as WorkspacesApi,
+
+  // Onboarding (P1 director): start the scan+board flow, stream real scan progress to the boot
+  // screen, and drive the FDA tutorial-unlock card.
+  onboarding: {
+    start(): Promise<{ ok: boolean; cached?: boolean }> {
+      return ipcRenderer.invoke('onboarding:start')
+    },
+    fdaStatus(): Promise<{ fda: boolean; appName: string }> {
+      return ipcRenderer.invoke('onboarding:fda-status')
+    },
+    openFdaSettings(): Promise<{ ok: boolean; appName: string }> {
+      return ipcRenderer.invoke('onboarding:open-fda-settings')
+    },
+    dismissUnlock(): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:dismiss-unlock')
+    },
+    onProgress(cb: (p: Record<string, unknown>) => void): () => void {
+      const listener = (_e: unknown, p: Record<string, unknown>): void => cb(p)
+      ipcRenderer.on('onboarding:progress', listener)
+      return () => ipcRenderer.removeListener('onboarding:progress', listener)
+    }
+  },
 
   integrations: {
     list(): Promise<IntegrationStatus[]> {

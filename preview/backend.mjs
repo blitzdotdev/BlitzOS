@@ -42,10 +42,14 @@ import {
   setContentShare,
   emitUserMessage,
   emitSurfaceAction,
+  emitSystemMoment,
+  setWorkspaceProvider,
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
 import { prepareAgentLaunch } from '../src/main/agent-runtime.mjs'
+// Boot journal (crash dirty-bit + root lease) — the SAME root-state store the Electron main uses.
+import { openBootJournal, resolveWorkspace, appendChatMessage } from '../src/main/workspace.mjs'
 // The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
 // the relay can't diverge between the two modes again. Only the adapter (publish url/status) differs.
 import { startRelay } from '../src/main/relay.mjs'
@@ -235,16 +239,16 @@ let osState = { surfaces: [] }
 let agentUrl = null
 let relay = null // the SHARED relay handle ({ getUrl, isOnline, stop }) — same module Electron uses (no divergence)
 // Agents run as VISIBLE tmux terminals (no headless brain). launchAgent (the workspace-host seam)
-// starts an agent's claude in a terminal in its area, over the same relay; the terminal-manager
+// starts an agent's claude in a terminal in its stage, over the same relay; the terminal-manager
 // persists + reattaches it. Gated by BLITZ_AGENT (=claude or a custom command); null ⇒ no auto-launch.
 const agentCmd = process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT
 const launchAgent = process.env.BLITZ_AGENT
-  ? (id, area, title) => {
+  ? (id, stage, title) => {
       const ws = wsHost.activePath()
       if (!ws || !agentUrl) return // not ready (no workspace / relay url yet) — boot resume retries
       const terminalsDir = join(ws, '.blitzos', 'terminals')
       const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir: terminalsDir, id, url: agentUrl, cmd: agentCmd })
-      Promise.resolve(serverTerminalOps.spawnTerminal({ id, kind: 'agent', command, cwd: ws, area, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })).catch(() => {})
+      Promise.resolve(serverTerminalOps.spawnTerminal({ id, kind: 'agent', command, cwd: ws, stage, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })).catch(() => {})
     }
   : null
 const sseClients = new Set()
@@ -290,6 +294,11 @@ async function initServerMode() {
   try {
     host = await startBrowserHost({
       chromiumPath: process.env.CHROMIUM,
+      // Host-side hard-nav sensor (parity with Electron's did-navigate emitter in osActions.ts): a
+      // cross-document navigation kills the in-page sensor before it can report, so the CDP host
+      // emits the nav signal into the SAME coalescer — moments flush immediately on real link
+      // clicks, not only on SPA route changes.
+      onNavigated: (id, url) => ingestSignals(id, [{ type: 'nav', url, t: Date.now() }]),
       onFrame: (id, data) => {
         lastFrame.set(id, data) // cache for replay to late-connecting renderers (static pages emit once)
         const msg = JSON.stringify({ t: 'frame', id, data }) // base64 jpeg (binary framing = future opt)
@@ -427,21 +436,73 @@ function broadcast(obj) {
 // watch+reconcile / switch / list / create / thumbnail), used HERE and by Electron main (osActions).
 // Server-only adapter bits: broadcast over SSE; realize web surfaces via reconcileSurfaces (headless
 // targets — Electron passes a no-op since the renderer owns its <webview>s).
+// v2 bleed fix: stamp every perception moment with the active workspace (same as Electron main).
+setWorkspaceProvider(() => { try { return wsHost.active() } catch { return null } })
 const wsHost = createWorkspaceHost({
   root: WORKSPACES_ROOT,
   initialName: INITIAL_WS,
+  // a BLITZ_WORKSPACE pin beats boot-where-you-left-off; a bare root override does not
+  explicitInitial: !!process.env.BLITZ_WORKSPACE,
   getState: () => osState,
   setState: (s) => {
     osState = s
+    reconcilePending(osState) // confirm/expire optimistic agent creates against the authoritative push
   },
   broadcast,
   onSurfaces: (surfaces) => (SERVER_MODE ? reconcileSurfaces(surfaces) : undefined),
   defaultMode: 'canvas',
-  // An agent's claude runs in a VISIBLE terminal in its area (no headless brain). null ⇒ BLITZ_AGENT off.
-  launchAgent: launchAgent ? (id, area, title) => launchAgent(id, area, title) : undefined,
+  // An agent's claude runs in a VISIBLE terminal in its stage (no headless brain). null ⇒ BLITZ_AGENT off.
+  launchAgent: launchAgent ? (id, stage, title) => launchAgent(id, stage, title) : undefined,
   stopAgent: (id) => { serverTerminalOps.removeTerminal(id) } // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
 })
+
+// 2C/2D parity with Electron (osActions): main is AUTHORITATIVE-ON-WRITE for agent mutations — apply each
+// to osState immediately (existence is exact; on a HEADLESS server there may be NO renderer to echo a
+// create, so this is the only thing that makes a create→operate sequence resolve), then broadcast for any
+// connected renderer. Content/existence changes also flush durably so an `ok` ack survives a crash.
+const serverPending = new Map()
+const PENDING_TTL = 10_000
+function surfaceExists(id) {
+  return serverPending.has(id) || (osState.surfaces || []).some((s) => s.id === id)
+}
+function reconcilePending(s) {
+  const now = Date.now()
+  for (const [id, t] of serverPending) if ((s.surfaces || []).some((x) => x.id === id) || now - t > PENDING_TTL) serverPending.delete(id)
+}
+function durableFlush() {
+  try {
+    if (!wsHost.isSwitching()) wsHost.flush()
+  } catch {
+    /* best-effort */
+  }
+}
+// Item 4: name where a non-active id lives so the agent can bring it (move_surface) or switch_workspace.
+function noSuch(id) {
+  const found = wsHost.locateSurface(String(id))
+  if (found) return { ok: false, error: `surface "${id}" is in workspace "${found.name}", not the active one — move_surface it (to bring just this window here) or switch_workspace "${found.name}" (for that whole desktop)` }
+  return { ok: false, error: `no surface "${id}" in any workspace` }
+}
+// Claim the root + read the previous run's dirty bit (kernel fault model — parity with Electron's
+// index.ts). `concurrent` = the old record's pid is still alive: another BlitzOS owns this root
+// (warn, never false-report a crash). Announced via a trigger:'system' moment for any watching
+// agent + a chat line for the human (which lands in chat.md, the brains' boot memory).
+const bootJournal = openBootJournal(WORKSPACES_ROOT, 'server')
 wsHost.hydrateOnBoot()
+if (bootJournal.concurrent) {
+  console.error(
+    `[agent-os backend] another BlitzOS (pid ${bootJournal.prev?.pid}, mode ${bootJournal.prev?.mode}) appears to be running on this workspaces root — two hosts on one root WILL fight over files. Close one of them.`
+  )
+} else if (bootJournal.dirty) {
+  const when = new Date(bootJournal.lastAliveAt || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const line = `Recovered from a crash: the previous BlitzOS process died around ${when} without a clean shutdown. Workspaces were restored from disk; edits made in the last moments before the crash may have been lost.`
+  console.error('[agent-os backend] ' + line)
+  emitSystemMoment('crash', line, { at: bootJournal.lastAliveAt || Date.now() })
+  try {
+    wsHost.appendChat('agent', line)
+  } catch {
+    /* chat append is best-effort at boot */
+  }
+}
 
 // #53: restore the human's persisted consent for the active workspace (so grants survive a restart).
 // Re-run after a switch (loadConsent) to swap to the new workspace's grants.
@@ -480,6 +541,17 @@ function toolBody(body) {
 
 // One source of truth (the SAME .md the Electron relay serves): src/main/blitzos-agents.md.
 const OS_AGENTS_MD = readFileSync(new URL('../src/main/blitzos-agents.md', import.meta.url), 'utf8')
+// Fill the doc's {{CONNECTORS}} placeholder with the live wired/unwired line (mirror of integrations.ts).
+function injectConnectors(md) {
+  const nameOf = (s) => String(s.name || s.id || '?')
+  const all = statuses()
+  const conn = all.filter((s) => s.connected).map(nameOf)
+  const off = all.filter((s) => !s.connected).map(nameOf)
+  const parts = []
+  if (conn.length) parts.push(`Connected: ${conn.join(', ')}`)
+  if (off.length) parts.push(`Not connected: ${off.join(', ')}`)
+  return md.replace('{{CONNECTORS}}', parts.join(' · ') || 'No connectors registered.')
+}
 
 // The "Agent activity" feed (ACTIVITY_TOOLS / activityText / withActivity) is the SHARED
 // core in src/main/activity.mjs — the SAME module the Electron relay (agentSocket.ts) uses,
@@ -496,33 +568,62 @@ const serverOps = {
     // The agent opened this surface itself (it chose the url) — auto-share web/app so it can read what it opened.
     // (Surfaces the USER opens stay private until shared — the P0 confused-deputy gate; this does not weaken it.)
     if (a.kind === 'web' || a.kind === 'app') setContentShare(id, true)
-    broadcast({ type: 'create', surface: { ...a, id } })
+    const surface = { ...a, id }
+    serverPending.set(id, Date.now())
+    osState = { ...osState, surfaces: [...(osState.surfaces || []), surface] }
+    broadcast({ type: 'create', surface })
     if (SERVER_MODE && host && a.kind === 'web' && !host.has(id)) {
       host.createSurface(id, { url: a.url || 'about:blank', width: Math.round(Number(a.w)) || 1280, height: Math.round(Number(a.h)) || 800 }).catch(() => {})
     }
+    durableFlush()
     return id
   },
   openWindow: (a) => {
     const id = randomUUID()
     setContentShare(id, true) // the agent opened this page — it can read what it opened
-    broadcast({ type: 'create', surface: { kind: 'web', ...a, id } })
+    const surface = { kind: 'web', ...a, id }
+    serverPending.set(id, Date.now())
+    osState = { ...osState, surfaces: [...(osState.surfaces || []), surface] }
+    broadcast({ type: 'create', surface })
     if (SERVER_MODE && host && !host.has(id)) {
       host.createSurface(id, { url: a.url, width: Math.round(Number(a.w)) || 1280, height: Math.round(Number(a.h)) || 800 }).catch(() => {})
     }
+    durableFlush()
     return id
   },
-  moveSurface: (id, x, y) => broadcast({ type: 'move', id: String(id), x: Number(x), y: Number(y) }),
+  moveSurface: (id, x, y) => {
+    const i = String(id)
+    if (!surfaceExists(i)) {
+      // Not here — if it lives in another workspace, move_surface MEANS "bring it here + place it".
+      const r = wsHost.bringSurfaceHere(i, Number(x), Number(y))
+      if (r && r.ok) return { ok: true }
+      return noSuch(i)
+    }
+    osState = { ...osState, surfaces: (osState.surfaces || []).map((s) => (s.id === i ? { ...s, x: Number(x), y: Number(y) } : s)) }
+    broadcast({ type: 'move', id: i, x: Number(x), y: Number(y) })
+    return { ok: true }
+  },
   updateSurface: (id, patch) => {
     const i = String(id)
+    if (!surfaceExists(i)) return noSuch(i)
+    const props = patch.props
+    osState = { ...osState, surfaces: (osState.surfaces || []).map((s) => (s.id === i ? { ...s, ...patch, props: { ...(s.props || {}), ...(props || {}) } } : s)) }
     broadcast({ type: 'update', id: i, patch })
     if (SERVER_MODE && host && host.has(i) && typeof patch.url === 'string') host.navigate(i, patch.url).catch(() => {})
+    durableFlush()
+    return { ok: true }
   },
   closeSurface: (id) => {
     const i = String(id)
+    if (!surfaceExists(i)) return noSuch(i)
+    serverPending.delete(i)
+    osState = { ...osState, surfaces: (osState.surfaces || []).filter((s) => s.id !== i) }
     broadcast({ type: 'close', id: i })
     for (const k of consentGranted) if (k.startsWith(`${i}:`)) consentGranted.delete(k)
     if (SERVER_MODE && host) host.closeSurface(i).catch(() => {})
     wsHost.closeSurfaceFile(i) // delete the backing content file so it doesn't resurrect (no-renderer agent close)
+    durableFlush()
+    return { ok: true }
   },
   goToPrimary: () => broadcast({ type: 'goToPrimary' }),
   // Raw full state (workspace identity threaded in). The shared os-tools list_state handler whittles this down
@@ -568,12 +669,20 @@ const serverOps = {
     if (!SERVER_MODE || !host || !host.has(id)) return { ok: false, error: 'in-window control needs server mode (BLITZ_SERVER_MODE=1) or the desktop app; this surface has no server browser target' }
     return controlSession(host.session(id), action)
   },
-  say: (text, agentId) => wsHost.appendChat('agent', String(text), agentId), // append to that agent's chat.md + broadcast
+  // v2 bleed fix: a workspace-pinned agent's say routes to ITS OWN workspace's transcript when that
+  // workspace isn't active (path-based append; its widgets hydrate on switch-in).
+  say: (text, agentId, workspace) => {
+    if (workspace && workspace !== wsHost.active()) {
+      const dir = resolveWorkspace(WORKSPACES_ROOT, String(workspace), { mustExist: true })
+      if (dir) return appendChatMessage(dir, 'agent', String(text), String(agentId ?? '0'))
+    }
+    return wsHost.appendChat('agent', String(text), agentId) // append to that agent's chat.md + broadcast
+  },
   customizeWidget: (name, html, agentId) => wsHost.customizeWidget(String(name), String(html), agentId),
   closeAgent: (id) => wsHost.closeAgent(String(id)),
   renameAgent: (id, title) => wsHost.renameAgent(String(id), String(title ?? '')),
   // Open a new agent: register + surface it; addAgent launches its claude terminal (launchAgent).
-  // focus:true (a USER '+ Agent') tells the renderer to follow the camera to the new area.
+  // focus:true (a USER '+ Agent') tells the renderer to follow the camera to the new stage.
   spawnAgent: async (title, focus = false) => {
     const id = wsHost.newAgentId()
     wsHost.addAgent(id, title, { focus })
@@ -618,9 +727,11 @@ function startServerRelay() {
       appId: process.env.AGENT_SOCKET_APP_ID || 'as_app_anon',
       baseUrl: process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev',
       appDescription: 'BlitzOS (browser preview): an agent OS desktop — open and arrange surfaces on an infinite canvas.',
-      agentsMd: OS_AGENTS_MD,
+      agentsMd: injectConnectors(OS_AGENTS_MD),
       label: 'blitzos-preview',
-      // The ONE shared registry, server-bound (serverOps). transport:relay — server is untrusted like the relay.
+      // The ONE shared registry, server-bound (serverOps). Same paths/descriptions/schemas/handlers as Electron;
+      // mapped to the agent-socket tool shape. transport:relay — the server is untrusted like the relay (no
+      // localhost trust), so the few security branches behave identically. Add/change a tool in os-tools.mjs once.
       tools: withActivity(
         makeOsTools(serverOps).map((t) => ({
           path: t.path,
@@ -806,7 +917,7 @@ const server = createServer(async (req, res) => {
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
     res.write(
-      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', areaCount: osState.areaCount || 1, workspace: wsHost.active() })}\n\n`
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', stageCount: osState.stageCount || 1, workspace: wsHost.active() })}\n\n`
     )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))
@@ -858,7 +969,7 @@ const server = createServer(async (req, res) => {
     req.on('end', () => { const b = toolBody(body); Promise.resolve(serverOps.spawnAgent(b.title != null ? String(b.title) : undefined, true)).then((s) => json(res, 200, { agent: s })).catch(() => json(res, 200, { agent: null })) })
     return
   }
-  // Close an agent (stop its terminal + remove its widget/files/area) — the UI Close button / agent tool.
+  // Close an agent (stop its terminal + remove its widget/files/stage) — the UI Close button / agent tool.
   if (path === '/api/os/agent-close' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
@@ -1168,9 +1279,27 @@ const server = createServer(async (req, res) => {
     })
     return
   }
+  // Delete a workspace + its folder (human-only, from Mission Control). The host guards the active/last
+  // cases and switches away first if the deleted one is current — so the active may change here too.
+  if (path === '/api/os/workspace/delete' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let cbody = ''
+    req.on('data', (c) => { cbody += c; if (cbody.length > 4096) req.destroy() })
+    req.on('end', async () => {
+      try {
+        const r = await wsHost.removeWorkspace(toolBody(cbody).name)
+        if (r.ok) loadConsent() // deleting the current one switched away → load the new active's consent
+        json(res, r.ok ? 200 : 400, r)
+      } catch (e) {
+        console.error('[workspace] delete failed:', e?.message || e)
+        json(res, 500, { ok: false, error: 'delete failed' })
+      }
+    })
+    return
+  }
 
   // POST /api/os/workspace/thumb { workspace, dataUrl } — the renderer uploads a captured snapshot of
-  // the primary area (a data:image/jpeg) as that workspace's thumbnail (last-seen, Mission-Control
+  // the primary stage (a data:image/jpeg) as that workspace's thumbnail (last-seen, Mission-Control
   // style). Stored at .blitzos/state/thumb.jpg (gitignored, agent-read-denied), overwritten each time.
   if (path === '/api/os/workspace/thumb' && req.method === 'POST') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
@@ -1192,7 +1321,7 @@ const server = createServer(async (req, res) => {
     })
     return
   }
-  // GET /api/os/workspace/thumb?name=X — serve the cached primary-area thumbnail (404 if none yet).
+  // GET /api/os/workspace/thumb?name=X — serve the cached primary-stage thumbnail (404 if none yet).
   // NOTE: a thumbnail is RENDERED PIXELS of the board (can contain third-party page content), served
   // under the same posture as the other /api/os routes — sameSiteOnly + the tunnel's CF Access gate,
   // no per-route bearer. Tighten to a bearer before any GA / public (non-CF-Access) deploy.
@@ -1283,7 +1412,7 @@ server.listen(PORT, '127.0.0.1', () => {
   initServerMode()
   // Phase 3: watch the workspace folder so external file edits (agent/Finder/git) reflect live.
   wsHost.startWatch()
-  // Boot agents: each agent's claude runs in a VISIBLE tmux terminal in its area. Survivors are
+  // Boot agents: each agent's claude runs in a VISIBLE tmux terminal in its stage. Survivors are
   // reattached (tmux outlives the process); only the DEAD ones are re-exec'd with --resume of their persisted
   // session id. Opt-in via BLITZ_AGENT (off by default — continuous LLM use has a cost). The relay URL is
   // minted async, so poll until it's up, then resume once (after survivors are adopted, to avoid double-launch).
@@ -1319,6 +1448,7 @@ async function gracefulExit() {
   } catch {
     /* ignore */
   }
+  bootJournal.markClean() // LAST: "clean shutdown" means everything above flushed first
   process.exit(0)
 }
 process.on('SIGTERM', gracefulExit)

@@ -49,6 +49,17 @@ export const IconGrid = (p: P): JSX.Element => (
     <path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />
   </Svg>
 )
+export const IconFolder = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z" />
+  </Svg>
+)
+export const IconBoard = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z" />
+    <path d="M9 4v16M15 4v16M4 10h16M4 15h16" />
+  </Svg>
+)
 export const IconCode = (p: P): JSX.Element => (
   <Svg {...p}>
     <path d="M9 8l-4 4 4 4M15 8l4 4-4 4" />

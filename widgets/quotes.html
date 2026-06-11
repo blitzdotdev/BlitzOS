@@ -1,0 +1,34 @@
+<!doctype html><meta charset="utf-8"><title>Quotes</title>
+<!-- Thinking-widget: verbatim pull-quotes with source tags — a voice/evidence card.
+     Drive with update_surface{props:{items:[{text,source?}],note?}}. -->
+<style>
+  .wrap{padding:13px 15px}
+  .q{position:relative;border:1px solid var(--blitz-hairline);border-radius:var(--blitz-radius);background:var(--blitz-surface-2);padding:11px 13px 9px;margin-bottom:9px}
+  .q:last-child{margin-bottom:2px}
+  .q .t{font-family:ui-serif,Georgia,serif;font-size:13px;line-height:1.45;font-style:italic}
+  .q .t::before{content:'“';color:var(--blitz-text-dim)}
+  .q .t::after{content:'”';color:var(--blitz-text-dim)}
+  .q .src{margin-top:6px;font:9px ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--blitz-text-dim)}
+  .note{font-size:11px;color:var(--blitz-text-dim);margin-top:10px;border-top:1px dashed var(--blitz-hairline);padding-top:9px}
+  .wrap.intro .q{animation:in .35s both}
+  .wrap.intro .q:nth-child(2){animation-delay:.07s}.wrap.intro .q:nth-child(3){animation-delay:.14s}.wrap.intro .q:nth-child(4){animation-delay:.21s}
+  @keyframes in{from{opacity:0;transform:translateY(6px)}}
+</style>
+<blitz-titlebar><span id="hd">Quotes</span></blitz-titlebar>
+<div class="wrap" id="wrap"></div>
+<script>
+  // props: { title?, items:[{text, source?}], note? }
+  const SAMPLE={title:'Quotes',items:[
+    {text:'A verbatim line, exactly as the subject wrote it.',source:'source'},
+    {text:'Another sample of tone, replaced by real evidence when props land.',source:'source'}]}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  function render(d){
+    document.getElementById('hd').textContent=d.title||'Quotes'
+    const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
+    w.innerHTML=(d.items||[]).map(q=>'<div class="q"><div class="t">'+esc(q.text)+'</div>'+(q.source?'<div class="src">'+esc(q.source)+'</div>':'')+'</div>').join('')
+      +(d.note?'<div class="note">'+esc(d.note)+'</div>':'')
+  }
+  render(data)
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
+</script>

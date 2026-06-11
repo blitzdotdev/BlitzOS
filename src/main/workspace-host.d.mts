@@ -4,14 +4,16 @@ import type { WorkspaceEntry } from './workspace.mjs'
 export interface WorkspaceHostAdapter {
   root: string
   initialName?: string
+  /** true when initialName was PINNED by the user (BLITZ_WORKSPACE): skip boot-where-you-left-off. */
+  explicitInitial?: boolean
   getState(): { surfaces: unknown[]; camera?: { x: number; y: number; scale: number }; mode?: string; view?: { cx: number; cy: number } }
   setState(s: unknown): void
   broadcast(obj: unknown): void
   onSurfaces?: (surfaces: unknown[]) => Promise<unknown> | void
   defaultMode?: 'canvas' | 'desktop'
-  /** Launch (or resume) the claude terminal for an agent in its area. Wired by each transport
+  /** Launch (or resume) the claude terminal for an agent in its stage. Wired by each transport
    *  from the shared agent-runtime core + its terminal-ops; absent ⇒ no agent auto-launch (BLITZ_AGENT off). */
-  launchAgent?: (agentId: string, area: number, title?: string) => void
+  launchAgent?: (agentId: string, stage: number, title?: string) => void
   /** Stop an agent's terminal (terminal-ops.stopTerminal — sets the stopping flag so it won't auto-restart).
    *  Wired by each transport; used when closing an agent. */
   stopAgent?: (agentId: string) => void
@@ -29,6 +31,7 @@ export interface WorkspaceHost {
   stopWatch(): void
   list(): WorkspaceEntry[]
   create(name: string): { name: string; path: string }
+  removeWorkspace(name: string): Promise<{ ok: boolean; active?: string; error?: string }>
   writeThumb(name: string, buf: Buffer): boolean
   readThumb(name: string): Buffer | null
   readWorkspaceFile(rel: string): { buf: Buffer; contentType: string } | null
@@ -39,7 +42,11 @@ export interface WorkspaceHost {
   newFolder(name: string, kind: 'board' | 'folder' | undefined, x: number, y: number): { ok: true; folder: string } | { error: string }
   listDir(rel: string): { path: string; entries: Array<{ name: string; dir: boolean; ext: string; size: number; isImage: boolean; path: string }>; total: number; truncated: boolean } | null
   closeSurfaceFile(id: string): { ok: boolean; removed?: string; error?: string; skipped?: string }
-  appendChat(role: 'user' | 'agent', text: string, agentId?: string): Array<{ role: string; text: string; ts: number }>
+  /** Item 4: which OTHER workspace holds surface `id` (or null). */
+  locateSurface(id: string): { name: string; dir: string; node: Record<string, unknown> } | null
+  /** Item 4: bring a surface from another workspace into the active one (id preserved). */
+  bringSurfaceHere(id: string, x?: number, y?: number): { ok: boolean; from?: string; id?: string; notFound?: boolean; error?: string }
+  appendChat(role: 'user' | 'agent', text: string, agentId?: string, meta?: Record<string, unknown>): Array<{ role: string; text: string; ts: number }>
   customizeWidget(name: string, html: string, agentId?: string): { ok: boolean; rel?: string; error?: string }
   systemUi(name: string): string | null
   agentIds(): string[]

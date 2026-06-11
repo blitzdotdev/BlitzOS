@@ -41,7 +41,7 @@ export interface Surface {
   /** A system surface the OS owns (e.g. 'chat' — a srcdoc widget backed by blitz-chat.html + chat.md).
    *  Pinned + never serialized as a node. */
   role?: string
-  /** the agent this surface belongs to (a per-agent chat widget); agent N lives in area N. */
+  /** the agent this surface belongs to (a per-agent chat widget); agent N lives in stage N. */
   agentId?: string
   /** Always-on-top (chat/activity) — kept above normal windows regardless of z. */
   pinned?: boolean
@@ -63,11 +63,32 @@ export interface Surface {
   tabs?: SurfaceTab[]
   /** Active tab index (default 0). */
   activeTab?: number
+  /** Stage desktop (plans/blitzos-stage-slot-desktop.md). Slotted tile: integer cell on the stage lattice. x/y/w/h are DERIVED from it (stage-core slotRect)
+   *  so rendering/persistence stay unchanged; a viewport change re-derives. Absent = free-form window. */
+  slot?: { col: number; row: number; size: string }
+  /** Which workspace stage's lattice the slot lives on (default 0 = the primary). */
+  slotStage?: number
+  /** Focus window (L3): a human-pulled free-form floater above the tile grid; the one free-form exception. */
+  focus?: boolean
 }
 
 export interface Vec2 {
   x: number
   y: number
+}
+
+/** A spatial annotation (item 5b): the human right-clicks a POINT on a surface and asks the agent about
+ *  it. Anchored by PERCENT of the surface (xPct/yPct) so it tracks the surface across move/resize. The
+ *  question is sent to the agent (a surface-anchored moment); the bubble persists on the canvas as a
+ *  grounded reference you can click to re-read. `pending` = drafting (input open, not yet sent). */
+export interface Annotation {
+  id: string
+  surfaceId: string
+  xPct: number
+  yPct: number
+  text: string
+  ts: number
+  pending?: boolean
 }
 
 export const GRID = 20

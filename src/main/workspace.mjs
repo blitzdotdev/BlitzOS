@@ -67,8 +67,8 @@ function safeUrl(u) {
   const s = String(u || '')
   return /^https?:\/\//i.test(s) ? s : '' // never hydrate javascript:/data:/file: into a web surface
 }
-// Number of workspace areas (#45). Default 1 for old folders / missing / invalid (NaN/0/negative).
-function safeAreaCount(n) {
+// Number of workspace stages (#45). Default 1 for old folders / missing / invalid (NaN/0/negative).
+function safeStageCount(n) {
   return Number.isInteger(n) && n > 0 ? n : 1
 }
 
@@ -77,7 +77,7 @@ function safeAreaCount(n) {
 function nodeKind(s) {
   if (s && s.role === 'chat') return null // the system chat is a srcdoc whose UI=blitz-chat.html + data=chat.md; never a node
   if (s && s.role === 'note') return 'note' // a note rendered via blitz-note.html still persists as its .md content file
-  if (s.kind === 'web' || s.kind === 'app') return 'web' // app folds to web (both serialize to a .weblink; no distinct 'app' node kind)
+  if (s.kind === 'web' || s.kind === 'app') return s.kind // both serialize to .weblink, but app needs its renderer kind preserved
   if (s.kind === 'srcdoc') return 'srcdoc'
   if (s.kind === 'native' && s.component === 'note') return 'note'
   if (s.kind === 'native' && s.component === 'file') return 'file' // a real file on disk (#37)
@@ -123,13 +123,14 @@ function hostOf(url) {
   }
 }
 
-// The content file (extension, desired basename, body bytes) for a node kind. nodeKind folds
-// 'app' into 'web', so only note/web/srcdoc reach here.
+// The content file (extension, desired basename, body bytes) for a node kind.
+// web and app share the .weblink payload, but remain distinct renderer kinds.
 function contentFor(kind, s) {
   switch (kind) {
     case 'note':
       return { ext: 'md', name: slug(s.title, 'note'), body: String(s.props?.text ?? '') }
     case 'web':
+    case 'app':
       return { ext: 'weblink', name: slug(hostOf(s.url) || s.title, 'link'), body: JSON.stringify({ url: s.url || '' }, null, 2) + '\n' }
     case 'srcdoc':
       return { ext: 'html', name: slug(s.title, 'panel'), body: String(s.html ?? '') }
@@ -212,6 +213,120 @@ function uniquePath(name, ext, taken) {
   return p
 }
 
+// ---- machine-global ROOT state (<root>/.blitzos/state.json) — the OS runtime journal. Holds what
+// must survive a process death but belongs to NO single workspace: the last-active workspace (boot
+// returns the user where they were) and the boot record (the dirty bit that detects a crash/kill on
+// the next launch, plus the soft-lease data against two hosts sharing one root). Root-level .blitzos
+// is deliberately OUTSIDE every per-workspace watcher, so the heartbeat can never trigger reconciles.
+function rootStateFile(root) {
+  return join(resolve(root), '.blitzos', 'state.json')
+}
+export function readRootState(root) {
+  try {
+    return JSON.parse(readFileSync(rootStateFile(root), 'utf8')) || {}
+  } catch {
+    return {}
+  }
+}
+/** Shallow top-level merge + atomic write. Pass a whole sub-object to replace it (e.g. { boot: {…} }). */
+export function patchRootState(root, patch) {
+  const next = { ...readRootState(root), ...(patch || {}) }
+  atomicWrite(rootStateFile(root), JSON.stringify(next, null, 2) + '\n')
+  return next
+}
+// Per-origin browser permission decisions, machine-global (an origin's camera grant is not workspace-
+// specific) — stored in the same root journal. Shape: { "<origin>": { "<permission>": "granted"|"denied" } }.
+export function readPermissions(root) {
+  const p = readRootState(root).permissions
+  return p && typeof p === 'object' ? p : {}
+}
+export function getPermission(root, origin, permission) {
+  const o = readPermissions(root)[origin]
+  return o && typeof o === 'object' ? o[permission] || null : null
+}
+export function setPermission(root, origin, permission, decision) {
+  if (!origin || !permission) return
+  const all = readPermissions(root)
+  const o = { ...(all[origin] || {}) }
+  o[permission] = decision === 'granted' ? 'granted' : 'denied'
+  patchRootState(root, { permissions: { ...all, [origin]: o } })
+}
+
+/** True if pid is a live process we can see (EPERM counts as alive; pid reuse is an accepted rare false-alive). */
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return !!e && e.code === 'EPERM'
+  }
+}
+/**
+ * Open the per-process boot journal: read the previous run's record (the dirty bit), then claim the
+ * root with a fresh record + a 60s heartbeat. Call `markClean()` as the LAST step of a graceful quit —
+ * "clean" means "state was flushed first". On the next boot:
+ *   dirty      → the previous run died without a clean shutdown (crash / SIGKILL / power loss)
+ *   concurrent → the previous record's pid is STILL ALIVE: not a crash — another BlitzOS (Electron or
+ *                server) is running on this root right now. Callers must NOT report a crash then;
+ *                whether to refuse to share a root is a pending product decision — today we detect
+ *                and warn loudly, and our heartbeat yields if another process re-claims the record.
+ */
+export function openBootJournal(root, mode) {
+  const prev = readRootState(root).boot || null
+  // A record carrying OUR OWN pid is a double-open within this process — neither a crash nor a
+  // concurrent owner (and never worth a false crash report).
+  const self = !!(prev && prev.pid === process.pid)
+  const concurrent = !!(prev && !self && prev.cleanShutdown !== true && pidAlive(prev.pid))
+  const dirty = !!(prev && !self && prev.cleanShutdown !== true && !concurrent)
+  const lastAliveAt = prev ? Number(prev.heartbeatAt || prev.bootedAt) || null : null
+  const write = (rec) => {
+    try {
+      patchRootState(root, { boot: rec })
+    } catch (e) {
+      console.error('[boot-journal] write failed:', e?.message || e)
+    }
+  }
+  write({ pid: process.pid, mode: String(mode || 'unknown'), bootedAt: Date.now(), heartbeatAt: Date.now(), cleanShutdown: false })
+  const iv = setInterval(() => {
+    const cur = readRootState(root).boot
+    // only beat OUR record — if another process re-claimed the root, leave its record alone
+    if (cur && cur.pid === process.pid) write({ ...cur, heartbeatAt: Date.now() })
+  }, 60_000)
+  if (iv.unref) iv.unref()
+  let closed = false
+  return {
+    dirty,
+    concurrent,
+    lastAliveAt,
+    prev,
+    markClean() {
+      if (closed) return
+      closed = true
+      clearInterval(iv)
+      const cur = readRootState(root).boot
+      if (cur && cur.pid === process.pid) write({ ...cur, cleanShutdown: true })
+    }
+  }
+}
+
+/** Stage-desktop fields a node carries (plans/blitzos-stage-slot-desktop.md): `slot {col,row,size}`
+ *  (+ slotStage) for tiles pinned to the slot lattice. Off-stage is GEOMETRIC (a surface parked outside
+ *  its stage's rect), so no zone field exists. Normalized on write so a hand-edited workspace.json can't
+ *  poison the placer (x/y/w/h stay the rendering truth; slots re-derive them on viewport change). */
+function stageFields(s) {
+  const out = {}
+  if (s.slot && typeof s.slot === 'object') {
+    const col = Math.max(0, Math.round(Number(s.slot.col) || 0))
+    const row = Math.max(0, Math.round(Number(s.slot.row) || 0))
+    const size = typeof s.slot.size === 'string' ? s.slot.size.toLowerCase() : 's'
+    out.slot = { col, row, size }
+    const a = Math.round(Number(s.slotStage ?? s.slotArea) || 0) // ?? slotArea: pre-rename nodes
+    if (a > 0) out.slotStage = a
+  }
+  return out
+}
+
 /**
  * Serialize osState into the workspace folder. Returns a small summary.
  * @param {string} dir absolute path to the workspace folder.
@@ -248,6 +363,7 @@ export function writeWorkspace(dir, osState) {
         y: Math.round(s.y),
         w: Math.round(s.w),
         h: Math.round(s.h),
+        ...stageFields(s),
         ...(Object.keys(fview).length ? { view: fview } : {})
       })
       order.push({ id: s.id, z: s.z || 0 })
@@ -274,6 +390,7 @@ export function writeWorkspace(dir, osState) {
       w: Math.round(s.w),
       h: Math.round(s.h),
       ...(s.zoom && s.zoom !== 1 ? { zoom: s.zoom } : {}),
+      ...stageFields(s),
       ...(Object.keys(view).length ? { view } : {})
     })
     order.push({ id: s.id, z: s.z || 0 })
@@ -300,15 +417,15 @@ export function writeWorkspace(dir, osState) {
       ? { x: Math.round(cam.x || 0), y: Math.round(cam.y || 0), scale: Math.round(cam.scale * 1000) / 1000 }
       : { x: 0, y: 0, scale: 1 }
 
-  // Number of workspace areas (#45 — bounded desktops tiled left→right). Default 1; floor invalid values.
-  const areaCount = Number.isInteger(osState?.areaCount) && osState.areaCount > 0 ? osState.areaCount : 1
+  // Number of workspace stages (#45 — bounded desktops tiled left→right). Default 1; floor invalid values.
+  const stageCount = Number.isInteger(osState?.stageCount) && osState.stageCount > 0 ? osState.stageCount : 1
   const ws = {
     version: VERSION,
     id: wsId || randomUUID(),
     kind: 'blitzos.workspace',
     camera,
     mode: osState?.mode === 'desktop' ? 'desktop' : 'canvas',
-    areaCount,
+    stageCount,
     stack,
     nodes
   }
@@ -470,7 +587,7 @@ function nodeToSurface(dir, n, z) {
     const name = basename(n.path)
     const view = n.view && typeof n.view === 'object' ? n.view : {}
     const title = typeof view.title === 'string' && view.title ? view.title : name
-    const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || 200, h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z }
+    const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || 200, h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z, ...stageFields(n) }
     if (n.kind === 'dir') {
       let entries = 0
       try {
@@ -502,7 +619,8 @@ function nodeToSurface(dir, n, z) {
     w: Number(n.w) || 240,
     h: Number(n.h) || 240,
     z,
-    ...(n.zoom ? { zoom: clampScale(n.zoom) } : {})
+    ...(n.zoom ? { zoom: clampScale(n.zoom) } : {}),
+    ...stageFields(n)
   }
   if (n.kind === 'note') {
     const noteProps = { text: content, ...(typeof view.color === 'string' ? { color: view.color } : {}) }
@@ -556,7 +674,7 @@ export function readWorkspace(dir) {
     seq++
     if (s) surfaces.push(s)
   }
-  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', areaCount: safeAreaCount(ws.areaCount) }
+  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', stageCount: safeStageCount(ws.stageCount ?? ws.areaCount) } // ?? areaCount: pre-rename folders
 }
 
 // Which loose root files auto-surface as new nodes on reconcile, and as what kind. Conservative
@@ -863,13 +981,109 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   }
   const camera = safeCamera(ws.camera)
   const mode = ws.mode === 'desktop' ? 'desktop' : 'canvas'
-  const areaCount = safeAreaCount(ws.areaCount) // preserve the area count across a reconcile (never collapse)
+  const stageCount = safeStageCount(ws.stageCount ?? ws.areaCount) // ?? areaCount: pre-rename folders; preserve across reconcile
 
   if (changed) {
-    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, areaCount, stack: surfaces.map((s) => s.id), nodes: alive }
+    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stageCount, stack: surfaces.map((s) => s.id), nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
-  return { surfaces, camera, mode, areaCount, changed, knownIds }
+  return { surfaces, camera, mode, stageCount, changed, knownIds }
+}
+
+// ---- cross-workspace surface addressing (item 4): a surface id lives in exactly one workspace folder.
+// findSurfaceWorkspace locates it (so an op on a non-active id can NAME where it is); relocateSurface
+// MOVES it into the active workspace (the "I just want this one window here" path) by carrying its
+// content file across folders and preserving the id — the everything-is-a-file model makes this a plain
+// file move + a node transfer.
+
+/** Find which workspace under `root` holds surface `id` (scanning each workspace.json). `exceptDir` skips
+ *  the active one. Returns { name, dir, node } or null. Read-only + size-capped. */
+export function findSurfaceWorkspace(root, id, exceptDir) {
+  let rootReal
+  try {
+    rootReal = realpathSync(resolve(root))
+  } catch {
+    return null
+  }
+  if (!id) return null
+  const except = exceptDir ? resolve(exceptDir) : null
+  let ents = []
+  try {
+    ents = readdirSync(rootReal, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const e of ents) {
+    if (!e.isDirectory() || !safeName(e.name)) continue
+    const dir = join(rootReal, e.name)
+    if (except && resolve(dir) === except) continue
+    const metaFile = join(dir, '.blitzos', 'workspace.json')
+    try {
+      const ms = statSync(metaFile)
+      if (ms.size > MAX_META) continue
+      const m = JSON.parse(readFileSync(metaFile, 'utf8'))
+      const node = Array.isArray(m.nodes) ? m.nodes.find((n) => n && n.id === id) : null
+      if (node) return { name: e.name, dir, node }
+    } catch {
+      /* unreadable workspace.json — skip */
+    }
+  }
+  return null
+}
+
+/**
+ * Move surface `id` from whatever OTHER workspace holds it INTO `destDir`: copy its content file across,
+ * delete it + drop its node from the source workspace.json, and return the reconstructed surface
+ * descriptor (SAME id, placed at `placeAt`) for the caller to insert into the live destination state.
+ * Single-file kinds only (note/web/srcdoc/file — a recursive folder move is out of scope). Returns
+ * { surface, fromName } or null if the id isn't in another workspace / is unmovable.
+ */
+export function relocateSurface(root, destDir, id, placeAt = {}) {
+  const found = findSurfaceWorkspace(root, id, destDir)
+  if (!found) return null
+  const { name: fromName, dir: srcDir, node } = found
+  if (node.kind === 'dir') return null // recursive folder move not supported yet
+  const srcRel = typeof node.path === 'string' ? node.path : null
+  const srcAbs = srcRel ? safeJoin(srcDir, srcRel) : null
+  if (!srcAbs || !existsSync(srcAbs)) return null
+  let bytes
+  try {
+    bytes = readFileSync(srcAbs)
+  } catch {
+    return null
+  }
+  // write into dest (uniquify the basename against existing dest files), then remove from source
+  const base = basename(srcRel)
+  const dot = base.lastIndexOf('.')
+  let destRel = base
+  for (let i = 2; existsSync(join(destDir, destRel)); i++) destRel = dot > 0 ? `${base.slice(0, dot)}-${i}${base.slice(dot)}` : `${base}-${i}`
+  const destAbs = safeJoin(destDir, destRel)
+  if (!destAbs) return null
+  try {
+    mkdirSync(dirname(destAbs), { recursive: true })
+    writeFileSync(destAbs, bytes)
+    markWrite(resolve(destAbs))
+    unlinkSync(srcAbs)
+    markWrite(resolve(srcAbs))
+  } catch {
+    return null
+  }
+  // drop the node from the source workspace.json so it doesn't linger / resurrect there
+  try {
+    const srcMeta = join(srcDir, '.blitzos', 'workspace.json')
+    const m = JSON.parse(readFileSync(srcMeta, 'utf8'))
+    m.nodes = (m.nodes || []).filter((n) => n.id !== id)
+    if (Array.isArray(m.stack)) m.stack = m.stack.filter((x) => x !== id)
+    writeMeta(srcMeta, m)
+  } catch {
+    /* source json untouched — the moved file is gone, so it won't resurface there on reconcile anyway */
+  }
+  // reconstruct the descriptor in the destination, preserving id + placing it at the requested point
+  const px = Number(placeAt.x)
+  const py = Number(placeAt.y)
+  const destNode = { ...node, path: destRel, x: Math.round(Number.isFinite(px) ? px : node.x || 0), y: Math.round(Number.isFinite(py) ? py : node.y || 0) }
+  const surface = nodeToSurface(destDir, destNode, 1)
+  return surface ? { surface, fromName } : null
 }
 
 /**
@@ -1050,14 +1264,39 @@ export function systemRoleOf(name) {
   return rendererRoleOf(name)
 }
 
-/** Ensure `blitz-<role>.html` exists in the workspace — copy the shipped default if MISSING (so a
- *  deleted renderer is recreated). Never overwrites an existing (possibly customized) file. */
+/** Ensure `blitz-<role>.html` exists in the workspace — copy the shipped default if MISSING (so a deleted
+ *  renderer is recreated). Never overwrites a real customization. EXCEPTION: a chat renderer that predates
+ *  the session HUB (renders the old `p.messages` and has no hub API) is incompatible with the new backend
+ *  props and would render BLANK — refresh it to the shipped default. A renderer written against the hub
+ *  (uses `blitz.chat` / `props.threads`) is a genuine customization and is left untouched. */
 export function ensureSystemRenderer(dir, role, sessionId = '0') {
   if (SYSTEM_RENDERERS.indexOf(role) === -1) return null
   const rel = sysRendererName(role, sessionId)
   const dest = safeJoin(dir, rel)
   if (!dest) return null
-  if (existsSync(dest)) return { rel, created: false }
+  if (existsSync(dest)) {
+    if (role === 'chat') {
+      try {
+        const cur = readFileSync(dest, 'utf8')
+        const shipped = readFileSync(join(SYS_DIR, 'chat.html'), 'utf8')
+        const hubAware = cur.indexOf('blitz.chat(') !== -1 || cur.indexOf('props.threads') !== -1 || cur.indexOf('p.threads') !== -1
+        const preHub = /p\.messages|onProps\(render\)/.test(cur)
+        // System-widget UPDATE propagation: a workspace holds its OWN copy of blitz-chat.html, so a shipped
+        // feature (here: item 5b annotation references) never reaches existing desktops. Refresh a SHIPPED
+        // copy that lags the shipped feature set; a copy the human CUSTOMIZED (writeSystemRenderer) is left
+        // alone — it carries the `blitz-chat-custom` opt-out marker. (Pre-hub copies still migrate as before.)
+        const featureLag = shipped.indexOf('focusAnnotation') !== -1 && cur.indexOf('focusAnnotation') === -1
+        const customized = cur.indexOf('blitz-chat-custom') !== -1
+        if ((!hubAware && preHub) || (hubAware && featureLag && !customized)) {
+          atomicWrite(dest, shipped)
+          return { rel, created: false, refreshed: true }
+        }
+      } catch {
+        /* leave it as-is */
+      }
+    }
+    return { rel, created: false }
+  }
   try {
     atomicWrite(dest, readFileSync(join(SYS_DIR, `${role}.html`), 'utf8')) // per-session widgets default to the SAME shipped UI
     return { rel, created: true }
@@ -1073,7 +1312,11 @@ export function writeSystemRenderer(dir, role, html, sessionId = '0') {
   const dest = safeJoin(dir, rel)
   if (!dest) return { ok: false, error: 'bad path' }
   try {
-    atomicWrite(dest, String(html == null ? '' : html))
+    // Stamp customized copies so ensureSystemRenderer never auto-refreshes over a human/agent customization
+    // (system-widget update propagation only refreshes UN-customized shipped copies).
+    let out = String(html == null ? '' : html)
+    if (out.indexOf('blitz-chat-custom') === -1) out = `<!--blitz-chat-custom-->\n${out}`
+    atomicWrite(dest, out)
     return { ok: true, rel }
   } catch {
     return { ok: false, error: 'write failed' }
@@ -1102,12 +1345,22 @@ function chatAbs(dir, sessionId = '0') {
   return safeJoin(dir, chatFileName(sessionId))
 }
 /** Append a chat message to a session's transcript (recreating the file if missing). role: 'user' | 'agent'. */
-export function appendChatMessage(dir, role, text, sessionId = '0') {
+export function appendChatMessage(dir, role, text, sessionId = '0', meta) {
   const abs = chatAbs(dir, sessionId)
   if (!abs) return { ok: false }
   try {
     if (!existsSync(abs)) atomicWrite(abs, '# Chat\n')
-    const block = `\n### ${role === 'user' ? 'user' : 'agent'} · ${Date.now()}\n${String(text == null ? '' : text)}\n`
+    // Optional structured ref (item 5b: a grounded annotation) rides the header as base64 JSON, so the
+    // transcript stays plain-text + human-readable and old messages without it parse unchanged.
+    let tag = ''
+    if (meta && typeof meta === 'object') {
+      try {
+        tag = ` · a:${Buffer.from(JSON.stringify(meta)).toString('base64')}`
+      } catch {
+        /* non-serializable meta — drop the tag */
+      }
+    }
+    const block = `\n### ${role === 'user' ? 'user' : 'agent'} · ${Date.now()}${tag}\n${String(text == null ? '' : text)}\n`
     appendFileSync(abs, block)
     markWrite(resolve(abs))
     return { ok: true }
@@ -1127,13 +1380,22 @@ export function readChatMessages(dir, cap = 400, sessionId = '0') {
     return []
   }
   const marks = []
-  const re = /^### (user|agent)(?: · (\d+))?[ \t]*$/gm
+  // optional ` · a:<base64>` carries a structured ref (item 5b: a grounded annotation) on the header
+  const re = /^### (user|agent)(?: · (\d+))?(?: · a:([A-Za-z0-9+/=]+))?[ \t]*$/gm
   let m
-  while ((m = re.exec(raw))) marks.push({ role: m[1], ts: Number(m[2]) || 0, start: m.index, end: re.lastIndex })
+  while ((m = re.exec(raw))) marks.push({ role: m[1], ts: Number(m[2]) || 0, metaB64: m[3] || null, start: m.index, end: re.lastIndex })
   const msgs = []
   for (let i = 0; i < marks.length; i++) {
     const body = raw.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].start : raw.length).replace(/^\n+|\n+$/g, '')
-    msgs.push({ role: marks[i].role, text: body, ts: marks[i].ts })
+    const msg = { role: marks[i].role, text: body, ts: marks[i].ts }
+    if (marks[i].metaB64) {
+      try {
+        msg.ref = { ...JSON.parse(Buffer.from(marks[i].metaB64, 'base64').toString('utf8')), text: body }
+      } catch {
+        /* corrupt ref — fall back to a plain message */
+      }
+    }
+    msgs.push(msg)
   }
   return msgs.slice(-cap)
 }
@@ -1294,7 +1556,7 @@ export function listWorkspaces(root) {
         /* unreadable — leave 0 */
       }
     }
-    let thumbTs = 0 // mtime of the cached primary-area thumbnail (0 = none) — used to cache-bust the tile
+    let thumbTs = 0 // mtime of the cached primary-stage thumbnail (0 = none) — used to cache-bust the tile
     try {
       thumbTs = statSync(join(p, '.blitzos', 'state', 'thumb.jpg')).mtimeMs
     } catch {
@@ -1331,4 +1593,26 @@ export function createWorkspace(root, name) {
   mkdirSync(target, { recursive: false }) // recursive:false → EEXIST backstop if it races
   scaffold(target) // self-describing BLITZOS.md + .gitignore (private fn above)
   return { name: safe, path: target }
+}
+
+/** Delete a workspace folder under `root` — rm -rf its dir and EVERYTHING in it (incl. .blitzos). Realpath-
+ *  jailed via resolveWorkspace: only an existing dir whose realpath is exactly <root>/<safeName> is removed,
+ *  so a crafted name or an escaping symlink can never delete outside the jail. Throws Error with .code
+ *  'EINVAL' (bad name/root) or 'ENOENT' (not found). Returns { name }. The HOST is responsible for the
+ *  policy guards (never the active workspace, never the last one) — this just does the destructive removal. */
+export function deleteWorkspace(root, name) {
+  const safe = safeName(name)
+  if (!safe) {
+    const e = new Error('invalid workspace name')
+    e.code = 'EINVAL'
+    throw e
+  }
+  const target = resolveWorkspace(root, safe, { mustExist: true }) // realpath-jailed to <rootReal>/<safe>, must be a real dir
+  if (!target) {
+    const e = new Error('workspace not found')
+    e.code = 'ENOENT'
+    throw e
+  }
+  rmSync(target, { recursive: true, force: true })
+  return { name: safe }
 }

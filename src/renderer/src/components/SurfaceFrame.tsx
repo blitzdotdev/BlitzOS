@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop, snapTargetFor, primaryRect, nextTerminalName } from '../store'
+import { useDesktop, snapTargetFor, primaryRect, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot } from '../store'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
@@ -13,6 +13,7 @@ import { IconEye } from './Icons'
 import { FolderWidget } from './FolderWidget'
 import { FileWidget, DirWidget } from './FileWidget'
 import { FileManager } from './FileManager'
+import { UnlockWidget } from './UnlockWidget'
 import { NOTE_PAPER } from '../paper'
 
 type BridgeReply = { ok: boolean; data?: unknown; error?: string }
@@ -25,7 +26,32 @@ interface WebviewMethods {
   getURL(): string
 }
 
-export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
+function AppEmptyState(): JSX.Element {
+  return (
+    <div className="surface-empty">
+      <div className="surface-empty-icon">▦</div>
+      <h3>App</h3>
+      <p>A Blitz app can appear here. Add a deployed app URL, or ask an agent to create one for this workspace.</p>
+    </div>
+  )
+}
+
+// memo: the camera tween (⌘⌘ zoom-out, pan/zoom) re-renders App ~60×/sec, which re-creates every
+// SurfaceFrame element. Their `surface` prop keeps a stable reference when only the transform changes,
+// so memo lets React skip re-running each (webview-bearing) frame per animation tick. A surface's own
+// store subscriptions (z/selection/drag) still re-render it independently — memo only gates the
+// parent-driven churn (brandon-ui's dock-animation props ride along; they only change per-gesture).
+export const SurfaceFrame = memo(function SurfaceFrame({
+  surface,
+  onRequestMinimize,
+  onRequestToggleMaximize,
+  restoring = false
+}: {
+  surface: Surface
+  onRequestMinimize?: (id: string) => void
+  onRequestToggleMaximize?: (id: string) => void
+  restoring?: boolean
+}): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
@@ -55,6 +81,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     poppedOut: boolean // a tiled window has been dragged back out to floating this gesture
   } | null>(null)
   const resize = useRef<{ startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; dir: string } | null>(null)
+  // Slotted-tile drag: the candidate lattice span under the outline ghost (committed on drop).
+  const slotGhost = useRef<{ col: number; row: number } | null>(null)
   const webviewRef = useRef<HTMLWebViewElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -241,6 +269,16 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     window.agentOS?.sendMessage?.(String(text), String(surface.props?.agentId ?? '0'))
     return Promise.resolve(postRes(win, reqId, { ok: true }))
   }
+  // blitz.chat — a per-agent chat widget manages itself (op 'new' → a fresh agent's id; 'rename' → its title).
+  // Returns the result (e.g. the new agent id). This is the per-agent control API, NOT a session hub.
+  function serveChat(win: Window, reqId: string, op: string, args: Record<string, unknown>): Promise<void> {
+    const api = window.agentOS as { chatControl?: (op: string, args: Record<string, unknown>) => Promise<unknown> } | undefined
+    if (!api?.chatControl) return Promise.resolve(postRes(win, reqId, { ok: false, error: 'chat control unavailable here' }))
+    return api.chatControl(String(op), args).then(
+      (r) => postRes(win, reqId, { ok: true, data: r }),
+      (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
+    )
+  }
   // blitz.listDir — the widget lists a workspace folder (the file-manager widget).
   function serveListDir(win: Window, reqId: string, path: string): Promise<void> {
     const api = window.agentOS
@@ -258,14 +296,38 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     const onMessage = (e: MessageEvent): void => {
       const win = iframeRef.current?.contentWindow
       if (!win || e.source !== win) return // only OUR widget (origin is unusable "null")
-      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; path?: string }
+      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; path?: string; chatOp?: string }
       if (!m || typeof m !== 'object') return
       if (m.type === 'blitz:hello') {
         win.postMessage({ type: 'blitz:init', props: surface.props ?? {} }, '*')
+      } else if (m.type === 'blitz:contextmenu') {
+        // Item 5b: a srcdoc widget forwarded a right-click (its iframe swallowed it). Open the annotation
+        // menu at that point — EXCEPT on runtime panels (chat/activity), where annotating makes no sense.
+        const isPanel = surface.role === 'chat' || surface.role === 'activity'
+        const el = iframeRef.current
+        if (!isPanel && el) {
+          const r = el.getBoundingClientRect()
+          const z = surface.zoom ?? 1
+          const cw = r.width / z
+          const ch = r.height / z // content px (the iframe is CSS-scaled by zoom)
+          const cx = Number((m as { x?: number }).x) || 0
+          const cy = Number((m as { y?: number }).y) || 0
+          if (cw > 0 && ch > 0) {
+            useDesktop.getState().openAnnotationMenu(surface.id, cx / cw, cy / ch, r.left + cx * z, r.top + cy * z)
+          }
+        }
+      } else if (m.type === 'blitz:annotation') {
+        // Item 5b: a chat widget's grounded reference was clicked → recall the annotation bubble on its
+        // surface (fire-and-forget; the ref carries the full annotation so it works after a reload).
+        const ref = (m as { ref?: unknown }).ref as { id?: unknown; surfaceId?: unknown; xPct?: unknown; yPct?: unknown; text?: unknown } | undefined
+        if (ref && ref.id && ref.surfaceId) {
+          useDesktop.getState().recallAnnotation({ id: String(ref.id), surfaceId: String(ref.surfaceId), xPct: Number(ref.xPct) || 0, yPct: Number(ref.yPct) || 0, text: String(ref.text ?? ''), ts: 0 })
+        }
       } else if (m.type === 'blitz:req' && typeof m.reqId === 'string') {
         if (m.op === 'data') void serveData(win, m.reqId, String(m.provider ?? ''), String(m.resource ?? ''))
         else if (m.op === 'tool') void serveTool(win, m.reqId, String(m.tool ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
         else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''))
+        else if (m.op === 'chat') void serveChat(win, m.reqId, String(m.chatOp ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
         else if (m.op === 'listdir') void serveListDir(win, m.reqId, String(m.path ?? ''))
         else if (m.op === 'setprops') {
           // A widget persists its OWN state (e.g. a note's text) — own-surface only, so no consent gate.
@@ -348,16 +410,39 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     const dx = (e.clientX - d.startX) / t.scale
     const dy = (e.clientY - d.startY) / t.scale
     for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
+    // Slotted tile drag (stage desktop, macOS widget feel): the tile floats under the cursor while an
+    // OUTLINE previews the nearest free span of the lattice — other tiles NEVER move; only the file
+    // layer parts fluidly around the outline. ⌘-drag skips snapping entirely (Apple's escape hatch:
+    // release pops the tile off the lattice, free-form). Edge-tiling is suppressed for tiles.
+    if (d.single && isSlotted && !e.metaKey) {
+      const me = d.items[0]
+      const sl = slotOf(surface)
+      const stage = surface.slotStage ?? 0
+      const lat = latticeFor(st.viewport, stage)
+      const ghost = nearestFreeSlot(st.surfaces, lat, sl ? sl.size : 's', me.ox + dx + me.ow / 2, me.oy + dy + me.oh / 2, stage, surface.id)
+      slotGhost.current = ghost
+      const gr = ghost && sl ? slotRect(lat, ghost.col, ghost.row, sl.size) : null
+      st.setSnapPreview(gr)
+      st.reflowFiles(gr) // fluid: files flow out of the outline's way live
+      st.setDragTarget(null)
+      return
+    }
+    if (d.single && isSlotted) {
+      // ⌘ held: free drag, no ghost — the escape hatch out of the lattice.
+      slotGhost.current = null
+      st.setSnapPreview(null)
+      return
+    }
     // highlight a folder under the cursor as an add-to-folder drop target
     const dragged = new Set(d.items.map((it) => it.id))
     const folder = st.surfaces.find(
       (w) => w.component === 'folder' && !dragged.has(w.id) && wx >= w.x && wx <= w.x + w.w && wy >= w.y && wy <= w.y + w.h
     )
     st.setDragTarget(folder ? folder.id : null)
-    // Snap preview (BOTH modes, #42): dragging a single window so the cursor reaches a primary-area
+    // Snap preview (BOTH modes, #42): dragging a single window so the cursor reaches a primary-stage
     // side/corner shows where it will tile on release (left|right half / quarter — never full-screen).
     // Suppressed over a folder target and for file/dir tiles (they aren't windows).
-    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport, st.currentArea, st.mode) : null)
+    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport, st.currentStage, st.mode) : null)
   }
   function onBarUp(e: React.PointerEvent): void {
     try {
@@ -373,6 +458,22 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
     const snap = st.snapPreview
     st.setDragTarget(null)
     st.setSnapPreview(null)
+    // Slotted tile drop: ⌘-release pops it OFF the lattice (free-form, Apple's escape hatch); a normal
+    // release spring-snaps into the outlined span (or back to its own cells — self is excluded from
+    // occupancy, so "didn't really move" is always a valid drop). Files reflow to the settled layout.
+    if (d && d.single && isSlotted) {
+      const sl = slotOf(surface)
+      if (e.metaKey) {
+        st.clearSurfaceSlot(surface.id)
+      } else {
+        const g = slotGhost.current
+        if (g && sl) st.placeSurfaceSlot(surface.id, g.col, g.row, sl.size)
+        else if (sl) st.placeSurfaceSlot(surface.id, sl.col, sl.row, sl.size) // nothing free under the drag — settle home
+      }
+      slotGhost.current = null
+      st.reflowFiles()
+      return
+    }
     if (d && target) st.dropIntoFolder(target, d.items.map((it) => it.id))
     // Apply the tile; remember the floating size in `preSnap` so a later drag pops it back out
     // (macOS). `restore` is cleared so a previously-maximized window's green-zoom isn't stale.
@@ -385,6 +486,13 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   // macOS-style resize from any side/corner. `dir` is a combination of n/s/e/w; a side handle
   // resizes that edge and moves the opposite edge's position. Works in control mode too (the
   // handles sit above the drag-overlay).
+  // Grid toggle (stage desktop): pop a slotted tile OUT to free-form (pre-slot size restored), or
+  // snap a free window INTO the nearest free span sized to fit it. The discoverable counterpart of
+  // ⌘-drag — this is how a note (or the chat) enters and leaves the lattice.
+  function toggleSlot(): void {
+    useDesktop.getState().toggleSurfaceSlot(surface.id)
+  }
+
   function onResizeDown(e: React.PointerEvent, dir: string): void {
     e.stopPropagation()
     focusSurface(surface.id)
@@ -425,10 +533,10 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       if (r.dir.includes('n')) ny = r.origY + r.origH - MINH // keep the bottom edge anchored
       nh = MINH
     }
-    // macOS-faithful resize: a window may extend freely BEYOND the area (off the sides/bottom), just
+    // macOS-faithful resize: a window may extend freely BEYOND the stage (off the sides/bottom), just
     // like free dragging — the ONLY constraint in normal mode is that a top-edge (n/nw/ne) resize can't
-    // push the title bar above the area's top (so it stays grabbable — the #29 invariant). All areas
-    // share the same top, so it's area-independent.
+    // push the title bar above the stage's top (so it stays grabbable — the #29 invariant). All stages
+    // share the same top, so it's stage-independent.
     const st0 = useDesktop.getState()
     if (st0.mode === 'desktop') {
       const topY = primaryRect(st0.viewport).y
@@ -454,6 +562,8 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
   const isNote = surface.kind === 'native' && surface.component === 'note'
   const isFolder = surface.kind === 'native' && surface.component === 'folder'
   const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
+  const isSlotted = !!slotOf(surface) // a stage tile: lattice-snapped, fixed-size, never edge-tiles
+  const needsFocusCatcher = !isActive && !isControl && (surface.kind === 'web' || surface.kind === 'app' || surface.kind === 'srcdoc')
   const paper = isNote ? (NOTE_PAPER[(surface.props?.color as string) || 'coral'] ?? NOTE_PAPER.coral) : undefined
 
   function body(): JSX.Element {
@@ -470,14 +580,21 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         // Electron / plain preview: a real <webview> guest.
         if (serverMode) return <canvas ref={canvasRef} style={fill} />
         return (
+          // allowpopups: window.open must RETURN A WINDOW inside guests — when it returns null,
+          // sites' fallback is `top.location = url`, which HIJACKS the whole surface (Gmail's
+          // contact-hovercard gapi frame wiped the compose page this way). Main decides what each
+          // popup actually becomes (hidden utility window / auth window / a new web surface) via
+          // setWindowOpenHandler in index.ts — nothing opens unmanaged.
           <webview
             ref={webviewRef}
             src={initialUrl.current}
             partition="persist:agentos"
+            allowpopups
             style={{ ...fill, display: 'inline-flex' }}
           />
         )
       case 'app':
+        if (!surface.url) return <AppEmptyState />
         return (
           <iframe
             title={surface.title}
@@ -518,6 +635,7 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         if (surface.component === 'file') return <FileWidget surface={surface} />
         if (surface.component === 'dir') return <DirWidget surface={surface} />
         if (surface.component === 'files') return <FileManager surface={surface} />
+        if (surface.component === 'unlock') return <UnlockWidget surface={surface} />
         return <div className="native-fallback">unknown widget: {surface.component}</div>
     }
   }
@@ -544,15 +662,42 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         width: surface.w,
         height: surface.h,
         ...(surface.minimized ? { display: 'none' } : {}),
+        // Slotted tiles spring-snap into their span (the macOS settle); suspended while dragging so
+        // the tile tracks the cursor 1:1, and resumed on drop for the snap animation. File tiles get
+        // the smooth glide of the fluid layer (they part around tiles like displaced liquid).
+        ...(isSlotted && !isDragging ? { transition: 'left 0.32s cubic-bezier(0.32, 1.23, 0.42, 1), top 0.32s cubic-bezier(0.32, 1.23, 0.42, 1), width 0.32s ease, height 0.32s ease' } : {}),
+        ...(isFileTile && !isDragging ? { transition: 'left 0.4s cubic-bezier(0.22, 1, 0.36, 1), top 0.4s cubic-bezier(0.22, 1, 0.36, 1)' } : {}),
+        // brandon-ui dock restore: the surface is mounted (for measurement) but hidden while the
+        // genie animation plays a clone from the dock; unhidden when the phase ends.
+        ...(restoring ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {}),
         ...(paper ? { background: paper.bg, color: paper.ink } : {}),
-        // The Chat + Agent-activity panels are pinned: a z-band far above any focus-raised
-        // window, so the agent (or the user) can never bury the channel/feed they rely on.
+        // Layered desktop (macOS model). Bands, bottom to top: slotted tiles + file/folder icons (the
+        // DESKTOP layer, raw z) → free-form windows (float above the desktop, +500k) → focus floater
+        // (+1.5M) → pinned chat/activity (+2M, never buried). Free windows therefore cover tiles
+        // instead of blocking them (the placer ignores windows entirely); a slotted tile being
+        // DRAGGED lifts above the window band so it never disappears under one mid-gesture.
         zIndex:
           surface.role === 'chat' || surface.role === 'activity' || (surface.kind === 'native' && (surface.component === 'chat' || surface.component === 'activity'))
             ? 2_000_000 + surface.z
-            : surface.z
+            : surface.focus
+              ? 1_500_000 + surface.z
+              : isSlotted
+                ? (isDragging ? 1_200_000 : 0) + surface.z
+                : isFileTile || isFolder
+                  ? surface.z
+                  : 500_000 + surface.z
       }}
       onPointerDown={() => focusSurface(surface.id)}
+      onFocus={() => focusSurface(surface.id)} // a click INTO an iframe/webview focuses the guest, not the host — still raise this window front-most so keybinds target it
+      onContextMenu={(e) => {
+        // Item 5b: right-click a native surface (note/tile/frame chrome) → annotation menu at that point.
+        // web is handled in main (the webview swallows this); srcdoc's sandboxed iframe also swallows it.
+        if (surface.kind === 'web') return
+        const r = e.currentTarget.getBoundingClientRect()
+        if (r.width < 1 || r.height < 1) return
+        e.preventDefault()
+        useDesktop.getState().openAnnotationMenu(surface.id, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, e.clientX, e.clientY)
+      }}
     >
       <div
         className="window-bar"
@@ -565,16 +710,23 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         <div className="traffic" onPointerDown={stop}>
           {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
               reconcile (the file still exists), so only offer zoom; delete the file to remove it.
-              A NON-primary chat widget's red light DELETES its agent (stop it + delete its chat + files/area);
-              the PRIMARY chat ('0') is pinned + never deletable, so it gets no close button. */}
+              A NON-primary chat widget's red light DELETES its agent (stop it + delete its chat + files/stage);
+              the PRIMARY chat ('0') is pinned + never deletable, so it gets no close button.
+              Minimize/zoom go through the dock genie-animation callbacks when provided (App.tsx wires
+              onRequestMinimize/onRequestToggleMaximize), falling back to the plain store actions. */}
           {surface.role === 'chat'
             ? surface.agentId && String(surface.agentId) !== '0'
               ? <button className="tl tl-close" title="Delete agent" onClick={() => closeAgent(String(surface.agentId))} />
               : null
             : !isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
-          {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => minimizeSurface(surface.id)} />}
-          <button className="tl tl-max" title="Zoom" onClick={() => toggleMaximize(surface.id)} />
+          {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => (onRequestMinimize ? onRequestMinimize(surface.id) : minimizeSurface(surface.id))} />}
+          <button className="tl tl-max" title="Zoom" onClick={() => (onRequestToggleMaximize ? onRequestToggleMaximize(surface.id) : toggleMaximize(surface.id))} />
         </div>
+        {!isFileTile && (
+          <button className={`slot-toggle${isSlotted ? ' on' : ''}`} title={isSlotted ? 'Pop out of the grid — free-form, restores its size (⌘T; ⇧⌘T cycles size)' : 'Snap into the widget grid (⌘T)'} onClick={toggleSlot} onPointerDown={stop}>
+            {isSlotted ? '⤢' : '⊞'}
+          </button>
+        )}
         {surface.kind === 'web' || surface.kind === 'app' ? (
           <form className="window-url" onSubmit={go} onPointerDown={stop}>
             <input
@@ -626,10 +778,13 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
         style={{ position: 'relative', ...(isNote ? { background: 'transparent' } : {}) }}
       >
         {body()}
+        {needsFocusCatcher && <div className="window-focus-catcher" onPointerDown={() => focusSurface(surface.id)} />}
       </div>
       {/* macOS-style resize from all sides + corners; above the drag-overlay so it works in control
-          mode too (#41). The handles avoid the title-bar controls (traffic lights / eye). */}
-      {(['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'] as const).map((dir) => (
+          mode too (#41). The handles avoid the title-bar controls (traffic lights / eye).
+          Slotted tiles have FIXED slot sizes (s/m/l/xl/tall) — no free resize; re-place to change. */}
+      {!isSlotted &&
+        (['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'] as const).map((dir) => (
         <div
           key={dir}
           className={`rsz rsz-${dir}`}
@@ -650,4 +805,4 @@ export function SurfaceFrame({ surface }: { surface: Surface }): JSX.Element {
       />
     </div>
   )
-}
+})

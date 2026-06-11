@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from 'fs'
 import { loadRecord, saveRecord, deleteRecord } from './tokenStore'
 import { loopbackAuthorize, REDIRECT_URI } from './oauth'
 import { capturedScopes } from './provider-specs.mjs'
+import { emitConnectorChange } from './events'
 
 interface Def {
   id: string
@@ -120,6 +121,23 @@ export function integrationStatuses(): Record<string, unknown>[] {
 /** The ids of integrations that are currently connected (have a stored token). */
 export function connectedProviders(): string[] {
   return REGISTRY.filter((d) => !!loadRecord(d.id)).map((d) => d.id)
+}
+
+/** One-line live render of the user's connectors for the served doc's `{{CONNECTORS}}` placeholder,
+ *  e.g. "Connected: GitHub, Gmail · Not connected: Slack, Jira". */
+export function renderConnectorsLine(): string {
+  const nameOf = (s: Record<string, unknown>): string => String(s.name || s.id || '?')
+  const all = integrationStatuses()
+  const conn = all.filter((s) => s.connected).map(nameOf)
+  const off = all.filter((s) => !s.connected).map(nameOf)
+  const parts: string[] = []
+  if (conn.length) parts.push(`Connected: ${conn.join(', ')}`)
+  if (off.length) parts.push(`Not connected: ${off.join(', ')}`)
+  return parts.join(' · ') || 'No connectors registered.'
+}
+/** Replace the `{{CONNECTORS}}` placeholder in the served agents.md with the live connector line. */
+export function injectConnectors(md: string): string {
+  return md.replace('{{CONNECTORS}}', renderConnectorsLine())
 }
 
 // ---------- token exchange helpers ----------
@@ -280,6 +298,7 @@ export function registerIntegrations(getWindow: () => BrowserWindow | null): voi
       const { label, secrets } = await connectProvider(id)
       saveRecord({ provider: id, label, secrets, grantedScopes: capturedScopes(secrets), connectedAt: Date.now() })
       emitUpdated()
+      emitConnectorChange(id, true) // wake the agent's /events loop — a connector is now live
       return { ok: true, label }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -289,6 +308,7 @@ export function registerIntegrations(getWindow: () => BrowserWindow | null): voi
   ipcMain.handle('integrations:disconnect', (_e, id: string) => {
     deleteRecord(id)
     emitUpdated()
+    emitConnectorChange(id, false)
     return { ok: true }
   })
 

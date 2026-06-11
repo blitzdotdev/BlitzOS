@@ -1,6 +1,8 @@
 # Agent OS Desktop: Architecture & Build Plan
 
 > **⚠️ Superseded for the vision by [`agent-os-dynamic-architecture.md`](agent-os-dynamic-architecture.md)** (2026-06-05) — the dynamic, AI-driven OS architecture (resident brain, perception→moments→wake loop, suggest-&-confirm autonomy, persistence/profile, attention/follow) + the phased roadmap. This doc remains useful for the original surface/canvas slice rationale.
+>
+> **⚠️ Navigation model superseded by [`blitzos-stage-slot-desktop.md`](blitzos-stage-slot-desktop.md)** (2026-06-10) — the human-facing infinite pan/zoom canvas is replaced by a fixed macOS-style slotted desktop (Stage) + an off-screen agent work zone (Backstage); widgets never reflow, agents place by slot, never by pixels.
 
 **Status:** Building. Prototype slice #1 (canvas + live windows) in progress.
 **Date:** 2026-06-03
@@ -128,6 +130,9 @@ Local only. `safeStorage.encryptString` (Keychain-backed) for tokens, persisted 
 - Discord always-on relay vs local-only (Flag 3).
 - Path A `<webview>` vs Path B OSR if perf/z-order bites.
 - Security: CDP is powerful; scope what the agent can drive and require user consent per window.
+
+**Capabilities (use-cases to support + showcase)**
+- Redesign the web. Point BlitzOS at any URL and it rewrites the page into what the user actually wants: subtract the slop (kill the Google Docs AI bar nobody asked for), re-paradigm (X as Instagram, YouTube as TikTok), gamify and adapt (a boring Canvas portal becomes a tech-tree game whose fun exercises do the real assignment), or fully generate an experience. Stays functional by driving the real site underneath, not just repainting it. Full vision plus the AI-gateway-as-tool-calls substrate in `redesign-the-web.md`.
 
 ## 7. Verification reality
 The GUI runs on the user's Mac (no display in the dev sandbox). I compile-check headlessly; behavioral verification is the user running `npm run dev`. Iterate from there.

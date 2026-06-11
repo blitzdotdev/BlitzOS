@@ -1,22 +1,44 @@
-import { app, BrowserWindow, protocol, ipcMain } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain, crashReporter } from 'electron'
 import { join } from 'path'
+import { readdirSync, readFileSync, statSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, setLaunchAgent, setStopAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent } from './osActions'
+import { emitSystemMoment } from './events'
+import { openBootJournal } from './workspace.mjs'
+import type { BootJournal } from './workspace.mjs'
+import { attachGuestWindowPolicy, installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, setTerminalGetUrl } from './electron-os-tools'
-import { prepareAgentLaunch } from './agent-runtime.mjs'
+import { prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
 // Keep web surfaces logged in across quit/relaunch (cookie/localStorage flush + unload).
 import { startSessionPersistence } from './persistence'
 import { registerWallpaperIpc } from './wallpaper'
+import { registerOnboarding, interviewBootTask, claudeCliPath } from './onboarding'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
 process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getAppPath(), 'widgets')
+
+// ONE BlitzOS per machine: a second launch focuses the first instead of fighting it for the webview
+// partition + the workspace watchers (observed live: partition LOCK errors, two hosts persisting over
+// each other, "Object has been destroyed" 500s). app.exit is immediate — the duplicate runs no
+// before-quit handlers, so it can never mark the journal clean or flush state over the owner's.
+if (!app.requestSingleInstanceLock()) app.exit(0)
+app.on('second-instance', () => {
+  const w = mainWindow
+  if (!w) return
+  if (w.isMinimized()) w.restore()
+  w.show()
+  w.focus()
+})
+
+// Retain local minidumps for renderer/GPU/browser-process crashes (forensics only, never uploaded).
+crashReporter.start({ uploadToServer: false })
 
 // Serve workspace thumbnails (rendered board snapshots, written by capturePage) to the renderer's
 // <img> over a custom protocol — main owns the bytes; the renderer just references blitz-thumb://…
@@ -26,6 +48,9 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
+// The boot journal (crash dirty-bit + root lease) — opened once the workspace host exists, marked
+// clean as the LAST step of a graceful quit ("clean" = state was flushed first).
+let bootJournal: BootJournal | null = null
 
 // Fullscreen "video-game" mode: NATIVE macOS fullscreen (its own Space), opt-in via `BLITZ_FULLSCREEN=1`
 // (default windowed so a relaunch never traps you). Stays fully escapable — Ctrl+← / Ctrl+→ swap to your
@@ -64,6 +89,25 @@ function createWindow(): void {
 
   // Log when a web-surface guest actually loads (proof the real site rendered).
   mainWindow.webContents.on('did-attach-webview', (_e, guest) => {
+    // The guest's browser-initiated escape hatches (popups, beforeunload) — content-agnostic policy owned
+    // by guest-capabilities.ts (NO hostnames; the old accounts.google.com / contacts.google.com regexes
+    // are gone). A popup becomes a window / a hidden child / a new surface / a denied-and-swallowed
+    // hijack purely by web-platform signals. Downloads + permission prompts are session-level (set once
+    // below, after the workspace host exists). logPlan records real features/disposition so the popup
+    // classifier can be tuned from data, not guesses.
+    attachGuestWindowPolicy(guest, {
+      openSurface: (url) => osCreateSurface({ kind: 'web', url }),
+      logPlan: (plan, d) => console.log(`[guest] popup ${plan.kind} <- ${JSON.stringify({ url: String(d.url).slice(0, 80), disposition: d.disposition, features: d.features })}`)
+    })
+    // Item 5b: a right-click inside a WEB guest is swallowed by the webview (never reaches the renderer's
+    // onContextMenu), so main intercepts it and forwards the surface + guest point — the renderer shows the
+    // "Ask the agent about this" annotation menu. (Native/srcdoc surfaces use React onContextMenu directly.)
+    guest.on('context-menu', (e, params) => {
+      const surfaceId = osSurfaceIdForWebContents(guest)
+      if (!surfaceId) return // not a tracked surface — leave the default menu
+      e.preventDefault()
+      mainWindow?.webContents.send('os:action', { type: 'surface-contextmenu', surfaceId, x: params.x, y: params.y })
+    })
     guest.on('did-finish-load', () => console.log('[guest] loaded:', guest.getURL()))
     guest.on('did-fail-load', (_ev, code, desc, url) => {
       if (code !== -3) console.log(`[guest] fail-load ${code} ${desc} ${url}`)
@@ -72,7 +116,11 @@ function createWindow(): void {
     // so "double-tap ⌘ to toggle pan-mode" works from inside a window.
     let metaDown = false
     let sawOther = false
-    guest.on('before-input-event', (_ev, input) => {
+    guest.on('before-input-event', (ev, input) => {
+      if (forwardTileKeybind(input)) {
+        ev.preventDefault()
+        return
+      }
       if (input.type === 'keyDown') {
         if (input.key === 'Meta') {
           metaDown = true
@@ -85,6 +133,21 @@ function createWindow(): void {
         metaDown = false
       }
     })
+  })
+
+  // Stage keybinds must work no matter WHAT has keyboard focus — the host, a srcdoc iframe (the
+  // chat hub!), or a webview guest. DOM keydown dies the moment a guest focuses, so main intercepts
+  // at before-input-event (host webContents covers all its iframes; each webview guest is hooked in
+  // did-attach-webview above) and forwards over IPC. ⌘T = tile toggle, ⇧⌘T = cycle size.
+  const forwardTileKeybind = (input: Electron.Input): boolean => {
+    if (input.type !== 'keyDown' || input.isAutoRepeat) return false
+    const cmd = process.platform === 'darwin' ? input.meta : input.control
+    if (!cmd || input.alt || input.code !== 'KeyT') return false
+    mainWindow?.webContents.send('os:keybind', { id: 'tile', shift: !!input.shift })
+    return true
+  }
+  mainWindow.webContents.on('before-input-event', (ev, input) => {
+    if (forwardTileKeybind(input)) ev.preventDefault()
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
@@ -120,6 +183,27 @@ app.whenReady().then(() => {
   // the shared workspace host (hydrate/persist/switch/list/create/thumb) — the SAME module the server
   // backend uses, so workspaces are one feature across both modes.
   initOsActions(() => mainWindow)
+
+  // Claim the root + read the previous run's dirty bit (announced below once the control plane is up,
+  // so a watching agent's /events long-poll can actually deliver the moment).
+  bootJournal = openBootJournal(osWorkspacesRoot(), 'electron')
+
+  // Guest capability contract (item 3): set the session-level policy ONCE on the shared persist:agentos
+  // session — covers every current + future web guest. Downloads land in the active workspace folder (→ a
+  // file tile); a sensitive permission request shows the human a real Allow/Block prompt (browser parity),
+  // remembered per-origin. Content-agnostic — see guest-capabilities.ts. (Per-guest popup/unload policy is
+  // attached in did-attach-webview via attachGuestWindowPolicy.)
+  installGuestSessionPolicy({
+    root: osWorkspacesRoot(),
+    getDownloadDir: () => osActiveWorkspaceDir(),
+    broadcastPermission: (p) => {
+      console.log(`[guest] permission prompt: ${p.permission} <- ${p.origin}`)
+      mainWindow?.webContents.send('os:action', { type: 'permission-request', ...p })
+    },
+    surfaceIdFor: (wc) => osSurfaceIdForWebContents(wc)
+  })
+  // The human answered an Allow/Block prompt in the renderer → resolve the held request + remember per-origin.
+  ipcMain.handle('os:permission-decide', (_e, id: string, allow: boolean, remember: boolean) => resolvePermissionPrompt(osWorkspacesRoot(), String(id), !!allow, !!remember))
 
   // Workspace thumbnail protocol (blitz-thumb://t/?name=X&t=ts → the cached jpeg). After initOsActions
   // so the host exists; osReadThumb null-guards anyway. (initOsActions already wired the shared
@@ -158,6 +242,9 @@ app.whenReady().then(() => {
 
   // Onboarding/boot frosted backdrop: serve the user's macOS wallpaper to the renderer.
   registerWallpaperIpc()
+
+  // Onboarding director (P1): local scan → Case File workspace → template board → FDA unlock loop.
+  registerOnboarding(() => mainWindow)
 
   // #51 general provider-access substrate: route write-approval cards to the renderer, and accept the
   // human's approve/deny/consent back. Reads need none of this; only WRITES surface a card.
@@ -224,20 +311,28 @@ app.whenReady().then(() => {
   startAgentSocket(() => mainWindow, (url) => osSetRelayUrl(url))
   setTerminalGetUrl(() => getAgentSocketUrl()) // so a dead agent's re-exec rebuilds its command with the live url
 
-  // Agents run as VISIBLE tmux terminals (no headless brain). Opt-in via BLITZ_AGENT (=claude or a
-  // custom command). When set, wire launchAgent: an agent's claude runs in a terminal in its area,
-  // connected over the same relay, /saying into its chat widget. The terminal-manager persists + reattaches
-  // it; on boot we resume the dead ones with --resume (survivors stay live). BLITZ_AGENT unset ⇒ no launch.
-  if (process.env.BLITZ_AGENT) {
-    const agentCmd = process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT
+  // Agents run as VISIBLE tmux terminals (no headless brain). An agent's claude runs in a terminal in its
+  // stage, connected over the relay, /saying into its per-agent chat widget; the terminal-manager persists
+  // + reattaches it, and boot resumes the dead ones with --resume (survivors stay live). Enabled when an
+  // agent command exists: BLITZ_AGENT (a custom command, or '1' for claude) OR a login-shell-resolved
+  // `claude` CLI — the resident-brain/onboarding decision (plans/onboarding-case-file.md): zero-setup when
+  // claude exists. No command means no launch.
+  const agentCmd = process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : claudeCliPath() || (process.env.BLITZ_AGENT === '1' ? 'claude' : null)
+  if (agentCmd) {
+    // Agent '0' carries the onboarding-interview standing duty while it's pending — the provider is
+    // re-read on EVERY (re)launch (prepareAgentLaunch rewrites bootstrap.txt), so a finished interview
+    // drops off the next respawn automatically.
+    setBootTaskProvider((id: string) => (String(id) === '0' ? interviewBootTask() : null))
     const terminalsDirOf = (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'terminals') : null }
-    const launchAgent = (id: string, area: number, title?: string): void => {
+    const launchAgent = (id: string, stage: number, title?: string): void => {
       const ws = osWorkspaceContext().workspace_path
       const terminalsDir = terminalsDirOf()
       const url = getAgentSocketUrl()
       if (!ws || !terminalsDir || !url) return // not ready (no workspace / relay url yet) — boot resume retries
+      // `sessionsDir` is the agent-runtime contract for the claude --session-id state dir; we point it at
+      // our .blitzos/terminals migration.
       const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir: terminalsDir, id, url, cmd: agentCmd })
-      void electronTerminalOps.spawnTerminal({ id, kind: 'agent', command, cwd: ws, area, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })
+      void electronTerminalOps.spawnTerminal({ id, kind: 'agent', command, cwd: ws, stage, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })
     }
     setLaunchAgent(launchAgent)
     setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its claude terminal record (no auto-restart, no exited ghost)
@@ -255,6 +350,27 @@ app.whenReady().then(() => {
     app.on('before-quit', () => clearInterval(t))
   }
 
+  // Kernel fault model: tell BOTH inhabitants when the previous run died without a clean shutdown.
+  // The dirty bit is the truth source (covers SIGSEGV / SIGKILL / power loss); the DiagnosticReports
+  // scan adds the WHY on macOS when it can. `concurrent` means the previous record's pid is still
+  // alive — that's another BlitzOS on this root (not a crash): warn loudly, never false-report. The
+  // agent gets a trigger:'system' moment (it decides significance); the human gets a chat line, which
+  // also lands in chat.md — the brains' boot memory.
+  if (bootJournal?.concurrent) {
+    console.error(
+      `[boot] another BlitzOS (pid ${bootJournal.prev?.pid}, mode ${bootJournal.prev?.mode}) appears to be running on this workspaces root — two hosts on one root WILL fight over files. Close one of them.`
+    )
+  } else if (bootJournal?.dirty) {
+    const upTo = bootJournal.lastAliveAt || Date.now()
+    const report = scanCrashReports(upTo, Date.now(), bootJournal.prev?.pid)
+    const when = new Date(report?.at || upTo).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    const why = report ? ` (${report.detail})` : ''
+    const line = `Recovered from a crash: the previous BlitzOS process died around ${when}${why} without a clean shutdown. Workspaces were restored from disk; edits made in the last moments before the crash may have been lost.`
+    console.error('[boot] ' + line)
+    emitSystemMoment('crash', line, { at: report?.at || upTo, ...(report ? { detail: report.detail } : {}) })
+    osSay(line)
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -264,8 +380,50 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   osFlushWorkspace()
   try { electronTerminalOps.stopHosts() } catch { /* ignore */ } // flush terminal scrollback + close tmux control clients (terminals survive)
+  bootJournal?.markClean() // LAST: "clean shutdown" means everything above flushed first
 })
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+
+// Best-effort macOS crash-report scan: find the Electron .ips in ~/Library/Logs/DiagnosticReports
+// whose header timestamp falls inside the previous run's death window. The .ips is two JSON docs —
+// a one-line header {timestamp, app_name} then the body {pid, termination, exception} — so we can
+// match OUR pid strictly when the body parses (another Electron app crashing in the window must not
+// be blamed). Returns the most recent match or null; every step is failure-tolerant by design.
+function scanCrashReports(fromTs: number, toTs: number, pid?: number): { at: number; detail: string } | null {
+  try {
+    const dir = join(app.getPath('home'), 'Library', 'Logs', 'DiagnosticReports')
+    let best: { at: number; detail: string } | null = null
+    for (const name of readdirSync(dir)) {
+      if (!/^Electron-.*\.ips$/.test(name)) continue
+      try {
+        const file = join(dir, name)
+        const st = statSync(file)
+        if (st.size > 8 * 1024 * 1024 || st.mtimeMs < fromTs - 120_000) continue
+        const raw = readFileSync(file, 'utf8')
+        const nl = raw.indexOf('\n')
+        if (nl <= 0) continue
+        const head = JSON.parse(raw.slice(0, nl)) as { timestamp?: string }
+        const at = Date.parse(String(head.timestamp || ''))
+        if (!Number.isFinite(at) || at < fromTs - 90_000 || at > toTs + 5_000) continue
+        let detail = 'native crash'
+        try {
+          const body = JSON.parse(raw.slice(nl + 1)) as { pid?: number; termination?: { indicator?: string; signal?: number }; exception?: { type?: string } }
+          if (pid != null && body.pid != null && body.pid !== pid) continue // someone else's Electron
+          const term = body.termination || {}
+          detail = [body.exception?.type, term.indicator || (term.signal != null ? `signal ${term.signal}` : '')].filter(Boolean).join(', ') || detail
+        } catch {
+          /* header-only match is still useful */
+        }
+        if (!best || at > best.at) best = { at, detail }
+      } catch {
+        /* unreadable report — skip */
+      }
+    }
+    return best
+  } catch {
+    return null
+  }
+}
