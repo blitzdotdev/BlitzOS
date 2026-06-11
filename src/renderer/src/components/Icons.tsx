@@ -86,6 +86,24 @@ export const IconChevronDown = (p: P): JSX.Element => (
     <path d="M6 9l6 6 6-6" />
   </Svg>
 )
+export const IconArrowLeft = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M19 12H5M12 5l-7 7 7 7" />
+  </Svg>
+)
+export const IconArrowRight = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M5 12h14M12 5l7 7-7 7" />
+  </Svg>
+)
+export const IconRefresh = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" />
+    <path d="M4 4v4h4" />
+    <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16" />
+    <path d="M20 20v-4h-4" />
+  </Svg>
+)
 export const IconLock = (p: P): JSX.Element => (
   <Svg {...p}>
     <rect x="5" y="11" width="14" height="9" rx="2" />

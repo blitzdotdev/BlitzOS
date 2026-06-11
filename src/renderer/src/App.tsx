@@ -1171,7 +1171,7 @@ export default function App(): JSX.Element {
 
   function addBrowser(): void {
     // let the store cascade + clamp onto the desktop
-    createSurface({ kind: 'web', url: 'https://news.ycombinator.com', title: 'Hacker News' })
+    createSurface({ kind: 'web', url: 'https://www.google.com', title: 'Google' })
   }
 
   function visibleWorldCenter(): { x: number; y: number } {

@@ -9,7 +9,7 @@ import { SessionsPanel } from './SessionsPanel'
 import { InboxPanel } from './InboxPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
 import { UI_KIT } from '../widget-ui-kit'
-import { IconEye } from './Icons'
+import { IconArrowLeft, IconArrowRight, IconEye, IconRefresh } from './Icons'
 import { FolderWidget } from './FolderWidget'
 import { FileWidget, DirWidget } from './FileWidget'
 import { FileManager } from './FileManager'
@@ -20,10 +20,21 @@ type BridgeReply = { ok: boolean; data?: unknown; error?: string }
 
 interface WebviewMethods {
   loadURL(url: string): Promise<void>
+  goBack(): void
+  goForward(): void
   reload(): void
+  canGoBack(): boolean
+  canGoForward(): boolean
+  isLoading?(): boolean
   setZoomFactor(factor: number): void
   getWebContentsId(): number
   getURL(): string
+}
+
+type BrowserNavState = {
+  canGoBack: boolean
+  canGoForward: boolean
+  isLoading: boolean
 }
 
 function AppEmptyState(): JSX.Element {
@@ -91,6 +102,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const initialUrl = useRef(surface.url)
   const serverMode = !!window.agentOS?.serverMode
   const [draft, setDraft] = useState(surface.url ?? '') // address-bar draft text (web/app surfaces)
+  const [browserNav, setBrowserNav] = useState<BrowserNavState>({ canGoBack: false, canGoForward: false, isLoading: false })
   const zoom = surface.zoom ?? 1
 
   // If this surface unmounts mid-drag (the agent closes it, a reconcile removes its file, a folder
@@ -170,6 +182,55 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     }
   }, [surface.kind, surface.id, serverMode])
 
+  // web (Electron) only: local browser chrome state. This is intentionally NOT persisted in the
+  // surface model; it reflects the live guest history/loading state.
+  useEffect(() => {
+    if (surface.kind !== 'web' || serverMode) {
+      setBrowserNav({ canGoBack: false, canGoForward: false, isLoading: false })
+      return
+    }
+    const el = webviewRef.current as (HTMLElement & WebviewMethods) | null
+    if (!el) return
+    const update = (): void => {
+      try {
+        setBrowserNav({
+          canGoBack: !!el.canGoBack?.(),
+          canGoForward: !!el.canGoForward?.(),
+          isLoading: !!el.isLoading?.()
+        })
+      } catch {
+        setBrowserNav((cur) => ({ ...cur, canGoBack: false, canGoForward: false }))
+      }
+    }
+    const onStart = (): void => {
+      setBrowserNav((cur) => ({ ...cur, isLoading: true }))
+      update()
+    }
+    const onStop = (): void => {
+      setBrowserNav((cur) => ({ ...cur, isLoading: false }))
+      update()
+    }
+    const onTitle = (e: Event): void => {
+      const title = (e as unknown as { title?: string }).title
+      if (title) useDesktop.getState().updateSurface(surface.id, { title })
+    }
+    el.addEventListener('dom-ready', update)
+    el.addEventListener('did-start-loading', onStart)
+    el.addEventListener('did-stop-loading', onStop)
+    el.addEventListener('did-navigate', update)
+    el.addEventListener('did-navigate-in-page', update)
+    el.addEventListener('page-title-updated', onTitle)
+    update()
+    return () => {
+      el.removeEventListener('dom-ready', update)
+      el.removeEventListener('did-start-loading', onStart)
+      el.removeEventListener('did-stop-loading', onStop)
+      el.removeEventListener('did-navigate', update)
+      el.removeEventListener('did-navigate-in-page', update)
+      el.removeEventListener('page-title-updated', onTitle)
+    }
+  }, [surface.kind, surface.id, serverMode])
+
   // web (Electron) only: navigate IMPERATIVELY when the store url diverges from the live location —
   // i.e. an agent/programmatic update_surface, not the user's own navigation (which the sync effect
   // above already folded into the store, so getURL() already matches and we skip the reload).
@@ -191,7 +252,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   function normalizeUrl(s: string): string {
     const t = s.trim()
     if (!t || /^https?:\/\//i.test(t)) return t
-    return 'https://' + t
+    if (/^[^\s/]+\.[^\s/]+(?::\d+)?(?:\/.*)?$/i.test(t) || /^[^\s/:]+:\d+(?:\/.*)?$/i.test(t) || /^localhost(?::\d+)?(?:\/.*)?$/i.test(t) || /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:\/.*)?$/i.test(t)) {
+      return 'https://' + t
+    }
+    return `https://www.google.com/search?q=${encodeURIComponent(t)}`
   }
   // Address-bar submit: navigate THIS surface. app (iframe) → set src through the store; web → loadURL
   // (Electron) or serverNavigate (server preview), keeping the store url/title in sync either way.
@@ -214,6 +278,50 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       }
       useDesktop.getState().updateSurface(surface.id, { url: u, title })
     } else (webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
+  }
+
+  function goBack(): void {
+    if (surface.kind !== 'web' || serverMode || !browserNav.canGoBack) return
+    try {
+      ;(webviewRef.current as unknown as WebviewMethods | null)?.goBack()
+    } catch {
+      /* guest not ready */
+    }
+  }
+
+  function goForward(): void {
+    if (surface.kind !== 'web' || serverMode || !browserNav.canGoForward) return
+    try {
+      ;(webviewRef.current as unknown as WebviewMethods | null)?.goForward()
+    } catch {
+      /* guest not ready */
+    }
+  }
+
+  function refreshSurface(): void {
+    setBrowserNav((cur) => ({ ...cur, isLoading: true }))
+    if (surface.kind === 'web') {
+      if (serverMode) {
+        window.agentOS?.serverReload?.(surface.id)
+        window.setTimeout(() => {
+          setBrowserNav((cur) => ({ ...cur, isLoading: false }))
+        }, 900)
+        return
+      }
+      try {
+        ;(webviewRef.current as unknown as WebviewMethods | null)?.reload()
+      } catch {
+        setBrowserNav((cur) => ({ ...cur, isLoading: false }))
+      }
+      return
+    }
+    if (surface.kind === 'app' && surface.url) {
+      const el = iframeRef.current
+      if (el) el.src = surface.url
+      window.setTimeout(() => {
+        setBrowserNav((cur) => ({ ...cur, isLoading: false }))
+      }, 700)
+    }
   }
 
   // Server mode: mount the streamed <canvas> for this web surface (draws screencast
@@ -597,6 +705,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         if (!surface.url) return <AppEmptyState />
         return (
           <iframe
+            ref={iframeRef}
             title={surface.title}
             src={surface.url}
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
@@ -714,15 +823,28 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           </button>
         )}
         {surface.kind === 'web' || surface.kind === 'app' ? (
-          <form className="window-url" onSubmit={go} onPointerDown={stop}>
-            <input
-              value={draft}
-              spellCheck={false}
-              placeholder="url…"
-              onChange={(e) => setDraft(e.target.value)}
-              onPointerDown={stop}
-            />
-          </form>
+          <div className="browser-chrome" onPointerDown={stop}>
+            <div className="browser-controls">
+              <button className="browser-nav-btn" title="Back" disabled={surface.kind !== 'web' || serverMode || !browserNav.canGoBack} onClick={goBack}>
+                <IconArrowLeft size={13} />
+              </button>
+              <button className="browser-nav-btn" title="Forward" disabled={surface.kind !== 'web' || serverMode || !browserNav.canGoForward} onClick={goForward}>
+                <IconArrowRight size={13} />
+              </button>
+              <button className="browser-nav-btn" title="Refresh" disabled={surface.kind === 'app' && !surface.url} onClick={refreshSurface}>
+                <IconRefresh size={13} />
+              </button>
+            </div>
+            <form className="window-url" onSubmit={go}>
+              <input
+                value={draft}
+                spellCheck={false}
+                placeholder="Search or enter URL"
+                onChange={(e) => setDraft(e.target.value)}
+                onPointerDown={stop}
+              />
+            </form>
+          </div>
         ) : (
           <div className="window-bar-fill" />
         )}

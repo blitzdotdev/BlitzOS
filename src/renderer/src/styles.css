@@ -1085,6 +1085,45 @@ button {
   flex: 1 1 auto;
 }
 
+.browser-chrome {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.browser-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.browser-nav-btn {
+  width: 24px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.browser-nav-btn:hover:not(:disabled) {
+  background: var(--control);
+  color: var(--text);
+  border-color: var(--hairline);
+}
+.browser-nav-btn:disabled {
+  color: color-mix(in srgb, var(--text-muted) 52%, transparent);
+  cursor: default;
+}
 /* Address bar for web/app surfaces — view + edit the URL. Matches the window chrome:
    control surface, hairline border, mono URL text, accent on focus (never default blue). */
 .window-url {
