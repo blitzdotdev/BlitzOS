@@ -68,6 +68,9 @@ export function safeName(name: unknown): string | null
 /** Resolve a name to a realpath-jailed absolute path under root (or null). */
 export function resolveWorkspace(root: string, name: string, opts: { mustExist: boolean }): string | null
 
+/** Append one chat message to a workspace folder's chat[-<sessionId>].md (path-based; any workspace). */
+export function appendChatMessage(dir: string, role: 'user' | 'agent', text: string, sessionId?: string, meta?: Record<string, unknown>): void
+
 /** List workspace folders under root, newest-edited first. */
 export function listWorkspaces(root: string): WorkspaceEntry[]
 

@@ -392,13 +392,15 @@ export function makeOsTools(ops) {
       path: '/events',
       description:
         "Long-poll the user's activity, coalesced into framed 'moments' (batched ~15s; flushed immediately on navigation or going idle after acting). Each moment carries a snapshot of the surface so you can react without a second read: {seq,surfaceId,url,title,trigger,signals,user[],snapshot}. THE AUTONOMY LOOP: start since=0, loop with since=latest and wait=25; on each moment decide whether to act, then build/arrange surfaces to help.",
-      input_schema: { type: 'object', properties: { since: { type: 'number' }, wait: { type: 'number' }, session: { type: 'string' } } },
+      input_schema: { type: 'object', properties: { since: { type: 'number' }, wait: { type: 'number' }, session: { type: 'string' }, workspace: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)
         const since = Number(a.since) || 0
         const wait = Math.min(Math.max(a.wait == null ? 25 : Number(a.wait) || 0, 0), 25)
         // `session` scopes the stream to ONE chat session's messages (default '0' = primary chat).
-        const events = await waitForEvents(since, wait * 1000, a.session != null ? String(a.session) : '0')
+        // `workspace` pins the stream to ONE workspace's moments (agents are born pinned via bootstrap)
+        // — a background workspace's agent must never see, or answer, another workspace's activity.
+        const events = await waitForEvents(since, wait * 1000, a.session != null ? String(a.session) : '0', a.workspace != null ? String(a.workspace) : null)
         return { events, latest: latestSeq(), reminder: EVENTS_REMINDER }
       }
     },
@@ -406,12 +408,14 @@ export function makeOsTools(ops) {
       path: '/say',
       description:
         "Send a chat message to the USER (their in-canvas Chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. To SHOW a visual, do BOTH: keep the real SOURCE open as a web surface (the live page it's from), AND screenshot it (surface_control {action:'screenshot'} returns base64 PNG) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary sessions MUST pass {session:'<your id>'} so it lands in YOUR chat.",
-      input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, session: { type: 'string' } } },
+      input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, session: { type: 'string' }, workspace: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
         const text = String(b.text || '')
         if (!text) return { status: 400, body: { error: 'text required' } }
-        ops.say(text, b.session != null ? String(b.session) : '0')
+        // `workspace` routes the message to the AGENT'S OWN workspace transcript (pinned via bootstrap),
+        // so a background workspace's say never lands in whichever workspace happens to be active.
+        ops.say(text, b.session != null ? String(b.session) : '0', b.workspace != null ? String(b.workspace) : undefined)
         return { ok: true }
       }
     },

@@ -43,11 +43,12 @@ import {
   emitUserMessage,
   emitSurfaceAction,
   emitSystemMoment,
+  setWorkspaceProvider,
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
 // Boot journal (crash dirty-bit + root lease) — the SAME root-state store the Electron main uses.
-import { openBootJournal } from '../src/main/workspace.mjs'
+import { openBootJournal, resolveWorkspace, appendChatMessage } from '../src/main/workspace.mjs'
 import { prepareAgentLaunch } from '../src/main/agent-session.mjs'
 // The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
 // the relay can't diverge between the two modes again. Only the adapter (publish url/status) differs.
@@ -435,6 +436,8 @@ function broadcast(obj) {
 // watch+reconcile / switch / list / create / thumbnail), used HERE and by Electron main (osActions).
 // Server-only adapter bits: broadcast over SSE; realize web surfaces via reconcileSurfaces (headless
 // targets — Electron passes a no-op since the renderer owns its <webview>s).
+// v2 bleed fix: stamp every perception moment with the active workspace (same as Electron main).
+setWorkspaceProvider(() => { try { return wsHost.active() } catch { return null } })
 const wsHost = createWorkspaceHost({
   root: WORKSPACES_ROOT,
   initialName: INITIAL_WS,
@@ -665,7 +668,15 @@ const serverOps = {
     if (!SERVER_MODE || !host || !host.has(id)) return { ok: false, error: 'in-window control needs server mode (BLITZ_SERVER_MODE=1) or the desktop app; this surface has no server browser target' }
     return controlSession(host.session(id), action)
   },
-  say: (text, sessionId) => wsHost.appendChat('agent', String(text), sessionId), // append to that session's chat.md + broadcast
+  // v2 bleed fix: a workspace-pinned agent's say routes to ITS OWN workspace's transcript when that
+  // workspace isn't active (path-based append; its widgets hydrate on switch-in).
+  say: (text, sessionId, workspace) => {
+    if (workspace && workspace !== wsHost.active()) {
+      const dir = resolveWorkspace(WORKSPACES_ROOT, String(workspace), { mustExist: true })
+      if (dir) return appendChatMessage(dir, 'agent', String(text), String(sessionId ?? '0'))
+    }
+    return wsHost.appendChat('agent', String(text), sessionId) // append to that session's chat.md + broadcast
+  },
   customizeWidget: (name, html, sessionId) => wsHost.customizeWidget(String(name), String(html), sessionId),
   // Open a new chat session: register + surface it; addChatSession launches its claude terminal (launchAgent).
   // focus:true (a USER '+ New') tells the renderer to follow the camera to the new area.

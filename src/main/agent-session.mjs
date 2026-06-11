@@ -10,7 +10,7 @@
 // Both transports (Electron + server) import THIS one file — no per-transport fork.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
 const metaPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'meta.json')
@@ -35,10 +35,13 @@ export function setBootTaskProvider(fn) {
  *  (blitzos-agents.md) is the SINGLE source of truth for identity, the /events loop, every tool, window
  *  management, and the design language — this stays a thin pointer and does NOT restate behavior. Multi-line
  *  is fine: it lives in a file, so it never touches the tmux control-mode command line (which rejects LF). */
-export function buildBootstrap(_url, sessionId = '0', bootTask = null) {
+export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace = null) {
   const primary = !sessionId || String(sessionId) === '0'
   const chatFile = primary ? 'chat.md' : `chat-${sessionId}.md`
-  const sess = primary ? '' : `,"session":"${sessionId}"` // non-primary agents MUST scope /events + /say to their session
+  // v2 bleed fix: an agent is PINNED to its workspace — every /events + /say carries it, so a
+  // background workspace's agent never sees (or answers into) another workspace's chat.
+  const wsPin = workspace ? `,"workspace":"${String(workspace).replace(/"/g, '')}"` : ''
+  const sess = (primary ? '' : `,"session":"${sessionId}"`) + wsPin // non-primary agents MUST scope /events + /say to their session
   const B = '"$(cat ' + RELAY_URL_FILE + ')"' // every URL is built fresh from the file on each curl
   return [
     primary
@@ -97,9 +100,11 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
   try {
     bootTask = bootTaskProvider ? bootTaskProvider(String(id)) : null
   } catch { /* a broken provider never blocks a launch */ }
+  // sessionsDir = <workspace>/.blitzos/sessions → the workspace NAME pins this agent (v2 bleed fix).
+  const workspace = basename(dirname(dirname(sessionsDir)))
   try {
     mkdirSync(sessionDir(sessionsDir, id), { recursive: true })
-    writeFileSync(file, buildBootstrap(url, id, bootTask))
+    writeFileSync(file, buildBootstrap(url, id, bootTask, workspace))
     writeRelayUrl(dirname(sessionsDir), url) // <ws>/.blitzos/relay-url — the live base the agent re-reads per call
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
   return {

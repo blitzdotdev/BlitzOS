@@ -29,7 +29,9 @@ export function emitConnectorChange(provider: string, connected: boolean): void
 export function emitAnnotation(surfaceId: string, text: string, anchor?: { xPct: number; yPct: number }, snapshot?: string): void
 /** An OS-level event both inhabitants should know about (crash recovery, update, restore…). */
 export function emitSystemMoment(kind: string, line: string, detail?: Record<string, unknown>): void
-export function waitForEvents(since: number, maxMs: number, sessionId?: string): Promise<BlitzMoment[]>
+export function waitForEvents(since: number, maxMs: number, sessionId?: string, workspace?: string | null): Promise<BlitzMoment[]>
+/** Register the active-workspace provider; every emitted moment is stamped with it (v2 bleed fix). */
+export function setWorkspaceProvider(fn: (() => string | null | undefined) | null): void
 export const EVENTS_REMINDER: string
 
 /** In-page sensor installer (evaluate in a web surface). */

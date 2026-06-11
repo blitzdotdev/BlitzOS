@@ -3,9 +3,9 @@ import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
-import { ingestSignals, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, INJECT, DRAIN } from './events'
+import { ingestSignals, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
-import { safeName } from './workspace.mjs'
+import { safeName, appendChatMessage, resolveWorkspace } from './workspace.mjs'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -95,6 +95,9 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   let initialName = process.env.BLITZ_WORKSPACE ? basename(resolve(process.env.BLITZ_WORKSPACE)) : 'Home'
   if (!safeName(initialName)) initialName = 'Home'
   wsRoot = root
+  // v2 bleed fix: every perception moment is stamped with the workspace that was active when it
+  // happened, so workspace-pinned agents (/events {workspace}) never see another desktop's activity.
+  setWorkspaceProvider(() => wsHost?.active() || null)
   wsHost = createWorkspaceHost({
     root,
     initialName,
@@ -395,8 +398,19 @@ export function osCloseSurface(id: string): MutationResult {
 export function osGoToPrimary(): void {
   send('goToPrimary')
 }
-/** Agent → user: append a chat message to a session's chat.md and broadcast it to that session's widget. */
-export function osSay(text: string, sessionId = '0'): void {
+/** Agent → user: append a chat message to a session's chat.md and broadcast it to that session's widget.
+ *  `workspace` (v2 bleed fix) routes a PINNED agent's say to ITS OWN workspace's transcript: when it
+ *  names a workspace that is not the active one, the message is appended to that folder's chat file
+ *  directly (no broadcast — its widgets aren't live; they hydrate the transcript on switch-in). */
+export function osSay(text: string, sessionId = '0', workspace?: string): void {
+  if (workspace && wsHost && workspace !== wsHost.active()) {
+    const dir = wsRoot ? resolveWorkspace(wsRoot, workspace, { mustExist: true }) : null
+    if (dir) {
+      appendChatMessage(dir, 'agent', text, String(sessionId))
+      return
+    }
+    // unknown workspace name → fall through to the active chat rather than silently dropping the message
+  }
   wsHost?.appendChat('agent', text, sessionId)
   onChatActivity?.(String(sessionId), false) // keep an EXISTING local brain alive through long work; never spawn
 }

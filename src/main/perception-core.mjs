@@ -36,7 +36,21 @@ const waiters = []
 // session's agent only sees + answers ITS chat. All OTHER (activity/canvas) moments go to the PRIMARY
 // session ('0') only — the desktop-watcher — so spawning N chat agents doesn't wake them all on canvas
 // churn. seq stays a single global counter, so an agent's `since` cursor advances past filtered moments.
-function visibleTo(moment, sessionId) {
+// WORKSPACE scoping (v2 of the cross-workspace bleed fix): every moment is stamped with the workspace
+// that was ACTIVE when it was emitted (the provider is registered by each transport's host wiring), and
+// a waiter that declares its workspace only sees that workspace's moments. Session ids repeat across
+// workspaces ('0' everywhere), so without this a background workspace's agent answers the active one's
+// chat. An unscoped waiter (no workspace declared — legacy callers, trusted local tools) sees everything.
+let workspaceProvider = null
+export function setWorkspaceProvider(fn) {
+  workspaceProvider = typeof fn === 'function' ? fn : null
+}
+function currentWorkspace() {
+  try { return workspaceProvider ? workspaceProvider() || null : null } catch { return null }
+}
+function visibleTo(moment, sessionId, workspace) {
+  // A moment belongs to ONE workspace; an agent pinned to a workspace never sees another's moments.
+  if (workspace && moment.workspace && String(moment.workspace) !== String(workspace)) return false
   const sid = String(sessionId || '0')
   // A chat 'message' and an 'action' (e.g. an action-item the human resolved) are PRIVATE to the session
   // they target — only that session's agent is woken. So a non-primary session that called request_action
@@ -147,12 +161,24 @@ function armSelectFlush(surfaceId) {
  *  see, per visibleTo). The ONE place moments enter the stream — every emitter funnels here so the
  *  ring cap + waiter wake can never drift between emitters. */
 function emit(moment) {
+  if (!moment.workspace) {
+    const ws = currentWorkspace()
+    if (ws) moment.workspace = ws // stamp ONCE at the funnel — every emitter inherits the scoping
+  }
   LOG.push(moment)
   if (LOG.length > MAX) LOG.splice(0, LOG.length - MAX)
+  // Wake ONLY the waiters that can SEE this moment — the rest keep sleeping (an invisible moment
+  // must not early-resolve a pinned agent's long-poll with an empty slice).
+  const keep = []
   for (const w of waiters.splice(0)) {
-    clearTimeout(w.timer)
-    w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId)))
+    if (visibleTo(moment, w.sessionId, w.workspace)) {
+      clearTimeout(w.timer)
+      w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId, w.workspace)))
+    } else {
+      keep.push(w)
+    }
   }
+  waiters.push(...keep)
 }
 
 function flush(surfaceId, trigger) {
@@ -286,19 +312,21 @@ export function emitSystemMoment(kind, line, detail) {
 }
 
 /** Long-poll for a session: resolve immediately if there are moments visible to `sessionId` after
- *  `since`, else wait up to maxMs. Each session only sees its own messages (+ activity for the primary). */
-export function waitForEvents(since, maxMs, sessionId = '0') {
-  const have = LOG.filter((m) => m.seq > since && visibleTo(m, sessionId))
+ *  `since`, else wait up to maxMs. Each session only sees its own messages (+ activity for the primary).
+ *  `workspace` (optional) pins the waiter: it then sees ONLY that workspace's moments. */
+export function waitForEvents(since, maxMs, sessionId = '0', workspace = null) {
+  const have = LOG.filter((m) => m.seq > since && visibleTo(m, sessionId, workspace))
   if (have.length > 0 || maxMs <= 0) return Promise.resolve(have)
   return new Promise((resolve) => {
     const w = {
       since,
       sessionId,
+      workspace,
       resolve,
       timer: setTimeout(() => {
         const i = waiters.indexOf(w)
         if (i >= 0) waiters.splice(i, 1)
-        resolve(LOG.filter((m) => m.seq > since && visibleTo(m, sessionId)))
+        resolve(LOG.filter((m) => m.seq > since && visibleTo(m, sessionId, workspace)))
       }, maxMs)
     }
     waiters.push(w)
