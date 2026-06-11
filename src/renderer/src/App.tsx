@@ -14,7 +14,7 @@ import { AnnotationLayer } from './components/AnnotationLayer'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
 import { SurfaceLauncherButton, type SurfaceLauncherKind } from './components/SurfaceLauncherButton'
-import { IconChat, IconSparkle, IconGrid, IconChevronDown, IconCheck } from './components/Icons'
+import { IconChat, IconSparkle, IconGrid, IconChevronDown, IconCheck, IconInbox, IconSessions, IconTerminal } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
@@ -25,6 +25,7 @@ import { ContextMenu } from './components/ContextMenu'
 const SHOW_INTEGRATION_CARDS = false
 type DockAnimationPhase = 'minimizing' | 'restoring'
 type ToolbarTooltip = { text: string; left: number; top: number }
+type AdvancedPopoverPosition = { left: number; top: number }
 const WIDGET_PLACEHOLDER_HTML = `
 <style>
   body {
@@ -284,6 +285,8 @@ export default function App(): JSX.Element {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [aiUrl, setAiUrl] = useState<string | null>(null)
   const [showAi, setShowAi] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [advancedPosition, setAdvancedPosition] = useState<AdvancedPopoverPosition | null>(null)
   // Agent relay connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [showOverview, setShowOverview] = useState(false)
@@ -333,6 +336,7 @@ export default function App(): JSX.Element {
   const toolbarTipWarm = useRef(false)
   const toolbarTipVisible = useRef(false)
   const toolbarTipSuppressFocus = useRef(false)
+  const advancedButtonRef = useRef<HTMLButtonElement>(null)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [toolbarTooltip, setToolbarTooltip] = useState<ToolbarTooltip | null>(null)
   const [aiCopied, setAiCopied] = useState(false)
@@ -431,6 +435,23 @@ export default function App(): JSX.Element {
     if (!aiUrl) return
     await navigator.clipboard?.writeText(aiUrl)
     setAiCopied(true)
+  }
+
+  function openTerminalSession(): void {
+    ;(window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })
+  }
+
+  function toggleAdvanced(): void {
+    const r = advancedButtonRef.current?.getBoundingClientRect()
+    if (r) {
+      const popoverWidth = 286
+      setAdvancedPosition({
+        left: Math.max(12, Math.min(window.innerWidth - popoverWidth - 12, Math.round(r.left + r.width / 2 - popoverWidth / 2))),
+        top: Math.max(44, Math.round(r.top - 146))
+      })
+    }
+    setShowAi(false)
+    setShowAdvanced((v) => !v)
   }
 
   // Smoothly tween the camera (used when entering/leaving control mode).
@@ -1493,7 +1514,7 @@ export default function App(): JSX.Element {
       )}
 
       <div className="toolbar-shell">
-        <div className="toolbar toolbar-main">
+        <div className="toolbar toolbar-nav">
           {hasWorkspaces && (
             <button className="ws-btn" onClick={() => void openOverview()} {...toolbarTip('Workspaces')}>
               <IconGrid size={14} />
@@ -1510,11 +1531,21 @@ export default function App(): JSX.Element {
               <button className="area-arrow" disabled={currentArea >= areaCount - 1} onClick={() => switchArea(1)} aria-label="Next area">›</button>
             </span>
           )}
+        </div>
+        <div className="toolbar toolbar-main">
           <SurfaceLauncherButton onCreateSurface={createFromLauncher} buttonProps={toolbarTip('Create surface')} />
           <button onClick={openChat} {...toolbarTip('Primary chat')}>
             <IconChat size={15} /> Chat
           </button>
-          <button onClick={() => setShowAi((v) => !v)} {...toolbarTip('Connection URL for your agent')}>
+          <button
+            onClick={openInbox}
+            {...toolbarTip('Action items from your agent')}
+          >
+            <IconInbox size={15} /> Inbox
+            {inboxPending > 0 && <span className="inbox-badge">{inboxPending}</span>}
+          </button>
+          <span className="toolbar-divider" aria-hidden="true" />
+          <button onClick={() => { setShowAdvanced(false); setShowAi((v) => !v) }} {...toolbarTip('Connection URL for your agent')}>
             <span className="connect-ai-icon" style={{ color: aiUrl ? 'var(--positive, #3fb950)' : 'var(--text-muted)' }}>
               <IconSparkle size={17} />
             </span>
@@ -1530,25 +1561,13 @@ export default function App(): JSX.Element {
             </span>
           )}
         </div>
-        <div className="toolbar toolbar-secondary">
+        <div className="toolbar toolbar-advanced">
           <button
-            onClick={openInbox}
-            {...toolbarTip('Action items from your agent')}
+            ref={advancedButtonRef}
+            onClick={toggleAdvanced}
+            {...toolbarTip('Advanced tools')}
           >
-            ☑ Inbox
-            {inboxPending > 0 && <span className="inbox-badge">{inboxPending}</span>}
-          </button>
-          <button
-            onClick={openSessions}
-            {...toolbarTip('Every shell / agent in this workspace')}
-          >
-            ▤ Sessions
-          </button>
-          <button
-            onClick={() => (window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })}
-            {...toolbarTip('Open terminal session')}
-          >
-            ⌗ Terminal
+            Advanced
           </button>
         </div>
       </div>
@@ -1559,6 +1578,43 @@ export default function App(): JSX.Element {
           </div>,
           document.body
         )}
+
+      {showAdvanced && (
+        <div className="advanced-backdrop" onPointerDown={() => setShowAdvanced(false)}>
+          <div
+            className="advanced-popover"
+            style={advancedPosition ? { left: advancedPosition.left, top: advancedPosition.top } : undefined}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <button
+              className="advanced-action"
+              onClick={() => {
+                setShowAdvanced(false)
+                openSessions()
+              }}
+            >
+              <IconSessions size={17} />
+              <span className="advanced-action-copy">
+                <span className="advanced-action-title">Sessions</span>
+                <span className="advanced-action-sub">Every shell / agent in this workspace</span>
+              </span>
+            </button>
+            <button
+              className="advanced-action"
+              onClick={() => {
+                setShowAdvanced(false)
+                openTerminalSession()
+              }}
+            >
+              <IconTerminal size={17} />
+              <span className="advanced-action-copy">
+                <span className="advanced-action-title">Terminal</span>
+                <span className="advanced-action-sub">Open terminal session</span>
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {showAi && (
         <div className="hud-backdrop" onPointerDown={() => setShowAi(false)}>

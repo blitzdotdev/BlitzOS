@@ -76,6 +76,24 @@ export const IconNote = (p: P): JSX.Element => (
     <path d="M14 3v4h4M9 13h6M9 17h4" />
   </Svg>
 )
+export const IconInbox = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M4 5h16v14H4z" />
+    <path d="M8 12l2.5 2.5L16 9" />
+  </Svg>
+)
+export const IconSessions = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M5 7h14M5 12h14M5 17h14" />
+    <path d="M3 7h.01M3 12h.01M3 17h.01" />
+  </Svg>
+)
+export const IconTerminal = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M4 5h16v14H4z" />
+    <path d="M8 9l3 3-3 3M13 15h4" />
+  </Svg>
+)
 export const IconChat = (p: P): JSX.Element => (
   <Svg {...p}>
     <path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5Z" />

@@ -1363,6 +1363,17 @@ button {
     var(--shadow-md);
   pointer-events: auto;
 }
+.toolbar-advanced {
+  padding: 8px;
+}
+.toolbar-divider {
+  align-self: stretch;
+  width: 1px;
+  min-height: 24px;
+  margin: 2px 1px;
+  background: var(--hairline);
+  opacity: 0.75;
+}
 .toolbar button {
   display: inline-flex;
   align-items: center;
@@ -1434,6 +1445,68 @@ button {
 .area-ctl button:disabled {
   opacity: 0.4;
   cursor: default;
+}
+.advanced-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+}
+.advanced-popover {
+  position: absolute;
+  width: 286px;
+  max-width: 88vw;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border-radius: var(--radius-panel);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-lg);
+}
+.advanced-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  border: none;
+  border-radius: var(--radius-button);
+  padding: 10px 12px;
+  background: var(--control);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--edge-highlight);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.advanced-action:hover {
+  background: var(--control-hover);
+}
+.advanced-action svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+.advanced-action-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.advanced-action-title {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+.advanced-action-sub {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 /* Left dock. */
