@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { IconCheck, IconClose, IconPlus } from './Icons'
+import { IconCheck, IconClose, IconMoon, IconPlus, IconSettings, IconSun } from './Icons'
 
 // Mission Control overview: every workspace as a screen-shaped tile (16:10) showing its last-seen
 // primary-area snapshot. Responsive grid — quantized integer columns from container WIDTH (capped
@@ -15,6 +15,8 @@ interface WorkspaceEntry {
 
 interface Props {
   onClose: () => void
+  theme: 'light' | 'dark'
+  onThemeChange: (theme: 'light' | 'dark') => void
   // App captures the CURRENT board's snapshot, then switches — so the board you leave gets a fresh tile.
   // Resolves {ok:true} on success (the overview is then unmounted by the broadcast), or {ok:false,error}
   // on failure (409 lock / 404 / 500) so we clear the busy state + show the error instead of hanging.
@@ -39,13 +41,14 @@ function relTime(ms: number): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
-export function Overview({ onClose, onSwitch }: Props): JSX.Element {
+export function Overview({ onClose, onSwitch, theme, onThemeChange }: Props): JSX.Element {
   const [list, setList] = useState<WorkspaceEntry[] | null>(null)
   const [active, setActive] = useState('')
   const [newName, setNewName] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null) // the name being switched to, or 'create'
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [failed, setFailed] = useState<Set<string>>(new Set()) // workspaces whose thumb img failed to load
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null) // workspace name pending delete confirmation
   const gridRef = useRef<HTMLDivElement>(null)
@@ -169,7 +172,14 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
 
   return (
     <div className="ovr" onPointerDown={onClose}>
-      <div className="ovr-scroll" ref={scrollRef} onPointerDown={(e) => e.stopPropagation()}>
+      <div
+        className="ovr-scroll"
+        ref={scrollRef}
+        onPointerDown={(e) => {
+          e.stopPropagation()
+          setSettingsOpen(false)
+        }}
+      >
         <div className="ovr-head">
           <h2>Workspaces</h2>
           <button className="panel-x ovr-x" onClick={onClose} aria-label="Close">
@@ -246,7 +256,7 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
           )}
         </div>
 
-        <div className={`ovr-create${createOpen ? ' open' : ''}`}>
+        <div className={`ovr-create${createOpen ? ' open' : ''}`} onPointerDown={(e) => e.stopPropagation()}>
           {createOpen ? (
             <form
               className="ovr-create-form"
@@ -268,6 +278,7 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
               className="ovr-create-plus"
               onClick={() => {
                 setError(null)
+                setSettingsOpen(false)
                 setCreateOpen(true)
               }}
               disabled={!!busy}
@@ -277,6 +288,44 @@ export function Overview({ onClose, onSwitch }: Props): JSX.Element {
               <IconPlus size={24} />
             </button>
           )}
+          <span className="ovr-settings-wrap">
+            <button
+              className={`ovr-settings-btn${settingsOpen ? ' active' : ''}`}
+              type="button"
+              onClick={() => setSettingsOpen((v) => !v)}
+              aria-label="Settings"
+              title="Settings"
+            >
+              <IconSettings size={21} />
+            </button>
+            {settingsOpen && (
+              <div className="ovr-settings-popover" onPointerDown={(e) => e.stopPropagation()}>
+                <div className="ovr-settings-title">Appearance</div>
+                <button
+                  className={`ovr-theme-option${theme === 'light' ? ' active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    onThemeChange('light')
+                    setSettingsOpen(false)
+                  }}
+                >
+                  <IconSun size={16} />
+                  Light
+                </button>
+                <button
+                  className={`ovr-theme-option${theme === 'dark' ? ' active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    onThemeChange('dark')
+                    setSettingsOpen(false)
+                  }}
+                >
+                  <IconMoon size={16} />
+                  Dark
+                </button>
+              </div>
+            )}
+          </span>
         </div>
       </div>
     </div>

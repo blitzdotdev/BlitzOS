@@ -26,6 +26,17 @@ const SHOW_INTEGRATION_CARDS = false
 type DockAnimationPhase = 'minimizing' | 'restoring'
 type ToolbarTooltip = { text: string; left: number; top: number }
 type AdvancedPopoverPosition = { left: number; top: number }
+type ThemeMode = 'light' | 'dark'
+const THEME_STORAGE_KEY = 'blitzos.theme'
+
+function systemTheme(): ThemeMode {
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function readInitialTheme(): ThemeMode {
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
+  return stored === 'dark' || stored === 'light' ? stored : systemTheme()
+}
 type AnimationSourceRect = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
 const WIDGET_PLACEHOLDER_HTML = `
 <style>
@@ -305,9 +316,23 @@ export default function App(): JSX.Element {
   const [showAi, setShowAi] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [advancedPosition, setAdvancedPosition] = useState<AdvancedPopoverPosition | null>(null)
+  const [theme, setTheme] = useState<ThemeMode>(() => readInitialTheme())
   // Agent relay connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [showOverview, setShowOverview] = useState(false)
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
+    if (!mq) return
+    const onChange = (): void => {
+      const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
+      if (stored !== 'dark' && stored !== 'light') setTheme(mq.matches ? 'dark' : 'light')
+    }
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
   // The fluid file layer: whenever the slotted-tile layout (or the viewport, or the file population)
   // changes, flow the file/dir tiles around the tiles. Signature-keyed so it runs exactly when needed;
   // live drag parting is handled by SurfaceFrame (reflowFiles(ghost)) — this settles the final layout.
@@ -456,6 +481,11 @@ export default function App(): JSX.Element {
     if (!aiUrl) return
     await navigator.clipboard?.writeText(aiUrl)
     setAiCopied(true)
+  }
+
+  function chooseTheme(next: ThemeMode): void {
+    setTheme(next)
+    window.localStorage.setItem(THEME_STORAGE_KEY, next)
   }
 
   function openTerminalSession(source?: AnimationSourceRect | null): void {
@@ -1794,7 +1824,7 @@ export default function App(): JSX.Element {
         </div>
       )}
 
-      {hasWorkspaces && showOverview && <Overview onClose={() => setShowOverview(false)} onSwitch={switchWorkspace} />}
+      {hasWorkspaces && showOverview && <Overview onClose={() => setShowOverview(false)} onSwitch={switchWorkspace} theme={theme} onThemeChange={chooseTheme} />}
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
 
       {openFolder && <FolderOverlay folder={openFolder} />}
