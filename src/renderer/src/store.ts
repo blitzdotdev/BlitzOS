@@ -374,7 +374,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     if (!cur || !sl) return
     const area = cur.slotArea ?? 0
     const lat = latticeFor(st.viewport, area)
-    const occ = occupancy(st.surfaces, area, id, lat)
+    const occ = occupancy(st.surfaces, area, id)
     const idx = SIZE_ORDER.indexOf(sl.size)
     const n = SIZE_ORDER.length
     // walk the cycle, SKIPPING sizes with no free span anywhere (a crowded stage must not turn the
@@ -692,7 +692,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
           // windows, so if one already covers that span, re-place through the placer instead of
           // overlapping it (the boot-time twin of the drag-ghost overlap bug).
           if (base.role === 'chat') {
-            const occ = occupancy(surfaces as Parameters<typeof occupancy>[0], area, base.id, lat0)
+            const occ = occupancy(surfaces as Parameters<typeof occupancy>[0], area, base.id)
             const sp = spanOf(sl.size)
             let blocked = false
             for (let c = col; c < col + sp.c && !blocked; c++) for (let r2 = row; r2 < row + sp.r && !blocked; r2++) if (occ.has(c + ',' + r2)) blocked = true
@@ -902,6 +902,30 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         it.id === id ? { ...it, ...patch, props: { ...it.props, ...(patch.props ?? {}) } } : it
       )
     }))
+    // Restore-from-dock of a SLOTTED tile: a minimized tile releases its cells (occupancy skips it),
+    // so by the time it comes back its span may be taken — re-place it through the placer (nearest
+    // free span), or pop it free-form if nothing fits. Never overlap, never reflow others.
+    if (patch.minimized === false) {
+      const st = get()
+      const cur = st.surfaces.find((x) => x.id === id)
+      const sl = cur && slotOf(cur)
+      if (cur && sl) {
+        const area = cur.slotArea ?? 0
+        const lat = latticeFor(st.viewport, area)
+        const occ = occupancy(st.surfaces, area, id)
+        const sp = spanOf(sl.size)
+        let blocked = sl.col + sp.c > lat.cols || sl.row + sp.r > lat.rows
+        if (!blocked) {
+          for (let c = sl.col; c < sl.col + sp.c && !blocked; c++) for (let r = sl.row; r < sl.row + sp.r && !blocked; r++) if (occ.has(c + ',' + r)) blocked = true
+        }
+        if (blocked) {
+          const ns = nearestFreeSlot(st.surfaces, lat, sl.size, cur.x + cur.w / 2, cur.y + cur.h / 2, area, id)
+          if (ns) st.placeSurfaceSlot(id, ns.col, ns.row, sl.size, area)
+          else st.clearSurfaceSlot(id) // stage too full for its size — come back free-form, overlap-free
+        }
+        st.reflowFiles()
+      }
+    }
   },
 
   closeSurface: (id) => {

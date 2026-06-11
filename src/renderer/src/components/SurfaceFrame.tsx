@@ -671,15 +671,21 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         // genie animation plays a clone from the dock; unhidden when the phase ends.
         ...(restoring ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {}),
         ...(paper ? { background: paper.bg, color: paper.ink } : {}),
-        // The Chat + Agent-activity panels are pinned: a z-band far above any focus-raised
-        // window, so the agent (or the user) can never bury the channel/feed they rely on.
-        // A focus floater (L3, human pull-in) sits in its own band just under the pinned panels.
+        // Layered desktop (macOS model). Bands, bottom to top: slotted tiles + file/folder icons (the
+        // DESKTOP layer, raw z) → free-form windows (float above the desktop, +500k) → focus floater
+        // (+1.5M) → pinned chat/activity (+2M, never buried). Free windows therefore cover tiles
+        // instead of blocking them (the placer ignores windows entirely); a slotted tile being
+        // DRAGGED lifts above the window band so it never disappears under one mid-gesture.
         zIndex:
           surface.role === 'chat' || surface.role === 'activity' || (surface.kind === 'native' && (surface.component === 'chat' || surface.component === 'activity'))
             ? 2_000_000 + surface.z
             : surface.focus
               ? 1_500_000 + surface.z
-              : surface.z
+              : isSlotted
+                ? (isDragging ? 1_200_000 : 0) + surface.z
+                : isFileTile || isFolder
+                  ? surface.z
+                  : 500_000 + surface.z
       }}
       onPointerDown={() => focusSurface(surface.id)}
       onFocus={() => focusSurface(surface.id)} // a click INTO an iframe/webview focuses the guest, not the host — still raise this window front-most so keybinds target it

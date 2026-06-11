@@ -146,28 +146,33 @@ console.log(`fuzz: 200 fill trials done`)
   ok(!underGhost, 'avoid rect (drag ghost) displaces files too')
 }
 
-// ---- REGRESSION (2026-06-11 video): free-form windows BLOCK cells — a tile must never snap onto one ----
+// ---- REGRESSION (2026-06-11 video #3, supersedes #1): free-form windows FLOAT — they never block ----
+// The desktop is layered like macOS: tiles + icons are the desktop layer, windows float above it
+// (z-banded). A free window over the lattice must be INVISIBLE to the placer.
 {
-  // a free Notepad covering cells around (2,1)..(3,2): tiles must route around it
   const c21 = slotRect(lat, 2, 1, 's')
   const notepad = { id: 'note', kind: 'native', component: 'note', x: c21.x + 20, y: c21.y + 20, w: 320, h: 300 }
-  const occ = occupancy([notepad], 0, null, lat)
-  ok(occ.size >= 4, `free window blocks the cells it covers (${occ.size} cells)`)
+  ok(occupancy([notepad], 0).size === 0, 'a free window reserves NO cells (it floats above)')
   const hit = nearestFreeSlot([notepad], lat, 's', c21.x + 90, c21.y + 90, 0)
-  ok(hit && !occ.has(hit.col + ',' + hit.row), 'nearestFreeSlot never offers a window-covered cell')
-  const fs = findSlot([notepad], lat, 'xl', null, 0)
-  ok(!fs || !(fs.col <= 3 && fs.col + 4 > 2 && fs.row <= 2 && fs.row + 2 > 1), 'findSlot spans avoid the window')
-  // file tiles are FLUID — they never block (they move out of the way instead)
+  ok(hit && hit.col === 2 && hit.row === 1, 'tiles snap into cells under a free window')
   const file = { id: 'f', kind: 'native', component: 'file', x: c21.x + 20, y: c21.y + 20, w: 160, h: 150 }
-  ok(occupancy([file], 0, null, lat).size === 0, 'file tile does NOT block (fluid layer)')
-  // minimized / focus floater windows do not block either
-  const min = { ...notepad, id: 'm', minimized: true }
-  const foc = { ...notepad, id: 'fo', focus: true }
-  ok(occupancy([min], 0, null, lat).size === 0 && occupancy([foc], 0, null, lat).size === 0, 'minimized/focus do not block')
-  // files flow around the free window too
-  const placedF = flowFiles([{ id: 'f1', w: 160, h: 150 }, { id: 'f2', w: 160, h: 150 }], [notepad], VP, 0)
-  const underNote = placedF.some((p) => p.x < notepad.x + notepad.w && p.x + 160 > notepad.x && p.y < notepad.y + notepad.h && p.y + 150 > notepad.y)
-  ok(!underNote, 'files never flow under a free window')
+  ok(occupancy([file], 0).size === 0, 'file tile reserves no cells either (fluid layer)')
+}
+
+// ---- REGRESSION (2026-06-11 video #2): a MINIMIZED tile must not reserve cells (the dead zone) ----
+{
+  const chat = { id: 'chat', pinned: true, minimized: true, slot: { col: 0, row: 0, size: 'tall' }, slotArea: 0 }
+  ok(occupancy([chat], 0, null, lat).size === 0, 'minimized tile frees its span (no dead zone)')
+  const tl = nearestFreeSlot([chat], lat, 's', slotRect(lat, 0, 0, 's').x + 90, slotRect(lat, 0, 0, 's').y + 90, 0)
+  ok(tl && tl.col === 0 && tl.row === 0, 'top-left is placeable while the chat is minimized')
+  ok(budgetUsed([{ ...chat, pinned: false }], 0) === 0, 'minimized tile is off the budget')
+  const sum = stageSummary([chat], VP, 0)
+  ok(sum.tiles.length === 0 && sum.free_cells === sum.grid.cols * sum.grid.rows, 'summary: minimized tile not on the stage')
+  // foldered (groupId) tiles release cells the same way
+  const grouped = { id: 'g', slot: { col: 0, row: 0, size: 'l' }, slotArea: 0, groupId: 'folder1' }
+  ok(occupancy([grouped], 0, null, lat).size === 0, 'foldered tile frees its span')
+  // visible again -> occupies again
+  ok(occupancy([{ ...chat, minimized: false }], 0, null, lat).size === 6, 'restored tile re-occupies (6 cells tall)')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

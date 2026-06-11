@@ -77,47 +77,20 @@ export function slotOf(s) {
   return { col, row, size: SPANS[String(sl.size || '').toLowerCase()] ? String(sl.size).toLowerCase() : 's' }
 }
 
-/** FREE-FORM windows that BLOCK lattice cells (the chat-tile-snapped-onto-the-Notepad bug): any
- *  unslotted window is solid to the placer — a tile must never land under/over it. The fluid file
- *  layer (file/dir tiles) does NOT block (it flows out of the way), nor do minimized / foldered /
- *  focus-floater surfaces. Rects are inset so a 1px edge-kiss doesn't block a whole cell. */
-function blockerRects(surfaces, excludeId) {
-  const out = []
-  const M = 12
-  for (const s of surfaces || []) {
-    if (!s || s.id === excludeId || s.slot) continue
-    if (s.minimized || s.groupId || s.focus) continue
-    if (s.kind === 'native' && (s.component === 'file' || s.component === 'dir')) continue
-    const w = Math.max(0, (Number(s.w) || 0) - 2 * M)
-    const h = Math.max(0, (Number(s.h) || 0) - 2 * M)
-    if (w > 0 && h > 0) out.push({ x: (Number(s.x) || 0) + M, y: (Number(s.y) || 0) + M, w, h })
-  }
-  return out
-}
-
 /** Occupancy set "col,row" of every cell covered by slotted surfaces in `area` (excluding excludeId).
- *  When `lat` is passed, cells covered by FREE-FORM windows are blocked too — the total non-overlap
- *  guarantee (tile-vs-tile AND tile-vs-window). */
-export function occupancy(surfaces, area = 0, excludeId = null, lat = null) {
+ *  FREE-FORM windows do NOT block: the desktop is layered like macOS — tiles + file icons are the
+ *  desktop layer, free windows FLOAT ABOVE it (z-banded in the renderer) — so a tile snapping "under"
+ *  a window simply sits behind it, exactly like a window over desktop widgets. */
+export function occupancy(surfaces, area = 0, excludeId = null) {
   const occ = new Set()
   for (const s of surfaces || []) {
     if (!s || s.id === excludeId) continue
+    if (s.minimized || s.groupId) continue // an INVISIBLE tile must not reserve cells (the top-left dead-zone bug: a minimized chat kept its 2x3 span); restore re-places if its span got taken
     if ((s.slotArea ?? 0) !== area) continue
     const sl = slotOf(s)
     if (!sl) continue
     const sp = spanOf(sl.size)
     for (let c = sl.col; c < sl.col + sp.c; c++) for (let r = sl.row; r < sl.row + sp.r; r++) occ.add(c + ',' + r)
-  }
-  if (lat) {
-    const blocks = blockerRects(surfaces, excludeId)
-    for (const b of blocks) {
-      // only cells the rect actually spans (clamped to the lattice) — no full scan per blocker
-      const c0 = Math.max(0, Math.floor((b.x - lat.x) / TILE))
-      const c1 = Math.min(lat.cols - 1, Math.floor((b.x + b.w - lat.x) / TILE))
-      const r0 = Math.max(0, Math.floor((b.y - lat.y) / TILE))
-      const r1 = Math.min(lat.rows - 1, Math.floor((b.y + b.h - lat.y) / TILE))
-      for (let c = c0; c <= c1; c++) for (let r = r0; r <= r1; r++) occ.add(c + ',' + r)
-    }
   }
   return occ
 }
@@ -133,6 +106,7 @@ export function budgetUsed(surfaces, area = 0) {
   let used = 0
   for (const s of surfaces || []) {
     if (!s || s.pinned) continue
+    if (s.minimized || s.groupId) continue // off the stage = off the budget (mirrors occupancy)
     if ((s.slotArea ?? 0) !== area) continue
     const sl = slotOf(s)
     if (!sl) continue
@@ -161,7 +135,7 @@ const NEAR_ORDER = {
  * (top-left reading order). Returns {col,row} or null when no span fits (the stage is spatially full).
  */
 export function findSlot(surfaces, lat, size, near = null, area = 0, excludeId = null) {
-  const occ = occupancy(surfaces, area, excludeId, lat)
+  const occ = occupancy(surfaces, area, excludeId)
   const sp = spanOf(size)
   // near = a surface id -> nearest free span to that surface's slot center
   if (near && !NEAR_ORDER[near]) {
@@ -202,7 +176,7 @@ export function findSlot(surfaces, lat, size, near = null, area = 0, excludeId =
 
 /** Free span nearest a WORLD point (drag snap: the outline ghost's cell). Null when none fits. */
 export function nearestFreeSlot(surfaces, lat, size, wx, wy, area = 0, excludeId = null) {
-  const occ = occupancy(surfaces, area, excludeId, lat)
+  const occ = occupancy(surfaces, area, excludeId)
   const sp = spanOf(size)
   let best = null
   let bestD = Infinity
@@ -235,11 +209,11 @@ export function sizeForDims(w, h) {
 /** The agent-facing stage summary for list_state: lattice, occupancy, budget, free space. */
 export function stageSummary(surfaces, vp, area = 0) {
   const lat = latticeFor(vp, area)
-  const occ = occupancy(surfaces, area, null, lat)
+  const occ = occupancy(surfaces, area)
   const used = budgetUsed(surfaces, area)
   const slotted = []
   for (const s of surfaces || []) {
-    if (!s || (s.slotArea ?? 0) !== area) continue
+    if (!s || s.minimized || s.groupId || (s.slotArea ?? 0) !== area) continue
     const sl = slotOf(s)
     if (sl) slotted.push({ id: s.id, title: s.title, col: sl.col, row: sl.row, size: sl.size, pinned: !!s.pinned })
   }
@@ -265,11 +239,10 @@ export function flowFiles(files, surfaces, vp, area = 0, avoid = null) {
   const lat = latticeFor(vp, area)
   const blocked = []
   for (const s of surfaces || []) {
-    if (!s || (s.slotArea ?? 0) !== area) continue
+    if (!s || s.minimized || s.groupId || (s.slotArea ?? 0) !== area) continue
     const sl = slotOf(s)
     if (sl) blocked.push(slotRect(lat, sl.col, sl.row, sl.size))
   }
-  blocked.push(...blockerRects(surfaces, null)) // free windows are solid to files too — never slide under one
   if (avoid) blocked.push(avoid)
   const PAD = 10
   const hit = (x, y, w, h) => blocked.some((b) => x < b.x + b.w + PAD && x + w + PAD > b.x && y < b.y + b.h + PAD && y + h + PAD > b.y)

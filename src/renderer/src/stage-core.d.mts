@@ -39,7 +39,7 @@ export function latticeFor(vp: { w: number; h: number } | null | undefined, area
 export function slotRect(lat: Lattice, col: number, row: number, size: string): Rect
 export function cardRect(lat: Lattice, col: number, row: number, size: string): Rect
 export function slotOf(s: unknown): Slot | null
-export function occupancy(surfaces: SlottedLike[], area?: number, excludeId?: string | null, lat?: Lattice | null): Set<string>
+export function occupancy(surfaces: SlottedLike[], area?: number, excludeId?: string | null): Set<string>
 export function budgetUsed(surfaces: SlottedLike[], area?: number): number
 export function findSlot(surfaces: SlottedLike[], lat: Lattice, size: string, near?: string | null, area?: number, excludeId?: string | null): SlotPos | null
 export function nearestFreeSlot(surfaces: SlottedLike[], lat: Lattice, size: string, wx: number, wy: number, area?: number, excludeId?: string | null): SlotPos | null
