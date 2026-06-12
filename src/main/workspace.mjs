@@ -181,14 +181,23 @@ function writeIfChanged(file, data) {
 }
 
 // Write workspace.json, keeping the previous copy as .bak so a crash mid-write or a corrupt
-// file still has a last-good fallback to boot from (spec §3.1).
+// file still has a last-good fallback to boot from (spec §3.1). Byte-identical content is NOT
+// rewritten: the idle write loop (flush → watcher → reconcile → flush, 1.27 byte-identical
+// writes/sec measured in the VM) is gated upstream by doReconcile's changed-check, but this
+// keeps ANY future feedback path from churning the disk + .bak + watcher for a no-op.
 function writeMeta(metaFile, obj) {
+  const next = JSON.stringify(obj, null, 2) + '\n'
+  try {
+    if (existsSync(metaFile) && readFileSync(metaFile, 'utf8') === next) return
+  } catch {
+    /* unreadable prior → write fresh */
+  }
   try {
     if (existsSync(metaFile)) copyFileSync(metaFile, metaFile + '.bak')
   } catch {
     /* best-effort */
   }
-  atomicWrite(metaFile, JSON.stringify(obj, null, 2) + '\n')
+  atomicWrite(metaFile, next)
 }
 
 // Read the prior workspace.json to recover (id → path) and the workspace id, so a node's

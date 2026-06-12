@@ -335,11 +335,13 @@ export async function osReadWindow(id: string, script?: string): Promise<unknown
 }
 
 function send(type: string, payload: Record<string, unknown> = {}): void {
+  tel('act', { type, ...payload }) // telemetry: surface ops (create/update/move/close…) emit HERE, not via the adapter broadcast
   getWin()?.webContents.send('os:action', { type, ...payload })
 }
 
 /** Send an arbitrary os:action to the renderer — the Electron emit seam for shared cores (e.g. session events). */
 export function osBroadcast(action: Record<string, unknown>): void {
+  tel('act', action) // telemetry: session/action-item events emit here (the shared-core seam)
   getWin()?.webContents.send('os:action', action)
 }
 

@@ -82,7 +82,15 @@ export function tel(ty: string, data: unknown): void {
   try {
     if (ty === 'act') data = compactAct(data)
     let s = JSON.stringify({ t: now(), ty, d: data })
-    if (s.length > MAX_LINE) s = JSON.stringify({ t: now(), ty, trunc: true, d: s.slice(0, MAX_LINE) })
+    if (s.length > MAX_LINE && data && typeof data === 'object') {
+      // still oversized after type-aware compaction (e.g. a terminal-output burst): cap every long
+      // top-level string field so the line stays a PARSEABLE OBJECT, never an opaque sliced string
+      const a = data as Record<string, unknown>
+      const capped: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(a)) capped[k] = typeof v === 'string' && v.length > 2000 ? v.slice(0, 2000) + '…' : v
+      s = JSON.stringify({ t: now(), ty, capped: true, d: capped })
+    }
+    if (s.length > MAX_LINE) s = JSON.stringify({ t: now(), ty, trunc: true, kind: String((data as { type?: unknown })?.type ?? ''), size: s.length })
     if (!lines) t0 = now()
     lines++
     appendFileSync(spool, s + '\n')
