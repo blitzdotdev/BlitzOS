@@ -4,6 +4,14 @@
 
 Living checklist. Status: ✅ done · 🔧 in progress · ⬜ todo · 🔴 bug.
 
+## ✅ Sessions made UNIFORM + user-controlled "New context" (2026-06-12, post-merge user directive)
+The user rejected the merge's always-fresh primary: *"there should be NO diff between the primary and other sessions… it should be up to the user when they want to clear context."*
+- **`476d939` revert:** dropped the `id==='0'` always-fresh guard in `ensureClaudeSessionId` — ALL agents now take the same resume-or-create path (primary `--resume`s like everyone else; context persists across restarts). `test-agent-fresh.mjs` → `test-agent-session.mjs`, now asserting uniformity (14/14).
+- **`e7ddb15` "New context" button:** `terminal-manager.clearAgentContext(id)` rotates the agent's claude session id + restarts → `--session-id` create mode, empty conversation; chat.md untouched (re-read on boot). Exposed via shared terminal-ops → BOTH transports (Electron `os:chat-control 'clear'`; server `/api/os/agent-clear` + shim). Chat widget header gained `↻ New context` (confirm-first), uniform for every agent incl `0`.
+- **`e871f5a` propagation:** `ensureSystemRenderer`'s refresh sentinel bumped `focusAnnotation`→`clearctx` so existing un-customized workspace chat copies pick the button up (customized copies untouched).
+- **Live-verified (server mode):** before clear agent 0 ran `--resume` (revert working) → `agent-clear` → rotated `cf41992c…`→`2b6784de…`, `--session-id` create, reconnected + replied `CLEARED-OK-4521`, single process; Home's widget refreshed + button renders (chromium). Gates green throughout.
+- **`7c70579` reader-proxy research** (`plans/web-surface-reader-proxy.md`): why sites won't iframe (XFO/CSP frame-ancestors) + verdict on replacing streaming — a NARROW null-origin srcdoc fast-path for unauthenticated static pages is safe/worth it; the naive strip-headers-and-reserve-same-origin design is a security hole (same-origin collapse → widget-bridge escalation); streaming stays default. Design only, not implemented.
+
 ## ✅ Re-merged `agent-runtime-moments` (delta) — `6697c90` (true merge, 2026-06-12)
 The branch advanced `16953bb` → `c350e76` (**4 new commits**); reconciled with our 11 master-side commits. Only `agent-runtime.mjs` truly conflicted; `workspace-host.mjs` + the other 11 files auto-merged.
 - **`e4afd26` always-fresh primary brain** — agent `0` mints a FRESH claude session id every launch (`--session-id` create mode, **never `--resume`**) so its accumulating transcript never saturates context / trips Anthropic's cyber-safety classifier; continuity comes from the bootstrap's chat.md re-read. Spawned agents (`1`+) KEEP `--resume`. The rotated id threads `prepareAgentLaunch`→`rebuildAgentCommand`→`restartTerminal` so `meta` + the launched `--session-id` never diverge.
