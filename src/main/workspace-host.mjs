@@ -99,6 +99,10 @@ export function createWorkspaceHost(a) {
   let writeTimer = null
   let reconcileTimer = null
   let watchers = []
+  // id -> expiry ts: a surface we authoritatively closed. A still-connected renderer whose store hasn't
+  // caught up can re-push the closed surface in its os:state; onStatePush rejects ids in here so the close
+  // sticks instead of resurrecting (the junk-resurrection half of the runtime-surface-loss fragility).
+  const recentlyClosed = new Map()
 
   const active = () => basename(activeWorkspace)
   const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode, stageCount: 1 })
@@ -215,7 +219,12 @@ export function createWorkspaceHost(a) {
    *  calls this when the user closes a window so it doesn't resurrect on the next reconcile. */
   function closeSurfaceFile(id) {
     if (switching) return { ok: false, error: 'switch in progress' }
-    return removeSurfaceFile(activeWorkspace, String(id))
+    const r = removeSurfaceFile(activeWorkspace, String(id))
+    // Both close paths (the renderer's traffic-light X and the agent's close_surface tool) call this, so
+    // recording here guards every authoritative close against a stale renderer re-push for ~8s (the echo
+    // window) — after which the renderer's store has caught up and won't re-push it.
+    if (r && r.ok) recentlyClosed.set(String(id), Date.now() + 8000)
+    return r
   }
 
   // Item 4: which OTHER workspace holds this surface id (so an op on a non-active id can NAME where it is).
@@ -533,8 +542,24 @@ export function createWorkspaceHost(a) {
     // Drop a stale push: mid-switch, or tagged with a workspace we've switched away from (else it
     // clobbers osState and persists the OLD board into the NEW folder). Untagged pushes pass.
     if (switching || (typeof s.workspace === 'string' && s.workspace !== active())) return
-    a.setState(s)
-    Promise.resolve(onSurfaces(s.surfaces)).catch(() => {})
+    // (1) REJECT a stale re-push of a just-closed surface — else a still-connected renderer resurrects a
+    // file-backed surface we authoritatively closed (the junk-resurrection bug).
+    const now = Date.now()
+    for (const [id, exp] of recentlyClosed) if (exp <= now) recentlyClosed.delete(id)
+    let pushed = recentlyClosed.size ? s.surfaces.filter((x) => !(x && recentlyClosed.has(x.id))) : s.surfaces
+    // (2) RE-ASSERT host-owned runtime surfaces. The host owns each agent's chat widget + the activity panel,
+    // and NONE of them are serialized (they're rebuilt on hydrate/switch). A wholesale `setState` would let a
+    // renderer push that DROPPED one (a mid-hydrate race, or a renderer that hadn't reconstructed it yet)
+    // DELETE it from osState — and it would stay gone until the next hydrate/switch. That is the chat-widget-
+    // loss bug. So rebuild any host-owned runtime surface missing from the push and add it back. Cheap —
+    // compares ids first and only rebuilds the (usually zero) that are actually absent.
+    const have = new Set(pushed.map((x) => x && x.id))
+    const missing = []
+    for (const id of agentIds()) { const sid = chatSurfaceId(id); if (!have.has(sid)) missing.push(buildAgentSurface(id)) }
+    for (const p of readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')) if (!have.has(p.id)) missing.push(p)
+    const surfaces = missing.length ? [...pushed, ...missing] : pushed
+    a.setState(surfaces === s.surfaces ? s : { ...s, surfaces })
+    Promise.resolve(onSurfaces(surfaces)).catch(() => {})
     scheduleWrite()
   }
 
