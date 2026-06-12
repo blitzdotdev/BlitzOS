@@ -25,6 +25,7 @@ mkdirSync(homeDir, { recursive: true })
 writeFileSync(join(homeDir, 'junk.md'), '# junk note (test)')
 
 let osState = { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas' }
+let storeItems = [] // the AUTHORITATIVE action-items store (what listActions() returns) — drives the inbox reconcile
 const host = createWorkspaceHost({
   root,
   initialName: 'Home',
@@ -32,6 +33,7 @@ const host = createWorkspaceHost({
   setState: (s) => { osState = s },
   broadcast: () => {},
   onSurfaces: () => {},
+  getActionItems: () => storeItems,
   defaultMode: 'canvas'
 })
 
@@ -60,6 +62,20 @@ ok('B: closeSurfaceFile removed the backing file (ok)', r && r.ok, r)
 host.onStatePush({ surfaces: [junkSurf, note('z', '# Z')] }) // renderer's store hasn't caught up — re-pushes junk
 ok('B: the closed surface is NOT resurrected by the re-push', !osState.surfaces.some((s) => s.id === 'junk'), osState.surfaces.map((s) => s.id))
 ok('B: a fresh surface in the same push still applies', osState.surfaces.some((s) => s.id === 'z'))
+
+// (C) the inbox is a runtime surface; a renderer can push a STALE item list (carried in osState across page
+// loads). onStatePush must overwrite it with the authoritative store so phantom items can't survive.
+storeItems = [{ id: 'a1', title: 'Real', status: 'pending', kind: 'task', createdAt: 1, resolvedAt: null, resolution: null }]
+const staleInbox = { id: 'inbox', kind: 'native', component: 'inbox', x: 0, y: 0, w: 320, h: 300, props: { items: [{ id: 'ghost', title: 'Phantom' }, { id: 'a1', title: 'Real' }] } }
+host.onStatePush({ surfaces: [staleInbox] })
+const inboxC = osState.surfaces.find((s) => s.component === 'inbox')
+ok('C: onStatePush reconciles inbox items to the store (phantom dropped)', !!inboxC && inboxC.props.items.length === 1 && inboxC.props.items[0].id === 'a1', inboxC && inboxC.props.items.map((i) => i.id))
+
+// (D) hydrateSurfaces() also reconciles — a fresh CONNECT can't receive a stale inbox even with no push since.
+storeItems = [] // everything cleared in the store (e.g. via the relay/agent path, no renderer attached)
+const hy = host.hydrateSurfaces()
+const inboxD = hy.find((s) => s.component === 'inbox')
+ok('D: hydrateSurfaces empties the inbox when the store is cleared (no phantom on a fresh connect)', !!inboxD && inboxD.props.items.length === 0, inboxD && inboxD.props.items)
 
 rmSync(root, { recursive: true, force: true })
 console.log(failures ? `\nFAIL ✗ ${failures}` : '\nPASS ✓ runtime-surface guard holds')

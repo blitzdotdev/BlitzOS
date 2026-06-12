@@ -43,6 +43,8 @@ import {
 import { stageForAgent, stageCenterX, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 // The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
 import { writeRelayUrl } from './agent-runtime.mjs'
+// The inbox is a runtime surface in osState; reconcileInboxItems keeps its items authoritative from the store.
+import { reconcileInboxItems } from './action-items.mjs'
 
 /**
  * @param {object} a
@@ -51,6 +53,8 @@ import { writeRelayUrl } from './agent-runtime.mjs'
  * @param {() => any} a.getState    returns the current osState ({surfaces,camera,mode,view})
  * @param {(s:any) => void} a.setState  sets osState (the host owns it on hydrate/switch/reconcile)
  * @param {(obj:any) => void} a.broadcast  send a message to all connected renderers
+ * @param {() => any[]} [a.getActionItems]  the authoritative action-items list (listActions()) — the inbox
+ *        surface's items are reconciled against this on hydrate + onStatePush so a stale osState copy never wins.
  * @param {(surfaces:any[]) => (Promise<any>|void)} [a.onSurfaces]  realize web surfaces (server: spin/tear
  *        headless targets; Electron: no-op, WebContentsView host owns browser guests)
  * @param {'canvas'|'desktop'} [a.defaultMode]  blank-workspace mode (server: canvas, Electron: desktop)
@@ -99,6 +103,9 @@ export function createWorkspaceHost(a) {
   let writeTimer = null
   let reconcileTimer = null
   let watchers = []
+  // The authoritative action-items list (listActions()), injected by the transport. The inbox surface's items
+  // are reconciled against this so a stale osState copy never wins. Guarded — a missing/throwing provider → [].
+  const actionItemsNow = () => { try { return (typeof a.getActionItems === 'function' ? a.getActionItems() : []) || [] } catch { return [] } }
   // id -> expiry ts: a surface we authoritatively closed. A still-connected renderer whose store hasn't
   // caught up can re-push the closed surface in its os:state; onStatePush rejects ids in here so the close
   // sticks instead of resurrecting (the junk-resurrection half of the runtime-surface-loss fragility).
@@ -570,10 +577,23 @@ export function createWorkspaceHost(a) {
     const missing = []
     for (const id of agentIds()) { const sid = chatSurfaceId(id); if (!have.has(sid)) missing.push(buildAgentSurface(id)) }
     for (const p of readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')) if (!have.has(p.id)) missing.push(p)
-    const surfaces = missing.length ? [...pushed, ...missing] : pushed
+    let surfaces = missing.length ? [...pushed, ...missing] : pushed
+    // (3) RECONCILE the inbox: its items are runtime-only and a renderer can push a STALE copy (carried in
+    // osState across page loads). Overwrite them with the authoritative store so osState — and every hydrate
+    // read of it — shows EXACTLY listActions(), never phantom items the store no longer has.
+    surfaces = reconcileInboxItems(surfaces, actionItemsNow())
     a.setState(surfaces === s.surfaces ? s : { ...s, surfaces })
     Promise.resolve(onSurfaces(surfaces)).catch(() => {})
     scheduleWrite()
+  }
+
+  /** The surfaces to send a CONNECTING renderer (its hydrate) — current osState surfaces with the inbox's
+   *  items reconciled to the authoritative store. Both transports call this for the hydrate `surfaces` field
+   *  so a fresh connect can never receive a stale inbox copy that osState happened to be carrying (the seed
+   *  happens with no renderer attached → no onStatePush fires → osState would otherwise stay stale). */
+  function hydrateSurfaces() {
+    const st = a.getState() || {}
+    return reconcileInboxItems(st.surfaces || [], actionItemsNow())
   }
 
   /** Atomic single-flight switch. Returns { status, body }. */
@@ -722,6 +742,7 @@ export function createWorkspaceHost(a) {
     isSwitching: () => switching,
     hydrateOnBoot,
     onStatePush,
+    hydrateSurfaces,
     performSwitch,
     flush,
     startWatch,

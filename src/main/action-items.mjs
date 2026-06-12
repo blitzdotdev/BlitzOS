@@ -122,3 +122,23 @@ export function makeActionItems({ getWorkspacePath, emit = () => {}, emitMoment 
 
   return { requestAction, listActions, resolveAction, clearAction }
 }
+
+/** Make the Action-items inbox surface AUTHORITATIVE: overwrite any inbox surface's `props.items` with the
+ *  CURRENT store items. The inbox is a runtime surface that lives in osState (a renderer creates it + pushes
+ *  it back), so its item list can drift — a stale copy carried in osState gets re-broadcast on hydrate and
+ *  shows items the store no longer has (the drive-inbox phantom-items bug). Reconciling at every read point
+ *  (hydrate + onStatePush) against listActions() guarantees the inbox shows EXACTLY the store, never a stale
+ *  cache. Pure; returns the SAME array reference when there's no inbox surface (cheap no-op). */
+export function reconcileInboxItems(surfaces, items) {
+  if (!Array.isArray(surfaces)) return surfaces
+  const authoritative = Array.isArray(items) ? items : []
+  let changed = false
+  const out = surfaces.map((s) => {
+    if (s && s.kind === 'native' && s.component === 'inbox') {
+      changed = true
+      return { ...s, props: { ...(s.props || {}), items: authoritative } }
+    }
+    return s
+  })
+  return changed ? out : surfaces
+}
