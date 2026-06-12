@@ -129,6 +129,24 @@ const BUILDERS = {
   })
 }
 
+// The hand-tuned Branch A board (FDA granted), captured from the user's case-file layout 2026-06-12:
+// the chat hub fills the left as an xxl tile, the cards run down columns 4-6. The seed reproduces this
+// EXACTLY (a fixed slot per role) rather than auto-placing, because the user has decided the layout.
+// `chat` is applied to the chat hub by the director (it is not a planner card). A card whose fixed slot
+// would fall outside the LIVE lattice (a smaller screen) falls back to dynamic placement.
+export const BRANCH_A_LAYOUT = {
+  chat: { col: 0, row: 0, size: 'xxl' },
+  projects: { col: 4, row: 0, size: 'm' },
+  profile: { col: 6, row: 0, size: 's' },
+  rhythm: { col: 4, row: 1, size: 'm' },
+  workflows: { col: 6, row: 1, size: 's' },
+  voice: { col: 4, row: 2, size: 'm' },
+  gaps: { col: 6, row: 2, size: 's' },
+  people: { col: 4, row: 3, size: 's' },
+  sessions: { col: 5, row: 3, size: 's' },
+  notepad: { col: 6, row: 3, size: 's' }
+}
+
 const WIDGET_OF = { profile: 'profile', projects: 'dossiers', workflows: 'workflows', schedule: 'timeline', rhythm: 'rhythm', voice: 'quotes', sessions: 'timeline', people: 'dossiers', gaps: 'gaps' }
 const TITLE_OF = { profile: 'Case File', projects: 'Projects', workflows: 'Web workflows', schedule: 'Coming up', rhythm: 'Working rhythm', voice: 'In their own words', sessions: 'Recent sessions', people: 'Known associates', gaps: 'Open questions', unlock: 'Unlock the personal layer' }
 
@@ -244,7 +262,14 @@ function parkSpot(vp, i) {
  * The unlock card is part of the plan when FDA is off (role 'unlock', native) so it gets
  * placement priority right after the gaps card — the director merges appName into its props.
  */
-export function buildBoardPlan(scan, { surfaces = [], viewport = null } = {}) {
+/** A fixed slot fits the LIVE lattice (a smaller screen may not hold a col-6 card). */
+function slotFits(slot, lat) {
+  if (!slot) return false
+  const sp = spanOf(slot.size)
+  return slot.col >= 0 && slot.row >= 0 && slot.col + sp.c <= lat.cols && slot.row + sp.r <= lat.rows
+}
+
+export function buildBoardPlan(scan, { surfaces = [], viewport = null, layout = null } = {}) {
   const props = {}
   for (const role of Object.keys(BUILDERS)) {
     try {
@@ -297,9 +322,12 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null } = {}) {
       title: TITLE_OF[role],
       props: { ...props[role], ...(ACCENT_OF[role] || {}) }
     }
-    let size = sizes[role] || 'm'
-    let at = null
-    while (size) {
+    // Fixed layout (Branch A): place at the hand-tuned slot when it fits the live lattice; otherwise
+    // fall through to dynamic placement (smaller screen, or a card the layout does not pin).
+    const fixed = layout && layout[role]
+    let at = fixed && slotFits(fixed, lat) ? { col: fixed.col, row: fixed.row } : null
+    let size = at ? fixed.size : sizes[role] || 'm'
+    while (!at && size) {
       at = findSlot(occupied, lat, size, NEAR_OF[role] || 'center', 0)
       if (at) break
       size = shrinkFrom(role, size) // fragmentation: step down (to the role's floor) before giving up

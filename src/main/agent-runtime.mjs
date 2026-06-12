@@ -13,9 +13,12 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 
-// Thinking effort for the onboarding interview (agent '0' while its duty is pending). Reduced so the
-// first question lands in seconds; the resident phase restores to claude's default (max) on respawn.
-const INTERVIEW_EFFORT = 'medium'
+// Thinking budget + effort for the onboarding interview (agent '0' while its duty is pending). Reduced
+// so the first question lands in seconds; the resident phase restores to claude's default on respawn.
+// MAX_THINKING_TOKENS is the lever that actually works (the TUI showed "max effort" under --effort low),
+// so it's a LOW token cap — raise it if questions get generic, lower toward 0 for max speed.
+const INTERVIEW_THINKING_TOKENS = 2048
+const INTERVIEW_EFFORT = 'low'
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
 const metaPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'meta.json')
 const bootstrapPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'bootstrap.txt')
@@ -52,7 +55,9 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
       ? 'You are the primary chat agent of BlitzOS, an agent OS the user watches live. BlitzOS makes NO decisions; YOU decide everything.'
       : `You are agent "${sessionId}" — one of several independent agents in BlitzOS (an agent OS). You serve ONLY your own chat; other agents have their own chats.`,
     `BlitzOS runs locally on this Mac and gives you a small local HTTP API to talk to it. It tells you its current address in the file ${RELAY_URL_FILE} in your working folder, and that address can change when the app restarts, so read it from the file each time rather than remembering it: \`curl -sX POST ${B}/<tool> -H 'content-type: application/json' -d '{…}'\`. The \`$(cat …)\` just reads the app's current address. If a call ever returns a connection error or 404, the app most likely restarted with a new address; reading the file again and retrying picks it up.`,
-    `Your full operating guide is at ${B}/agents.md. Please read it first (\`curl -s ${B}/agents.md\`) and follow it; if that request doesn't succeed, give it another try before continuing.`,
+    bootTask
+      ? `Your full operating guide is at ${B}/agents.md, with the complete tool set. You do NOT need it to do the first step of your standing duty below, so do that FIRST and fetch the guide (\`curl -s ${B}/agents.md\`) only afterward, when you need a tool the duty did not give you. Do not let reading the guide delay your first action.`
+      : `Your full operating guide is at ${B}/agents.md. Please read it first (\`curl -s ${B}/agents.md\`) and follow it; if that request doesn't succeed, give it another try before continuing.`,
     "Note for this session: the user has already arranged their desktop. Please leave it as-is on connect — don't rearrange, resize, recenter, move, or close anything on your own. Ignore the guide's 'assemble the desktop on connect' section here; this is the user's own live layout.",
     `Get your bearings first: you may have been restarted, so recover the conversation before doing anything. Call \`list_state\` to get \`workspace_path\`, then read the recent chat: \`tail -n 60 "$workspace_path/${chatFile}"\`. That file is your saved conversation with the user and it carries over between restarts (the live event feed does not). Reading it helps you understand follow-ups like "continue the X thing" or "go". If the last line is a user message you haven't answered, answer it now.`,
     // The OS can hand a session ONE standing duty (e.g. the onboarding interview); the duty text licenses
@@ -80,13 +85,16 @@ export function shellQuote(s) {
  *  INTERACTIVE (no -p): claude renders its full TUI in the terminal so the user can WATCH it work — print
  *  mode (-p) ran silently, leaving the terminal blank. --dangerously-skip-permissions: the agent acts
  *  unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
-export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, effort }) {
+export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, effort, thinkingTokens }) {
   const sessionArg = mode === 'resume' ? `--resume ${claudeSid}` : `--session-id ${claudeSid}`
-  // `effort` (low|medium|high) caps claude's thinking budget. Omitted → claude's default (the highest,
-  // shown as "max effort" in the TUI). The onboarding interview runs reduced so its first question
-  // lands in seconds (deep rumination adds latency, not quality, for templated MC questions).
   const effortArg = effort ? `--effort ${effort} ` : ''
-  return `${cmd} ${sessionArg} --dangerously-skip-permissions ${effortArg}"$(cat ${shellQuote(bootstrapFile)})"`
+  // MAX_THINKING_TOKENS caps the model's extended-thinking budget — the REAL lever for snappy turns
+  // (`--effort` does NOT change it: the TUI still showed "max effort" under --effort low). The interview
+  // sets a low budget so its first question lands fast; deep rumination adds latency, not quality, for
+  // templated MC questions. Omitted → claude's adaptive default (the slow "max effort"). It's a shell
+  // env assignment prefixing the command, so it applies to this claude process only.
+  const envPrefix = thinkingTokens ? `MAX_THINKING_TOKENS=${thinkingTokens} ` : ''
+  return `${envPrefix}${cmd} ${sessionArg} --dangerously-skip-permissions ${effortArg}"$(cat ${shellQuote(bootstrapFile)})"`
 }
 
 /** Has claude ALREADY created this conversation on disk? claude writes `<configDir>/projects/<encoded-cwd>/
@@ -153,11 +161,18 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
   // The onboarding interview (the only id-0 boot task today) runs at reduced thinking effort so its
   // first question is snappy; it restores to the default (max) on the next respawn once the duty is
   // done. Tune INTERVIEW_EFFORT to 'low' if questions are still slow, 'high' if they get generic.
-  const effort = String(id) === '0' && bootTask ? INTERVIEW_EFFORT : undefined
+  const interview = String(id) === '0' && !!bootTask
   return {
     claudeSessionId,
     established, // surfaced so the re-exec path persists the (possibly rotated) id + correct established flag
-    command: buildClaudeCommand({ cmd, claudeSid: claudeSessionId, mode: established ? 'resume' : 'create', bootstrapFile: file, effort })
+    command: buildClaudeCommand({
+      cmd,
+      claudeSid: claudeSessionId,
+      mode: established ? 'resume' : 'create',
+      bootstrapFile: file,
+      effort: interview ? INTERVIEW_EFFORT : undefined,
+      thinkingTokens: interview ? INTERVIEW_THINKING_TOKENS : undefined
+    })
   }
 }
 

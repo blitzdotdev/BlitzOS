@@ -23,7 +23,7 @@ import { join } from 'node:path'
 import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain, osRestartBrain } from './osActions'
 import { waitForEvents, latestSeq } from './events'
 import { getWidgetSource } from './widget-catalog.mjs'
-import { buildBoardPlan, unlockCardProps, findUnlockSlot } from './onboarding-board.mjs'
+import { buildBoardPlan, unlockCardProps, findUnlockSlot, BRANCH_A_LAYOUT } from './onboarding-board.mjs'
 import type { ScanJson, StagedSurface } from './onboarding-board.mjs'
 import { runCannedInterview } from './onboarding-interview.mjs'
 
@@ -178,7 +178,10 @@ function spawnUnlockCard(): string {
 
 async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
   const board: BoardFile = { v: 1, seededAt: Date.now(), fdaAtSeed: scan.meta.fda, ids: {} }
-  const plan = buildBoardPlan(scan, liveStage())
+  // Branch A (FDA granted) seeds the user's hand-tuned fixed layout; Branch B keeps adaptive placement
+  // (it gets its own hand-tuned layout once captured).
+  const branchA = !!(scan.meta && scan.meta.fda)
+  const plan = buildBoardPlan(scan, { ...liveStage(), layout: branchA ? BRANCH_A_LAYOUT : null })
   progress({ phase: 'seeding', cards: plan.length })
   for (const card of plan) {
     // staged cards carry slot/slotStage (tiles on the lattice); parked ones carry x/y/w/h below the stage
@@ -192,6 +195,9 @@ async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
     }
     await sleep(170) // staggered assembly — the human watches the board build
   }
+  // Branch A: tile the pinned chat hub into its hand-tuned slot (xxl, top-left) so it is EMBEDDED, not
+  // free-float covering cards. Persists via the runtime-panel slot (workspace.mjs) so it stays put.
+  if (branchA && BRANCH_A_LAYOUT.chat) osUpdateSurface('chat', { slot: BRANCH_A_LAYOUT.chat, slotStage: 0 })
   writeBoard(wsPath, board)
   osGoToPrimary()
   progress({ phase: 'board-ready', fda: scan.meta.fda })

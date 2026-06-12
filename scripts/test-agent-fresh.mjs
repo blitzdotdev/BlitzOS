@@ -41,7 +41,8 @@ ok('primary with NO duty runs at default effort (no --effort)', !prep.command.in
 // 2b) with the interview duty active, the primary launches at reduced effort; spawned agents do not
 setBootTaskProvider((id) => (String(id) === '0' ? 'do the onboarding interview' : null))
 const prepDuty = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md' })
-ok('primary interview launches at reduced effort (--effort medium)', prepDuty.command.includes('--effort medium'))
+ok('primary interview launches at reduced effort (--effort low)', prepDuty.command.includes('--effort low'))
+ok('primary interview caps thinking budget (MAX_THINKING_TOKENS)', prepDuty.command.includes('MAX_THINKING_TOKENS='))
 
 // 3) spawned agent '1': UNCHANGED — resumes when established
 seedMeta('1', { id: '1', kind: 'agent', claudeSessionId: 'SPAWNED-UUID', claudeEstablished: true })

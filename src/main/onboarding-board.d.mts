@@ -56,4 +56,9 @@ export interface BoardCard {
 export const UNLOCK_SIZE: string
 export function unlockCardProps(appName: string): Record<string, unknown>
 export function findUnlockSlot(surfaces: StagedSurface[] | null | undefined, viewport?: { w: number; h: number } | null): { slot: { col: number; row: number; size: string }; slotStage: number } | null
-export function buildBoardPlan(scan: ScanJson, opts?: { surfaces?: StagedSurface[]; viewport?: { w: number; h: number } | null }): BoardCard[]
+/** The hand-tuned Branch A fixed layout: role → {col,row,size}. `chat` is applied to the chat hub. */
+export const BRANCH_A_LAYOUT: Record<string, { col: number; row: number; size: string }>
+export function buildBoardPlan(
+  scan: ScanJson,
+  opts?: { surfaces?: StagedSurface[]; viewport?: { w: number; h: number } | null; layout?: Record<string, { col: number; row: number; size: string }> | null }
+): BoardCard[]

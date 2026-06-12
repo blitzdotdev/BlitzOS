@@ -436,7 +436,12 @@ export function writeWorkspace(dir, osState) {
   // Runtime panels (chat / agent-activity) aren't folder nodes, but their content (the chat
   // transcript, the activity feed) must survive a backend RESTART — persist them to
   // .blitzos/state/panels.json (machine-local) and merge them back in on boot (#38).
-  const runtimePanels = surfaces.filter((s) => s && s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+  // The chat hub is a srcdoc with role:'chat' (not native), so match BOTH the native activity panel and
+  // the role-based chat — otherwise the chat's layout (its slot, when the user or onboarding tiles it)
+  // has nowhere to persist and reverts to free-float on every boot.
+  const runtimePanels = surfaces.filter(
+    (s) => s && ((s.kind === 'native' && (s.component === 'chat' || s.component === 'activity')) || s.role === 'chat')
+  )
 
   // Don't materialize an empty workspace.json (or scaffold) for a fresh, empty canvas — only
   // once there's something to persist (a node, a runtime panel, or an existing workspace to sync).
@@ -515,6 +520,9 @@ function writeRuntimePanels(dir, panels) {
         w: Math.round(s.w) || (isAct ? 320 : 360),
         h: Math.round(s.h) || (isAct ? 200 : 460),
         z: s.z || 0,
+        // Persist the tile slot so a slotted chat/activity panel survives a restart (the user tiles the
+        // chat, or onboarding seeds it; without this it reverts to free-float — the "popped out" bug).
+        ...(s.slot ? { slot: s.slot, slotStage: s.slotStage ?? 0 } : {}),
         title: typeof s.title === 'string' ? s.title : s.component,
         props: sp
       }
@@ -547,6 +555,7 @@ export function readRuntimePanels(dir) {
         w: Number(s.w) || (s.component === 'activity' ? 320 : 360),
         h: Number(s.h) || (s.component === 'activity' ? 200 : 460),
         z: Number(s.z) || 0,
+        ...(s.slot && typeof s.slot === 'object' ? { slot: s.slot, slotStage: Number(s.slotStage) || 0 } : {}),
         title: typeof s.title === 'string' ? s.title : s.component,
         props: s.props && typeof s.props === 'object' ? s.props : {}
       }))
