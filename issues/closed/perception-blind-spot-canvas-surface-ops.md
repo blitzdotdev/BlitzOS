@@ -47,3 +47,18 @@ Should canvas-level surface ops become moments? Considerations:
 Cheapest faithful seam: the same two functions telemetry now taps (`send()`/`osBroadcast` in
 osActions.ts) could feed a canvas-signal ingest into perception-core's coalescer with an origin
 tag; the coalescer decides significance per its existing rules.
+
+## RESOLVED 2026-06-12 — build #16 (commit 48c49ce), VM-verified
+
+The human's call: the brain should see window movement. Implemented as `trigger:'canvas'`
+moments (coalesced, origin-tagged, echo-suppressed — see the commit). VM verification re-ran the
+exact failing scenario; the brain's verbatim answer flipped from "Honestly, no. I didn't catch
+those moves in real time." to:
+
+> "Yes, two things this time. The events stream actually delivered them: **Unlock the personal
+> layer** was opened (a new native surface, created by a tool call). **Notepad** was moved to
+> (600, -50). Big improvement over last session where I was blind to moves."
+
+Canvas moment timing measured at the designed 15s batch cadence (15523ms move→moment), `[agent
+tool]` origin tag present, exact id+coords in `ops[]`, message + canvas moments coexisting in one
+stream. Tests: `node scripts/test-canvas-perception.mjs`.
