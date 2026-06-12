@@ -40,3 +40,13 @@ planner's shrink/park fallback can't help if it ran against the wrong lattice.
 
 Confirmed display: 1336×835 logical points (@2x, UTM VM) → lattice 7×3 = 21 cells; board seeds 25.
 Any display in that class + a fresh onboarding run reproduces. The VM rig reproduces on demand.
+
+## Update 2026-06-11 (build #11, VM): `offstage:true` does NOT bypass the budget gate
+
+The VM agent retested on v0.0.1-11: `place_widget {kind:'native', component:'timeline', offstage:true}`
+still returns `{error:'stage_full', reason:'attention budget', occupied_cells:25, free_cells:-3,
+used:18/16}` — even after closing two stage tiles. Two additional wrinkles beyond the original
+oversubscription: (1) an explicitly OFF-stage placement should not consume on-stage attention
+budget at all; (2) closing tiles did not free the tracked budget (used stayed over), suggesting
+the budget/occupancy is derived from the persisted oversubscribed slots rather than live state.
+Fix 3 (occupancy clamps out-of-bounds slots) likely cures both symptoms with the original cause.

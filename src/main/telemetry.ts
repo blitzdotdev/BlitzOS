@@ -47,10 +47,40 @@ function now(): number {
   return Date.now()
 }
 
+// Bulk-bearing acts (reconcile/hydrate/switch) carry the ENTIRE surface array with props/html —
+// one line blew the 8KB cap into a truncated string on every watcher blip (the VM diff showed
+// 456/465 acts mutilated). Replay needs their LAYOUT; content fidelity comes from the individual
+// create/update/chat acts, which stay verbatim.
+const LAYOUT_KEYS = ['id', 'kind', 'component', 'role', 'x', 'y', 'w', 'h', 'z', 'title', 'url', 'slot', 'slotStage', 'groupId', 'pinned', 'sessionId', 'focus'] as const
+function compactAct(d: unknown): unknown {
+  const a = d as { type?: unknown; surfaces?: unknown[]; messages?: unknown[] }
+  if (!a || typeof a !== 'object') return d
+  const t = String(a.type || '')
+  // chat rebroadcasts carry the WHOLE thread each time — keep the delta (the appended message);
+  // successive deltas reconstruct the thread, and chat.md remains the authoritative transcript.
+  if (t === 'chat' && Array.isArray(a.messages) && a.messages.length) {
+    const last = a.messages[a.messages.length - 1] as Record<string, unknown>
+    return { ...a, compact: true, n: a.messages.length, messages: [{ ...last, text: String(last?.text ?? '').slice(0, 2000) }] }
+  }
+  if (!Array.isArray(a.surfaces)) return d
+  if (t !== 'reconcile' && t !== 'hydrate' && t !== 'switch') return d
+  return {
+    ...a,
+    compact: true,
+    surfaces: a.surfaces.map((s) => {
+      const src = s as Record<string, unknown>
+      const out: Record<string, unknown> = {}
+      for (const k of LAYOUT_KEYS) if (src[k] !== undefined) out[k] = src[k]
+      return out
+    })
+  }
+}
+
 /** The capture tap — safe to call from anywhere in main; a no-op until initTelemetry enables it. */
 export function tel(ty: string, data: unknown): void {
   if (!cfg) return
   try {
+    if (ty === 'act') data = compactAct(data)
     let s = JSON.stringify({ t: now(), ty, d: data })
     if (s.length > MAX_LINE) s = JSON.stringify({ t: now(), ty, trunc: true, d: s.slice(0, MAX_LINE) })
     if (!lines) t0 = now()
@@ -180,7 +210,9 @@ async function captureFrame(): Promise<void> {
   if (!cfg || !win || win.isDestroyed() || !win.isVisible() || win.isMinimized()) return
   try {
     const img = await win.webContents.capturePage()
-    const jpg = img.resize({ width: 1100 }).toJPEG(55)
+    // 900px/q35: frames are the storage budget (~30-45MB per ACTIVE hour at the old 1100/q55) and
+    // replay only needs "what was the user doing", not pixel fidelity. Measured ~3x smaller.
+    const jpg = img.resize({ width: 900 }).toJPEG(35)
     if (jpg.length === lastFrame.length && jpg.equals(lastFrame)) return // idle screen — don't re-ship identical frames
     lastFrame = jpg
     writeFileSync(join(dir, 'outbox', `frame-${now()}.jpg`), jpg)
