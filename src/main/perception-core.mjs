@@ -32,13 +32,9 @@ let seq = 0
 const MAX = 1000
 const waiters = []
 
-// Per-session visibility (one agent per session): a chat 'message' moment is PRIVATE to its session, so each
-// session's agent only sees + answers ITS chat. All OTHER (activity/canvas) moments go to the PRIMARY
-// session ('0') only — the desktop-watcher — so spawning N chat agents doesn't wake them all on canvas
-// churn. seq stays a single global counter, so an agent's `since` cursor advances past filtered moments.
 // WORKSPACE scoping (v2 of the cross-workspace bleed fix): every moment is stamped with the workspace
 // that was ACTIVE when it was emitted (the provider is registered by each transport's host wiring), and
-// a waiter that declares its workspace only sees that workspace's moments. Session ids repeat across
+// a waiter that declares its workspace only sees that workspace's moments. Agent ids repeat across
 // workspaces ('0' everywhere), so without this a background workspace's agent answers the active one's
 // chat. An unscoped waiter (no workspace declared — legacy callers, trusted local tools) sees everything.
 let workspaceProvider = null
@@ -48,14 +44,19 @@ export function setWorkspaceProvider(fn) {
 function currentWorkspace() {
   try { return workspaceProvider ? workspaceProvider() || null : null } catch { return null }
 }
-function visibleTo(moment, sessionId, workspace) {
+
+// Per-agent visibility (per agent): a chat 'message' moment is PRIVATE to its agent, so each
+// agent only sees + answers ITS chat. All OTHER (activity/canvas) moments go to the PRIMARY
+// agent ('0') only — the desktop-watcher — so spawning N chat agents doesn't wake them all on canvas
+// churn. seq stays a single global counter, so an agent's `since` cursor advances past filtered moments.
+function visibleTo(moment, agentId, workspace) {
   // A moment belongs to ONE workspace; an agent pinned to a workspace never sees another's moments.
   if (workspace && moment.workspace && String(moment.workspace) !== String(workspace)) return false
-  const sid = String(sessionId || '0')
-  // A chat 'message' and an 'action' (e.g. an action-item the human resolved) are PRIVATE to the session
-  // they target — only that session's agent is woken. So a non-primary session that called request_action
-  // is woken when ITS item is resolved (the moment carries sessionId; generic surface actions default to '0').
-  if (moment.trigger === 'message' || moment.trigger === 'action') return String(moment.sessionId || '0') === sid
+  const sid = String(agentId || '0')
+  // A chat 'message' and an 'action' (e.g. an action-item the human resolved) are PRIVATE to the agent
+  // they target — only that agent is woken. So a non-primary agent that called request_action
+  // is woken when ITS item is resolved (the moment carries agentId; generic surface actions default to '0').
+  if (moment.trigger === 'message' || moment.trigger === 'action') return String(moment.agentId || '0') === sid
   return sid === '0'
 }
 
@@ -187,9 +188,9 @@ function emit(moment) {
   // must not early-resolve a pinned agent's long-poll with an empty slice).
   const keep = []
   for (const w of waiters.splice(0)) {
-    if (visibleTo(moment, w.sessionId, w.workspace)) {
+    if (visibleTo(moment, w.agentId, w.workspace)) {
       clearTimeout(w.timer)
-      w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.sessionId, w.workspace)))
+      w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.agentId, w.workspace)))
     } else {
       keep.push(w)
     }
@@ -290,7 +291,7 @@ function flushCanvas() {
 
 // Batch timer: emit a moment for any surface whose window has aged past BATCH_MS
 // (significant transitions flush sooner, via ingestSignals).
-setInterval(() => {
+const sweepTimer = setInterval(() => {
   const now = Date.now()
   for (const [surfaceId, p] of pending) {
     if (now - p.startTs >= BATCH_MS) flush(surfaceId, 'batch')
@@ -301,6 +302,10 @@ setInterval(() => {
     flushCanvas()
   }
 }, 2000)
+// A background sweeper must never keep the PROCESS alive — node test scripts that import this
+// module (e.g. test-perception-scope) hang at exit otherwise. Unref'd timers still fire normally
+// while anything else is running.
+if (sweepTimer.unref) sweepTimer.unref()
 
 export function latestSeq() {
   return seq
@@ -316,9 +321,9 @@ export function emitSurfaceAction(surfaceId, action) {
     seq: ++seq,
     ts: Date.now(),
     surfaceId,
-    // route this action to the session it targets (action-items carry the requesting session's id);
+    // route this action to the agent it targets (action-items carry the requesting agent's id);
     // generic surface actions have none → '0' (the primary watcher), preserving prior behavior.
-    sessionId: String((action && action.sessionId) || '0'),
+    agentId: String((action && action.agentId) || '0'),
     trigger: 'action',
     windowMs: 0,
     signals: { action: 1 },
@@ -333,14 +338,14 @@ export function emitSurfaceAction(surfaceId, action) {
  * direct message ALWAYS warrants a response (unlike passive activity moments). Not
  * redacted over the relay (the user authored it for the agent).
  */
-export function emitUserMessage(text, sessionId = '0') {
+export function emitUserMessage(text, agentId = '0') {
   const msg = String(text || '').slice(0, 2000)
-  const sid = String(sessionId || '0')
+  const sid = String(agentId || '0')
   emit({
     seq: ++seq,
     ts: Date.now(),
     surfaceId: sid === '0' ? 'chat' : `chat-${sid}`,
-    sessionId: sid, // routes this message to ONLY this session's agent (visibleTo)
+    agentId: sid, // routes this message to ONLY this agent (visibleTo)
     trigger: 'message',
     windowMs: 0,
     signals: { message: 1 },
@@ -394,22 +399,22 @@ export function emitSystemMoment(kind, line, detail) {
   })
 }
 
-/** Long-poll for a session: resolve immediately if there are moments visible to `sessionId` after
- *  `since`, else wait up to maxMs. Each session only sees its own messages (+ activity for the primary).
+/** Long-poll for an agent: resolve immediately if there are moments visible to `agentId` after
+ *  `since`, else wait up to maxMs. Each agent only sees its own messages (+ activity for the primary).
  *  `workspace` (optional) pins the waiter: it then sees ONLY that workspace's moments. */
-export function waitForEvents(since, maxMs, sessionId = '0', workspace = null) {
-  const have = LOG.filter((m) => m.seq > since && visibleTo(m, sessionId, workspace))
+export function waitForEvents(since, maxMs, agentId = '0', workspace = null) {
+  const have = LOG.filter((m) => m.seq > since && visibleTo(m, agentId, workspace))
   if (have.length > 0 || maxMs <= 0) return Promise.resolve(have)
   return new Promise((resolve) => {
     const w = {
       since,
-      sessionId,
+      agentId,
       workspace,
       resolve,
       timer: setTimeout(() => {
         const i = waiters.indexOf(w)
         if (i >= 0) waiters.splice(i, 1)
-        resolve(LOG.filter((m) => m.seq > since && visibleTo(m, sessionId, workspace)))
+        resolve(LOG.filter((m) => m.seq > since && visibleTo(m, agentId, workspace)))
       }, maxMs)
     }
     waiters.push(w)

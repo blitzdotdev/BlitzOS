@@ -13,7 +13,8 @@ export const WIDGET_TOOLS = [
   'group',
   'go_to_primary',
   'list_state',
-  'provider_call'
+  'provider_call',
+  'set_theme'
 ]
 
 export function isWidgetTool(name) {

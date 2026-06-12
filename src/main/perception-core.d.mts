@@ -28,13 +28,13 @@ export function setMomentTap(fn: ((moment: Record<string, unknown>) => void) | n
 export function ingestCanvasOps(ops: Array<{ op: 'open' | 'close' | 'move' | 'resize'; id: string; title?: string; kind?: string; x?: number; y?: number; w?: number; h?: number; origin: 'human' | 'tool' }>): void
 export function latestSeq(): number
 export function emitSurfaceAction(surfaceId: string, action: Record<string, unknown>): void
-export function emitUserMessage(text: string, sessionId?: string): void
+export function emitUserMessage(text: string, agentId?: string): void
 export function emitConnectorChange(provider: string, connected: boolean): void
 /** The human placed a spatial annotation on a surface + asked the agent about that point (item 5b). */
 export function emitAnnotation(surfaceId: string, text: string, anchor?: { xPct: number; yPct: number }, snapshot?: string): void
 /** An OS-level event both inhabitants should know about (crash recovery, update, restore…). */
 export function emitSystemMoment(kind: string, line: string, detail?: Record<string, unknown>): void
-export function waitForEvents(since: number, maxMs: number, sessionId?: string, workspace?: string | null): Promise<BlitzMoment[]>
+export function waitForEvents(since: number, maxMs: number, agentId?: string, workspace?: string | null): Promise<BlitzMoment[]>
 /** Register the active-workspace provider; every emitted moment is stamped with it (v2 bleed fix). */
 export function setWorkspaceProvider(fn: (() => string | null | undefined) | null): void
 export const EVENTS_REMINDER: string

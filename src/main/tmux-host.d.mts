@@ -1,9 +1,9 @@
-// Types for the tmux control-mode session host (tmux-host.mjs).
+// Types for the tmux control-mode terminal host (tmux-host.mjs).
 
 export interface TmuxHostConfig {
   /** Absolute path to the tmux server socket. Put under <workspace>/.blitzos/tmux/ to keep it in-workspace. */
   socketPath: string
-  /** The single tmux session that holds one window per BlitzOS session. Default "blitz". */
+  /** The single tmux session that holds one window per BlitzOS terminal. Default "blitz". */
   sessionName?: string
   cols?: number
   rows?: number
@@ -38,7 +38,7 @@ export interface TmuxSessionInfo {
 export interface TmuxHost {
   /** Connect the control client (create the session if absent, else attach — enables reattach). */
   start(): Promise<void>
-  /** Spawn a session = a tmux window named with the id; resolves once tmux assigns the pane. */
+  /** Spawn a terminal = a tmux window named with the id; resolves once tmux assigns the pane. */
   spawn(id: string, opts?: TmuxSpawnOpts): Promise<TmuxSessionInfo | null>
   write(id: string, data: string): boolean
   resize(id: string, cols: number, rows: number): boolean
@@ -52,11 +52,11 @@ export interface TmuxHost {
   list(): TmuxSessionInfo[]
   /** Reattach-on-boot: adopt windows (named with ids) already live in the tmux server. Returns adopted ids. */
   adoptExisting(): Promise<string[]>
-  /** Close the control client — sessions SURVIVE (the tmux server keeps running). */
+  /** Close the control client — terminals SURVIVE (the tmux server keeps running). */
   stop(): void
-  /** Kill the tmux server — all sessions DIE. */
+  /** Kill the tmux server — all terminals DIE. */
   killServer(): void
-  /** Kill every session's window. */
+  /** Kill every terminal's window. */
   stopAll(): void
 }
 

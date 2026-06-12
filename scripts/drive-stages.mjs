@@ -1,6 +1,6 @@
-// CDP + relay driver: verify stage-per-agent-session end to end.
-//  (1) self-heal — existing chat sessions hydrate into their own stages (chat-N in stage N);
-//  (2) a NEW session's chat + its agent-created surface + its terminal all land in the session's stage,
+// CDP + relay driver: verify stage-per-agent end to end.
+//  (1) self-heal — existing agent chats hydrate into their own stages (chat-N in stage N);
+//  (2) a NEW agent's chat + its agent-created surface + its terminal all land in the agent's stage,
 //      while the user's primary stage (0) is undisturbed.
 //   node scripts/drive-stages.mjs [pageUrl] [backendUrl]
 import { spawn } from 'node:child_process'
@@ -73,15 +73,15 @@ async function main() {
   // assertions match exactly. SIDEBAR=52, RIGHTPAD=24, STAGE_GAP=1200 (stages-core.mjs).
   const stride = await evalJs(`const w=Math.max(320, window.innerWidth-52-24); return w+1200`)
   // Map: surfaceId -> stage index (round((left + width/2)/stride)). data-sid carries the world x in style.left.
-  const areaMap = async () => evalJs(`
+  const stageMap = async () => evalJs(`
     const out={}; for (const el of document.querySelectorAll('[data-sid]')) {
       const sid=el.getAttribute('data-sid'); const left=parseFloat(el.style.left||'0'); const w=el.offsetWidth||parseFloat(el.style.width||'0');
       out[sid]=Math.round((left + w/2)/${stride});
     } return out;`)
 
   console.log(`stride=${stride}`)
-  console.log('\n[1] self-heal: existing chat sessions hydrate into their own stages')
-  const m1 = await areaMap()
+  console.log('\n[1] self-heal: existing agent chats hydrate into their own stages')
+  const m1 = await stageMap()
   console.log('  stage map: ' + JSON.stringify(m1))
   check(m1['chat'] === 0, `primary chat in stage 0 (got ${m1['chat']})`)
   for (const sid of Object.keys(m1)) {
@@ -89,41 +89,57 @@ async function main() {
     if (mm) check(m1[sid] === Number(mm[1]), `${sid} in stage ${mm[1]} (got ${m1[sid]})`)
   }
 
-  console.log('\n[2] spawn a NEW chat session via relay → its chat lands in its own stage')
-  const spawned = await relay('spawn_chat_session', { title: 'Stage Test Agent' })
-  const newId = spawned && spawned.session && String(spawned.session.id)
-  check(!!newId, `spawn_chat_session returned an id (${newId})`)
+  console.log('\n[2] spawn a NEW agent via relay → its chat lands in its own stage')
+  const spawned = await relay('spawn_agent', { title: 'Stage Test Agent' })
+  const newId = spawned && spawned.agent && String(spawned.agent.id)
+  check(!!newId, `spawn_agent returned an id (${newId})`)
   await delay(4000)
-  const m2 = await areaMap()
+  const m2 = await stageMap()
   const newChatSid = `chat-${newId}`
   check(m2[newChatSid] === Number(newId), `${newChatSid} chat widget in stage ${newId} (got ${m2[newChatSid]})`)
 
-  console.log('\n[3] that session opens a surface + a terminal → both land in ITS stage, not the user\'s')
+  console.log('\n[3] that agent opens a surface + a terminal → both land in ITS stage, not the user\'s')
   let surfId = null
   for (let i = 0; i < 3 && !surfId; i++) {
-    const created = await relay('create_surface', { kind: 'srcdoc', html: '<h1>agent work window</h1>', session: newId })
+    const created = await relay('create_surface', { kind: 'srcdoc', html: '<h1>agent work window</h1>', agent: newId })
     surfId = created && created.id
     if (!surfId) await delay(1500) // transient relay hiccup — retry
   }
-  check(!!surfId, `create_surface {session:${newId}} returned an id (${surfId})`)
-  await relay('spawn_session', { command: 'bash', title: `stage${newId}-shell`, session: newId })
-  await delay(5000)
-  const m3 = await areaMap()
-  console.log('  stage map after work: ' + JSON.stringify(m3))
-  check(surfId && m3[surfId] === Number(newId), `agent-created surface in stage ${newId} (got ${surfId ? m3[surfId] : 'n/a'})`)
-  // the terminal surface id is dynamic; find any terminal-bearing surface NOT in stage 0 that is in stage newId.
-  const termAreas = await evalJs(`
+  check(!!surfId, `create_surface {agent:${newId}} returned an id (${surfId})`)
+  await relay('open_terminal', { command: 'bash', title: `stage${newId}-shell`, agent: newId })
+  // POLL until the canvas settles — a single fixed delay flaked (the new surface/terminal hadn't registered
+  // its position yet, reading stage `undefined`). Retry up to ~12s for all three conditions to hold.
+  // The terminal surface id is dynamic; find any terminal-bearing surface and report which stage it's in.
+  const termStagesExpr = `
     const out=[]; for (const el of document.querySelectorAll('[data-sid]')) {
       if (el.querySelector('.window-tabs') || (el.textContent||'').includes('Terminal')) {
         const left=parseFloat(el.style.left||'0'); const w=el.offsetWidth||0; out.push(Math.round((left+w/2)/${stride}));
       }
-    } return out;`)
-  console.log('  terminal-window stages: ' + JSON.stringify(termAreas))
-  check(termAreas.includes(Number(newId)), `a terminal window is in stage ${newId} (got ${JSON.stringify(termAreas)})`)
+    } return out;`
+  let m3 = {}, surfStage, termStages = []
+  for (let i = 0; i < 10; i++) {
+    await delay(1200)
+    m3 = await stageMap()
+    surfStage = surfId ? m3[surfId] : undefined
+    termStages = await evalJs(termStagesExpr)
+    if (surfStage === Number(newId) && termStages.includes(Number(newId)) && m3['chat'] === 0) break
+  }
+  console.log('  stage map after work: ' + JSON.stringify(m3))
+  check(surfId && surfStage === Number(newId), `agent-created surface in stage ${newId} (got ${surfStage})`)
+  console.log('  terminal-window stages: ' + JSON.stringify(termStages))
+  check(termStages.includes(Number(newId)), `a terminal window is in stage ${newId} (got ${JSON.stringify(termStages)})`)
   check(m3['chat'] === 0, `the user's primary chat is STILL in stage 0 (undisturbed) (got ${m3['chat']})`)
 
   await shot('after')
-  console.log(fails.length ? `\nFAIL ✗ ${fails.length}: ${fails.join(' | ')}` : '\nPASS ✓ stage-per-session isolation verified')
+
+  // cleanup: close the agent this run spawned (close_agent deletes its chat + files + stage) AND remove the
+  // terminal it opened into that stage, so Home is left exactly as found (only the primary agent).
+  console.log('\n[cleanup] closing the spawned agent + removing its terminal')
+  if (newId) { try { await relay('close_agent', { id: newId }) } catch { /* ignore */ } }
+  try { await evalJs(`const ts=(await window.agentOS.terminalList()).filter(s=>s.kind==='terminal'); for(const t of ts){try{window.agentOS.terminalRemove(t.id)}catch{}} return ts.length`) } catch { /* ignore */ }
+  await delay(2000) // terminalRemove is a fire-and-forget shim fetch — let it land before we close the socket + exit
+
+  console.log(fails.length ? `\nFAIL ✗ ${fails.length}: ${fails.join(' | ')}` : '\nPASS ✓ stage-per-agent isolation verified')
   ws.close()
   cleanup(fails.length ? 2 : 0)
 }

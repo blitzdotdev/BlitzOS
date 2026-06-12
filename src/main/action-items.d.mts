@@ -7,7 +7,7 @@ export interface ActionItem {
   title: string
   detail?: string
   kind: ActionKind
-  sessionId?: string
+  agentId?: string
   choices?: string[]
   status: ActionStatus
   createdAt: number

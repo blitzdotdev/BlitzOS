@@ -1,52 +1,47 @@
-# Agent-Session Rebuild — Master Tracker
+# Agent-Session (Terminal/Agent) Rebuild — Master Tracker
 
-The living checklist for the BlitzOS agent-session work, so nothing is forgotten. Status: ✅ done · 🔧 in progress · ⬜ todo · 🔴 bug.
+> **VOCABULARY (current):** the primitive is a **Terminal**; an **Agent** = a Terminal running `claude` + a chat widget. "session" is the OLD word (renamed deeply: `session-manager`→`terminal-manager`, `spawn_chat_session`→`spawn_agent`, kind `pty`→`terminal`). "areas" were renamed to **stages** (`areaForSession`→`stageForAgent`, `areaCount`→`stageCount`). All renames are EXECUTED + committed — see `plans/terminal-agent-rename.md` and `plans/merge-stages-reconcile.md`.
 
-## The standing goal (/goal — active)
-> every agent session should have a workspace area (like the primary one) associated with it. the agent terminal should be there and other windows agent opens for its work, so they dont interfere with the user's area. every agent should have a name/id so it can be used to resume it. serialization etc should work accordingly. plan for this and implement.
+Living checklist. Status: ✅ done · 🔧 in progress · ⬜ todo · 🔴 bug.
 
-## Everything asked / told (in order) + status
-1. ✅ **/goal area-per-session** — session N owns area N; chat + terminal + agent-opened windows land in area N; user's area 0 undisturbed. Planned (workflow) + implemented + chromium-verified. *(uncommitted)*
-2. ✅ **"+ New" launcher button** — open a chat session from the UI. Committed `2bc0f59` (you pushed it).
-3. ✅ **"i don't see a terminal in the agent workspace"** — diagnosed: the agent was headless. Offered options.
-4. ✅ **Chose "Agent runs IN a terminal"** (Option A) — you watch claude work; it /says clean replies to the chat widget.
-5. ✅ **"remove all the session and brain stuff and do it properly with all serialization"** — REBUILT: an agent = a claude in a visible tmux terminal in its area; deleted `agent-runner.mjs` + all headless wiring; new shared `agent-session.mjs`. Chromium-verified (terminal renders + /says + no cross-talk; restart reattaches survivors + --resumes a killed agent, no duplicates). *(uncommitted)*
-6. ✅ **"is all old code removed?"** — runtime old code 100% gone (zero refs). Vestiges remain (see cleanup below).
-7. 🔧 **"is all the UX done properly for user use?"** — assessment + fixes (see UX below).
-8. 🔧 **"electron and server in sync? no divergence anywhere"** — launchAgent/boot-resume audited = equivalent; parity green (11 cores). Full adapter audit + Electron path review pending. Electron not live-testable here (no display).
-9. 🔧 **"remove obsolete stuff and other brain references"** — cleanup pending (see below).
-10. ✅/🔴 **"are all sessions given the agents.md link to fetch/prime/connect?"** — YES, every bootstrap has the url + fetch + /events connect (verified live). **BUT FOUND A BUG** → see 🔴 below.
-11. ✅ **"list everything … so we don't forget"** — this file.
-12. 🔧 **"and fix all systematically"** — in progress (this tracker drives it).
+## The standing goal (delivered)
+> every agent owns a workspace stage; its terminal + the windows it opens live there (not the user's stage); every agent has a name/id and resumes; serialization round-trips a restart.
+
+All of the above is **done, committed, and chromium-verified** (server mode). Electron runs the identical shared-core code but has no display here to test pixels.
+
+## Everything asked / told (in order) — final status
+1. ✅ **Stage-per-agent** — agent N owns stage N; chat + terminal + agent-opened windows land there; user's stage 0 undisturbed. (committed)
+2. ✅ **"+ Agent" launcher + "+ Terminal"** — open an agent (claude+chat) or a plain shell, separately, from the toolbar + the tray. (committed `2bc0f59` + later)
+3. ✅ **Agent runs IN a visible tmux terminal** (you watch claude work; interactive TUI, no `-p`); /says clean replies to its chat widget. (`4c0c641`)
+4. ✅ **Removed all brain/headless code, rebuilt on tmux** — `agent-runner.mjs`/`session-dispatch.mjs` deleted; new shared `agent-runtime.mjs`; full serialization (reattach survivors + `--resume` dead agents, no duplicates). (`2826e38`)
+5. ✅ **All old code removed** — zero refs to `startAgentRunner`/`BRAIN_MARKER`/`chatRunners`/`restartBrain`/`session-manager`/`areas-core`/`spawnChatSession` (grep-verified 2026-06-11).
+6. ✅ **UX for real use** — separate +Terminal/+Agent; **Terminals & Agents tray** (two groups, Open/Stop/Resume/Remove/Delete); inline **rename**; **close/delete** (primary '0' guarded everywhere); resume-on-reload. (`08bbd85`, `ae0bc3a`, `cd19983`, `a5ffbb6`)
+7. ✅ **Electron ↔ server: no divergence** — every runtime seam (launchAgent/stopAgent/setRelayUrl/resumeAgentsOnBoot/whenRestored/setBootTaskProvider, spawn/close/rename agent, removeTerminal, the slot tools, action-items) wired in BOTH transports; parity green (11 cores). Re-audited 2026-06-11 (28-agent adversarial sweep): 0 structural breaks. **Caveat:** Electron can't be live-tested here (no display) — verified by code parity + the live server path.
+8. ✅ **Remove obsolete/brain references** — `restartBrain` seam gone; `brain:` status flag → `agent:`; `start-all.sh` dead pkills + `blitz-brain-poll.sh` removed; stale code comments scrubbed.
+9. ✅ **Sessions get the agents.md link + connect** — every agent's `bootstrap.txt` carries the manual url + fetch + `/events` connect loop; the relay url is a self-healing file (`.blitzos/relay-url`) re-read per curl. Verified live.
+10. ✅ **Stage-slot desktop merge** (`agent-runtime-moments`) — stages vocabulary + slot lattice (`place_widget`/`bring_to_stage`/`send_backstage`) + per-agent chat widget (no hub). (`e83f7c4`)
 
 ## 🔴 Bugs found → ✅ FIXED + verified
-- ✅ **Stale relay URL on reattach** — the relay re-mints the URL each run; a reattached agent held a dead url → disconnected. **Fixed:** (a) the bootstrap now inlines `$(cat .blitzos/relay-url)` into every curl (BlitzOS writes that file on every url change) so a running agent self-heals mid-run; (b) on boot we **re-exec** every chat agent on the CURRENT url + `--resume` (reattach alone was unreliable — the agent gave up during downtime). Verified: agents reconnect + reply across 2 restarts, no duplicates.
-- ✅ **`claudeEstablished` crash-loop** (review blocker, live-confirmed: `--session-id <existing>` → "already in use") — established was only set on a live exit, lost on a crash-while-down. **Fixed:** persist it proactively at 8s of healthy uptime + in `restore()`'s adopt-as-exited path → a re-exec always `--resume`s an established id. Verified.
+- ✅ Blank terminal (`-p` silent) → interactive TUI.
+- ✅ Stale relay URL on reattach → re-exec on current url + `--resume` + the relay-url self-heal file.
+- ✅ `claudeEstablished` crash-loop ("already in use") → persist proactively (8s) + in `restore()`.
+- ✅ Agent died + stayed dead → auto-restart with backoff (`4611bb5`).
 
-## 🔧 Remove obsolete / brain references (asked)
-- ⬜ `restartBrain` no-op seam — remove from relay.mjs / relay.d.mts / agentSocket.ts / backend.mjs / index.ts (the new url-file self-heal replaces its purpose).
-- ⬜ `brain:` status flag (agentStatus + /api/health) + toolbar pill text "Brain connected/Brain link" → rename to "Agent".
-- ⬜ `start-all.sh` dead `pkill 'blitz-brain-session'` / `'blitz-session-'` + "brains running" doctor line + comments (the tmux agents have no such marker and MUST survive restart).
-- ⬜ `scripts/blitz-brain-poll.sh` — obsolete manual /events poller; remove.
-- ⬜ Stale "brain" comments (perception-core, workspace.mjs, backend.mjs). *(workspace `.workspace/*` notes are agent DATA + gitignored — leave.)*
+## 2026-06-11 review pass (this session) — verified + fixed
+Ran a full verified audit (gates + 5/6 live drive tests + a 28-agent adversarial sweep). Green baseline: typecheck · parity (11) · build · `test-stage-core` 238/0 · `test-stage-e2e` 24/0 · `drive-terminals`/`drive-stages`/`drive-tabs`/`drive-newchat`/`verify-real` all PASS live. Real findings fixed:
+- ✅ **`electronOps.say` dropped the `workspace` arg** the shared handler passes (server honored it) → threaded it (`osSay` already supported it). [divergence]
+- ✅ **`os:chat-control` had no handler/shim** — `blitz.chat('new'/'rename')` in the chat widget was dead in BOTH transports → wired to `osSpawnAgent`/`osRenameAgent` (Electron `ipcMain.handle('os:chat-control')` + shim `chatControl`). [broken-code]
+- ✅ **Electron hydrate `mode` fallback was `'desktop'`** vs server `'canvas'` (both hosts canvas-first) → `'canvas'`. [divergence]
+- ✅ **`claudeEstablished` narrow create-mode race** (survivor restarted in the <8s window) → deterministic backstop: `ensureClaudeSessionId` also treats the agent as established when claude's conversation jsonl already exists on disk (encoding verified against the live store). [correctness]
+- ✅ **`InboxPanel` ActionItem type said `sessionId`** but the producer emits `agentId` → renamed (was never read). [vocabulary]
 
-## 🔧 UX for real user use (assess + fix)
-- ⬜ Name a session from "+ New" (today → "Chat N" / "Agent N"; goal wants named/resumable).
-- ⬜ Close / delete a chat session from the UI (today append-only).
-- ⬜ Sessions tray now lists agents + shells together — confirm Open/Resume/Stop are coherent for agents.
-- ⬜ Discoverability: after "+ New" the camera follows to the new area — make returning obvious.
-- ⬜ Default-off (BLITZ_AGENT unset): sessions persist but no claude runs — is that legible?
-
-## 🔧 Electron ↔ server divergence (full audit)
-- 🔧 launchAgent + boot-resume — audited equivalent.
-- ⬜ Full audit: every new seam (getUrl, whenRestored, isSessionLive, spawnChatSession focus, the chat-session-spawn IPC vs route, preload vs shim) wired identically; BLITZ_AGENT gate present in BOTH.
-- ⬜ Note: Electron mode can't be live-tested in this sandbox (no display) — verify by code parity + the server live test.
-
-## Then
-- ✅ Pre-commit review (`rebuild-review`) — found the claudeEstablished crash-loop (fixed) + warnings (folded in).
-- ✅ typecheck + parity (11 cores) + build green; re-verified live (server) in chromium.
-- ✅ Committed `2826e38` — "agent sessions are serialized tmux terminals in their own areas". USER runs `git push origin master` (ahead 1; 2bc0f59 already on origin).
-- ⬜ Remaining: the UX enhancements above + the Electron live test (no display here — server path verified, Electron structurally identical).
+## ⬜ Remaining (not blocking)
+- ⬜ **Electron live test** — needs `npm run dev` on a Mac (no display in this sandbox). Code is parity-identical to the verified server path.
+- ⬜ **Name-on-create prompt** for +Terminal/+Agent (today: auto-named + rename-after). Optional UX.
+- ✅ **`drive-inbox` is now self-contained** — it resets the live inbox, seeds 2 items via the real relay `request_action` path, verifies resume/badge/Done/choose/Clear, and resets to empty. PASS live; leaves Home clean. The whole drive suite (terminals/stages/tabs/newchat/inbox + verify-real) is green everytime.
+- ✅ **Stale plan docs handled** — `onboarding-case-file.md` (live-code spec) had its deleted-seam names corrected to `agent-runtime.mjs`/`setBootTaskProvider`/`terminal-manager.mjs`; the aspirational docs (`guardian-angel-blitzos.md`, `blitzos-visceral-loop.md`, `session-tape-and-daydreaming.md`) and the pre-rename `multiple-workspace-areas*.md` got a dated ⚠️ banner mapping `agent-runner.mjs`/"areas" onto the current model. `working-stream.md` left as a dated historical log (it self-corrects).
+- ⬜ **Push** — 36 commits ahead of (cached) origin/master; user runs `git push origin master` (no SSH key here). If `agent-runtime-moments` has commits newer than the cached `b47dca1`, re-merge the delta.
+- ⬜ Optional: simplify the chat widget (`widgets/system/chat.html`) — it still carries the pre-merge multi-session switcher sidebar; per the locked "per-agent widget, no hub" doctrine it could be a single-agent thread. (chat-control now works, so the switcher is functional, not broken — this is a UX call.)
 
 ## Persistent constraints (always)
-NO git reset/checkout/stash · NO placeholders/secrets committed · Opus subagents only (except ultracode) · no drizzle/prisma · no SSH key here (user pushes) · no time estimates · don't say "let me be more honest" · tmux is a hard dep · run prod backup before any remote deploy · after compaction run scripts/extract-session-transcript.sh.
+NO git reset/checkout/stash · NO placeholders/secrets committed · Opus subagents only (except ultracode) · no drizzle/prisma · no SSH key here (user pushes) · no time estimates · don't say "let me be more honest" · tmux is a hard dep · run prod backup before any remote deploy · after compaction run `scripts/extract-session-transcript.sh`.

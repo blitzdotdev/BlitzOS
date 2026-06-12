@@ -214,11 +214,11 @@
     setContentShare: function (surfaceId, on) {
       return postJSON('/os/content-share', { surfaceId: surfaceId, on: on })
     },
-    // The user typed a message to a chat session's agent (sessionId '0' = the primary chat).
-    sendMessage: function (text, sessionId) {
+    // The user typed a message to an agent (agentId '0' = the primary chat).
+    sendMessage: function (text, agentId) {
       fetch(API + '/os/user-message', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: text, sessionId: sessionId || '0' })
+        body: JSON.stringify({ text: text, agentId: agentId || '0' })
       }).catch(function () {})
     },
     onAction: function (cb) {
@@ -240,33 +240,56 @@
     unregisterWebview: function () {},
     reportWebview: function () {}, // electron-only (webview guest -> main); no-op in the browser
     onMetaTap: function () { return function () {} }, // electron-only ⌘-tap; no-op subscribe
-    // Session terminal I/O (server mode) — POST to the backend, the SAME shared session ops as Electron IPC.
-    sessionInput: function (id, data) {
-      fetch(API + '/os/session-input', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, data: data }) }).catch(function () {})
+    // Terminal I/O (server mode) — POST to the backend, the SAME shared terminal ops as Electron IPC.
+    terminalInput: function (id, data) {
+      fetch(API + '/os/terminal-input', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, data: data }) }).catch(function () {})
     },
-    sessionResize: function (id, cols, rows) {
-      fetch(API + '/os/session-resize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, cols: cols, rows: rows }) }).catch(function () {})
+    terminalResize: function (id, cols, rows) {
+      fetch(API + '/os/terminal-resize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, cols: cols, rows: rows }) }).catch(function () {})
     },
-    sessionRead: function (id) {
-      return postJSON('/os/session-read', { id: id }, { text: '' }).then(function (r) { return (r && r.text) || '' })
+    terminalRead: function (id) {
+      return postJSON('/os/terminal-read', { id: id }, { text: '' }).then(function (r) { return (r && r.text) || '' })
     },
-    sessionSpawn: function (opts) {
-      fetch(API + '/os/session-spawn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(opts || {}) }).catch(function () {})
+    terminalSpawn: function (opts) {
+      fetch(API + '/os/terminal-spawn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(opts || {}) }).catch(function () {})
     },
-    // Open a NEW chat session (a fresh peer agent + its own chat widget). The host broadcasts a `create`
+    // Open a NEW agent (a fresh peer agent + its own chat widget). The host broadcasts a `create`
     // for the new chat surface over SSE, so it appears without a refresh.
-    spawnChatSession: function (title) {
-      fetch(API + '/os/chat-session-spawn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: title }) }).catch(function () {})
+    spawnAgent: function (title) {
+      fetch(API + '/os/agent-spawn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: title }) }).catch(function () {})
     },
-    sessionList: function () {
-      return postJSON('/os/session-list', {}, { sessions: [] }).then(function (r) { return (r && r.sessions) || [] })
+    // Close a non-primary agent (stop its terminal + remove its widget/files/area).
+    closeAgent: function (id) {
+      return postJSON('/os/agent-close', { id: id }, { ok: false })
     },
-    sessionStop: function (id) {
-      fetch(API + '/os/session-stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
+    // Rename an agent (cosmetic title).
+    renameAgent: function (id, title) {
+      return postJSON('/os/agent-rename', { id: id, title: title }, { ok: false })
     },
-    sessionRestart: function (id) {
-      // Re-spawn a dead session — the backend emits session-spawn, which re-opens its terminal tab.
-      fetch(API + '/os/session-restart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
+    // blitz.chat (a per-agent chat widget's own control) — server side of the SAME seam as the Electron
+    // os:chat-control handler: 'new' → spawn a fresh agent and return its { id }; 'rename' → retitle.
+    chatControl: function (op, args) {
+      var a = args || {}
+      if (String(op) === 'new') {
+        return postJSON('/os/agent-spawn', { title: a.title }, { agent: null }).then(function (r) {
+          return r && r.agent ? { id: r.agent.id, title: r.agent.title } : { ok: false, error: 'spawn failed' }
+        })
+      }
+      if (String(op) === 'rename') return postJSON('/os/agent-rename', { id: a.id, title: a.title }, { ok: false })
+      return Promise.resolve({ ok: false, error: 'unknown chat op: ' + String(op) })
+    },
+    terminalList: function () {
+      return postJSON('/os/terminal-list', {}, { terminals: [] }).then(function (r) { return (r && r.terminals) || [] })
+    },
+    terminalStop: function (id) {
+      fetch(API + '/os/terminal-stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
+    },
+    terminalRemove: function (id) {
+      fetch(API + '/os/terminal-remove', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
+    },
+    terminalRestart: function (id) {
+      // Re-spawn a dead terminal — the backend emits terminal-spawn, which re-opens its terminal tab.
+      fetch(API + '/os/terminal-restart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
     },
     // Action-items inbox (human side): load the list, tick an item (resolve), clear a resolved one.
     actionList: function (status) {

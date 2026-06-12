@@ -4,7 +4,7 @@
 // is ONE implementation, no second copy to drift. The serializer (workspace.mjs) does disk I/O; the
 // per-transport bits (reaching renderers, realizing web surfaces) are adapter callbacks. This is the
 // control-core.mjs / perception-core.mjs pattern: one feature, both modes.
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, watch, statSync, realpathSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, watch, statSync, realpathSync, existsSync } from 'node:fs'
 import { join, basename, resolve, sep } from 'node:path'
 import {
   writeWorkspace,
@@ -18,6 +18,7 @@ import {
   createFolder,
   listDir,
   removeSurfaceFile,
+  removeAgentFiles,
   ensureSystemRenderer,
   readSystemRenderer,
   writeSystemRenderer,
@@ -37,11 +38,11 @@ import {
   findSurfaceWorkspace,
   relocateSurface
 } from './workspace.mjs'
-// Stage grid: a chat session N owns stage N (stageForSession), so its chat widget + the windows its agent
+// Stage grid: an agent N owns stage N (stageForAgent), so its chat widget + the windows it
 // opens land in stage N — isolated from the user's primary (stage 0). Shared with the renderer (one grid).
-import { stageForSession, stageCenterX, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
+import { stageForAgent, stageCenterX, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 // The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
-import { writeRelayUrl } from './agent-session.mjs'
+import { writeRelayUrl } from './agent-runtime.mjs'
 
 /**
  * @param {object} a
@@ -137,9 +138,10 @@ export function createWorkspaceHost(a) {
       //    known node → it correctly drops). Re-apply group memberships to the disk surfaces too.
       // Runtime-only surfaces (never serialized as workspace.json nodes). This MUST match the renderer's
       // isRuntime predicate in store.ts applyReconcile — the two run the same reconcile contract and any
-      // drift is exactly the divergence the parity guard exists to prevent. terminal/sessions/inbox are
-      // reconstructed from session/action-item events on load, so they're kept across a reconcile here too.
-      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'terminal' || s.component === 'sessions' || s.component === 'inbox' || s.component === 'unlock'))
+      // drift is exactly the divergence the parity guard exists to prevent. terminal/runtime/inbox are
+      // reconstructed from terminal/action-item events on load, so they're kept across a reconcile here too.
+      // `unlock` is the runtime-only onboarding FDA card (must be in BOTH isRuntime predicates — see store.ts).
+      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'terminal' || s.component === 'runtime' || s.component === 'inbox' || s.component === 'unlock'))
       const reconciledIds = new Set(r.surfaces.map((s) => s.id))
       const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
       const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))
@@ -240,32 +242,33 @@ export function createWorkspaceHost(a) {
     return { ok: true, from: r.fromName, id: r.surface.id }
   }
 
-  // ---- The system Chat: a srcdoc widget per SESSION whose UI is blitz-[<id>-]chat.html (customizable)
-  // and whose transcript is chat[-<id>].md. Session '0' is the primary chat (legacy names, pinned). Each
-  // session is an AGENT — a claude running in its own tmux terminal (launchAgent) that /says into ITS
-  // transcript. The OS appends each message and broadcasts {type:'chat', sessionId, messages}.
-  // The chat UI is ONE hub surface ('chat') holding EVERY session — a sidebar switches threads
-  // client-side (this branch's model; master briefly had a chat surface per session+stage). Agents
-  // themselves still get per-session STAGES for their windows/terminals.
-  const CHAT_HUB_ID = 'chat'
-  const chatSurfaceId = () => CHAT_HUB_ID
-  const chatStatus = {} // sessionId -> '' | 'thinking' (true while the agent is working that session)
-  /** A session's display title: its meta.json title, else a default ('0' = the primary, named "Main"). */
-  function sessionTitle(id) {
-    try { const m = JSON.parse(readFileSync(join(activeWorkspace, '.blitzos', 'sessions', String(id), 'meta.json'), 'utf8')); if (m && m.title) return String(m.title) } catch { /* no meta */ }
-    return !id || String(id) === '0' ? 'Main' : `Chat ${id}`
+  // ---- The system Chat: a srcdoc widget per AGENT whose UI is blitz-[<id>-]chat.html (customizable)
+  // and whose transcript is chat[-<id>].md. Agent '0' is the primary chat (legacy names, pinned). Each
+  // agent is a claude running in its own tmux terminal (launchAgent) that /says into ITS
+  // transcript. The OS appends each message and broadcasts {type:'chat', agentId, messages}; the widget
+  // just renders props.messages. There is NO chat hub — each agent has its OWN chat widget.
+  const chatSurfaceId = (agentId = '0') => (!agentId || String(agentId) === '0' ? 'chat' : `chat-${agentId}`)
+  /** The chat-bearing agents: always '0' (primary) + any .blitzos/terminals/<id> that is an AGENT (its
+   *  terminal runs a BlitzOS claude → it has a chat widget). 'chat' is the legacy kind from before agents
+   *  ran in terminals; 'agent' is the unified kind now. Plain 'terminal' shells are NOT agents.
+   *  Read-tolerant of the legacy `.blitzos/sessions` dir: the engine migration (terminal-ops) renames it to
+   *  `terminals` lazily on first launch/restore, which may not have run yet when we hydrate on boot — so
+   *  fall back to the legacy dir if `terminals` is absent (no agent is lost on the first post-upgrade boot). */
+  function agentDir() {
+    const t = join(activeWorkspace, '.blitzos', 'terminals')
+    if (existsSync(t)) return t
+    const legacy = join(activeWorkspace, '.blitzos', 'sessions')
+    return existsSync(legacy) ? legacy : t
   }
-  /** The chat-bearing sessions: always '0' (primary) + any .blitzos/sessions/<id> that is an AGENT (its
-   *  terminal runs a BlitzOS claude → it has a chat thread). 'chat' is the legacy kind from before agents
-   *  ran in terminals; 'agent' is the unified kind now. Plain 'pty' shells are NOT chat sessions. */
-  function chatSessionIds() {
+  function agentIds() {
     const ids = ['0']
+    const dir = agentDir()
     try {
-      for (const d of readdirSync(join(activeWorkspace, '.blitzos', 'sessions'), { withFileTypes: true })) {
+      for (const d of readdirSync(dir, { withFileTypes: true })) {
         if (!d.isDirectory() || d.name === '0') continue
-        try { const m = JSON.parse(readFileSync(join(activeWorkspace, '.blitzos', 'sessions', d.name, 'meta.json'), 'utf8')); if (m && (m.kind === 'agent' || m.kind === 'chat')) ids.push(d.name) } catch { /* skip */ }
+        try { const m = JSON.parse(readFileSync(join(dir, d.name, 'meta.json'), 'utf8')); if (m && (m.kind === 'agent' || m.kind === 'chat')) ids.push(d.name) } catch { /* skip */ }
       }
-    } catch { /* no sessions dir */ }
+    } catch { /* no terminals dir */ }
     return ids
   }
   /** The viewport last pushed by a renderer (for stage-math placement); a default until the first push. */
@@ -273,138 +276,140 @@ export function createWorkspaceHost(a) {
     try { const st = a.getState(); if (st && st.viewport && st.viewport.w) return st.viewport } catch { /* no state */ }
     return DEFAULT_VP
   }
-  /** The hub's props: the session list (id + title + status) + every session's recent transcript, so the
-   *  widget can render a sidebar and switch threads with zero round-trips. */
-  function chatHubProps() {
-    const ids = chatSessionIds()
-    const threads = {}
-    for (const id of ids) threads[id] = readChatMessages(activeWorkspace, 200, id)
+  /** Build one agent's chat surface (ensuring/recreating its blitz-[<id>-]chat.html if missing). */
+  function buildAgentSurface(agentId = '0') {
+    ensureSystemRenderer(activeWorkspace, 'chat', agentId)
+    const primary = !agentId || String(agentId) === '0'
+    const w = 360
+    // Agent N owns stage N: anchor its chat at the SAME relative spot in ITS stage that the primary chat
+    // sits at in stage 0 (left-of-center, −700 from the stage center). stageCenterX(0)=0 → primary x=−700,
+    // byte-identical to before; agent N's chat sits at the same on-screen place when you switch to stage N.
+    const x = Math.round(stageCenterX(stageForAgent(agentId), viewportOf()) - 700)
     return {
-      sessionId: '0',
-      activeSessionId: '0',
-      messages: threads['0'] || [], // compat: simple per-session renderers (chat-session.html) read this
-      sessions: ids.map((id) => ({ id, title: sessionTitle(id), status: chatStatus[id] || '' })),
-      threads,
-      status: { ...chatStatus }
-    }
-  }
-  /** Re-push the hub props (sessions + threads + status) into osState + to live renderers. */
-  function pushChatHub() {
-    const props = chatHubProps()
-    try {
-      const st = a.getState()
-      if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.id === CHAT_HUB_ID ? { ...s, props: { ...(s.props || {}), ...props } } : s)) })
-    } catch { /* optional adapter */ }
-    a.broadcast({ type: 'chat', sessionId: '0', messages: props.threads['0'] || [], sessions: props.sessions, status: props.status })
-  }
-  /** Build the SINGLE hub chat surface: UI = blitz-chat.html, data = all sessions (chatHubProps). */
-  function buildChatSurface() {
-    ensureSystemRenderer(activeWorkspace, 'chat', '0')
-    return {
-      id: CHAT_HUB_ID,
+      id: chatSurfaceId(agentId),
       kind: 'srcdoc',
       role: 'chat',
-      pinned: true,
-      sessionId: '0',
-      title: 'Chat',
-      // Stage desktop: the hub is a TALL tile (2×3 cells) anchored top-left of the slot lattice —
-      // the renderer derives exact x/y/w/h from the slot at ITS real viewport (these are fallbacks).
-      slot: { col: 0, row: 0, size: 'tall' },
-      preSnap: { w: 520, h: 600 }, // pop-out (slot-toggle) restores the chat's designed free-form size
-      x: -720,
-      y: -260,
-      w: 520,
-      h: 600,
+      pinned: primary, // only the primary chat is pinned-always-on-top; others are normal windows
+      agentId: String(agentId),
+      title: primary ? 'Chat' : `Chat ${agentId}`,
+      x,
+      y: -210,
+      w,
+      h: 460,
       z: 5,
-      html: readSystemRenderer(activeWorkspace, 'chat', '0') || '',
-      props: chatHubProps()
+      html: readSystemRenderer(activeWorkspace, 'chat', agentId) || '',
+      props: { messages: readChatMessages(activeWorkspace, 400, agentId), agentId: String(agentId) }
     }
   }
-  /** The minimum stageCount needed for every chat session to have its stage (max chat-session id + 1) —
-   *  agents' windows/terminals live in per-session stages even though the chat UI is one hub. */
-  function maxChatStageCount() {
+  /** The minimum stageCount needed for every agent to have its stage (max agent id + 1). */
+  function maxAgentStageCount() {
     let max = 1
-    for (const id of chatSessionIds()) max = Math.max(max, stageForSession(id) + 1)
+    for (const id of agentIds()) max = Math.max(max, stageForAgent(id) + 1)
     return max
   }
-  /** The chat surfaces in this workspace — exactly ONE hub (it holds every session's thread). */
-  function buildChatSurfaces() { return [buildChatSurface()] }
-  /** Mint the next chat-session id: max existing integer id + 1 (primary '0' counts), so ids stay 1,2,3…
+  /** Every agent's chat surface (primary + spawned agents) — built on hydrate/switch. */
+  function buildAgentSurfaces() { return agentIds().map((id) => buildAgentSurface(id)) }
+  /** Mint the next agent id: max existing integer id + 1 (primary '0' counts), so ids stay 1,2,3…
    *  Non-numeric ids (none today) are ignored for the max. */
-  function newChatSessionId() {
+  function newAgentId() {
     let max = 0
-    for (const id of chatSessionIds()) { const n = Number(id); if (Number.isInteger(n) && n > max) max = n }
+    for (const id of agentIds()) { const n = Number(id); if (Number.isInteger(n) && n > max) max = n }
     return String(max + 1)
   }
-  /** Register a new chat session: write its meta (kind:'agent', its stage), grow stageCount so its stage
-   *  exists, launch its claude terminal (launchAgent seam, when wired), and re-push the hub so it appears
-   *  in the sidebar. Idempotent — re-adding an existing session just refreshes meta + hub. opts.focus is
-   *  accepted for parity with the per-surface model (the hub switches threads client-side, so no camera move). */
-  function addChatSession(sessionId, title, opts = {}) {
-    void opts
-    const id = String(sessionId)
-    const stage = stageForSession(id)
+  /** Register + LIVE-surface a new agent: write its meta (kind:'agent'), build its chat widget, add it
+   *  to osState, and broadcast a 'create' so every open renderer shows it without a refresh. Idempotent —
+   *  re-adding an existing agent just refreshes its surface. launchAgent (the seam below) starts its claude terminal. */
+  function addAgent(agentId, title, opts = {}) {
+    const id = String(agentId)
+    const stage = stageForAgent(id)
     const name = title || (id === '0' ? 'Chat' : `Chat ${id}`)
-    // Persist the session RECORD up front (kind:'agent') so the chat session survives a restart even when no
+    // Persist the agent RECORD up front (kind:'agent') so the agent survives a restart even when no
     // claude is auto-launched (BLITZ_AGENT off). launchAgent (below) will overwrite this with the full live
-    // meta when it spawns the terminal; both keep the same id/kind/title/stage, so chatSessionIds() finds it.
+    // meta when it spawns the terminal; both keep the same id/kind/title/stage, so agentIds() finds it.
     try {
-      const dir = join(activeWorkspace, '.blitzos', 'sessions', id)
+      const dir = join(agentDir(), id) // canonical `.blitzos/terminals`, or the legacy dir if migration hasn't run yet
       mkdirSync(dir, { recursive: true })
       const mp = join(dir, 'meta.json')
       let m = {}
       try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
       writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, stage, createdAt: m.createdAt || Date.now() }, null, 2))
-    } catch { /* best-effort: the session still works in-memory this run */ }
+    } catch { /* best-effort: the surface still works in-memory this run */ }
+    const surface = buildAgentSurface(id)
     try {
       const st = a.getState()
       if (st && Array.isArray(st.surfaces)) {
-        // Grow stageCount so this session's stage exists + is navigable (persisted via writeWorkspace) —
-        // the agent's terminal + windows land there even though its chat thread lives in the hub.
+        const without = st.surfaces.filter((s) => !(s && s.id === surface.id))
+        // Grow stageCount so this agent's stage exists + is navigable (persisted via writeWorkspace). The
+        // renderer also bumps on the 'create' below, then pushes it back — this keeps osState correct meanwhile.
         const stageCount = Math.max(Number(st.stageCount) || 1, stage + 1)
-        a.setState({ ...st, stageCount })
+        a.setState({ ...st, surfaces: [...without, surface], stageCount })
       }
     } catch { /* adapter without getState/setState */ }
-    pushChatHub()
+    // focus:true (a USER '+ New') tells the renderer to follow the camera to the new stage; an AGENT's
+    // spawn_agent leaves it false so a background agent never yanks the user's view.
+    a.broadcast({ type: 'create', surface, focus: !!opts.focus })
     // Launch the agent in a VISIBLE terminal in its stage (only when a launcher is wired — BLITZ_AGENT on).
     try { a.launchAgent?.(id, stage, name) } catch (e) { console.error('[workspace] launchAgent failed:', e?.message || e) }
-    return { id }
+    return surface
   }
-  /** Set a session's title (the agent auto-names; the human can rename) and re-push the hub sidebar. */
-  function renameChatSession(sessionId, title) {
-    const id = String(sessionId)
-    const t = String(title || '').trim().slice(0, 40)
-    if (!t) return { ok: false, error: 'empty title' }
-    try {
-      const dir = join(activeWorkspace, '.blitzos', 'sessions', id)
-      mkdirSync(dir, { recursive: true })
-      const mp = join(dir, 'meta.json')
-      let m = {}
-      try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
-      writeFileSync(mp, JSON.stringify({ ...m, id, kind: m.kind || 'agent', title: t, updatedAt: 0 }, null, 2))
-    } catch { /* best-effort */ }
-    pushChatHub()
-    return { ok: true, id, title: t }
-  }
-  /** Stop a session (the human hit Stop): clear its 'thinking' status and re-push the hub so the indicator
-   *  drops at once. The actual agent-process kill is the TRANSPORT's job (osActions → session ops); this is
-   *  the shared state/UI half. The transcript + session stay — the next message relaunches the agent. */
-  function stopChatSession(sessionId) {
-    const sid = String(sessionId)
-    chatStatus[sid] = ''
-    pushChatHub()
-    return { ok: true, id: sid }
-  }
-  /** Boot: (re)launch the claude terminal for EVERY chat session with the CURRENT relay url + --resume of its
+  /** Boot: (re)launch the claude terminal for EVERY agent with the CURRENT relay url + --resume of its
    *  persisted session id. We deliberately re-exec rather than reattach a survivor: the relay url is re-minted
    *  each run, so a survivor would hold a DEAD url and silently disconnect — re-exec'ing on the fresh url (with
-   *  --resume keeping the conversation) is the only reliable reconnect. spawnSession replaces any existing
+   *  --resume keeping the conversation) is the only reliable reconnect. spawnTerminal replaces any existing
    *  window, so there's no duplicate. No-op when launchAgent is unwired (BLITZ_AGENT off). */
   function resumeAgentsOnBoot() {
     if (typeof a.launchAgent !== 'function') return
-    for (const id of chatSessionIds()) {
-      try { a.launchAgent(id, stageForSession(id)) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) }
+    for (const id of agentIds()) {
+      try { a.launchAgent(id, stageForAgent(id)) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) }
     }
+  }
+  /** Close a NON-primary agent: stop it (no auto-restart), remove its chat widget surface +
+   *  ALL its files (chat-<id>.md, blitz-<id>-chat.html, .blitzos/terminals/<id>/), and collapse its now-empty
+   *  stage (stageCount recomputes DOWN). Primary '0' is never closable. Idempotent. */
+  function closeAgent(agentId) {
+    const id = String(agentId)
+    if (id === '0') return { ok: false, error: 'cannot close the primary agent' }
+    // SECURITY: an agent id is always numeric (newAgentId). Reject anything else so a crafted id
+    // (e.g. '..' or '../x') can't path-traverse in removeAgentFiles and delete the wrong tree —
+    // close_agent is reachable from the UNTRUSTED relay agent.
+    if (!/^[0-9]+$/.test(id)) return { ok: false, error: 'invalid agent id' }
+    if (switching) return { ok: false, error: 'switch in progress' }
+    try { a.stopAgent?.(id) } catch (e) { console.error('[workspace] stopAgent failed for', id, e?.message || e) } // sets stopping → no auto-restart
+    removeAgentFiles(activeWorkspace, id) // delete the agent dir FIRST so agentIds() drops it before we recompute stageCount
+    const sid = chatSurfaceId(id)
+    const stageCount = Math.max(1, maxAgentStageCount())
+    try {
+      const st = a.getState()
+      if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.filter((s) => s && s.id !== sid), stageCount })
+    } catch { /* adapter without getState/setState */ }
+    a.broadcast({ type: 'close', id: sid }) // renderer drops the chat widget (+ its terminal tab — see store.closeAgent)
+    a.broadcast({ type: 'agent-remove', id, stageCount }) // tray re-lists + renderer collapses the empty stage
+    return { ok: true }
+  }
+  /** Rename an agent (cosmetic — the id stays the file/stage key). Updates meta + the widget title live. */
+  function renameAgent(agentId, newTitle) {
+    const id = String(agentId)
+    const title = String(newTitle || '').trim()
+    if (!title) return { ok: false, error: 'title required' }
+    // SECURITY: numeric id only — else the meta.json write below (raw join on the id) path-escapes the
+    // workspace (e.g. id '../../../../tmp/evil'). Untrusted-relay reachable via rename_agent.
+    if (!/^[0-9]+$/.test(id)) return { ok: false, error: 'invalid agent id' }
+    if (switching) return { ok: false, error: 'switch in progress' }
+    try {
+      const mp = join(agentDir(), id, 'meta.json')
+      let m = {}
+      try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
+      mkdirSync(join(mp, '..'), { recursive: true })
+      writeFileSync(mp, JSON.stringify({ ...m, id, kind: m.kind || 'agent', title }, null, 2))
+    } catch (e) { return { ok: false, error: e?.message || 'rename failed' } }
+    const sid = chatSurfaceId(id)
+    try {
+      const st = a.getState()
+      if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.id === sid ? { ...s, title } : s)) })
+    } catch { /* adapter without getState/setState */ }
+    a.broadcast({ type: 'update', id: sid, patch: { title } })
+    a.broadcast({ type: 'agent-rename', id, title })
+    return { ok: true, title }
   }
   /** Publish the CURRENT relay base url to <ws>/.blitzos/relay-url — the file every agent re-reads on each
    *  call, so a reattached agent self-heals onto the fresh url after BlitzOS restarts (no privileged brain to
@@ -421,37 +426,33 @@ export function createWorkspaceHost(a) {
     const msgs = chat && chat.props && Array.isArray(chat.props.messages) ? chat.props.messages : []
     for (const m of msgs) appendChatMessage(activeWorkspace, m.role === 'user' ? 'user' : 'agent', String(m.text || ''))
   }
-  /** Append a chat message to a SESSION's transcript and broadcast it so that session's widget re-renders.
-   *  role 'user' (the human typed) | 'agent' (a `say`). sessionId defaults to '0' (the primary chat). */
-  function appendChat(role, text, sessionId = '0', meta) {
-    const sid = String(sessionId)
-    appendChatMessage(activeWorkspace, role, text, sid, meta)
-    // Status: the human typing means the agent is now thinking; an agent `say` clears it. Drives the
-    // "thinking…" indicator with zero extra plumbing (every message already flows through here).
-    chatStatus[sid] = role === 'user' ? 'thinking' : ''
-    const messages = readChatMessages(activeWorkspace, 200, sid)
-    const props = chatHubProps()
-    props.threads[sid] = messages // freshest for the session we just touched
-    // Keep osState's hub current so a FRESH hydrate shows up-to-date threads; live renderers also get the broadcast.
+  /** Append a chat message to an AGENT's transcript and broadcast it so that agent's widget re-renders.
+   *  role 'user' (the human typed) | 'agent' (a `say`). agentId defaults to '0' (the primary chat). */
+  function appendChat(role, text, agentId = '0', meta) {
+    appendChatMessage(activeWorkspace, role, text, agentId, meta)
+    const messages = readChatMessages(activeWorkspace, 400, agentId)
+    const sid = chatSurfaceId(agentId)
+    // Keep osState's chat surface current so a FRESH hydrate (a page refresh / new SSE connect) shows the
+    // up-to-date transcript, not the boot-time snapshot — live renderers also get the broadcast below.
     try {
       const st = a.getState()
       if (st && Array.isArray(st.surfaces)) {
-        a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.id === CHAT_HUB_ID ? { ...s, props: { ...(s.props || {}), ...props } } : s)) })
+        a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.id === sid ? { ...s, props: { ...(s.props || {}), messages } } : s)) })
       }
     } catch {
       /* getState/setState optional on some adapters */
     }
-    a.broadcast({ type: 'chat', sessionId: sid, messages, sessions: props.sessions, status: props.status })
+    a.broadcast({ type: 'chat', agentId: String(agentId), messages })
     return messages
   }
-  /** The agent customizes a session's widget UI by rewriting blitz-[<id>-]<name>.html, then we live-reload
+  /** The agent customizes its widget UI by rewriting blitz-[<id>-]<name>.html, then we live-reload
    *  that one surface (the iframe reloads → re-earns its capabilities; transcript re-seeds from props). */
-  function customizeWidget(name, html, sessionId = '0') {
-    const r = writeSystemRenderer(activeWorkspace, name, html, sessionId)
+  function customizeWidget(name, html, agentId = '0') {
+    const r = writeSystemRenderer(activeWorkspace, name, html, agentId)
     if (!r.ok) return r
     if (name === 'chat') {
-      const newHtml = readSystemRenderer(activeWorkspace, 'chat', sessionId) || ''
-      const sid = chatSurfaceId(sessionId)
+      const newHtml = readSystemRenderer(activeWorkspace, 'chat', agentId) || ''
+      const sid = chatSurfaceId(agentId)
       try {
         const st = a.getState()
         if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.map((s) => (s && s.id === sid ? { ...s, html: newHtml } : s)) })
@@ -521,12 +522,12 @@ export function createWorkspaceHost(a) {
       migrateChatToFile() // seed chat.md from an old panels.json transcript, once
       const panels = readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')
       const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', stageCount: 1 }
-      const surfaces = [...base.surfaces, ...buildChatSurfaces(), ...panels]
+      const surfaces = [...base.surfaces, ...buildAgentSurfaces(), ...panels]
       // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted stageCount > 1 isn't lost on an
       // empty workspace — the hydrate senders read cached.stageCount, which would otherwise stay undefined→1.
-      // stageCount self-heals to fit every chat session's stage (max chat id + 1), so an old workspace whose
-      // stageCount wasn't bumped — or a hand-added session — still lands its widget in a reachable stage.
-      const stageCount = Math.max(base.stageCount ?? 1, maxChatStageCount())
+      // stageCount self-heals to fit every agent's stage (max agent id + 1), so an old workspace whose
+      // stageCount wasn't bumped — or a hand-added agent — still lands its widget in a reachable stage.
+      const stageCount = Math.max(base.stageCount ?? 1, maxAgentStageCount())
       a.setState({ surfaces, camera: base.camera, mode: base.mode, stageCount })
       if (surfaces.length) console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
     } catch (e) {
@@ -566,8 +567,8 @@ export function createWorkspaceHost(a) {
       // Per-workspace chat/activity: the DESTINATION's own chat (its blitz-chat.html + chat.md) and its
       // activity panel — never carry the previous workspace's over.
       migrateChatToFile()
-      const surfaces = [...next.surfaces, ...buildChatSurfaces(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
-      const stageCount = Math.max(next.stageCount ?? 1, maxChatStageCount()) // self-heal for the destination's chat sessions
+      const surfaces = [...next.surfaces, ...buildAgentSurfaces(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
+      const stageCount = Math.max(next.stageCount ?? 1, maxAgentStageCount()) // self-heal for the destination's agents
       a.setState({ surfaces, camera: next.camera, mode: next.mode, stageCount, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
@@ -669,11 +670,11 @@ export function createWorkspaceHost(a) {
     appendChat,
     customizeWidget,
     systemUi,
-    chatSessionIds,
-    newChatSessionId,
-    addChatSession,
-    renameChatSession,
-    stopChatSession,
+    agentIds,
+    newAgentId,
+    addAgent,
+    closeAgent,
+    renameAgent,
     resumeAgentsOnBoot,
     setRelayUrl,
     group,

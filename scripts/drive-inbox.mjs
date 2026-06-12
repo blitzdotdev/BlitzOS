@@ -1,5 +1,9 @@
 // CDP driver for the Action-items inbox: resume on load (persisted pending items rebuild the inbox),
 // the toolbar badge, ticking Done (resolve → SSE update + persist), choosing an option, and Clear.
+// SELF-CONTAINED: it resets the live inbox to empty, SEEDS two items via the relay `request_action`
+// tool (a signin + a choose), runs the checks, then resets again so Home is left clean — like the other
+// drive-*.mjs. (The inbox holds transient asks, so reset-to-empty is the clean baseline, mirroring how
+// drive-terminals removes all terminals.)
 //   node scripts/drive-inbox.mjs [pageUrl] [backendUrl]
 import { spawn } from 'node:child_process'
 import { writeFileSync, mkdtempSync, appendFileSync } from 'node:fs'
@@ -26,6 +30,26 @@ function post(path, body) {
   })
 }
 
+// Drive an agent-socket tool ($BASE/<tool>) the way a connected agent would — used to SEED items via the
+// real request_action path (so this exercises the agent→inbox contract, not a backdoor).
+async function relay(tool, body) {
+  const r = await fetch(`${backend}/api/os/agent-url`).then((x) => x.json()).catch(() => ({}))
+  const base = String(r.url || '').replace(/\/agents\.md$/, '')
+  if (!base) throw new Error('no agent base (relay offline?)')
+  return fetch(`${base}/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((x) => x.json()).catch(() => null)
+}
+
+async function listItems() {
+  try { const r = JSON.parse(await post('/api/os/action-list', {})); return Array.isArray(r.actions) ? r.actions : [] } catch { return [] }
+}
+// Reset the inbox to empty: pending items can't be cleared (core rule), so dismiss-then-clear each.
+async function resetInbox() {
+  for (const it of await listItems()) {
+    if (it.status === 'pending') await post('/api/os/action-resolve', { id: it.id, resolution: 'dismissed' })
+    await post('/api/os/action-clear', { id: it.id })
+  }
+}
+
 const child = spawn(process.env.CHROMIUM || '/usr/bin/chromium', [
   '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--use-gl=swiftshader', '--enable-unsafe-swiftshader',
   '--hide-scrollbars', '--mute-audio', '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
@@ -35,6 +59,15 @@ let stderr = ''
 function cleanup(code) { try { child.kill('SIGKILL') } catch { /* gone */ } process.exit(code) }
 
 async function main() {
+  // SEED FIRST (before the page loads), so check [1] exercises the resume/reconstruct path: the persisted
+  // pending items must rebuild the inbox on load. Reset to a known-empty baseline, then seed exactly two.
+  log('seed: reset inbox to empty, then request_action × 2 (signin + choose) via the relay')
+  await resetInbox()
+  await relay('request_action', { title: 'Sign in to GitHub', kind: 'signin', detail: 'Authorize the GitHub app so the agent can open PRs.' })
+  await relay('request_action', { id: 'act-choose', title: 'Choose a branch to deploy', kind: 'choose', choices: ['main', 'develop', 'release/1.0'] })
+  const seeded = await listItems()
+  check(seeded.filter((i) => i.status === 'pending').length === 2, `2 pending items seeded (got ${seeded.length})`)
+
   const wsUrl = await new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('no ws')), 20000)
     child.stderr.on('data', (d) => { stderr += d; const m = stderr.match(/ws:\/\/[^\s]+/); if (m) { clearTimeout(t); resolve(m[0]) } })
@@ -98,6 +131,12 @@ async function main() {
   const after = await ev(`return document.querySelectorAll('.inbox-item').length`)
   check(after === before - 1, `Clear removed one item (${before} → ${after})`)
   await shot('4-after-clear')
+
+  // cleanup: leave Home's inbox exactly as a fresh board — empty.
+  log('\n[cleanup] resetting inbox to empty')
+  await resetInbox()
+  const left = (await listItems()).length
+  check(left === 0, `inbox left clean (got ${left} items)`)
 
   log(fails.length ? `\nFAIL ✗ ${fails.length}: ${fails.join(' | ')}` : '\nPASS ✓ all inbox checks')
   ws.close(); cleanup(fails.length ? 2 : 0)

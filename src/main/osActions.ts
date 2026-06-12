@@ -54,7 +54,7 @@ export interface OsState {
     slot?: { col: number; row: number; size: string }
     slotStage?: number
     pinned?: boolean
-    sessionId?: string
+    agentId?: string
     focus?: boolean
   }>
   camera?: { x: number; y: number; scale: number }
@@ -193,9 +193,11 @@ export function initOsActions(opts: {
     },
     onSurfaces: () => {}, // Electron browser guests are hosted by webcontents-view-host.ts
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
-    // A chat session's claude runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
-    // agent-session core + the session-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
-    launchAgent: (id, stage, title) => launchAgentHook?.(id, stage, title)
+    // An agent's claude runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
+    // agent-runtime core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
+    launchAgent: (id, stage, title) => launchAgentHook?.(id, stage, title),
+    // Stop an agent (when closing it) — index.ts wires this to terminal-ops.stopTerminal.
+    stopAgent: (id) => stopAgentHook?.(id)
   })
   wsHost.hydrateOnBoot()
   wsHost.startWatch()
@@ -256,18 +258,6 @@ export function initOsActions(opts: {
   // The renderer pulls its hydrate once its onAction listener is mounted (race-free; absorbs the
   // teammate's request-hydrate, replacing the old main-push on did-finish-load).
   ipcMain.on('workspace:request-hydrate', () => osSendHydrate())
-
-  // The chat HUB widget manages its sessions over the bridge: 'new' mints a session (the agent spawns
-  // on-demand on its first message); 'rename' sets a session's sidebar title (the agent auto-names).
-  ipcMain.handle('os:chat-control', (_e, payload: { op?: unknown; args?: Record<string, unknown> }) => {
-    const op = String(payload?.op || '')
-    const args = (payload?.args && typeof payload.args === 'object' ? payload.args : {}) as Record<string, unknown>
-    if (op === 'new') return osSpawnChatSession(typeof args.title === 'string' ? args.title : undefined)
-    if (op === 'rename') return osRenameChatSession(String(args.id ?? '0'), String(args.title ?? ''))
-    if (op === 'stop') return osStopChatSession(String(args.id ?? '0')) // human hit Stop: kill the brain, clear thinking
-    if (op === 'switch') return { ok: true } // active session is widget-side state; nothing to persist (yet)
-    return { ok: false, error: `unknown chat op: ${op}` }
-  })
 
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) {
@@ -384,10 +374,10 @@ export function initOsActions(opts: {
   })
   // The human typed a message to the agent in the in-canvas Chat.
   ipcMain.on('os:user-message', (_e, payload: unknown) => {
-    // payload is { text, sessionId } (object) — tolerate a bare string (older renderer) → session '0'.
+    // payload is { text, agentId } (object) — tolerate a bare string (older renderer) → agent '0'.
     const text = typeof payload === 'string' ? payload : String((payload as { text?: unknown })?.text ?? '')
-    const sid = payload && typeof payload === 'object' && (payload as { sessionId?: unknown }).sessionId != null ? String((payload as { sessionId?: unknown }).sessionId) : '0'
-    osUserMessage(text, sid)
+    const aid = payload && typeof payload === 'object' && (payload as { agentId?: unknown }).agentId != null ? String((payload as { agentId?: unknown }).agentId) : '0'
+    osUserMessage(text, aid)
   })
   // The human placed a spatial annotation on a surface + asked about that point (item 5b). The question
   // lands in chat (so it reads as a normal turn the agent answers) AND wakes the agent with a surface-
@@ -402,7 +392,6 @@ export function initOsActions(opts: {
     // bubble even after a reload; the agent gets the surface-anchored moment.
     wsHost?.appendChat('user', text, '0', { id: String(p?.id ?? ''), surfaceId, xPct, yPct })
     emitAnnotation(surfaceId, text, { xPct, yPct })
-    onChatActivity?.('0', true)
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
   ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {
@@ -524,7 +513,7 @@ function send(type: string, payload: Record<string, unknown> = {}): void {
   sendToRenderer('os:action', { type, ...payload })
 }
 
-/** Send an arbitrary os:action to the renderer — the Electron emit seam for shared cores (e.g. session events). */
+/** Send an arbitrary os:action to the renderer — the Electron emit seam for shared cores (e.g. terminal events). */
 export function osBroadcast(action: Record<string, unknown>): void {
   tel('act', action) // telemetry: session/action-item events emit here (the shared-core seam)
   sendToRenderer('os:action', action)
@@ -728,98 +717,85 @@ export function osSetTheme(theme: Record<string, unknown>): { ok: boolean; error
   send('set-theme', { theme: out })
   return { ok: true }
 }
-/** Agent → user: append a chat message to a session's chat.md and broadcast it to that session's widget.
+/** Agent → user: append a chat message to an agent's chat.md and broadcast it to that agent's widget.
  *  `workspace` (v2 bleed fix) routes a PINNED agent's say to ITS OWN workspace's transcript: when it
  *  names a workspace that is not the active one, the message is appended to that folder's chat file
  *  directly (no broadcast — its widgets aren't live; they hydrate the transcript on switch-in). */
-export function osSay(text: string, sessionId = '0', workspace?: string): void {
+export function osSay(text: string, agentId = '0', workspace?: string): void {
   if (workspace && wsHost && workspace !== wsHost.active()) {
     const dir = wsRoot ? resolveWorkspace(wsRoot, workspace, { mustExist: true }) : null
     if (dir) {
-      appendChatMessage(dir, 'agent', text, String(sessionId))
+      appendChatMessage(dir, 'agent', text, String(agentId))
       return
     }
     // unknown workspace name → fall through to the active chat rather than silently dropping the message
   }
-  wsHost?.appendChat('agent', text, sessionId)
-  onChatActivity?.(String(sessionId), false) // keep an EXISTING local brain alive through long work; never spawn
+  wsHost?.appendChat('agent', text, agentId)
 }
 /** USER → agent: enter a chat message exactly as the human composer does (append '### user' to that
- *  session's chat.md + echo to its widget, wake the session's agent with a 'message' moment, and spawn
- *  its brain on demand). The renderer IPC and the localhost-only `user_say` test syscall both land here,
- *  so programmatic user input is indistinguishable from typed input — the test rig's input path. */
-export function osUserMessage(text: string, sessionId = '0'): void {
+ *  agent's chat.md + echo to its widget, and wake that agent with a 'message' moment). The renderer
+ *  IPC and the localhost-only `user_say` test syscall both land here, so programmatic user input is
+ *  indistinguishable from typed input — the test rig's input path. (No spawn hook: agents are
+ *  boot-resident / spawned via spawn_agent in the Terminal/Agent model.) */
+export function osUserMessage(text: string, agentId = '0'): void {
   if (!text.trim()) return
-  const sid = String(sessionId)
-  wsHost?.appendChat('user', text, sid) // write to that session's chat.md + echo to its widget
-  emitUserMessage(text, sid) // wake ONLY that session's agent (trigger:'message')
-  onChatActivity?.(sid, true) // on-demand: spawn this session's brain if it isn't running, and keep it alive
+  const aid = String(agentId)
+  wsHost?.appendChat('user', text, aid) // write to that agent's chat.md + echo to its widget
+  emitUserMessage(text, aid) // wake ONLY that agent (trigger:'message')
+  onUserMessage?.(aid)
 }
-/** The agent customizes a session's widget UI (blitz-[<id>-]<name>.html) — currently 'chat'. Live-reloads. */
-export function osCustomizeWidget(name: string, html: string, sessionId = '0'): { ok: boolean; rel?: string; error?: string } {
-  return wsHost ? wsHost.customizeWidget(String(name), String(html), sessionId) : { ok: false, error: 'no workspace host' }
+
+// Missing-runtime notice seam (index.ts): observe user messages so a brainless install can still
+// ANSWER (silence is never an acceptable reply). Deliberately NOT a spawn hook — agents launch via
+// terminal-manager only; this only lets index.ts say "install claude" when nothing will reply.
+let onUserMessage: ((agentId: string) => void) | null = null
+export function setOnUserMessage(fn: ((agentId: string) => void) | null): void {
+  onUserMessage = fn
+}
+/** The agent customizes an agent's widget UI (blitz-[<id>-]<name>.html) — currently 'chat'. Live-reloads. */
+export function osCustomizeWidget(name: string, html: string, agentId = '0'): { ok: boolean; rel?: string; error?: string } {
+  return wsHost ? wsHost.customizeWidget(String(name), String(html), agentId) : { ok: false, error: 'no workspace host' }
 }
 /** Read a built-in widget's current UI source (workspace file or shipped default) — read-before-edit. */
 export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
 }
 let lastStateKeyframe = 0
-// Chat activity hook (legacy seam, kept for liveness signals): a USER MESSAGE (spawn=true) may bring an
-// agent up; an AGENT REPLY (spawn=false) only re-arms liveness — it must NEVER spawn one, or an EXTERNAL
-// agent driving over the relay (whose /say also lands in osSay) would conscript a duplicate and both answer.
-let onChatActivity: ((sessionId: string, spawn: boolean) => void) | null = null
-export function setOnChatActivity(fn: (sessionId: string, spawn: boolean) => void): void {
-  onChatActivity = fn
-}
-// index.ts owns the relay url + session-ops, so it registers HOW to launch a chat session's claude in a
-// tmux terminal. osActions handles the workspace-side (mint id + hub registration); addChatSession then
-// calls launchAgent via the host adapter. index.ts registers this when an agent command is available
-// (BLITZ_AGENT, or a detected `claude` CLI).
-let launchAgentHook: ((sessionId: string, stage: number, title?: string) => void) | null = null
-export function setLaunchAgent(fn: (sessionId: string, stage: number, title?: string) => void): void {
+// index.ts owns the relay url + terminal-ops, so it registers HOW to launch an agent's claude in a
+// tmux terminal. osActions handles the workspace-side (mint id + surface the widget); addAgent then
+// calls launchAgent via the host adapter. Gated: index.ts only registers this when BLITZ_AGENT is set.
+let launchAgentHook: ((agentId: string, stage: number, title?: string) => void) | null = null
+export function setLaunchAgent(fn: (agentId: string, stage: number, title?: string) => void): void {
   launchAgentHook = fn
 }
-/** Ensure a session's agent is up WITHOUT a chat message — the onboarding director uses this to start
- *  the resident interviewer at board-ready (its standing duty rides the bootstrap). Prefers the tmux
- *  launcher (re-exec replaces any stale terminal); falls back to the legacy activity hook. */
-export function osKickBrain(sessionId = '0'): void {
-  const sid = String(sessionId)
-  if (launchAgentHook) {
-    launchAgentHook(sid, sid === '0' ? 0 : 0)
-    return
-  }
-  onChatActivity?.(sid, true)
+let stopAgentHook: ((agentId: string) => void) | null = null
+export function setStopAgent(fn: (agentId: string) => void): void {
+  stopAgentHook = fn
 }
-// The human hit Stop on a session. index.ts owns the agent processes, so it registers the KILLER here and
-// osStopChatSession fires it. Kept separate from onChatActivity so a stop can never be misread as activity.
-let onChatStop: ((sessionId: string) => void) | null = null
-export function setOnChatStop(fn: (sessionId: string) => void): void {
-  onChatStop = fn
+/** Ensure an agent is up WITHOUT a chat message — the onboarding director uses this to start the
+ *  resident interviewer at board-ready (its standing duty rides the bootstrap). Re-execs via the tmux
+ *  launcher (replaces any stale terminal); no-op when no launcher is wired (no claude CLI / BLITZ_AGENT). */
+export function osKickBrain(agentId = '0'): void {
+  const id = String(agentId)
+  launchAgentHook?.(id, id === '0' ? 0 : 0)
 }
-/** Open a new chat session: mint its id, register it in the hub; addChatSession launches its claude
- *  terminal (via the launchAgent seam, when wired). focus is accepted for API parity (hub switches client-side). */
-export function osSpawnChatSession(title?: string, focus = false): { id: string; title: string } {
+/** Open a new agent: mint its id, register + live-surface its chat widget; addAgent launches
+ *  its claude terminal (via the launchAgent seam). focus:true (a USER '+ Agent') follows the camera to it. */
+export function osSpawnAgent(title?: string, focus = false): { id: string; title: string } {
   if (!wsHost) throw new Error('no workspace host')
-  const id = wsHost.newChatSessionId()
-  wsHost.addChatSession(id, title, { focus })
+  const id = wsHost.newAgentId()
+  wsHost.addAgent(id, title, { focus })
   return { id, title: title || `Chat ${id}` }
 }
-/** Set a chat session's sidebar title (the agent auto-names; the human can rename). */
-export function osRenameChatSession(id: string, title: string): { ok: boolean; id?: string; title?: string; error?: string } {
-  return wsHost ? wsHost.renameChatSession(String(id), String(title)) : { ok: false, error: 'no workspace host' }
+/** Close a non-primary agent (stop its claude + remove its widget/files/stage). */
+export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
+  return wsHost ? wsHost.closeAgent(agentId) : { ok: false, error: 'no workspace host' }
 }
-/** The human hit Stop on a session: kill its agent process NOW (index.ts hook) and clear its 'thinking'
- *  status (workspace host re-pushes the hub). The session + transcript stay — Stop is a halt, not a delete. */
-export function osStopChatSession(id: string): { ok: boolean; id?: string; error?: string } {
-  const sid = String(id)
-  onChatStop?.(sid)
-  return wsHost ? wsHost.stopChatSession(sid) : { ok: false, error: 'no workspace host' }
+/** Rename an agent (cosmetic title). */
+export function osRenameAgent(agentId: string, newTitle: string): { ok: boolean; error?: string; title?: string } {
+  return wsHost ? wsHost.renameAgent(agentId, newTitle) : { ok: false, error: 'no workspace host' }
 }
-/** The chat sessions in the active workspace (always '0' + any persisted agent sessions) — for boot-resume. */
-export function osChatSessionIds(): string[] {
-  return wsHost ? wsHost.chatSessionIds() : ['0']
-}
-/** Boot: re-exec the claude terminal for every chat session on the current relay url (+ --resume). */
+/** Boot: re-exec the claude terminal for every agent on the current relay url (+ --resume). */
 export function osResumeAgentsOnBoot(): void {
   wsHost?.resumeAgentsOnBoot()
 }
@@ -958,7 +934,7 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
 /** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
 export function osSendHydrate(): void {
   if (!wsHost) return
-  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', stageCount: cached.stageCount || 1, workspace: wsHost.active() })
+  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, workspace: wsHost.active() })
 }
 /** Serve a workspace thumbnail by name (the blitz-thumb:// protocol handler in index.ts calls this). */
 export function osReadThumb(name: string): Buffer | null {

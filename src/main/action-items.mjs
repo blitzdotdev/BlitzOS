@@ -3,7 +3,7 @@
 // instead of burying it in a wall of chat. The human sees a checkable list; ticking an item wakes the
 // agent (a perception moment) so it can continue. Items are file-backed under
 //   <workspace>/.blitzos/state/action-items.json
-// so they survive a restart. Like session-ops, this lives ONCE and both transports bind the SAME core
+// so they survive a restart. Like terminal-ops, this lives ONCE and both transports bind the SAME core
 // (only the seams differ: emit = SSE broadcast / webContents.send; emitMoment = perception wake).
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -29,7 +29,7 @@ export function makeActionItems({ getWorkspacePath, emit = () => {}, emitMoment 
     if (!wsPath) return null
     // Keep ONLY the active workspace cached — evict the rest, so re-activating a workspace reloads its
     // items from disk (an agent may have written to .blitzos/state/action-items.json while we were on
-    // another workspace). Mirrors session-ops.mjs's mgrFor eviction; without it a switch serves stale items.
+    // another workspace). Mirrors terminal-ops.mjs's mgrFor eviction; without it a switch serves stale items.
     for (const p of [...byWs.keys()]) if (p !== wsPath) byWs.delete(p)
     let st = byWs.get(wsPath)
     if (!st) {
@@ -53,7 +53,7 @@ export function makeActionItems({ getWorkspacePath, emit = () => {}, emitMoment 
     } catch { /* best-effort */ }
   }
 
-  /** Agent pushes an action the human must do. opts: { id?, title, detail?, kind?, sessionId?, choices? } */
+  /** Agent pushes an action the human must do. opts: { id?, title, detail?, kind?, agentId?, choices? } */
   function requestAction(opts = {}) {
     const st = stateFor()
     if (!st) return null
@@ -68,7 +68,7 @@ export function makeActionItems({ getWorkspacePath, emit = () => {}, emitMoment 
       title: title.slice(0, 240),
       detail: opts.detail != null ? String(opts.detail).slice(0, 2000) : (prev?.detail ?? undefined),
       kind,
-      sessionId: opts.sessionId != null ? String(opts.sessionId) : (prev?.sessionId ?? undefined),
+      agentId: opts.agentId != null ? String(opts.agentId) : (prev?.agentId ?? undefined),
       ...(choices ? { choices } : prev?.choices ? { choices: prev.choices } : {}),
       status: 'pending',
       createdAt: prev?.createdAt ?? Date.now(),
@@ -104,7 +104,7 @@ export function makeActionItems({ getWorkspacePath, emit = () => {}, emitMoment 
     persist(st)
     emit({ type: 'action-item', item })
     // Wake the watching agent: a perception moment carrying what the human did (no chat pollution).
-    try { emitMoment({ kind: 'action-resolved', id: item.id, title: item.title, resolution: item.resolution, sessionId: item.sessionId }) } catch { /* best-effort */ }
+    try { emitMoment({ kind: 'action-resolved', id: item.id, title: item.title, resolution: item.resolution, agentId: item.agentId }) } catch { /* best-effort */ }
     return true
   }
 

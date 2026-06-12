@@ -47,16 +47,16 @@ import {
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
+import { prepareAgentLaunch } from '../src/main/agent-runtime.mjs'
 // Boot journal (crash dirty-bit + root lease) — the SAME root-state store the Electron main uses.
 import { openBootJournal, resolveWorkspace, appendChatMessage } from '../src/main/workspace.mjs'
-import { prepareAgentLaunch } from '../src/main/agent-session.mjs'
 // The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
 // the relay can't diverge between the two modes again. Only the adapter (publish url/status) differs.
 import { startRelay } from '../src/main/relay.mjs'
 // Shared "Agent activity" feed — the SAME module the Electron relay uses; only `emit` differs (SSE here).
 import { withActivity } from '../src/main/activity.mjs'
-// Shared multi-agent session lifecycle (tmux-backed, workspace-keyed) — SAME module Electron binds.
-import { makeSessionOps } from '../src/main/session-ops.mjs'
+// Shared multi-agent terminal lifecycle (tmux-backed, workspace-keyed) — SAME module Electron binds.
+import { makeTerminalOps } from '../src/main/terminal-ops.mjs'
 import { makeActionItems } from '../src/main/action-items.mjs'
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
 import { fileURLToPath } from 'node:url'
@@ -238,17 +238,17 @@ let osState = { surfaces: [] }
 // after broadcast + reconcileSurfaces exist). The renderer adopts it via a `hydrate` on SSE connect.
 let agentUrl = null
 let relay = null // the SHARED relay handle ({ getUrl, isOnline, stop }) — same module Electron uses (no divergence)
-// Agent sessions run as VISIBLE tmux terminals (no headless brain). launchAgent (the workspace-host seam)
-// starts a chat session's claude in a terminal in its stage, over the same relay; the session-manager
+// Agents run as VISIBLE tmux terminals (no headless brain). launchAgent (the workspace-host seam)
+// starts an agent's claude in a terminal in its stage, over the same relay; the terminal-manager
 // persists + reattaches it. Gated by BLITZ_AGENT (=claude or a custom command); null ⇒ no auto-launch.
 const agentCmd = process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT
 const launchAgent = process.env.BLITZ_AGENT
   ? (id, stage, title) => {
       const ws = wsHost.activePath()
       if (!ws || !agentUrl) return // not ready (no workspace / relay url yet) — boot resume retries
-      const sessionsDir = join(ws, '.blitzos', 'sessions')
-      const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir, id, url: agentUrl, cmd: agentCmd })
-      Promise.resolve(serverSessionOps.spawnSession({ id, kind: 'agent', command, cwd: ws, stage, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })).catch(() => {})
+      const terminalsDir = join(ws, '.blitzos', 'terminals')
+      const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir: terminalsDir, id, url: agentUrl, cmd: agentCmd })
+      Promise.resolve(serverTerminalOps.spawnTerminal({ id, kind: 'agent', command, cwd: ws, stage, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })).catch(() => {})
     }
   : null
 const sseClients = new Set()
@@ -451,8 +451,9 @@ const wsHost = createWorkspaceHost({
   broadcast,
   onSurfaces: (surfaces) => (SERVER_MODE ? reconcileSurfaces(surfaces) : undefined),
   defaultMode: 'canvas',
-  // A chat session's claude runs in a VISIBLE terminal in its stage (no headless brain). null ⇒ BLITZ_AGENT off.
-  launchAgent: launchAgent ? (id, stage, title) => launchAgent(id, stage, title) : undefined
+  // An agent's claude runs in a VISIBLE terminal in its stage (no headless brain). null ⇒ BLITZ_AGENT off.
+  launchAgent: launchAgent ? (id, stage, title) => launchAgent(id, stage, title) : undefined,
+  stopAgent: (id) => { serverTerminalOps.removeTerminal(id) } // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
 })
 
 // 2C/2D parity with Electron (osActions): main is AUTHORITATIVE-ON-WRITE for agent mutations — apply each
@@ -670,22 +671,23 @@ const serverOps = {
   },
   // v2 bleed fix: a workspace-pinned agent's say routes to ITS OWN workspace's transcript when that
   // workspace isn't active (path-based append; its widgets hydrate on switch-in).
-  say: (text, sessionId, workspace) => {
+  say: (text, agentId, workspace) => {
     if (workspace && workspace !== wsHost.active()) {
       const dir = resolveWorkspace(WORKSPACES_ROOT, String(workspace), { mustExist: true })
-      if (dir) return appendChatMessage(dir, 'agent', String(text), String(sessionId ?? '0'))
+      if (dir) return appendChatMessage(dir, 'agent', String(text), String(agentId ?? '0'))
     }
-    return wsHost.appendChat('agent', String(text), sessionId) // append to that session's chat.md + broadcast
+    return wsHost.appendChat('agent', String(text), agentId) // append to that agent's chat.md + broadcast
   },
-  customizeWidget: (name, html, sessionId) => wsHost.customizeWidget(String(name), String(html), sessionId),
-  // Open a new chat session: register + surface it; addChatSession launches its claude terminal (launchAgent).
-  // focus:true (a USER '+ New') tells the renderer to follow the camera to the new stage.
-  spawnChatSession: async (title, focus = false) => {
-    const id = wsHost.newChatSessionId()
-    wsHost.addChatSession(id, title, { focus })
-    return { id, title: title || `Chat ${id}` }
+  customizeWidget: (name, html, agentId) => wsHost.customizeWidget(String(name), String(html), agentId),
+  closeAgent: (id) => wsHost.closeAgent(String(id)),
+  renameAgent: (id, title) => wsHost.renameAgent(String(id), String(title ?? '')),
+  // Open a new agent: register + surface it; addAgent launches its claude terminal (launchAgent).
+  // focus:true (a USER '+ Agent') tells the renderer to follow the camera to the new stage.
+  spawnAgent: async (title, focus = false) => {
+    const id = wsHost.newAgentId()
+    wsHost.addAgent(id, title, { focus })
+    return { id, title: title || `Agent ${id}` }
   },
-  renameChatSession: (sessionId, title) => wsHost.renameChatSession(String(sessionId), String(title)),
   systemUi: (name) => wsHost.systemUi(String(name)),
   groupIntoFolder: (name, ids, x, y, kind) => {
     // Normalize to { ok, ... } like Electron's osGroupIntoFolder — wsHost.group returns a bare { error } (no ok)
@@ -706,10 +708,10 @@ const serverOps = {
   connectedProviders: () => Object.keys(readTokens())
 }
 
-// Session ops — the SHARED workspace-keyed lifecycle (session-ops.mjs). Server seam: the active
-// workspace folder + the SSE broadcast emit. Electron binds the SAME makeSessionOps with its own seam.
-const serverSessionOps = makeSessionOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast, getUrl: () => agentUrl, agentCmd: agentCmd || 'claude' })
-Object.assign(serverOps, serverSessionOps)
+// Terminal ops — the SHARED workspace-keyed lifecycle (terminal-ops.mjs). Server seam: the active
+// workspace folder + the SSE broadcast emit. Electron binds the SAME makeTerminalOps with its own seam.
+const serverTerminalOps = makeTerminalOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast, getUrl: () => agentUrl, agentCmd: agentCmd || 'claude' })
+Object.assign(serverOps, serverTerminalOps)
 
 // Action-items inbox — the SAME shared core Electron binds. Server seam: active workspace + SSE
 // broadcast for UI; emitMoment wakes the watching agent (perception 'action' moment) on resolve.
@@ -933,59 +935,80 @@ const server = createServer(async (req, res) => {
     })
     return
   }
-  // Session terminal I/O from a SessionTerminal in the browser (mirrors /api/os/state): keystrokes,
-  // resize, and a one-shot scrollback read for repaint. Drive the SAME shared session ops as the tools.
-  if (path === '/api/os/session-input' && req.method === 'POST') {
+  // Terminal I/O from a TerminalView in the browser (mirrors /api/os/state): keystrokes,
+  // resize, and a one-shot scrollback read for repaint. Drive the SAME shared terminal ops as the tools.
+  if (path === '/api/os/terminal-input' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 1_000_000) req.destroy() })
-    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverSessionOps.sendToSession(String(b.id || ''), String(b.data ?? '')) }) })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverTerminalOps.sendToTerminal(String(b.id || ''), String(b.data ?? '')) }) })
     return
   }
-  if (path === '/api/os/session-resize' && req.method === 'POST') {
+  if (path === '/api/os/terminal-resize' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
-    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverSessionOps.resizeSession(String(b.id || ''), Number(b.cols) || 80, Number(b.rows) || 24) }) })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverTerminalOps.resizeTerminal(String(b.id || ''), Number(b.cols) || 80, Number(b.rows) || 24) }) })
     return
   }
-  if (path === '/api/os/session-read' && req.method === 'POST') {
+  if (path === '/api/os/terminal-read' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
-    req.on('end', () => { const b = toolBody(body); json(res, 200, { text: serverSessionOps.readSession(String(b.id || '')) }) })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { text: serverTerminalOps.readTerminal(String(b.id || '')) }) })
     return
   }
-  if (path === '/api/os/session-spawn' && req.method === 'POST') {
+  if (path === '/api/os/terminal-spawn' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
-    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverSessionOps.spawnSession({ command: b.command, title: b.title, kind: b.kind, cwd: b.cwd })).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverTerminalOps.spawnTerminal({ command: b.command, title: b.title, kind: b.kind, cwd: b.cwd })).then((s) => json(res, 200, { terminal: s })).catch(() => json(res, 200, { terminal: null })) })
     return
   }
-  // Open a new CHAT session from the UI (the "+ Chat" button). serverOps.spawnChatSession mints the id,
+  // Open a new AGENT from the UI (the "+ Agent" button). serverOps.spawnAgent mints the id,
   // surfaces its widget (broadcast), and supervises its agent over the relay.
-  if (path === '/api/os/chat-session-spawn' && req.method === 'POST') {
+  if (path === '/api/os/agent-spawn' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
-    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverOps.spawnChatSession(b.title != null ? String(b.title) : undefined, true)).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverOps.spawnAgent(b.title != null ? String(b.title) : undefined, true)).then((s) => json(res, 200, { agent: s })).catch(() => json(res, 200, { agent: null })) })
     return
   }
-  if (path === '/api/os/session-list' && req.method === 'POST') {
+  // Close an agent (stop its terminal + remove its widget/files/stage) — the UI Close button / agent tool.
+  if (path === '/api/os/agent-close' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, serverOps.closeAgent(String(b.id || ''))) })
+    return
+  }
+  // Rename an agent (cosmetic title) — the UI rename / agent tool.
+  if (path === '/api/os/agent-rename' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, serverOps.renameAgent(String(b.id || ''), String(b.title ?? ''))) })
+    return
+  }
+  if (path === '/api/os/terminal-list' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 1000) req.destroy() })
-    req.on('end', () => json(res, 200, { sessions: serverSessionOps.listSessions() }))
+    req.on('end', () => json(res, 200, { terminals: serverTerminalOps.listTerminals() }))
     return
   }
-  if (path === '/api/os/session-stop' && req.method === 'POST') {
+  if (path === '/api/os/terminal-stop' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
-    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverSessionOps.stopSession(String(b.id || '')) }) })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverTerminalOps.stopTerminal(String(b.id || '')) }) })
     return
   }
-  if (path === '/api/os/session-restart' && req.method === 'POST') {
+  // Permanently remove a (dead or live) terminal from the tray — prune it from the workspace. Never the agent.
+  if (path === '/api/os/terminal-remove' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
-    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverSessionOps.restartSession(String(b.id || ''))).then((s) => json(res, 200, { session: s })).catch(() => json(res, 200, { session: null })) })
+    req.on('end', () => { const b = toolBody(body); json(res, 200, { ok: serverTerminalOps.removeTerminal(String(b.id || '')) }) })
     return
   }
-  // Action-items inbox — the renderer (human) loads/resolves/clears items (mirrors the session routes).
+  if (path === '/api/os/terminal-restart' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverTerminalOps.restartTerminal(String(b.id || ''))).then((s) => json(res, 200, { terminal: s })).catch(() => json(res, 200, { terminal: null })) })
+    return
+  }
+  // Action-items inbox — the renderer (human) loads/resolves/clears items (mirrors the terminal routes).
   if (path === '/api/os/action-list' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 1000) req.destroy() })
@@ -1206,10 +1229,10 @@ const server = createServer(async (req, res) => {
     req.on('end', () => {
       const cb = toolBody(cbody)
       const t = cb.text
-      const sid = cb.sessionId != null ? String(cb.sessionId) : '0' // which chat session the human typed into
+      const sid = cb.agentId != null ? String(cb.agentId) : '0' // which agent the human typed into
       if (typeof t === 'string' && t.trim()) {
-        wsHost.appendChat('user', t, sid) // write the user's message to that session's chat.md + echo to its widget
-        emitUserMessage(t, sid) // …and wake ONLY that session's agent (trigger:'message' moment, redaction-exempt)
+        wsHost.appendChat('user', t, sid) // write the user's message to that agent's chat.md + echo to its widget
+        emitUserMessage(t, sid) // …and wake ONLY that agent (trigger:'message' moment, redaction-exempt)
       }
       json(res, 200, { ok: true })
     })
@@ -1389,7 +1412,7 @@ server.listen(PORT, '127.0.0.1', () => {
   initServerMode()
   // Phase 3: watch the workspace folder so external file edits (agent/Finder/git) reflect live.
   wsHost.startWatch()
-  // Boot agents: each chat session's claude runs in a VISIBLE tmux terminal in its stage. Survivors are
+  // Boot agents: each agent's claude runs in a VISIBLE tmux terminal in its stage. Survivors are
   // reattached (tmux outlives the process); only the DEAD ones are re-exec'd with --resume of their persisted
   // session id. Opt-in via BLITZ_AGENT (off by default — continuous LLM use has a cost). The relay URL is
   // minted async, so poll until it's up, then resume once (after survivors are adopted, to avoid double-launch).
@@ -1401,7 +1424,7 @@ server.listen(PORT, '127.0.0.1', () => {
       clearInterval(t)
       if (resumed) return
       resumed = true
-      Promise.resolve(serverSessionOps.whenRestored())
+      Promise.resolve(serverTerminalOps.whenRestored())
         .catch(() => {})
         .then(() => wsHost.resumeAgentsOnBoot())
     }, 800)
@@ -1419,7 +1442,7 @@ async function gracefulExit() {
   // created/moved right before quit lands on disk — otherwise hydrate restores the stale state.
   wsHost.flush()
   wsHost.stopWatch() // close fs watchers (handle hygiene)
-  try { serverSessionOps.stopHosts() } catch { /* ignore */ } // flush transcripts + close tmux control clients; the agents' terminals SURVIVE (reattached next boot)
+  try { serverTerminalOps.stopHosts() } catch { /* ignore */ } // flush transcripts + close tmux control clients; the agents' terminals SURVIVE (reattached next boot)
   try {
     if (host) await host.stop()
   } catch {

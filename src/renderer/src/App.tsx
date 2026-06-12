@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { useDesktop, viewTransform, stageRect, stageForSession, stageCenterX, nextTerminalName, latticeFor, nearestFreeSlot, type CreateSurfaceInput } from './store'
+import { useDesktop, viewTransform, stageRect, stageForAgent, stageCenterX, nextTerminalName, latticeFor, nearestFreeSlot, type CreateSurfaceInput } from './store'
 import { applyTheme, saveTheme, type Theme } from './theme'
-import { pushSessionData, pushSessionExit } from './sessionStream'
+import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
 import { IntegrationWidget } from './components/IntegrationWidget'
@@ -13,7 +13,7 @@ import { SurfaceFrame, bgHolesClip } from './components/SurfaceFrame'
 import { AnnotationLayer } from './components/AnnotationLayer'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar, type SurfaceLauncherKind } from './components/Sidebar'
-import { IconChat, IconSparkle, IconGrid, IconChevronDown } from './components/Icons'
+import { IconChat, IconSparkle, IconCode, IconGrid, IconChevronDown } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
@@ -386,7 +386,7 @@ export default function App(): JSX.Element {
     const st = useDesktop.getState()
     const next = Math.max(0, Math.min(st.stageCount - 1, st.currentStage + delta))
     if (next === st.currentStage) return
-    st.setCurrentArea(next)
+    st.setCurrentStage(next)
     if (st.mode === 'desktop') animateTransform(viewTransform('desktop', st.viewport, next, st.stageCount))
   }
   // Add a new (empty) stage to the right and go to it (re-fits the bird's-eye in control mode).
@@ -410,7 +410,7 @@ export default function App(): JSX.Element {
   }, [setIntegrations])
 
   // The default Notepad is ensured after each hydrate (see the 'hydrate'/'switch' handlers below),
-  // so it persists as a file in the active workspace instead of being recreated per session.
+  // so it persists as a file in the active workspace instead of being recreated on each boot.
 
   useEffect(() => {
     const onResize = (): void => {
@@ -665,12 +665,12 @@ export default function App(): JSX.Element {
         const surf = a.surface as CreateSurfaceInput
         // agent-opened web/app surfaces are readable by the agent (it chose the url) -> show 👁 on
         if (surf && (surf.kind === 'web' || surf.kind === 'app')) surf.shared = true
-        // Dedupe by id: a 'create' (e.g. a new chat session) can race a hydrate that already brought it.
+        // Dedupe by id: a 'create' (e.g. a new agent) can race a hydrate that already brought it.
         if (surf && surf.id && st.surfaces.some((s) => s.id === surf.id)) return
-        // A NEW chat session owns its own stage N. Recompute its x from the stage with the renderer's REAL
+        // A NEW agent owns its own stage N. Recompute its x from the stage with the renderer's REAL
         // viewport (the host may have used a default vp), so its widget lands precisely in stage N.
-        const isNewChat = hydrated.current && surf && surf.role === 'chat' && surf.sessionId != null
-        const chatStage = isNewChat ? stageForSession(surf.sessionId as string) : 0
+        const isNewChat = hydrated.current && surf && surf.role === 'chat' && surf.agentId != null
+        const chatStage = isNewChat ? stageForAgent(surf.agentId as string) : 0
         if (isNewChat && chatStage > 0) {
           // stage tags it for createSurface's clamp (else it clamps to the CURRENT stage); x sets the precise
           // left-of-center spot in stage N using the real viewport.
@@ -681,12 +681,12 @@ export default function App(): JSX.Element {
         if (isNewChat && chatStage > 0) {
           // ALWAYS grow stageCount so the new stage exists + is navigable (whether a user or an agent spawned it).
           const cur = useDesktop.getState()
-          if (chatStage + 1 > cur.stageCount) cur.setAreaCount(chatStage + 1)
-          // Follow the camera ONLY for a USER '+ New' (a.focus) — so "+ New" visibly opens the new agent's
-          // workspace — never for an agent's spawn_chat_session (a background agent must not yank the user's view).
+          if (chatStage + 1 > cur.stageCount) cur.setStageCount(chatStage + 1)
+          // Follow the camera ONLY for a USER '+ Agent' (a.focus) — so "+ Agent" visibly opens the new agent's
+          // workspace — never for an agent's spawn_agent (a background agent must not yank the user's view).
           if (a.focus) {
             const now = useDesktop.getState()
-            now.setCurrentArea(chatStage)
+            now.setCurrentStage(chatStage)
             animateTransform(viewTransform(now.mode, now.viewport, chatStage, now.stageCount))
           }
         }
@@ -739,23 +739,22 @@ export default function App(): JSX.Element {
         }
       }
       else if (a.type === 'chat') {
-        // ONE hub chat surface holds every session. The OS broadcasts a session's full transcript tagged
-        // with sessionId; merge it into the hub's props.threads[sid] and refresh the sidebar (sessions) +
-        // per-session status when included. The widget renders the active thread + a session sidebar.
-        const sid = a.sessionId != null ? String(a.sessionId) : '0'
-        const hub = st.surfaces.find((s) => s.id === 'chat' || s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
-        if (!hub) return
-        const extra = a as { sessions?: unknown; status?: unknown }
-        const prevThreads = (hub.props?.threads as Record<string, Array<{ role: string; text: string }>>) ?? {}
-        const patch: Record<string, unknown> = {}
-        if (Array.isArray(a.messages)) patch.threads = { ...prevThreads, [sid]: a.messages as Array<{ role: string; text: string }> }
-        else {
+        // The OS owns each agent's transcript and sends the FULL message list tagged with agentId
+        // ('0' = the primary chat). Route to THAT agent's chat surface (id 'chat' / 'chat-<id>') so a
+        // per-agent widget only shows its own conversation. If it isn't here yet, ignore (hydrate brings it).
+        const sid = a.agentId != null ? String(a.agentId) : '0'
+        const chatId = sid === '0' ? 'chat' : `chat-${sid}`
+        const chat = st.surfaces.find((s) => s.id === chatId) || (sid === '0' ? st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat')) : undefined)
+        if (!chat) return
+        if (Array.isArray(a.messages)) {
+          st.updateSurfaceProps(chat.id, { messages: a.messages as Array<{ role: string; text: string }> })
+        } else {
           const text = String(a.text ?? '')
-          if (text) patch.threads = { ...prevThreads, [sid]: [...(prevThreads[sid] ?? []), { role: 'agent', text }].slice(-200) }
+          if (text) {
+            const prev = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
+            st.updateSurfaceProps(chat.id, { messages: [...prev, { role: 'agent', text }].slice(-200) })
+          }
         }
-        if (extra.sessions) patch.sessions = extra.sessions
-        if (extra.status) patch.status = extra.status
-        if (Object.keys(patch).length) st.updateSurfaceProps(hub.id, patch)
       } else if (a.type === 'agentStatus') {
         // Backend heartbeat: is the agent's relay link up? Drives the toolbar status pill.
         setAgentOnline(!!a.online)
@@ -772,17 +771,18 @@ export default function App(): JSX.Element {
         } else {
           st.createSurface(activitySurfaceInput([evt]))
         }
-      } else if (a.type === 'session-data') {
-        // live tmux %output for a session -> its terminal surface (sessionStream routes by id)
-        pushSessionData(String(a.id), String(a.data ?? ''))
-      } else if (a.type === 'session-exit') {
-        pushSessionExit(String(a.id), a.exitCode == null ? null : Number(a.exitCode))
-      } else if (a.type === 'session-spawn') {
-        // A session was created (by an agent or the user), or re-adopted on restore. Sessions live as
+      } else if (a.type === 'terminal-data') {
+        // live tmux %output for a terminal -> its terminal surface (terminalStream routes by id)
+        pushTerminalData(String(a.id), String(a.data ?? ''))
+      } else if (a.type === 'terminal-exit') {
+        pushTerminalExit(String(a.id), a.exitCode == null ? null : Number(a.exitCode))
+      } else if (a.type === 'terminal-spawn') {
+        // A terminal was created (by an agent or the user), or re-adopted on restore. Terminals live as
         // TABS in a terminal window — add this one as a tab (idempotent). Covers both live spawns and
-        // the restore() replay that brings back tmux survivors after a restart.
-        const sess = (a.session ?? {}) as { title?: string; stage?: number | null }
-        ensureTerminalTab(String(a.id), sess.title || 'Terminal', sess.stage ?? (sess as { area?: number | null }).area)
+        // the restore() replay that brings back tmux survivors after a restart. An AGENT's raw terminal is
+        // opt-in (its chat is primary), so ensureTerminalTab auto-tabs only a plain terminal (kind 'terminal').
+        const term = (a.terminal ?? {}) as { title?: string; stage?: number | null; area?: number | null; kind?: string }
+        if (term.kind !== 'agent') ensureTerminalTab(String(a.id), term.title || 'Terminal', term.stage ?? term.area)
       } else if (a.type === 'action-item') {
         // An agent pushed (or updated/resolved) an action item the human must do → the Inbox surface.
         const item = a.item as { id?: string; status?: string } | undefined
@@ -794,6 +794,20 @@ export default function App(): JSX.Element {
           const its = (panel.props?.items as Array<{ id: string }>) ?? []
           st.updateSurfaceProps(panel.id, { items: its.filter((x) => x.id !== id) })
         }
+      } else if (a.type === 'agent-remove') {
+        // An agent was deleted (host removed its widget via the 'close' broadcast + its files). Collapse
+        // the now-empty stage: apply the host's recomputed stageCount (clamps currentStage so the camera
+        // doesn't strand on a vanished stage). Also drop the agent's terminal tab if it's still around.
+        const cur = useDesktop.getState()
+        const removeCount = Number.isInteger(a.stageCount) ? (a.stageCount as number) : (a.areaCount as number) // tolerate legacy `areaCount`
+        if (Number.isInteger(removeCount) && removeCount < cur.stageCount) cur.setStageCount(removeCount)
+        const rid = String(a.id)
+        for (const w of cur.surfaces) {
+          if (w.kind === 'native' && w.component === 'terminal' && w.tabs?.some((t) => t.terminalId === rid)) {
+            const tab = w.tabs.find((t) => t.terminalId === rid)
+            if (tab) st.closeTab(w.id, tab.id)
+          }
+        }
       }
     })
   }, [])
@@ -804,21 +818,22 @@ export default function App(): JSX.Element {
     window.agentOS?.requestHydrate?.()
   }, [])
 
-  // Resume sessions: terminal surfaces aren't serialized (they're runtime-only), so on load — and on
-  // every workspace switch — we reconstruct a terminal tab for each session still ALIVE in this
-  // workspace. tmux keeps the process across a BlitzOS/page restart; calling sessionList() also drives
+  // Resume terminals: terminal surfaces aren't serialized (they're runtime-only), so on load — and on
+  // every workspace switch — we reconstruct a terminal tab for each plain terminal still ALIVE in this
+  // workspace. tmux keeps the process across a BlitzOS/page restart; calling terminalList() also drives
   // the backend's lazy restore() (re-adopting survivors). ensureTerminalTab is idempotent, so this
-  // converges with the restore() session-spawn replay rather than double-creating. Keyed on the active
-  // workspace because sessions are per-workspace (a switch wholesale-replaces the canvas first).
+  // converges with the restore() terminal-spawn replay rather than double-creating. An AGENT's raw
+  // terminal is opt-in (its chat is primary), so we skip kind==='agent' here. Keyed on the active
+  // workspace because terminals are per-workspace (a switch wholesale-replaces the canvas first).
   useEffect(() => {
     if (!activeWs) return
     let cancelled = false
-    const api = window.agentOS as unknown as { sessionList?: () => Promise<unknown[]> }
-    Promise.resolve(api?.sessionList?.() ?? [])
+    const api = window.agentOS as unknown as { terminalList?: () => Promise<unknown[]> }
+    Promise.resolve(api?.terminalList?.() ?? [])
       .then((list) => {
         if (cancelled || !Array.isArray(list)) return
-        for (const s of list as Array<{ id?: string; title?: string; status?: string; stage?: number | null }>) {
-          if (s && s.id && s.status === 'running') ensureTerminalTab(String(s.id), s.title || 'Terminal', s.stage ?? (s as { area?: number | null }).area)
+        for (const s of list as Array<{ id?: string; title?: string; status?: string; kind?: string; stage?: number | null; area?: number | null }>) {
+          if (s && s.id && s.status === 'running' && s.kind !== 'agent') ensureTerminalTab(String(s.id), s.title || 'Terminal', s.stage ?? s.area)
         }
       })
       .catch(() => {})
@@ -898,9 +913,9 @@ export default function App(): JSX.Element {
         props: s.props,
         component: s.component,
         role: s.role,
-        // Carry the chat session id so a per-session chat survives the round-trip (osState → a later
-        // hydrate): without it the surface would lose its stage on the next connect and snap back to stage 0.
-        sessionId: s.sessionId,
+        // Carry the agent id so a per-agent chat survives the round-trip (osState → a later hydrate):
+        // without it the surface would lose its stage on the next connect and snap back to stage 0.
+        agentId: s.agentId,
         // Lattice membership must survive the round-trip too: workspace.mjs stageFields persists
         // slot/slotStage from THIS push — dropping them here silently demoted every tile to a free
         // window on the next flush (observed: the seeded case-file board lost its slots).
@@ -908,7 +923,7 @@ export default function App(): JSX.Element {
         slotStage: s.slotStage,
         // Browser tabs persist (.weblink) + surface in list_state from THIS push too — persistable
         // fields only ({id,title,url}; favicon/loading/nav state are runtime chrome).
-        tabs: s.tabs?.map((t) => ({ id: t.id, title: t.title, url: t.url, sessionId: t.sessionId })),
+        tabs: s.tabs?.map((t) => ({ id: t.id, title: t.title, url: t.url, terminalId: t.terminalId })),
         activeTab: s.activeTab,
         // Chat + Agent-activity panels are pinned always-on-top — the agent must not cover them
         pinned: isRuntimePanel(s)
@@ -1134,14 +1149,11 @@ export default function App(): JSX.Element {
     return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x: Math.round(r.x + r.w - W - 40), y: Math.round(r.y + r.h + 140), props: { events } }
   }
 
-  // PROGRAMMATIC session events (live spawn + resume-on-load) do NOT open a terminal window —
-  // an agent waking up must never put a window on the user's desktop uninvited. If a terminal
-  // already shows this session, just activate its tab; otherwise the session runs headless and
-  // the Sessions tray (or the agent, deliberately) opens it when someone wants to LOOK.
-  function ensureTerminalTab(sid: string, title: string, stage?: number | null): void {
-    const st = useDesktop.getState()
-    const shown = st.surfaces.some((w) => w.kind === 'native' && w.component === 'terminal' && (w.tabs || []).some((t) => t.sessionId === sid))
-    if (shown) st.openSession(sid, title || 'Terminal', stage)
+  // Open/focus a terminal tab (idempotent). Shared by the live terminal-spawn action, resume-on-load,
+  // and the Runtime tray — the placement + add-tab-or-create logic lives in the store action so all
+  // three callers stay in sync.
+  function ensureTerminalTab(tid: string, title: string, stage?: number | null): void {
+    useDesktop.getState().openTerminal(tid, title || 'Terminal', stage)
   }
 
   // The Action-items inbox docks TOP-RIGHT of the current view (out of the way of chat/activity which
@@ -1240,21 +1252,21 @@ export default function App(): JSX.Element {
     return r?.ok ? { ok: true } : { ok: false, error: (r as { error?: string })?.error || 'could not switch' }
   }
 
-  // The Sessions tray: a glanceable list of every session in the workspace. Docks to the left of the
-  // current view (like Chat); focus it if it's already open.
-  function openSessions(): void {
+  // The Runtime tray ("Terminals & Agents"): a glanceable list of every terminal + agent in the
+  // workspace. Docks to the left of the current view (like Chat); focus it if it's already open.
+  function openRuntime(): void {
     const st = useDesktop.getState()
-    const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'sessions')
+    const existing = st.surfaces.find((s) => s.kind === 'native' && s.component === 'runtime')
     if (existing) {
       st.focusSurface(existing.id)
       return
     }
     const { scale, x: tx, y: ty } = st.transform
     const W = 380
-    const H = 420
+    const H = 480
     const x = Math.round(-tx / scale + 24)
     const y = Math.round((st.viewport.h / 2 - ty) / scale - H / 2)
-    st.createSurface({ kind: 'native', component: 'sessions', title: 'Sessions', w: W, h: H, x, y })
+    st.createSurface({ kind: 'native', component: 'runtime', title: 'Terminals & Agents', w: W, h: H, x, y })
   }
 
   // The Action-items inbox: focus it if open, else create it empty (the agent fills it via request_action).
@@ -1268,7 +1280,7 @@ export default function App(): JSX.Element {
   function openChat(): void {
     const st = useDesktop.getState()
     // The chat is a host-hydrated role:'chat' srcdoc widget (blitz-chat.html). Just focus/center it; if a
-    // very old session is still on the native chat, fall back to that.
+    // very old board is still on the native chat, fall back to that.
     const existing = st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
     if (existing) st.focusSurface(existing.id)
     else createSurface(chatSurfaceInput([]))
@@ -1506,29 +1518,29 @@ export default function App(): JSX.Element {
             <button className="stage-arrow" disabled={currentStage >= stageCount - 1} onClick={() => switchStage(1)} title="Next stage">›</button>
           </span>
         )}
-        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} title="Jump to your primary chat" onClick={openChat}>
-          <IconChat size={15} /> Chat
+        <button
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
+          title="Open a new terminal — a real shell"
+          onClick={() => (window.agentOS as unknown as { terminalSpawn?: (o: object) => void })?.terminalSpawn?.({ command: 'bash', title: nextTerminalName() })}
+        >
+          <IconCode size={15} /> + Terminal
         </button>
         <button
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
-          title="Open a new chat session — a fresh peer agent with its own chat widget"
-          onClick={() => (window.agentOS as unknown as { spawnChatSession?: (t?: string) => void })?.spawnChatSession?.()}
+          title="Spawn a new agent — a fresh claude with its own chat widget"
+          onClick={() => (window.agentOS as unknown as { spawnAgent?: (t?: string) => void })?.spawnAgent?.()}
         >
-          <IconChat size={15} /> + New
+          <IconSparkle size={15} /> + Agent
+        </button>
+        <button style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} title="Go to your primary chat" onClick={openChat}>
+          <IconChat size={15} /> Go to chat
         </button>
         <button
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
-          title="Open a terminal session (a real shell — or an agent like claude/codex)"
-          onClick={() => (window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })}
+          title="Terminals & Agents — everything running in this workspace (open, resume, stop)"
+          onClick={openRuntime}
         >
-          ⌗ Terminal
-        </button>
-        <button
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
-          title="Sessions — every shell / agent in this workspace (open, resume, stop)"
-          onClick={openSessions}
-        >
-          ▤ Sessions
+          ▤ Terminals &amp; Agents
         </button>
         <button
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}

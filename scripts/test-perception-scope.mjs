@@ -2,7 +2,7 @@
 // v2 cross-workspace bleed fix: moments are stamped with the workspace active at emission, and a
 // workspace-pinned waiter only sees its own workspace's moments. Run: node scripts/test-perception-scope.mjs
 import { setWorkspaceProvider, emitUserMessage, waitForEvents, latestSeq } from '../src/main/perception-core.mjs'
-import { buildBootstrap } from '../src/main/agent-session.mjs'
+import { buildBootstrap } from '../src/main/agent-runtime.mjs'
 
 let failed = 0
 const ok = (cond, msg) => {
@@ -47,7 +47,7 @@ ok(got.length === 1 && /A signal/.test(JSON.stringify(got[0].user || [])), 'a pi
 const boot = buildBootstrap('http://x', '0', null, 'CaseFile')
 ok((boot.match(/"workspace":"CaseFile"/g) || []).length >= 2, 'bootstrap pins /events + /say to the agent workspace')
 const boot1 = buildBootstrap('http://x', '1', null, 'CaseFile')
-ok(boot1.includes('"session":"1","workspace":"CaseFile"'), 'non-primary bootstrap carries session AND workspace')
+ok(boot1.includes('"agent":"1","workspace":"CaseFile"'), 'non-primary bootstrap carries agent AND workspace')
 
 if (failed) {
   console.error(`\n✗ ${failed} failed`)

@@ -1,5 +1,5 @@
 // CDP driver to exercise the terminal TAB system end-to-end in a real browser.
-// Loads the server-mode renderer, spawns N sessions via window.agentOS.sessionSpawn,
+// Loads the server-mode renderer, spawns N terminals via window.agentOS.terminalSpawn,
 // asserts they collapse into ONE terminal window with N tabs, switches a tab, and
 // screenshots each step. Wall-clock waits (the page holds an SSE open → never idles).
 //
@@ -66,17 +66,17 @@ async function main() {
   }
 
   // sanity: shim present?
-  const hasApi = await evalJs('!!(window.agentOS && window.agentOS.sessionSpawn)')
-  console.log('agentOS.sessionSpawn present:', hasApi)
-  if (!hasApi) { console.error('FAIL: shim/sessionSpawn missing'); cleanup(1) }
+  const hasApi = await evalJs('!!(window.agentOS && window.agentOS.terminalSpawn)')
+  console.log('agentOS.terminalSpawn present:', hasApi)
+  if (!hasApi) { console.error('FAIL: shim/terminalSpawn missing'); cleanup(1) }
 
   // spawn 3 sessions
   console.log('spawning 3 sessions…')
-  await evalJs(`window.agentOS.sessionSpawn({ command: 'bash', title: 'shell-1' })`)
+  await evalJs(`window.agentOS.terminalSpawn({ command: 'bash', title: 'shell-1' })`)
   await delay(1200)
-  await evalJs(`window.agentOS.sessionSpawn({ command: 'bash', title: 'shell-2' })`)
+  await evalJs(`window.agentOS.terminalSpawn({ command: 'bash', title: 'shell-2' })`)
   await delay(1200)
-  await evalJs(`window.agentOS.sessionSpawn({ command: 'bash', title: 'shell-3' })`)
+  await evalJs(`window.agentOS.terminalSpawn({ command: 'bash', title: 'shell-3' })`)
   await delay(2500)
 
   // assert: ONE terminal window, THREE tabs
@@ -111,6 +111,10 @@ async function main() {
   const tabCount3 = await evalJs(`document.querySelectorAll('.window-tabs .wtab').length`)
   console.log('tabs after +:', tabCount3)
   await shot('4-after-add')
+
+  // cleanup: remove every terminal this run spawned so the workspace is left as found (only the agent).
+  console.log('\n[cleanup] removing spawned terminals')
+  await evalJs(`(async()=>{const ts=(await window.agentOS.terminalList()).filter(s=>s.kind==='terminal'); for(const t of ts){try{window.agentOS.terminalRemove(t.id)}catch{}} return ts.length})()`)
 
   // result summary
   const ok = termCount === 1 && tabCount === 3 && activeAfter === 0 && tabCount2 === 2 && tabCount3 === 3

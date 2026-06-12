@@ -66,22 +66,23 @@ async function main() {
   check(consoleErrors < 50, `no render-flood: console error count is sane (${consoleErrors}) — the duplicate-key hang would be in the thousands`)
   await shot('1-home')
 
-  log('\n[2] toolbar affordances present (Chat / Terminal / Sessions / Inbox)')
+  log('\n[2] toolbar affordances present (+ Terminal / + Agent / Go to chat / Terminals & Agents / Inbox)')
   const btns = await ev(`return Array.from(document.querySelectorAll('.toolbar button')).map(b=>(b.textContent||'').replace(/\\s+/g,' ').trim())`)
-  check(btns.some(b=>/Chat/.test(b)), 'Chat button')
-  check(btns.some(b=>/Terminal/.test(b)), 'Terminal button')
-  check(btns.some(b=>/Sessions/.test(b)), 'Sessions button')
+  check(btns.some(b=>/\+ Terminal/.test(b)), '+ Terminal button')
+  check(btns.some(b=>/\+ Agent/.test(b)), '+ Agent button')
+  check(btns.some(b=>/Go to chat/.test(b)), 'Go to chat button')
+  check(btns.some(b=>/Terminals & Agents/.test(b)), 'Terminals & Agents tray button')
   check(btns.some(b=>/Inbox/.test(b)), 'Inbox button')
 
   log('\n[3] a live session spawn works in server mode on Home (the real tmux path)')
   const before = await ev(`return document.querySelectorAll('.window-tabs .wtab').length`)
-  await ev(`window.agentOS.sessionSpawn({command:'bash', title:'verify-shell'}); return 1`)
+  await ev(`window.agentOS.terminalSpawn({command:'bash', title:'verify-shell'}); return 1`)
   await delay(3500)
   const after = await ev(`return document.querySelectorAll('.window-tabs .wtab').length`)
   check(after === before + 1, `spawning a session adds a terminal tab (${before} → ${after})`)
   // clean up the verify session so we don't leave junk in Home
-  const sid = await ev(`const ss = await window.agentOS.sessionList(); const s = ss.find(x=>x.title==='verify-shell' && x.status==='running'); return s ? s.id : ''`)
-  if (sid) { await ev(`window.agentOS.sessionStop(${JSON.stringify(sid)}); return 1`); log('  (stopped the verify-shell session)') }
+  const sid = await ev(`const ss = await window.agentOS.terminalList(); const s = ss.find(x=>x.title==='verify-shell' && x.status==='running'); return s ? s.id : ''`)
+  if (sid) { await ev(`window.agentOS.terminalRemove(${JSON.stringify(sid)}); return 1`); log('  (removed the verify-shell terminal)') }
   await shot('2-after-spawn')
 
   log(fails.length ? `\nFAIL ✗ ${fails.length}: ${fails.join(' | ')}` : '\nPASS ✓ real server-mode deployment is usable')

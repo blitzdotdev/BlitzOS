@@ -3,22 +3,22 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { Surface } from '../types'
-import { subscribeSession } from '../sessionStream'
+import { subscribeTerminal } from '../terminalStream'
 
-// The terminal surface: a real xterm.js terminal bound to a session id. It renders the live tmux
-// %output stream (routed via sessionStream) and sends keystrokes/resize back to the session over
+// The terminal surface: a real xterm.js terminal bound to a terminal id. It renders the live tmux
+// %output stream (routed via terminalStream) and sends keystrokes/resize back to the terminal over
 // window.agentOS (preload IPC on Electron, POST on the server) — the same renderer↔backend pattern
-// as sendState, mirrored for sessions. The session itself lives in tmux (survives restarts); this is
-// just the viewport.
-type SessionApi = {
-  sessionRead?: (id: string) => Promise<string> | string
-  sessionInput?: (id: string, data: string) => void
-  sessionResize?: (id: string, cols: number, rows: number) => void
+// as sendState, mirrored for terminals. The terminal itself lives in tmux (survives restarts); this
+// is just the viewport.
+type TerminalApi = {
+  terminalRead?: (id: string) => Promise<string> | string
+  terminalInput?: (id: string, data: string) => void
+  terminalResize?: (id: string, cols: number, rows: number) => void
 }
-const sapi = (): SessionApi => (window.agentOS as unknown as SessionApi) || {}
+const tapi = (): TerminalApi => (window.agentOS as unknown as TerminalApi) || {}
 
-export function SessionTerminal({ surface }: { surface: Surface }): JSX.Element {
-  const id = String(surface.props?.sessionId || '')
+export function TerminalView({ surface }: { surface: Surface }): JSX.Element {
+  const id = String(surface.props?.terminalId || '')
   const hostRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -38,23 +38,23 @@ export function SessionTerminal({ surface }: { surface: Surface }): JSX.Element 
     try { fit.fit() } catch { /* container not laid out yet */ }
 
     let disposed = false
-    // Repaint the current screen+history once (the session may already be running), then go live.
-    Promise.resolve(sapi().sessionRead?.(id)).then((scroll) => {
+    // Repaint the current screen+history once (the terminal may already be running), then go live.
+    Promise.resolve(tapi().terminalRead?.(id)).then((scroll) => {
       if (disposed) return
       if (scroll) term.write(scroll)
     }).catch(() => {})
-    const unsub = subscribeSession(
+    const unsub = subscribeTerminal(
       id,
       (data) => term.write(data),
-      ({ exitCode }) => term.write(`\r\n\x1b[2m[session exited${exitCode != null ? ' (' + exitCode + ')' : ''}]\x1b[0m\r\n`)
+      ({ exitCode }) => term.write(`\r\n\x1b[2m[terminal exited${exitCode != null ? ' (' + exitCode + ')' : ''}]\x1b[0m\r\n`)
     )
 
-    // keystrokes → the session
-    const onData = term.onData((data) => sapi().sessionInput?.(id, data))
+    // keystrokes → the terminal
+    const onData = term.onData((data) => tapi().terminalInput?.(id, data))
 
     // keep the PTY sized to the visible terminal
     const doFit = () => {
-      try { fit.fit(); sapi().sessionResize?.(id, term.cols, term.rows) } catch { /* ignore */ }
+      try { fit.fit(); tapi().terminalResize?.(id, term.cols, term.rows) } catch { /* ignore */ }
     }
     const ro = new ResizeObserver(() => doFit())
     ro.observe(el)
@@ -73,7 +73,7 @@ export function SessionTerminal({ surface }: { surface: Surface }): JSX.Element 
   return (
     <div
       ref={hostRef}
-      className="session-terminal"
+      className="terminal-view"
       style={{ width: '100%', height: '100%', background: '#0b0c0e' }}
       onPointerDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}

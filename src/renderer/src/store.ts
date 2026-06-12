@@ -13,14 +13,14 @@ import {
   WIDGET_H,
   isRuntimePanel
 } from './types'
-// The stage-grid geometry (insets, primaryRect, stageStride, stageRect, stageCenterX, stageForSession) lives
+// The stage-grid geometry (insets, primaryRect, stageStride, stageRect, stageCenterX, stageForAgent) lives
 // in the shared stages-core so the renderer and the main-process cores share ONE definition (no divergence).
 // Re-exported below so existing `from './store'` importers (capture/App/SurfaceFrame/PrimarySpace) don't churn.
-import { primaryRect, stageStride, stageRect, stageCenterX, stageForSession, stageOfX } from './stages-core.mjs'
-export { primaryRect, stageStride, stageRect, stageCenterX, stageForSession, stageOfX }
+import { primaryRect, stageStride, stageRect, stageCenterX, stageForAgent, stageOfX } from './stages-core.mjs'
+export { primaryRect, stageStride, stageRect, stageCenterX, stageForAgent, stageOfX }
 // Stage slot lattice (plans/blitzos-stage-slot-desktop.md): pure shared placer — tiles at integer
 // cells, geometry derived; the SAME module places in main (place_widget) and snaps drags here.
-import { latticeFor, slotRect, cardRect, slotOf, nearestFreeSlot, flowFiles, sizeForDims, occupancy, findSlot, spanOf, SIZE_ORDER } from './stage-core.mjs'
+import { latticeFor, slotRect, cardRect, slotOf, nearestFreeSlot, flowFiles, sizeForDims, occupancy, spanOf, SIZE_ORDER } from './stage-core.mjs'
 export { latticeFor, slotRect, cardRect, slotOf, nearestFreeSlot, sizeForDims }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -135,15 +135,15 @@ export interface CreateSurfaceInput {
   props?: Record<string, unknown>
   /** P0: agent may read this surface's content over the relay (auto-true for agent-opened web/app). */
   shared?: boolean
-  /** tabbed windows (terminal): a session per tab. */
+  /** tabbed windows (terminal): a terminal per tab. */
   tabs?: SurfaceTab[]
   activeTab?: number
-  /** system runtime surface (e.g. a chat session widget: role:'chat', pinned). */
+  /** system runtime surface (e.g. an agent chat widget: role:'chat', pinned). */
   role?: string
   pinned?: boolean
-  /** the chat session this surface belongs to (a per-session chat widget). */
-  sessionId?: string
-  /** place this surface in a SPECIFIC workspace stage (a session-scoped agent → its own stage N); when
+  /** the agent this surface belongs to (a per-agent chat widget). */
+  agentId?: string
+  /** place this surface in a SPECIFIC workspace stage (an agent → its own stage N); when
    *  omitted, it cascades into the current stage. Derived from x afterward — never stored on the Surface. */
   stage?: number
   /** Born slotted: a tile on the stage lattice — x/y/w/h are derived from it, never trusted. */
@@ -205,8 +205,10 @@ interface DesktopState {
   setMode: (m: 'desktop' | 'canvas') => void
   setTransform: (t: CanvasTransform) => void
   setControlTransform: (t: CanvasTransform | null) => void
-  setCurrentArea: (i: number) => void
-  setAreaCount: (n: number) => void
+  setCurrentStage: (i: number) => void
+  setStageCount: (n: number) => void
+  /** Jump the camera to a workspace stage (set currentStage + retarget the view) — e.g. the Runtime tray's "Stage N". */
+  goToStage: (area: number) => void
   addArea: () => void
   panBy: (dx: number, dy: number) => void
   zoomAt: (cursorX: number, cursorY: number, deltaY: number) => void
@@ -256,10 +258,14 @@ interface DesktopState {
   bookmarks: Bookmark[]
   loadBookmarks: () => void
   toggleBookmark: (url: string, title: string) => void
-  // Open (or focus) a session's terminal tab: activate it if it's already a tab, else add it to the
+  // Open (or focus) a terminal tab: activate it if it's already a tab, else add it to the
   // existing terminal window, else open the first terminal window. The one shared seam for the live
-  // session-spawn action, resume-on-load, and the Sessions tray's "Open" — so a session is in one tab.
-  openSession: (sessionId: string, title: string, stage?: number | null) => void
+  // terminal-spawn action, resume-on-load, and the Runtime tray's "Open" — so a terminal is in one tab.
+  openTerminal: (terminalId: string, title: string, stage?: number | null) => void
+  // Close a non-primary agent (stop it + remove its widget/files/stage, via the host) and drop
+  // its chat surface + terminal tab locally. Rename updates the title live. Both no-op on the primary '0'.
+  closeAgent: (agentId: string) => void
+  renameAgent: (agentId: string, newTitle: string) => void
   // Layout undo: the agent auto-applies layouts; the human reverts with Cmd+Z.
   snapshotLayout: () => void
   undoLayout: () => void
@@ -339,12 +345,12 @@ export const useDesktop = create<DesktopState>((set, get) => ({
    *  from the cell; never reflows neighbors — the placer only ever offers free spans, this just
    *  commits one. First snap remembers the free-form size in preSnap so popping out restores it
    *  (a slot size that squishes a widget — the chat — must never be a one-way door). */
-  placeSurfaceSlot: (id, col, row, size, areaArg) =>
+  placeSurfaceSlot: (id, col, row, size, stageArg) =>
     set((s) => {
       const cur = s.surfaces.find((x) => x.id === id)
       if (!cur) return {}
       const sz = size || slotOf(cur)?.size || sizeForDims(cur.w, cur.h)
-      const stage = Number.isInteger(areaArg) ? (areaArg as number) : (cur.slotStage ?? 0)
+      const stage = Number.isInteger(stageArg) ? (stageArg as number) : (cur.slotStage ?? 0)
       const r = cardRect(latticeFor(s.viewport, stage), col, row, sz)
       const keepFree = cur.slot ? cur.preSnap : { w: cur.w, h: cur.h }
       return {
@@ -434,7 +440,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   /** The fluid file layer: flow file/dir tiles around the slotted widgets (macOS desktop-icon feel).
    *  `avoid` = the in-flight drag ghost's rect so files part around it live. Stage 0 only (workspace
-   *  files are root tiles; session stages hold windows, not files). */
+   *  files are root tiles; agent stages hold windows, not files). */
   reflowFiles: (avoid) =>
     set((s) => {
       const isFile = (x: Surface): boolean => x.kind === 'native' && (x.component === 'file' || x.component === 'dir') && !x.groupId && !x.minimized
@@ -455,8 +461,13 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   setTransform: (t) => set({ transform: t }),
   setControlTransform: (t) => set({ controlTransform: t }),
   // Pure state mutations (the camera animation on switch is wired by the caller in App.tsx).
-  setCurrentArea: (i) => set((s) => ({ currentStage: clamp(Math.round(i), 0, s.stageCount - 1) })),
-  setAreaCount: (n) => set((s) => ({ stageCount: Math.max(1, Math.round(n)), currentStage: clamp(s.currentStage, 0, Math.max(0, Math.round(n) - 1)) })),
+  setCurrentStage: (i) => set((s) => ({ currentStage: clamp(Math.round(i), 0, s.stageCount - 1) })),
+  setStageCount: (n) => set((s) => ({ stageCount: Math.max(1, Math.round(n)), currentStage: clamp(s.currentStage, 0, Math.max(0, Math.round(n) - 1)) })),
+  goToStage: (area) =>
+    set((s) => {
+      const a = clamp(Math.round(area), 0, s.stageCount - 1)
+      return { currentStage: a, transform: viewTransform(s.mode, s.viewport, a, s.stageCount) }
+    }),
   addArea: () => set((s) => ({ stageCount: s.stageCount + 1, currentStage: s.stageCount })),
 
   setSelection: (ids) => set({ selection: ids }),
@@ -676,7 +687,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   createSurface: (input) => {
     get().snapshotLayout()
     // Stable, unique id (Phase 0 of the workspaces design): survives serialization +
-    // restart, so layout/consent can key off it. zCounter is now ONLY the session
+    // restart, so layout/consent can key off it. zCounter is now ONLY the surface
     // z-order allocator, never identity. (UUIDv4 here; ULID is a deferred sortable swap.)
     const id = input.id ?? crypto.randomUUID()
     const size = defaultSize(input.kind)
@@ -684,7 +695,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     const h = input.h ?? size.h
     const st = get()
     // cascade if no explicit position (macOS-style stagger), centered on the TARGET stage: input.stage when
-    // given (a session-scoped agent's surface → its own stage, isolating it from the user) else currentStage.
+    // given (an agent's surface → its own stage, isolating it from the user) else currentStage.
     // stage 0 ⇒ the world origin ⇒ byte-identical to before; a later stage shifts the cascade by its offset.
     const targetStage = Number.isInteger(input.stage) ? (input.stage as number) : st.currentStage
     const n = st.surfaces.length % 7
@@ -710,11 +721,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       component: input.component,
       props: input.props ?? {},
       shared: input.shared,
-      // preserve system-surface fields so a broadcast 'create' (e.g. a new chat session) keeps its
-      // role/pinned/sessionId — without these a created chat widget would lose role:'chat' and not render.
+      // preserve system-surface fields so a broadcast 'create' (e.g. a new agent) keeps its
+      // role/pinned/agentId — without these a created chat widget would lose role:'chat' and not render.
       ...(input.role ? { role: input.role } : {}),
       ...(input.pinned ? { pinned: input.pinned } : {}),
-      ...(input.sessionId != null ? { sessionId: String(input.sessionId) } : {}),
+      ...(input.agentId != null ? { agentId: String(input.agentId) } : {}),
       ...(input.tabs ? { tabs: input.tabs, activeTab: input.activeTab ?? 0 } : {}),
       ...(input.focus ? { focus: true } : {})
     }
@@ -745,41 +756,23 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const nAreas = Number.isInteger(stageCount) && (stageCount as number) > 0 ? (stageCount as number) : 1
       const restored: Surface[] = surfaces.map((w) => {
         const base = { zoom: 1, props: {}, ...w, z: w.z ?? ++zCounter } as Surface
-        // Runtime chat/activity panels persist absolute x/y. A per-session chat lives in ITS OWN stage
-        // (stage N for session N); the activity feed + the primary chat live in stage 0. Recompute a session
-        // chat's x from its stage using the renderer's REAL viewport (authoritative — the host may have
-        // guessed a default vp), then clamp into that stage. Single-stage / primary case is byte-identical
-        // (stageForSession('0')=0, stageCenterX(0)=0 → x=-700). The camera can reach any stage (stageCount below).
         // A slotted tile's geometry derives from its lattice cell at THIS renderer's real viewport
         // (the persisted x/y may come from a different window size) — slots beat the legacy paths.
         const sl = slotOf(base)
         if (sl) {
           const stage = base.slotStage ?? 0
           const lat0 = latticeFor(s.viewport, stage)
-          let { col, row } = sl
-          // The pinned chat hub boots at a HOST-fixed cell (col 0, row 0) — the host can't see free
-          // windows, so if one already covers that span, re-place through the placer instead of
-          // overlapping it (the boot-time twin of the drag-ghost overlap bug).
-          if (base.role === 'chat') {
-            const occ = occupancy(surfaces as Parameters<typeof occupancy>[0], stage, base.id)
-            const sp = spanOf(sl.size)
-            let blocked = false
-            for (let c = col; c < col + sp.c && !blocked; c++) for (let r2 = row; r2 < row + sp.r && !blocked; r2++) if (occ.has(c + ',' + r2)) blocked = true
-            if (blocked) {
-              const ns = findSlot(surfaces as Parameters<typeof findSlot>[0], lat0, sl.size, null, stage, base.id)
-              if (ns) {
-                col = ns.col
-                row = ns.row
-                base.slot = { col, row, size: sl.size }
-              }
-            }
-          }
-          const r = cardRect(lat0, col, row, sl.size)
+          const r = cardRect(lat0, sl.col, sl.row, sl.size)
           return { ...base, x: r.x, y: r.y, w: r.w, h: r.h }
         }
+        // Runtime chat/activity panels persist absolute x/y. A per-agent chat lives in ITS OWN stage
+        // (stage N for agent N); the activity feed + the primary chat live in stage 0. Recompute an agent
+        // chat's x from its stage using the renderer's REAL viewport (authoritative — the host may have
+        // guessed a default vp), then clamp into that stage. Single-stage / primary case is byte-identical
+        // (stageForAgent('0')=0, stageCenterX(0)=0 → x=-700). The camera can reach any stage (stageCount below).
         if (isRuntimePanel(base)) {
-          const stage = base.role === 'chat' && base.sessionId != null ? stageForSession(base.sessionId) : 0
-          const x = base.role === 'chat' && base.sessionId != null ? Math.round(stageCenterX(stage, s.viewport) - 700) : base.x
+          const stage = base.role === 'chat' && base.agentId != null ? stageForAgent(base.agentId) : 0
+          const x = base.role === 'chat' && base.agentId != null ? Math.round(stageCenterX(stage, s.viewport) - 700) : base.x
           const p = desktopClamp(x, base.y, base.w, base.h, s.viewport, stage)
           return { ...base, x: p.x, y: p.y }
         }
@@ -804,16 +797,16 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => {
       // Runtime-only surfaces NOT backed by a workspace file (nodeKind returns null for them), so they're
       // never in the reconciled `incoming` set — keep the LIVE ones or a reconcile would wipe them. Covers
-      // the chat/activity panels, in-memory folders, AND the session surfaces (terminal windows + the
-      // Sessions tray), which are reconstructed from live sessions, never persisted as nodes.
+      // the chat/activity panels, in-memory folders, AND the runtime surfaces (terminal windows + the
+      // Runtime tray), which are reconstructed from live terminals, never persisted as nodes.
       const isRuntime = (w: Surface): boolean =>
         w.role === 'chat' ||
         w.role === 'activity' ||
-        (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder' || w.component === 'terminal' || w.component === 'sessions' || w.component === 'inbox' || w.component === 'unlock'))
+        (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder' || w.component === 'terminal' || w.component === 'runtime' || w.component === 'inbox' || w.component === 'unlock'))
       const keepRuntime = s.surfaces.filter(isRuntime)
       const localById = new Map(s.surfaces.map((w) => [w.id, w]))
       // A reconcile's `incoming` can echo back runtime-only surfaces (the host keeps un-persisted state
-      // like an open terminal/sessions/folder). Those are preserved via keepRuntime from the LIVE store,
+      // like an open terminal/runtime/folder). Those are preserved via keepRuntime from the LIVE store,
       // so they must be EXCLUDED from fileBacked here — otherwise the surface lands in `restored` twice
       // (once from incoming, once from keepRuntime), a duplicate React key. Worse, the duplicate is then
       // pushed back, re-echoed, and re-doubled on the next reconcile — an exponential blow-up that floods
@@ -883,7 +876,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       surfaces: s.surfaces.map((it) => (it.id === id ? { ...it, zoom: clamp(zoom, 0.3, 3) } : it))
     })),
 
-  // ---- tabbed windows (terminal windows hold a session per tab) ----
+  // ---- tabbed windows (terminal windows hold a terminal per tab) ----
   addTab: (id, tab) =>
     set((s) => ({
       surfaces: s.surfaces.map((w) => {
@@ -945,12 +938,12 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   toggleBookmark: (url, title) => {
     void window.agentOS?.bookmarksToggle?.(url, title).then((b) => set({ bookmarks: Array.isArray(b) ? b : [] }))
   },
-  openSession: (sessionId, title, stage) => {
+  openTerminal: (terminalId, title, stage) => {
     const s = get()
     // Already a tab somewhere? activate it + raise its window (idempotent — no duplicate tab).
     for (const w of s.surfaces) {
       if (w.kind === 'native' && w.component === 'terminal') {
-        const idx = (w.tabs || []).findIndex((t) => t.sessionId === sessionId)
+        const idx = (w.tabs || []).findIndex((t) => t.terminalId === terminalId)
         if (idx >= 0) {
           get().setActiveTab(w.id, idx)
           get().focusSurface(w.id)
@@ -958,18 +951,48 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         }
       }
     }
-    // Dock the session's terminal in ITS stage: an agent's session carries an stage (so its terminal stays
-    // out of the user's stage); a human spawn has none → the current stage, today's behavior. Add to a
+    // Dock the terminal in ITS stage: an agent's terminal carries a stage (so it stays out of the user's
+    // stage); a human spawn has none → the current stage, today's behavior. Add to a
     // terminal window ALREADY in that stage, else open one there (createSurface honors the `stage` hint).
     const want = Number.isInteger(stage) ? (stage as number) : s.currentStage
     const term = s.surfaces.find(
       (w) => w.kind === 'native' && w.component === 'terminal' && stageOfX(w.x + (w.w || 0) / 2, s.viewport) === want
     )
-    if (term) {
-      get().addTab(term.id, { id: sessionId, title, sessionId })
-      return
-    }
-    get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, stage: want, tabs: [{ id: sessionId, title, sessionId }], activeTab: 0 })
+    if (term) get().addTab(term.id, { id: terminalId, title, terminalId })
+    else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, stage: want, tabs: [{ id: terminalId, title, terminalId }], activeTab: 0 })
+  },
+
+  closeAgent: (agentId) => {
+    const id = String(agentId)
+    if (id === '0') return // the primary chat is never closed
+    // Tell the host to stop the agent + delete the agent's files/stage (it broadcasts a 'close' for the chat
+    // widget + an 'agent-remove'). Optimistically drop the chat surface + the agent's terminal TAB locally
+    // (the host can't reach a renderer-only tab) so the UI updates instantly.
+    void (window.agentOS as unknown as { closeAgent?: (s: string) => Promise<unknown> })?.closeAgent?.(id)
+    set((s) => {
+      let surfaces = s.surfaces.filter((w) => !(w.role === 'chat' && String(w.agentId ?? '') === id))
+      surfaces = surfaces
+        .map((w) => {
+          if (w.kind !== 'native' || w.component !== 'terminal' || !w.tabs) return w
+          const tabs = w.tabs.filter((t) => t.terminalId !== id)
+          return tabs.length === w.tabs.length ? w : { ...w, tabs, activeTab: clamp(w.activeTab || 0, 0, Math.max(0, tabs.length - 1)) }
+        })
+        .filter((w) => !(w.kind === 'native' && w.component === 'terminal' && w.tabs && w.tabs.length === 0)) // drop an emptied terminal window
+      return { surfaces }
+    })
+  },
+  renameAgent: (agentId, newTitle) => {
+    const id = String(agentId)
+    const title = String(newTitle || '').trim()
+    if (!title) return
+    void (window.agentOS as unknown as { renameAgent?: (s: string, t: string) => Promise<unknown> })?.renameAgent?.(id, title)
+    set((s) => ({
+      surfaces: s.surfaces.map((w) => {
+        if (w.role === 'chat' && String(w.agentId ?? '') === id) return { ...w, title }
+        if (w.kind === 'native' && w.component === 'terminal' && w.tabs) return { ...w, tabs: w.tabs.map((t) => (t.terminalId === id ? { ...t, title } : t)) }
+        return w
+      })
+    }))
   },
 
   toggleMaximize: (id) => {
@@ -1165,7 +1188,7 @@ export function webTabsOf(s: Surface): SurfaceTab[] {
   return [{ id: 't0', title: s.title || (s.url ? hostLabel(s.url) : 'New Tab'), ...(s.url ? { url: s.url } : {}) }]
 }
 
-/** Default name for a UI-spawned terminal session — "Terminal N", N counting existing terminal tabs,
+/** Default name for a UI-spawned terminal — "Terminal N", N counting existing terminal tabs,
  *  so the "+ Terminal" toolbar button and the tab strip's "+" produce distinct, readable tab names
  *  instead of every tab reading "Terminal". (Agent/tool spawns name themselves from the command.) */
 export function nextTerminalName(): string {

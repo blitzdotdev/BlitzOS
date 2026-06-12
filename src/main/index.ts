@@ -4,14 +4,14 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnChatSession, setOnChatActivity } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage } from './osActions'
 import { emitSystemMoment } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
 import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
-import { electronSessionOps, electronActionItems, setSessionGetUrl } from './electron-os-tools'
-import { prepareAgentLaunch, setBootTaskProvider } from './agent-session.mjs'
+import { electronTerminalOps, electronActionItems, setTerminalGetUrl } from './electron-os-tools'
+import { prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -245,15 +245,29 @@ app.whenReady().then(() => {
   // Close = delete the closed window's backing content file (so it doesn't pop back up on reconcile).
   ipcMain.handle('os:close-surface-file', (_e, id: string) => osCloseSurfaceFile(String(id)))
 
-  // Session terminal I/O from a SessionTerminal in the renderer: keystrokes, resize, scrollback read.
-  ipcMain.on('os:session-input', (_e, p: { id: string; data: string }) => electronSessionOps.sendToSession(String(p?.id), String(p?.data ?? '')))
-  ipcMain.on('os:session-resize', (_e, p: { id: string; cols: number; rows: number }) => electronSessionOps.resizeSession(String(p?.id), Number(p?.cols) || 80, Number(p?.rows) || 24))
-  ipcMain.handle('os:session-read', (_e, id: string) => electronSessionOps.readSession(String(id)))
-  ipcMain.on('os:session-spawn', (_e, opts: { command?: string; title?: string }) => { void electronSessionOps.spawnSession(opts || {}) })
-  ipcMain.on('os:chat-session-spawn', (_e, p?: { title?: string }) => { try { osSpawnChatSession(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
-  ipcMain.handle('os:session-list', () => electronSessionOps.listSessions())
-  ipcMain.on('os:session-stop', (_e, id: string) => electronSessionOps.stopSession(String(id)))
-  ipcMain.on('os:session-restart', (_e, id: string) => { void electronSessionOps.restartSession(String(id)) })
+  // Terminal I/O from a TerminalView in the renderer: keystrokes, resize, scrollback read.
+  ipcMain.on('os:terminal-input', (_e, p: { id: string; data: string }) => electronTerminalOps.sendToTerminal(String(p?.id), String(p?.data ?? '')))
+  ipcMain.on('os:terminal-resize', (_e, p: { id: string; cols: number; rows: number }) => electronTerminalOps.resizeTerminal(String(p?.id), Number(p?.cols) || 80, Number(p?.rows) || 24))
+  ipcMain.handle('os:terminal-read', (_e, id: string) => electronTerminalOps.readTerminal(String(id)))
+  ipcMain.on('os:terminal-spawn', (_e, opts: { command?: string; title?: string }) => { void electronTerminalOps.spawnTerminal(opts || {}) })
+  ipcMain.on('os:agent-spawn', (_e, p?: { title?: string }) => { try { osSpawnAgent(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
+  ipcMain.handle('os:close-agent', (_e, id: string) => { try { return osCloseAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
+  ipcMain.handle('os:rename-agent', (_e, p: { id: string; title: string }) => { try { return osRenameAgent(String(p?.id), String(p?.title ?? '')) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
+  // blitz.chat (a per-agent chat widget's own control): 'new' → spawn a fresh agent (returns its id);
+  // 'rename' → retitle an agent. Routes to the SAME osSpawnAgent/osRenameAgent the toolbar uses — the
+  // server mirrors this via the shim's chatControl → /api/os/agent-spawn|agent-rename (no divergence).
+  ipcMain.handle('os:chat-control', (_e, p: { op?: string; args?: { id?: string; title?: string } }) => {
+    try {
+      const op = String(p?.op || ''); const a = p?.args || {}
+      if (op === 'new') return osSpawnAgent(a.title != null ? String(a.title) : undefined, true)
+      if (op === 'rename') return osRenameAgent(String(a.id ?? ''), String(a.title ?? ''))
+      return { ok: false, error: `unknown chat op: ${op}` }
+    } catch (e) { return { ok: false, error: (e as Error)?.message } }
+  })
+  ipcMain.handle('os:terminal-list', () => electronTerminalOps.listTerminals())
+  ipcMain.on('os:terminal-stop', (_e, id: string) => electronTerminalOps.stopTerminal(String(id)))
+  ipcMain.on('os:terminal-remove', (_e, id: string) => electronTerminalOps.removeTerminal(String(id)))
+  ipcMain.on('os:terminal-restart', (_e, id: string) => { void electronTerminalOps.restartTerminal(String(id)) })
 
   // Action-items inbox (human side): list / resolve / clear.
   ipcMain.handle('os:action-list', (_e, status?: string) => electronActionItems.listActions(status as ActionStatus | undefined))
@@ -268,13 +282,14 @@ app.whenReady().then(() => {
   // On every URL change we refresh .blitzos/relay-url so the running agent terminals (which re-read it per
   // call) self-heal onto the fresh url — no privileged brain to restart.
   startAgentSocket(() => mainWindow, (url) => osSetRelayUrl(url))
-  setSessionGetUrl(() => getAgentSocketUrl()) // so a dead agent's re-exec rebuilds its command with the live url
+  setTerminalGetUrl(() => getAgentSocketUrl()) // so a dead agent's re-exec rebuilds its command with the live url
 
-  // Agent sessions run as VISIBLE tmux terminals (no headless brain). A chat session's claude runs in a
-  // terminal in its stage, connected over the relay, /saying into its chat thread; the session-manager
-  // persists + reattaches it, and boot resumes the dead ones with --resume. Enabled when an agent command
-  // exists: BLITZ_AGENT (a custom command, or '1' for claude) OR a login-shell-resolved `claude` CLI —
-  // the resident-brain/onboarding decision (plans/onboarding-case-file.md): zero-setup when claude exists.
+  // Agents run as VISIBLE tmux terminals (no headless brain). An agent's claude runs in a terminal in its
+  // stage, connected over the relay, /saying into its per-agent chat widget; the terminal-manager persists
+  // + reattaches it, and boot resumes the dead ones with --resume (survivors stay live). Enabled when an
+  // agent command exists: BLITZ_AGENT (a custom command, or '1' for claude) OR a login-shell-resolved
+  // `claude` CLI — the resident-brain/onboarding decision (plans/onboarding-case-file.md): zero-setup when
+  // claude exists. No command means no launch.
   const agentCmd = process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : claudeCliPath() || (process.env.BLITZ_AGENT === '1' ? 'claude' : null)
   // PRE-FLIGHT: the brain = a claude CLI inside a tmux terminal. If either is missing on this Mac
   // (fresh VM; packaged GUI apps also don't get homebrew's PATH — both resolvers use the login
@@ -296,8 +311,7 @@ app.whenReady().then(() => {
       setTimeout(() => notice('0'), 7000) // after the workspace + chat hub hydrate
       // Answer (throttled) every message sent while broken — silence is never an acceptable reply.
       const lastNotice = new Map<string, number>()
-      setOnChatActivity((sid, spawn) => {
-        if (!spawn) return
+      setOnUserMessage((sid) => {
         const now = Date.now()
         if (now - (lastNotice.get(sid) || 0) < 60_000) return
         lastNotice.set(sid, now)
@@ -306,26 +320,29 @@ app.whenReady().then(() => {
     }
   }
   if (agentCmd) {
-    // Session '0' carries the onboarding-interview standing duty while it's pending — the provider is
+    // Agent '0' carries the onboarding-interview standing duty while it's pending — the provider is
     // re-read on EVERY (re)launch (prepareAgentLaunch rewrites bootstrap.txt), so a finished interview
     // drops off the next respawn automatically.
     setBootTaskProvider((id: string) => (String(id) === '0' ? interviewBootTask() : null))
-    const sessionsDirOf = (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'sessions') : null }
+    const terminalsDirOf = (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'terminals') : null }
     const launchAgent = (id: string, stage: number, title?: string): void => {
       const ws = osWorkspaceContext().workspace_path
-      const sessionsDir = sessionsDirOf()
+      const terminalsDir = terminalsDirOf()
       const url = getAgentSocketUrl()
-      if (!ws || !sessionsDir || !url) return // not ready (no workspace / relay url yet) — boot resume retries
-      const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir, id, url, cmd: agentCmd })
-      void electronSessionOps.spawnSession({ id, kind: 'agent', command, cwd: ws, stage, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })
+      if (!ws || !terminalsDir || !url) return // not ready (no workspace / relay url yet) — boot resume retries
+      // `sessionsDir` is the agent-runtime contract for the claude --session-id state dir; we point it at
+      // our .blitzos/terminals migration.
+      const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir: terminalsDir, id, url, cmd: agentCmd })
+      void electronTerminalOps.spawnTerminal({ id, kind: 'agent', command, cwd: ws, stage, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })
     }
     setLaunchAgent(launchAgent)
-    // Resume/reattach all chat-session agents once the relay URL is live + survivors adopted. Fire once.
+    setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its claude terminal record (no auto-restart, no exited ghost)
+    // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
     let resumed = false
     const resumeAll = async (): Promise<void> => {
       if (resumed || !getAgentSocketUrl()) return
       resumed = true
-      try { await electronSessionOps.whenRestored() } catch { /* ignore */ }
+      try { await electronTerminalOps.whenRestored() } catch { /* ignore */ }
       osResumeAgentsOnBoot()
     }
     // The URL is minted async after the relay connects; poll until it's up (capped ~2min), then resume once.
@@ -363,7 +380,7 @@ app.whenReady().then(() => {
 // Flush a pending workspace write + stop the folder watchers before quit (so the last edit persists).
 app.on('before-quit', () => {
   osFlushWorkspace()
-  try { electronSessionOps.stopHosts() } catch { /* ignore */ } // flush session transcripts + close tmux control clients (sessions survive)
+  try { electronTerminalOps.stopHosts() } catch { /* ignore */ } // flush terminal scrollback + close tmux control clients (terminals survive)
   bootJournal?.markClean() // LAST: "clean shutdown" means everything above flushed first
 })
 

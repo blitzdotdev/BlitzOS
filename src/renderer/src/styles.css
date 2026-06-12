@@ -316,8 +316,8 @@ button {
   line-height: 1.45;
 }
 
-/* Tabbed windows (terminal): a strip of session tabs between the title bar and the body. Each tab is
-   one tmux session; the body renders the active tab. The "+" spawns a new session into a new tab. */
+/* Tabbed windows (terminal): a strip of terminal tabs between the title bar and the body. Each tab is
+   one tmux terminal; the body renders the active tab. The "+" spawns a new terminal into a new tab. */
 .window-tabs {
   flex: 0 0 28px;
   height: 28px;
@@ -555,8 +555,9 @@ button {
   z-index: 40;
 }
 
-/* Sessions tray — the glanceable list of every session in the workspace (running + persisted-dead). */
-.sessions-panel {
+/* Runtime tray ("Terminals & Agents") — the glanceable list of everything running in the workspace
+   (live + persisted-dead), split into an Agents group and a Terminals group. */
+.runtime-panel {
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -565,85 +566,141 @@ button {
   color: var(--text);
   overflow: hidden;
 }
-.sessions-head {
+.runtime-head {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--hairline);
   font-size: 12px;
   color: var(--text-muted);
 }
-.sessions-running {
-  color: var(--positive, #3fb950);
+.runtime-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
 }
-.sessions-new {
+.runtime-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.runtime-group {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.runtime-group + .runtime-group {
+  border-top: 1px solid var(--hairline);
+}
+.runtime-group-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+.runtime-add {
   border: 1px solid var(--hairline);
   border-radius: 6px;
   background: var(--surface-raised);
   color: var(--text-secondary);
-  font-size: 12px;
-  padding: 3px 9px;
+  font-size: 14px;
+  line-height: 1;
+  padding: 1px 8px;
   cursor: pointer;
 }
-.sessions-new:hover {
+.runtime-add:hover {
   color: var(--text);
   border-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
 }
-.sessions-list {
+.runtime-list {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 4px;
+  padding: 2px 4px 6px;
 }
-.sessions-empty {
-  padding: 28px 18px;
+.runtime-empty {
+  padding: 14px 18px;
   text-align: center;
   color: var(--text-tertiary);
-  font-size: 12.5px;
-  line-height: 1.7;
+  font-size: 12px;
+  line-height: 1.6;
 }
-.sess-row {
+.run-row {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
+  gap: 8px;
   padding: 8px 9px;
   border-radius: 8px;
   cursor: default;
 }
-.sess-row:hover {
+.run-row:hover {
   background: var(--surface-raised);
 }
-.sess-dot {
+.run-dot {
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   margin-top: 5px;
 }
-.sess-main {
+.run-ico {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+.run-main {
   flex: 1 1 auto;
   min-width: 0;
 }
-.sess-title {
+.run-title {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: text;
 }
-.sess-meta {
+.run-title-edit {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface, #fff);
+  border: 1px solid var(--accent, #4493f8);
+  border-radius: 4px;
+  padding: 1px 5px;
+  width: 100%;
+  outline: none;
+}
+.run-stage {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent, #4493f8);
+  cursor: pointer;
+}
+.run-stage:hover {
+  text-decoration: underline;
+}
+.run-meta {
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.sess-cmd {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-.sess-cwd {
+.run-cwd {
   font-size: 10.5px;
   color: var(--text-tertiary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -653,13 +710,13 @@ button {
   direction: rtl; /* keep the tail (the deepest dir) visible when truncated */
   text-align: left;
 }
-.sess-actions {
+.run-actions {
   flex: 0 0 auto;
   display: flex;
   gap: 5px;
   align-items: center;
 }
-.sess-btn {
+.run-btn {
   border: 1px solid var(--hairline);
   border-radius: 6px;
   background: transparent;
@@ -668,12 +725,12 @@ button {
   padding: 3px 9px;
   cursor: pointer;
 }
-.sess-btn:hover {
+.run-btn:hover {
   color: var(--text);
   border-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
   background: color-mix(in srgb, var(--text-muted) 10%, transparent);
 }
-.sess-btn.danger:hover {
+.run-btn.danger:hover {
   color: var(--negative, #e5484d);
   border-color: color-mix(in srgb, var(--negative, #e5484d) 45%, transparent);
   background: color-mix(in srgb, var(--negative, #e5484d) 10%, transparent);

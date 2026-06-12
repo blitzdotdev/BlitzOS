@@ -1,6 +1,6 @@
-// Types for the shared agent-session core (agent-session.mjs).
-export function buildBootstrap(url: string, sessionId?: string, bootTask?: string | null): string
-/** Register the per-session standing-duty provider (e.g. the onboarding interview). Re-read on every
+// Types for the shared agent-runtime core (agent-runtime.mjs).
+export function buildBootstrap(url: string, sessionId?: string, bootTask?: string | null, workspace?: string | null): string
+/** Register the per-agent standing-duty provider (e.g. the onboarding interview). Re-read on every
  *  (re)launch by prepareAgentLaunch; return null for no duty. Policy-free: the text is the caller's. */
 export function setBootTaskProvider(fn: ((sessionId: string) => string | null | undefined) | null): void
 export function shellQuote(s: string): string

@@ -1,15 +1,16 @@
-// agent-session.mjs — the SHARED core that turns a workspace session into a BlitzOS agent.
+// agent-runtime.mjs — the SHARED core that turns a workspace terminal into a BlitzOS agent.
 //
-// There is no privileged headless "brain" anymore: an agent session is just a tmux terminal (owned by
-// session-manager.mjs) whose command runs `claude` pointed at the agent-socket relay. The claude process
+// There is no privileged headless "brain" anymore: an agent is just a tmux terminal (owned by
+// terminal-manager.mjs) whose command runs `claude` pointed at the agent-socket relay. The claude process
 // is VISIBLE (you watch it work), survives a BlitzOS restart (tmux), and /says clean replies into its chat
 // widget over the unchanged agent-socket contract. This module owns the only agent-specific bits:
 //   • the bootstrap prompt (the served blitzos-agents.md is the source of truth; this is a thin pointer),
 //   • the claude argv command string (create vs resume), and
 //   • the persisted claude --session-id token (so the SAME conversation continues across restarts).
 // Both transports (Electron + server) import THIS one file — no per-transport fork.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
@@ -41,12 +42,12 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   // v2 bleed fix: an agent is PINNED to its workspace — every /events + /say carries it, so a
   // background workspace's agent never sees (or answers into) another workspace's chat.
   const wsPin = workspace ? `,"workspace":"${String(workspace).replace(/"/g, '')}"` : ''
-  const sess = (primary ? '' : `,"session":"${sessionId}"`) + wsPin // non-primary agents MUST scope /events + /say to their session
+  const sess = (primary ? '' : `,"agent":"${sessionId}"`) + wsPin // non-primary agents MUST scope /events + /say to their agent id
   const B = '"$(cat ' + RELAY_URL_FILE + ')"' // every URL is built fresh from the file on each curl
   return [
     primary
       ? 'You are the primary chat agent of BlitzOS, an agent OS the user watches live. BlitzOS makes NO decisions; YOU decide everything.'
-      : `You are session "${sessionId}" — one of several independent agents in BlitzOS (an agent OS). You serve ONLY your own chat; other sessions have their own agents.`,
+      : `You are agent "${sessionId}" — one of several independent agents in BlitzOS (an agent OS). You serve ONLY your own chat; other agents have their own chats.`,
     `YOUR AGENT-SOCKET BASE URL IS VOLATILE — it changes every time BlitzOS restarts. NEVER hardcode it. Build EVERY url FRESH from the file ${RELAY_URL_FILE} (in your cwd): write each call as \`curl -sX POST ${B}/<tool> -H 'content-type: application/json' -d '{…}'\`. The \`$(cat …)\` re-reads your CURRENT base on each call, so you stay connected across restarts. If ANY curl fails (connection error / app_offline / 404), it almost always means BlitzOS restarted and minted a new url — just retry; the inlined \`$(cat …)\` already picks up the fresh one.`,
     `Your full operating manual is ${B}/agents.md. Fetch it FIRST (with your Bash tool: \`curl -s ${B}/agents.md\`) and FOLLOW it. If the fetch fails, retry; do not act blind.`,
     "IMPORTANT OVERRIDE for this session: the desktop is ALREADY set up by the user. Do NOT assemble, rearrange, resize, recenter, move, or close ANYTHING on connect or on your own — ignore the manual's 'assemble the desktop on connect' guidance entirely. This is the user's curated, live desktop.",
@@ -55,12 +56,12 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
     // unprompted action for its own scope and is re-read per (re)launch, so a finished duty disappears.
     ...(bootTask ? [`STANDING DUTY — sanctioned by the OS, do it FIRST after recovering context (it OVERRIDES the do-nothing-unprompted rule below until it is done, and only for its own scope): ${bootTask}`] : []),
     `Your ONLY job: respond when the user types in YOUR chat. Poll \`curl -sX POST ${B}/events -d '{"since":0,"wait":0${sess}}'\` once for the live backlog, then set \`since\` to the returned \`latest\` and run the /events long-poll loop FOREVER (wait:25${sess ? `, always including ${sess.slice(1)}` : ''}), responding to each new trigger:'message' and doing EXACTLY what it asks.`,
-    `CRITICAL — STAYING ALIVE: there is NO background process. You are a terminal program that exists ONLY while you are actively running tool calls. The INSTANT you end your turn (stop calling tools, go "idle", or announce you are "watching/listening" and stop) your process EXITS and you go OFFLINE — the user can no longer reach you. So you must keep calling \`/events\` yourself in an UNBROKEN, NEVER-ENDING chain: poll → (handle any message) → poll again → poll again → forever. After EVERY poll, immediately issue the next poll, even if it returned nothing. Do NOT say "I'm now watching" and stop — that kills you. Just keep polling. (If you do die, BlitzOS auto-restarts you, but you lose responsiveness in the gap — so don't stop.)`,
+    `CRITICAL — STAYING REACHABLE: there is NO background process polling for you. The user reaches you ONLY while you are actively calling \`/events\`. The INSTANT you stop (end your turn, go "idle", or announce you are "watching/listening" and then sit waiting) you go DEAF — the user's messages pile up unseen and you appear frozen. So you must keep calling \`/events\` yourself in an UNBROKEN, NEVER-ENDING chain: poll → (handle any message) → poll again → poll again → forever. After EVERY poll, immediately issue the next poll, even if it returned nothing. Do NOT say "I'm now watching" and then stop — that makes you deaf. Just keep polling, forever, no matter what.`,
     `BE VISIBLE — the user must always SEE what you're doing. Reply + progress ONLY via \`curl -sX POST ${B}/say -d '{"text":"…"${sess}}'\` (this lands in YOUR chat). The MOMENT you get a message, /say a one-line acknowledgement of your PLAN, then /say a short note before/after each meaningful step. Never go quiet for more than a few seconds of work without a /say. DO NOTHING unprompted. Going silent, or acting without saying what you're doing, is a FAILURE.`,
     ...(primary
       ? []
       : [
-          `YOUR WINDOWS LIVE IN YOUR OWN AREA (separate from the user's primary desktop). On EVERY surface-opening call — create_surface, open_window, and spawn_session — you MUST include "session":"${sessionId}" so the window opens in YOUR stage and never disturbs the user. Do NOT pass an explicit x/y unless repositioning a window within your own stage. Open your terminal and all work windows this way.`
+          `YOUR WINDOWS LIVE IN YOUR OWN STAGE (separate from the user's primary desktop). On EVERY surface-opening call — create_surface, open_window, and open_terminal — you MUST include "agent":"${sessionId}" so the window opens in YOUR stage and never disturbs the user. Do NOT pass an explicit x/y unless repositioning a window within your own stage. Open your terminal and all work windows this way.`
         ])
   ].join('\n')
 }
@@ -71,27 +72,49 @@ export function shellQuote(s) {
 }
 
 /** The claude argv command string run inside the tmux terminal. mode 'create' → --session-id (first run),
- *  'resume' → --resume (continue the SAME conversation). The prompt is read from the bootstrap FILE so the
- *  command stays single-line (tmux control mode forbids newlines). --dangerously-skip-permissions because
- *  the agent acts unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
+ *  'resume' → --resume (continue the SAME conversation). The bootstrap is the POSITIONAL prompt (read from a
+ *  FILE via "$(cat …)" so the command stays single-line — tmux control mode forbids newlines).
+ *  INTERACTIVE (no -p): claude renders its full TUI in the terminal so the user can WATCH it work — print
+ *  mode (-p) ran silently, leaving the terminal blank. --dangerously-skip-permissions: the agent acts
+ *  unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
 export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile }) {
   const sessionArg = mode === 'resume' ? `--resume ${claudeSid}` : `--session-id ${claudeSid}`
-  return `${cmd} ${sessionArg} --dangerously-skip-permissions -p "$(cat ${shellQuote(bootstrapFile)})"`
+  return `${cmd} ${sessionArg} --dangerously-skip-permissions "$(cat ${shellQuote(bootstrapFile)})"`
 }
 
-/** Read (or mint) this session's persisted claude session-id + whether claude has ESTABLISHED it (so we
- *  --resume vs --session-id). Lives in the SAME meta.json the session-manager owns — no second file. The
- *  caller persists the id by passing it to spawnSession (which writes meta). established flips true only
- *  after a healthy run (session-manager sets claudeEstablished on a ≥5s exit), so we never --resume an id
- *  claude never created (which fails 'No conversation found' → a crash loop). */
+/** Has claude ALREADY created this conversation on disk? claude writes `<configDir>/projects/<encoded-cwd>/
+ *  <session-id>.jsonl` (encoded-cwd = the workspace path with every `/` and `.` turned into `-`; we don't
+ *  relocate CLAUDE_CONFIG_DIR, so configDir defaults to ~/.claude). The session-id is a UUID, so a hit is
+ *  unambiguous. A wrong/exotic encoding just misses → we safely fall back to the timing flag (no regression). */
+function claudeConversationExists(sessionsDir, claudeSessionId) {
+  if (!claudeSessionId) return false
+  try {
+    const wsPath = dirname(dirname(sessionsDir)) // <ws>/.blitzos/sessions → <ws> (claude's cwd)
+    const cfgDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
+    const encoded = wsPath.replace(/[/.]/g, '-')
+    return existsSync(join(cfgDir, 'projects', encoded, `${claudeSessionId}.jsonl`))
+  } catch { return false }
+}
+
+/** Read (or mint) this agent's persisted claude session-id + whether claude has ESTABLISHED it (so we
+ *  --resume vs --session-id). Lives in the SAME meta.json the terminal-manager owns — no second file. The
+ *  caller persists the id by passing it to spawnTerminal (which writes meta). established is true when the
+ *  timing flag is set (terminal-manager sets claudeEstablished after ≥8s uptime / a ≥5s exit) OR — the
+ *  deterministic backstop — when claude's conversation jsonl already exists on disk. The jsonl check closes
+ *  the narrow gap where claude created the session but BlitzOS restarted (and the agent survived in tmux)
+ *  before the establish timer fired: without it that re-exec would run `--session-id <existing>` → claude
+ *  errors "already in use" → crash loop. We still never --resume an id claude never created (no jsonl, flag
+ *  unset → create mode → 'No conversation found' avoided). */
 export function ensureClaudeSessionId(sessionsDir, id) {
   const m = readMeta(sessionsDir, id)
-  return { claudeSessionId: m.claudeSessionId || randomUUID(), established: !!m.claudeEstablished }
+  const claudeSessionId = m.claudeSessionId || randomUUID()
+  const established = !!m.claudeEstablished || claudeConversationExists(sessionsDir, claudeSessionId)
+  return { claudeSessionId, established }
 }
 
 /** Prepare an agent (re)launch: ensure the claude session-id, (re)write the bootstrap file with the CURRENT
- *  relay url, and build the command. Returns { command, claudeSessionId } for session-manager.spawnSession.
- *  Used by BOTH the new-session launch (workspace-host launchAgent) AND the re-exec path (restartSession's
+ *  relay url, and build the command. Returns { command, claudeSessionId } for terminal-manager.spawnTerminal.
+ *  Used by BOTH the new-agent launch (workspace-host launchAgent) AND the re-exec path (restartTerminal's
  *  rebuildAgentCommand) — one definition, no divergence. */
 export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
   const { claudeSessionId, established } = ensureClaudeSessionId(sessionsDir, id)

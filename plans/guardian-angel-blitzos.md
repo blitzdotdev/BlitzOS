@@ -1,5 +1,7 @@
 # Guardian Angel BlitzOS — make any connecting agent the principal's GA
 
+> **⚠️ Stale runtime references (2026-06-11):** the headless `agent-runner.mjs` "brain" (`startAgentRunner`, a respawning `claude -p`) this doc builds on was **DELETED**. An agent is now a **visible `claude` running in a tmux terminal**, supervised + auto-restarted by `terminal-manager.mjs`; the agent command, bootstrap prompt, and policy-free boot-task/duty seam live in `agent-runtime.mjs` (`setBootTaskProvider`). Map every `agent-runner.mjs` / `claude -p brain` reference below onto that. The thesis (swappable brain, zero per-task code) is unchanged.
+
 **Status:** Proposal / design (2026-06-06). No core code changed yet.
 **Source idea:** Gwern Branwen, *"Guardian Angels: LLM Personalization for Productivity and Security"* — full text installed at `plans/guardian-angel-gwern.md` (retrieved 2026-06-06).
 **Companion docs:** `agent-os-dynamic-architecture.md` (the substrate, L1–L5 layers, §0 locked decisions, P0–P6 roadmap), `agent-os-desktop-architecture.md` (Electron plan), `CLAUDE.md` (BlitzOS guidance). GA is the **policy + identity + memory** layer that the pure-substrate architecture deliberately left to "the agent" and to the "OPEN memory model."

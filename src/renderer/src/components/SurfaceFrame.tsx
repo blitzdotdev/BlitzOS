@@ -5,8 +5,8 @@ import { BrowserNav } from './BrowserNav'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
-import { SessionTerminal } from './SessionTerminal'
-import { SessionsPanel } from './SessionsPanel'
+import { TerminalView } from './TerminalView'
+import { RuntimePanel } from './RuntimePanel'
 import { InboxPanel } from './InboxPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
 import { UI_KIT } from '../widget-ui-kit'
@@ -132,6 +132,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const moveSurface = useDesktop((s) => s.moveSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
   const closeSurface = useDesktop((s) => s.closeSurface)
+  const closeAgent = useDesktop((s) => s.closeAgent)
   const toggleMaximize = useDesktop((s) => s.toggleMaximize)
   const minimizeSurface = useDesktop((s) => s.minimizeSurface)
   const setActiveTab = useDesktop((s) => s.setActiveTab)
@@ -425,15 +426,14 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
       )
   }
-  // blitz.sendMessage — the widget sends a message to ITS session's agent. The session id rides from the
-  // surface (props.sessionId, set by the host per chat session) so each chat widget routes to its own agent.
-  function serveMessage(win: Window, reqId: string, text: string, sessionId?: string): Promise<void> {
-    // The hub chat widget passes the ACTIVE session id per send; a plain per-session widget omits it and
-    // the id rides from the surface (props.sessionId). Either way the message wakes the right session's agent.
-    window.agentOS?.sendMessage?.(String(text), String(sessionId ?? surface.props?.sessionId ?? '0'))
+  // blitz.sendMessage — the widget sends a message to ITS agent. The agent id rides from the surface
+  // (props.agentId, set by the host per agent) so each chat widget routes to its own agent.
+  function serveMessage(win: Window, reqId: string, text: string): Promise<void> {
+    window.agentOS?.sendMessage?.(String(text), String(surface.props?.agentId ?? '0'))
     return Promise.resolve(postRes(win, reqId, { ok: true }))
   }
-  // blitz.chat — the chat HUB manages its sessions (new / rename). Returns the result (e.g. the new id).
+  // blitz.chat — a per-agent chat widget manages itself (op 'new' → a fresh agent's id; 'rename' → its title).
+  // Returns the result (e.g. the new agent id). This is the per-agent control API, NOT a session hub.
   function serveChat(win: Window, reqId: string, op: string, args: Record<string, unknown>): Promise<void> {
     const api = window.agentOS as { chatControl?: (op: string, args: Record<string, unknown>) => Promise<unknown> } | undefined
     if (!api?.chatControl) return Promise.resolve(postRes(win, reqId, { ok: false, error: 'chat control unavailable here' }))
@@ -459,7 +459,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     const onMessage = (e: MessageEvent): void => {
       const win = iframeRef.current?.contentWindow
       if (!win || e.source !== win) return // only OUR widget (origin is unusable "null")
-      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; path?: string; sessionId?: string; chatOp?: string }
+      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; path?: string; chatOp?: string }
       if (!m || typeof m !== 'object') return
       if (m.type === 'blitz:hello') {
         win.postMessage({ type: 'blitz:init', props: widgetProps() }, '*')
@@ -480,7 +480,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           }
         }
       } else if (m.type === 'blitz:annotation') {
-        // Item 5b: the chat hub's grounded reference was clicked → recall the annotation bubble on its
+        // Item 5b: a chat widget's grounded reference was clicked → recall the annotation bubble on its
         // surface (fire-and-forget; the ref carries the full annotation so it works after a reload).
         const ref = (m as { ref?: unknown }).ref as { id?: unknown; surfaceId?: unknown; xPct?: unknown; yPct?: unknown; text?: unknown } | undefined
         if (ref && ref.id && ref.surfaceId) {
@@ -489,7 +489,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       } else if (m.type === 'blitz:req' && typeof m.reqId === 'string') {
         if (m.op === 'data') void serveData(win, m.reqId, String(m.provider ?? ''), String(m.resource ?? ''))
         else if (m.op === 'tool') void serveTool(win, m.reqId, String(m.tool ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
-        else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''), m.sessionId)
+        else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''))
         else if (m.op === 'chat') void serveChat(win, m.reqId, String(m.chatOp ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
         else if (m.op === 'listdir') void serveListDir(win, m.reqId, String(m.path ?? ''))
         else if (m.op === 'setprops') {
@@ -807,11 +807,11 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         if (surface.component === 'terminal') {
           const tabs = surface.tabs || []
           const active = tabs[Math.min(Math.max(surface.activeTab || 0, 0), Math.max(0, tabs.length - 1))]
-          const sid = active?.sessionId || (surface.props?.sessionId as string) || ''
-          // key by session id so switching tabs remounts the terminal onto the new session (scrollback re-fetched)
-          return <SessionTerminal key={sid} surface={{ ...surface, props: { sessionId: sid } }} />
+          const tid = active?.terminalId || (surface.props?.terminalId as string) || ''
+          // key by terminal id so switching tabs remounts the view onto the new terminal (scrollback re-fetched)
+          return <TerminalView key={tid} surface={{ ...surface, props: { terminalId: tid } }} />
         }
-        if (surface.component === 'sessions') return <SessionsPanel surface={surface} />
+        if (surface.component === 'runtime') return <RuntimePanel surface={surface} />
         if (surface.component === 'inbox') return <InboxPanel surface={surface} />
         if (surface.component === 'file') return <FileWidget surface={surface} />
         if (surface.component === 'dir') return <DirWidget surface={surface} />
@@ -904,8 +904,14 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           {/* macOS traffic lights: red=close, yellow=minimize, green=zoom. Colored only when active. */}
           <div className="traffic" onPointerDown={stop}>
             {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
-                reconcile (the file still exists), so only offer zoom; delete the file to remove it. */}
-            {!isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
+                reconcile (the file still exists), so only offer zoom; delete the file to remove it.
+                A NON-primary chat widget's red light DELETES its agent (stop it + delete its chat +
+                files/stage); the PRIMARY chat ('0') is pinned + never deletable → no close button. */}
+            {surface.role === 'chat'
+              ? surface.agentId && String(surface.agentId) !== '0'
+                ? <button className="tl tl-close" title="Delete agent" onClick={() => closeAgent(String(surface.agentId))} />
+                : null
+              : !isFileTile && <button className="tl tl-close" title="Close" onClick={() => closeSurface(surface.id)} />}
             {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => (onRequestMinimize ? onRequestMinimize(surface.id) : minimizeSurface(surface.id))} />}
             <button className="tl tl-max" title="Zoom" onClick={() => (onRequestToggleMaximize ? onRequestToggleMaximize(surface.id) : toggleMaximize(surface.id))} />
           </div>
@@ -998,7 +1004,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
                 title="Close tab"
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (t.sessionId) (window.agentOS as unknown as { sessionStop?: (id: string) => void })?.sessionStop?.(t.sessionId)
+                  if (t.terminalId) (window.agentOS as unknown as { terminalStop?: (id: string) => void })?.terminalStop?.(t.terminalId)
                   closeTab(surface.id, t.id)
                 }}
               >
@@ -1008,8 +1014,8 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           ))}
           <button
             className="wtab-add"
-            title="New session tab"
-            onClick={() => (window.agentOS as unknown as { sessionSpawn?: (o: object) => void })?.sessionSpawn?.({ command: 'bash', title: nextTerminalName() })}
+            title="New terminal tab"
+            onClick={() => (window.agentOS as unknown as { terminalSpawn?: (o: object) => void })?.terminalSpawn?.({ command: 'bash', title: nextTerminalName() })}
           >
             +
           </button>

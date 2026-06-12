@@ -23,8 +23,9 @@ import {
   osSay,
   osUserMessage,
   osCustomizeWidget,
-  osSpawnChatSession,
-  osRenameChatSession,
+  osSpawnAgent,
+  osCloseAgent,
+  osRenameAgent,
   osSystemUi,
   osGroupIntoFolder,
   osBroadcast,
@@ -33,7 +34,7 @@ import {
 } from './osActions'
 import { runProviderCall } from './provider-bridge'
 import { integrationStatuses, connectedProviders } from './integrations'
-import { makeSessionOps } from './session-ops.mjs'
+import { makeTerminalOps } from './terminal-ops.mjs'
 import { makeActionItems } from './action-items.mjs'
 import { emitSurfaceAction } from './events'
 
@@ -64,12 +65,13 @@ export const electronOps = {
   switchWorkspace: (name: string) => osSwitchWorkspace(name),
   readWindow: (id: string, script?: string) => osReadWindow(id, script),
   controlSurface: (id: string, action: unknown) => osControlSurface(id, action as Parameters<typeof osControlSurface>[1]),
-  say: (text: string, sessionId?: string, workspace?: string) => osSay(text, sessionId, workspace),
+  say: (text: string, agentId?: string, workspace?: string) => osSay(text, agentId, workspace),
   // user_say (localhost-only test syscall): programmatic user input through the human composer's exact path
-  userMessage: (text: string, sessionId?: string) => osUserMessage(text, sessionId),
-  customizeWidget: (name: string, html: string, sessionId?: string) => osCustomizeWidget(name, html, sessionId),
-  spawnChatSession: (title?: string) => osSpawnChatSession(title),
-  renameChatSession: (sessionId: string, title: string) => osRenameChatSession(sessionId, title),
+  userMessage: (text: string, agentId?: string) => osUserMessage(text, agentId),
+  customizeWidget: (name: string, html: string, agentId?: string) => osCustomizeWidget(name, html, agentId),
+  spawnAgent: (title?: string) => osSpawnAgent(title),
+  closeAgent: (id: string) => osCloseAgent(id),
+  renameAgent: (id: string, title: string) => osRenameAgent(id, title),
   systemUi: (name: string) => osSystemUi(name),
   groupIntoFolder: (name: string, ids: string[], x: number | undefined, y: number | undefined, kind: 'board' | 'folder') => osGroupIntoFolder(name, ids, x, y, kind),
   providerCall: (descriptor: Parameters<typeof runProviderCall>[0], transport: 'relay' | 'localhost') => runProviderCall(descriptor, transport === 'localhost' ? 'localhost' : 'relay'),
@@ -80,15 +82,15 @@ export const electronOps = {
 
 // The current relay url, injected by index.ts (the top-level wirer) to avoid an import cycle with
 // agentSocket (which imports OS_TOOLS from here). Used to rebuild an agent's command on re-exec.
-let sessionGetUrl: (() => string | null) | null = null
-export function setSessionGetUrl(fn: () => string | null): void { sessionGetUrl = fn }
+let terminalGetUrl: (() => string | null) | null = null
+export function setTerminalGetUrl(fn: () => string | null): void { terminalGetUrl = fn }
 
-// Session ops — the SHARED workspace-keyed lifecycle (session-ops.mjs). Electron seam: the active
-// workspace folder + the os:action emit. The server binds the SAME makeSessionOps with its own seam,
-// so the multi-agent session model can't diverge between the two modes.
+// Terminal ops — the SHARED workspace-keyed lifecycle (terminal-ops.mjs). Electron seam: the active
+// workspace folder + the os:action emit. The server binds the SAME makeTerminalOps with its own seam,
+// so the terminal/agent model can't diverge between the two modes.
 const AGENT_CMD = process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : 'claude'
-export const electronSessionOps = makeSessionOps({ getWorkspacePath: () => osWorkspaceContext().workspace_path, emit: osBroadcast, getUrl: () => sessionGetUrl?.() ?? null, agentCmd: AGENT_CMD })
-Object.assign(electronOps, electronSessionOps)
+export const electronTerminalOps = makeTerminalOps({ getWorkspacePath: () => osWorkspaceContext().workspace_path, emit: osBroadcast, getUrl: () => terminalGetUrl?.() ?? null, agentCmd: AGENT_CMD })
+Object.assign(electronOps, electronTerminalOps)
 
 // Action-items inbox — same shared-core pattern. emitMoment wakes the watching agent (a perception
 // 'action' moment) when the human ticks an item; emit pushes the UI update over os:action.

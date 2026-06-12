@@ -1,5 +1,7 @@
 # The Visceral Loop — why BlitzOS doesn't feel like a paradigm shift yet, measured, and the general-framework fixes
 
+> **⚠️ Stale runtime references (2026-06-11):** the respawning `claude -p` in `agent-runner.mjs` that §3 proposes to "replace with a held session" was **DELETED** — the headless brain is gone. An agent now runs as a **visible interactive `claude` in a tmux terminal** (`agent-runtime.mjs` builds the command; `terminal-manager.mjs` supervises + auto-restarts; continuity via `--resume` of a persisted `--session-id`). The "warm held session" idea below still applies as a *future* upgrade to that terminal model; just read `agent-runner.mjs` as `agent-runtime.mjs`/`terminal-manager.mjs`.
+
 **Status:** Proposal (2026-06-09). Two bug fixes from this investigation are LANDED (§2); everything else is design.
 **Companion docs:** `agent-os-dynamic-architecture.md` (the substrate + locked decisions), `session-tape-and-daydreaming.md` (Feature 3 tape + Feature 5 daydreaming — §3.C below defers to it), `guardian-angel-blitzos.md` (identity/flywheel tiers), `ONBOARDING-FLOW.md` (the scan + interview §3.F wires in), `blitzos-agents-redraft.md` (the doctrine rewrite §3.G feeds), `command-bar.md` (the <1s human→agent channel).
 **Grounding:** every number below was **measured live this session** by driving the running Electron app over the localhost control API (and the server backend over the relay) as the brain would — instrumented scripts, isolated test workspaces, all torn down after. Re-verify before citing; line numbers drift.
