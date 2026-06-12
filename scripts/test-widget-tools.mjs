@@ -7,11 +7,11 @@ let fail = 0
 const ok = (n, c) => (c ? (pass++, console.log('  ✓ ' + n)) : (fail++, console.log('  ✗ ' + n)))
 
 console.log('# the allowlist allows the intended OS tools')
-for (const t of ['create_surface', 'open_window', 'move_surface', 'update_surface', 'close_surface', 'group', 'go_to_primary', 'list_state', 'provider_call']) ok('allows ' + t, isWidgetTool(t))
+for (const t of ['create_surface', 'open_window', 'move_surface', 'update_surface', 'close_surface', 'group', 'go_to_primary', 'list_state', 'provider_call', 'set_theme']) ok('allows ' + t, isWidgetTool(t))
 
 console.log('\n# …and DENIES everything dangerous / off-list (no relay pass-through)')
 for (const t of ['eval', 'surface_control', 'read_window', 'save_widget', 'customize_widget', '__proto__', 'constructor', '', 'createSurface']) ok('denies ' + JSON.stringify(t), !isWidgetTool(t))
-ok('the allowlist is exactly the 9 intended tools', WIDGET_TOOLS.length === 9)
+ok('the allowlist is exactly the 10 intended tools', WIDGET_TOOLS.length === 10)
 
 console.log('\n# the runner enforces the allowlist + never throws')
 const calls = []

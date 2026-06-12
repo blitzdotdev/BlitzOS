@@ -4,11 +4,11 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage } from './osActions'
 import { emitSystemMoment } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
-import { attachGuestWindowPolicy, installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
+import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, setTerminalGetUrl } from './electron-os-tools'
 import { prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
@@ -17,14 +17,19 @@ import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
 // Keep web surfaces logged in across quit/relaunch (cookie/localStorage flush + unload).
 import { startSessionPersistence } from './persistence'
+import { initTelemetry } from './telemetry'
 import { registerWallpaperIpc } from './wallpaper'
 import { registerOnboarding, interviewBootTask, claudeCliPath } from './onboarding'
+import { initUpdater, openBuildPicker, isDevMachine } from './update'
+import { resolveTmuxBin } from './tmux-host.mjs'
+import { setWebContentsViewInputForwarder } from './webcontents-view-host'
+import { createSandwich, type Sandwich } from './sandwich'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
 process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getAppPath(), 'widgets')
 
-// ONE BlitzOS per machine: a second launch focuses the first instead of fighting it for the webview
+// ONE BlitzOS per machine: a second launch focuses the first instead of fighting it for the browser
 // partition + the workspace watchers (observed live: partition LOCK errors, two hosts persisting over
 // each other, "Object has been destroyed" 500s). app.exit is immediate — the duplicate runs no
 // before-quit handlers, so it can never mark the journal clean or flush state over the owner's.
@@ -48,6 +53,9 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
+// The window pair (sandwich compositor) — mainWindow above is its UI layer; sandwich.pages hosts
+// the browser WebContentsViews underneath it.
+let sandwich: Sandwich | null = null
 // The boot journal (crash dirty-bit + root lease) — opened once the workspace host exists, marked
 // clean as the LAST step of a graceful quit ("clean" = state was flushed first).
 let bootJournal: BootJournal | null = null
@@ -59,98 +67,40 @@ let bootJournal: BootJournal | null = null
 const FULLSCREEN = process.env.BLITZ_FULLSCREEN === '1'
 
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
+  // The sandwich compositor (plans/blitzos-sandwich-compositor.md): two congruent windows — L0
+  // hosts the page WebContentsViews, L1 (transparent) hosts the entire renderer with a hole per
+  // browser body. `mainWindow` stays the UI window: every renderer-facing reference is unchanged.
+  sandwich = createSandwich({
     width: 1440,
-    height: 900, // TODO make sure its close to windowless fullscreen
-    show: false,
+    height: 900,
     fullscreen: FULLSCREEN,
-    backgroundColor: '#e9e9e7',
-    titleBarStyle: 'hiddenInset',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-      // Enable <webview> for live web-app windows.
-      webviewTag: true,
-      // Keep the desktop renderer itself running full-speed when not focused.
-      backgroundThrottling: false
-    }
+    preload: join(__dirname, '../preload/index.js')
   })
-
-  // Every <webview> attached to the desktop must keep running even when it is
-  // panned off-screen, so the agent can drive it. Force backgroundThrottling off
-  // for all guests at attach time (the reliable place to set it).
-  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences) => {
-    webPreferences.backgroundThrottling = false
-    webPreferences.nodeIntegration = false
-    webPreferences.contextIsolation = true
-  })
-
-  // Log when a web-surface guest actually loads (proof the real site rendered).
-  mainWindow.webContents.on('did-attach-webview', (_e, guest) => {
-    // The guest's browser-initiated escape hatches (popups, beforeunload) — content-agnostic policy owned
-    // by guest-capabilities.ts (NO hostnames; the old accounts.google.com / contacts.google.com regexes
-    // are gone). A popup becomes a window / a hidden child / a new surface / a denied-and-swallowed
-    // hijack purely by web-platform signals. Downloads + permission prompts are session-level (set once
-    // below, after the workspace host exists). logPlan records real features/disposition so the popup
-    // classifier can be tuned from data, not guesses.
-    attachGuestWindowPolicy(guest, {
-      openSurface: (url) => osCreateSurface({ kind: 'web', url }),
-      logPlan: (plan, d) => console.log(`[guest] popup ${plan.kind} <- ${JSON.stringify({ url: String(d.url).slice(0, 80), disposition: d.disposition, features: d.features })}`)
-    })
-    // Item 5b: a right-click inside a WEB guest is swallowed by the webview (never reaches the renderer's
-    // onContextMenu), so main intercepts it and forwards the surface + guest point — the renderer shows the
-    // "Ask the agent about this" annotation menu. (Native/srcdoc surfaces use React onContextMenu directly.)
-    guest.on('context-menu', (e, params) => {
-      const surfaceId = osSurfaceIdForWebContents(guest)
-      if (!surfaceId) return // not a tracked surface — leave the default menu
-      e.preventDefault()
-      mainWindow?.webContents.send('os:action', { type: 'surface-contextmenu', surfaceId, x: params.x, y: params.y })
-    })
-    guest.on('did-finish-load', () => console.log('[guest] loaded:', guest.getURL()))
-    guest.on('did-fail-load', (_ev, code, desc, url) => {
-      if (code !== -3) console.log(`[guest] fail-load ${code} ${desc} ${url}`)
-    })
-    // Even when a webview has keyboard focus, surface a bare ⌘ tap to the desktop
-    // so "double-tap ⌘ to toggle pan-mode" works from inside a window.
-    let metaDown = false
-    let sawOther = false
-    guest.on('before-input-event', (ev, input) => {
-      if (forwardTileKeybind(input)) {
-        ev.preventDefault()
-        return
-      }
-      if (input.type === 'keyDown') {
-        if (input.key === 'Meta') {
-          metaDown = true
-          sawOther = false
-        } else if (metaDown) {
-          sawOther = true
-        }
-      } else if (input.type === 'keyUp' && input.key === 'Meta') {
-        if (metaDown && !sawOther) mainWindow?.webContents.send('os:metatap')
-        metaDown = false
-      }
-    })
-  })
+  mainWindow = sandwich.ui
 
   // Stage keybinds must work no matter WHAT has keyboard focus — the host, a srcdoc iframe (the
-  // chat hub!), or a webview guest. DOM keydown dies the moment a guest focuses, so main intercepts
-  // at before-input-event (host webContents covers all its iframes; each webview guest is hooked in
-  // did-attach-webview above) and forwards over IPC. ⌘T = tile toggle, ⇧⌘T = cycle size.
+  // chat hub!), or a WebContentsView guest. DOM keydown dies the moment a guest focuses, so main
+  // intercepts at before-input-event (host webContents covers all its iframes; browser guests are
+  // hooked by webcontents-view-host.ts) and forwards over IPC. ⌘T = tile toggle, ⇧⌘T = cycle size.
   const forwardTileKeybind = (input: Electron.Input): boolean => {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return false
     const cmd = process.platform === 'darwin' ? input.meta : input.control
-    if (!cmd || input.alt || input.code !== 'KeyT') return false
+    if (!cmd) return false
+    // ⌥⌘U — the hidden CI-build picker (developer machines only; see update.ts isDevMachine).
+    if (input.alt && input.code === 'KeyU') {
+      if (isDevMachine()) void openBuildPicker()
+      return isDevMachine()
+    }
+    if (input.alt || input.code !== 'KeyT') return false
     mainWindow?.webContents.send('os:keybind', { id: 'tile', shift: !!input.shift })
     return true
   }
+  setWebContentsViewInputForwarder(forwardTileKeybind)
   mainWindow.webContents.on('before-input-event', (ev, input) => {
     if (forwardTileKeybind(input)) ev.preventDefault()
   })
 
-  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  // (show is owned by sandwich.ts: pages first, then the UI above it, then the z-assert.)
 
   // Surface real renderer failures (not normal logs) into the terminal.
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
@@ -182,7 +132,18 @@ app.whenReady().then(() => {
   // Wire the renderer<->main control channel (shared by control server + agent-socket). Also creates
   // the shared workspace host (hydrate/persist/switch/list/create/thumb) — the SAME module the server
   // backend uses, so workspaces are one feature across both modes.
-  initOsActions(() => mainWindow)
+  initOsActions({
+    getWindow: () => mainWindow,
+    getPagesWindow: () => sandwich?.pages ?? null,
+    focusPages: () => sandwich?.focusPages(),
+    focusUi: () => sandwich?.focusUi(),
+    dragShell: (op, dx, dy) => sandwich?.dragShell(op, dx, dy)
+  })
+
+  // Session telemetry (plans/blitzos-telemetry.md): events + frames → the replay dashboard. Off unless
+  // ~/.blitzos/telemetry.json exists; BLITZ_TELEMETRY=0 kills it. After initOsActions so the taps see
+  // a wired control plane; before everything else so boot-time errors are captured.
+  initTelemetry(() => mainWindow)
 
   // Claim the root + read the previous run's dirty bit (announced below once the control plane is up,
   // so a watching agent's /events long-poll can actually deliver the moment).
@@ -192,7 +153,7 @@ app.whenReady().then(() => {
   // session — covers every current + future web guest. Downloads land in the active workspace folder (→ a
   // file tile); a sensitive permission request shows the human a real Allow/Block prompt (browser parity),
   // remembered per-origin. Content-agnostic — see guest-capabilities.ts. (Per-guest popup/unload policy is
-  // attached in did-attach-webview via attachGuestWindowPolicy.)
+  // attached by webcontents-view-host.ts via attachGuestWindowPolicy.)
   installGuestSessionPolicy({
     root: osWorkspacesRoot(),
     getDownloadDir: () => osActiveWorkspaceDir(),
@@ -245,6 +206,7 @@ app.whenReady().then(() => {
 
   // Onboarding director (P1): local scan → Case File workspace → template board → FDA unlock loop.
   registerOnboarding(() => mainWindow)
+  initUpdater() // OTA poll (packaged builds only — no-op in dev)
 
   // #51 general provider-access substrate: route write-approval cards to the renderer, and accept the
   // human's approve/deny/consent back. Reads need none of this; only WRITES surface a card.
@@ -329,6 +291,34 @@ app.whenReady().then(() => {
   // `claude` CLI — the resident-brain/onboarding decision (plans/onboarding-case-file.md): zero-setup when
   // claude exists. No command means no launch.
   const agentCmd = process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : claudeCliPath() || (process.env.BLITZ_AGENT === '1' ? 'claude' : null)
+  // PRE-FLIGHT: the brain = a claude CLI inside a tmux terminal. If either is missing on this Mac
+  // (fresh VM; packaged GUI apps also don't get homebrew's PATH — both resolvers use the login
+  // shell), the worst failure mode is SILENCE: the user types into chat and nothing ever answers
+  // (the 2026-06-11 VM report). Say what's missing in the chat — at boot, and again whenever they
+  // send a message while it's still broken.
+  const missingRuntime = (): string[] => {
+    const m: string[] = []
+    if (!agentCmd) m.push('the Claude Code CLI (`claude`) — install it from https://claude.com/code, make sure `claude` works in your terminal')
+    if (!resolveTmuxBin()) m.push('tmux — run `brew install tmux` (my agent terminals run inside it)')
+    return m
+  }
+  {
+    const missing = missingRuntime()
+    if (missing.length) {
+      console.error('[brain] runtime prerequisites missing:', missing.join(' | '))
+      const notice = (sid: string): void =>
+        osSay(`I can't respond yet — this Mac is missing what my brain runs on:\n${missing.map((x) => `- ${x}`).join('\n')}\n\nInstall the above, then relaunch BlitzOS and I'll pick your messages up.`, sid)
+      setTimeout(() => notice('0'), 7000) // after the workspace + chat hub hydrate
+      // Answer (throttled) every message sent while broken — silence is never an acceptable reply.
+      const lastNotice = new Map<string, number>()
+      setOnUserMessage((sid) => {
+        const now = Date.now()
+        if (now - (lastNotice.get(sid) || 0) < 60_000) return
+        lastNotice.set(sid, now)
+        setTimeout(() => notice(sid), 400) // after their message lands in the thread
+      })
+    }
+  }
   if (agentCmd) {
     // Agent '0' carries the onboarding-interview standing duty while it's pending — the provider is
     // re-read on EVERY (re)launch (prepareAgentLaunch rewrites bootstrap.txt), so a finished interview

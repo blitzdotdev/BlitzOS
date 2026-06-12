@@ -130,8 +130,18 @@ function contentFor(kind, s) {
     case 'note':
       return { ext: 'md', name: slug(s.title, 'note'), body: String(s.props?.text ?? '') }
     case 'web':
-    case 'app':
-      return { ext: 'weblink', name: slug(hostOf(s.url) || s.title, 'link'), body: JSON.stringify({ url: s.url || '' }, null, 2) + '\n' }
+    case 'app': {
+      // A browser surface with materialized tabs persists them ({id,title,url} only — favicon/loading/
+      // nav state are runtime). Single-tab windows keep the legacy {url} shape.
+      const link = { url: s.url || '' }
+      if (kind === 'web' && Array.isArray(s.tabs) && s.tabs.length) {
+        link.tabs = s.tabs
+          .filter((t) => t && t.id)
+          .map((t) => ({ id: String(t.id), title: String(t.title || '').slice(0, 200), url: safeUrl(t.url) || '' }))
+        link.activeTab = Number.isInteger(s.activeTab) ? Math.max(0, Math.min(s.activeTab, link.tabs.length - 1)) : 0
+      }
+      return { ext: 'weblink', name: slug(hostOf(s.url) || s.title, 'link'), body: JSON.stringify(link, null, 2) + '\n' }
+    }
     case 'srcdoc':
       return { ext: 'html', name: slug(s.title, 'panel'), body: String(s.html ?? '') }
     default:
@@ -181,14 +191,23 @@ function writeIfChanged(file, data) {
 }
 
 // Write workspace.json, keeping the previous copy as .bak so a crash mid-write or a corrupt
-// file still has a last-good fallback to boot from (spec §3.1).
+// file still has a last-good fallback to boot from (spec §3.1). Byte-identical content is NOT
+// rewritten: the idle write loop (flush → watcher → reconcile → flush, 1.27 byte-identical
+// writes/sec measured in the VM) is gated upstream by doReconcile's changed-check, but this
+// keeps ANY future feedback path from churning the disk + .bak + watcher for a no-op.
 function writeMeta(metaFile, obj) {
+  const next = JSON.stringify(obj, null, 2) + '\n'
+  try {
+    if (existsSync(metaFile) && readFileSync(metaFile, 'utf8') === next) return
+  } catch {
+    /* unreadable prior → write fresh */
+  }
   try {
     if (existsSync(metaFile)) copyFileSync(metaFile, metaFile + '.bak')
   } catch {
     /* best-effort */
   }
-  atomicWrite(metaFile, JSON.stringify(obj, null, 2) + '\n')
+  atomicWrite(metaFile, next)
 }
 
 // Read the prior workspace.json to recover (id → path) and the workspace id, so a node's
@@ -250,6 +269,24 @@ export function setPermission(root, origin, permission, decision) {
   const o = { ...(all[origin] || {}) }
   o[permission] = decision === 'granted' ? 'granted' : 'denied'
   patchRootState(root, { permissions: { ...all, [origin]: o } })
+}
+// Browser bookmarks, machine-global (same root journal — a bookmark belongs to the user, not a
+// workspace). Flat list, keyed by url: [{ id, url, title, addedAt }]. Folders can come later;
+// Chromium's Bookmarks JSON is the interop target if export is ever wanted.
+export function readBookmarks(root) {
+  const b = readRootState(root).bookmarks
+  return Array.isArray(b) ? b.filter((x) => x && typeof x.url === 'string' && x.url) : []
+}
+/** Add the url if absent, remove it if present (the star toggle). Returns the updated list. */
+export function toggleBookmark(root, { url, title }) {
+  const u = safeUrl(url)
+  if (!u) return readBookmarks(root)
+  const cur = readBookmarks(root)
+  const next = cur.some((b) => b.url === u)
+    ? cur.filter((b) => b.url !== u)
+    : [...cur, { id: randomUUID(), url: u, title: String(title || u).slice(0, 200), addedAt: Date.now() }]
+  patchRootState(root, { bookmarks: next })
+  return next
 }
 
 /** True if pid is a live process we can see (EPERM counts as alive; pid reuse is an accepted rare false-alive). */
@@ -635,12 +672,23 @@ function nodeToSurface(dir, n, z) {
   }
   if (n.kind === 'web' || n.kind === 'app') {
     let url = ''
+    let tabs
+    let activeTab
     try {
-      url = safeUrl(JSON.parse(content).url) // scheme-filtered: no javascript:/data:/file:
+      const link = JSON.parse(content)
+      url = safeUrl(link.url) // scheme-filtered: no javascript:/data:/file:
+      // Restore browser tabs (web only). Each tab url is scheme-filtered like the main one.
+      if (n.kind === 'web' && Array.isArray(link.tabs)) {
+        tabs = link.tabs
+          .filter((t) => t && typeof t.id === 'string' && t.id)
+          .map((t) => ({ id: t.id, title: String(t.title || 'Tab').slice(0, 200), ...(safeUrl(t.url) ? { url: safeUrl(t.url) } : {}) }))
+        if (tabs.length) activeTab = Math.max(0, Math.min(Number(link.activeTab) || 0, tabs.length - 1))
+        else tabs = undefined
+      }
     } catch {
       /* malformed .weblink — leave url empty */
     }
-    return { ...base, kind: n.kind, url, title, props: {} }
+    return { ...base, kind: n.kind, url, title, props: {}, ...(tabs ? { tabs, activeTab } : {}) }
   }
   if (n.kind === 'srcdoc') {
     return { ...base, kind: 'srcdoc', html: content, title, props: view.props && typeof view.props === 'object' ? view.props : {} }

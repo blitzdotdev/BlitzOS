@@ -6,6 +6,7 @@ import {
   SurfaceKind,
   Vec2,
   Annotation,
+  Bookmark,
   IntegrationStatus,
   GRID,
   WIDGET_W,
@@ -183,6 +184,10 @@ interface DesktopState {
   editingId: string | null // surface the user is actively editing — its live content survives a reconcile (#47)
   absorbing: string[]
   grabMode: boolean
+  /** The live OS accent (hex), picked by the theme widget/agent. Folded into the props posted to
+   *  srcdoc widgets that carry no own accent, so plain + future widgets follow the OS theme. */
+  osAccent: string | null
+  setOsAccent: (hex: string) => void
   /** View locked (⌘⌘): the infinite canvas is frozen at its current camera — pan/zoom are off
    *  and a background drag becomes marquee-select. Lets you work inside surfaces without the
    *  canvas drifting. Toggled by double-tapping ⌘ (or the toolbar lock button). */
@@ -209,6 +214,9 @@ interface DesktopState {
   zoomAt: (cursorX: number, cursorY: number, deltaY: number) => void
   goToPrimary: () => void
   focusAndZoom: (id: string) => void
+  /** Mission-Control "splay": frame ALL free-form windows (not slotted widgets) by zooming the
+   *  camera out just enough to show them all, no more. A pure camera move (reversible by pan/zoom). */
+  splayWindows: () => void
   setSelection: (ids: string[]) => void
   clearSelection: () => void
   groupSelection: () => void
@@ -241,6 +249,15 @@ interface DesktopState {
   addTab: (id: string, tab: SurfaceTab) => void
   setActiveTab: (id: string, index: number) => void
   closeTab: (id: string, tabId: string) => void
+  // Browser (web) tabs: a page per tab, one main-owned WebContentsView each. addWebTab materializes
+  // the implicit single tab first (a plain {url} web surface IS one tab); applyWebTab ingests main's
+  // per-tab page-state pushes (url/title/favicon/loading/canGoBack/canGoForward, tab death, popups).
+  addWebTab: (id: string, url?: string) => void
+  applyWebTab: (m: { surfaceId: string; tabId?: string; patch?: Partial<SurfaceTab>; removed?: boolean; openTab?: { url: string } }) => void
+  // Machine-global browser bookmarks (root journal via main).
+  bookmarks: Bookmark[]
+  loadBookmarks: () => void
+  toggleBookmark: (url: string, title: string) => void
   // Open (or focus) a terminal tab: activate it if it's already a tab, else add it to the
   // existing terminal window, else open the first terminal window. The one shared seam for the live
   // terminal-spawn action, resume-on-load, and the Runtime tray's "Open" — so a terminal is in one tab.
@@ -293,7 +310,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   editingId: null,
   absorbing: [],
   grabMode: false,
-  locked: false,
+  osAccent: null,
+  // Boot LOCKED = work mode: the desktop is interactive at rest (click widgets, marquee on the
+  // background), the camera frozen at the stage frame. Double-tap ⌘ unlocks for pan/zoom/arrange.
+  // (Canvas-first made 'canvas' the permanent mode, so the lock — not the mode — is the interact gate.)
+  locked: true,
 
   setViewport: (w, h) =>
     set((s) => {
@@ -362,9 +383,18 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       st.clearSurfaceSlot(id)
     } else {
       const stage = stageOfX(cur.x + cur.w / 2, st.viewport)
-      const size = sizeForDims(cur.w, cur.h)
-      const slot = nearestFreeSlot(st.surfaces, latticeFor(st.viewport, stage), size, cur.x + cur.w / 2, cur.y + cur.h / 2, stage, id)
-      if (slot) st.placeSurfaceSlot(id, slot.col, slot.row, size, stage)
+      // A crowded stage must not make ⌘T a silent no-op: when the window's natural span has no
+      // free cells, fall back through smaller spans until one fits (truly full → nothing happens,
+      // matching the placer's contract that tiles never overlap).
+      const start = SIZE_ORDER.indexOf(sizeForDims(cur.w, cur.h))
+      for (let i = start; i >= 0; i--) {
+        const size = SIZE_ORDER[i]
+        const slot = nearestFreeSlot(st.surfaces, latticeFor(st.viewport, stage), size, cur.x + cur.w / 2, cur.y + cur.h / 2, stage, id)
+        if (slot) {
+          st.placeSurfaceSlot(id, slot.col, slot.row, size, stage)
+          break
+        }
+      }
     }
     st.reflowFiles()
   },
@@ -512,6 +542,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   setSnapPreview: (r) => set({ snapPreview: r }),
   setEditingId: (id) => set({ editingId: id }),
   setGrabMode: (on) => set({ grabMode: on }),
+  setOsAccent: (hex) => set({ osAccent: hex }),
   toggleLock: () => set((s) => ({ locked: !s.locked })),
 
   // Add surfaces to an existing folder (drag-onto-folder). Skips folders; re-adding a
@@ -592,6 +623,44 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         transform,
         controlTransform: transform // a dock-focus in control mode is a settled camera to remember
       }
+    }),
+
+  // "Splay out" (macOS Mission Control intent): show me ALL my free-form windows at once. Frees the
+  // user from hunting a window they panned away from. We zoom the camera to fit the bounding box of
+  // every FREE window (anything floating: web/app/srcdoc/note that is NOT a slotted stage tile, NOT a
+  // pinned chat/activity panel, NOT a file/folder desktop tile, NOT minimized/foldered). "Zoomed out
+  // just enough but not more": scale = fit-to-bbox, capped at 1 so we never zoom IN past natural size.
+  splayWindows: () =>
+    set((s) => {
+      const free = s.surfaces.filter(
+        (w) =>
+          !slotOf(w) &&
+          !w.minimized &&
+          !w.groupId &&
+          w.role !== 'chat' &&
+          w.role !== 'activity' &&
+          !(w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'file' || w.component === 'dir' || w.component === 'folder' || w.component === 'terminal' || w.component === 'sessions' || w.component === 'inbox' || w.component === 'unlock'))
+      )
+      if (!free.length) return {}
+      let minX = Infinity
+      let minY = Infinity
+      let maxX = -Infinity
+      let maxY = -Infinity
+      for (const w of free) {
+        minX = Math.min(minX, w.x)
+        minY = Math.min(minY, w.y)
+        maxX = Math.max(maxX, w.x + w.w)
+        maxY = Math.max(maxY, w.y + w.h)
+      }
+      const pad = 80 // breathing room around the splay (matches Mission Control's screen margin feel)
+      const bw = maxX - minX
+      const bh = maxY - minY
+      const fit = Math.min((s.viewport.w - 2 * pad) / Math.max(bw, 1), (s.viewport.h - 2 * pad) / Math.max(bh, 1))
+      const scale = clamp(Math.min(1, fit), 0.1, 1) // never zoom IN past 1 ("just enough, not more")
+      const cx = minX + bw / 2
+      const cy = minY + bh / 2
+      const transform = { scale, x: s.viewport.w / 2 - cx * scale, y: s.viewport.h / 2 - cy * scale }
+      return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
     }),
 
   setIntegrations: (list) =>
@@ -775,7 +844,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
             kind: w.kind,
             component: w.component,
             title: w.title,
-            // For web/app the LIVE webview location is authoritative (the user/agent may have navigated
+            // For web/app the LIVE browser location is authoritative (the user/agent may have navigated
             // it); never let a lagging disk .weblink snap it back — the "typing on Google → back to HN"
             // race, when a reconcile fires before the new url is persisted.
             url: w.kind === 'web' || w.kind === 'app' ? (live.url ?? w.url) : w.url,
@@ -832,6 +901,45 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       if (!tabs.length) return { surfaces: s.surfaces.filter((x) => x.id !== id) } // last tab closed → close the window
       return { surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, tabs, activeTab: clamp(w.activeTab || 0, 0, tabs.length - 1) } : x)) }
     }),
+
+  // ---- browser tabs (web surfaces: one page per tab) ----
+  addWebTab: (id, url) =>
+    set((s) => ({
+      surfaces: s.surfaces.map((w) => {
+        if (w.id !== id || w.kind !== 'web') return w
+        // A plain {url} browser IS one implicit tab — materialize it before appending, so the first
+        // explicit tab op turns the legacy shape into a real tab list without losing the open page.
+        const tabs = w.tabs?.length ? w.tabs : webTabsOf(w)
+        const tab: SurfaceTab = { id: crypto.randomUUID(), title: url ? hostLabel(url) : 'New Tab', ...(url ? { url } : {}) }
+        return { ...w, tabs: [...tabs, tab], activeTab: tabs.length, z: ++zCounter }
+      })
+    })),
+  applyWebTab: (m) => {
+    const { surfaceId, tabId, patch, removed, openTab } = m
+    if (openTab?.url) return get().addWebTab(surfaceId, openTab.url)
+    if (!tabId) return
+    if (removed) return get().closeTab(surfaceId, tabId)
+    if (!patch) return
+    set((s) => ({
+      surfaces: s.surfaces.map((w) => {
+        if (w.id !== surfaceId || w.kind !== 'web') return w
+        // Page-state pushes also materialize the implicit tab: once a page actually lives in this
+        // window, its tabs are real (persisted as {id,title,url}; runtime fields never hit disk).
+        const base = w.tabs?.length ? w.tabs : webTabsOf(w)
+        if (!base.some((t) => t.id === tabId)) return w // state for a tab we no longer hold (race with close)
+        return { ...w, tabs: base.map((t) => (t.id === tabId ? { ...t, ...patch } : t)) }
+      })
+    }))
+  },
+
+  // ---- bookmarks (machine-global, persisted by main in the root journal) ----
+  bookmarks: [],
+  loadBookmarks: () => {
+    void window.agentOS?.bookmarksList?.().then((b) => set({ bookmarks: Array.isArray(b) ? b : [] }))
+  },
+  toggleBookmark: (url, title) => {
+    void window.agentOS?.bookmarksToggle?.(url, title).then((b) => set({ bookmarks: Array.isArray(b) ? b : [] }))
+  },
   openTerminal: (terminalId, title, stage) => {
     const s = get()
     // Already a tab somewhere? activate it + raise its window (idempotent — no duplicate tab).
@@ -934,9 +1042,17 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     // Only a geometry change is "layout"; html/props updates are not undoable via Cmd+Z.
     if (patch.x !== undefined || patch.y !== undefined || patch.w !== undefined || patch.h !== undefined) get().snapshotLayout()
     set((s) => ({
-      surfaces: s.surfaces.map((it) =>
-        it.id === id ? { ...it, ...patch, props: { ...it.props, ...(patch.props ?? {}) } } : it
-      )
+      surfaces: s.surfaces.map((it) => {
+        if (it.id !== id) return it
+        const next = { ...it, ...patch, props: { ...it.props, ...(patch.props ?? {}) } }
+        // A url update on a tabbed browser drives its ACTIVE tab (agent update_surface{url} and the
+        // address bar both land here) — the tab's url is what the host navigate effect watches.
+        if (patch.url !== undefined && it.kind === 'web' && next.tabs?.length) {
+          const at = clamp(next.activeTab || 0, 0, next.tabs.length - 1)
+          next.tabs = next.tabs.map((t, i) => (i === at ? { ...t, url: patch.url } : t))
+        }
+        return next
+      })
     }))
     // Restore-from-dock of a SLOTTED tile: a minimized tile releases its cells (occupancy skips it),
     // so by the time it comes back its span may be taken — re-place it through the placer (nearest
@@ -1051,6 +1167,36 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   removeAnnotation: (id) =>
     set((s) => ({ annotations: s.annotations.filter((a) => a.id !== id), focusedAnnotation: s.focusedAnnotation === id ? null : s.focusedAnnotation }))
 }))
+
+/** The layered-desktop z bands (one source — SurfaceFrame's stacking style AND the browser
+ *  occlusion test use this): tiles/icons at raw z → free windows +500k → focus floater +1.5M →
+ *  pinned chat/activity +2M. (A slotted tile being DRAGGED gets a transient +1.2M lift on top,
+ *  component-local — callers add it where the gesture state lives.) */
+export function effectiveZ(s: Surface): number {
+  const isPanel = s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
+  if (isPanel) return 2_000_000 + s.z
+  if (s.focus) return 1_500_000 + s.z
+  if (slotOf(s)) return s.z
+  if (s.kind === 'native' && (s.component === 'file' || s.component === 'dir' || s.component === 'folder')) return s.z
+  return 500_000 + s.z
+}
+
+/** A short human label for a url (the tab-title default until the page reports its own). */
+export function hostLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '') || url
+  } catch {
+    return url
+  }
+}
+
+/** A browser surface's tabs, with the legacy plain-{url} window seen as ONE implicit tab. The
+ *  implicit id is constant ('t0', scoped per surface) so the host's declarative view sync is stable
+ *  across renders; materializing (addWebTab / first page-state push) keeps that id. */
+export function webTabsOf(s: Surface): SurfaceTab[] {
+  if (s.tabs?.length) return s.tabs
+  return [{ id: 't0', title: s.title || (s.url ? hostLabel(s.url) : 'New Tab'), ...(s.url ? { url: s.url } : {}) }]
+}
 
 /** Default name for a UI-spawned terminal — "Terminal N", N counting existing terminal tabs,
  *  so the "+ Terminal" toolbar button and the tab strip's "+" produce distinct, readable tab names

@@ -17,7 +17,11 @@ body,
   font-family: var(--font-ui);
   font-size: 14px;
   color: var(--text);
-  background: var(--canvas);
+  /* TRANSPARENT base (sandwich compositor): the desktop's canvas color is painted by the PAGES
+     window underneath (sandwich.ts UI_BG = --canvas), so a browser hole reaches the live page with
+     nothing opaque in the way. Everything above this base (windows, widgets, chrome) paints its own
+     opaque background as before. */
+  background: transparent;
   user-select: none;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -51,7 +55,9 @@ button {
   right: 0;
   height: 32px;
   z-index: 5000;
-  -webkit-app-region: drag;
+  /* NO -webkit-app-region: native drag would move only the sandwich's attached child window,
+     detaching the layers — App.tsx streams pointer deltas to main instead (os:shell-drag). */
+  cursor: default;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -76,6 +82,10 @@ button {
   background-color: var(--canvas);
   cursor: grab;
 }
+/* Sandwich compositor (Electron): .bg STAYS OPAQUE and gets precise clip-path holes per page
+   (App.tsx bgClip) instead of going fully transparent — a transparent base made every window's
+   box-shadow alpha-composite against glass (dark fringes that pooled between windows). The glass
+   rule still holds INSIDE the holes: there the clip removes .bg entirely, alpha-0 all the way down. */
 .bg:active {
   cursor: grabbing;
 }
@@ -248,6 +258,25 @@ button {
   position: relative;
   background: var(--surface);
 }
+/* THE HOLE (sandwich compositor): a browser body is fully transparent — the live page, a
+   WebContentsView in the pages window BELOW this transparent UI window, shows through. The frame's
+   chrome rows around it keep their own opaque backgrounds. */
+.webcontents-host {
+  background: transparent;
+}
+.window.browser {
+  background: transparent;
+  /* the focus ring is an INSET shadow on the frame, which paints UNDER children — a 1px padding
+     keeps the ring's line in a zone no opaque chrome row can cover, so it stays a continuous
+     crisp outline around chrome and page alike */
+  padding: 1px;
+}
+.window.browser .window-body {
+  background: transparent;
+}
+.window.browser .window-tabs {
+  background: var(--surface);
+}
 .surface-empty {
   width: 100%;
   height: 100%;
@@ -372,6 +401,158 @@ button {
 .wtab-add:hover {
   background: color-mix(in srgb, var(--surface) 60%, transparent);
   color: var(--text);
+}
+/* Browser tabs: the page favicon (or a placeholder dot while none/loading). */
+.wtab-fav {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex: 0 0 14px;
+  object-fit: contain;
+}
+.wtab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 6px;
+  background: var(--text-muted);
+  opacity: 0.5;
+}
+.wtab-fav.loading,
+.wtab-dot.loading {
+  animation: wtab-pulse 1s ease-in-out infinite;
+}
+@keyframes wtab-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* ============================================================================
+   Browser navbar — back/forward/reload, address bar, star + bookmarks (web surfaces)
+   ============================================================================ */
+.browser-nav {
+  position: relative;
+  z-index: 50; /* above the bookmarks backdrop so the nav buttons stay live while the panel is open */
+  flex: 0 0 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+}
+.bnav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.bnav-btn:hover:not(:disabled),
+.bnav-btn.active {
+  background: var(--control);
+  color: var(--text);
+}
+.bnav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.bnav-star.on {
+  color: var(--accent);
+}
+.bnav-addr {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+.bnav-addr input {
+  width: 100%;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: var(--control);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.bnav-addr input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--surface);
+}
+/* Bookmarks dropdown — plain DOM that simply paints over the live page (the sandwich compositor
+   keeps all UI physically above the pages window). */
+.bm-panel {
+  position: absolute;
+  top: 34px;
+  right: 6px;
+  z-index: 60;
+  width: 280px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+}
+.bm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.bm-row:hover {
+  background: var(--control);
+}
+.bm-title {
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bm-remove {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 5px;
+  cursor: pointer;
+  opacity: 0;
+}
+.bm-row:hover .bm-remove {
+  opacity: 1;
+}
+.bm-remove:hover {
+  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+  color: var(--text);
+}
+.bm-empty {
+  padding: 14px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.bm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
 }
 
 /* Runtime tray ("Terminals & Agents") — the glanceable list of everything running in the workspace
@@ -729,6 +910,46 @@ button {
   z-index: 1;
   background: transparent;
   cursor: default;
+}
+
+.preview-web {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 18px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+}
+.preview-web-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--control) 72%, transparent);
+  font-size: 22px;
+}
+.preview-web-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+}
+.preview-web-url {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 
 /* File + folder tiles (#37): a real workspace file / subfolder shown on the canvas. */
@@ -2913,6 +3134,48 @@ button {
 .window:hover .slot-toggle { opacity: 0.75; }
 .slot-toggle:hover { opacity: 1 !important; background: color-mix(in srgb, var(--text) 10%, transparent); }
 .slot-toggle.on { color: var(--accent, #1a73e8); }
+/* sits at the right end of the bar now — breathe against the window edge, not the traffic lights */
+.slot-toggle { margin-left: 0; margin-right: 4px; }
+
+/* ---- macOS-widget chrome for slotted tiles (no window bar) ----
+   The grip is an invisible drag strip along the tile's top — the widget's own titlebar shows
+   through it, so the tile drags "by its titlebar" exactly like a macOS desktop widget (move,
+   ⌘-drag, drag-to-pop-out all work). The pop-out toggle floats in the far right corner: faint
+   at rest, clear on hover, never part of a bar. ---- */
+.tile-grip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 30px; /* leave the corner to the toggle */
+  height: 26px;
+  z-index: 5;
+  cursor: grab;
+}
+.tile-grip:active {
+  cursor: grabbing;
+}
+.tile-toggle {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim, var(--text));
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.3;
+  z-index: 6;
+  transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.window:hover .tile-toggle { opacity: 0.8; }
+.tile-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--text) 10%, transparent); }
 
 /* ---- Universal window-state rings (LAST in the cascade so no variant — notes' paper shadow,
    folders, file tiles — can swallow them). is-active = the front-most window (one per desktop);

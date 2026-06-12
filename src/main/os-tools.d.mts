@@ -16,6 +16,8 @@ export interface OsTool {
  *  headless Chromium on the server). Loosely typed — each transport binds its own implementations. */
 export type OsOps = Record<string, (...args: never[]) => unknown>
 
+/** Telemetry seam: observe every tool call across every transport ({path, transport, ms, status}). */
+export function setToolTap(fn: ((info: Record<string, unknown>) => void) | null): void
 export function makeOsTools(ops: Record<string, (...args: never[]) => unknown>): OsTool[]
 export function makeOsToolsByPath(ops: Record<string, (...args: never[]) => unknown>): Record<string, OsTool>
 /** The agent-facing view of desktop state: layout fields only (drops srcdoc html + native props/transcript).

@@ -1,0 +1,80 @@
+# CI/CD (docs/prod-ci.md): every push to these branches builds the mac app and publishes it as a
+# GitHub (pre)release. The in-app updater (src/main/update.ts) polls releases and offers the swap.
+# Version = 0.0.1-<run_number> (monotonic, stamped into the bundle, compared against the tag).
+#
+# Signing is OPTIONAL: with the secrets below the artifact is Developer-ID-signed + notarized
+# (Gatekeeper-clean); without them it builds unsigned (the updater strips quarantine on swap).
+# Secrets are hoisted into job env because the `secrets` context is not usable in step `if:`.
+#   MAC_CERT_P12 / MAC_CERT_PASSWORD                base64 .p12 of "Developer ID Application" + password
+#   APPLE_API_KEY_P8 / APPLE_API_KEY_ID / APPLE_API_ISSUER   App Store Connect key (.p8 content, key id, issuer)
+name: release
+on:
+  push:
+    branches: ['**'] # every branch gets its own build channel (tag build-<branch>-<run>)
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    env:
+      MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+      MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+      ASC_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      ASC_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      ASC_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Stamp version (0.0.1-<run>)
+        run: npm version "0.0.1-${{ github.run_number }}" --no-git-tag-version
+      - name: Branch channel
+        run: |
+          SAFE="${GITHUB_REF_NAME//\//-}"
+          echo "SAFE_BRANCH=$SAFE" >> $GITHUB_ENV
+          echo "BUILD_TAG=build-$SAFE-${{ github.run_number }}" >> $GITHUB_ENV
+      - name: Import signing cert (when configured)
+        if: env.MAC_CERT_P12 != ''
+        run: |
+          KC=$RUNNER_TEMP/build.keychain
+          security create-keychain -p ci "$KC"
+          security default-keychain -s "$KC"
+          security unlock-keychain -p ci "$KC"
+          echo "$MAC_CERT_P12" | base64 -d > $RUNNER_TEMP/cert.p12
+          security import $RUNNER_TEMP/cert.p12 -k "$KC" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
+      - name: Build app
+        run: npm run build
+      - name: Package
+        run: |
+          # stamp the channel into the app: the updater follows ITS OWN branch; the dev picker shows all
+          ARGS="--mac zip --arm64 --publish never -c.extraMetadata.buildBranch=$SAFE_BRANCH -c.extraMetadata.buildRun=${{ github.run_number }}"
+          if [ -z "$MAC_CERT_P12" ]; then
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            echo "[ci] unsigned build (no MAC_CERT_P12 secret)"
+          elif [ -n "$ASC_KEY_P8" ]; then
+            echo "$ASC_KEY_P8" > $RUNNER_TEMP/asc.p8
+            export APPLE_API_KEY=$RUNNER_TEMP/asc.p8
+            export APPLE_API_KEY_ID="$ASC_KEY_ID"
+            export APPLE_API_ISSUER="$ASC_ISSUER"
+            ARGS="$ARGS -c.mac.notarize=true"
+            echo "[ci] signed + notarized build"
+          else
+            echo "[ci] signed build (no notarization key)"
+          fi
+          npx electron-builder $ARGS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$BUILD_TAG" release/*.zip \
+            --prerelease \
+            --target "${{ github.sha }}" \
+            --title "BlitzOS ${{ github.ref_name }} #${{ github.run_number }}" \
+            --notes "Auto-build of ${{ github.ref_name }} @ ${{ github.sha }}"

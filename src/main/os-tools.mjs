@@ -37,9 +37,41 @@ function parse(body) {
   }
 }
 
+// Telemetry seam: ONE observer sees every tool call across every transport. A no-op until the host
+// (telemetry.ts) sets it; must never be able to break a tool call.
+let toolTap = null
+export function setToolTap(fn) {
+  toolTap = fn
+}
+function instrument(t) {
+  return {
+    ...t,
+    handler: async (ctx) => {
+      const start = Date.now()
+      let status = 200
+      try {
+        const out = await t.handler(ctx)
+        if (out && typeof out === 'object' && typeof out.status === 'number' && 'body' in out) status = out.status
+        return out
+      } catch (e) {
+        status = 500
+        throw e
+      } finally {
+        if (toolTap) {
+          try {
+            toolTap({ path: t.path, transport: ctx?.transport, ms: Date.now() - start, status })
+          } catch {
+            /* the tap must never break the tool */
+          }
+        }
+      }
+    }
+  }
+}
+
 // Item 7: a CONTENT-AGNOSTIC web-host → integration map, so a web surface's host can be correlated to a
 // CONNECTED account. This is a hint ("an account is connected for this site"), NOT a claim about the
-// surface's actual logged-in account (a webview can be signed into a DIFFERENT account than the OAuth
+// surface's actual logged-in account (a browser guest can be signed into a DIFFERENT account than the OAuth
 // integration) — the agent verifies with read_window before acting AS the account. Suffix-matched, so a
 // subdomain (app.slack.com) or a tenant (acme.atlassian.net) still resolves. No per-site DOM logic.
 const PROVIDER_WEB_HOSTS = {
@@ -84,6 +116,9 @@ export function serializeStateForAgent(state, integrations) {
       const hint = x.kind === 'web' && x.url ? accountHintFor(x.url, integrations) : null
       const out = {
         id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
+        // A web surface is a BROWSER WINDOW: url/title above are its ACTIVE tab's; `tabs` lists all
+        // of them. update_surface{url} / read_window / surface_control act on the active tab.
+        ...(x.kind === 'web' && Array.isArray(x.tabs) && x.tabs.length ? { tabs: x.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url })), activeTab: x.activeTab || 0 } : {}),
         // Stage desktop: a slotted surface is ON the user's stage; offstage = parked on the open canvas.
         ...(x.slot ? { slot: x.slot, ...(x.slotStage ? { slotStage: x.slotStage } : {}) } : {}),
         ...(isOffstage(x, s.viewport) ? { offstage: true } : {}),
@@ -115,6 +150,7 @@ export function serializeSurfaceForAgent(state, id) {
   return {
     surface: {
       id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
+      ...(x.kind === 'web' && Array.isArray(x.tabs) && x.tabs.length ? { tabs: x.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url })), activeTab: x.activeTab || 0 } : {}),
       ...(x.props ? { props: x.props } : {})
     }
   }
@@ -343,6 +379,17 @@ export function makeOsTools(ops) {
       }
     },
     {
+      path: '/set_theme',
+      description: 'Set the OS accent color live. `accent` must be a #rrggbb hex. `accentDeep` (optional) is the pressed/hover variant; if omitted it is derived automatically. The change applies instantly to all chrome and persists across restarts.',
+      input_schema: { type: 'object', required: ['accent'], properties: { accent: { type: 'string' }, accentDeep: { type: 'string' } } },
+      handler: ({ body }) => {
+        const a = parse(body)
+        if (!ops.setTheme) return { status: 400, body: { error: 'set_theme not available in this transport' } }
+        const r = ops.setTheme({ accent: a.accent, accentDeep: a.accentDeep })
+        return r.ok ? { ok: true } : { status: 400, body: { error: r.error } }
+      }
+    },
+    {
       path: '/group',
       description:
         'Group related surfaces into ONE REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' files into it. kind:"folder" (default) → one collapsed tile (drill in to browse), best for many items / a repo. kind:"board" → the items stay SPLAYED on the canvas as a sub-board (best for a small curated set you want visible). A real filesystem folder either way, so it persists. Pass 2+ ids + a name.',
@@ -568,6 +615,21 @@ export function makeOsTools(ops) {
       }
     },
     {
+      path: '/user_say',
+      description:
+        "TEST/DEV syscall (localhost transport ONLY — rejected over the relay): enter a chat message AS THE USER through the exact same path as the human composer (appends '### user' to that agent's chat.md and wakes it with a message moment). Exists so a co-located test agent can drive BlitzOS like a real user; an external agent must never be able to forge user input. Args: {text, agent?}.",
+      input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, agent: { type: 'string' } } },
+      handler: ({ body, transport }) => {
+        if (transport !== 'localhost') return { status: 403, body: { error: 'user_say is localhost-only (trusted co-located test path)' } }
+        if (!ops.userMessage) return { status: 400, body: { error: 'user_say not available in this transport' } }
+        const b = parse(body)
+        const text = String(b.text || '')
+        if (!text.trim()) return { status: 400, body: { error: 'text required' } }
+        ops.userMessage(text, b.agent != null ? String(b.agent) : b.session != null ? String(b.session) : '0') // `session` accepted for back-compat (the VM rig's scripts)
+        return { ok: true }
+      }
+    },
+    {
       path: '/customize_widget',
       description:
         "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Agent messages may embed markdown images / inline <svg> / a ```blitz-ui {type,prompt,options} card. Read the current source with get_system_ui first. Args: {name, html, agent? (which agent's chat widget; default '0')}.",
@@ -726,7 +788,7 @@ export function makeOsTools(ops) {
         return { ok: ops.resolveAction(String(a.id), a.resolution ? String(a.resolution) : 'done') }
       }
     }
-  ]
+  ].map(instrument)
 }
 
 /** Build the registry + a path lookup for a runtime's ops (the localhost dispatcher needs the by-path map). */

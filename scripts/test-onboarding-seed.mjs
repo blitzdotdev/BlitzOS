@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Seed test for the onboarding board planner (plans/onboarding-case-file.md P1): scan.json
-// fixtures → buildBoardPlan → assert card selection, ADAPTIVE slotting (hero swap for web-first,
-// flex slots, unlock slot reservation), props shape, and invariants — no Electron, no model.
-// Run: node scripts/test-onboarding-seed.mjs
-import { buildBoardPlan, unlockCardProps, UNLOCK_POS } from '../src/main/onboarding-board.mjs'
+// fixtures → buildBoardPlan → assert STAGE-LATTICE placement (content-driven slot sizes, live
+// occupancy incl. the chat hub, shrink-then-park overflow), props shape, and invariants.
+// No Electron, no model. Run: node scripts/test-onboarding-seed.mjs
+import { buildBoardPlan, unlockCardProps, findUnlockSlot, UNLOCK_SIZE } from '../src/main/onboarding-board.mjs'
+import { latticeFor, spanOf } from '../src/renderer/src/stage-core.mjs'
+import { stageRect } from '../src/renderer/src/stages-core.mjs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -19,6 +21,25 @@ const ok = (cond, msg) => {
   }
 }
 const at = (plan, role) => plan.find((c) => c.role === role)
+const VP = { w: 1600, h: 1000 }
+const CHAT_HUB = { id: 'chat', slot: { col: 0, row: 0, size: 'tall' }, slotStage: 0 }
+
+/** Every cell each staged thing covers; duplicates = an overlap (the cardinal lattice sin). */
+function cellsOf(items) {
+  const seen = new Map()
+  let clash = null
+  for (const it of items) {
+    if (!it.slot) continue
+    const sp = spanOf(it.slot.size)
+    for (let r = it.slot.row; r < it.slot.row + sp.r; r++)
+      for (let c = it.slot.col; c < it.slot.col + sp.c; c++) {
+        const k = `${c}:${r}`
+        if (seen.has(k)) clash = `${seen.get(k)} overlaps ${it.role || it.id} at ${k}`
+        seen.set(k, it.role || it.id)
+      }
+  }
+  return { count: seen.size, clash }
+}
 
 // A realistic engineer scan, FDA OFF: no calendar/messages/mail/contacts data exists yet.
 const FIXTURE = {
@@ -48,40 +69,41 @@ const FIXTURE = {
   voice: [{ text: 'Brevity over flourish, always.', source: 'claude' }],
   sessions: [{ title: 'Port the engine to TS', agent: 'claude', last: 1780900000000, project: 'analytical-engine' }],
   facts: { dock: ['Terminal', 'Chrome'], installedApps: 120, accounts: [] },
-  gaps: ['How much should BlitzOS act on its own vs. ask before acting?', 'What is worth doing this quarter?']
+  gaps: ['Autonomy preference, act vs ask?', 'Goals for the quarter']
 }
 
-console.log('1) engineer fixture, FDA off — hero=projects, people@E, workflows@F, unlock owns I')
+console.log('1) engineer fixture, FDA off, chat hub on stage — FIT-FIRST: everything staged compact, growth into leftovers')
 {
-  const plan = buildBoardPlan(FIXTURE)
+  const plan = buildBoardPlan(FIXTURE, { surfaces: [CHAT_HUB], viewport: VP })
   const roles = plan.map((c) => c.role)
-  ok(roles.join(',') === 'profile,projects,rhythm,voice,sessions,people,workflows,gaps', `expected 8 cards in narrative order, no Daily-tools (got ${roles.join(',')})`)
-  ok(!at(plan, 'toolbox'), 'the Daily-tools card is gone')
-  ok(at(plan, 'projects').x === -225 && at(plan, 'projects').y === -390, 'projects sits in the hero slot')
-  ok(at(plan, 'people').x === -225 && at(plan, 'people').y === -15, 'people takes flex slot E (freed by toolbox)')
-  ok(at(plan, 'workflows').x === 240 && at(plan, 'workflows').y === 5, 'workflows takes flex slot F (no longer dropped when FDA is off)')
-  ok(!plan.some((c) => c.x === UNLOCK_POS.x && c.y === UNLOCK_POS.y), 'no card occupies the unlock slot when FDA is off')
-  ok(at(plan, 'people').props.items[0].sub === 'git collaborator', 'people card subtitles say HOW we know them')
+  ok(roles.join(',') === 'profile,projects,rhythm,gaps,unlock,workflows,people,voice,sessions', `priority order incl. the unlock reservation (got ${roles.join(',')})`)
+  ok(plan.every((c) => c.slot), 'fit-first: at the default viewport EVERY card is a slotted tile, zero parked')
+  const staged = plan.filter((c) => c.slot)
+  const { clash } = cellsOf([CHAT_HUB, ...staged])
+  ok(!clash, `no span overlaps another tile or the chat hub${clash ? ` (${clash})` : ''}`)
+  const lat = latticeFor(VP, 0)
+  ok(staged.every((c) => c.slot.col >= 0 && c.slot.row >= 0 && c.slot.col + spanOf(c.slot.size).c <= lat.cols && c.slot.row + spanOf(c.slot.size).r <= lat.rows), 'every span sits inside the lattice')
+  ok(at(plan, 'profile').slot.size === 'l', 'profile grew to l (priority upgrade into free cells)')
+  ok(at(plan, 'projects').slot.size === 'xl', 'projects grew to the xl hero (free cells allowed it)')
+  ok(at(plan, 'workflows').slot.size === 'm', 'workflows with 3 items stays a gist tile (m)')
+  ok(at(plan, 'people').slot.size === 'm', 'people with 2 names stays m')
+  ok(at(plan, 'gaps').slot.size === 'm', 'gaps with 3 items stays m')
+  ok(at(plan, 'unlock') && at(plan, 'unlock').native === 'unlock' && at(plan, 'unlock').slot, 'unlock card is part of the plan, slotted right after gaps')
   ok(at(plan, 'gaps').props.items.some((g) => g.q === 'The personal layer'), 'gaps includes the FDA unlock teaser when locked')
   ok(at(plan, 'rhythm').props.topApps[0].n === 40, 'rhythm falls back to launch counts when knowledgeC is locked')
-  ok(plan.every((c) => typeof c.props.accent === 'string' && typeof c.props.accentInk === 'string'), 'every card samples an accent from the palette')
-  ok(new Set(plan.map((c) => c.props.accent)).size >= 5, 'accents vary across the board (a distribution, not one color)')
-  ok(at(plan, 'gaps').props.accent === '#E8C71D', 'gaps gets the marker-yellow accent')
-  ok(at(plan, 'rhythm').props.heatLo === '#7FA0C8' && at(plan, 'rhythm').props.heatHi === '#FF8D61', 'rhythm carries the cool→warm heat ramp')
-  ok(at(plan, 'workflows').props.items.every((i) => i.color), 'workflow items carry brand colors')
+  ok(plan.filter((c) => c.role !== 'unlock').every((c) => typeof c.props.accent === 'string'), 'every widget card samples an accent from the palette')
+  // The picked theme (2026-06-11) rotates FOUR colors (slate, dusty blue, sage, marker) instead of
+  // the old 7-accent palette — assert a distribution, not the old palette size.
+  ok(new Set(plan.filter((c) => c.props.accent).map((c) => c.props.accent)).size >= 3, 'accents vary across the board (a distribution, not one color)')
+  ok(!JSON.stringify(plan.map((c) => c.props)).includes('—'), 'no em dash anywhere a human reads')
   for (const card of plan) {
     const size = JSON.stringify(card.props).length
     ok(size <= 8192, `${card.role} props fit the 8KB persistence cap (${size}b)`)
   }
-  ok(plan.every((c) => getWidgetSource(c.widget)), 'every planned widget resolves in the catalog')
-  // the renderer clamps creation into the primary rect (≈±682×±399 at 1440×900) — the grid must fit
-  ok(plan.every((c) => c.x >= -660 && c.x + c.w <= 660 && c.y >= -390 && c.y + c.h <= 390), 'board fits the smallest common primary rect (no clamp drift)')
-  // strict prose rule (plans/siri-prompt.md): board copy the human reads carries no em dashes
-  ok(plan.every((c) => !JSON.stringify(c.props).includes('—')), 'no em dashes in any card copy')
-  ok(!JSON.stringify(unlockCardProps('Electron')).includes('—'), 'no em dashes in the unlock card copy')
+  ok(plan.filter((c) => c.widget).every((c) => getWidgetSource(c.widget)), 'every planned widget resolves in the catalog')
 }
 
-console.log('2) FDA on, meeting-heavy — schedule at F, people at I, locked artifacts gone')
+console.log('2) FDA on, meeting-heavy — schedule joins, unlock stays out of the plan')
 {
   const fdaScan = {
     ...FIXTURE,
@@ -97,18 +119,20 @@ console.log('2) FDA on, meeting-heavy — schedule at F, people at I, locked art
     },
     people: [{ label: 'Luigi M.', n: 22, kind: 'name', via: 'messages' }, ...FIXTURE.people] // scan emits topN-sorted
   }
-  const plan = buildBoardPlan(fdaScan)
-  ok(at(plan, 'schedule') && at(plan, 'schedule').x === -225 && at(plan, 'schedule').y === -15, 'schedule takes flex slot E')
-  ok(at(plan, 'people') && at(plan, 'people').x === 240 && at(plan, 'people').y === 5, 'people takes flex slot F')
-  ok(at(plan, 'workflows') && at(plan, 'workflows').x === UNLOCK_POS.x && at(plan, 'workflows').y === UNLOCK_POS.y, 'workflows takes slot I (free when FDA is on)')
-  ok(at(plan, 'schedule').props.items.length === 3 && /\w{3} \d{2}:\d{2}/.test(at(plan, 'schedule').props.items[0].time), 'schedule items carry weekday+time')
+  const plan = buildBoardPlan(fdaScan, { surfaces: [CHAT_HUB], viewport: VP })
+  ok(!at(plan, 'unlock'), 'no unlock card when FDA is already granted')
+  ok(plan.every((c) => c.slot), 'all ten cards staged (fit-first)')
+  ok(at(plan, 'schedule') && at(plan, 'schedule').slot.size === 'm', 'schedule with 3 events is m')
+  ok(/\w{3} \d{2}:\d{2}/.test(at(plan, 'schedule').props.items[0].time), 'schedule items carry weekday+time')
   ok(at(plan, 'people').props.items[0].sub === 'texts with you', 'messages-joined person labeled by via')
   ok(at(plan, 'profile').props.facts.some((f) => f.k === 'Meetings'), 'profile gains a meetings fact')
   ok(at(plan, 'rhythm').props.topApps[0].secs === 7200, 'rhythm uses real focus time')
   ok(!at(plan, 'gaps').props.items.some((g) => g.q === 'The personal layer'), 'gaps drops the unlock teaser')
+  const { clash } = cellsOf([CHAT_HUB, ...plan.filter((c) => c.slot)])
+  ok(!clash, 'still zero overlaps with more cards on the lattice')
 }
 
-console.log('3) web-first life — workflows takes the HERO slot, projects yields')
+console.log('3) web-first life — workflows wins the prime spans, projects yields')
 {
   const webScan = {
     ...FIXTURE,
@@ -125,23 +149,44 @@ console.log('3) web-first life — workflows takes the HERO slot, projects yield
         { host: 'mail.google.com', name: 'Gmail', n: 300, color: '#EA4335', integration: 'gmail' },
         { host: 'notion.so', name: 'Notion', n: 200, color: '#191919' },
         { host: 'app.slack.com', name: 'Slack', n: 150, color: '#611F69', integration: 'slack' },
-        { host: 'canva.com', name: 'Canva', n: 90, color: '#00C4CC' }
+        { host: 'canva.com', name: 'Canva', n: 90, color: '#00C4CC' },
+        { host: 'linkedin.com', name: 'LinkedIn', n: 70, color: '#0A66C2' },
+        { host: 'airtable.com', name: 'Airtable', n: 60, color: '#FCB400' }
       ]
     }
   }
-  const plan = buildBoardPlan(webScan)
+  const plan = buildBoardPlan(webScan, { surfaces: [CHAT_HUB], viewport: VP })
   const wf = at(plan, 'workflows')
-  ok(wf && wf.x === -225 && wf.y === -390, 'workflows card is the hero')
-  ok(wf.props.title === 'Where your work lives', 'hero workflows gets the web-first title')
+  ok(plan[1] && plan[1].role === 'workflows', 'workflows is placed second (right after profile), winning the prime spans')
+  ok(wf.slot && wf.slot.size === 'tall', 'workflows with 6 items is tall (list-shaped)')
+  ok(wf.props.title === 'Where your work lives', 'web-first workflows gets the web-first title')
   ok(wf.props.items.filter((i) => i.integration).length === 2, 'connectable integrations marked')
   ok(!at(plan, 'projects'), 'no projects card for a web-first life')
 }
 
-console.log('4) sparse scan — cards skip, board never crashes')
+console.log('4) tiny lattice — shrink first, then park off-stage below the frame (never overlap)')
+{
+  const smallVP = { w: 800, h: 600 }
+  const plan = buildBoardPlan(FIXTURE, { surfaces: [], viewport: smallVP })
+  const staged = plan.filter((c) => c.slot)
+  const parked = plan.filter((c) => c.offstage)
+  ok(staged.length >= 1, `something still makes the tiny stage (${staged.length} staged)`)
+  ok(parked.length >= 1, `overflow parks off-stage instead of overlapping (${parked.length} parked)`)
+  const r = stageRect(0, smallVP)
+  ok(parked.every((c) => c.y >= r.y + r.h && typeof c.w === 'number' && typeof c.h === 'number'), 'parked cards sit BELOW the stage frame with real dims')
+  const { clash } = cellsOf(staged)
+  ok(!clash, 'no overlaps even under pressure')
+  // backstage is a clean grid too: no parked card may overlap another (the 64px-cascade pile bug)
+  const rectClash = parked.some((a, i) => parked.some((b, j) => j > i && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h))
+  ok(!rectClash, 'parked cards never overlap each other')
+  ok(staged.every((c) => ['s', 'm', 'l', 'tall', 'xl', 'xxl'].includes(c.slot.size)), 'staged sizes are legal spans')
+}
+
+console.log('5) sparse scan — profile + gaps + unlock only, never crashes')
 {
   const empty = {
     meta: { v: 2, generatedAt: 0, fda: false, spanDays: 1, nText: 0, nEvents: 0, fdaLocked: [] },
-    identity: { name: null, computer: null, locale: {}, defaultBrowser: null },
+    identity: { name: null, handle: null, computer: null, locale: {}, defaultBrowser: null },
     cadence: { peakHours: [], activeWeekdays: [], punch: {}, topApps: [], appLaunches: [] },
     projects: [], repos: [], stack: [], tooling: [],
     people: [{ label: 'Solo Dev', n: 1, kind: 'name', via: 'commits' }],
@@ -152,21 +197,20 @@ console.log('4) sparse scan — cards skip, board never crashes')
     facts: { dock: [], installedApps: 0, accounts: [] },
     gaps: []
   }
-  const plan = buildBoardPlan(empty)
+  const plan = buildBoardPlan(empty, { surfaces: [CHAT_HUB], viewport: VP })
   const roles = plan.map((c) => c.role)
-  ok(roles.includes('profile') && roles.includes('gaps'), 'profile + gaps always render')
-  ok(roles.length === 2, `everything else skips (got ${roles.join(',')})`)
+  ok(roles.join(',') === 'profile,gaps,unlock', `everything empty skips, the spine stays (got ${roles.join(',')})`)
   ok(at(plan, 'profile').props.name === 'Unknown subject', 'nameless scan degrades gracefully')
 }
 
-console.log('5) malformed scan sections — planner skips, never throws')
+console.log('6) malformed scan sections — planner skips, never throws')
 {
   const broken = JSON.parse(JSON.stringify(FIXTURE))
   broken.cadence = null
   broken.web = null
   let plan = null
   try {
-    plan = buildBoardPlan(broken)
+    plan = buildBoardPlan(broken, { surfaces: [CHAT_HUB], viewport: VP })
   } catch {
     /* must not throw */
   }
@@ -175,11 +219,16 @@ console.log('5) malformed scan sections — planner skips, never throws')
   ok(plan && at(plan, 'projects'), 'healthy cards survive')
 }
 
-console.log('6) unlock card contract')
+console.log('7) unlock card contract')
 {
   const p = unlockCardProps('Electron')
   ok(p.state === 'locked' && p.appName === 'Electron' && Array.isArray(p.sources) && p.sources.length >= 4, 'unlock props complete')
-  ok(UNLOCK_POS.w >= 300 && UNLOCK_POS.h >= 150, 'unlock position sane')
+  ok(UNLOCK_SIZE === 'l', 'unlock prefers a l span')
+  const slotted = findUnlockSlot([CHAT_HUB], VP)
+  ok(slotted && slotted.slot && slotted.slotStage === 0, 'findUnlockSlot lands a span against live surfaces')
+  // a saturated tiny lattice (an xxl tile owns it) → no span at all → null (caller parks)
+  const full = findUnlockSlot([{ id: 'big', slot: { col: 0, row: 0, size: 'xxl' }, slotStage: 0 }], { w: 700, h: 500 })
+  ok(full === null, 'a truly full stage returns null instead of overlapping')
 }
 
 if (failed) {

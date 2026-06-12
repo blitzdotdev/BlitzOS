@@ -1,43 +1,45 @@
 <!doctype html><meta charset="utf-8"><title>Profile</title>
-<!-- Thinking-widget: an identity/header card — one subject, its key facts, an optional note.
-     Drive with update_surface{props:{kicker?,name,sub?,facts?:[{k,v}],note?}}. -->
+<!-- Thinking-widget: an identity card — one subject, big name, key facts as quiet stats.
+     Widget language: no titlebar, no prose. Drive with update_surface{props:{kicker?,name,sub?,facts?:[{k,v}]}}. -->
 <style>
-  .wrap{padding:18px 20px 16px}
-  .kick{font:10px ui-monospace,monospace;letter-spacing:.22em;text-transform:uppercase;color:var(--blitz-text-dim);margin-bottom:8px}
-  .kick .dot{display:inline-block;width:6px;height:6px;border-radius:99px;background:var(--blitz-accent);margin-right:7px;vertical-align:1px}
-  h1{margin:0;font-size:26px;font-weight:700;letter-spacing:-.03em;line-height:1.1}
-  .sub{font-size:12px;color:var(--blitz-text-dim);margin-top:5px}
-  .facts{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px}
-  .f{border:1px solid var(--blitz-hairline);border-radius:var(--blitz-radius-sm);background:var(--blitz-surface-2);padding:7px 10px;min-width:86px}
-  .f .k{font:9px ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--blitz-text-dim)}
-  .f .v{font-size:13px;font-weight:600;letter-spacing:-.01em;margin-top:2px}
-  .note{margin-top:13px;font-size:12px;line-height:1.5;color:var(--blitz-text-dim);border-top:1px dashed var(--blitz-hairline);padding-top:11px}
+  .wrap{padding:18px 18px 14px;height:100%;display:flex;flex-direction:column;box-sizing:border-box}
+  .kick{font:600 9px ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--blitz-accent);margin-bottom:10px}
+  h1{margin:0;font-size:27px;font-weight:700;letter-spacing:-.035em;line-height:1.05}
+  .sub{font-size:11px;color:var(--blitz-text-dim);margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .facts{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;margin-top:auto;padding-top:14px}
+  .f .v{font-size:15px;font-weight:650;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .f .k{font:600 8.5px ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--blitz-text-dim);margin-top:2px}
   .wrap.intro h1,.wrap.intro .f{animation:in .35s both}
-  .wrap.intro .f:nth-child(2){animation-delay:.05s}.wrap.intro .f:nth-child(3){animation-delay:.1s}.wrap.intro .f:nth-child(4){animation-delay:.15s}.wrap.intro .f:nth-child(5){animation-delay:.2s}
+  .wrap.intro .f:nth-child(2){animation-delay:.05s}.wrap.intro .f:nth-child(3){animation-delay:.1s}.wrap.intro .f:nth-child(4){animation-delay:.15s}
   @keyframes in{from{opacity:0;transform:translateY(5px)}}
+  /* gist mode (an m/s tile): name + two stats, nothing else — pop out / enlarge for the rest */
+  @media (max-height:219px){
+    .wrap{padding:13px 15px 11px}
+    h1{font-size:21px}
+    .sub{display:none}
+    .facts{gap:8px 12px;padding-top:10px}
+    .f:nth-child(n+3){display:none}
+    .f .v{font-size:14px}
+  }
 </style>
-<blitz-titlebar><span id="hd">Profile</span></blitz-titlebar>
 <div class="wrap" id="wrap">
   <div class="kick" id="kick"></div>
   <h1 id="nm"></h1>
   <div class="sub" id="sub"></div>
   <div class="facts" id="facts"></div>
-  <div class="note" id="note" style="display:none"></div>
 </div>
 <script>
-  // props: { title?, kicker?, name, sub?, facts?:[{k,v}], note? }
-  const SAMPLE={title:'Profile',kicker:'Case file',name:'Unknown subject',sub:'awaiting first evidence',
+  // props: { kicker?, name, sub?, facts?:[{k,v}] } — facts render as a 2x2 stat grid, max 4.
+  const SAMPLE={kicker:'Case file',name:'Unknown subject',sub:'awaiting first evidence',
     facts:[{k:'Machine',v:'…'},{k:'Span',v:'…'},{k:'Signals',v:'…'}]}
   let data=SAMPLE, __p=false
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
   function render(d){
-    document.getElementById('hd').textContent=d.title||'Profile'
     const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
-    document.getElementById('kick').innerHTML=d.kicker?'<span class="dot"></span>'+esc(d.kicker):''
+    document.getElementById('kick').textContent=d.kicker||''
     document.getElementById('nm').textContent=d.name||''
     document.getElementById('sub').textContent=d.sub||''
-    document.getElementById('facts').innerHTML=(d.facts||[]).map(f=>'<div class="f"><div class="k">'+esc(f.k)+'</div><div class="v">'+esc(f.v)+'</div></div>').join('')
-    const n=document.getElementById('note');n.style.display=d.note?'':'none';n.textContent=d.note||''
+    document.getElementById('facts').innerHTML=(d.facts||[]).slice(0,4).map(f=>'<div class="f"><div class="v">'+esc(f.v)+'</div><div class="k">'+esc(f.k)+'</div></div>').join('')
   }
   render(data)
   if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.name){data=p;render(p)}})

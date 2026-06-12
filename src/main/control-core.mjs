@@ -7,7 +7,7 @@
  *  - Server mode:   the Node backend wraps a CDP WebSocket (RemoteCdpSession).
  *
  * Every call here is a stock CDP `send(method, params)` with zero Electron
- * dependency, which is exactly why it drives a <webview> guest and a server-side
+ * dependency, which is exactly why it drives an Electron browser guest and a server-side
  * headless Chromium target identically. Coordinates are CSS pixels (the space
  * Input.dispatch* expects); callers in server mode must map canvas→CSS px first.
  */

@@ -7,5 +7,8 @@ export function shellQuote(s: string): string
 export function buildClaudeCommand(opts: { cmd?: string; claudeSid: string; mode?: 'create' | 'resume'; bootstrapFile: string }): string
 export function ensureClaudeSessionId(sessionsDir: string, id: string): { claudeSessionId: string; established: boolean }
 export function prepareAgentLaunch(opts: { sessionsDir: string; id: string; url: string | null | undefined; cmd?: string }): { command: string; claudeSessionId: string }
+/** Pre-seed claude's one-time workspace-trust ack (~/.claude.json) so an UNATTENDED interactive
+ *  spawn can never stall on the trust dialog (headless -p skipped it; the live TUI does not). */
+export function ensureWorkspaceTrusted(wsPath: string): void
 export function writeRelayUrl(blitzDir: string, url: string | null | undefined): void
 export const RELAY_URL_FILE: string

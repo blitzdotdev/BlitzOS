@@ -25,17 +25,35 @@ export interface ScanJson {
   gaps: string[]
 }
 
-export interface BoardCard {
-  role: string
-  widget: string
-  title: string
-  x: number
-  y: number
-  w: number
-  h: number
-  props: Record<string, unknown>
+/** A surface as the lattice sees it (occupancy input): only slot fields matter. */
+export interface StagedSurface {
+  id: string
+  slot?: { col: number; row: number; size: string }
+  slotStage?: number
+  minimized?: boolean
+  groupId?: string
 }
 
-export const UNLOCK_POS: { x: number; y: number; w: number; h: number }
+export interface BoardCard {
+  role: string
+  /** Library widget name; absent on the native unlock card. */
+  widget?: string
+  /** Native component name ('unlock') when the card is not a library widget. */
+  native?: string
+  title: string
+  props: Record<string, unknown>
+  /** Staged tile: the slot on the stage-0 lattice. */
+  slot?: { col: number; row: number; size: string }
+  slotStage?: number
+  /** Lattice was full: parked below the stage frame at these world coords instead. */
+  offstage?: boolean
+  x?: number
+  y?: number
+  w?: number
+  h?: number
+}
+
+export const UNLOCK_SIZE: string
 export function unlockCardProps(appName: string): Record<string, unknown>
-export function buildBoardPlan(scan: ScanJson): BoardCard[]
+export function findUnlockSlot(surfaces: StagedSurface[] | null | undefined, viewport?: { w: number; h: number } | null): { slot: { col: number; row: number; size: string }; slotStage: number } | null
+export function buildBoardPlan(scan: ScanJson, opts?: { surfaces?: StagedSurface[]; viewport?: { w: number; h: number } | null }): BoardCard[]

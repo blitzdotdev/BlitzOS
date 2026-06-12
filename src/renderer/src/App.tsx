@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { useDesktop, viewTransform, stageRect, stageForAgent, stageCenterX, nextTerminalName, type CreateSurfaceInput } from './store'
+import { useDesktop, viewTransform, stageRect, stageForAgent, stageCenterX, nextTerminalName, latticeFor, nearestFreeSlot, type CreateSurfaceInput } from './store'
+import { applyTheme, saveTheme, type Theme } from './theme'
 import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
@@ -8,7 +9,7 @@ import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
 import { Overview } from './components/Overview'
 import { capturePrimaryThumb } from './capture'
-import { SurfaceFrame } from './components/SurfaceFrame'
+import { SurfaceFrame, bgHolesClip } from './components/SurfaceFrame'
 import { AnnotationLayer } from './components/AnnotationLayer'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar, type SurfaceLauncherKind } from './components/Sidebar'
@@ -201,10 +202,16 @@ function ensureNotepad(): void {
   // memory; the manual + the dynamic-boot instruction both rely on it existing, incl. server mode).
   const st = useDesktop.getState()
   if (st.surfaces.some((s) => s.kind === 'native' && s.component === 'note' && s.title === 'Notepad')) return
+  // Born SLOTTED (an s tile near the stage's bottom-right), never a free float over the middle of
+  // the desktop; a packed lattice parks it below the stage frame instead.
+  const lat = latticeFor(st.viewport, st.currentStage)
+  const r = stageRect(st.currentStage, st.viewport)
+  const slot = nearestFreeSlot(st.surfaces, lat, 's', r.x + r.w - 90, r.y + r.h - 90, st.currentStage)
   st.createSurface({
     kind: 'native',
     component: 'note',
     title: 'Notepad',
+    ...(slot ? { slot: { col: slot.col, row: slot.row, size: 's' }, slotStage: st.currentStage } : { x: Math.round(r.x + 40), y: Math.round(r.y + r.h + 360) }),
     props: {
       text: '# Notepad\n\nShared working memory for you and BlitzOS. The agent keeps context and notes here; you can edit it too.\n',
       color: 'yellow'
@@ -322,6 +329,9 @@ export default function App(): JSX.Element {
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
   // restored canvas before hydration arrives.
   const hydrated = useRef(false)
+  // Shell titlebar drag origin (screen coords at pointerdown) — deltas stream to main, which moves
+  // the sandwich's parent window (the UI child follows natively).
+  const shellDragFrom = useRef<{ x: number; y: number } | null>(null)
   // The active workspace name, mirrored into a ref so the state-push closure (an effect with []
   // deps) reads the CURRENT value — each push is tagged with it so the backend can drop a stale
   // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
@@ -418,7 +428,7 @@ export default function App(): JSX.Element {
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
       // pan/zoom only on an UNLOCKED canvas; when locked (⌘⌘) or in desktop mode,
-      // let webviews/iframes scroll normally
+      // let browser surfaces/iframes scroll normally
       const w = useDesktop.getState()
       if (w.mode !== 'canvas' || w.locked) return
       e.preventDefault()
@@ -455,6 +465,12 @@ export default function App(): JSX.Element {
       if ((e.metaKey || e.ctrlKey) && e.key === '0') {
         e.preventDefault()
         useDesktop.getState().goToPrimary()
+      } else if (e.ctrlKey && e.metaKey && e.key === 'ArrowUp') {
+        // ⌃⌘↑ "splay out" — frame all free-form windows (Mission-Control intent). macOS reserves the
+        // four-finger swipe-up and plain ⌃↑ for its OWN Mission Control (an app can't intercept them),
+        // so this is the app-level equivalent. Slotted widgets stay put; only free windows are framed.
+        e.preventDefault()
+        useDesktop.getState().splayWindows()
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'g' || e.key === 'G')) {
         // Cmd+G: collapse the multi-selection into an iPhone-style folder you tap to open (in-memory
         // `component:'folder'` via groupSelection). Works for ANY surface kind — windows, widgets, notes
@@ -502,7 +518,7 @@ export default function App(): JSX.Element {
         }
       } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.code === 'KeyT' && !window.agentOS?.onKeybind) {
         // ⌘T/⇧⌘T DOM fallback for SERVER mode only — in Electron the bind arrives from main's
-        // before-input-event (os:keybind), which works even when an iframe/webview holds focus.
+        // before-input-event (os:keybind), which works even when an iframe/browser guest holds focus.
         e.preventDefault()
         runTileKeybind(e.shiftKey)
       }
@@ -513,7 +529,7 @@ export default function App(): JSX.Element {
 
   // Hold ⌥ (or Space, when not typing) → "grab mode": drag any surface from anywhere to
   // move it (and select it); release to interact with content again.
-  // NOTE: a key held while a <webview> has keyboard focus is delivered to that guest, not
+  // NOTE: a key held while a browser guest has keyboard focus is delivered to that guest, not
   // here — so grab-mode may not engage until you click off a focused web page. A robust
   // fix is to forward ⌥/Space from guests via main (like onMetaTap); deferred.
   useEffect(() => {
@@ -542,7 +558,7 @@ export default function App(): JSX.Element {
   }, [])
 
   // Double-tap ⌘ to toggle Control mode (the bird's-eye overview). A bare ⌘ tap from a focused
-  // webview arrives via onMetaTap (main); plain keydown/keyup covers the browser/server transport.
+  // WebContentsView arrives via onMetaTap (main); plain keydown/keyup covers the browser/server transport.
   useEffect(() => {
     let metaDown = false
     let sawOther = false
@@ -580,6 +596,32 @@ export default function App(): JSX.Element {
       window.removeEventListener('keyup', up)
       off?.()
     }
+  }, [])
+
+  // Browser-tab page state pushed from main (url/title/favicon/loading/nav state, tab death,
+  // popup-as-new-tab) + the machine-global bookmarks for the browser chrome's star/dropdown.
+  useEffect(() => {
+    useDesktop.getState().loadBookmarks()
+    return window.agentOS?.onWebTab?.((m) => useDesktop.getState().applyWebTab(m))
+  }, [])
+
+  // Sandwich compositor: the opaque desktop base (.bg) gets screen-space clip holes where pages
+  // are, so the live views below show through while window shadows keep compositing against solid
+  // color (a fully transparent base made shadows render as dark pooling fringes).
+  const bgClip = useDesktop((s) =>
+    window.agentOS && !window.agentOS.serverMode ? bgHolesClip(s.surfaces, s.transform, s.viewport.w, s.viewport.h) : undefined
+  )
+
+
+  // Sandwich keyboard handoff, return path: a pointerdown anywhere on UI chrome (anything that is
+  // not a page hole) takes the keyboard back from the pages window. The forward path lives on the
+  // hole itself (SurfaceFrame onHoleDown → pageFocus).
+  useEffect(() => {
+    const onDown = (e: PointerEvent): void => {
+      if (!(e.target as HTMLElement)?.closest?.('.webcontents-host')) window.agentOS?.uiFocus?.()
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    return () => window.removeEventListener('pointerdown', onDown, true)
   }, [])
 
   // Control actions from main (local control server or agent-socket).
@@ -658,7 +700,7 @@ export default function App(): JSX.Element {
         }
       }
       else if (a.type === 'surface-contextmenu') {
-        // Item 5b: a WEB guest's right-click (main intercepts it — the webview swallows React's onContextMenu).
+        // Item 5b: a WEB guest's right-click (main intercepts it — the browser guest owns the page).
         // params x/y are guest-viewport CSS px; map to a percent of the surface so the annotation anchors,
         // and to screen px (via the live camera) so the menu opens at the cursor.
         const st = useDesktop.getState()
@@ -683,7 +725,19 @@ export default function App(): JSX.Element {
       else if (a.type === 'move') st.moveSurface(String(a.id), Number(a.x), Number(a.y))
       else if (a.type === 'update') st.updateSurface(String(a.id), (a.patch ?? {}) as Partial<Surface>)
       else if (a.type === 'close') st.closeSurface(String(a.id))
+      else if (a.type === 'focus') st.focusSurface(String(a.id))
       else if (a.type === 'goToPrimary') st.goToPrimary()
+      else if (a.type === 'set-theme') {
+        // Live OS accent (widget/agent picked it): recolor chrome now, persist for next boot. The
+        // accent also reaches every srcdoc widget WITHOUT its own props.accent by bumping a token
+        // SurfaceFrame folds into the props it posts (board cards keep their own palette accents).
+        const theme = (a.theme ?? {}) as { accent?: string; accentDeep?: string }
+        if (theme.accent) {
+          applyTheme(theme as Theme)
+          saveTheme(theme as Theme)
+          st.setOsAccent(theme.accent)
+        }
+      }
       else if (a.type === 'chat') {
         // The OS owns each agent's transcript and sends the FULL message list tagged with agentId
         // ('0' = the primary chat). Route to THAT agent's chat surface (id 'chat' / 'chat-<id>') so a
@@ -870,6 +924,15 @@ export default function App(): JSX.Element {
         // Carry the agent id so a per-agent chat survives the round-trip (osState → a later hydrate):
         // without it the surface would lose its stage on the next connect and snap back to stage 0.
         agentId: s.agentId,
+        // Lattice membership must survive the round-trip too: workspace.mjs stageFields persists
+        // slot/slotStage from THIS push — dropping them here silently demoted every tile to a free
+        // window on the next flush (observed: the seeded case-file board lost its slots).
+        slot: s.slot,
+        slotStage: s.slotStage,
+        // Browser tabs persist (.weblink) + surface in list_state from THIS push too — persistable
+        // fields only ({id,title,url}; favicon/loading/nav state are runtime chrome).
+        tabs: s.tabs?.map((t) => ({ id: t.id, title: t.title, url: t.url, terminalId: t.terminalId })),
+        activeTab: s.activeTab,
         // Chat + Agent-activity panels are pinned always-on-top — the agent must not cover them
         pinned: isRuntimePanel(s)
       }))
@@ -1084,13 +1147,14 @@ export default function App(): JSX.Element {
 
   // The Agent-activity feed docks to the TOP-LEFT of the view (above the centered chat).
   function activitySurfaceInput(events: Array<{ at: number; text: string }>): CreateSurfaceInput {
+    // BACKSTAGE by default: the feed must never pop a window onto the user's desktop — it parks on
+    // the canvas just below the stage frame (right side, clear of parked terminals/cards), visible
+    // when the user zooms out to watch the agent work.
     const st = useDesktop.getState()
-    const { scale, x: tx, y: ty } = st.transform
+    const r = stageRect(st.currentStage, st.viewport)
     const W = 320
     const H = 200
-    const x = Math.round(-tx / scale + 24)
-    const y = Math.round(-ty / scale + 24)
-    return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x, y, props: { events } }
+    return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x: Math.round(r.x + r.w - W - 40), y: Math.round(r.y + r.h + 140), props: { events } }
   }
 
   // Open/focus a terminal tab (idempotent). Shared by the live terminal-spawn action, resume-on-load,
@@ -1173,7 +1237,7 @@ export default function App(): JSX.Element {
     if (!name || !ws) return
     try {
       if (ws.captureThumb) {
-        await ws.captureThumb(name) // Electron: main-side capturePage (real pixels, incl. <webview>s)
+        await ws.captureThumb(name) // Electron: main-side capturePage (real pixels, incl. WebContentsViews)
       } else if (ws.thumb) {
         const dataUrl = capturePrimaryThumb() // server: composite the streamed canvases + upload
         if (dataUrl) await ws.thumb(name, dataUrl)
@@ -1353,19 +1417,50 @@ export default function App(): JSX.Element {
       onDragOver={onDragOver}
       onDrop={onDrop}
       onPointerDownCapture={() => {
-        // Keyboard-focus reclaim: iframes/webviews swallow window keydown while focused, killing every
+        // Keyboard-focus reclaim: iframes/browser guests swallow window keydown while focused, killing every
         // app keybind (⌘T etc.). A pointerdown that reaches the HOST at all means the user is now
         // interacting OUTSIDE the guest — blur it so the next keystroke lands in the app again.
         const ae = document.activeElement as HTMLElement | null
-        if (ae && (ae.tagName === 'IFRAME' || ae.tagName === 'WEBVIEW')) ae.blur()
+        if (ae && ae.tagName === 'IFRAME') ae.blur()
       }}
     >
-      {/* draggable native-window title bar (macOS move/resize) */}
-      <div className="titlebar">
+      {/* draggable shell title bar — MANUAL drag (pointer deltas → main moves the sandwich's parent
+          window; CSS app-region would drag only the attached child and detach the layers) */}
+      <div
+        className="titlebar"
+        onPointerDown={(e) => {
+          if (e.button !== 0) return
+          ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+          shellDragFrom.current = { x: e.screenX, y: e.screenY }
+          window.agentOS?.shellDrag?.('start')
+        }}
+        onPointerMove={(e) => {
+          const o = shellDragFrom.current
+          if (o) window.agentOS?.shellDrag?.('move', e.screenX - o.x, e.screenY - o.y)
+        }}
+        onPointerUp={(e) => {
+          shellDragFrom.current = null
+          try {
+            ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+          } catch {
+            /* ignore */
+          }
+        }}
+        onPointerCancel={() => {
+          shellDragFrom.current = null
+        }}
+      >
         <span className="titlebar-label">BlitzOS</span>
       </div>
 
-      <div className="bg" onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onContextMenu={onBgContextMenu} />
+      <div
+        className="bg"
+        style={bgClip === 'HIDE' ? { visibility: 'hidden' } : bgClip ? { clipPath: bgClip } : undefined}
+        onPointerDown={onBgDown}
+        onPointerMove={onBgMove}
+        onPointerUp={onBgUp}
+        onContextMenu={onBgContextMenu}
+      />
 
       <Sidebar onCreateSurface={createFromLauncher} onRequestRestore={requestRestore} animating={dockAnimations} />
 

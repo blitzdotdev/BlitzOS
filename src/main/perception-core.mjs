@@ -160,10 +160,24 @@ function armSelectFlush(surfaceId) {
   selectTimers.set(surfaceId, t)
 }
 
+// Telemetry seam: ONE observer sees every emitted moment (the agent's eyes, recorded). No-op until
+// the host sets it; must never be able to break the emit path.
+let momentTap = null
+export function setMomentTap(fn) {
+  momentTap = fn
+}
+
 /** Append a finished moment to the LOG and wake every long-poll waiter (each gets the slice it may
  *  see, per visibleTo). The ONE place moments enter the stream — every emitter funnels here so the
  *  ring cap + waiter wake can never drift between emitters. */
 function emit(moment) {
+  if (momentTap) {
+    try {
+      momentTap(moment)
+    } catch {
+      /* the tap must never break perception */
+    }
+  }
   if (!moment.workspace) {
     const ws = currentWorkspace()
     if (ws) moment.workspace = ws // stamp ONCE at the funnel — every emitter inherits the scoping
@@ -213,14 +227,85 @@ function flush(surfaceId, trigger) {
   })
 }
 
+// ---- canvas ops: the desktop's own geometry as perception (issues/open → the human's call:
+// the brain SHOULD see window movement). Ops are COALESCED, never per-gesture: structural
+// changes (open/close) settle ~2s then flush; pure move/resize rides the same ~15s batch as
+// routine page input. Every op carries origin 'human' (a gesture) or 'tool' (a syscall) — the
+// moment is delivered either way (accountability: the agent sees exactly what its syscalls did),
+// and the operating doc tells the policy to ABSORB tool-origin ops, never re-react to itself.
+// Canvas moments ride the default visibility (primary watcher only) + workspace stamping.
+let canvasBatch = null
+const CANVAS_SETTLE_MS = 2000
+const CANVAS_MAX_OPS = 30
+
+/** Ingest desktop-geometry ops: [{op:'open'|'close'|'move'|'resize', id, title?, kind?, x?,y?,w?,h?, origin:'human'|'tool'}] */
+export function ingestCanvasOps(ops) {
+  const list = Array.isArray(ops) ? ops.filter((o) => o && o.op && o.id) : []
+  if (!list.length) return
+  const now = Date.now()
+  if (!canvasBatch) canvasBatch = { startTs: now, lastTs: now, ops: [], structural: false, dropped: 0 }
+  const b = canvasBatch
+  b.lastTs = now
+  for (const o of list) {
+    if (o.op === 'open' || o.op === 'close') b.structural = true
+    if (o.op === 'move' || o.op === 'resize') {
+      // a drag is ONE op: repeated geometry for the same surface keeps only the latest
+      const prev = b.ops.find((p) => p.id === o.id && p.op === o.op && p.origin === o.origin)
+      if (prev) {
+        Object.assign(prev, o)
+        continue
+      }
+    }
+    if (b.ops.length < CANVAS_MAX_OPS) b.ops.push({ ...o })
+    else b.dropped++
+  }
+}
+
+function flushCanvas() {
+  const b = canvasBatch
+  canvasBatch = null
+  if (!b || !b.ops.length) return
+  const signals = {}
+  const user = []
+  for (const o of b.ops) {
+    signals[o.op] = (signals[o.op] || 0) + 1
+    const name = o.title ? `'${o.title}'` : String(o.id).slice(0, 8)
+    const by = o.origin === 'tool' ? ' [agent tool]' : ''
+    if (o.op === 'move') user.push(`moved ${name} to ${Math.round(o.x)},${Math.round(o.y)}${by}`)
+    else if (o.op === 'resize') user.push(`resized ${name} to ${Math.round(o.w)}×${Math.round(o.h)}${by}`)
+    else if (o.op === 'open') user.push(`opened ${o.kind ? o.kind + ' ' : ''}${name}${by}`)
+    else user.push(`${o.op}d ${name}${by}`)
+  }
+  if (b.dropped) user.push(`(+${b.dropped} more ops)`)
+  emit({
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId: 'desktop',
+    trigger: 'canvas',
+    windowMs: Date.now() - b.startTs,
+    signals,
+    user,
+    ops: b.ops
+  })
+}
+
 // Batch timer: emit a moment for any surface whose window has aged past BATCH_MS
 // (significant transitions flush sooner, via ingestSignals).
-setInterval(() => {
+const sweepTimer = setInterval(() => {
   const now = Date.now()
   for (const [surfaceId, p] of pending) {
     if (now - p.startTs >= BATCH_MS) flush(surfaceId, 'batch')
   }
+  // canvas: flush once ops stop arriving (settle) — immediately for structural batches,
+  // at the routine batch age for pure move/resize churn.
+  if (canvasBatch && now - canvasBatch.lastTs >= CANVAS_SETTLE_MS && (canvasBatch.structural || now - canvasBatch.startTs >= BATCH_MS)) {
+    flushCanvas()
+  }
 }, 2000)
+// A background sweeper must never keep the PROCESS alive — node test scripts that import this
+// module (e.g. test-perception-scope) hang at exit otherwise. Unref'd timers still fire normally
+// while anything else is running.
+if (sweepTimer.unref) sweepTimer.unref()
 
 export function latestSeq() {
   return seq

@@ -52,7 +52,7 @@ import { writeRelayUrl } from './agent-runtime.mjs'
  * @param {(s:any) => void} a.setState  sets osState (the host owns it on hydrate/switch/reconcile)
  * @param {(obj:any) => void} a.broadcast  send a message to all connected renderers
  * @param {(surfaces:any[]) => (Promise<any>|void)} [a.onSurfaces]  realize web surfaces (server: spin/tear
- *        headless targets; Electron: no-op, the renderer owns <webview>s)
+ *        headless targets; Electron: no-op, WebContentsView host owns browser guests)
  * @param {'canvas'|'desktop'} [a.defaultMode]  blank-workspace mode (server: canvas, Electron: desktop)
  * @param {boolean} [a.explicitInitial]  true when initialName was PINNED by the user (BLITZ_WORKSPACE):
  *        skip the boot-where-you-left-off preference and honor the pin.
@@ -130,6 +130,10 @@ export function createWorkspaceHost(a) {
       const st = a.getState()
       const r = reconcileWorkspace(activeWorkspace, placeAt || {})
       if (!r) return
+      // Nothing on disk changed → the renderer already has this exact state. Broadcasting anyway
+      // re-sent the FULL surface array (props included) on every watcher blip — and reset live
+      // camera/mode to the persisted ones. Skip; real changes (new/renamed/dropped files) pass.
+      if (!r.changed) return
       // Preserve LIVE state that disk doesn't represent, so a reconcile never destroys it:
       //  - runtime chat/activity panels + iPhone-style folder groupings (never persisted as nodes)
       //  - surfaces that exist in osState but aren't a workspace.json node yet (agent-created /
@@ -492,6 +496,10 @@ export function createWorkspaceHost(a) {
     const onEvent = (sub) => (_evt, filename) => {
       if (!filename) return scheduleReconcile()
       if (/(^\.tmp)|(\.tmp(-[0-9a-f]+)?$)/.test(filename)) return // our atomic temp files
+      // Inside .blitzos only workspace.json can change what the canvas shows — sessions/, state/
+      // (thumbnails), tmux/, relay-url churn CONSTANTLY while a brain runs and were driving a
+      // full folder re-scan + reconcile broadcast every ~0.8s (the storm telemetry caught in the VM).
+      if (sub === '.blitzos' && String(filename) !== 'workspace.json') return
       if (wasSelfWrite(join(activeWorkspace, sub, filename))) return // our own write
       scheduleReconcile()
     }

@@ -21,6 +21,7 @@ import {
   osReadWindow,
   osControlSurface,
   osSay,
+  osUserMessage,
   osCustomizeWidget,
   osSpawnAgent,
   osCloseAgent,
@@ -28,6 +29,7 @@ import {
   osSystemUi,
   osGroupIntoFolder,
   osBroadcast,
+  osSetTheme,
   type SurfaceDescriptor
 } from './osActions'
 import { runProviderCall } from './provider-bridge'
@@ -64,6 +66,8 @@ export const electronOps = {
   readWindow: (id: string, script?: string) => osReadWindow(id, script),
   controlSurface: (id: string, action: unknown) => osControlSurface(id, action as Parameters<typeof osControlSurface>[1]),
   say: (text: string, agentId?: string, workspace?: string) => osSay(text, agentId, workspace),
+  // user_say (localhost-only test syscall): programmatic user input through the human composer's exact path
+  userMessage: (text: string, agentId?: string) => osUserMessage(text, agentId),
   customizeWidget: (name: string, html: string, agentId?: string) => osCustomizeWidget(name, html, agentId),
   spawnAgent: (title?: string) => osSpawnAgent(title),
   closeAgent: (id: string) => osCloseAgent(id),
@@ -72,7 +76,8 @@ export const electronOps = {
   groupIntoFolder: (name: string, ids: string[], x: number | undefined, y: number | undefined, kind: 'board' | 'folder') => osGroupIntoFolder(name, ids, x, y, kind),
   providerCall: (descriptor: Parameters<typeof runProviderCall>[0], transport: 'relay' | 'localhost') => runProviderCall(descriptor, transport === 'localhost' ? 'localhost' : 'relay'),
   integrationStatuses: () => integrationStatuses(),
-  connectedProviders: () => connectedProviders()
+  connectedProviders: () => connectedProviders(),
+  setTheme: (theme: { accent?: unknown; accentDeep?: unknown }) => osSetTheme(theme)
 } as Record<string, (...args: never[]) => unknown>
 
 // The current relay url, injected by index.ts (the top-level wirer) to avoid an import cycle with

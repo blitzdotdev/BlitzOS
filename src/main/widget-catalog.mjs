@@ -238,6 +238,23 @@ const dir = await window.blitz.listDir('') // list a workspace folder (the file 
 window.blitz.setProps({ text })            // persist THIS widget's own state, e.g. a note's text — no prompt
 \`\`\`
 
+## Look like a WIDGET, not a web page (the design language)
+
+A widget on the stage is a macOS-desktop-widget peer, not a document. The OS already draws the
+window chrome; the tile's content must read at a glance:
+
+- **No titlebar.** Do NOT add \`<blitz-titlebar>\` to a widget (it's for full app frames like the
+  chat). Identity is a tiny caps LABEL inline at the top, or nothing when the content self-explains:
+  \`font:600 9px ui-monospace; letter-spacing:.18em; text-transform:uppercase; color:var(--blitz-accent)\`.
+- **One hero element.** The number, the chart, the icon grid, the name — make it BIG (24px+ values,
+  9px caps labels); everything else is small and dim. If everything is the same size it's a web page.
+- **Almost no words.** No explanatory sentences, no footers, no instructions inside the tile. A
+  widget that needs a paragraph to explain itself is the wrong widget.
+- **Icons and color over text.** A grid of favicon tiles beats a list of name+button rows; a heat
+  ramp beats a table of numbers. Generous padding (14px+), soft corners, no borders-inside-borders.
+- The board templates (\`profile\`, \`rhythm\`, \`workflows\`, \`quotes\`, \`gaps\`) are the reference set —
+  \`get_widget_source\` one before authoring your own.
+
 ## Use the shared UI kit (don't restyle from scratch)
 
 Every widget gets a component library + design tokens injected (no import needed) so widgets match the OS
@@ -246,7 +263,7 @@ and you never reinvent buttons/rows/bubbles. Prefer these over hand-rolled marku
 - Tokens: \`--blitz-accent\`, \`--blitz-bg\`, \`--blitz-surface\`, \`--blitz-text\`, \`--blitz-text-dim\`, \`--blitz-hairline\`, \`--blitz-radius\`.
 - **Color:** spawn any widget with \`props.accent\` (+ optional \`props.accentInk\`) and its \`--blitz-accent\` recolors automatically — no widget code needed. Sample accents from the Blitz paper palette tokens: \`--blitz-coral #FF8D61\` (signature), \`--blitz-terracotta\`, \`--blitz-sage\`, \`--blitz-slate\`, \`--blitz-dust\`, \`--blitz-mauve\`, \`--blitz-tan\`, \`--blitz-marker\`. Vary accents across a board of widgets (a distribution, not one color).
 - **Copy:** any text the human reads inside a widget follows the OS prose rules (manual, "Talking with the user"): absolutely NO em dashes (—); plain, tight sentences; bold sparingly; say what is missing instead of guessing.
-- Elements: \`<blitz-titlebar>\`, \`<blitz-list>\`, \`<blitz-message role="user|agent">\`, \`<blitz-row name meta kind ext>\` (fires \`open\`), \`<blitz-input placeholder>\` (fires \`send\` with \`detail.text\`), \`<blitz-button>\`. Or imperatively: \`window.blitz.ui.message(role,text)\` / \`.row({...})\` / \`.input({onSend})\` / \`.button(label,onClick)\`.
+- Elements: \`<blitz-titlebar>\` (full APP frames like the chat only — never on a plain widget, see the design language above), \`<blitz-list>\`, \`<blitz-message role="user|agent">\`, \`<blitz-row name meta kind ext>\` (fires \`open\`), \`<blitz-input placeholder>\` (fires \`send\` with \`detail.text\`), \`<blitz-button>\`. Or imperatively: \`window.blitz.ui.message(role,text)\` / \`.row({...})\` / \`.input({onSend})\` / \`.button(label,onClick)\`.
 - Layout/scroll: by default the body is a normal scrolling document — content taller than the surface scrolls, so don't put \`overflow:hidden\` or a fixed \`height\`/\`100vh\` on \`body\` (that clips it). For a fixed app frame — a pinned \`<blitz-titlebar>\`/\`<blitz-input>\` with ONE scrolling region — use a \`<blitz-list>\`; it fills the height and scrolls internally, and the body switches to the fixed frame automatically.
 
 The built-in chat (\`blitz-chat.html\`) and note (\`blitz-note.html\`) are themselves widgets built this way — read them with get_system_ui as templates; the user can have you rewrite them with customize_widget.

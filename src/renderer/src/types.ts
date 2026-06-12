@@ -6,17 +6,24 @@ export interface CanvasTransform {
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
-/** A tab inside a tabbed window. Terminal windows hold one TERMINAL per tab. */
+/** A tab inside a tabbed window. Terminal windows hold one TERMINAL per tab; web (browser) windows
+ *  hold one PAGE per tab (a main-owned WebContentsView each). */
 export interface SurfaceTab {
   id: string
   title: string
   /** terminal tab → the terminal id it renders */
   terminalId?: string
+  /** browser tab → its page url (persisted; favicon/loading/nav state below are runtime-only) */
+  url?: string
+  favicon?: string
+  loading?: boolean
+  canGoBack?: boolean
+  canGoForward?: boolean
 }
 
 /**
  * A surface on the canvas. One descriptor, four renderers:
- *  - web    : live <webview> (third-party sites, even framing-blockers)
+ *  - web    : live WebContentsView hosted by Electron main (third-party sites, even framing-blockers)
  *  - app    : <iframe src> (first-party blitz.dev apps)
  *  - srcdoc : sandboxed <iframe srcdoc> (agent-authored HTML, no backend)
  *  - native : built-in React component (post-its, tiles) by `component` name
@@ -45,7 +52,7 @@ export interface Surface {
   agentId?: string
   /** Always-on-top (chat/activity) — kept above normal windows regardless of z. */
   pinned?: boolean
-  /** content zoom factor (web: webview zoom; app/srcdoc: CSS scale). default 1 */
+  /** content zoom factor (web: WebContentsView zoom; app/srcdoc: CSS scale). default 1 */
   zoom?: number
   /** saved geometry when maximized, for restore */
   restore?: { x: number; y: number; w: number; h: number }
@@ -75,6 +82,14 @@ export interface Surface {
 export interface Vec2 {
   x: number
   y: number
+}
+
+/** A browser bookmark — machine-global (root journal), flat list keyed by url. */
+export interface Bookmark {
+  id: string
+  url: string
+  title: string
+  addedAt: number
 }
 
 /** A spatial annotation (item 5b): the human right-clicks a POINT on a surface and asks the agent about

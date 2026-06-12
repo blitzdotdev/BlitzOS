@@ -19,7 +19,7 @@ export interface ConnectResult {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed'
+  type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme'
   [k: string]: unknown
 }
 
@@ -81,7 +81,7 @@ const api = {
   sendState(state: OsState): void {
     ipcRenderer.send('os:state', state)
   },
-  /** Renderer reports a web surface's guest WebContents id so main can read its DOM. */
+  /** Legacy webview path: renderer reports a guest WebContents id so main can read its DOM. */
   reportWebview(surfaceId: string, wcid: number): void {
     ipcRenderer.send('os:webview', { surfaceId, wcid })
   },
@@ -145,25 +145,92 @@ const api = {
     return () => ipcRenderer.removeListener('agentsocket:url', listener)
   },
   /** App keybinds forwarded from main's before-input-event — they fire regardless of which guest
-   *  (iframe/webview) holds keyboard focus. id 'tile': ⌘T toggle / ⇧⌘T cycle size. */
+   *  (iframe/WebContentsView) holds keyboard focus. id 'tile': ⌘T toggle / ⇧⌘T cycle size. */
   onKeybind(cb: (k: { id: string; shift: boolean }) => void): () => void {
     const listener = (_e: unknown, k: { id: string; shift: boolean }): void => cb(k)
     ipcRenderer.on('os:keybind', listener)
     return () => ipcRenderer.removeListener('os:keybind', listener)
   },
-  /** A bare ⌘ tap forwarded from a focused webview (for double-tap-⌘ pan toggle). */
+  /** A bare ⌘ tap forwarded from a focused browser guest (for double-tap-⌘ pan toggle). */
   onMetaTap(cb: () => void): () => void {
     const listener = (): void => cb()
     ipcRenderer.on('os:metatap', listener)
     return () => ipcRenderer.removeListener('os:metatap', listener)
   },
 
-  /** Report a live webview's guest webContents id so main can CDP-drive it. */
+  /** Legacy webview path: report a live guest webContents id so main can CDP-drive it. */
   registerWebview(windowId: string, webContentsId: number): void {
     ipcRenderer.send('os:register-webview', windowId, webContentsId)
   },
   unregisterWebview(windowId: string): void {
     ipcRenderer.send('os:unregister-webview', windowId)
+  },
+  /** Electron-only: main owns live web surfaces as WebContentsViews (one per browser TAB); the
+   *  renderer declares the tab list + reports layout, main pushes per-tab page state back. */
+  webContentsViewSync(payload: { id: string; tabs: Array<{ id: string; url?: string }>; active: string | null; zoom?: number }): void {
+    ipcRenderer.send('os:webcontents-view:sync', payload)
+  },
+  webContentsViewBounds(payload: { id: string; rect: { x: number; y: number; width: number; height: number }; visible: boolean; z: number; zoom?: number }): void {
+    ipcRenderer.send('os:webcontents-view:bounds', payload)
+  },
+  webContentsViewNavigate(id: string, tabId: string | null, url: string): void {
+    ipcRenderer.send('os:webcontents-view:navigate', { id, tabId, url })
+  },
+  /** Browser chrome buttons → the surface's active tab. */
+  webContentsViewNavAction(id: string, action: 'back' | 'forward' | 'reload' | 'stop'): void {
+    ipcRenderer.send('os:webcontents-view:nav-action', { id, action })
+  },
+  /** Sandwich input router: forward a pointer/wheel event landing on a browser HOLE to its page.
+   *  Coordinates are view-local CSS px; wheel deltas are the DOM's (main negates for Electron). */
+  pageInput(id: string, ev: { type: 'move' | 'down' | 'up' | 'wheel'; x: number; y: number; button?: number; clicks?: number; dx?: number; dy?: number; modifiers?: string[] }): void {
+    ipcRenderer.send('os:page-input', { id, ev })
+  },
+  /** Keyboard handoff: typing target is this page (pages window becomes key, stays under the UI). */
+  pageFocus(id: string): void {
+    ipcRenderer.send('os:page-focus', id)
+  },
+  /** Keyboard back to the UI window (any pointerdown on UI chrome). */
+  uiFocus(): void {
+    ipcRenderer.send('os:ui-focus')
+  },
+  /** Titlebar drag: 'start' latches the window origin, 'move' applies screen deltas (main moves the
+   *  parent window of the sandwich; CSS app-region cannot be used on the attached child). */
+  shellDrag(op: 'start' | 'move', dx = 0, dy = 0): void {
+    ipcRenderer.send('os:shell-drag', { op, dx, dy })
+  },
+  /** The page's cursor changed (text beam over inputs, hand over links) — mirror it onto the hole. */
+  onPageCursor(cb: (m: { surfaceId: string; cursor: string }) => void): () => void {
+    const listener = (_e: unknown, m: { surfaceId: string; cursor: string }): void => cb(m)
+    ipcRenderer.on('os:page-cursor', listener)
+    return () => ipcRenderer.removeListener('os:page-cursor', listener)
+  },
+  webContentsViewFocus(id: string): void {
+    ipcRenderer.send('os:webcontents-view:focus', id)
+  },
+  webContentsViewClose(id: string): void {
+    ipcRenderer.send('os:webcontents-view:close', id)
+  },
+  /** Per-tab page state pushed from main: {patch} = url/title/favicon/loading/canGoBack/canGoForward;
+   *  {removed} = the tab's webContents died; {openTab} = a popup wants a new tab in this surface. */
+  onWebTab(
+    cb: (m: {
+      surfaceId: string
+      tabId?: string
+      patch?: { url?: string; title?: string; favicon?: string; loading?: boolean; canGoBack?: boolean; canGoForward?: boolean }
+      removed?: boolean
+      openTab?: { url: string }
+    }) => void
+  ): () => void {
+    const listener = (_e: unknown, m: Parameters<typeof cb>[0]): void => cb(m)
+    ipcRenderer.on('os:web-tab', listener)
+    return () => ipcRenderer.removeListener('os:web-tab', listener)
+  },
+  /** Machine-global browser bookmarks (root journal). */
+  bookmarksList(): Promise<Array<{ id: string; url: string; title: string; addedAt: number }>> {
+    return (ipcRenderer.invoke('os:bookmarks') as Promise<Array<{ id: string; url: string; title: string; addedAt: number }>>).catch(() => [])
+  },
+  bookmarksToggle(url: string, title: string): Promise<Array<{ id: string; url: string; title: string; addedAt: number }>> {
+    return (ipcRenderer.invoke('os:bookmarks-toggle', { url, title }) as Promise<Array<{ id: string; url: string; title: string; addedAt: number }>>).catch(() => [])
   },
   /** A srcdoc surface (agent-authored UI) fired an action back to the agent. */
   surfaceAction(payload: Record<string, unknown>): void {

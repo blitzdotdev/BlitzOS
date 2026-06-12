@@ -36,7 +36,7 @@
   },
   {
     "name": "profile",
-    "description": "Thinking-widget. An identity/header card for ONE subject — big name, key facts as labelled chips, optional note. The centerpiece of a dossier/case-file board. Drive with update_surface{props:{kicker?,name,sub?,facts?:[{k,v}],note?}}.",
+    "description": "Thinking-widget. An identity card for ONE subject — big name, up to 4 quiet stats (no titlebar, no prose). The centerpiece of a dossier/case-file board. Drive with update_surface{props:{kicker?,name,sub?,facts?:[{k,v}]}}.",
     "needs": [],
     "props": { "title": "Profile" },
     "version": 1
@@ -57,21 +57,21 @@
   },
   {
     "name": "quotes",
-    "description": "Thinking-widget. Verbatim pull-quotes with source tags — a voice/evidence card for showing EXACTLY what someone said or wrote. Drive with update_surface{props:{items:[{text,source?}],note?}}.",
+    "description": "Thinking-widget. Verbatim words displayed BIG (serif pull-quote card, shows the top 2-3) — for EXACTLY what someone said or wrote. Drive with update_surface{props:{items:[{text,source?}]}}.",
     "needs": [],
     "props": { "title": "Quotes" },
     "version": 1
   },
   {
     "name": "workflows",
-    "description": "Thinking-widget. The web tools someone lives in, as rows with one-click Open (spawns the site as a live web surface via open_window). For surfacing/importing a person's browser-based workflow. Drive with update_surface{props:{items:[{name,host,n?,integration?}],note?}}.",
+    "description": "Thinking-widget. The web tools someone lives in, as an ICON GRID (favicons, Shortcuts-widget look) — tap an icon to open the site as a live web surface via open_window. Drive with update_surface{props:{items:[{name,host,color?,integration?}]}}.",
     "needs": [],
     "props": { "title": "Workflows" },
     "version": 1
   },
   {
     "name": "gaps",
-    "description": "Thinking-widget. Open questions / missing evidence as dashed empty slots — externalizes what is NOT known yet; flip a slot with done:true when answered. Drive with update_surface{props:{items:[{q,hint?,done?}],note?}}.",
+    "description": "Thinking-widget. Open questions as a clean checklist — what is NOT known yet; flip an item with done:true when answered. Drive with update_surface{props:{items:[{q,hint?,done?}]}}.",
     "needs": [],
     "props": { "title": "Gaps" },
     "version": 1

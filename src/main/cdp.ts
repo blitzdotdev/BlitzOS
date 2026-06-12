@@ -6,7 +6,7 @@ import type { CdpSession, ControlAction, ControlResult } from './control-core.mj
 export type { ControlAction, ControlResult } from './control-core.mjs'
 
 /**
- * Electron adapter for in-window control of `web` surfaces (`<webview>` guests).
+ * Electron adapter for in-window control of `web` surfaces (`WebContentsView` guests).
  * The action vocabulary lives in the shared, transport-agnostic control-core.mjs;
  * this file only owns the Electron-specific bits: mapping a surface id to its guest
  * WebContents, and the single-client `webContents.debugger` lifecycle (lazy attach,
@@ -15,7 +15,8 @@ export type { ControlAction, ControlResult } from './control-core.mjs'
  * Server mode reuses control-core.mjs verbatim with a RemoteCdpSession instead.
  */
 
-// surfaceId -> guest <webview> webContents id (reported by the renderer)
+// surfaceId -> guest WebContents id (reported by the renderer in the legacy webview path,
+// registered directly by the WebContentsView host in the current path)
 const registry = new Map<string, number>()
 // webContentsId -> idle-detach timer
 const idleTimers = new Map<number, ReturnType<typeof setTimeout>>()
@@ -24,13 +25,21 @@ const IDLE_DETACH_MS = 60_000
 /** Register the IPC the renderer uses to report/withdraw web-surface guests. */
 export function initCdp(): void {
   ipcMain.on('os:register-webview', (_e, surfaceId: string, webContentsId: number) => {
-    registry.set(surfaceId, webContentsId)
+    registerCdpSurface(surfaceId, webContentsId)
   })
   ipcMain.on('os:unregister-webview', (_e, surfaceId: string) => {
-    const wcId = registry.get(surfaceId)
-    registry.delete(surfaceId)
-    if (wcId !== undefined) detachById(wcId)
+    unregisterCdpSurface(surfaceId)
   })
+}
+
+export function registerCdpSurface(surfaceId: string, webContentsId: number): void {
+  registry.set(surfaceId, webContentsId)
+}
+
+export function unregisterCdpSurface(surfaceId: string): void {
+  const wcId = registry.get(surfaceId)
+  registry.delete(surfaceId)
+  if (wcId !== undefined) detachById(wcId)
 }
 
 function detachById(wcId: number): void {

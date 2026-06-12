@@ -13,8 +13,12 @@
   .wrap.intro .ch{animation:in .3s both}
   .wrap.intro .ch:nth-child(2n){animation-delay:.04s}.wrap.intro .ch:nth-child(3n){animation-delay:.08s}
   @keyframes in{from{opacity:0;transform:scale(.92)}}
+  /* gist mode (an m/s tile): the first section only — pop out for the full inventory */
+  @media (max-height:219px){
+    .wrap{padding:11px 13px}
+    .sec:nth-child(n+2){display:none}
+  }
 </style>
-<blitz-titlebar><span id="hd">Toolbox</span></blitz-titlebar>
 <div class="wrap" id="wrap"></div>
 <script>
   // props: { title?, sections:[{label, items:[{name, n?}]}] } — items with n in the top
@@ -25,7 +29,7 @@
   let data=SAMPLE, __p=false
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
   function render(d){
-    document.getElementById('hd').textContent=d.title||'Toolbox'
+    // no titlebar (widget language): the section labels carry all the identity needed
     const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
     w.innerHTML=(d.sections||[]).map(s=>{
       const ns=(s.items||[]).map(i=>i.n||0).filter(Boolean).sort((a,b)=>b-a)
