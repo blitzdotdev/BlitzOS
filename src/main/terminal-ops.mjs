@@ -60,12 +60,14 @@ export function makeTerminalOps({ getWorkspacePath, emit = () => {}, markWrite =
         terminalsDir,
         emit,
         markWrite: (p) => { try { markWrite(resolve(p)) } catch { /* ignore */ } },
-        // Rebuild a dead AGENT terminal's command on re-exec: fresh relay url + --resume of its persisted
-        // claude session id (created vs resume decided by claudeEstablished inside prepareAgentLaunch).
+        // Rebuild a dead AGENT terminal's command on re-exec: fresh relay url + the right session mode
+        // (resume vs a rotated fresh id for the always-fresh primary), decided inside prepareAgentLaunch.
+        // Returns the FULL { command, claudeSessionId, established } so restartTerminal persists the
+        // (possibly rotated) id + flag — meta and the actual command must never diverge.
         rebuildAgentCommand: (meta) => {
           const url = typeof getUrl === 'function' ? getUrl() : null
           if (!url) return null
-          try { return prepareAgentLaunch({ sessionsDir: terminalsDir, id: meta.id, url, cmd: agentCmd }).command } catch { return null }
+          try { return prepareAgentLaunch({ sessionsDir: terminalsDir, id: meta.id, url, cmd: agentCmd }) } catch { return null }
         }
       })
       entry = { host, mgr, restorePromise: null }

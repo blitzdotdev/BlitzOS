@@ -107,6 +107,18 @@ function claudeConversationExists(sessionsDir, claudeSessionId) {
  *  unset → create mode → 'No conversation found' avoided). */
 export function ensureClaudeSessionId(sessionsDir, id) {
   const m = readMeta(sessionsDir, id)
+  // ALWAYS-FRESH PRIMARY (agent '0', the user's call 2026-06-12): the long-lived primary brain
+  // accumulated a huge `--resume` transcript that tripped Anthropic's cyber-safety classifier near
+  // full context (the saturated curl/bearer/$(cat) history reads as exfiltration) — and a near-full
+  // context is degraded anyway. The primary recovers continuity by RE-READING chat.md on every boot
+  // (the bootstrap mandates that `tail`), so a claude-level resume adds risk without value. Mint a
+  // FRESH session id each launch → `--session-id` create mode, empty context, never trips. A new uuid
+  // is REQUIRED (not just create mode): `claude --resume <missing-id>` exits 0 and `--session-id
+  // <existing-id>` would continue the old session — only a brand-new id guarantees a clean slate.
+  // Spawned agents ('1'+) keep resume (task-scoped, shorter-lived; extend here if they ever trip).
+  // TODO: each boot orphans the prior session jsonl in ~/.claude/projects/<ws>/ — harmless, but a
+  // periodic sweep of stale agent-0 sessions would be tidy.
+  if (String(id) === '0') return { claudeSessionId: randomUUID(), established: false }
   const claudeSessionId = m.claudeSessionId || randomUUID()
   const established = !!m.claudeEstablished || claudeConversationExists(sessionsDir, claudeSessionId)
   return { claudeSessionId, established }
@@ -133,6 +145,7 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
   return {
     claudeSessionId,
+    established, // surfaced so the re-exec path persists the (possibly rotated) id + correct established flag
     command: buildClaudeCommand({ cmd, claudeSid: claudeSessionId, mode: established ? 'resume' : 'create', bootstrapFile: file })
   }
 }

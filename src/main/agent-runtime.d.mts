@@ -6,7 +6,7 @@ export function setBootTaskProvider(fn: ((sessionId: string) => string | null | 
 export function shellQuote(s: string): string
 export function buildClaudeCommand(opts: { cmd?: string; claudeSid: string; mode?: 'create' | 'resume'; bootstrapFile: string }): string
 export function ensureClaudeSessionId(sessionsDir: string, id: string): { claudeSessionId: string; established: boolean }
-export function prepareAgentLaunch(opts: { sessionsDir: string; id: string; url: string | null | undefined; cmd?: string }): { command: string; claudeSessionId: string }
+export function prepareAgentLaunch(opts: { sessionsDir: string; id: string; url: string | null | undefined; cmd?: string }): { command: string; claudeSessionId: string; established: boolean }
 /** Pre-seed claude's one-time workspace-trust ack (~/.claude.json) so an UNATTENDED interactive
  *  spawn can never stall on the trust dialog (headless -p skipped it; the live TUI does not). */
 export function ensureWorkspaceTrusted(wsPath: string): void
