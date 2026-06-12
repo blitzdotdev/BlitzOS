@@ -126,6 +126,7 @@ button {
   border-radius: var(--radius-window);
   background: color-mix(in srgb, var(--accent) 5%, transparent);
   z-index: 1;
+  pointer-events: none;
 }
 /* The active stage among several (#45) — solid, brighter frame so you can see which desktop you're on. */
 .primary-space.is-current {
@@ -133,14 +134,53 @@ button {
   border-color: color-mix(in srgb, var(--accent) 75%, transparent);
   background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
-.primary-label {
+.primary-space.primary-space-add {
+  border-color: color-mix(in srgb, var(--text-muted) 34%, transparent);
+  background: color-mix(in srgb, var(--surface) 28%, transparent);
+}
+.area-chrome-overlay {
   position: absolute;
-  top: 10px;
-  left: 14px;
+  inset: 0;
+  z-index: 900; /* above the transformed world/surfaces, below toolbar/sidebar/titlebar chrome */
+  pointer-events: none;
+}
+.area-chrome-label,
+.area-chrome-create {
+  appearance: none;
+  position: absolute;
+  pointer-events: auto;
   font-family: var(--font-mono);
-  font-size: 11px;
   letter-spacing: var(--track-label);
-  color: color-mix(in srgb, var(--accent) 70%, transparent);
+  white-space: nowrap;
+  color: var(--text-secondary);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+.area-chrome-label {
+  transform: translateY(-100%);
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.area-chrome-label.is-current {
+  color: color-mix(in srgb, var(--accent) 76%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+}
+.area-chrome-create {
+  transform: translate(-50%, -50%);
+  padding: 8px 14px;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.area-chrome-label:hover,
+.area-chrome-create:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
 }
 
 /* Ground plane: widgets + icons (legacy ground-plane items). */
@@ -1363,6 +1403,45 @@ button {
   flex: 1 1 auto;
 }
 
+.browser-chrome {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.browser-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.browser-nav-btn {
+  width: 24px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.browser-nav-btn:hover:not(:disabled) {
+  background: var(--control);
+  color: var(--text);
+  border-color: var(--hairline);
+}
+.browser-nav-btn:disabled {
+  color: color-mix(in srgb, var(--text-muted) 52%, transparent);
+  cursor: default;
+}
 /* Address bar for web/app surfaces — view + edit the URL. Matches the window chrome:
    control surface, hairline border, mono URL text, accent on focus (never default blue). */
 .window-url {
@@ -1573,13 +1652,21 @@ button {
    Screen-space chrome
    ============================================================================ */
 
-/* Bottom-center toolbar (frosted cluster). */
-.toolbar {
+/* Bottom toolbars (frosted clusters). */
+.toolbar-shell {
   position: fixed;
   bottom: 18px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  max-width: calc(100vw - 96px);
+  pointer-events: none;
+}
+.toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1592,8 +1679,25 @@ button {
     inset 0 1px 0 var(--edge-highlight),
     inset 0 0 0 1px var(--hairline),
     var(--shadow-md);
+  pointer-events: auto;
+}
+.toolbar-advanced {
+  padding: 8px;
+}
+.toolbar-divider {
+  align-self: stretch;
+  width: 1px;
+  min-height: 24px;
+  margin: 2px 1px;
+  background: var(--hairline);
+  opacity: 0.75;
 }
 .toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: 0 0 auto;
   background: var(--control);
   color: var(--text);
   border: none;
@@ -1603,19 +1707,40 @@ button {
   cursor: pointer;
   box-shadow: inset 0 1px 0 var(--edge-highlight);
   transition: background var(--dur-fast) var(--ease-out);
+  white-space: nowrap;
 }
-.toolbar button:hover {
+.toolbar button:hover,
+.toolbar button.active {
   background: var(--control-hover);
 }
-.toolbar .hint {
-  flex: 0 0 auto;
-  width: 250px;
+.connect-ai-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  line-height: 0;
+}
+.agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--text-muted);
   padding: 0 6px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+.agent-status.online {
+  color: var(--positive);
+}
+.agent-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e0a23c;
+}
+.agent-status.online .agent-status-dot {
+  background: var(--positive);
 }
 /* Stage control (#45): prev/next arrows + indicator + add. Compact, inline in the toolbar. */
 .stage-ctl {
@@ -1639,6 +1764,68 @@ button {
   opacity: 0.4;
   cursor: default;
 }
+.advanced-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+}
+.advanced-popover {
+  position: absolute;
+  width: 286px;
+  max-width: 88vw;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border-radius: var(--radius-panel);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-lg);
+}
+.advanced-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  border: none;
+  border-radius: var(--radius-button);
+  padding: 10px 12px;
+  background: var(--control);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--edge-highlight);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.advanced-action:hover {
+  background: var(--control-hover);
+}
+.advanced-action svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+.advanced-action-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.advanced-action-title {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+.advanced-action-sub {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
 
 /* Left dock. */
 .sidebar {
@@ -1646,60 +1833,48 @@ button {
   top: 32px;
   left: 0;
   bottom: 0;
-  width: 52px;
+  width: 64px;
   z-index: 1500;
   background: color-mix(in srgb, var(--surface) 78%, transparent);
   border-right: 1px solid var(--hairline);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 12px;
-  gap: 10px;
+  overflow: visible;
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
 }
-.sidebar-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-button);
-  border: none;
-  background: var(--control);
-  color: var(--text-secondary);
-  cursor: pointer;
-  box-shadow: inset 0 1px 0 var(--edge-highlight);
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.sidebar-btn:hover {
-  background: var(--control-hover);
-  color: var(--text);
-}
-.sidebar-btn.active {
-  background: var(--control-hover);
-  color: var(--text);
-}
-.sidebar-btn svg {
-  width: 18px;
-  height: 18px;
-}
-.sidebar-sep {
-  width: 24px;
-  height: 1px;
-  background: var(--hairline);
-  margin: 2px 0;
-  flex: 0 0 auto;
-}
 .sidebar-apps {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  width: 100%;
+  width: 76px;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-bottom: 10px;
+  padding: 12px 0 10px 7px;
+  box-sizing: border-box;
+}
+.sidebar-apps::-webkit-scrollbar {
+  width: 12px;
+}
+.sidebar-apps::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--surface) 42%, transparent);
+}
+.sidebar-apps::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 48%, transparent);
+  background-clip: padding-box;
+}
+.sidebar-apps::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-secondary) 58%, transparent);
+  background-clip: padding-box;
 }
 .sidebar-app {
   flex: 0 0 auto;
@@ -1707,8 +1882,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   border-radius: var(--radius-button);
   border: none;
   background: var(--surface-raised);
@@ -1737,13 +1912,14 @@ button {
 .sidebar-app.minimized::after {
   content: '';
   position: absolute;
-  right: 5px;
+  left: 50%;
   bottom: 5px;
   width: 8px;
   height: 3px;
   border-radius: 999px;
   background: var(--accent);
   opacity: 0.8;
+  transform: translateX(-50%);
 }
 .sidebar-app.is-minimizing,
 .sidebar-app.is-restoring {
@@ -1760,8 +1936,8 @@ button {
   display: inline-flex;
 }
 .sidebar-app-ic svg {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
 }
 .sidebar-app-label {
   display: none;
@@ -1791,6 +1967,11 @@ button {
 }
 .sidebar-tooltip.closing {
   animation: sidebar-tooltip-out 120ms var(--ease-out) both;
+}
+.toolbar-tooltip {
+  transform: translate(-50%, -100%);
+  max-width: min(320px, calc(100vw - 32px));
+  animation: toolbar-tooltip-in 90ms var(--ease-out) both;
 }
 
 .surface-launcher-backdrop {
@@ -1826,6 +2007,9 @@ button {
   -webkit-backdrop-filter: blur(22px) saturate(1.18);
   transform-origin: 0 18px;
   animation: surface-launcher-in 170ms var(--ease-out) both;
+}
+.surface-launcher-toolbar {
+  transform-origin: 50% 100%;
 }
 .surface-launcher.closing {
   animation: surface-launcher-out 150ms var(--ease-out) both;
@@ -1916,6 +2100,17 @@ button {
   to {
     opacity: 0;
     transform: translate(3px, -50%) scale(0.98);
+  }
+}
+
+@keyframes toolbar-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-100% + 3px)) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -100%) scale(1);
   }
 }
 
@@ -2256,12 +2451,16 @@ button {
 }
 
 /* Command HUD (the agent-connect / scratch-pad-style bar). */
+.hud-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+}
 .hud {
   position: fixed;
   bottom: 74px;
-  left: 50%;
+  left: 50vw;
   transform: translateX(-50%);
-  z-index: 1600;
   width: 480px;
   max-width: 92vw;
   background: color-mix(in srgb, var(--surface) 82%, transparent);
@@ -2303,6 +2502,32 @@ button {
 }
 .hud-input:focus {
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.hud-copy {
+  width: 68px;
+  min-width: 68px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.hud-copy.copied {
+  min-width: 68px;
+  width: 68px;
+  padding: 0;
+  background: var(--positive, #2fbf65);
+  color: #fff;
+}
+.hud-copy.copied:hover {
+  background: var(--positive, #2fbf65);
+  color: #fff;
+}
+.hud-copy.copied svg {
+  width: 18px;
+  height: 18px;
 }
 
 /* ============================================================================
@@ -2588,9 +2813,17 @@ button {
   inset: 0;
   max-width: 1600px;
   margin-inline: auto;
-  padding: 0 20px 40px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0 20px 144px;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.ovr-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .ovr-head {
@@ -2611,21 +2844,40 @@ button {
   color: var(--text);
 }
 
-.ovr-new {
-  display: flex;
-  gap: 8px;
+.ovr-x {
   margin-left: auto;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 30px;
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  opacity: 0.82;
 }
 
-.ovr-x {
-  font-size: 22px;
+.ovr-x:hover {
+  background: transparent;
+  color: var(--text);
+  opacity: 1;
+  transform: translateY(-1px);
 }
 
 .ovr-error {
   margin: 0 4px 10px;
 }
 
+.ovr-content {
+  flex: 1 0 auto;
+  min-height: calc(100vh - 220px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(44px, 8vh, 104px) 0 clamp(72px, 10vh, 128px);
+}
+
 .ovr-grid {
+  width: 100%;
   display: grid;
   gap: 20px;
   margin-inline: auto; /* center the (width-capped) grid so a few tiles don't stretch full-width */
@@ -2847,6 +3099,182 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ovr-create {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 3;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ovr-settings-btn,
+.ovr-create-plus,
+.ovr-create-form {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 1px solid var(--hairline);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    var(--shadow-lg);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+}
+
+.ovr-settings-btn,
+.ovr-create-plus {
+  width: 58px;
+  height: 58px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.ovr-settings-btn:hover:not(:disabled),
+.ovr-settings-btn.active,
+.ovr-create-plus:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border-color: color-mix(in srgb, var(--text) 13%, transparent);
+}
+
+.ovr-settings-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.ovr-settings-popover {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 14px);
+  transform: translateX(-50%);
+  z-index: 1;
+  width: 220px;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    var(--shadow-lg);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+}
+
+.ovr-settings-title {
+  padding: 2px 4px 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.ovr-theme-option {
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  border: none;
+  border-radius: var(--radius-button);
+  padding: 0 11px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ovr-theme-option:hover,
+.ovr-theme-option.active {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.ovr-create-plus:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ovr-create-form {
+  width: min(420px, calc(100vw - 48px));
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 999px;
+}
+
+.ovr-create-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 42px;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--text);
+  font-size: 14px;
+  padding: 0 15px;
+  outline: none;
+}
+
+.ovr-create-input::placeholder {
+  color: var(--text-muted);
+}
+
+.ovr-create-input:focus {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.ovr-create-action {
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+
+.ovr-create-action.ok:not(:disabled) {
+  color: #fff;
+  background: var(--positive);
+}
+
+.ovr-create-action.cancel:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.ovr-create-action.ok:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--positive) 86%, #000);
+}
+
+.ovr-create-action:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* (duplicate .window-ico removed in merge cleanup — consolidated into the
@@ -3115,17 +3543,17 @@ button {
 /* ---- Stage grid toggle (window bar): snap a window into the lattice / pop a tile out ---- */
 .slot-toggle {
   flex: 0 0 auto;
-  width: 22px;
-  height: 18px;
+  width: 28px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-left: 2px;
+  margin-left: 4px;
   border: none;
-  border-radius: 5px;
+  border-radius: 7px;
   background: transparent;
   color: var(--text-dim, var(--text));
-  font-size: 12px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;

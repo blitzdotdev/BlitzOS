@@ -265,6 +265,10 @@ const api = {
   requestHydrate(): void {
     ipcRenderer.send('workspace:request-hydrate')
   },
+  /** Re-open the runtime chat hub if the user closed it. */
+  restoreChatHub(): Promise<{ ok: boolean; id?: string; error?: string }> {
+    return ipcRenderer.invoke('os:restore-chat-hub')
+  },
 
   /** Relay a sandboxed srcdoc widget's data request to main (consent-gated; token stays in main). */
   widgetRequest(req: {

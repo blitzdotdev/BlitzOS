@@ -50,6 +50,7 @@ export interface WorkspaceHost {
   customizeWidget(name: string, html: string, agentId?: string): { ok: boolean; rel?: string; error?: string }
   systemUi(name: string): string | null
   agentIds(): string[]
+  restoreChatHub(): { ok: boolean; id?: string; error?: string }
   newAgentId(): string
   addAgent(agentId: string, title?: string, opts?: { focus?: boolean }): Record<string, unknown>
   closeAgent(agentId: string): { ok: boolean; error?: string }

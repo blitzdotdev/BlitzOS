@@ -258,6 +258,7 @@ export function initOsActions(opts: {
   // The renderer pulls its hydrate once its onAction listener is mounted (race-free; absorbs the
   // teammate's request-hydrate, replacing the old main-push on did-finish-load).
   ipcMain.on('workspace:request-hydrate', () => osSendHydrate())
+  ipcMain.handle('os:restore-chat-hub', () => osRestoreChatHub())
 
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) {
@@ -946,6 +947,13 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
 export function osSendHydrate(): void {
   if (!wsHost) return
   send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, workspace: wsHost.active() })
+}
+export function osRestoreChatHub(): { ok: boolean; id?: string; error?: string } {
+  try {
+    return wsHost ? wsHost.restoreChatHub() : { ok: false, error: 'workspace host not ready' }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || 'restore chat failed' }
+  }
 }
 /** Serve a workspace thumbnail by name (the blitz-thumb:// protocol handler in index.ts calls this). */
 export function osReadThumb(name: string): Buffer | null {

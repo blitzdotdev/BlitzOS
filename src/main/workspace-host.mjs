@@ -314,6 +314,24 @@ export function createWorkspaceHost(a) {
   }
   /** Every agent's chat surface (primary + spawned agents) — built on hydrate/switch. */
   function buildAgentSurfaces() { return agentIds().map((id) => buildAgentSurface(id)) }
+  /** Re-open the primary chat widget after the human closes it. */
+  function restoreChatHub() {
+    const st = a.getState() || { surfaces: [], stageCount: 1 }
+    const chat = buildAgentSurface('0')
+    const surfaces = Array.isArray(st.surfaces) ? st.surfaces : []
+    const matchesPrimaryChat = (s) => s && (s.id === chat.id || (s.role === 'chat' && String(s.agentId ?? '0') === '0'))
+    const nextSurfaces = surfaces.some(matchesPrimaryChat)
+      ? surfaces.map((s) => (
+          matchesPrimaryChat(s)
+            ? { ...chat, ...s, minimized: false, html: chat.html, props: chat.props }
+            : s
+        ))
+      : [...surfaces, chat]
+    const stageCount = Math.max(Number(st.stageCount) || 1, maxAgentStageCount())
+    a.setState({ ...st, surfaces: nextSurfaces, stageCount })
+    a.broadcast({ type: 'create', surface: { ...chat, minimized: false }, focus: true })
+    return { ok: true, id: chat.id }
+  }
   /** Mint the next agent id: max existing integer id + 1 (primary '0' counts), so ids stay 1,2,3…
    *  Non-numeric ids (none today) are ignored for the max. */
   function newAgentId() {
@@ -675,6 +693,7 @@ export function createWorkspaceHost(a) {
     customizeWidget,
     systemUi,
     agentIds,
+    restoreChatHub,
     newAgentId,
     addAgent,
     closeAgent,
