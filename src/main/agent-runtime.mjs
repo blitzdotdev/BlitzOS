@@ -55,8 +55,9 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
     // The OS can hand a session ONE standing duty (e.g. the onboarding interview); the duty text licenses
     // unprompted action for its own scope and is re-read per (re)launch, so a finished duty disappears.
     ...(bootTask ? [`STANDING DUTY — sanctioned by the OS, do it FIRST after recovering context (it OVERRIDES the do-nothing-unprompted rule below until it is done, and only for its own scope): ${bootTask}`] : []),
-    `Your ONLY job: respond when the user types in YOUR chat. Poll \`curl -sX POST ${B}/events -d '{"since":0,"wait":0${sess}}'\` once for the live backlog, then set \`since\` to the returned \`latest\` and run the /events long-poll loop FOREVER (wait:25${sess ? `, always including ${sess.slice(1)}` : ''}), responding to each new trigger:'message' and doing EXACTLY what it asks.`,
-    `CRITICAL — STAYING REACHABLE: there is NO background process polling for you. The user reaches you ONLY while you are actively calling \`/events\`. The INSTANT you stop (end your turn, go "idle", or announce you are "watching/listening" and then sit waiting) you go DEAF — the user's messages pile up unseen and you appear frozen. So you must keep calling \`/events\` yourself in an UNBROKEN, NEVER-ENDING chain: poll → (handle any message) → poll again → poll again → forever. After EVERY poll, immediately issue the next poll, even if it returned nothing. Do NOT say "I'm now watching" and then stop — that makes you deaf. Just keep polling, forever, no matter what.`,
+    `Your ONLY job: respond when the user messages YOUR chat. ON CONNECT, fetch the backlog ONCE — \`curl -sX POST ${B}/events -d '{"since":0,"wait":0${sess}}'\` — and note the returned \`latest\` as your cursor (a number).`,
+    `THEN WAIT — do NOT hand-roll a \`while curl /events\` loop in your own turns (every empty poll would burn a turn). Run ONE command, with a 10-MINUTE timeout on your Bash tool: \`bash .blitzos/wait.sh <cursor> '${sess}'\` (replace <cursor> with your latest number). It BLOCKS in the shell — which costs you nothing and keeps you fully reachable — and returns ONLY when a new event arrives (it loops the 25s long-poll internally), or re-arms after ~10 min. It prints \`{"events":[…],"latest":N}\`.`,
+    `CRITICAL — STAYING REACHABLE: \`wait.sh\` IS how you stay reachable. Handle each \`trigger:'message'\` it returns (do EXACTLY what it asks), update your cursor to the new \`latest\`, then run \`bash .blitzos/wait.sh <cursor> '${sess}'\` AGAIN — immediately, forever. NEVER end your turn without \`wait.sh\` running: the instant nothing is blocking on events, the user's messages pile up unseen and you appear frozen. Do NOT say "I'm now watching" and then stop — re-run \`wait.sh\` instead.`,
     `BE VISIBLE — the user must always SEE what you're doing. Reply + progress ONLY via \`curl -sX POST ${B}/say -d '{"text":"…"${sess}}'\` (this lands in YOUR chat). The MOMENT you get a message, /say a one-line acknowledgement of your PLAN, then /say a short note before/after each meaningful step. Never go quiet for more than a few seconds of work without a /say. DO NOTHING unprompted. Going silent, or acting without saying what you're doing, is a FAILURE.`,
     ...(primary
       ? []
@@ -129,6 +130,7 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
     mkdirSync(sessionDir(sessionsDir, id), { recursive: true })
     writeFileSync(file, buildBootstrap(url, id, bootTask, workspace))
     writeRelayUrl(dirname(sessionsDir), url) // <ws>/.blitzos/relay-url — the live base the agent re-reads per call
+    writeWaitScript(dirname(sessionsDir)) // <ws>/.blitzos/wait.sh — the blocking event-wait the bootstrap points at
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
   return {
     claudeSessionId,
@@ -143,4 +145,31 @@ export function writeRelayUrl(blitzDir, url) {
   if (!blitzDir || !url) return
   const base = String(url).replace(/\/agents\.md$/, '')
   try { mkdirSync(blitzDir, { recursive: true }); writeFileSync(join(blitzDir, 'relay-url'), base) } catch { /* best-effort */ }
+}
+
+// The agent's BLOCKING event-wait, run as `bash .blitzos/wait.sh <since> '<scopeJson>'` (cwd = workspace).
+// It loops the 25s `/events` long-poll IN THE SHELL and returns ONLY on a real event — so the agent's LLM is
+// woken once per actual message instead of once per empty 25s poll (~24× fewer idle turns). It re-reads
+// `.blitzos/relay-url` each iteration, so a relay-url change after a BlitzOS restart self-heals mid-wait.
+// $1 = the `since` cursor (a number); $2 = the scope JSON fragment (e.g. `,"agent":"1","workspace":"Home"`).
+export const WAIT_SCRIPT = `#!/bin/sh
+# BlitzOS agent event-wait — blocks until the next event, prints {"events":[…],"latest":N}, exits. See agent-runtime.mjs.
+S="\${1:-0}"; SC="$2"
+while :; do
+  B=$(cat .blitzos/relay-url 2>/dev/null)
+  [ -z "$B" ] && { sleep 1; continue; }
+  R=$(curl -sS -X POST "$B/events" -H 'content-type: application/json' -d "{\\"since\\":$S,\\"wait\\":25$SC}" 2>/dev/null)
+  case "$R" in
+    '' ) sleep 1 ;;                     # transient failure / url change — retry (relay-url re-read next loop)
+    *'"events":[]'* ) : ;;             # 25s timeout, nothing new — keep blocking
+    * ) printf '%s\\n' "$R"; exit 0 ;; # got events — hand them back to the agent's turn
+  esac
+done
+`
+
+/** Write `<blitzDir>/wait.sh` (the agent's blocking event-wait). Static content; written at every launch so it
+ *  always exists next to relay-url. `blitzDir` is the workspace's `.blitzos` folder. */
+export function writeWaitScript(blitzDir) {
+  if (!blitzDir) return
+  try { mkdirSync(blitzDir, { recursive: true }); writeFileSync(join(blitzDir, 'wait.sh'), WAIT_SCRIPT) } catch { /* best-effort */ }
 }
