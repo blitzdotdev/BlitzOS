@@ -4,6 +4,13 @@
 
 Living checklist. Status: ✅ done · 🔧 in progress · ⬜ todo · 🔴 bug.
 
+## ✅ Re-merged `agent-runtime-moments` again (`4f06d06`, 2026-06-12)
+The branch advanced from the cached `b47dca1` (merged in `e83f7c4`) to `16953bb` — **21 new commits**: the **sandwich** compositor (web surfaces → real multi-tab `WebContentsView` windows, retiring `<webview>`), **perception sees canvas surface ops** as moments, a **telemetry/session-replay** pipeline + dashboard, a **portable bundled tmux** (`resolveTmuxBin`) + tmux-less graceful degradation, signed/notarized **CI** + build channels, a **softened agent bootstrap** (drops C2-looking framing), and **`ensureWorkspaceTrusted`** (claude trust pre-seed). Reconciled with my 7 post-merge commits.
+- **Conflict (agent-runtime.mjs):** kept my `wait.sh` MECHANISM with the branch's SOFTER tone; kept BOTH `writeWaitScript` + `ensureWorkspaceTrusted`. The other 4 overlap files auto-merged; verified all my changes survived.
+- **Cross-platform fix folded in:** `resolveTmuxBin` only checked `existsSync` → on Linux it picked the vendored **Mac-arm64** tmux (control client failed → phantom "exited" status). Now probes each candidate with `-V`; picks `/usr/bin/tmux` here, the bundled tmux on a packaged Mac. Verified live (agent status=running, replies 5s, single process).
+- **Verified:** gates green (typecheck · parity 11 · build); all unit tests pass; live server mode works; drive suite passes (stages on re-run — step-1 render race, now flakier with the heavier renderer).
+- **Follow-ups:** ⬜ `set_theme` is Electron-only server-side (graceful guard; wire into server or doc as Electron-first). ⬜ harden `drive-stages` step-1 to poll-until-settled (render-race flake). ⬜ Electron sandwich/`WebContentsView` needs a Mac pixel-test (no display here). ⬜ re-merge any branch commits newer than `16953bb` (git fetch unavailable here).
+
 ## The standing goal (delivered)
 > every agent owns a workspace stage; its terminal + the windows it opens live there (not the user's stage); every agent has a name/id and resumes; serialization round-trips a restart.
 
