@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
-import { ingestSignals, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, INJECT, DRAIN } from './events'
+import { ingestSignals, ingestCanvasOps, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName, appendChatMessage, resolveWorkspace } from './workspace.mjs'
 import { tel } from './telemetry'
@@ -131,6 +131,10 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     },
     broadcast: (obj) => {
       tel('act', obj) // telemetry: the renderer's entire feed = the replayable content stream
+      // bulk transitions flow over THIS seam (workspace-host reconcile/switch) — suppress the
+      // canvas-gesture differ for a beat so a folder-wide change never reads as human gestures
+      const bt = (obj as { type?: unknown })?.type
+      if (bt === 'reconcile' || bt === 'hydrate' || bt === 'switch') canvasBulkAt = Date.now()
       getWin()?.webContents.send('os:action', obj)
     },
     onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
@@ -186,7 +190,9 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
 
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) {
+      const prev = cached // BEFORE the host replaces it — the diff baseline for human canvas ops
       wsHost?.onStatePush(state)
+      diffCanvasOps(prev, state)
       // telemetry: a compact layout keyframe (~every 20s, not every push) — replay resyncs from these;
       // content fidelity comes from the 'act' stream, so heavy props are deliberately dropped here.
       if (Date.now() - lastStateKeyframe > 20_000) {
@@ -336,6 +342,7 @@ export async function osReadWindow(id: string, script?: string): Promise<unknown
 
 function send(type: string, payload: Record<string, unknown> = {}): void {
   tel('act', { type, ...payload }) // telemetry: surface ops (create/update/move/close…) emit HERE, not via the adapter broadcast
+  noteCanvasOpFromMain(type, payload) // perception: tool-driven desktop changes become 'canvas' moments
   getWin()?.webContents.send('os:action', { type, ...payload })
 }
 
@@ -343,6 +350,100 @@ function send(type: string, payload: Record<string, unknown> = {}): void {
 export function osBroadcast(action: Record<string, unknown>): void {
   tel('act', action) // telemetry: session/action-item events emit here (the shared-core seam)
   getWin()?.webContents.send('os:action', action)
+}
+
+// ---- canvas perception (the brain sees window movement — issues/open/perception-blind-spot…):
+// TOOL-driven ops ingest at the send() seam with origin 'tool'; HUMAN gestures are derived by
+// diffing successive renderer os:state pushes. The renderer ECHOES applied tool ops back in its
+// next state push, so each tool op arms a short-lived echo key the differ consumes instead of
+// double-reporting it as human. Bulk transitions (hydrate/switch/reconcile) change everything at
+// once and are perception-noise — they suppress the differ for a beat instead of spamming ops.
+const canvasEcho = new Map<string, number>() // `${op}:${id}` -> armed-at
+const CANVAS_ECHO_TTL = 5000
+let canvasBulkAt = 0
+const CANVAS_BULK_WINDOW = 3000
+const CANVAS_MOVE_MIN = 8 // px; below this a "move" is layout jitter, not a gesture
+
+function armEcho(op: string, id: unknown): void {
+  if (typeof id === 'string' && id) canvasEcho.set(`${op}:${id}`, Date.now())
+}
+function consumeEcho(op: string, id: string): boolean {
+  const k = `${op}:${id}`
+  const t = canvasEcho.get(k)
+  if (t == null) return false
+  canvasEcho.delete(k)
+  return Date.now() - t <= CANVAS_ECHO_TTL
+}
+
+function noteCanvasOpFromMain(type: string, payload: Record<string, unknown>): void {
+  try {
+    if (type === 'hydrate' || type === 'switch' || type === 'reconcile') {
+      canvasBulkAt = Date.now()
+      return
+    }
+    if (type === 'create') {
+      const s = payload.surface as { id?: string; title?: string; kind?: string } | undefined
+      if (!s?.id) return
+      armEcho('open', s.id)
+      ingestCanvasOps([{ op: 'open', id: s.id, title: s.title, kind: s.kind, origin: 'tool' }])
+    } else if (type === 'close') {
+      const id = payload.id
+      if (typeof id !== 'string') return
+      armEcho('close', id)
+      const t = (cached.surfaces || []).find((x) => x.id === id)
+      ingestCanvasOps([{ op: 'close', id, title: t?.title, origin: 'tool' }])
+    } else if (type === 'move') {
+      const { id, x, y } = payload as { id?: string; x?: number; y?: number }
+      if (typeof id !== 'string') return
+      armEcho('move', id)
+      const t = (cached.surfaces || []).find((s) => s.id === id)
+      ingestCanvasOps([{ op: 'move', id, title: t?.title, x: Number(x) || 0, y: Number(y) || 0, origin: 'tool' }])
+    } else if (type === 'update') {
+      const { id, patch } = payload as { id?: string; patch?: Record<string, unknown> }
+      if (typeof id !== 'string' || !patch) return
+      const t = (cached.surfaces || []).find((s) => s.id === id)
+      if (patch.x != null || patch.y != null) {
+        armEcho('move', id)
+        ingestCanvasOps([{ op: 'move', id, title: t?.title, x: Number(patch.x ?? t?.x) || 0, y: Number(patch.y ?? t?.y) || 0, origin: 'tool' }])
+      }
+      if (patch.w != null || patch.h != null) {
+        armEcho('resize', id)
+        ingestCanvasOps([{ op: 'resize', id, title: t?.title, w: Number(patch.w ?? t?.w) || 0, h: Number(patch.h ?? t?.h) || 0, origin: 'tool' }])
+      }
+    }
+  } catch {
+    /* perception must never break the control plane */
+  }
+}
+
+/** Human gestures: diff the renderer's authoritative state pushes. Runs on every os:state. */
+function diffCanvasOps(prev: OsState, next: OsState): void {
+  try {
+    if (Date.now() - canvasBulkAt < CANVAS_BULK_WINDOW) return
+    const a = new Map((prev.surfaces || []).map((s) => [s.id, s]))
+    const b = new Map((next.surfaces || []).map((s) => [s.id, s]))
+    if (!a.size && b.size > 1) return // first real push after boot — hydration, not gestures
+    const ops: Array<{ op: 'open' | 'close' | 'move' | 'resize'; id: string; title?: string; kind?: string; x?: number; y?: number; w?: number; h?: number; origin: 'human' }> = []
+    for (const [id, s] of b) {
+      const p = a.get(id)
+      if (!p) {
+        if (!consumeEcho('open', id)) ops.push({ op: 'open', id, title: s.title, kind: s.kind, origin: 'human' })
+        continue
+      }
+      if (Math.abs(s.x - p.x) >= CANVAS_MOVE_MIN || Math.abs(s.y - p.y) >= CANVAS_MOVE_MIN) {
+        if (!consumeEcho('move', id)) ops.push({ op: 'move', id, title: s.title, x: s.x, y: s.y, origin: 'human' })
+      }
+      if (Math.abs(s.w - p.w) >= CANVAS_MOVE_MIN || Math.abs(s.h - p.h) >= CANVAS_MOVE_MIN) {
+        if (!consumeEcho('resize', id)) ops.push({ op: 'resize', id, title: s.title, w: s.w, h: s.h, origin: 'human' })
+      }
+    }
+    for (const [id, p] of a) {
+      if (!b.has(id) && !consumeEcho('close', id)) ops.push({ op: 'close', id, title: p.title, origin: 'human' })
+    }
+    if (ops.length) ingestCanvasOps(ops)
+  } catch {
+    /* perception must never break the state pipeline */
+  }
 }
 
 /** Create any surface kind. Returns its id. */

@@ -6,7 +6,7 @@ export interface BlitzMoment {
   surfaceId: string
   url?: string
   title?: string
-  trigger: 'batch' | 'nav' | 'idle' | 'action' | 'message' | 'select'
+  trigger: 'batch' | 'nav' | 'idle' | 'action' | 'message' | 'select' | 'canvas'
   windowMs: number
   signals: Record<string, number>
   user: string[]
@@ -23,6 +23,9 @@ export function redactMoment(m: BlitzMoment): BlitzMoment
 export function ingestSignals(surfaceId: string, raw: Array<Record<string, unknown>>): void
 /** Telemetry seam: observe every emitted moment. No-op until set; never breaks the emit path. */
 export function setMomentTap(fn: ((moment: Record<string, unknown>) => void) | null): void
+/** Desktop-geometry ops (window open/close/move/resize) → coalesced 'canvas' moments for the
+ *  primary watcher. origin 'human' = a gesture; 'tool' = a syscall (the policy absorbs its own). */
+export function ingestCanvasOps(ops: Array<{ op: 'open' | 'close' | 'move' | 'resize'; id: string; title?: string; kind?: string; x?: number; y?: number; w?: number; h?: number; origin: 'human' | 'tool' }>): void
 export function latestSeq(): number
 export function emitSurfaceAction(surfaceId: string, action: Record<string, unknown>): void
 export function emitUserMessage(text: string, sessionId?: string): void
