@@ -43,6 +43,9 @@ Ran a full verified audit (gates + 5/6 live drive tests + a 28-agent adversarial
 - ✅ **`claudeEstablished` narrow create-mode race** (survivor restarted in the <8s window) → deterministic backstop: `ensureClaudeSessionId` also treats the agent as established when claude's conversation jsonl already exists on disk (encoding verified against the live store). [correctness]
 - ✅ **`InboxPanel` ActionItem type said `sessionId`** but the producer emits `agentId` → renamed (was never read). [vocabulary]
 
+## 🚫 Descoped by the user (2026-06-12) — DO NOT re-raise
+- **Per-task git worktrees**, **per-session autonomy policy** (auto/checkpoint/dry-run), and **persona templates** are OFF the roadmap. Removed from `plans/abstract-marinating-meerkat.md` (the old Phase 3). NOTE: the core "Suggest & Confirm" write-consent model (`agent-os-dynamic-architecture.md`) is a SEPARATE, foundational concept and is NOT descoped.
+
 ## ⬜ Remaining (not blocking)
 - ⬜ **Electron live test** — needs `npm run dev` on a Mac (no display in this sandbox). Code is parity-identical to the verified server path.
 - ⬜ **Name-on-create prompt** for +Terminal/+Agent (today: auto-named + rename-after). Optional UX.
