@@ -67,7 +67,7 @@ cmd_stop() {
   # user-data-dir name). Never touches 8787 (the agent-socket relay) or other browsers.
   if command -v fuser >/dev/null 2>&1; then fuser -k -KILL "${RENDERER_PORT}/tcp" "${BACKEND_PORT}/tcp" 2>/dev/null || true; fi
   pkill -KILL -f 'blitz-chrome' 2>/dev/null || true
-  # NOTE: agent sessions are claude processes running in the workspace's OWN tmux server (not the backend's
+  # NOTE: agent sessions are backend processes running in the workspace's OWN tmux server (not the backend's
   # process group), so they intentionally SURVIVE a stop and reattach on the next start. Do NOT kill them here.
   say "stopped."
 }
@@ -79,11 +79,12 @@ cmd_start() {
     say "WARNING: server mode needs Chromium ('$CHROMIUM' not found) — set CHROMIUM=/path, or run with SERVER_MODE=0."
   fi
 
-  # BLITZ_AGENT (optional): if set (e.g. =claude), each chat session runs a claude in its own tmux terminal
-  # (reattached across restarts). Unset = sessions persist but no claude is auto-launched.
+  # BLITZ_AGENT (optional): if set (e.g. =1, =codex, or =claude), each chat session runs a managed agent
+  # in its own tmux terminal (reattached across restarts). Unset = sessions persist but no agent is auto-launched.
+  # BLITZ_AGENT_BACKEND / BLITZ_AGENT_RUNTIME (optional): choose codex-serverless or claude.
   # BLITZ_WORKSPACES_ROOT (optional): the folder that holds all workspace folders (default
   # preview/.workspace). BLITZ_WORKSPACE (optional, back-compat): a single explicit workspace folder.
-  export BLITZ_SERVER_MODE="$SERVER_MODE" BACKEND_PORT="$BACKEND_PORT" CHROMIUM="$CHROMIUM" PUBLIC_BASE_URL="$PUBLIC_BASE_URL" BLITZ_AGENT="${BLITZ_AGENT:-}" BLITZ_WORKSPACES_ROOT="${BLITZ_WORKSPACES_ROOT:-}" BLITZ_WORKSPACE="${BLITZ_WORKSPACE:-}"
+  export BLITZ_SERVER_MODE="$SERVER_MODE" BACKEND_PORT="$BACKEND_PORT" CHROMIUM="$CHROMIUM" PUBLIC_BASE_URL="$PUBLIC_BASE_URL" BLITZ_AGENT="${BLITZ_AGENT:-}" BLITZ_AGENT_BACKEND="${BLITZ_AGENT_BACKEND:-}" BLITZ_AGENT_RUNTIME="${BLITZ_AGENT_RUNTIME:-}" BLITZ_WORKSPACES_ROOT="${BLITZ_WORKSPACES_ROOT:-}" BLITZ_WORKSPACE="${BLITZ_WORKSPACE:-}"
 
   # Clear Vite's transform cache so a restart can NEVER serve a stale module (the "fresh bundle + old
   # agentos-shim" bug). The port was already freed by cmd_stop above, so :5174 is clean here.
@@ -120,7 +121,7 @@ cmd_status() {
       *'"relayOnline":true'*)  echo "relay:    UP (agents can see + answer chat)";;
       *'"relayOnline":false'*) echo "relay:    DOWN — agents offline (the watchdog will reconnect; or restart)";;
     esac
-    echo "agents:   $(ps -eo args 2>/dev/null | grep -c '[c]laude --\(session-id\|resume\)') claude terminal(s)"
+    echo "agents:   $(ps -eo args 2>/dev/null | grep -E -c '([c]laude --(session-id|resume)|[c]odex exec)') managed terminal(s)"
   else
     echo "backend:  :$BACKEND_PORT no response"
   fi

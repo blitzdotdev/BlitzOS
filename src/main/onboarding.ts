@@ -21,11 +21,9 @@ import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, read
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain, osRestartBrain } from './osActions'
-import { waitForEvents, latestSeq } from './events'
 import { getWidgetSource } from './widget-catalog.mjs'
 import { buildBoardPlan, unlockCardProps, findUnlockSlot, BRANCH_A_LAYOUT } from './onboarding-board.mjs'
 import type { ScanJson, StagedSurface } from './onboarding-board.mjs'
-import { runCannedInterview } from './onboarding-interview.mjs'
 
 const WS_NAME = 'case-file'
 const POLL_MS = 3000
@@ -204,7 +202,7 @@ async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
   return board
 }
 
-// ---- the interview (P2): resident brain when a CLI exists, the canned tier when not -----------
+// ---- the interview (P2): resident brain only --------------------------------------------------
 interface InterviewState {
   state: 'pending' | 'done'
   startedAt?: number
@@ -235,13 +233,13 @@ function ensureInterviewArtifacts(wsPath: string): void {
   try {
     if (existsSync(duty)) writeFileSync(join(dir, 'interview.md'), readFileSync(duty, 'utf8'))
   } catch {
-    /* template unreadable (packaged build) — the canned tier still works */
+    /* template unreadable (packaged build) — the brain still gets the inline boot task */
   }
   if (!readInterview(wsPath)) writeInterview(wsPath, { state: 'pending', startedAt: Date.now() })
 }
 
-// `claude` CLI detection — resolved through a LOGIN shell because GUI Electron's PATH often lacks
-// /opt/homebrew/bin. The resolved absolute path doubles as the brain cmd (index.ts brainCmd).
+// Agent CLI detection — resolved through a LOGIN shell because GUI Electron's PATH often lacks
+// /opt/homebrew/bin. The resolved absolute path doubles as the agent cmd (index.ts launch backend).
 let claudePath: string | null | undefined // undefined = not probed yet
 export function claudeCliPath(): string | null {
   if (claudePath !== undefined) return claudePath
@@ -252,15 +250,37 @@ export function claudeCliPath(): string | null {
   }
   return claudePath
 }
+let codexPath: string | null | undefined
+export function codexCliPath(): string | null {
+  if (codexPath !== undefined) return codexPath
+  try {
+    codexPath = execFileSync('/bin/zsh', ['-lc', 'command -v codex'], { encoding: 'utf8', timeout: 8000 }).trim() || null
+  } catch {
+    codexPath = null
+  }
+  return codexPath
+}
 
-/** index.ts threads this into the session-'0' brain: its standing duty while the interview is pending. */
+let interviewAgentAvailable = false
+export function setInterviewAgentAvailable(available: boolean): void {
+  interviewAgentAvailable = !!available
+}
+
+const INTERVIEW_BOOT_TASK =
+  'THE ONBOARDING INTERVIEW. You are the interviewer. If `.blitzos/onboarding/context.md` or `.blitzos/onboarding/board.json` is not present yet, wait for those files instead of asking from generic assumptions. Then read `.blitzos/onboarding/interview.md`, skim `.blitzos/onboarding/context.md` only long enough to ask the first high-value choice-card question immediately, and continue the interview from the human answers. Ask at most 4 multiple-choice questions TOTAL, plus one open voice sample, then write `.blitzos/onboarding/profile.md` and mark `.blitzos/onboarding/interview.json` done. If the chat already shows prior Q&A, continue it, do not restart.'
+
+const RESIDENT_INITIATIVE_BOOT_TASK =
+  'THE RESIDENT INITIATIVE DUTY. The onboarding interview is done, so do not sit in passive watch mode. Read `.blitzos/onboarding/profile.md`, `.blitzos/onboarding/board.json`, `.blitzos/onboarding/initiative.md` if it exists, and the recent chat. Then act on the initiative gradient from the onboarding plan: propose useful work the user did not explicitly ask for, and start one safe reversible initiative immediately. If no current initiative is recorded, send one short chat message with 2 or 3 concrete initiatives grounded in the profile, say which one you are starting now, write `.blitzos/onboarding/initiative.md` with the active initiative and next step, then make visible progress on that initiative. If an initiative is already recorded or visible, continue it instead of re-proposing. Use quiet surfaces, action items, or board updates, not modals. Stay inside the user boundaries in the profile: reversible testing and preparation can proceed; ask before outward-facing actions, destructive changes, sends, money, credentials, deploys, or account actions. Do not merely say you are watching. Keep polling `/events`, but use idle time to originate, execute, and update the case file.'
+
+/** index.ts threads this into session '0': interview first, then the resident initiative duty. */
 export function interviewBootTask(): string | null {
   try {
     const st = readInterview(osWorkspaceContext().workspace_path)
     if (st && st.state === 'pending') {
-      // The OS already posted the opening scope question (postOpeningQuestion) — the brain does NOT
-      // repeat it; its job is the tailored follow-ups + board work, which it reads from the duty doc.
-      return 'THE ONBOARDING INTERVIEW. The opening scope question is ALREADY posted in this chat (the OS asked it); do NOT repeat it. Read `.blitzos/onboarding/interview.md` and carry out the rest: when the user answers the scope question (their click arrives as a chat message), correct the board from their answer and ask your tailored follow-ups — at most 4 multiple-choice questions TOTAL including the one already posted, plus one open voice sample — then write `.blitzos/onboarding/profile.md` and mark `.blitzos/onboarding/interview.json` done. If the chat already shows prior Q&A, continue it, do not restart.'
+      return INTERVIEW_BOOT_TASK
+    }
+    if (st && st.state === 'done') {
+      return RESIDENT_INITIATIVE_BOOT_TASK
     }
   } catch {
     /* no workspace yet */
@@ -268,10 +288,10 @@ export function interviewBootTask(): string | null {
   return null
 }
 
-let cannedRunning = false
 // Restore the brain to full thinking effort once the interview is done: poll interview.json and, on
-// the pending→done flip, re-exec agent '0' ONCE (the re-exec drops the interview boot task, so its
-// command no longer caps --effort). Single-shot; unref'd so it never holds the process open.
+// the pending to done flip, re-exec agent '0' ONCE. The next bootstrap carries the resident initiative
+// duty, not the interview duty, so it no longer caps effort. Single-shot; unref'd so it never holds
+// the process open.
 let interviewDoneTimer: ReturnType<typeof setInterval> | null = null
 function watchInterviewDone(wsPath: string): void {
   if (interviewDoneTimer) return
@@ -286,80 +306,20 @@ function watchInterviewDone(wsPath: string): void {
   if (interviewDoneTimer.unref) interviewDoneTimer.unref()
 }
 
-/** The opening scope question, built deterministically from the scan and posted by the DIRECTOR (not the
- *  brain). A claude turn takes tens of seconds (process start + thinking), so waiting for the brain to
- *  compose question one put it 50s+ out; the OS already has the data, so it asks instantly (<1s) and the
- *  brain takes over for the tailored follow-ups. The scan's top projects are grouped by stem (blitz-*,
- *  teeny-*) into the options. */
-function buildOpeningQuestion(scan: { identity?: { name?: string }; projects?: { name?: string }[] }): string {
-  const name = scan.identity?.name || 'there'
-  const projs = (scan.projects || []).map((p) => p.name).filter((n): n is string => !!n)
-  const groups = new Map<string, string[]>()
-  for (const n of projs.slice(0, 10)) {
-    const key = n.toLowerCase().slice(0, 5) // blitz-cn + blitz-macos → "blitz"; teenybase + teeny → "teeny"
-    groups.set(key, [...(groups.get(key) || []), n])
-  }
-  const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
-  const multi = [...groups.entries()].filter(([, ns]) => ns.length > 1).sort((a, b) => b[1].length - a[1].length)
-  const options: string[] = multi.slice(0, 3).map(([k, ns]) => `${cap(k)} (${ns.slice(0, 3).join(', ')})`)
-  for (const n of projs) {
-    if (options.length >= 3) break
-    if (!options.some((o) => o.includes(n))) options.push(n)
-  }
-  options.push('something else (type it)')
-  const card = '```blitz-ui\n' + JSON.stringify({ type: 'choice', prompt: 'Which work should BlitzOS focus on day to day?', options }) + '\n```'
-  return `Hey ${name}! I'm your BlitzOS brain, online and watching this chat. One quick question to aim me right:\n\n${card}`
-}
-
-function postOpeningQuestion(wsPath: string): void {
-  try {
-    const scan = JSON.parse(readFileSync(join(onboardingDir(wsPath), 'scan.json'), 'utf8'))
-    osSay(buildOpeningQuestion(scan))
-  } catch {
-    /* no scan → the brain will ask the opener itself (slower, but never silent) */
-  }
-}
-
 function startInterviewPhase(wsPath: string): void {
   ensureInterviewArtifacts(wsPath)
   const st = readInterview(wsPath)
   if (!st || st.state !== 'pending') return
-  if (claudeCliPath()) {
-    // Tier 1: the resident brain. The DIRECTOR posts the opening scope question instantly (a claude turn
-    // is tens of seconds), then the brain takes over for the tailored follow-ups + board work. Once the
-    // interview finishes we re-exec the brain so the resident phase runs at the default (max) effort.
-    postOpeningQuestion(wsPath)
-    osKickBrain('0')
-    progress({ phase: 'interview', tier: 'brain' })
-    watchInterviewDone(wsPath)
+  if (!interviewAgentAvailable) {
+    progress({ phase: 'interview-error', tier: 'brain', reason: 'missing-cli' })
+    osSay("I can't start the real onboarding interview because no agent backend is available on this Mac. Install or fix Codex or Claude Code, then relaunch BlitzOS.")
     return
   }
-  // Tier 2: no model anywhere — the OS runs the static interview itself, through the same chat cards.
-  if (cannedRunning) return
-  cannedRunning = true
-  progress({ phase: 'interview', tier: 'canned' })
-  const ops = {
-    say: (t: string) => osSay(t),
-    waitEvents: (since: number, maxMs: number) => waitForEvents(since, maxMs, '0'),
-    latestSeq: () => latestSeq(),
-    updateSurface: (id: string, patch: Record<string, unknown>) => osUpdateSurface(id, patch),
-    readBoard: () => {
-      const board = readBoard(wsPath)
-      if (!board) return null
-      const state = osGetState() as { surfaces?: { id: string; props?: { items?: { q?: string; done?: boolean }[] } }[] }
-      const gaps = (state.surfaces || []).find((s) => s.id === board.ids.gaps)
-      return { ids: board.ids, gapsItems: gaps?.props?.items }
-    },
-    readState: () => readInterview(wsPath),
-    writeState: (obj: Record<string, unknown>) => writeInterview(wsPath, obj as unknown as InterviewState),
-    writeProfile: (md: string) => writeFileSync(join(onboardingDir(wsPath), 'profile.md'), md),
-    done: () => progress({ phase: 'interview-done', tier: 'canned' })
-  }
-  void runCannedInterview(ops)
-    .catch((e) => console.error('[onboarding] canned interview failed:', e?.message || e))
-    .finally(() => {
-      cannedRunning = false
-    })
+  // The selected agent backend owns the interview from the first question. No deterministic opener,
+  // no static fallback: if the backend is quota-blocked or auth-broken, the terminal shows the real failure.
+  osKickBrain('0')
+  progress({ phase: 'interview', tier: 'brain' })
+  watchInterviewDone(wsPath)
 }
 
 // ---- FDA unlock: poll → rescan → deepen --------------------------------------------------------
@@ -422,6 +382,7 @@ async function start(): Promise<{ ok: boolean; cached?: boolean }> {
       return { ok: false }
     }
     const wsPath = osWorkspaceContext().workspace_path
+    ensureInterviewArtifacts(wsPath) // make the standing duty visible before any boot-resume of agent 0
     const prior = readBoard(wsPath)
     if (prior && Object.keys(prior.ids).length) {
       // Board already seeded (a restart mid-onboarding, or dev re-run): don't re-scan or duplicate —
@@ -441,7 +402,7 @@ async function start(): Promise<{ ok: boolean; cached?: boolean }> {
     if (!scan) return { ok: false } // 'error' phase already sent — renderer degrades to plain desktop
     const board = await seedBoard(wsPath, scan)
     if (!scan.meta.fda && !board.unlockDismissed) startFdaPoll(wsPath)
-    startInterviewPhase(wsPath) // P2: the resident brain's first duty (or the canned tier)
+    startInterviewPhase(wsPath) // P2: the resident brain's first duty
     return { ok: true }
   } finally {
     starting = false

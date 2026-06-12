@@ -1,28 +1,35 @@
 // agent-runtime.mjs — the SHARED core that turns a workspace terminal into a BlitzOS agent.
 //
 // There is no privileged headless "brain" anymore: an agent is just a tmux terminal (owned by
-// terminal-manager.mjs) whose command runs `claude` pointed at the agent-socket relay. The claude process
-// is VISIBLE (you watch it work), survives a BlitzOS restart (tmux), and /says clean replies into its chat
-// widget over the unchanged agent-socket contract. This module owns the only agent-specific bits:
+// terminal-manager.mjs) whose command runs a pluggable backend pointed at the agent-socket relay. The
+// backend survives BlitzOS restarts through tmux supervision and /says clean replies into its chat widget
+// over the unchanged agent-socket contract. This module owns the only agent-specific bits:
 //   • the bootstrap prompt (the served blitzos-agents.md is the source of truth; this is a thin pointer),
-//   • the claude argv command string (create vs resume), and
-//   • the persisted claude --session-id token (so the SAME conversation continues across restarts).
+//   • backend-specific command strings (Claude TUI vs Codex serverless), and
+//   • backend metadata such as Claude's persisted --session-id token.
 // Both transports (Electron + server) import THIS one file — no per-transport fork.
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 
-// Thinking budget + effort for the onboarding interview (agent '0' while its duty is pending). Reduced
-// so the first question lands in seconds; the resident phase restores to claude's default on respawn.
-// MAX_THINKING_TOKENS is the lever that actually works (the TUI showed "max effort" under --effort low),
-// so it's a LOW token cap — raise it if questions get generic, lower toward 0 for max speed.
-const INTERVIEW_THINKING_TOKENS = 2048
-const INTERVIEW_EFFORT = 'low'
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
 const metaPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'meta.json')
 const bootstrapPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'bootstrap.txt')
+export const INTERVIEW_FAST_MODEL = 'sonnet'
+export const INTERVIEW_FAST_SETTINGS = { model: INTERVIEW_FAST_MODEL, effortLevel: 'low', env: { CLAUDE_CODE_EFFORT_LEVEL: 'low' } }
+export const AGENT_RUNTIME_CLAUDE = 'claude'
+export const AGENT_RUNTIME_CODEX_SERVERLESS = 'codex-serverless'
+export const DEFAULT_AGENT_RUNTIME = AGENT_RUNTIME_CODEX_SERVERLESS
 function readMeta(sessionsDir, id) { try { return JSON.parse(readFileSync(metaPath(sessionsDir, id), 'utf8')) } catch { return {} } }
+
+export function normalizeAgentRuntime(value) {
+  const v = String(value || '').trim().toLowerCase()
+  if (!v) return DEFAULT_AGENT_RUNTIME
+  if (v === 'codex' || v === 'codex-exec' || v === 'codex-serverless' || v === 'serverless') return AGENT_RUNTIME_CODEX_SERVERLESS
+  if (v === 'claude' || v === 'claude-code' || v === 'claude-tui' || v === '1') return AGENT_RUNTIME_CLAUDE
+  return v
+}
 
 // The agent's agent-socket BASE url is VOLATILE — the relay mints a fresh one on every BlitzOS (re)start, so
 // a long-lived terminal can't bake it in. BlitzOS keeps the current base in this file (relative to the agent's
@@ -30,15 +37,16 @@ function readMeta(sessionsDir, id) { try { return JSON.parse(readFileSync(metaPa
 // re-reads the live url on each call and a reattached agent self-heals after a restart. Single source of truth.
 export const RELAY_URL_FILE = '.blitzos/relay-url'
 
-// Optional per-session STANDING DUTY (e.g. the onboarding interview): a policy-free seam — the transport
-// registers a provider, and prepareAgentLaunch re-reads it on EVERY (re)launch (bootstrap.txt is rewritten),
-// so a finished duty drops off the next respawn automatically. The duty TEXT is owned by whoever set it.
+// Optional per-session STANDING DUTY (e.g. onboarding interview, then resident initiatives): a
+// policy-free seam. The transport registers a provider, and prepareAgentLaunch re-reads it on EVERY
+// (re)launch (bootstrap.txt is rewritten), so the duty can change as workspace state changes. The duty
+// TEXT is owned by whoever set it.
 let bootTaskProvider = null
 export function setBootTaskProvider(fn) {
   bootTaskProvider = typeof fn === 'function' ? fn : null
 }
 
-/** The agent's BOOTSTRAP prompt (written to a file, run via `claude -p "$(cat …)"`). The served manual
+/** The agent's BOOTSTRAP prompt (written to a file and passed to the selected agent backend). The served manual
  *  (blitzos-agents.md) is the SINGLE source of truth for identity, the /events loop, every tool, window
  *  management, and the design language — this stays a thin pointer and does NOT restate behavior. Multi-line
  *  is fine: it lives in a file, so it never touches the tmux control-mode command line (which rejects LF). */
@@ -82,16 +90,33 @@ export function shellQuote(s) {
  *  INTERACTIVE (no -p): claude renders its full TUI in the terminal so the user can WATCH it work — print
  *  mode (-p) ran silently, leaving the terminal blank. --dangerously-skip-permissions: the agent acts
  *  unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
-export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, effort, thinkingTokens }) {
+export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, lowThinking = false }) {
   const sessionArg = mode === 'resume' ? `--resume ${claudeSid}` : `--session-id ${claudeSid}`
-  const effortArg = effort ? `--effort ${effort} ` : ''
-  // MAX_THINKING_TOKENS caps the model's extended-thinking budget — the REAL lever for snappy turns
-  // (`--effort` does NOT change it: the TUI still showed "max effort" under --effort low). The interview
-  // sets a low budget so its first question lands fast; deep rumination adds latency, not quality, for
-  // templated MC questions. Omitted → claude's adaptive default (the slow "max effort"). It's a shell
-  // env assignment prefixing the command, so it applies to this claude process only.
-  const envPrefix = thinkingTokens ? `MAX_THINKING_TOKENS=${thinkingTokens} ` : ''
-  return `${envPrefix}${cmd} ${sessionArg} --dangerously-skip-permissions ${effortArg}"$(cat ${shellQuote(bootstrapFile)})"`
+  // The interview asks dynamic questions, so the brain must run FAST. The real lever is `--settings`,
+  // NOT env vars or --effort alone: Claude Code's settings precedence is CLI args > project > USER
+  // (~/.claude/settings.json). A user's global `model` may also be a 1M-context variant that requires
+  // usage credits, so force standard-context sonnet for this once-per-user interview. Standalone timing
+  // with global xhigh: baseline 7.9s, --effort low 3.9s, --settings effort+env low 2.7s for a small
+  // onboarding-question prompt. The resident phase passes nothing, so it returns to the user's normal
+  // model/effort after the duty is done and agent 0 is re-exec'd.
+  const fast = lowThinking ? `--model ${INTERVIEW_FAST_MODEL} --effort low --settings ${shellQuote(JSON.stringify(INTERVIEW_FAST_SETTINGS))} ` : ''
+  return `${cmd} ${sessionArg} ${fast}--dangerously-skip-permissions "$(cat ${shellQuote(bootstrapFile)})"`
+}
+
+/** Codex serverless backend: one non-interactive `codex exec` turn that receives the same BlitzOS
+ * bootstrap as Claude. Disable plugins and ignore Codex user config/rules so the app bootstrap is the
+ * policy surface instead of inheriting this machine's personal Codex skills, hooks, or repo instructions.
+ * Auth still uses CODEX_HOME. The terminal supervisor restarts it when it exits, so it behaves like a
+ * resident agent without requiring a long-lived TUI or Anthropic account quota. */
+export function buildCodexServerlessCommand({ cmd = 'codex', bootstrapFile, lowThinking = false }) {
+  const effort = lowThinking ? `-c ${shellQuote('model_reasoning_effort="low"')} ` : ''
+  return `${cmd} exec ${effort}--disable plugins --ignore-user-config --ignore-rules --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --color never "$(cat ${shellQuote(bootstrapFile)})"`
+}
+
+export function buildAgentCommand({ runtime = AGENT_RUNTIME_CLAUDE, cmd, claudeSid, mode = 'create', bootstrapFile, lowThinking = false }) {
+  const r = normalizeAgentRuntime(runtime)
+  if (r === AGENT_RUNTIME_CODEX_SERVERLESS) return buildCodexServerlessCommand({ cmd: cmd || 'codex', bootstrapFile, lowThinking })
+  return buildClaudeCommand({ cmd: cmd || 'claude', claudeSid, mode, bootstrapFile, lowThinking })
 }
 
 /** Has claude ALREADY created this conversation on disk? claude writes `<configDir>/projects/<encoded-cwd>/
@@ -140,8 +165,10 @@ export function ensureClaudeSessionId(sessionsDir, id) {
  *  relay url, and build the command. Returns { command, claudeSessionId } for terminal-manager.spawnTerminal.
  *  Used by BOTH the new-agent launch (workspace-host launchAgent) AND the re-exec path (restartTerminal's
  *  rebuildAgentCommand) — one definition, no divergence. */
-export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
-  const { claudeSessionId, established } = ensureClaudeSessionId(sessionsDir, id)
+export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_RUNTIME_CLAUDE }) {
+  const agentRuntime = normalizeAgentRuntime(runtime)
+  const claudeState = agentRuntime === AGENT_RUNTIME_CLAUDE ? ensureClaudeSessionId(sessionsDir, id) : { claudeSessionId: undefined, established: false }
+  const agentSessionId = agentRuntime === AGENT_RUNTIME_CODEX_SERVERLESS ? randomUUID() : undefined
   const file = bootstrapPath(sessionsDir, id)
   let bootTask = null
   try {
@@ -155,20 +182,21 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
     writeRelayUrl(dirname(sessionsDir), url) // <ws>/.blitzos/relay-url — the live base the agent re-reads per call
     ensureWorkspaceTrusted(dirname(dirname(sessionsDir))) // unattended spawn must never stall on the trust dialog
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
-  // The onboarding interview (the only id-0 boot task today) runs at reduced thinking effort so its
-  // first question is snappy; it restores to the default (max) on the next respawn once the duty is
-  // done. Tune INTERVIEW_EFFORT to 'low' if questions are still slow, 'high' if they get generic.
-  const interview = String(id) === '0' && !!bootTask
+  // The onboarding interview runs at reduced thinking effort so its dynamic follow-ups are snappy.
+  // Other resident duties, such as post-onboarding initiative work, use the normal effort.
+  const interview = String(id) === '0' && typeof bootTask === 'string' && bootTask.includes('THE ONBOARDING INTERVIEW')
   return {
-    claudeSessionId,
-    established, // surfaced so the re-exec path persists the (possibly rotated) id + correct established flag
-    command: buildClaudeCommand({
-      cmd,
-      claudeSid: claudeSessionId,
-      mode: established ? 'resume' : 'create',
+    agentRuntime,
+    agentSessionId,
+    claudeSessionId: claudeState.claudeSessionId,
+    established: claudeState.established, // surfaced so the re-exec path persists the (possibly rotated) id + correct established flag
+    command: buildAgentCommand({
+      runtime: agentRuntime,
+      cmd: cmd || (agentRuntime === AGENT_RUNTIME_CODEX_SERVERLESS ? 'codex' : 'claude'),
+      claudeSid: claudeState.claudeSessionId,
+      mode: claudeState.established ? 'resume' : 'create',
       bootstrapFile: file,
-      effort: interview ? INTERVIEW_EFFORT : undefined,
-      thinkingTokens: interview ? INTERVIEW_THINKING_TOKENS : undefined
+      lowThinking: interview
     })
   }
 }

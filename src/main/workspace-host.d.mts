@@ -11,8 +11,8 @@ export interface WorkspaceHostAdapter {
   broadcast(obj: unknown): void
   onSurfaces?: (surfaces: unknown[]) => Promise<unknown> | void
   defaultMode?: 'canvas' | 'desktop'
-  /** Launch (or resume) the claude terminal for an agent in its stage. Wired by each transport
-   *  from the shared agent-runtime core + its terminal-ops; absent ⇒ no agent auto-launch (BLITZ_AGENT off). */
+  /** Launch (or resume) the managed terminal for an agent in its stage. Wired by each transport
+   *  from the shared agent-runtime core + its terminal-ops; absent ⇒ no agent auto-launch. */
   launchAgent?: (agentId: string, stage: number, title?: string) => void
   /** Stop an agent's terminal (terminal-ops.stopTerminal — sets the stopping flag so it won't auto-restart).
    *  Wired by each transport; used when closing an agent. */

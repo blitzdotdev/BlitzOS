@@ -193,7 +193,7 @@ export function initOsActions(opts: {
     },
     onSurfaces: () => {}, // Electron browser guests are hosted by webcontents-view-host.ts
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
-    // An agent's claude runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
+    // An agent backend runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
     // agent-runtime core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
     launchAgent: (id, stage, title) => launchAgentHook?.(id, stage, title),
     // Stop an agent (when closing it) — index.ts wires this to terminal-ops.stopTerminal.
@@ -761,9 +761,9 @@ export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
 }
 let lastStateKeyframe = 0
-// index.ts owns the relay url + terminal-ops, so it registers HOW to launch an agent's claude in a
+// index.ts owns the relay url + terminal-ops, so it registers HOW to launch an agent backend in a
 // tmux terminal. osActions handles the workspace-side (mint id + surface the widget); addAgent then
-// calls launchAgent via the host adapter. Gated: index.ts only registers this when BLITZ_AGENT is set.
+// calls launchAgent via the host adapter.
 let launchAgentHook: ((agentId: string, stage: number, title?: string) => void) | null = null
 export function setLaunchAgent(fn: (agentId: string, stage: number, title?: string) => void): void {
   launchAgentHook = fn
@@ -774,7 +774,7 @@ export function setStopAgent(fn: (agentId: string) => void): void {
 }
 // Re-exec a running agent in place (kill + relaunch from its persisted meta). The onboarding director
 // uses it to upgrade the interview brain back to full thinking effort once the duty is done — the
-// re-exec rebuilds the command (no interview boot task → no --effort cap). Always-fresh, so it just
+// re-exec rebuilds the command (resident initiative duty, no interview effort cap). Always-fresh, so it just
 // re-reads chat.md; no conversation is lost.
 let restartAgentHook: ((agentId: string) => void) | null = null
 export function setRestartAgent(fn: (agentId: string) => void): void {
@@ -785,20 +785,20 @@ export function osRestartBrain(agentId = '0'): void {
 }
 /** Ensure an agent is up WITHOUT a chat message — the onboarding director uses this to start the
  *  resident interviewer at board-ready (its standing duty rides the bootstrap). Re-execs via the tmux
- *  launcher (replaces any stale terminal); no-op when no launcher is wired (no claude CLI / BLITZ_AGENT). */
+ *  launcher (replaces any stale terminal); no-op when no launcher is wired. */
 export function osKickBrain(agentId = '0'): void {
   const id = String(agentId)
   launchAgentHook?.(id, id === '0' ? 0 : 0)
 }
 /** Open a new agent: mint its id, register + live-surface its chat widget; addAgent launches
- *  its claude terminal (via the launchAgent seam). focus:true (a USER '+ Agent') follows the camera to it. */
+ *  its managed terminal (via the launchAgent seam). focus:true (a USER '+ Agent') follows the camera to it. */
 export function osSpawnAgent(title?: string, focus = false): { id: string; title: string } {
   if (!wsHost) throw new Error('no workspace host')
   const id = wsHost.newAgentId()
   wsHost.addAgent(id, title, { focus })
   return { id, title: title || `Chat ${id}` }
 }
-/** Close a non-primary agent (stop its claude + remove its widget/files/stage). */
+/** Close a non-primary agent (stop its backend + remove its widget/files/stage). */
 export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
   return wsHost ? wsHost.closeAgent(agentId) : { ok: false, error: 'no workspace host' }
 }
@@ -806,7 +806,7 @@ export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
 export function osRenameAgent(agentId: string, newTitle: string): { ok: boolean; error?: string; title?: string } {
   return wsHost ? wsHost.renameAgent(agentId, newTitle) : { ok: false, error: 'no workspace host' }
 }
-/** Boot: re-exec the claude terminal for every agent on the current relay url (+ --resume). */
+/** Boot: re-exec every agent terminal on the current relay url. */
 export function osResumeAgentsOnBoot(): void {
   wsHost?.resumeAgentsOnBoot()
 }

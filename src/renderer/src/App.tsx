@@ -1527,7 +1527,7 @@ export default function App(): JSX.Element {
         </button>
         <button
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
-          title="Spawn a new agent — a fresh claude with its own chat widget"
+          title="Spawn a new agent with its own chat widget"
           onClick={() => (window.agentOS as unknown as { spawnAgent?: (t?: string) => void })?.spawnAgent?.()}
         >
           <IconSparkle size={15} /> + Agent
@@ -1578,7 +1578,7 @@ export default function App(): JSX.Element {
           {aiUrl ? (
             <>
               <p className="hud-sub">
-                Paste this URL into a <strong>tool-capable</strong> AI agent — Claude Code, or <code>claude -p</code> — and ask
+                Paste this URL into a <strong>tool-capable</strong> AI agent — Codex CLI, Claude Code, or similar — and ask
                 it to open windows, post-its, etc. (It needs to make HTTP calls, so a plain Claude.ai / ChatGPT chat can only
                 read the link, not drive BlitzOS.)
               </p>

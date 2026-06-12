@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "parity": "node scripts/check-parity.mjs",
     "check": "npm run typecheck && npm run parity && npm run build",
+    "dev:fresh-onboarding": "bash scripts/fresh-onboarding-dev.sh",
     "onboard": "node scripts/onboarding-scan.mjs --no-fda --prompt src/main/blitzos-onboarding.md --out -",
     "onboard:fda": "node scripts/onboarding-scan.mjs --prompt src/main/blitzos-onboarding.md --out -",
     "onboard:scan": "node scripts/onboarding-scan.mjs --out -",

@@ -17,7 +17,7 @@ You reach BlitzOS over plain HTTPS, no MCP, no SDK. Two paths:
 - Relay (any agent, remote): you fetched this from a URL; `$BASE` = that URL minus the trailing `/agents.md`. Call tools at `POST $BASE/<tool>`.
 - Localhost (same machine, trusted, full power): read `~/.blitzos/session.json` -> `.local = {url, token}` (the loopback control server). Call `POST $url/<tool>` with `authorization: Bearer $token`. Prefer this when co-located: no relay flakiness, and the trusted-only raw `eval` action lives here.
 
-Driving BlitzOS requires you to make HTTP requests yourself (a Bash/`curl`, code-execution, or HTTP `fetch` tool). If you have NO such tool — e.g. a plain Claude.ai / ChatGPT web chat — you CANNOT act here: do not summarize this document. Instead reply in one line: "Open this link in a tool-capable agent (Claude Code, or `claude -p '<paste the URL> drive BlitzOS'`) — a plain chat can't call BlitzOS's HTTP tools." Then stop.
+Driving BlitzOS requires you to make HTTP requests yourself (a Bash/`curl`, code-execution, or HTTP `fetch` tool). If you have NO such tool — e.g. a plain Claude.ai / ChatGPT web chat — you CANNOT act here: do not summarize this document. Instead reply in one line: "Open this link in a tool-capable agent such as Codex CLI or Claude Code — a plain chat can't call BlitzOS's HTTP tools." Then stop.
 
 FIRST: `GET $BASE/tools.json` (or read session.json) for the exact tools + schemas. Then tell the user in one line what you can do, and start. Keep the URL so you can re-read these instructions if your context resets.
 
@@ -77,18 +77,18 @@ Every tool and its exact schema lives in `$BASE/tools.json` — you already read
 Use a connected one via `provider_call` only when a task makes it relevant — surface nothing unprompted. New connections arrive as a `/events` moment.
 
 ## Terminals & Agents — run real programs (the hands for long work)
-A **terminal** is a real terminal running a command in this workspace, shown as a terminal surface and persisted under `.blitzos/terminals/<id>/`. It SURVIVES a BlitzOS/page restart (tmux-backed) and keeps its scrollback. Use a terminal for a shell, a coding agent (claude/codex), a build/test runner, or any long-running job — never fake shell output in an `srcdoc`. An **agent** is just a terminal running `claude` plus its own chat widget; it's a peer you can talk to, not a separate primitive.
+A **terminal** is a real terminal running a command in this workspace, shown as a terminal surface and persisted under `.blitzos/terminals/<id>/`. It SURVIVES a BlitzOS/page restart (tmux-backed) and keeps its scrollback. Use a terminal for a shell, a coding agent (Codex/Claude), a build/test runner, or any long-running job — never fake shell output in an `srcdoc`. An **agent** is just a managed agent terminal plus its own chat widget; it's a peer you can talk to, not a separate primitive.
 
 Terminal tools:
-- open_terminal { command, cwd?, title?, cols?, rows?, agent? } — start a terminal (e.g. `command:'bash'` or `command:"claude -p '…'"`). If you are a NON-primary agent, pass `agent:"<your id>"` so it opens in YOUR stage, not the user's. Returns { terminal:{ id, kind, title, command, status, … } } — keep the `id`.
-- list_terminals — every terminal in this workspace (running + persisted): `{ terminals:[{ id, kind, title, command, status, pid }] }`. `kind:'agent'` = a claude+chat agent, `kind:'terminal'` = a plain program.
+- open_terminal { command, cwd?, title?, cols?, rows?, agent? } — start a terminal (e.g. `command:'bash'`, `command:"codex exec '…'"`, or `command:"claude '…'"`). If you are a NON-primary agent, pass `agent:"<your id>"` so it opens in YOUR stage, not the user's. Returns { terminal:{ id, kind, title, command, status, … } } — keep the `id`.
+- list_terminals — every terminal in this workspace (running + persisted): `{ terminals:[{ id, kind, title, command, status, pid }] }`. `kind:'agent'` = a managed agent+chat, `kind:'terminal'` = a plain program.
 - send_to_terminal { id, data } — write raw input/keystrokes. Include a trailing newline to submit (e.g. `data:'git status\n'`). Returns { ok }.
 - read_terminal { id } — read the terminal's current output (scrollback). Returns { text }.
 - close_terminal { id } — STOP (kill) the terminal but keep it in the tray as RESUMABLE. Returns { ok }.
 - remove_terminal { id } — PERMANENTLY remove the terminal (kill + delete its record; not resumable). Use this to clean up a throwaway terminal you spawned once the job is done. Returns { ok }.
 
 Agent (peer-chat) lifecycle:
-- spawn_agent { title? } — start a NEW peer agent: a fresh claude with its OWN `chat-<id>.md` transcript + chat widget over this same relay. It's independent — its chat and `say`s never cross-talk with you. Returns { agent:{ id, title } }.
+- spawn_agent { title? } — start a NEW peer agent: a fresh managed agent with its OWN `chat-<id>.md` transcript + chat widget over this same relay. It's independent — its chat and `say`s never cross-talk with you. Returns { agent:{ id, title } }.
 - close_agent { id } — stop a spawned agent and delete its chat widget + terminal + files + stage. The PRIMARY agent `'0'` (the user's main chat) cannot be closed. Returns { ok } or { ok:false, error }.
 - rename_agent { id, title } — cosmetic rename in the widget + the "Terminals & Agents" tray. Returns { ok, title }.
 

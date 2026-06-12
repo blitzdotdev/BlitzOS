@@ -10,8 +10,8 @@ import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
 import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
-import { electronTerminalOps, electronActionItems, setTerminalGetUrl } from './electron-os-tools'
-import { prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
+import { electronTerminalOps, electronActionItems, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
+import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -19,7 +19,7 @@ import { registerWidgets } from './widgets'
 import { startSessionPersistence } from './persistence'
 import { initTelemetry } from './telemetry'
 import { registerWallpaperIpc } from './wallpaper'
-import { registerOnboarding, interviewBootTask, claudeCliPath } from './onboarding'
+import { registerOnboarding, interviewBootTask, claudeCliPath, codexCliPath, setInterviewAgentAvailable } from './onboarding'
 import { initUpdater, openBuildPicker, isDevMachine } from './update'
 import { resolveTmuxBin } from './tmux-host.mjs'
 import { setWebContentsViewInputForwarder } from './webcontents-view-host'
@@ -284,21 +284,44 @@ app.whenReady().then(() => {
   startAgentSocket(() => mainWindow, (url) => osSetRelayUrl(url))
   setTerminalGetUrl(() => getAgentSocketUrl()) // so a dead agent's re-exec rebuilds its command with the live url
 
-  // Agents run as VISIBLE tmux terminals (no headless brain). An agent's claude runs in a terminal in its
-  // stage, connected over the relay, /saying into its per-agent chat widget; the terminal-manager persists
-  // + reattaches it, and boot resumes the dead ones with --resume (survivors stay live). Enabled when an
-  // agent command exists: BLITZ_AGENT (a custom command, or '1' for claude) OR a login-shell-resolved
-  // `claude` CLI — the resident-brain/onboarding decision (plans/onboarding-case-file.md): zero-setup when
-  // claude exists. No command means no launch.
-  const agentCmd = process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : claudeCliPath() || (process.env.BLITZ_AGENT === '1' ? 'claude' : null)
-  // PRE-FLIGHT: the brain = a claude CLI inside a tmux terminal. If either is missing on this Mac
-  // (fresh VM; packaged GUI apps also don't get homebrew's PATH — both resolvers use the login
-  // shell), the worst failure mode is SILENCE: the user types into chat and nothing ever answers
-  // (the 2026-06-11 VM report). Say what's missing in the chat — at boot, and again whenever they
-  // send a message while it's still broken.
+  // Agents run as managed tmux terminals. The backend is pluggable: Codex serverless (`codex exec`) is
+  // the default when available, while Claude Code stays selectable for the visible TUI/resume path.
+  // BLITZ_AGENT_BACKEND/BLITZ_AGENT_RUNTIME can force `codex`, `codex-serverless`, or `claude`.
+  // BLITZ_AGENT remains the command override; `BLITZ_AGENT=1` preserves the old "force claude" meaning
+  // unless a backend env var is also set.
+  const resolveAgentRuntime = (): { runtime: string; cmd: string; label: string } | null => {
+    const rawBackend = process.env.BLITZ_AGENT_BACKEND || process.env.BLITZ_AGENT_RUNTIME || ''
+    const rawAgent = process.env.BLITZ_AGENT || ''
+    const rawAgentRuntime = rawAgent && rawAgent !== '1' ? normalizeAgentRuntime(rawAgent) : ''
+    const rawAgentIsRuntime = rawAgentRuntime === AGENT_RUNTIME_CODEX_SERVERLESS || rawAgentRuntime === AGENT_RUNTIME_CLAUDE
+    const customAgentCmd = rawAgent && rawAgent !== '1' && !rawAgentIsRuntime ? rawAgent : ''
+    const explicitRuntime = rawBackend ? normalizeAgentRuntime(rawBackend) : rawAgentIsRuntime ? rawAgentRuntime : ''
+    const wanted = explicitRuntime || (customAgentCmd || rawAgent === '1' ? AGENT_RUNTIME_CLAUDE : DEFAULT_AGENT_RUNTIME)
+    if (wanted === AGENT_RUNTIME_CODEX_SERVERLESS) {
+      const cmd = customAgentCmd || codexCliPath()
+      if (cmd) return { runtime: AGENT_RUNTIME_CODEX_SERVERLESS, cmd, label: 'Codex CLI (`codex`)' }
+      if (explicitRuntime) return null
+    }
+    if (wanted === AGENT_RUNTIME_CLAUDE) {
+      const cmd = customAgentCmd || claudeCliPath() || (rawAgent === '1' ? 'claude' : null)
+      if (cmd) return { runtime: AGENT_RUNTIME_CLAUDE, cmd, label: 'Claude Code CLI (`claude`)' }
+      if (explicitRuntime || rawAgent === '1') return null
+    }
+    const codex = codexCliPath()
+    if (codex) return { runtime: AGENT_RUNTIME_CODEX_SERVERLESS, cmd: codex, label: 'Codex CLI (`codex`)' }
+    const claude = claudeCliPath()
+    if (claude) return { runtime: AGENT_RUNTIME_CLAUDE, cmd: claude, label: 'Claude Code CLI (`claude`)' }
+    return null
+  }
+  const agentRuntime = resolveAgentRuntime()
+  setInterviewAgentAvailable(!!agentRuntime)
+  if (agentRuntime) setTerminalAgentRuntime({ runtime: agentRuntime.runtime, cmd: agentRuntime.cmd })
+  // PRE-FLIGHT: the brain = a managed agent backend inside a tmux terminal. If either is missing on this
+  // Mac (fresh VM; packaged GUI apps also don't get homebrew's PATH — both resolvers use the login shell),
+  // the worst failure mode is SILENCE. Say what's missing in chat at boot and on messages while broken.
   const missingRuntime = (): string[] => {
     const m: string[] = []
-    if (!agentCmd) m.push('the Claude Code CLI (`claude`) — install it from https://claude.com/code, make sure `claude` works in your terminal')
+    if (!agentRuntime) m.push('an agent backend (`codex` or `claude`) — install/fix Codex or Claude Code, and make sure the command works in your terminal')
     if (!resolveTmuxBin()) m.push('tmux — run `brew install tmux` (my agent terminals run inside it)')
     return m
   }
@@ -319,10 +342,10 @@ app.whenReady().then(() => {
       })
     }
   }
-  if (agentCmd) {
-    // Agent '0' carries the onboarding-interview standing duty while it's pending — the provider is
-    // re-read on EVERY (re)launch (prepareAgentLaunch rewrites bootstrap.txt), so a finished interview
-    // drops off the next respawn automatically.
+  if (agentRuntime) {
+    // Agent '0' carries the onboarding standing duty. The provider is re-read on EVERY (re)launch
+    // (prepareAgentLaunch rewrites bootstrap.txt): pending interview becomes the interview duty,
+    // then a finished interview becomes the resident initiative duty.
     setBootTaskProvider((id: string) => (String(id) === '0' ? interviewBootTask() : null))
     const terminalsDirOf = (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'terminals') : null }
     const launchAgent = (id: string, stage: number, title?: string): void => {
@@ -330,13 +353,24 @@ app.whenReady().then(() => {
       const terminalsDir = terminalsDirOf()
       const url = getAgentSocketUrl()
       if (!ws || !terminalsDir || !url) return // not ready (no workspace / relay url yet) — boot resume retries
-      // `sessionsDir` is the agent-runtime contract for the claude --session-id state dir; we point it at
+      // `sessionsDir` is the agent-runtime contract for persisted backend metadata; we point it at
       // our .blitzos/terminals migration.
-      const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir: terminalsDir, id, url, cmd: agentCmd })
-      void electronTerminalOps.spawnTerminal({ id, kind: 'agent', command, cwd: ws, stage, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })
+      const launch = prepareAgentLaunch({ sessionsDir: terminalsDir, id, url, cmd: agentRuntime.cmd, runtime: agentRuntime.runtime })
+      void electronTerminalOps.spawnTerminal({
+        id,
+        kind: 'agent',
+        command: launch.command,
+        cwd: ws,
+        stage,
+        title: title || (id === '0' ? 'Agent' : `Agent ${id}`),
+        agentRuntime: launch.agentRuntime,
+        agentSessionId: launch.agentSessionId,
+        claudeSessionId: launch.claudeSessionId,
+        claudeEstablished: launch.established
+      })
     }
     setLaunchAgent(launchAgent)
-    setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its claude terminal record (no auto-restart, no exited ghost)
+    setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
     setRestartAgent((id) => { void electronTerminalOps.restartTerminal(id) }) // re-exec in place (onboarding: restore full effort once the interview is done)
     // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
     let resumed = false

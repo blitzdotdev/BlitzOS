@@ -4,6 +4,7 @@ import type { TmuxHost } from './tmux-host.d.mts'
 export type TerminalKind = 'terminal' | 'agent'
 export type TerminalStatus = 'running' | 'exited' | 'stopped'
 export type Autonomy = 'auto' | 'checkpoint' | 'dry-run'
+export type AgentRuntime = 'claude' | 'codex-serverless' | string
 
 export interface TerminalMeta {
   id: string
@@ -24,6 +25,8 @@ export interface TerminalMeta {
   /** @deprecated legacy pre-stage-rename meta field; tolerated on read, written as `stage`. */
   area?: number | null
   /** agent terminals only: persisted claude --session-id token + whether claude has established it. */
+  agentRuntime?: AgentRuntime | null
+  agentSessionId?: string | null
   claudeSessionId?: string
   claudeEstablished?: boolean
 }
@@ -42,6 +45,8 @@ export interface SpawnTerminalOpts {
   stage?: number | null
   /** @deprecated legacy pre-stage-rename opt; tolerated on read, written as `stage`. */
   area?: number | null
+  agentRuntime?: AgentRuntime | null
+  agentSessionId?: string | null
   claudeSessionId?: string
   claudeEstablished?: boolean
 }
@@ -61,8 +66,14 @@ export interface TerminalManagerDeps {
   emit?: (ev: TerminalEvent) => void
   /** Tell the workspace watcher a write is the OS's own, so it doesn't reconcile itself. */
   markWrite?: (path: string) => void
-  /** Rebuild a dead AGENT terminal's command (fresh relay url + --resume) on re-exec; null ⇒ shell verbatim. */
-  rebuildAgentCommand?: ((meta: TerminalMeta) => string | null) | null
+  /** Rebuild a managed AGENT terminal's command on re-exec; null ⇒ shell verbatim. */
+  rebuildAgentCommand?: ((meta: TerminalMeta) => {
+    command: string
+    agentRuntime?: AgentRuntime | null
+    agentSessionId?: string | null
+    claudeSessionId?: string
+    established?: boolean
+  } | null) | null
 }
 
 export interface TerminalManager {
