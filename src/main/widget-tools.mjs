@@ -96,6 +96,10 @@ export function makeWidgetToolHandlers(ops) {
       ops.goToPrimary()
       return { ok: true }
     },
+    set_theme: (a) => {
+      if (!ops.setTheme) return { ok: false, error: 'set_theme not available in this transport' }
+      return ops.setTheme({ accent: a.accent, accentDeep: a.accentDeep })
+    },
     list_state: () => serializeStateForAgent(ops.getState()),
     // provider_call rides the SAME provider engine the agent tools use on each transport (Electron: gated
     // relay path with the human approval card; server: callProvider, writes hard-refused). 'relay' selects

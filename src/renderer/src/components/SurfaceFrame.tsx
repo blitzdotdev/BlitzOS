@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop, snapTargetFor, primaryRect, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, stageOfX } from '../store'
+import { useDesktop, snapTargetFor, primaryRect, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, stageOfX, webTabsOf, effectiveZ } from '../store'
+import { BrowserNav } from './BrowserNav'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
@@ -18,12 +19,88 @@ import { NOTE_PAPER } from '../paper'
 
 type BridgeReply = { ok: boolean; data?: unknown; error?: string }
 
-interface WebviewMethods {
-  loadURL(url: string): Promise<void>
-  reload(): void
-  setZoomFactor(factor: number): void
-  getWebContentsId(): number
-  getURL(): string
+// Electron cursor-changed types → CSS. Most pass through verbatim; the two that disagree are the
+// arrow ('pointer' in Chromium terms) and the link hand. Unknown values fall back to themselves
+// (invalid CSS cursor = default), so new Chromium cursor types degrade safely.
+const CURSOR_CSS: Record<string, string> = { pointer: 'default', hand: 'pointer', nodrop: 'no-drop', 'm-panning': 'move' }
+
+// A browser frame's chrome rows above the page hole: window bar (34) + tab strip (28) + navbar (36).
+// Slotted (widget-chrome) browsers drop the bar. Used by the clip-path pass to hole out EXACTLY the
+// page area of a higher browser from DOM that sits under it — the chrome itself is DOM and stacks
+// by z-index like everything else.
+const WEB_CHROME_H = 34 + 28 + 36
+const WEB_CHROME_H_SLOTTED = 28 + 36
+
+/** 'HIDE' = the holes fully cover the element: skip clipping and hide it outright (a degenerate
+ *  clip leaves an antialiased ghost outline of the element — the "widget outline" artifact). */
+export type HolesClip = string | 'HIDE' | undefined
+
+// The window corner radius (tokens.css --radius-window), read once — hole masks must follow the
+// frame's rounded BOTTOM corners or the square native view pokes out past the curve.
+const WINDOW_RADIUS = typeof document !== 'undefined' ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--radius-window')) || 14 : 14
+
+/** Build a holes clip as `path(…)` with SEPARATE SUBPATHS — never `polygon()`: a single even-odd
+ *  polygon needs connector edges between rings, and their retraced pixels (plus outer-ring pixels
+ *  hugging the element edge) don't antialias to zero, drawing hairline ghosts of the clipped
+ *  element (the "widget outline" artifact). Subpaths have no connectors; the outer ring is PADDED
+ *  beyond the element so its antialiasing never touches content; and the holes are wound OPPOSITE
+ *  the outer ring (outer clockwise, holes counter-clockwise) so they cut under the default nonzero
+ *  fill-rule — the `evenodd` keyword inside path() isn't parsed by every Chromium. Hole BOTTOM
+ *  corners are rounded by `radius` (the frame's rounded corners; the top edge sits under the
+ *  square chrome rows), so what shows through always matches the window shape. */
+export function holesPath(w: number, h: number, holes: Array<{ x1: number; y1: number; x2: number; y2: number }>, radius = 0): HolesClip {
+  if (!holes.length) return undefined
+  if (holes.some((r) => r.x1 <= 0 && r.y1 <= 0 && r.x2 >= w && r.y2 >= h)) return 'HIDE'
+  const PAD = 8
+  const subs = holes
+    .map((r) => {
+      const rad = Math.max(0, Math.min(radius, (r.x2 - r.x1) / 2, (r.y2 - r.y1) / 2))
+      if (rad < 0.5) return `M${r.x1} ${r.y1} V${r.y2} H${r.x2} V${r.y1} Z`
+      // counter-clockwise: down the left, arc the bottom-left, along the bottom, arc the
+      // bottom-right, up the right, close along the top (sweep 0 = CCW corner turns)
+      return `M${r.x1} ${r.y1} V${r.y2 - rad} A${rad} ${rad} 0 0 0 ${r.x1 + rad} ${r.y2} H${r.x2 - rad} A${rad} ${rad} 0 0 0 ${r.x2} ${r.y2 - rad} V${r.y1} Z`
+    })
+    .join(' ')
+  return `path("M${-PAD} ${-PAD} H${w + PAD} V${h + PAD} H${-PAD} Z ${subs}")`
+}
+
+/** The desktop base (.bg) keeps its opaque canvas color and gets SCREEN-SPACE holes cut per page —
+ *  going fully transparent instead made every window box-shadow composite against glass (dark
+ *  fringes pooling between windows). Recomputed per camera change (it renders per pan frame anyway). */
+export function bgHolesClip(surfaces: Surface[], t: { x: number; y: number; scale: number }, vw: number, vh: number): HolesClip {
+  const holes: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
+  for (const w of surfaces) {
+    if (w.kind !== 'web' || w.minimized || (w.groupId && !w.peek)) continue
+    const inset = slotOf(w) ? WEB_CHROME_H_SLOTTED : WEB_CHROME_H
+    const x1 = Math.round(w.x * t.scale + t.x)
+    const y1 = Math.round((w.y + inset) * t.scale + t.y)
+    const x2 = Math.round((w.x + w.w) * t.scale + t.x)
+    const y2 = Math.round((w.y + w.h) * t.scale + t.y)
+    if (x2 <= 0 || y2 <= 0 || x1 >= vw || y1 >= vh || y2 <= y1) continue
+    holes.push({ x1, y1, x2, y2 })
+  }
+  return holesPath(vw, vh, holes, WINDOW_RADIUS * t.scale)
+}
+
+/** The sandwich's page-over-DOM direction: pages live BELOW all DOM, so any DOM surface that should
+ *  render UNDER a browser (lower effectiveZ, overlapping) gets its frame clipped around that
+ *  browser's page hole — the live page shows through the cut. World coordinates, so camera pan/zoom
+ *  never recomputes this; only layout/z changes do. */
+function pageHolesClip(me: Surface, all: Surface[]): HolesClip {
+  const meZ = effectiveZ(me)
+  const holes: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
+  for (const w of all) {
+    if (w.id === me.id || w.kind !== 'web' || w.minimized || (w.groupId && !w.peek)) continue
+    if (effectiveZ(w) <= meZ) continue
+    const inset = slotOf(w) ? WEB_CHROME_H_SLOTTED : WEB_CHROME_H
+    const x1 = w.x - me.x
+    const y1 = w.y + inset - me.y
+    const x2 = w.x + w.w - me.x
+    const y2 = w.y + w.h - me.y
+    if (x2 <= 0 || y2 <= 0 || x1 >= me.w || y1 >= me.h || y2 <= y1) continue
+    holes.push({ x1, y1, x2, y2 })
+  }
+  return holesPath(me.w, me.h, holes, WINDOW_RADIUS)
 }
 
 function AppEmptyState(): JSX.Element {
@@ -38,7 +115,7 @@ function AppEmptyState(): JSX.Element {
 
 // memo: the camera tween (⌘⌘ zoom-out, pan/zoom) re-renders App ~60×/sec, which re-creates every
 // SurfaceFrame element. Their `surface` prop keeps a stable reference when only the transform changes,
-// so memo lets React skip re-running each (webview-bearing) frame per animation tick. A surface's own
+// so memo lets React skip re-running each browser-bearing frame per animation tick. A surface's own
 // store subscriptions (z/selection/drag) still re-render it independently — memo only gates the
 // parent-driven churn (brandon-ui's dock-animation props ride along; they only change per-gesture).
 export const SurfaceFrame = memo(function SurfaceFrame({
@@ -59,6 +136,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const minimizeSurface = useDesktop((s) => s.minimizeSurface)
   const setActiveTab = useDesktop((s) => s.setActiveTab)
   const closeTab = useDesktop((s) => s.closeTab)
+  const addWebTab = useDesktop((s) => s.addWebTab)
   // macOS-style: the front-most (highest-z) surface is "active"; only its lights colorize.
   const maxZ = useDesktop((s) => s.surfaces.reduce((m, w) => Math.max(m, w.z), -Infinity))
   const isActive = surface.z === maxZ
@@ -66,8 +144,23 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const isDropTarget = useDesktop((s) => s.dragTarget === surface.id)
   const isAbsorbing = useDesktop((s) => s.absorbing.includes(surface.id))
   const grabMode = useDesktop((s) => s.grabMode)
-  const isControl = useDesktop((s) => s.mode === 'canvas') // control mode: drag cards, don't interact
+  // Control view = the UNLOCKED canvas (pan/zoom/arrange: drag cards from anywhere, don't interact).
+  // The view lock (double-tap ⌘ / toolbar) flips to work mode: the overlay drops and clicks reach the
+  // surface content. `mode === 'canvas'` alone broke when canvas became the DEFAULT mode — it covered
+  // every widget with the drag overlay permanently ("can't even click the theme picker").
+  const isControl = useDesktop((s) => s.mode === 'canvas' && !s.locked)
+  const osAccent = useDesktop((s) => s.osAccent)
   const [isDragging, setIsDragging] = useState(false)
+  // The props a srcdoc widget receives: its OWN props, but the GLOBAL OS accent folded in when the
+  // widget declares none (board cards carry their own palette accent and keep it). So plain + future
+  // widgets follow the OS theme automatically.
+  const widgetProps = (): Record<string, unknown> => {
+    const p = (surface.props ?? {}) as Record<string, unknown>
+    if (!osAccent || p.accent) return p
+    const n = parseInt(osAccent.slice(1), 16)
+    const lum = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)
+    return { accent: osAccent, accentInk: lum > 150 ? '#1a1b1d' : '#ffffff', ...p }
+  }
 
   const drag = useRef<{
     startX: number
@@ -82,16 +175,25 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const resize = useRef<{ startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; dir: string } | null>(null)
   // Slotted-tile drag: the candidate lattice span under the outline ghost (committed on drop).
   const slotGhost = useRef<{ col: number; row: number } | null>(null)
-  const webviewRef = useRef<HTMLWebViewElement>(null)
+  const frameRef = useRef<HTMLDivElement>(null)
+  const webHostRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  // The webview's `src` is set ONCE (uncontrolled): React must never reload a <webview> just because
-  // surface.url changed in the store, or it would yank the user off the page they navigated to (the
-  // "typing on Google → back to HN" bug). Programmatic navigation goes through loadURL (see below).
-  const initialUrl = useRef(surface.url)
   const serverMode = !!window.agentOS?.serverMode
-  const [draft, setDraft] = useState(surface.url ?? '') // address-bar draft text (web/app surfaces)
+  const [draft, setDraft] = useState(surface.url ?? '') // address-bar draft text (app / server-web)
   const zoom = surface.zoom ?? 1
+  // Bookmarks dropdown — plain DOM. The sandwich compositor (plans/blitzos-sandwich-compositor.md)
+  // puts ALL UI in the transparent top window, physically above the live pages below, so a dropdown
+  // simply paints over the page. No capture, no freeze, no placeholder.
+  const [bmOpen, setBmOpen] = useState(false)
+  // The page's cursor (text beam, link hand), mirrored from main — the UI window owns the OS cursor.
+  const [pageCursor, setPageCursor] = useState('default')
+  useEffect(() => {
+    if (surface.kind !== 'web' || serverMode) return
+    return window.agentOS?.onPageCursor?.((m) => {
+      if (m.surfaceId === surface.id) setPageCursor(CURSOR_CSS[m.cursor] ?? m.cursor)
+    })
+  }, [surface.kind, surface.id, serverMode])
 
   // If this surface unmounts mid-drag (the agent closes it, a reconcile removes its file, a folder
   // absorbs it), onBarUp never fires — so clear any ghost snap-preview / drop-target it left behind.
@@ -105,87 +207,149 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     }
   }, [])
 
-  // web: navigation sync + apply content zoom
-  useEffect(() => {
-    if (surface.kind !== 'web') return
-    const el = webviewRef.current as (HTMLElement & WebviewMethods) | null
-    if (!el) return
-    const onReady = (): void => {
-      try {
-        el.setZoomFactor(zoom)
-      } catch {
-        /* not ready */
-      }
-      try {
-        window.agentOS?.reportWebview(surface.id, el.getWebContentsId())
-      } catch {
-        /* not ready */
-      }
-    }
-    el.addEventListener('dom-ready', onReady)
-    onReady()
-    return () => {
-      el.removeEventListener('dom-ready', onReady)
-    }
-  }, [surface.kind, zoom, surface.id])
-
-  // web only: report this guest's webContents id to main so the agent can drive
-  // it over CDP (POST /surfaces/:id/control). No-op outside Electron.
-  useEffect(() => {
-    if (surface.kind !== 'web') return
-    const el = webviewRef.current as (HTMLElement & { getWebContentsId(): number }) | null
-    if (!el) return
-    const onReady = (): void => {
-      try {
-        window.agentOS?.registerWebview?.(surface.id, el.getWebContentsId())
-      } catch {
-        // not running under Electron — ignore
-      }
-    }
-    el.addEventListener('dom-ready', onReady)
-    return () => {
-      el.removeEventListener('dom-ready', onReady)
-      window.agentOS?.unregisterWebview?.(surface.id)
-    }
-  }, [surface.kind, surface.id])
-
-  // web (Electron) only: keep surface.url in sync with the LIVE webview location. Without this, the
-  // store keeps the original url forever, it gets persisted, and a reconcile re-applies it — snapping
-  // the page back (the "I was typing on Google and it took me back to HN" bug). The live page is the
-  // source of truth for where this surface is.
+  // Electron web surfaces are main-owned WebContentsViews — ONE PER BROWSER TAB. React owns the
+  // chrome/layout and DECLARES the tab list; main reconciles live views to it. The declaration is
+  // idempotent and the host defers teardown one beat, so StrictMode's mount→close→mount churn never
+  // orphans a view (the bug that left a page floating detached from its frame).
+  const webTabs = surface.kind === 'web' && !serverMode ? webTabsOf(surface) : null
+  const activeWebTabIdx = webTabs ? Math.min(Math.max(surface.activeTab || 0, 0), webTabs.length - 1) : 0
+  const activeWebTab = webTabs ? webTabs[activeWebTabIdx] : null
+  const webTabsKey = webTabs ? webTabs.map((t) => t.id).join('\n') : ''
+  const webNavKey = webTabs ? webTabs.map((t) => `${t.id} ${t.url ?? ''}`).join('\n') : ''
   useEffect(() => {
     if (surface.kind !== 'web' || serverMode) return
-    const el = webviewRef.current as (HTMLElement & WebviewMethods) | null
-    if (!el) return
-    const onNav = (e: Event): void => {
-      const url = (e as unknown as { url?: string }).url || (el.getURL ? el.getURL() : '')
-      const cur = useDesktop.getState().surfaces.find((s) => s.id === surface.id)?.url
-      if (url && url !== cur) useDesktop.getState().updateSurface(surface.id, { url })
-    }
-    el.addEventListener('did-navigate', onNav)
-    el.addEventListener('did-navigate-in-page', onNav)
-    return () => {
-      el.removeEventListener('did-navigate', onNav)
-      el.removeEventListener('did-navigate-in-page', onNav)
-    }
+    const cur = useDesktop.getState().surfaces.find((s) => s.id === surface.id) ?? surface
+    window.agentOS?.webContentsViewSync?.({
+      id: surface.id,
+      tabs: webTabsOf(cur).map((t) => ({ id: t.id, url: t.url })),
+      active: activeWebTab?.id ?? null,
+      zoom
+    })
+    // Re-declare on tab-list/active/zoom changes only — a tab's URL changing is a NAVIGATION
+    // (the effect below), not a reason to re-sync the list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surface.kind, surface.id, serverMode, webTabsKey, activeWebTab?.id, zoom])
+  useEffect(() => {
+    if (surface.kind !== 'web' || serverMode) return
+    return () => window.agentOS?.webContentsViewClose?.(surface.id)
   }, [surface.kind, surface.id, serverMode])
 
-  // web (Electron) only: navigate IMPERATIVELY when the store url diverges from the live location —
-  // i.e. an agent/programmatic update_surface, not the user's own navigation (which the sync effect
-  // above already folded into the store, so getURL() already matches and we skip the reload).
+  // Report the body rectangle in window CSS pixels while the main process hosts and clips the real
+  // browser view there. A RAF loop is intentional: canvas pan/zoom changes the DOM transform without
+  // re-rendering this memoized frame, and ResizeObserver cannot see transforms.
   useEffect(() => {
-    if (surface.kind !== 'web' || serverMode || !surface.url) return
-    const el = webviewRef.current as (HTMLElement & WebviewMethods) | null
-    if (!el || !el.getURL) return
-    try {
-      if (el.getURL() !== surface.url) void el.loadURL(surface.url)
-    } catch {
-      /* not ready — dom-ready will reconcile on the next store change */
+    if (surface.kind !== 'web' || serverMode) return
+    let raf = 0
+    let last = ''
+    const tick = (): void => {
+      const el = webHostRef.current
+      if (el) {
+        const r = el.getBoundingClientRect()
+        const winW = window.innerWidth || 0
+        const winH = window.innerHeight || 0
+        // NOT gated on isDragging: the view tracks its frame live during a drag (one RAF behind at
+        // worst) — blanking the page mid-drag read as "the content detached from the window".
+        // (No occlusion test here anymore: the sandwich compositor stacks DOM above pages for real,
+        // so nothing needs detecting or freezing.)
+        const visible =
+          !surface.minimized &&
+          !restoring &&
+          r.width > 1 &&
+          r.height > 1 &&
+          r.right > 0 &&
+          r.bottom > 0 &&
+          r.left < winW &&
+          r.top < winH
+        const z = Number(frameRef.current ? getComputedStyle(frameRef.current).zIndex : surface.z) || surface.z || 0
+        const key = `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)},${visible ? 1 : 0},${z},${zoom}`
+        if (key !== last) {
+          last = key
+          window.agentOS?.webContentsViewBounds?.({
+            id: surface.id,
+            rect: { x: r.left, y: r.top, width: r.width, height: r.height },
+            visible,
+            z,
+            zoom
+          })
+        }
+      }
+      raf = requestAnimationFrame(tick)
     }
-  }, [surface.kind, surface.id, surface.url, serverMode])
+    tick()
+    return () => cancelAnimationFrame(raf)
+  }, [surface.kind, surface.id, zoom, serverMode, surface.minimized, restoring, surface.z])
 
-  // Keep the address-bar draft in sync with the live/stored url (user navigation folds into the store
-  // via the sync effect above; an agent update_surface{url} also lands here).
+  // --- sandwich input forwarding: pointer/wheel events landing on the hole go to the page. The
+  // view sits at exactly the hole's screen rect, so view-local = client - rect origin (no descale).
+  const holePoint = (e: { clientX: number; clientY: number }): { x: number; y: number } | null => {
+    const el = webHostRef.current
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    if (r.width < 1 || r.height < 1) return null
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
+  }
+  const holeMods = (e: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean }): string[] => {
+    const m: string[] = []
+    if (e.shiftKey) m.push('shift')
+    if (e.ctrlKey) m.push('control')
+    if (e.altKey) m.push('alt')
+    if (e.metaKey) m.push('meta')
+    return m
+  }
+  const holeMoveRaf = useRef(0)
+  function onHoleDown(e: React.PointerEvent): void {
+    const p = holePoint(e)
+    if (!p) return
+    window.agentOS?.pageInput?.(surface.id, { type: 'down', ...p, button: e.button, clicks: e.detail || 1, modifiers: holeMods(e) })
+    // no stopPropagation: the bubble reaches focusHere on the frame and raises this window
+  }
+  function onHoleUp(e: React.PointerEvent): void {
+    const p = holePoint(e)
+    if (!p) return
+    window.agentOS?.pageInput?.(surface.id, { type: 'up', ...p, button: e.button, clicks: e.detail || 1, modifiers: holeMods(e) })
+    // Keyboard handoff is CONDITIONAL (main probes what the click focused): flipping the key window
+    // on every page click grayed the UI chrome — only an editable target needs native keys/IME.
+    window.agentOS?.pageFocus?.(surface.id)
+  }
+  function onHoleMove(e: React.PointerEvent): void {
+    if (holeMoveRaf.current) return
+    const { clientX, clientY } = e
+    const m = holeMods(e)
+    holeMoveRaf.current = requestAnimationFrame(() => {
+      holeMoveRaf.current = 0
+      const p = holePoint({ clientX, clientY })
+      if (p) window.agentOS?.pageInput?.(surface.id, { type: 'move', ...p, modifiers: m })
+    })
+  }
+  // Wheel needs preventDefault (the canvas pan/zoom handlers live above) → native non-passive listener.
+  useEffect(() => {
+    if (surface.kind !== 'web' || serverMode) return
+    const el = webHostRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      e.preventDefault()
+      e.stopPropagation()
+      const r = el.getBoundingClientRect()
+      window.agentOS?.pageInput?.(surface.id, { type: 'wheel', x: e.clientX - r.left, y: e.clientY - r.top, dx: e.deltaX, dy: e.deltaY, modifiers: holeMods(e) })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surface.kind, surface.id, serverMode])
+
+  // Any tab's url change navigates ITS view: the BrowserNav address bar and agent update_surface{url}
+  // both fold into the active tab's url (store), bookmark clicks too; popup tabs arrive with one. Main
+  // reports real navigations back per tab and the host no-ops an already-current url, so the
+  // push-echo never loops.
+  useEffect(() => {
+    if (surface.kind !== 'web' || serverMode) return
+    const cur = useDesktop.getState().surfaces.find((s) => s.id === surface.id) ?? surface
+    for (const t of webTabsOf(cur)) if (t.url) window.agentOS?.webContentsViewNavigate?.(surface.id, t.id, t.url)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surface.kind, surface.id, serverMode, webNavKey])
+
+  // Keep the app/server address-bar draft in sync with the stored url (Electron web surfaces moved to
+  // BrowserNav, which holds per-tab drafts with a focus clobber-guard).
   useEffect(() => setDraft(surface.url ?? ''), [surface.url])
 
   function normalizeUrl(s: string): string {
@@ -193,8 +357,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     if (!t || /^https?:\/\//i.test(t)) return t
     return 'https://' + t
   }
-  // Address-bar submit: navigate THIS surface. app (iframe) → set src through the store; web → loadURL
-  // (Electron) or serverNavigate (server preview), keeping the store url/title in sync either way.
+  // Address-bar submit for app (iframe src via the store) and server-mode web (headless browser).
   function go(e: React.FormEvent): void {
     e.preventDefault()
     const u = normalizeUrl(draft)
@@ -213,7 +376,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         /* keep u */
       }
       useDesktop.getState().updateSurface(surface.id, { url: u, title })
-    } else (webviewRef.current as unknown as WebviewMethods | null)?.loadURL(u)
+    }
   }
 
   // Server mode: mount the streamed <canvas> for this web surface (draws screencast
@@ -299,7 +462,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; path?: string; sessionId?: string; chatOp?: string }
       if (!m || typeof m !== 'object') return
       if (m.type === 'blitz:hello') {
-        win.postMessage({ type: 'blitz:init', props: surface.props ?? {} }, '*')
+        win.postMessage({ type: 'blitz:init', props: widgetProps() }, '*')
       } else if (m.type === 'blitz:contextmenu') {
         // Item 5b: a srcdoc widget forwarded a right-click (its iframe swallowed it). Open the annotation
         // menu at that point — EXCEPT on runtime panels (chat/activity), where annotating makes no sense.
@@ -342,11 +505,13 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     // surface.props intentionally in deps: a hello after a prop change re-seeds fresh props
   }, [surface.kind, surface.id, surface.props])
 
-  // Live prop changes reach the widget without reloading it (html stays put).
+  // Live prop changes reach the widget without reloading it (html stays put). Also re-posts when
+  // the global OS accent changes so plain widgets (no own props.accent) recolor immediately.
   useEffect(() => {
     if (surface.kind !== 'srcdoc') return
-    iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:props', props: surface.props ?? {} }, '*')
-  }, [surface.kind, surface.props])
+    iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:props', props: widgetProps() }, '*')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surface.kind, surface.props, osAccent])
 
   function onBarDown(e: React.PointerEvent): void {
     e.stopPropagation()
@@ -563,12 +728,15 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const isFolder = surface.kind === 'native' && surface.component === 'folder'
   const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
   const isSlotted = !!slotOf(surface) // a stage tile: lattice-snapped, fixed-size, never edge-tiles
+  // Cut a higher browser's page hole out of this frame (string-equality selector: recomputes per
+  // store change, re-renders only when the polygon actually changes; world coords, camera-free).
+  const clipPath = useDesktop((s) => (serverMode ? undefined : pageHolesClip(surface, s.surfaces)))
   // System panels (the pinned chat/activity hubs) keep the full window bar even when slotted —
   // hiding it would cost their close/minimize controls. Everything else slotted gets WIDGET chrome:
   // no bar at all, just an invisible top drag-grip + the pop-out toggle in the far right corner.
   const isSystemPanel = surface.role === 'chat' || surface.role === 'activity' || (surface.kind === 'native' && (surface.component === 'chat' || surface.component === 'activity'))
   const widgetChrome = isSlotted && !isSystemPanel
-  const needsFocusCatcher = !isActive && !isControl && (surface.kind === 'web' || surface.kind === 'app' || surface.kind === 'srcdoc')
+  const needsFocusCatcher = !isActive && !isControl && (surface.kind === 'app' || surface.kind === 'srcdoc')
   // A direct click/focus means THIS is the window the user is acting on: raise it AND drop any stale
   // marquee selection that doesn't include it — ⌘T/⇧⌘T target "the single selection else the
   // front-most", so a forgotten selection would silently hijack the keybind to an old window.
@@ -591,20 +759,19 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       case 'web':
         // Server mode: the site lives in a server-side headless browser, streamed
         // here as a <canvas> (mountServerSurface draws frames + forwards input).
-        // Electron / plain preview: a real <webview> guest.
+        // Electron: THE HOLE — transparent; the live page (a WebContentsView in the sandwich's
+        // pages window) shows through from underneath. Pointer/wheel forward to it; keyboard rides
+        // the pageFocus handoff from onHoleDown.
         if (serverMode) return <canvas ref={canvasRef} style={fill} />
         return (
-          // allowpopups: window.open must RETURN A WINDOW inside guests — when it returns null,
-          // sites' fallback is `top.location = url`, which HIJACKS the whole surface (Gmail's
-          // contact-hovercard gapi frame wiped the compose page this way). Main decides what each
-          // popup actually becomes (hidden utility window / auth window / a new web surface) via
-          // setWindowOpenHandler in index.ts — nothing opens unmanaged.
-          <webview
-            ref={webviewRef}
-            src={initialUrl.current}
-            partition="persist:agentos"
-            allowpopups
-            style={{ ...fill, display: 'inline-flex' }}
+          <div
+            ref={webHostRef}
+            className="webcontents-host"
+            // containment inside the focus ring comes from the frame's 1px padding (.window.browser)
+            style={{ ...fill, cursor: pageCursor }}
+            onPointerDown={onHoleDown}
+            onPointerMove={onHoleMove}
+            onPointerUp={onHoleUp}
           />
         )
       case 'app':
@@ -629,7 +796,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
             srcDoc={BRIDGE_SHIM + UI_KIT + (surface.html ?? '')}
             style={iframeZoom}
             onLoad={() =>
-              iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:init', props: surface.props ?? {} }, '*')
+              iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:init', props: widgetProps() }, '*')
             }
           />
         )
@@ -658,7 +825,15 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     return (
       <div
         className={`window folder${isActive ? ' is-active' : ''}${isSelected ? ' is-selected' : ''}${isDropTarget ? ' drop-target' : ''}`}
-        style={{ left: surface.x, top: surface.y, width: surface.w, height: surface.h, zIndex: surface.z }}
+        style={{
+          left: surface.x,
+          top: surface.y,
+          width: surface.w,
+          height: surface.h,
+          zIndex: surface.z,
+          ...(clipPath && clipPath !== 'HIDE' ? { clipPath } : {}),
+          ...(clipPath === 'HIDE' ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {})
+        }}
         onPointerDown={focusHere}
       >
         <FolderWidget surface={surface} onDragDown={onBarDown} onDragMove={onBarMove} onDragUp={onBarUp} />
@@ -668,13 +843,18 @@ export const SurfaceFrame = memo(function SurfaceFrame({
 
   return (
     <div
+      ref={frameRef}
       data-sid={surface.id}
-      className={`window${isNote ? ' note' : ''}${isActive ? ' is-active' : ''}${isSelected ? ' is-selected' : ''}${isAbsorbing ? ' absorbing' : ''}`}
+      className={`window${isNote ? ' note' : ''}${surface.kind === 'web' && !serverMode ? ' browser' : ''}${isActive ? ' is-active' : ''}${isSelected ? ' is-selected' : ''}${isAbsorbing ? ' absorbing' : ''}`}
       style={{
         left: surface.x,
         top: surface.y,
         width: surface.w,
         height: surface.h,
+        // The sandwich's page-over-DOM direction: a higher browser's page hole is CUT out of this
+        // frame so the live page (below all DOM) shows through where it should cover us. 'HIDE' =
+        // fully covered: hide outright (a degenerate clip ghosts the element's outline).
+        ...(clipPath && clipPath !== 'HIDE' ? { clipPath } : {}),
         ...(surface.minimized ? { display: 'none' } : {}),
         // Slotted tiles spring-snap into their span (the macOS settle); suspended while dragging so
         // the tile tracks the cursor 1:1, and resumed on drop for the snap animation. File tiles get
@@ -683,29 +863,19 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         ...(isFileTile && !isDragging ? { transition: 'left 0.4s cubic-bezier(0.22, 1, 0.36, 1), top 0.4s cubic-bezier(0.22, 1, 0.36, 1)' } : {}),
         // brandon-ui dock restore: the surface is mounted (for measurement) but hidden while the
         // genie animation plays a clone from the dock; unhidden when the phase ends.
-        ...(restoring ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {}),
+        ...(restoring || clipPath === 'HIDE' ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {}),
         ...(paper ? { background: paper.bg, color: paper.ink } : {}),
-        // Layered desktop (macOS model). Bands, bottom to top: slotted tiles + file/folder icons (the
-        // DESKTOP layer, raw z) → free-form windows (float above the desktop, +500k) → focus floater
-        // (+1.5M) → pinned chat/activity (+2M, never buried). Free windows therefore cover tiles
-        // instead of blocking them (the placer ignores windows entirely); a slotted tile being
-        // DRAGGED lifts above the window band so it never disappears under one mid-gesture.
-        zIndex:
-          surface.role === 'chat' || surface.role === 'activity' || (surface.kind === 'native' && (surface.component === 'chat' || surface.component === 'activity'))
-            ? 2_000_000 + surface.z
-            : surface.focus
-              ? 1_500_000 + surface.z
-              : isSlotted
-                ? (isDragging ? 1_200_000 : 0) + surface.z
-                : isFileTile || isFolder
-                  ? surface.z
-                  : 500_000 + surface.z
+        // Layered desktop (macOS model) — bands live in store.effectiveZ (one source, shared with
+        // the browser occlusion test): tiles/icons raw z → free windows +500k → focus +1.5M →
+        // pinned chat/activity +2M. A slotted tile being DRAGGED lifts above the window band so it
+        // never disappears under one mid-gesture (transient, component-local).
+        zIndex: effectiveZ(surface) + (isSlotted && isDragging ? 1_200_000 : 0)
       }}
       onPointerDown={focusHere}
-      onFocus={focusHere} // a click INTO an iframe/webview focuses the guest, not the host — still raise this window front-most so keybinds target it
+      onFocus={focusHere} // a click INTO an iframe focuses the guest, not the host — still raise this window front-most so keybinds target it
       onContextMenu={(e) => {
         // Item 5b: right-click a native surface (note/tile/frame chrome) → annotation menu at that point.
-        // web is handled in main (the webview swallows this); srcdoc's sandboxed iframe also swallows it.
+        // web is handled in main (the WebContentsView owns the browser); srcdoc's sandboxed iframe also swallows it.
         if (surface.kind === 'web') return
         const r = e.currentTarget.getBoundingClientRect()
         if (r.width < 1 || r.height < 1) return
@@ -739,7 +909,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
             {!isFileTile && <button className="tl tl-min" title="Minimize" onClick={() => (onRequestMinimize ? onRequestMinimize(surface.id) : minimizeSurface(surface.id))} />}
             <button className="tl tl-max" title="Zoom" onClick={() => (onRequestToggleMaximize ? onRequestToggleMaximize(surface.id) : toggleMaximize(surface.id))} />
           </div>
-          {surface.kind === 'web' || surface.kind === 'app' ? (
+          {surface.kind === 'app' || (surface.kind === 'web' && serverMode) ? (
             <form className="window-url" onSubmit={go} onPointerDown={stop}>
               <input
                 value={draft}
@@ -749,6 +919,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({
                 onPointerDown={stop}
               />
             </form>
+          ) : surface.kind === 'web' ? (
+            // Electron browser window: the address lives in the BrowserNav below; the bar shows the
+            // page title like every other window (and stays the drag handle).
+            <div className="window-title">{activeWebTab?.title || surface.title}</div>
           ) : (
             <div className="window-bar-fill" />
           )}
@@ -760,6 +934,54 @@ export const SurfaceFrame = memo(function SurfaceFrame({
             </button>
           )}
         </div>
+      )}
+      {webTabs && (
+        <>
+          {/* Browser tab strip — one page per tab (a main-owned WebContentsView each). Always shown
+              (the + is how a second tab is born); closing the last tab closes the window. */}
+          <div className="window-tabs" onPointerDown={stop}>
+            {webTabs.map((t, i) => (
+              <div
+                key={t.id}
+                className={`wtab${i === activeWebTabIdx ? ' active' : ''}`}
+                title={t.url || t.title}
+                onClick={() => setActiveTab(surface.id, i)}
+              >
+                {t.favicon ? (
+                  <img className={`wtab-fav${t.loading ? ' loading' : ''}`} src={t.favicon} alt="" draggable={false} />
+                ) : (
+                  <span className={`wtab-dot${t.loading ? ' loading' : ''}`} />
+                )}
+                <span className="wtab-title">{t.title || 'New Tab'}</span>
+                <button
+                  className="wtab-close"
+                  title="Close tab"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    // the implicit single tab isn't materialized in the store — closing it closes the window
+                    if (surface.tabs?.length) closeTab(surface.id, t.id)
+                    else closeSurface(surface.id)
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button className="wtab-add" title="New tab" onClick={() => addWebTab(surface.id)}>
+              +
+            </button>
+          </div>
+          {bmOpen && (
+            <div
+              className="bm-backdrop"
+              onPointerDown={(e) => {
+                e.stopPropagation()
+                setBmOpen(false)
+              }}
+            />
+          )}
+          <BrowserNav surface={surface} bmOpen={bmOpen} setBmOpen={setBmOpen} />
+        </>
       )}
       {surface.component === 'terminal' && surface.tabs && (
         <div className="window-tabs" onPointerDown={stop}>

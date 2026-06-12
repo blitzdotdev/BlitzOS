@@ -10,14 +10,14 @@
 //
 // Tokens are explicit values (a sandboxed iframe doesn't inherit the OS's CSS vars) chosen to match the
 // OS's default LIGHT theme (tokens.css: --canvas #e9e9e7, --surface #fff, --surface-raised #f6f6f5,
-// --text #1a1b1d, --text-muted #797c7f, --accent coral #f4673b). The OS canvas is light, so the kit must be
+// --text #1a1b1d, --text-muted #797c7f, --accent red #e31c30). The OS canvas is light, so the kit must be
 // light too or every widget clashes dark-on-light. Keep in sync with widget-catalog.mjs's WIDGET_AUTHORING_MD.
 //
 // Sandboxed `allow-scripts` srcdoc CAN `customElements.define` + Shadow DOM (no same-origin needed).
 
 export const UI_KIT = `<style>
 :root{
-  --blitz-accent:#1a1b1d; --blitz-accent-ink:#ffffff; /* default neutral — a widget recolors itself via props.accent (script below) */
+  --blitz-accent:#e31c30; --blitz-accent-ink:#ffffff; /* Blitz red default (picked 2026-06-11), a widget recolors itself via props.accent (script below) */
   /* The Blitz paper palette (plans/agent-os-design-system.md §3) — the distribution cards sample
      their accents from. Muted, light-theme-safe; coral is the signature. */
   --blitz-coral:#FF8D61; --blitz-terracotta:#924B2F; --blitz-sage:#7FA98C; --blitz-slate:#5B78AA;

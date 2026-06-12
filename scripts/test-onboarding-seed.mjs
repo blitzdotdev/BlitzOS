@@ -92,7 +92,9 @@ console.log('1) engineer fixture, FDA off, chat hub on stage — FIT-FIRST: ever
   ok(at(plan, 'gaps').props.items.some((g) => g.q === 'The personal layer'), 'gaps includes the FDA unlock teaser when locked')
   ok(at(plan, 'rhythm').props.topApps[0].n === 40, 'rhythm falls back to launch counts when knowledgeC is locked')
   ok(plan.filter((c) => c.role !== 'unlock').every((c) => typeof c.props.accent === 'string'), 'every widget card samples an accent from the palette')
-  ok(new Set(plan.filter((c) => c.props.accent).map((c) => c.props.accent)).size >= 5, 'accents vary across the board (a distribution, not one color)')
+  // The picked theme (2026-06-11) rotates FOUR colors (slate, dusty blue, sage, marker) instead of
+  // the old 7-accent palette — assert a distribution, not the old palette size.
+  ok(new Set(plan.filter((c) => c.props.accent).map((c) => c.props.accent)).size >= 3, 'accents vary across the board (a distribution, not one color)')
   ok(!JSON.stringify(plan.map((c) => c.props)).includes('—'), 'no em dash anywhere a human reads')
   for (const card of plan) {
     const size = JSON.stringify(card.props).length

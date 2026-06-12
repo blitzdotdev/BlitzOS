@@ -1,12 +1,23 @@
 import { BrowserWindow, ipcMain, webContents, app } from 'electron'
 import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
-import { controlWindow, type ControlAction, type ControlResult } from './cdp'
+import { controlWindow, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
 import { dropConsent } from './widgets'
 import { ingestSignals, ingestCanvasOps, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
-import { safeName, appendChatMessage, resolveWorkspace } from './workspace.mjs'
+import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
 import { tel } from './telemetry'
+import {
+  closeWebContentsView,
+  focusWebContentsView,
+  initWebContentsViewHost,
+  navigateWebContentsView,
+  syncWebContentsViewTabs,
+  updateWebContentsViewBounds,
+  webContentsForSurface,
+  webContentsViewNavAction,
+  type TabDecl
+} from './webcontents-view-host'
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -62,6 +73,14 @@ export interface OsState {
 }
 
 let getWin: () => BrowserWindow | null = () => null
+// The sandwich's L0 (pages) window — where page WebContentsViews live. getWin() stays the UI window
+// (the renderer face); these two are different windows by design (plans/blitzos-sandwich-compositor.md).
+let getPagesWin: () => BrowserWindow | null = () => null
+let sandwichFocus: { focusPages: () => void; focusUi: () => void; dragShell: (op: 'start' | 'move', dx: number, dy: number) => void } = {
+  focusPages: () => {},
+  focusUi: () => {},
+  dragShell: () => {}
+}
 let cached: OsState = { surfaces: [] }
 // The workspaces root this process runs on (~/Blitz unless overridden) — index.ts needs it for the
 // boot journal (root-level runtime state lives at <root>/.blitzos/state.json).
@@ -97,14 +116,49 @@ function durableFlush(): void {
 }
 // The SHARED workspace host (created in initOsActions, once app paths exist) — the SAME module the
 // server backend uses, so workspaces are ONE feature across both modes. Electron adapter: broadcast =
-// os:action IPC; web surfaces are <webview>s the renderer owns (onSurfaces no-op); mode 'desktop'.
+// os:action IPC; web surfaces are main-owned WebContentsViews (onSurfaces no-op); mode 'desktop'.
 let wsHost: ReturnType<typeof createWorkspaceHost> | null = null
-// surfaceId -> the webview guest's WebContents id (so we can read its DOM)
-const webviewIds = new Map<string, number>()
+// surfaceId -> the browser guest's WebContents id (so we can read/control its DOM)
+const browserContentIds = new Map<string, number>()
+
+function registerLiveWebContent(surfaceId: string, wcid: number): void {
+  browserContentIds.set(surfaceId, wcid)
+  registerCdpSurface(surfaceId, wcid)
+  ensureCapture(surfaceId)
+  ensureNavEmitter(surfaceId, wcid)
+}
+
+function unregisterLiveWebContent(surfaceId: string, wcid?: number): void {
+  const existing = browserContentIds.get(surfaceId)
+  if (wcid == null || existing === wcid) browserContentIds.delete(surfaceId)
+  unregisterCdpSurface(surfaceId)
+  const iv = captureIntervals.get(surfaceId)
+  if (iv) clearInterval(iv)
+  captureIntervals.delete(surfaceId)
+}
+
+function osWebContentNavigated(id: string, url: string, title?: string): void {
+  if (!surfaceExists(id)) return
+  const patch = { url, ...(title ? { title } : {}) }
+  cached = { ...cached, surfaces: (cached.surfaces || []).map((s) => (s.id === id ? { ...s, ...patch } : s)) }
+  send('update', { id, patch })
+}
 
 /** Wire the renderer<->main control channel. Renderer pushes state on change. */
-export function initOsActions(getWindow: () => BrowserWindow | null): void {
-  getWin = getWindow
+export function initOsActions(opts: {
+  /** L1 — the transparent UI window (the renderer; every os:action/IPC send targets it). */
+  getWindow: () => BrowserWindow | null
+  /** L0 — the pages window (where the browser WebContentsViews live). */
+  getPagesWindow: () => BrowserWindow | null
+  /** Keyboard handoff: typing into a page vs back to the UI (the attached child stays on top). */
+  focusPages: () => void
+  focusUi: () => void
+  /** Titlebar drag protocol → moves the PARENT window (sandwich.ts). */
+  dragShell: (op: 'start' | 'move', dx: number, dy: number) => void
+}): void {
+  getWin = opts.getWindow
+  getPagesWin = opts.getPagesWindow
+  sandwichFocus = { focusPages: opts.focusPages, focusUi: opts.focusUi, dragShell: opts.dragShell }
 
   // The shared workspace host. Root honors BLITZ_WORKSPACES_ROOT / BLITZ_WORKSPACE (parity with the
   // server backend), defaulting to ~/Blitz (user-browseable folders). SAME module as the server.
@@ -135,9 +189,9 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
       // canvas-gesture differ for a beat so a folder-wide change never reads as human gestures
       const bt = (obj as { type?: unknown })?.type
       if (bt === 'reconcile' || bt === 'hydrate' || bt === 'switch') canvasBulkAt = Date.now()
-      getWin()?.webContents.send('os:action', obj)
+      sendToRenderer('os:action', obj)
     },
-    onSurfaces: () => {}, // the renderer owns its <webview>s in Electron
+    onSurfaces: () => {}, // Electron browser guests are hosted by webcontents-view-host.ts
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
     // A chat session's claude runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
     // agent-session core + the session-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
@@ -145,6 +199,33 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   })
   wsHost.hydrateOnBoot()
   wsHost.startWatch()
+
+  initWebContentsViewHost({
+    getWindow: getPagesWin, // views live in the sandwich's L0 (pages) window, under the UI layer
+    // Per-tab page state → the renderer chrome (tab strip / navbar). The ACTIVE tab's url/title also
+    // fold into the surface itself (the agent + .weblink persistence contract is unchanged by tabs).
+    onTabState: (surfaceId, tabId, patch, isActive) => {
+      sendToRenderer('os:web-tab', { surfaceId, tabId, patch })
+      if (isActive && patch.url) osWebContentNavigated(surfaceId, patch.url, patch.title)
+    },
+    onTabGone: (surfaceId, tabId) => sendToRenderer('os:web-tab', { surfaceId, tabId, removed: true }),
+    // CDP + perception always follow the surface's ACTIVE tab — one live target per surface. Fired
+    // on tab switch AND on the active tab's every dom-ready (same wcId): the re-register re-injects
+    // the perception sensors a navigation destroyed, so don't dedupe on wcId.
+    onActiveContent: (surfaceId, wcId) => {
+      unregisterLiveWebContent(surfaceId)
+      if (wcId != null) registerLiveWebContent(surfaceId, wcId)
+    },
+    // A link-disposition popup opens as a NEW TAB of its surface (browser semantics). The renderer
+    // owns the tab list, so it materializes the tab and syncs back.
+    onOpenTab: (surfaceId, url) => sendToRenderer('os:web-tab', { surfaceId, openTab: { url } }),
+    // Page cursor feedback: the UI window owns the OS cursor (it is the window under the mouse), so
+    // the page's cursor changes (text beam, link hand) mirror onto the hole div's CSS cursor.
+    onCursor: (surfaceId, cursor) => sendToRenderer('os:page-cursor', { surfaceId, cursor }),
+    onFocus: (id) => send('focus', { id }),
+    onContextMenu: (surfaceId, x, y) => sendToRenderer('os:action', { type: 'surface-contextmenu', surfaceId, x, y }),
+    onMetaTap: () => sendToRenderer('os:metatap', undefined)
+  })
 
   // Workspace launcher / Mission-Control IPC — mirrors the server's /api/os/workspace* routes.
   ipcMain.handle('workspace:list', () => ({
@@ -207,11 +288,87 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
     }
   })
   ipcMain.on('os:webview', (_e, m: { surfaceId: string; wcid: number }) => {
-    if (m && m.surfaceId) {
-      webviewIds.set(m.surfaceId, m.wcid)
-      ensureCapture(m.surfaceId)
-      ensureNavEmitter(m.surfaceId, m.wcid)
+    if (m && m.surfaceId) registerLiveWebContent(m.surfaceId, m.wcid)
+  })
+  // The renderer declares each web surface's tab list; the host reconciles live views to it.
+  ipcMain.on('os:webcontents-view:sync', (_e, m: { id?: string; tabs?: TabDecl[]; active?: string | null; zoom?: number }) => {
+    if (!m?.id || !Array.isArray(m.tabs)) return
+    syncWebContentsViewTabs(String(m.id), m.tabs, typeof m.active === 'string' ? m.active : null, Number(m.zoom) || 1)
+  })
+  ipcMain.on('os:webcontents-view:bounds', (_e, m: { id?: string; rect?: { x: number; y: number; width: number; height: number }; visible?: boolean; z?: number; zoom?: number }) => {
+    if (!m?.id || !m.rect) return
+    updateWebContentsViewBounds(String(m.id), m.rect, !!m.visible, Number(m.z) || 0, Number(m.zoom) || 1)
+  })
+  ipcMain.on('os:webcontents-view:navigate', (_e, m: { id?: string; tabId?: string; url?: string }) => {
+    if (m?.id && typeof m.url === 'string') navigateWebContentsView(String(m.id), typeof m.tabId === 'string' ? m.tabId : null, m.url)
+  })
+  // Browser chrome buttons (back/forward/reload/stop) → the surface's active tab.
+  ipcMain.on('os:webcontents-view:nav-action', (_e, m: { id?: string; action?: string }) => {
+    const a = String(m?.action || '')
+    if (m?.id && (a === 'back' || a === 'forward' || a === 'reload' || a === 'stop')) webContentsViewNavAction(String(m.id), a)
+  })
+  // The sandwich input router: the UI window owns ALL mouse; events landing on a browser HOLE
+  // forward to that surface's active tab. Wheel deltas are NEGATED (Electron's mouseWheel scrolls
+  // down on negative deltaY — spike-verified, inverse of the DOM's convention). Keyboard is NATIVE
+  // via the focus handoff below, so typing and IME never ride synthetic events.
+  ipcMain.on('os:page-input', (_e, m: { id?: string; ev?: Record<string, unknown> }) => {
+    const wc = m?.id ? webContentsForSurface(String(m.id)) : null
+    const ev = m?.ev
+    if (!wc || !ev) return
+    const x = Math.round(Number(ev.x) || 0)
+    const y = Math.round(Number(ev.y) || 0)
+    const mods = (Array.isArray(ev.modifiers) ? ev.modifiers : []) as Array<'shift' | 'control' | 'alt' | 'meta'>
+    try {
+      if (ev.type === 'wheel') {
+        wc.sendInputEvent({ type: 'mouseWheel', x, y, deltaX: -Math.round(Number(ev.dx) || 0), deltaY: -Math.round(Number(ev.dy) || 0), modifiers: mods })
+      } else if (ev.type === 'move') {
+        wc.sendInputEvent({ type: 'mouseMove', x, y, modifiers: mods })
+      } else if (ev.type === 'down' || ev.type === 'up') {
+        const button = ev.button === 2 ? 'right' : ev.button === 1 ? 'middle' : 'left'
+        wc.sendInputEvent({ type: ev.type === 'down' ? 'mouseDown' : 'mouseUp', x, y, button, clickCount: Math.max(1, Number(ev.clicks) || 1), modifiers: mods })
+      }
+    } catch {
+      /* view torn down mid-event */
     }
+  })
+  // Keyboard handoff, CONDITIONAL: fired after a click lands in a page; probe what it focused.
+  // Only an EDITABLE target (typing/IME) needs the pages window to become key — flipping the key
+  // window on every click grays the UI window's chrome and reads as the app losing focus. A
+  // non-editable click returns the keyboard to the UI so app keybinds keep working.
+  ipcMain.on('os:page-focus', (_e, id: string) => {
+    const wc = webContentsForSurface(String(id || ''))
+    if (!wc) return
+    wc.executeJavaScript(
+      '(()=>{const e=document.activeElement;if(!e)return false;if(e.isContentEditable)return true;const t=e.tagName;return t==="INPUT"||t==="TEXTAREA"||t==="SELECT"})()',
+      true
+    )
+      .then((editable) => {
+        if (editable) {
+          sandwichFocus.focusPages()
+          try {
+            wc.focus()
+          } catch {
+            /* gone */
+          }
+        } else {
+          sandwichFocus.focusUi()
+        }
+      })
+      .catch(() => {})
+  })
+  ipcMain.on('os:ui-focus', () => sandwichFocus.focusUi())
+  // Titlebar drag (sandwich): the renderer streams screen deltas; main moves the PARENT window and
+  // the attached UI child follows natively (CSS app-region would drag the child alone, detaching it).
+  ipcMain.on('os:shell-drag', (_e, m: { op?: string; dx?: number; dy?: number }) => {
+    const op = m?.op === 'start' ? 'start' : 'move'
+    sandwichFocus.dragShell(op, Number(m?.dx) || 0, Number(m?.dy) || 0)
+  })
+  ipcMain.on('os:webcontents-view:focus', (_e, id: string) => focusWebContentsView(String(id || '')))
+  ipcMain.on('os:webcontents-view:close', (_e, id: string) => closeWebContentsView(String(id || '')))
+  // Machine-global browser bookmarks (root journal — a bookmark isn't workspace-specific).
+  ipcMain.handle('os:bookmarks', () => readBookmarks(root))
+  ipcMain.handle('os:bookmarks-toggle', (_e, m: { url?: unknown; title?: unknown }) => {
+    return toggleBookmark(root, { url: String(m?.url || ''), title: String(m?.title || '') })
   })
   // A srcdoc surface fired an action back (e.g. "approve" in a triage panel).
   // Strip the envelope and emit it into the agent's event stream.
@@ -249,9 +406,8 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
   ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {
-    const wcid = webviewIds.get(surfaceId)
-    if (wcid == null) return null
-    const wc = webContents.fromId(wcid)
+    const wcid = browserContentIds.get(surfaceId)
+    const wc = wcid == null ? webContentsForSurface(surfaceId) : webContents.fromId(wcid)
     if (!wc || wc.isDestroyed()) return null
     try {
       const img = await wc.capturePage()
@@ -263,11 +419,10 @@ export function initOsActions(getWindow: () => BrowserWindow | null): void {
 }
 
 // ---- perception (Electron): inject the shared in-page SENSORS (INJECT, from
-// perception-core via events.ts) into each <webview> guest and drain them on a loop
+// perception-core via events.ts) into each WebContentsView guest and drain them on a loop
 // into the shared moment coalescer (ingestSignals). The sensor scripts + coalescer are
 // the SAME ones server mode uses (preview/backend.mjs), so there is no drift.
-// Re-injects on navigation (os:webview re-fires on each dom-ready); self-cleans when
-// the guest is gone.
+// Re-injects on each guest dom-ready; self-cleans when the guest is gone.
 
 const captureIntervals = new Map<string, ReturnType<typeof setInterval>>()
 
@@ -297,6 +452,13 @@ function ensureCapture(surfaceId: string): void {
   if (captureIntervals.has(surfaceId)) return
   const iv = setInterval(async () => {
     try {
+      // Skip the tick while the main frame is mid-load: executeJavaScript on a loading document just
+      // QUEUES on an internal did-stop-loading once-listener, and a 350ms poll against a slow page
+      // piles those up (the MaxListenersExceeded warning). The document is being replaced anyway;
+      // dom-ready re-injects and the next tick reads the new page.
+      const wcid = browserContentIds.get(surfaceId)
+      const wc = wcid == null ? null : webContents.fromId(wcid)
+      if (wc && !wc.isDestroyed() && wc.isLoadingMainFrame()) return
       const raw = (await osReadWindow(surfaceId, DRAIN)) as Array<Record<string, unknown>>
       ingestSignals(surfaceId, raw)
     } catch {
@@ -320,7 +482,7 @@ const DEFAULT_READ = `(() => {
 
 /** Run JS inside a web surface and return the (JSON-serializable) result. */
 export async function osReadWindow(id: string, script?: string): Promise<unknown> {
-  const wcid = webviewIds.get(id)
+  const wcid = browserContentIds.get(id)
   if (wcid == null) {
     const kind = cached.surfaces.find((s) => s.id === id)?.kind
     if (kind === 'srcdoc' || kind === 'native')
@@ -340,16 +502,32 @@ export async function osReadWindow(id: string, script?: string): Promise<unknown
   return wc.executeJavaScript(script && script.trim() ? script : DEFAULT_READ, true)
 }
 
+/** The ONE guarded renderer sender. During window teardown a guest's 'destroyed' event can fire
+ *  while the BrowserWindow object survives in a destroyed state — `getWin()?.webContents.send`
+ *  then THROWS ("Object has been destroyed", an uncaught main-process crash), because the optional
+ *  chain only guards null, not destruction. Every event-driven send must come through here. */
+function sendToRenderer(channel: string, payload: unknown): void {
+  try {
+    const win = getWin()
+    if (!win || win.isDestroyed()) return
+    const wc = win.webContents
+    if (!wc || wc.isDestroyed()) return
+    wc.send(channel, payload)
+  } catch {
+    /* window mid-teardown between the checks and the send */
+  }
+}
+
 function send(type: string, payload: Record<string, unknown> = {}): void {
   tel('act', { type, ...payload }) // telemetry: surface ops (create/update/move/close…) emit HERE, not via the adapter broadcast
   noteCanvasOpFromMain(type, payload) // perception: tool-driven desktop changes become 'canvas' moments
-  getWin()?.webContents.send('os:action', { type, ...payload })
+  sendToRenderer('os:action', { type, ...payload })
 }
 
 /** Send an arbitrary os:action to the renderer — the Electron emit seam for shared cores (e.g. session events). */
 export function osBroadcast(action: Record<string, unknown>): void {
   tel('act', action) // telemetry: session/action-item events emit here (the shared-core seam)
-  getWin()?.webContents.send('os:action', action)
+  sendToRenderer('os:action', action)
 }
 
 // ---- canvas perception (the brain sees window movement — issues/open/perception-blind-spot…):
@@ -525,6 +703,7 @@ export function osCloseSurface(id: string): MutationResult {
   if (!surfaceExists(id)) return noSuch(id)
   dropConsent(id)
   dropContentShare(id)
+  closeWebContentsView(id)
   pendingCreates.delete(id)
   cached = { ...cached, surfaces: (cached.surfaces || []).filter((s) => s.id !== id) }
   send('close', { id })
@@ -533,6 +712,21 @@ export function osCloseSurface(id: string): MutationResult {
 }
 export function osGoToPrimary(): void {
   send('goToPrimary')
+}
+/** Set the OS accent theme live: the renderer applies it to chrome + plain widgets and persists it
+ *  (so it survives restart). `theme` is a partial map of role → #rrggbb hex (accent, accentDeep,
+ *  marker, positive, danger, info — see theme.ts THEME_ROLES). At least one valid hex required.
+ *  The renderer is the source of truth for CSS vars; main only relays + lets it persist. */
+export function osSetTheme(theme: Record<string, unknown>): { ok: boolean; error?: string } {
+  const hex = (v: unknown): string | null => (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.trim()) ? v.trim().toLowerCase() : null)
+  const out: Record<string, string> = {}
+  for (const k of ['accent', 'accentDeep', 'marker', 'positive', 'danger', 'info']) {
+    const h = hex((theme || {})[k])
+    if (h) out[k] = h
+  }
+  if (!Object.keys(out).length) return { ok: false, error: 'pass at least one role as a #rrggbb hex (accent, marker, …)' }
+  send('set-theme', { theme: out })
+  return { ok: true }
 }
 /** Agent → user: append a chat message to a session's chat.md and broadcast it to that session's widget.
  *  `workspace` (v2 bleed fix) routes a PINNED agent's say to ITS OWN workspace's transcript: when it
@@ -730,7 +924,7 @@ export function osWorkspacesRoot(): string {
  *  surface). Null for the desktop renderer or an unregistered guest. */
 export function osSurfaceIdForWebContents(wc: { id: number } | null | undefined): string | null {
   if (!wc || wc.id == null) return null
-  for (const [sid, wcid] of webviewIds) if (wcid === wc.id) return sid
+  for (const [sid, wcid] of browserContentIds) if (wcid === wc.id) return sid
   return null
 }
 /** Absolute path of the active workspace folder (where a guest download lands), or null before init. */
@@ -745,7 +939,7 @@ export function osGetState(): OsState {
 
 /**
  * Act INSIDE a surface. The single dispatch core both transports (control server
- * + agent-socket) call. Keyed on surface.kind: only `web` (a <webview> guest) is
+ * + agent-socket) call. Keyed on surface.kind: only `web` (a WebContentsView guest) is
  * CDP-controllable; `app`/`srcdoc` (iframes) and `native` (React) would be driven
  * cooperatively (postMessage / store) and aren't wired yet.
  */

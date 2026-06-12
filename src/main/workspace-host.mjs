@@ -51,7 +51,7 @@ import { writeRelayUrl } from './agent-session.mjs'
  * @param {(s:any) => void} a.setState  sets osState (the host owns it on hydrate/switch/reconcile)
  * @param {(obj:any) => void} a.broadcast  send a message to all connected renderers
  * @param {(surfaces:any[]) => (Promise<any>|void)} [a.onSurfaces]  realize web surfaces (server: spin/tear
- *        headless targets; Electron: no-op, the renderer owns <webview>s)
+ *        headless targets; Electron: no-op, WebContentsView host owns browser guests)
  * @param {'canvas'|'desktop'} [a.defaultMode]  blank-workspace mode (server: canvas, Electron: desktop)
  * @param {boolean} [a.explicitInitial]  true when initialName was PINNED by the user (BLITZ_WORKSPACE):
  *        skip the boot-where-you-left-off preference and honor the pin.

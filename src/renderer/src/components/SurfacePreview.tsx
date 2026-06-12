@@ -10,8 +10,8 @@ import { paperFor } from '../paper'
  *   - native  → re-render the component from props
  *   - srcdoc  → re-mount the same html
  *   - app     → re-mount the same url (iframe)
- *   - web     → a scaled <webview> guest (reliable where a cross-origin iframe is
- *               framing-blocked and a capturePage screenshot comes back blank)
+ *   - web     → lightweight label; the live browser itself is a main-owned WebContentsView
+ *               that cannot be duplicated inside this React preview.
  */
 export function SurfacePreview({ surface, box }: { surface: Surface; box: number }): JSX.Element {
   const scale = Math.min(box / surface.w, box / surface.h)
@@ -26,8 +26,21 @@ export function SurfacePreview({ surface, box }: { surface: Surface; box: number
 
 function PreviewBody({ surface }: { surface: Surface }): JSX.Element {
   const fill = { width: '100%', height: '100%', border: 'none', pointerEvents: 'none' } as const
-  if (surface.kind === 'web')
-    return <webview src={surface.url} partition="persist:agentos" style={{ ...fill, display: 'inline-flex' }} />
+  if (surface.kind === 'web') {
+    let host = surface.url || surface.title
+    try {
+      host = new URL(surface.url || '').hostname || host
+    } catch {
+      /* keep host */
+    }
+    return (
+      <div className="preview-web">
+        <div className="preview-web-icon">⌁</div>
+        <div className="preview-web-title">{surface.title || 'Web'}</div>
+        <div className="preview-web-url">{host}</div>
+      </div>
+    )
+  }
   if (surface.kind === 'app')
     return <iframe title={surface.title} src={surface.url} sandbox="allow-scripts allow-same-origin" style={{ ...fill, display: 'block', background: '#fff' }} />
   // System widgets (chat / customized note) preview their REAL content via the native renderer (which

@@ -15,7 +15,7 @@ import { classifyPopup, type PopupPlan } from './popup-policy.mjs'
 //
 // Wired at two altitudes (index.ts): session-level handlers (download, permission) set ONCE on the shared
 // persist:agentos session cover every present + future guest; the per-guest window-open/unload handlers
-// attach in did-attach-webview. Server-mode parity (headless Chromium) is a follow-up: popups there are
+// attach in the WebContentsView host. Server-mode parity (headless Chromium) is a follow-up: popups there are
 // orphan Target.targetCreated targets to adopt as surfaces (noted in browser-host.mjs).
 
 const PARTITION = 'persist:agentos'

@@ -93,8 +93,8 @@ const BUILDERS = {
       peakHours: s.cadence.peakHours,
       activeWeekdays: s.cadence.activeWeekdays,
       topApps: apps,
-      heatLo: '#7FA0C8', // dusty blue → coral: quiet hours cool, intense hours warm (never monochrome)
-      heatHi: '#FF8D61',
+      heatLo: '#7FA0C8', // dusty blue to hot red (picked 2026-06-11): quiet hours cool, intense hours warm (never monochrome)
+      heatHi: '#f4360b',
       ...(s.meta.fda ? {} : { note: 'launch counts only' })
     }
   },
@@ -132,18 +132,19 @@ const BUILDERS = {
 const WIDGET_OF = { profile: 'profile', projects: 'dossiers', workflows: 'workflows', schedule: 'timeline', rhythm: 'rhythm', voice: 'quotes', sessions: 'timeline', people: 'dossiers', gaps: 'gaps' }
 const TITLE_OF = { profile: 'Case File', projects: 'Projects', workflows: 'Web workflows', schedule: 'Coming up', rhythm: 'Working rhythm', voice: 'In their own words', sessions: 'Recent sessions', people: 'Known associates', gaps: 'Open questions', unlock: 'Unlock the personal layer' }
 
-// Every card samples its accent from the Blitz paper palette (design-system §3) — varied across
-// the board, stable per role. The UI kit applies props.accent/accentInk to --blitz-accent.
+// Card accents rotate through the four picked theme colors (2026-06-11: slate, dusty blue, sage,
+// marker), varied across the board, stable per role. The UI kit applies props.accent/accentInk
+// to --blitz-accent. Heat ramp is #7FA0C8 to #f4360b (see heatLo/heatHi above).
 const ACCENT_OF = {
-  profile: { accent: '#FF8D61', accentInk: '#2B1100' }, // signature coral
-  projects: { accent: '#5B78AA', accentInk: '#FFFFFF' }, // slate
-  workflows: { accent: '#924B2F', accentInk: '#FFFFFF' }, // terracotta
-  schedule: { accent: '#7FA0C8', accentInk: '#16202F' }, // dusty blue
-  rhythm: { accent: '#FF8D61', accentInk: '#2B1100' }, // coral (heat ramp supplies the rest)
-  voice: { accent: '#493839', accentInk: '#FFFFFF' }, // mauve
-  sessions: { accent: '#7FA0C8', accentInk: '#16202F' }, // dusty blue
+  profile: { accent: '#5B78AA', accentInk: '#FFFFFF' }, // slate
+  projects: { accent: '#7FA0C8', accentInk: '#16202F' }, // dusty blue
+  workflows: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
+  schedule: { accent: '#5B78AA', accentInk: '#FFFFFF' }, // slate
+  rhythm: { accent: '#7FA0C8', accentInk: '#16202F' }, // dusty blue (heat ramp supplies the rest)
+  voice: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
+  sessions: { accent: '#5B78AA', accentInk: '#FFFFFF' }, // slate
   people: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
-  gaps: { accent: '#E8C71D', accentInk: '#2A2400' } // marker — highlighter over the unknowns
+  gaps: { accent: '#E8C71D', accentInk: '#2A2400' } // marker, highlighter over the unknowns
 }
 
 // ---- slot sizing: FIT-FIRST, then grow into leftover space ----

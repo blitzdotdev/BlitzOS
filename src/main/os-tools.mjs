@@ -71,7 +71,7 @@ function instrument(t) {
 
 // Item 7: a CONTENT-AGNOSTIC web-host → integration map, so a web surface's host can be correlated to a
 // CONNECTED account. This is a hint ("an account is connected for this site"), NOT a claim about the
-// surface's actual logged-in account (a webview can be signed into a DIFFERENT account than the OAuth
+// surface's actual logged-in account (a browser guest can be signed into a DIFFERENT account than the OAuth
 // integration) — the agent verifies with read_window before acting AS the account. Suffix-matched, so a
 // subdomain (app.slack.com) or a tenant (acme.atlassian.net) still resolves. No per-site DOM logic.
 const PROVIDER_WEB_HOSTS = {
@@ -116,6 +116,9 @@ export function serializeStateForAgent(state, integrations) {
       const hint = x.kind === 'web' && x.url ? accountHintFor(x.url, integrations) : null
       return {
         id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
+        // A web surface is a BROWSER WINDOW: url/title above are its ACTIVE tab's; `tabs` lists all
+        // of them. update_surface{url} / read_window / surface_control act on the active tab.
+        ...(x.kind === 'web' && Array.isArray(x.tabs) && x.tabs.length ? { tabs: x.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url })), activeTab: x.activeTab || 0 } : {}),
         // Stage desktop: a slotted surface is ON the user's stage; offstage = parked on the open canvas.
         ...(x.slot ? { slot: x.slot, ...(x.slotStage ? { slotStage: x.slotStage } : {}) } : {}),
         ...(isOffstage(x, s.viewport) ? { offstage: true } : {}),
@@ -142,6 +145,7 @@ export function serializeSurfaceForAgent(state, id) {
   return {
     surface: {
       id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
+      ...(x.kind === 'web' && Array.isArray(x.tabs) && x.tabs.length ? { tabs: x.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url })), activeTab: x.activeTab || 0 } : {}),
       ...(x.props ? { props: x.props } : {})
     }
   }
@@ -367,6 +371,17 @@ export function makeOsTools(ops) {
       handler: () => {
         ops.goToPrimary()
         return { ok: true }
+      }
+    },
+    {
+      path: '/set_theme',
+      description: 'Set the OS accent color live. `accent` must be a #rrggbb hex. `accentDeep` (optional) is the pressed/hover variant; if omitted it is derived automatically. The change applies instantly to all chrome and persists across restarts.',
+      input_schema: { type: 'object', required: ['accent'], properties: { accent: { type: 'string' }, accentDeep: { type: 'string' } } },
+      handler: ({ body }) => {
+        const a = parse(body)
+        if (!ops.setTheme) return { status: 400, body: { error: 'set_theme not available in this transport' } }
+        const r = ops.setTheme({ accent: a.accent, accentDeep: a.accentDeep })
+        return r.ok ? { ok: true } : { status: 400, body: { error: r.error } }
       }
     },
     {

@@ -111,6 +111,17 @@ export function readPermissions(root: string): Record<string, Record<string, Per
 export function getPermission(root: string, origin: string, permission: string): PermissionDecision | null
 export function setPermission(root: string, origin: string, permission: string, decision: PermissionDecision): void
 
+// ---- browser bookmarks (machine-global, in the root journal) ----
+export interface Bookmark {
+  id: string
+  url: string
+  title: string
+  addedAt: number
+}
+export function readBookmarks(root: string): Bookmark[]
+/** Add the url if absent, remove it if present (the star toggle). Returns the updated list. */
+export function toggleBookmark(root: string, b: { url: string; title?: string }): Bookmark[]
+
 export interface BootJournal {
   /** Previous run died without a clean shutdown (crash / SIGKILL / power loss). */
   dirty: boolean

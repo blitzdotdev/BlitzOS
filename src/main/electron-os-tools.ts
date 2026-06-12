@@ -28,6 +28,7 @@ import {
   osSystemUi,
   osGroupIntoFolder,
   osBroadcast,
+  osSetTheme,
   type SurfaceDescriptor
 } from './osActions'
 import { runProviderCall } from './provider-bridge'
@@ -73,7 +74,8 @@ export const electronOps = {
   groupIntoFolder: (name: string, ids: string[], x: number | undefined, y: number | undefined, kind: 'board' | 'folder') => osGroupIntoFolder(name, ids, x, y, kind),
   providerCall: (descriptor: Parameters<typeof runProviderCall>[0], transport: 'relay' | 'localhost') => runProviderCall(descriptor, transport === 'localhost' ? 'localhost' : 'relay'),
   integrationStatuses: () => integrationStatuses(),
-  connectedProviders: () => connectedProviders()
+  connectedProviders: () => connectedProviders(),
+  setTheme: (theme: { accent?: unknown; accentDeep?: unknown }) => osSetTheme(theme)
 } as Record<string, (...args: never[]) => unknown>
 
 // The current relay url, injected by index.ts (the top-level wirer) to avoid an import cycle with
