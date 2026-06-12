@@ -129,10 +129,40 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
     mkdirSync(sessionDir(sessionsDir, id), { recursive: true })
     writeFileSync(file, buildBootstrap(url, id, bootTask, workspace))
     writeRelayUrl(dirname(sessionsDir), url) // <ws>/.blitzos/relay-url — the live base the agent re-reads per call
+    ensureWorkspaceTrusted(dirname(dirname(sessionsDir))) // unattended spawn must never stall on the trust dialog
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
   return {
     claudeSessionId,
     command: buildClaudeCommand({ cmd, claudeSid: claudeSessionId, mode: established ? 'resume' : 'create', bootstrapFile: file })
+  }
+}
+
+/** Claude's interactive TUI asks a ONE-TIME workspace-trust question per project dir. Headless `-p`
+ *  never did — so when 4c0c641 dropped `-p` for the live TUI, every UNATTENDED spawn on a machine
+ *  where no human had ever accepted the dialog froze at it forever (the VM brain: alive, 0 TCP,
+ *  waiting on stdin; `--dangerously-skip-permissions` does NOT cover workspace trust). BlitzOS
+ *  agents are unattended BY DESIGN, so pre-seed claude's own ack in ~/.claude.json (merge-patch,
+ *  claude's persistence). If a future CLI renames the key, the dialog merely reappears —
+ *  degraded, never silently broken. */
+export function ensureWorkspaceTrusted(wsPath) {
+  if (!wsPath) return
+  const file = join(homedir(), '.claude.json')
+  try {
+    let d = {}
+    try {
+      d = JSON.parse(readFileSync(file, 'utf8'))
+    } catch {
+      /* missing/corrupt → seed fresh; claude tolerates a minimal file */
+    }
+    if (!d || typeof d !== 'object') d = {}
+    if (!d.projects || typeof d.projects !== 'object') d.projects = {}
+    const cur = (d.projects[wsPath] = d.projects[wsPath] && typeof d.projects[wsPath] === 'object' ? d.projects[wsPath] : {})
+    if (cur.hasTrustDialogAccepted === true && cur.hasCompletedProjectOnboarding === true) return
+    cur.hasTrustDialogAccepted = true
+    cur.hasCompletedProjectOnboarding = true
+    writeFileSync(file, JSON.stringify(d, null, 2))
+  } catch {
+    /* best-effort — worst case the dialog shows once on an attended machine */
   }
 }
 
