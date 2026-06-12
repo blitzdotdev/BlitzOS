@@ -20,10 +20,10 @@ const appRoot = (): string => app.getAppPath().replace(/app\.asar$/, 'app.asar.u
 import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain } from './osActions'
+import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain, osRestartBrain } from './osActions'
 import { waitForEvents, latestSeq } from './events'
 import { getWidgetSource } from './widget-catalog.mjs'
-import { buildBoardPlan, unlockCardProps, findUnlockSlot } from './onboarding-board.mjs'
+import { buildBoardPlan, unlockCardProps, findUnlockSlot, BRANCH_A_LAYOUT } from './onboarding-board.mjs'
 import type { ScanJson, StagedSurface } from './onboarding-board.mjs'
 import { runCannedInterview } from './onboarding-interview.mjs'
 
@@ -178,7 +178,10 @@ function spawnUnlockCard(): string {
 
 async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
   const board: BoardFile = { v: 1, seededAt: Date.now(), fdaAtSeed: scan.meta.fda, ids: {} }
-  const plan = buildBoardPlan(scan, liveStage())
+  // Branch A (FDA granted) seeds the user's hand-tuned fixed layout; Branch B keeps adaptive placement
+  // (it gets its own hand-tuned layout once captured).
+  const branchA = !!(scan.meta && scan.meta.fda)
+  const plan = buildBoardPlan(scan, { ...liveStage(), layout: branchA ? BRANCH_A_LAYOUT : null })
   progress({ phase: 'seeding', cards: plan.length })
   for (const card of plan) {
     // staged cards carry slot/slotStage (tiles on the lattice); parked ones carry x/y/w/h below the stage
@@ -192,6 +195,9 @@ async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
     }
     await sleep(170) // staggered assembly — the human watches the board build
   }
+  // Branch A: tile the pinned chat hub into its hand-tuned slot (xxl, top-left) so it is EMBEDDED, not
+  // free-float covering cards. Persists via the runtime-panel slot (workspace.mjs) so it stays put.
+  if (branchA && BRANCH_A_LAYOUT.chat) osUpdateSurface('chat', { slot: BRANCH_A_LAYOUT.chat, slotStage: 0 })
   writeBoard(wsPath, board)
   osGoToPrimary()
   progress({ phase: 'board-ready', fda: scan.meta.fda })
@@ -252,7 +258,9 @@ export function interviewBootTask(): string | null {
   try {
     const st = readInterview(osWorkspaceContext().workspace_path)
     if (st && st.state === 'pending') {
-      return 'Read `.blitzos/onboarding/interview.md` (relative to your cwd, the workspace root) and carry it out: the onboarding interview on the Case File board. If it is already in progress per the chat history, continue it, do not restart it.'
+      // The OS already posted the opening scope question (postOpeningQuestion) — the brain does NOT
+      // repeat it; its job is the tailored follow-ups + board work, which it reads from the duty doc.
+      return 'THE ONBOARDING INTERVIEW. The opening scope question is ALREADY posted in this chat (the OS asked it); do NOT repeat it. Read `.blitzos/onboarding/interview.md` and carry out the rest: when the user answers the scope question (their click arrives as a chat message), correct the board from their answer and ask your tailored follow-ups — at most 4 multiple-choice questions TOTAL including the one already posted, plus one open voice sample — then write `.blitzos/onboarding/profile.md` and mark `.blitzos/onboarding/interview.json` done. If the chat already shows prior Q&A, continue it, do not restart.'
     }
   } catch {
     /* no workspace yet */
@@ -261,14 +269,69 @@ export function interviewBootTask(): string | null {
 }
 
 let cannedRunning = false
+// Restore the brain to full thinking effort once the interview is done: poll interview.json and, on
+// the pending→done flip, re-exec agent '0' ONCE (the re-exec drops the interview boot task, so its
+// command no longer caps --effort). Single-shot; unref'd so it never holds the process open.
+let interviewDoneTimer: ReturnType<typeof setInterval> | null = null
+function watchInterviewDone(wsPath: string): void {
+  if (interviewDoneTimer) return
+  interviewDoneTimer = setInterval(() => {
+    const st = readInterview(wsPath)
+    if (st && st.state === 'done') {
+      if (interviewDoneTimer) clearInterval(interviewDoneTimer)
+      interviewDoneTimer = null
+      osRestartBrain('0') // resident phase resumes at the default (max) effort
+    }
+  }, 4000)
+  if (interviewDoneTimer.unref) interviewDoneTimer.unref()
+}
+
+/** The opening scope question, built deterministically from the scan and posted by the DIRECTOR (not the
+ *  brain). A claude turn takes tens of seconds (process start + thinking), so waiting for the brain to
+ *  compose question one put it 50s+ out; the OS already has the data, so it asks instantly (<1s) and the
+ *  brain takes over for the tailored follow-ups. The scan's top projects are grouped by stem (blitz-*,
+ *  teeny-*) into the options. */
+function buildOpeningQuestion(scan: { identity?: { name?: string }; projects?: { name?: string }[] }): string {
+  const name = scan.identity?.name || 'there'
+  const projs = (scan.projects || []).map((p) => p.name).filter((n): n is string => !!n)
+  const groups = new Map<string, string[]>()
+  for (const n of projs.slice(0, 10)) {
+    const key = n.toLowerCase().slice(0, 5) // blitz-cn + blitz-macos → "blitz"; teenybase + teeny → "teeny"
+    groups.set(key, [...(groups.get(key) || []), n])
+  }
+  const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
+  const multi = [...groups.entries()].filter(([, ns]) => ns.length > 1).sort((a, b) => b[1].length - a[1].length)
+  const options: string[] = multi.slice(0, 3).map(([k, ns]) => `${cap(k)} (${ns.slice(0, 3).join(', ')})`)
+  for (const n of projs) {
+    if (options.length >= 3) break
+    if (!options.some((o) => o.includes(n))) options.push(n)
+  }
+  options.push('something else (type it)')
+  const card = '```blitz-ui\n' + JSON.stringify({ type: 'choice', prompt: 'Which work should BlitzOS focus on day to day?', options }) + '\n```'
+  return `Hey ${name}! I'm your BlitzOS brain, online and watching this chat. One quick question to aim me right:\n\n${card}`
+}
+
+function postOpeningQuestion(wsPath: string): void {
+  try {
+    const scan = JSON.parse(readFileSync(join(onboardingDir(wsPath), 'scan.json'), 'utf8'))
+    osSay(buildOpeningQuestion(scan))
+  } catch {
+    /* no scan → the brain will ask the opener itself (slower, but never silent) */
+  }
+}
+
 function startInterviewPhase(wsPath: string): void {
   ensureInterviewArtifacts(wsPath)
   const st = readInterview(wsPath)
   if (!st || st.state !== 'pending') return
   if (claudeCliPath()) {
-    // Tier 1: the resident brain (existing per-session supervisor) — its boot task points at the duty doc.
+    // Tier 1: the resident brain. The DIRECTOR posts the opening scope question instantly (a claude turn
+    // is tens of seconds), then the brain takes over for the tailored follow-ups + board work. Once the
+    // interview finishes we re-exec the brain so the resident phase runs at the default (max) effort.
+    postOpeningQuestion(wsPath)
     osKickBrain('0')
     progress({ phase: 'interview', tier: 'brain' })
+    watchInterviewDone(wsPath)
     return
   }
   // Tier 2: no model anywhere — the OS runs the static interview itself, through the same chat cards.

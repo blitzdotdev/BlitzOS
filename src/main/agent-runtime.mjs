@@ -13,6 +13,12 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 
+// Thinking budget + effort for the onboarding interview (agent '0' while its duty is pending). Reduced
+// so the first question lands in seconds; the resident phase restores to claude's default on respawn.
+// MAX_THINKING_TOKENS is the lever that actually works (the TUI showed "max effort" under --effort low),
+// so it's a LOW token cap — raise it if questions get generic, lower toward 0 for max speed.
+const INTERVIEW_THINKING_TOKENS = 2048
+const INTERVIEW_EFFORT = 'low'
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
 const metaPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'meta.json')
 const bootstrapPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'bootstrap.txt')
@@ -44,27 +50,30 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   const wsPin = workspace ? `,"workspace":"${String(workspace).replace(/"/g, '')}"` : ''
   const sess = (primary ? '' : `,"agent":"${sessionId}"`) + wsPin // non-primary agents MUST scope /events + /say to their agent id
   const B = '"$(cat ' + RELAY_URL_FILE + ')"' // every URL is built fresh from the file on each curl
-  return [
-    primary
-      ? 'You are the primary chat agent of BlitzOS, an agent OS the user watches live. BlitzOS makes NO decisions; YOU decide everything.'
-      : `You are agent "${sessionId}" — one of several independent agents in BlitzOS (an agent OS). You serve ONLY your own chat; other agents have their own chats.`,
-    `BlitzOS runs locally on this Mac and gives you a small local HTTP API to talk to it. It tells you its current address in the file ${RELAY_URL_FILE} in your working folder, and that address can change when the app restarts, so read it from the file each time rather than remembering it: \`curl -sX POST ${B}/<tool> -H 'content-type: application/json' -d '{…}'\`. The \`$(cat …)\` just reads the app's current address. If a call ever returns a connection error or 404, the app most likely restarted with a new address; reading the file again and retrying picks it up.`,
-    `Your full operating guide is at ${B}/agents.md. Please read it first (\`curl -s ${B}/agents.md\`) and follow it; if that request doesn't succeed, give it another try before continuing.`,
-    "Note for this session: the user has already arranged their desktop. Please leave it as-is on connect — don't rearrange, resize, recenter, move, or close anything on your own. Ignore the guide's 'assemble the desktop on connect' section here; this is the user's own live layout.",
-    `Get your bearings first: you may have been restarted, so recover the conversation before doing anything. Call \`list_state\` to get \`workspace_path\`, then read the recent chat: \`tail -n 60 "$workspace_path/${chatFile}"\`. That file is your saved conversation with the user and it carries over between restarts (the live event feed does not). Reading it helps you understand follow-ups like "continue the X thing" or "go". If the last line is a user message you haven't answered, answer it now.`,
-    // The OS can hand a session ONE standing duty (e.g. the onboarding interview); the duty text licenses
-    // unprompted action for its own scope and is re-read per (re)launch, so a finished duty disappears.
-    ...(bootTask ? [`The app has given you one standing task to handle first, right after you've caught up on the conversation (it applies only to its own scope): ${bootTask}`] : []),
-    `Your job is to help the user in their chat. ON CONNECT, read anything already waiting once: \`curl -sX POST ${B}/events -d '{"since":0,"wait":0${sess}}'\` — then use the returned \`latest\` as your cursor.`,
-    `To see new messages, run \`bash .blitzos/wait.sh <cursor> '${sess}'\` with a 10-minute timeout on your Bash tool (replace <cursor> with your latest number). It waits in the shell and returns as soon as a message arrives — printing \`{"events":[…],"latest":N}\` — so you don't have to keep polling yourself. (Under the hood it's a normal \`/events\` long-poll loop; the script just runs it for you, and re-reads the relay url each time so it keeps working across an app restart.)`,
-    `Keep checking for messages while you're working: when \`wait.sh\` returns, handle each \`trigger:'message'\` (do what it asks), set your cursor to the new \`latest\`, and run \`wait.sh\` again. The app doesn't push messages to you — you see them by running \`wait.sh\` — so after each one, start the next wait rather than stopping idle, or you won't notice the user's next message until you check again.`,
-    `Keep the user in the loop: send your replies and progress with \`curl -sX POST ${B}/say -d '{"text":"…"${sess}}'\` (it appears in their chat). When a message comes in, a quick note of your plan first is nice, then a short line as you go. It's best not to act unless the user has asked for something, and to say what you're doing as you do it rather than working silently.`,
-    ...(primary
-      ? []
-      : [
-          `Your windows live in your own stage, separate from the user's primary desktop. On every surface-opening call — create_surface, open_window, and open_terminal — include "agent":"${sessionId}" so the window opens in your stage and doesn't disturb the user. Don't pass an explicit x/y unless you're repositioning a window within your own stage. Open your terminal and all work windows this way.`
-        ])
-  ].join('\n')
+  const identity = primary
+    ? 'You are the primary chat agent of BlitzOS, an agent OS the user watches live. BlitzOS makes NO decisions; YOU decide everything.'
+    : `You are agent "${sessionId}" — one of several independent agents in BlitzOS (an agent OS). You serve ONLY your own chat; other agents have their own chats.`
+  const relay = `BlitzOS runs locally on this Mac and gives you a small local HTTP API to talk to it. It tells you its current address in the file ${RELAY_URL_FILE} in your working folder, and that address can change when the app restarts, so read it from the file each time rather than remembering it: \`curl -sX POST ${B}/<tool> -H 'content-type: application/json' -d '{…}'\`. The \`$(cat …)\` just reads the app's current address. If a call ever returns a connection error or 404, the app most likely restarted with a new address; reading the file again and retrying picks it up.`
+  const guide = bootTask
+    ? `Your full operating guide is at ${B}/agents.md, with the complete tool set. You do NOT need it for the first step of your standing duty below, so do that FIRST and fetch the guide (\`curl -s ${B}/agents.md\`) only afterward, when you need a tool the duty did not give you. Do not let reading the guide delay your first action.`
+    : `Your full operating guide is at ${B}/agents.md. Please read it first (\`curl -s ${B}/agents.md\`) and follow it; if that request doesn't succeed, give it another try before continuing.`
+  const desktop = "Note for this session: the user has already arranged their desktop. Please leave it as-is on connect — don't rearrange, resize, recenter, move, or close anything on your own. Ignore the guide's 'assemble the desktop on connect' section here; this is the user's own live layout."
+  const recover = `Get your bearings first: you may have been restarted, so recover the conversation before doing anything. Call \`list_state\` to get \`workspace_path\`, then read the recent chat: \`tail -n 60 "$workspace_path/${chatFile}"\`. That file is your saved conversation with the user and it carries over between restarts (the live event feed does not). Reading it helps you understand follow-ups like "continue the X thing" or "go". If the last line is a user message you haven't answered, answer it now.`
+  // The OS can hand a session ONE standing duty (e.g. the onboarding interview); the duty text licenses
+  // unprompted action for its own scope and is re-read per (re)launch, so a finished duty disappears.
+  const duty = bootTask ? `The app has given you one standing task to handle first, right after you've caught up on the conversation (it applies only to its own scope): ${bootTask}` : null
+  // MERGE-RECONCILED (master wait.sh + branch const-fragment structure): the agent's event-wait is the
+  // shared blocking helper `.blitzos/wait.sh` — one LLM turn per REAL message instead of one per empty 25s
+  // poll. These three fragments describe wait.sh, NOT a raw /events poll loop (do not regress them to the
+  // pre-wait.sh long-poll text the branch carried forward). wait.sh re-reads relay-url, so it survives a restart.
+  const onConnect = `Your job is to help the user in their chat. ON CONNECT, read anything already waiting once: \`curl -sX POST ${B}/events -d '{"since":0,"wait":0${sess}}'\` — then use the returned \`latest\` as your cursor.`
+  const waitLoop = `To see new messages, run \`bash .blitzos/wait.sh <cursor> '${sess}'\` with a 10-minute timeout on your Bash tool (replace <cursor> with your latest number). It waits in the shell and returns as soon as a message arrives — printing \`{"events":[…],"latest":N}\` — so you don't have to keep polling yourself. (Under the hood it's a normal \`/events\` long-poll loop; the script just runs it for you, and re-reads the relay url each time so it keeps working across an app restart.)`
+  const keepChecking = `Keep checking for messages while you're working: when \`wait.sh\` returns, handle each \`trigger:'message'\` (do what it asks), set your cursor to the new \`latest\`, and run \`wait.sh\` again. The app doesn't push messages to you — you see them by running \`wait.sh\` — so after each one, start the next wait rather than stopping idle, or you won't notice the user's next message until you check again.`
+  const say = `Keep the user in the loop: send your replies and progress with \`curl -sX POST ${B}/say -d '{"text":"…"${sess}}'\` (it appears in their chat). When a message comes in, a quick note of your plan first is nice, then a short line as you go. It's best not to act unless the user has asked for something, and to say what you're doing as you do it rather than working silently.`
+  const stage = primary
+    ? null
+    : `Your windows live in your own stage, separate from the user's primary desktop. On every surface-opening call — create_surface, open_window, and open_terminal — include "agent":"${sessionId}" so the window opens in your stage and doesn't disturb the user. Don't pass an explicit x/y unless you're repositioning a window within your own stage. Open your terminal and all work windows this way.`
+  return [identity, relay, guide, desktop, recover, duty, onConnect, waitLoop, keepChecking, say, stage].filter(Boolean).join('\n')
 }
 
 /** POSIX single-quote a value for a shell command line (wrap in '…', escape embedded ' as '\''). */
@@ -78,9 +87,16 @@ export function shellQuote(s) {
  *  INTERACTIVE (no -p): claude renders its full TUI in the terminal so the user can WATCH it work — print
  *  mode (-p) ran silently, leaving the terminal blank. --dangerously-skip-permissions: the agent acts
  *  unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
-export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile }) {
+export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, effort, thinkingTokens }) {
   const sessionArg = mode === 'resume' ? `--resume ${claudeSid}` : `--session-id ${claudeSid}`
-  return `${cmd} ${sessionArg} --dangerously-skip-permissions "$(cat ${shellQuote(bootstrapFile)})"`
+  const effortArg = effort ? `--effort ${effort} ` : ''
+  // MAX_THINKING_TOKENS caps the model's extended-thinking budget — the REAL lever for snappy turns
+  // (`--effort` does NOT change it: the TUI still showed "max effort" under --effort low). The interview
+  // sets a low budget so its first question lands fast; deep rumination adds latency, not quality, for
+  // templated MC questions. Omitted → claude's adaptive default (the slow "max effort"). It's a shell
+  // env assignment prefixing the command, so it applies to this claude process only.
+  const envPrefix = thinkingTokens ? `MAX_THINKING_TOKENS=${thinkingTokens} ` : ''
+  return `${envPrefix}${cmd} ${sessionArg} --dangerously-skip-permissions ${effortArg}"$(cat ${shellQuote(bootstrapFile)})"`
 }
 
 /** Has claude ALREADY created this conversation on disk? claude writes `<configDir>/projects/<encoded-cwd>/
@@ -108,6 +124,18 @@ function claudeConversationExists(sessionsDir, claudeSessionId) {
  *  unset → create mode → 'No conversation found' avoided). */
 export function ensureClaudeSessionId(sessionsDir, id) {
   const m = readMeta(sessionsDir, id)
+  // ALWAYS-FRESH PRIMARY (agent '0', the user's call 2026-06-12): the long-lived primary brain
+  // accumulated a huge `--resume` transcript that tripped Anthropic's cyber-safety classifier near
+  // full context (the saturated curl/bearer/$(cat) history reads as exfiltration) — and a near-full
+  // context is degraded anyway. The primary recovers continuity by RE-READING chat.md on every boot
+  // (the bootstrap mandates that `tail`), so a claude-level resume adds risk without value. Mint a
+  // FRESH session id each launch → `--session-id` create mode, empty context, never trips. A new uuid
+  // is REQUIRED (not just create mode): `claude --resume <missing-id>` exits 0 and `--session-id
+  // <existing-id>` would continue the old session — only a brand-new id guarantees a clean slate.
+  // Spawned agents ('1'+) keep resume (task-scoped, shorter-lived; extend here if they ever trip).
+  // TODO: each boot orphans the prior session jsonl in ~/.claude/projects/<ws>/ — harmless, but a
+  // periodic sweep of stale agent-0 sessions would be tidy.
+  if (String(id) === '0') return { claudeSessionId: randomUUID(), established: false }
   const claudeSessionId = m.claudeSessionId || randomUUID()
   const established = !!m.claudeEstablished || claudeConversationExists(sessionsDir, claudeSessionId)
   return { claudeSessionId, established }
@@ -133,9 +161,21 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
     writeWaitScript(dirname(sessionsDir)) // <ws>/.blitzos/wait.sh — the blocking event-wait the bootstrap points at
     ensureWorkspaceTrusted(dirname(dirname(sessionsDir))) // unattended spawn must never stall on the trust dialog
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
+  // The onboarding interview (the only id-0 boot task today) runs at reduced thinking effort so its
+  // first question is snappy; it restores to the default (max) on the next respawn once the duty is
+  // done. Tune INTERVIEW_EFFORT to 'low' if questions are still slow, 'high' if they get generic.
+  const interview = String(id) === '0' && !!bootTask
   return {
     claudeSessionId,
-    command: buildClaudeCommand({ cmd, claudeSid: claudeSessionId, mode: established ? 'resume' : 'create', bootstrapFile: file })
+    established, // surfaced so the re-exec path persists the (possibly rotated) id + correct established flag
+    command: buildClaudeCommand({
+      cmd,
+      claudeSid: claudeSessionId,
+      mode: established ? 'resume' : 'create',
+      bootstrapFile: file,
+      effort: interview ? INTERVIEW_EFFORT : undefined,
+      thinkingTokens: interview ? INTERVIEW_THINKING_TOKENS : undefined
+    })
   }
 }
 

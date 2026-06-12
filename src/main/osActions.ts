@@ -772,6 +772,17 @@ let stopAgentHook: ((agentId: string) => void) | null = null
 export function setStopAgent(fn: (agentId: string) => void): void {
   stopAgentHook = fn
 }
+// Re-exec a running agent in place (kill + relaunch from its persisted meta). The onboarding director
+// uses it to upgrade the interview brain back to full thinking effort once the duty is done — the
+// re-exec rebuilds the command (no interview boot task → no --effort cap). Always-fresh, so it just
+// re-reads chat.md; no conversation is lost.
+let restartAgentHook: ((agentId: string) => void) | null = null
+export function setRestartAgent(fn: (agentId: string) => void): void {
+  restartAgentHook = fn
+}
+export function osRestartBrain(agentId = '0'): void {
+  restartAgentHook?.(String(agentId))
+}
 /** Ensure an agent is up WITHOUT a chat message — the onboarding director uses this to start the
  *  resident interviewer at board-ready (its standing duty rides the bootstrap). Re-execs via the tmux
  *  launcher (replaces any stale terminal); no-op when no launcher is wired (no claude CLI / BLITZ_AGENT). */

@@ -190,10 +190,16 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     if (r) { try { r.unsubData && r.unsubData(); r.unsubExit && r.unsubExit() } catch { /* ignore */ } live.delete(id) }
     host.remove(id)
     // A BlitzOS AGENT (it carries a claudeSessionId) re-execs with a FRESH command (current relay url +
-    // --resume), not the stale one baked at create. A plain shell — or a generic spawnTerminal kind:'agent'
-    // with its own command (no claudeSessionId) — re-runs its original command verbatim.
-    const command = (meta.kind === 'agent' && meta.claudeSessionId && rebuildAgentCommand && rebuildAgentCommand(meta)) || meta.command
-    return spawnTerminal({ id, kind: meta.kind, command, cwd: meta.cwd, title: meta.title, autonomy: meta.autonomy, cols: meta.cols, rows: meta.rows, stage: meta.stage ?? meta.area, claudeSessionId: meta.claudeSessionId, claudeEstablished: meta.claudeEstablished })
+    // the right session mode), not the stale one baked at create. A plain shell — or a generic
+    // spawnTerminal kind:'agent' with its own command (no claudeSessionId) — re-runs its command verbatim.
+    // rebuildAgentCommand returns { command, claudeSessionId, established }: the always-fresh primary
+    // ROTATES its session id here, so persist the rebuilt id + flag (not the stale meta ones), else the
+    // command would --session-id a new id while meta still pointed at the old one.
+    const rebuilt = (meta.kind === 'agent' && meta.claudeSessionId && rebuildAgentCommand && rebuildAgentCommand(meta)) || null
+    const command = (rebuilt && rebuilt.command) || meta.command
+    const claudeSessionId = rebuilt ? rebuilt.claudeSessionId : meta.claudeSessionId
+    const claudeEstablished = rebuilt ? rebuilt.established : meta.claudeEstablished
+    return spawnTerminal({ id, kind: meta.kind, command, cwd: meta.cwd, title: meta.title, autonomy: meta.autonomy, cols: meta.cols, rows: meta.rows, stage: meta.stage ?? meta.area, claudeSessionId, claudeEstablished })
   }
 
   /** Reattach-on-boot: adopt tmux windows that SURVIVED a restart, re-read their meta, re-wire streams. */

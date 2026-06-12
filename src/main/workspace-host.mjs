@@ -294,6 +294,10 @@ export function createWorkspaceHost(a) {
     // sits at in stage 0 (left-of-center, −700 from the stage center). stageCenterX(0)=0 → primary x=−700,
     // byte-identical to before; agent N's chat sits at the same on-screen place when you switch to stage N.
     const x = Math.round(stageCenterX(stageForAgent(agentId), viewportOf()) - 700)
+    // Restore a persisted tile slot (the user tiled the chat, or onboarding seeded it) so it comes back
+    // EMBEDDED, not free-float. No persisted slot → the legacy free-float default (every existing
+    // workspace stays exactly as it was). Geometry derives from the slot in the renderer on hydrate.
+    const persisted = readRuntimePanels(activeWorkspace).find((p) => p.id === chatSurfaceId(agentId) && p.slot)
     return {
       id: chatSurfaceId(agentId),
       kind: 'srcdoc',
@@ -306,6 +310,7 @@ export function createWorkspaceHost(a) {
       w,
       h: 460,
       z: 5,
+      ...(persisted ? { slot: persisted.slot, slotStage: persisted.slotStage ?? 0 } : {}),
       html: readSystemRenderer(activeWorkspace, 'chat', agentId) || '',
       props: { messages: readChatMessages(activeWorkspace, 400, agentId), agentId: String(agentId) }
     }

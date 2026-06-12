@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setRestartAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage } from './osActions'
 import { emitSystemMoment } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -337,6 +337,7 @@ app.whenReady().then(() => {
     }
     setLaunchAgent(launchAgent)
     setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its claude terminal record (no auto-restart, no exited ghost)
+    setRestartAgent((id) => { void electronTerminalOps.restartTerminal(id) }) // re-exec in place (onboarding: restore full effort once the interview is done)
     // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
     let resumed = false
     const resumeAll = async (): Promise<void> => {
