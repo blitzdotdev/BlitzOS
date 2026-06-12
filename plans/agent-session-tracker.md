@@ -4,6 +4,11 @@
 
 Living checklist. Status: ✅ done · 🔧 in progress · ⬜ todo · 🔴 bug.
 
+## ✅ Inbox made authoritative-from-store — `drive-inbox` fixed (2026-06-12, `ff8427d`)
+The last red test. **Bug:** the Action-items inbox is a runtime surface in `osState` (renderer-created, pushed back); its `props.items` drifted from the authoritative `action-items.json` store — a stale copy in `osState` was re-broadcast on hydrate, so a fresh page showed phantom items (proven: an EMPTY backend still rendered 4 stale items). Same runtime-surface-drift class as the chat-loss bug.
+**Fix:** reconcile the inbox surface's items against `listActions()` at every read point, via ONE shared pure helper `reconcileInboxItems` (action-items core). Host gains a `getActionItems` dep + `hydrateSurfaces()` (the surfaces for a CONNECTING renderer, inbox reconciled) + reconcile in `onStatePush`. Both transports' connect-hydrate now send `wsHost.hydrateSurfaces()`. Closes the seed-then-connect case (seed with no renderer → no push → `hydrateSurfaces` still reconciles). No divergence (one helper, one host seam).
+**Verified:** `drive-inbox` **4/4 PASS** (was 0/3, deterministic phantom-items fail); `test-runtime-surface-guard` +C/+D; full drive suite (terminals/stages/newchat/inbox/verify-real) + unit suite + gates green. **The whole drive suite is green everytime now.**
+
 ## ✅ Sessions made UNIFORM + user-controlled "New context" (2026-06-12, post-merge user directive)
 The user rejected the merge's always-fresh primary: *"there should be NO diff between the primary and other sessions… it should be up to the user when they want to clear context."*
 - **`476d939` revert:** dropped the `id==='0'` always-fresh guard in `ensureClaudeSessionId` — ALL agents now take the same resume-or-create path (primary `--resume`s like everyone else; context persists across restarts). `test-agent-fresh.mjs` → `test-agent-session.mjs`, now asserting uniformity (14/14).
