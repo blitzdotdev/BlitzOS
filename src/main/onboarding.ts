@@ -20,7 +20,7 @@ const appRoot = (): string => app.getAppPath().replace(/app\.asar$/, 'app.asar.u
 import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain } from './osActions'
+import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain, osRestartBrain } from './osActions'
 import { waitForEvents, latestSeq } from './events'
 import { getWidgetSource } from './widget-catalog.mjs'
 import { buildBoardPlan, unlockCardProps, findUnlockSlot } from './onboarding-board.mjs'
@@ -261,14 +261,34 @@ export function interviewBootTask(): string | null {
 }
 
 let cannedRunning = false
+// Restore the brain to full thinking effort once the interview is done: poll interview.json and, on
+// the pending→done flip, re-exec agent '0' ONCE (the re-exec drops the interview boot task, so its
+// command no longer caps --effort). Single-shot; unref'd so it never holds the process open.
+let interviewDoneTimer: ReturnType<typeof setInterval> | null = null
+function watchInterviewDone(wsPath: string): void {
+  if (interviewDoneTimer) return
+  interviewDoneTimer = setInterval(() => {
+    const st = readInterview(wsPath)
+    if (st && st.state === 'done') {
+      if (interviewDoneTimer) clearInterval(interviewDoneTimer)
+      interviewDoneTimer = null
+      osRestartBrain('0') // resident phase resumes at the default (max) effort
+    }
+  }, 4000)
+  if (interviewDoneTimer.unref) interviewDoneTimer.unref()
+}
+
 function startInterviewPhase(wsPath: string): void {
   ensureInterviewArtifacts(wsPath)
   const st = readInterview(wsPath)
   if (!st || st.state !== 'pending') return
   if (claudeCliPath()) {
     // Tier 1: the resident brain (existing per-session supervisor) — its boot task points at the duty doc.
+    // It launches at reduced thinking effort for snappy questions (agent-runtime INTERVIEW_EFFORT); once
+    // the interview finishes we re-exec it once so the resident phase runs at the default (max) effort.
     osKickBrain('0')
     progress({ phase: 'interview', tier: 'brain' })
+    watchInterviewDone(wsPath)
     return
   }
   // Tier 2: no model anywhere — the OS runs the static interview itself, through the same chat cards.

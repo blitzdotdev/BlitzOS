@@ -4,7 +4,7 @@ export function buildBootstrap(url: string, sessionId?: string, bootTask?: strin
  *  (re)launch by prepareAgentLaunch; return null for no duty. Policy-free: the text is the caller's. */
 export function setBootTaskProvider(fn: ((sessionId: string) => string | null | undefined) | null): void
 export function shellQuote(s: string): string
-export function buildClaudeCommand(opts: { cmd?: string; claudeSid: string; mode?: 'create' | 'resume'; bootstrapFile: string }): string
+export function buildClaudeCommand(opts: { cmd?: string; claudeSid: string; mode?: 'create' | 'resume'; bootstrapFile: string; effort?: 'low' | 'medium' | 'high' }): string
 export function ensureClaudeSessionId(sessionsDir: string, id: string): { claudeSessionId: string; established: boolean }
 export function prepareAgentLaunch(opts: { sessionsDir: string; id: string; url: string | null | undefined; cmd?: string }): { command: string; claudeSessionId: string; established: boolean }
 /** Pre-seed claude's one-time workspace-trust ack (~/.claude.json) so an UNATTENDED interactive

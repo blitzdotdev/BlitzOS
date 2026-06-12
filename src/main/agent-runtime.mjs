@@ -13,6 +13,9 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 
+// Thinking effort for the onboarding interview (agent '0' while its duty is pending). Reduced so the
+// first question lands in seconds; the resident phase restores to claude's default (max) on respawn.
+const INTERVIEW_EFFORT = 'medium'
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
 const metaPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'meta.json')
 const bootstrapPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'bootstrap.txt')
@@ -77,9 +80,13 @@ export function shellQuote(s) {
  *  INTERACTIVE (no -p): claude renders its full TUI in the terminal so the user can WATCH it work — print
  *  mode (-p) ran silently, leaving the terminal blank. --dangerously-skip-permissions: the agent acts
  *  unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
-export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile }) {
+export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, effort }) {
   const sessionArg = mode === 'resume' ? `--resume ${claudeSid}` : `--session-id ${claudeSid}`
-  return `${cmd} ${sessionArg} --dangerously-skip-permissions "$(cat ${shellQuote(bootstrapFile)})"`
+  // `effort` (low|medium|high) caps claude's thinking budget. Omitted → claude's default (the highest,
+  // shown as "max effort" in the TUI). The onboarding interview runs reduced so its first question
+  // lands in seconds (deep rumination adds latency, not quality, for templated MC questions).
+  const effortArg = effort ? `--effort ${effort} ` : ''
+  return `${cmd} ${sessionArg} --dangerously-skip-permissions ${effortArg}"$(cat ${shellQuote(bootstrapFile)})"`
 }
 
 /** Has claude ALREADY created this conversation on disk? claude writes `<configDir>/projects/<encoded-cwd>/
@@ -143,10 +150,14 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd = 'claude' }) {
     writeRelayUrl(dirname(sessionsDir), url) // <ws>/.blitzos/relay-url — the live base the agent re-reads per call
     ensureWorkspaceTrusted(dirname(dirname(sessionsDir))) // unattended spawn must never stall on the trust dialog
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
+  // The onboarding interview (the only id-0 boot task today) runs at reduced thinking effort so its
+  // first question is snappy; it restores to the default (max) on the next respawn once the duty is
+  // done. Tune INTERVIEW_EFFORT to 'low' if questions are still slow, 'high' if they get generic.
+  const effort = String(id) === '0' && bootTask ? INTERVIEW_EFFORT : undefined
   return {
     claudeSessionId,
     established, // surfaced so the re-exec path persists the (possibly rotated) id + correct established flag
-    command: buildClaudeCommand({ cmd, claudeSid: claudeSessionId, mode: established ? 'resume' : 'create', bootstrapFile: file })
+    command: buildClaudeCommand({ cmd, claudeSid: claudeSessionId, mode: established ? 'resume' : 'create', bootstrapFile: file, effort })
   }
 }
 

@@ -2,7 +2,7 @@
 // Always-fresh primary (the user's 2026-06-12 call): agent '0' mints a NEW claude session id every
 // launch (--session-id create, empty context — never trips the cyber classifier), recovering
 // continuity from chat.md. Spawned agents ('1'+) keep --resume. Pure: a temp sessionsDir, no spawn.
-import { ensureClaudeSessionId, prepareAgentLaunch, buildClaudeCommand } from '../src/main/agent-runtime.mjs'
+import { ensureClaudeSessionId, prepareAgentLaunch, buildClaudeCommand, setBootTaskProvider } from '../src/main/agent-runtime.mjs'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -36,6 +36,12 @@ ok('primary command uses --session-id, never --resume', cmd0.includes(`--session
 const prep = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md' })
 ok('prepareAgentLaunch returns established=false for primary', prep.established === false)
 ok('prepareAgentLaunch command + id agree', prep.command.includes(`--session-id ${prep.claudeSessionId}`))
+ok('primary with NO duty runs at default effort (no --effort)', !prep.command.includes('--effort'))
+
+// 2b) with the interview duty active, the primary launches at reduced effort; spawned agents do not
+setBootTaskProvider((id) => (String(id) === '0' ? 'do the onboarding interview' : null))
+const prepDuty = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md' })
+ok('primary interview launches at reduced effort (--effort medium)', prepDuty.command.includes('--effort medium'))
 
 // 3) spawned agent '1': UNCHANGED — resumes when established
 seedMeta('1', { id: '1', kind: 'agent', claudeSessionId: 'SPAWNED-UUID', claudeEstablished: true })
@@ -44,6 +50,8 @@ ok('spawned agent keeps its persisted id', s.claudeSessionId === 'SPAWNED-UUID')
 ok('spawned agent stays established (→ resume)', s.established === true)
 const prep1 = prepareAgentLaunch({ sessionsDir, id: '1', url: 'http://127.0.0.1:1/agents.md' })
 ok('spawned agent command uses --resume', prep1.command.includes('--resume SPAWNED-UUID'))
+ok('spawned agent gets no effort cap (full thinking)', !prep1.command.includes('--effort'))
+setBootTaskProvider(null)
 
 // 4) a brand-new spawned agent (no meta) creates fresh, then would resume next time
 const s2 = ensureClaudeSessionId(sessionsDir, '2')
