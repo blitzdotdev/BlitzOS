@@ -157,6 +157,15 @@ const api = {
     ipcRenderer.on('os:metatap', listener)
     return () => ipcRenderer.removeListener('os:metatap', listener)
   },
+  /** Bare-Option hold/release for the radial create menu, forwarded from main's before-input-event —
+   *  fires no matter what holds keyboard focus (host DOM, an app/srcdoc iframe, a browser guest).
+   *  'down' carries the true cursor position in window coords (the renderer's own pointermove never
+   *  fires while the cursor is over an iframe, so its last-seen position can be stale). */
+  onRadialKey(cb: (m: { phase: 'down' | 'up' | 'cancel'; x?: number; y?: number }) => void): () => void {
+    const listener = (_e: unknown, m: { phase: 'down' | 'up' | 'cancel'; x?: number; y?: number }): void => cb(m)
+    ipcRenderer.on('os:radial', listener)
+    return () => ipcRenderer.removeListener('os:radial', listener)
+  },
 
   /** Legacy webview path: report a live guest webContents id so main can CDP-drive it. */
   registerWebview(windowId: string, webContentsId: number): void {

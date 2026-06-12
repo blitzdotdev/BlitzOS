@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setRestartAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setRestartAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, osRadialPhase } from './osActions'
 import { emitSystemMoment } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -96,8 +96,29 @@ function createWindow(): void {
     return true
   }
   setWebContentsViewInputForwarder(forwardTileKeybind)
+  // Bare-Option hold → the radial create menu, same focus-proof route as the keybinds above: the
+  // host webContents sees the key even when an app/srcdoc iframe holds focus (the renderer's own
+  // DOM keydown does not). Browser guests get the mirror tracker in webcontents-view-host.ts.
+  let altHeld = false
   mainWindow.webContents.on('before-input-event', (ev, input) => {
-    if (forwardTileKeybind(input)) ev.preventDefault()
+    if (forwardTileKeybind(input)) {
+      ev.preventDefault()
+      return
+    }
+    if (input.type === 'keyDown') {
+      if (input.key === 'Alt') {
+        if (!input.isAutoRepeat && !input.meta && !input.control && !input.shift) {
+          altHeld = true
+          osRadialPhase('down')
+        }
+      } else if (altHeld) {
+        altHeld = false
+        osRadialPhase('cancel')
+      }
+    } else if (input.type === 'keyUp' && input.key === 'Alt' && altHeld) {
+      altHeld = false
+      osRadialPhase('up')
+    }
   })
 
   // (show is owned by sandwich.ts: pages first, then the UI above it, then the z-assert.)

@@ -1,27 +1,29 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { IconBoard, IconCode, IconFolder, IconGlobe, IconGrid, IconNote, IconPlus, IconSparkle } from './Icons'
+import { IconBoard, IconChat, IconCode, IconFolder, IconGlobe, IconNote, IconPlus, IconSparkle } from './Icons'
 
-export type SurfaceLauncherKind = 'browser' | 'note' | 'app' | 'widget' | 'folder' | 'board'
+export type SurfaceLauncherKind = 'browser' | 'note' | 'chat' | 'widget' | 'folder' | 'board'
 type AnimationSourceRect = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
+type LauncherPlacement = 'toolbar' | 'sidebar'
 
 type LauncherState = {
   left: number
   top: number
+  placement: LauncherPlacement
   closing?: boolean
 }
 
-type LauncherItem = {
+export type SurfaceLauncherItem = {
   kind: SurfaceLauncherKind
   label: string
   icon: ReactNode
 }
 
-const LAUNCHER_ITEMS: LauncherItem[] = [
+export const SURFACE_LAUNCHER_ITEMS: SurfaceLauncherItem[] = [
   { kind: 'browser', label: 'Browser', icon: <IconGlobe /> },
   { kind: 'note', label: 'Note', icon: <IconNote /> },
-  { kind: 'app', label: 'App', icon: <IconGrid /> },
+  { kind: 'chat', label: 'Chat', icon: <IconChat /> },
   { kind: 'widget', label: 'Widget', icon: <IconCode /> },
   { kind: 'folder', label: 'Folder', icon: <IconFolder /> },
   { kind: 'board', label: 'Board', icon: <IconBoard /> }
@@ -30,9 +32,10 @@ const LAUNCHER_ITEMS: LauncherItem[] = [
 interface Props {
   onCreateSurface: (kind: SurfaceLauncherKind, source?: AnimationSourceRect | null) => void
   buttonProps?: ButtonHTMLAttributes<HTMLButtonElement>
+  label?: string | null
 }
 
-export function SurfaceLauncherButton({ onCreateSurface, buttonProps }: Props): JSX.Element {
+export function SurfaceLauncherButton({ onCreateSurface, buttonProps, label = 'Create' }: Props): JSX.Element {
   const { className, onClick, ...restButtonProps } = buttonProps ?? {}
   const buttonRef = useRef<HTMLButtonElement>(null)
   const launcherRef = useRef<HTMLDivElement>(null)
@@ -56,12 +59,19 @@ export function SurfaceLauncherButton({ onCreateSurface, buttonProps }: Props): 
 
   const positionLauncher = (menuWidth: number, menuHeight: number): LauncherState => {
     const r = buttonRef.current?.getBoundingClientRect()
+    const sidebar = buttonRef.current?.closest('.sidebar') as HTMLElement | null
+    const gap = 14
+    if (sidebar && r) {
+      const left = Math.max(76, Math.min(window.innerWidth - menuWidth - 12, Math.round(r.right + gap)))
+      const top = Math.max(44, Math.min(window.innerHeight - menuHeight - 12, Math.round(r.top + r.height / 2 - menuHeight / 2)))
+      return { left, top, placement: 'sidebar' }
+    }
+
     const toolbarShell = buttonRef.current?.closest('.toolbar-shell') as HTMLElement | null
     const toolbarTop = toolbarShell?.getBoundingClientRect().top ?? r?.top
-    const gap = 14
     const left = Math.max(12, Math.min(window.innerWidth - menuWidth - 12, Math.round((r?.left ?? window.innerWidth / 2) + (r?.width ?? 0) / 2 - menuWidth / 2)))
     const top = Math.max(44, Math.round((toolbarTop ?? window.innerHeight - 72) - menuHeight - gap))
-    return { left, top }
+    return { left, top, placement: 'toolbar' }
   }
 
   useLayoutEffect(() => {
@@ -113,11 +123,11 @@ export function SurfaceLauncherButton({ onCreateSurface, buttonProps }: Props): 
       <div className={`surface-launcher-backdrop${launcher.closing ? ' closing' : ''}`} onPointerDown={closeLauncher}>
         <div
           ref={launcherRef}
-          className={`surface-launcher surface-launcher-toolbar${launcher.closing ? ' closing' : ''}`}
+          className={`surface-launcher surface-launcher-${launcher.placement}${launcher.closing ? ' closing' : ''}`}
           style={{ left: launcher.left, top: launcher.top }}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          {LAUNCHER_ITEMS.map((it) => (
+          {SURFACE_LAUNCHER_ITEMS.map((it) => (
             <button
               key={it.kind}
               className="surface-launcher-item"
@@ -133,7 +143,7 @@ export function SurfaceLauncherButton({ onCreateSurface, buttonProps }: Props): 
           ))}
           <div className="surface-launcher-hint">
             <IconSparkle size={13} />
-            <span>Agents can fill apps and widgets</span>
+            <span>Agents can fill widgets</span>
           </div>
         </div>
       </div>,
@@ -145,13 +155,14 @@ export function SurfaceLauncherButton({ onCreateSurface, buttonProps }: Props): 
       <button
         {...restButtonProps}
         ref={buttonRef}
-        className={[className, launcher ? 'active' : null].filter(Boolean).join(' ') || undefined}
+        className={['surface-launcher-trigger', className, launcher ? 'active' : null].filter(Boolean).join(' ')}
         onClick={(e) => {
           onClick?.(e)
           if (!e.defaultPrevented) toggleLauncher()
         }}
       >
-        <IconPlus size={15} /> Create
+        <IconPlus size={15} />
+        {label !== null && <span className="surface-launcher-trigger-label">{label}</span>}
       </button>
       {launcherOverlay}
     </>

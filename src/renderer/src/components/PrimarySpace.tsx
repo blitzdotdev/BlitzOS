@@ -94,15 +94,23 @@ export function AreaChromeOverlay({ showAddArea = false, onEnterStage, onAddArea
       {Array.from({ length: stageCount }, (_, i) => {
         const r = screenRect(i)
         return (
-          <button
-            key={i}
-            className={`area-chrome-label${i === currentStage ? ' is-current' : ''}`}
-            type="button"
-            style={{ left: r.left + 24, top: r.top - 10 }}
-            onClick={() => onEnterStage?.(i)}
-          >
-            Area {i + 1}
-          </button>
+          <div key={i} className="area-chrome-stage">
+            <button
+              className="area-chrome-hit"
+              type="button"
+              aria-label={`Open Stage ${i + 1}`}
+              style={{ left: r.left, top: r.top, width: r.width, height: r.height }}
+              onClick={() => onEnterStage?.(i)}
+            />
+            <button
+              className={`area-chrome-label${i === currentStage ? ' is-current' : ''}`}
+              type="button"
+              style={{ left: r.left + 24, top: r.top - 10 }}
+              onClick={() => onEnterStage?.(i)}
+            >
+              Stage {i + 1}
+            </button>
+          </div>
         )
       })}
       {addRect && (
@@ -115,7 +123,7 @@ export function AreaChromeOverlay({ showAddArea = false, onEnterStage, onAddArea
           }}
           onClick={() => onAddArea?.()}
         >
-          Create new area
+          Create new stage
         </button>
       )}
     </div>

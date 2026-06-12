@@ -2,11 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useDesktop } from '../store'
 import { KindIcon } from './Icons'
+import { SurfaceLauncherButton, type SurfaceLauncherKind } from './SurfaceLauncherButton'
 
 interface Props {
   onRequestRestore: (id: string) => void
+  onCreateSurface: (kind: SurfaceLauncherKind, source?: AnimationSourceRect | null) => void
   animating?: Record<string, 'minimizing' | 'restoring'>
 }
+
+type AnimationSourceRect = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
 
 type TooltipState = {
   text: string
@@ -16,7 +20,7 @@ type TooltipState = {
 }
 
 /** Left dock: an icon per open surface. Click to bring it forward at real size. */
-export function Sidebar({ onRequestRestore, animating = {} }: Props): JSX.Element {
+export function Sidebar({ onRequestRestore, onCreateSurface, animating = {} }: Props): JSX.Element {
   const surfaces = useDesktop((s) => s.surfaces)
   const focusAndZoom = useDesktop((s) => s.focusAndZoom)
   const closeSurface = useDesktop((s) => s.closeSurface)
@@ -111,6 +115,18 @@ export function Sidebar({ onRequestRestore, animating = {} }: Props): JSX.Elemen
             <span className="sidebar-app-label">{s.title}</span>
           </button>
         ))}
+      </div>
+      <div className="sidebar-bottom">
+        <span className="sidebar-divider" aria-hidden="true" />
+        <SurfaceLauncherButton
+          onCreateSurface={onCreateSurface}
+          label={null}
+          buttonProps={{
+            className: 'sidebar-create',
+            title: 'Create surface',
+            'aria-label': 'Create surface'
+          }}
+        />
       </div>
     </div>
   )

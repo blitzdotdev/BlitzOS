@@ -527,7 +527,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     setIsDragging(true)
     const st = useDesktop.getState()
     // drag the whole selection if this surface is part of a multi-selection; else just this one.
-    // A ⌥/Space "grab" of a single surface also selects it.
+    // A Space "grab" of a single surface also selects it.
     let ids: string[]
     if (st.selection.includes(surface.id) && st.selection.length > 1) {
       ids = st.selection
@@ -1043,7 +1043,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           onPointerCancel={onResizeUp}
         />
       ))}
-      {/* ⌥/Space grab-mode or selected → drag the surface from anywhere on its body. Always
+      {/* Space grab-mode or selected → drag the surface from anywhere on its body. Always
           mounted (so an in-flight drag survives releasing the key); inert otherwise. */}
       <div
         className={`drag-overlay${isSelected || grabMode || isDragging || isControl ? ' active' : ''}${isControl ? ' control' : ''}`}

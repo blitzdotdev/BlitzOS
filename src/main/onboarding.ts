@@ -225,6 +225,59 @@ function writeInterview(wsPath: string, st: InterviewState): void {
   writeFileSync(interviewPath(wsPath), JSON.stringify(st, null, 2))
 }
 
+const RESTART_ANCHOR_HEADING = '## Restart anchor'
+const RESTART_ANCHOR_RE = /\n## Restart anchor\n[\s\S]*?(?=\n\n## |\n# |$)/
+
+function readText(path: string): string {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+function profileValue(profile: string, label: string): string {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = profile.match(new RegExp(`^- ${escaped}:\\s*(.+)$`, 'm'))
+  return match ? match[1].trim() : ''
+}
+
+function markdownValue(md: string, heading: string): string {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = md.match(new RegExp(`^## ${escaped}\\n\\n([\\s\\S]*?)(?=\\n## |$)`, 'm'))
+  return match ? match[1].trim().split('\n').find((line) => line.trim())?.replace(/^- /, '').trim() || '' : ''
+}
+
+export function replaceRestartAnchor(notepad: string, anchor: string): string {
+  const base = notepad.trimEnd() || '# Notepad\n\nShared working memory for you and BlitzOS. The agent keeps context and notes here; you can edit it too.'
+  if (RESTART_ANCHOR_RE.test(`\n${base}`)) return `\n${base}`.replace(RESTART_ANCHOR_RE, `\n${anchor}`).trimStart()
+  return `${base}\n\n${anchor}`
+}
+
+export function refreshRestartAnchor(wsPath: string): void {
+  const dir = onboardingDir(wsPath)
+  const profile = readText(join(dir, 'profile.md'))
+  const initiative = readText(join(dir, 'initiative.md'))
+  const scope = profileValue(profile, 'Scope') || 'BlitzOS and agent-os testing'
+  const autonomy = profileValue(profile, 'Autonomy') || 'Reversible testing and preparation can proceed without waiting.'
+  const confirmation = profileValue(profile, 'Confirmation boundary') || profileValue(profile, 'Privacy and accounts') || 'Ask before outward-facing actions, destructive changes, sends, money, credentials, deploys, or account actions.'
+  const priority = profileValue(profile, 'Current priority') || 'Make BlitzOS onboarding fast and reliable.'
+  const active = markdownValue(initiative, 'Focus') || 'No active initiative recorded yet.'
+  const next = markdownValue(initiative, 'Current Next Step') || 'Continue the resident initiative setup, then record the next reversible action.'
+  const anchor = [
+    RESTART_ANCHOR_HEADING,
+    '',
+    `- Scope: ${scope}`,
+    `- Autonomy: ${autonomy}`,
+    `- Confirm before: ${confirmation}`,
+    `- Priority: ${priority}`,
+    `- Active initiative: ${active}`,
+    `- Next reversible action: ${next}`
+  ].join('\n')
+  const notepadPath = join(wsPath, 'notepad.md')
+  writeFileSync(notepadPath, replaceRestartAnchor(readText(notepadPath), anchor))
+}
+
 /** Lay down the brain's duty doc + pending state (idempotent; never resets a done interview). */
 function ensureInterviewArtifacts(wsPath: string): void {
   const dir = onboardingDir(wsPath)
@@ -267,10 +320,10 @@ export function setInterviewAgentAvailable(available: boolean): void {
 }
 
 const INTERVIEW_BOOT_TASK =
-  'THE ONBOARDING INTERVIEW. You are the interviewer. If `.blitzos/onboarding/context.md` or `.blitzos/onboarding/board.json` is not present yet, wait for those files instead of asking from generic assumptions. Then read `.blitzos/onboarding/interview.md`, skim `.blitzos/onboarding/context.md` only long enough to ask the first high-value choice-card question immediately, and continue the interview from the human answers. Ask at most 4 multiple-choice questions TOTAL, plus one open voice sample, then write `.blitzos/onboarding/profile.md` and mark `.blitzos/onboarding/interview.json` done. If the chat already shows prior Q&A, continue it, do not restart.'
+  'THE ONBOARDING INTERVIEW. You are the interviewer. If `.blitzos/onboarding/context.md` or `.blitzos/onboarding/board.json` is not present yet, wait for those files instead of asking from generic assumptions. Then read `.blitzos/onboarding/interview.md`, skim `.blitzos/onboarding/context.md` only long enough to ask the first high-value choice-card question immediately, and continue the interview from the human answers. Ask at most 4 multiple-choice questions TOTAL, plus one open voice sample, then write `.blitzos/onboarding/profile.md` and mark `.blitzos/onboarding/interview.json` done. Onboarding will write the compact Notepad restart anchor after completion. If the chat already shows prior Q&A, continue it, do not restart.'
 
 const RESIDENT_INITIATIVE_BOOT_TASK =
-  'THE RESIDENT INITIATIVE DUTY. The onboarding interview is done, so do not sit in passive watch mode. Read `.blitzos/onboarding/profile.md`, `.blitzos/onboarding/board.json`, `.blitzos/onboarding/initiative.md` if it exists, and the recent chat. Then act on the initiative gradient from the onboarding plan: propose useful work the user did not explicitly ask for, and start one safe reversible initiative immediately. If no current initiative is recorded, send one short chat message with 2 or 3 concrete initiatives grounded in the profile, say which one you are starting now, write `.blitzos/onboarding/initiative.md` with the active initiative and next step, then make visible progress on that initiative. If an initiative is already recorded or visible, continue it instead of re-proposing. Use quiet surfaces, action items, or board updates, not modals. Stay inside the user boundaries in the profile: reversible testing and preparation can proceed; ask before outward-facing actions, destructive changes, sends, money, credentials, deploys, or account actions. Do not merely say you are watching. Keep polling `/events`, but use idle time to originate, execute, and update the case file.'
+  'THE RESIDENT INITIATIVE DUTY. The onboarding interview is done, so do not sit in passive watch mode. Read the Notepad restart anchor first if it exists, then read `.blitzos/onboarding/profile.md`, `.blitzos/onboarding/board.json`, `.blitzos/onboarding/initiative.md` if it exists, and the recent chat. Then act on the initiative gradient from the onboarding plan: propose useful work the user did not explicitly ask for, and start one safe reversible initiative immediately. If no current initiative is recorded, send one short chat message with 2 or 3 concrete initiatives grounded in the profile, say which one you are starting now, write `.blitzos/onboarding/initiative.md` with the active initiative and next step, then make visible progress on that initiative. If an initiative is already recorded or visible, continue it instead of re-proposing. Use quiet surfaces, action items, or board updates, not modals. Stay inside the user boundaries in the profile: reversible testing and preparation can proceed; ask before outward-facing actions, destructive changes, sends, money, credentials, deploys, or account actions. Do not merely say you are watching. Keep polling `/events`, but use idle time to originate, execute, and update the case file.'
 
 /** index.ts threads this into session '0': interview first, then the resident initiative duty. */
 export function interviewBootTask(): string | null {
@@ -280,6 +333,7 @@ export function interviewBootTask(): string | null {
       return INTERVIEW_BOOT_TASK
     }
     if (st && st.state === 'done') {
+      refreshRestartAnchor(osWorkspaceContext().workspace_path)
       return RESIDENT_INITIATIVE_BOOT_TASK
     }
   } catch {
@@ -300,6 +354,7 @@ function watchInterviewDone(wsPath: string): void {
     if (st && st.state === 'done') {
       if (interviewDoneTimer) clearInterval(interviewDoneTimer)
       interviewDoneTimer = null
+      refreshRestartAnchor(wsPath)
       osRestartBrain('0') // resident phase resumes at the default (max) effort
     }
   }, 4000)

@@ -14,8 +14,9 @@ import { SurfaceFrame, bgHolesClip } from './components/SurfaceFrame'
 import { AnnotationLayer } from './components/AnnotationLayer'
 import { AreaChromeOverlay, PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
-import { SurfaceLauncherButton, type SurfaceLauncherKind } from './components/SurfaceLauncherButton'
-import { IconChat, IconSparkle, IconGrid, IconChevronDown, IconCheck, IconInbox, IconSessions, IconTerminal } from './components/Icons'
+import { RadialSurfaceMenu } from './components/RadialSurfaceMenu'
+import type { SurfaceLauncherKind } from './components/SurfaceLauncherButton'
+import { IconChat, IconSparkle, IconCheck, IconInbox, IconSessions, IconTerminal } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
@@ -24,6 +25,7 @@ import { ContextMenu } from './components/ContextMenu'
 // Legacy always-on integration cards on the canvas (they stacked at origin and clutter the agent-driven
 // desktop). Off by default — integrations now surface as agent-spawned widgets. Flip to re-enable.
 const SHOW_INTEGRATION_CARDS = false
+const SHOW_ADVANCED_TOOLBAR = false
 type DockAnimationPhase = 'minimizing' | 'restoring'
 type ToolbarTooltip = { text: string; left: number; top: number }
 type AdvancedPopoverPosition = { left: number; top: number }
@@ -34,6 +36,7 @@ const AREA_ADD_SCALE_THRESHOLD = 0.8
 const HOME_TRANSFORM_EPS = 0.75
 const HOME_SCALE_EPS = 0.006
 const CANVAS_WHEEL_GESTURE_MS = 220
+const HOME_DOUBLE_TAP_MS = 280
 const CANVAS_GESTURE_BLOCK_SELECTOR = [
   '.sidebar',
   '.titlebar',
@@ -366,8 +369,6 @@ export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
   const mode = useDesktop((s) => s.mode)
-  const stageCount = useDesktop((s) => s.stageCount)
-  const currentStage = useDesktop((s) => s.currentStage)
   const integrations = useDesktop((s) => s.integrations)
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
@@ -389,6 +390,23 @@ export default function App(): JSX.Element {
   // Agent relay connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [showOverview, setShowOverview] = useState(false)
+  // The home orb is hidden until the pointer nears the bottom-center screen edge. Hysteresis:
+  // a thin edge strip reveals it, a taller zone around the revealed button keeps it shown.
+  const [homeRevealed, setHomeRevealed] = useState(false)
+  const homeRevealedRef = useRef(false)
+  useEffect(() => {
+    const onMove = (e: globalThis.PointerEvent): void => {
+      const cx = Math.abs(e.clientX - window.innerWidth / 2)
+      const fromBottom = window.innerHeight - e.clientY
+      const next = homeRevealedRef.current ? fromBottom <= 96 && cx <= 130 : fromBottom <= 28 && cx <= 110
+      if (next !== homeRevealedRef.current) {
+        homeRevealedRef.current = next
+        setHomeRevealed(next)
+      }
+    }
+    window.addEventListener('pointermove', onMove, true)
+    return () => window.removeEventListener('pointermove', onMove, true)
+  }, [])
   useEffect(() => {
     document.documentElement.dataset.theme = theme
   }, [theme])
@@ -421,6 +439,7 @@ export default function App(): JSX.Element {
   // closure): it must never run while the overview overlay is mounted, or capturePage saves the gallery
   // itself AS the workspace's thumbnail (the screenshot-of-the-gallery-in-a-tile bug).
   const showOverviewRef = useRef(false)
+  const overviewOpening = useRef(false)
   useEffect(() => {
     showOverviewRef.current = showOverview
   }, [showOverview])
@@ -451,6 +470,7 @@ export default function App(): JSX.Element {
   const toolbarTipWarm = useRef(false)
   const toolbarTipVisible = useRef(false)
   const toolbarTipSuppressFocus = useRef(false)
+  const homeTapTimer = useRef<number | null>(null)
   const advancedButtonRef = useRef<HTMLButtonElement>(null)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [toolbarTooltip, setToolbarTooltip] = useState<ToolbarTooltip | null>(null)
@@ -469,6 +489,8 @@ export default function App(): JSX.Element {
   const animRef = useRef<number | null>(null)
   const viewportReady = useRef(false)
   const canvasWheelGestureUntil = useRef(0)
+  const pointerRef = useRef<{ x: number; y: number }>({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+  const [radialMenu, setRadialMenu] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
     if (!showAi) setAiCopied(false)
@@ -482,6 +504,7 @@ export default function App(): JSX.Element {
     return () => {
       if (toolbarTipShowTimer.current != null) window.clearTimeout(toolbarTipShowTimer.current)
       if (toolbarTipWarmTimer.current != null) window.clearTimeout(toolbarTipWarmTimer.current)
+      if (homeTapTimer.current != null) window.clearTimeout(homeTapTimer.current)
     }
   }, [])
 
@@ -612,27 +635,33 @@ export default function App(): JSX.Element {
     }
     animRef.current = requestAnimationFrame(step)
   }
-  // Double-tap ⌘ toggles "Control mode" (the zoomed-out bird's-eye): animate the camera to the
-  // control viewport on enter and back to the current stage's home view on exit. Both modes exist in
-  // BOTH transports (Electron + server/Chrome); normal mode is the default everywhere.
+  // Double-tap ⌘ toggles the stage overview: animate the camera to the splayed stage view on enter
+  // and back to the current stage's fixed desktop frame on exit.
   function toggleControlMode(): void {
     const st = useDesktop.getState()
     st.setSnapPreview(null) // a mode switch cancels any in-flight drag UI
     st.setDragTarget(null)
     const next = st.mode === 'desktop' ? 'canvas' : 'desktop'
     if (next === 'canvas') {
-      // Entering control mode: ALWAYS the gentle default zoom-out (controlScale 0.7), never a stale
-      // remembered camera — the human wants a consistent gentle bird's-eye, not whatever it was left at.
       const target = viewTransform('canvas', st.viewport, st.currentStage, st.stageCount)
       st.setMode('canvas')
       animateTransform(target)
     } else {
-      // Leaving control mode: animate back to the CURRENT stage's home frame. controlTransform was
-      // already kept current by every pan/zoom/center in canvas mode, so there's nothing to capture
-      // here (capturing st.transform now could grab a mid-animation frame — the ISSUE-3 trap).
       st.setMode('desktop')
       animateTransform(viewTransform('desktop', st.viewport, st.currentStage, st.stageCount))
     }
+  }
+
+  function enterStageOverview(): void {
+    const st = useDesktop.getState()
+    st.setSnapPreview(null)
+    st.setDragTarget(null)
+    st.clearActiveSurface()
+    const now = useDesktop.getState()
+    const target = viewTransform('canvas', now.viewport, now.currentStage, now.stageCount)
+    now.setMode('canvas')
+    now.setControlTransform(target)
+    animateTransform(target)
   }
 
   // Switch to an adjacent workspace stage (#45). In normal mode the camera animates to the new stage's
@@ -722,8 +751,12 @@ export default function App(): JSX.Element {
       const isPanGesture = !e.ctrlKey
       // Trackpad wheel gestures are a burst, not one event. Once a burst begins as canvas pan, keep it
       // owned by the canvas even if the cursor crosses a terminal or other custom scroll surface.
+      const modeForGesture = useDesktop.getState().mode
       const continuingCanvasPan =
-        isPanGesture && canvasWheelGestureUntil.current > performance.now() && !isCanvasGestureBlockedTarget(e.target)
+        modeForGesture === 'canvas' &&
+        isPanGesture &&
+        canvasWheelGestureUntil.current > performance.now() &&
+        !isCanvasGestureBlockedTarget(e.target)
       if (continuingCanvasPan) {
         e.preventDefault()
         e.stopPropagation()
@@ -748,15 +781,8 @@ export default function App(): JSX.Element {
         else w.panBy(-e.deltaX, -e.deltaY)
         return
       }
-      if (e.ctrlKey) {
-        e.preventDefault()
-        w.zoomAt(e.clientX, e.clientY, e.deltaY)
-        return
-      }
       e.preventDefault()
       e.stopPropagation()
-      canvasWheelGestureUntil.current = performance.now() + CANVAS_WHEEL_GESTURE_MS
-      w.panBy(-e.deltaX, -e.deltaY)
     }
     el.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => el.removeEventListener('wheel', onWheel, { capture: true })
@@ -849,24 +875,24 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Hold ⌥ (or Space, when not typing) → "grab mode": drag any surface from anywhere to
-  // move it (and select it); release to interact with content again.
+  // Hold Space, when not typing → "grab mode": drag any surface from anywhere to move it
+  // (and select it); release to interact with content again. Option is reserved for the radial create menu.
   // NOTE: a key held while a browser guest has keyboard focus is delivered to that guest, not
   // here — so grab-mode may not engage until you click off a focused web page. A robust
-  // fix is to forward ⌥/Space from guests via main (like onMetaTap); deferred.
+  // fix is to forward Space from guests via main (like onMetaTap); deferred.
   useEffect(() => {
     const editable = (): boolean => {
       const ae = document.activeElement as HTMLElement | null
       return !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
     }
     const down = (e: KeyboardEvent): void => {
-      if (e.key === 'Alt' || (e.key === ' ' && !editable())) {
-        if (e.key === ' ') e.preventDefault()
+      if (e.key === ' ' && !editable()) {
+        e.preventDefault()
         useDesktop.getState().setGrabMode(true)
       }
     }
     const up = (e: KeyboardEvent): void => {
-      if (e.key === 'Alt' || e.key === ' ') useDesktop.getState().setGrabMode(false)
+      if (e.key === ' ') useDesktop.getState().setGrabMode(false)
     }
     const clear = (): void => useDesktop.getState().setGrabMode(false)
     window.addEventListener('keydown', down)
@@ -879,12 +905,64 @@ export default function App(): JSX.Element {
     }
   }, [])
 
-  // Double-tap ⌘ to toggle Control mode (the bird's-eye overview). A bare ⌘ tap from a focused
+  useEffect(() => {
+    const editable = (): boolean => {
+      const ae = document.activeElement as HTMLElement | null
+      return !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
+    }
+    const move = (e: globalThis.PointerEvent): void => {
+      pointerRef.current = { x: e.clientX, y: e.clientY }
+    }
+    const openAt = (p: { x: number; y: number }): void => {
+      if (editable() || showOverviewRef.current) return
+      useDesktop.getState().setGrabMode(false)
+      setRadialMenu(p)
+    }
+    // Electron: main forwards bare-Option holds via before-input-event (os:radial), which fires no
+    // matter what holds keyboard focus — host DOM, an app/srcdoc iframe, or a browser guest — and
+    // carries the TRUE cursor position (pointermove never fires over iframes, so pointerRef goes
+    // stale there). The DOM keydown below is the server/browser-transport fallback only; in
+    // Electron it stays inert so the two sources never double-fire.
+    const offRadial = window.agentOS?.onRadialKey?.((m) => {
+      if (m.phase === 'down') openAt(m.x != null && m.y != null ? { x: m.x, y: m.y } : pointerRef.current)
+      else setRadialMenu(null)
+    })
+    const down = (e: KeyboardEvent): void => {
+      if (offRadial || e.key !== 'Alt' || e.repeat) return
+      e.preventDefault()
+      openAt(pointerRef.current)
+    }
+    const up = (e: KeyboardEvent): void => {
+      if (!offRadial && e.key === 'Alt') setRadialMenu(null)
+    }
+    const clear = (): void => setRadialMenu(null)
+    window.addEventListener('pointermove', move, true)
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', clear)
+    return () => {
+      offRadial?.()
+      window.removeEventListener('pointermove', move, true)
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', clear)
+    }
+  }, [])
+
+  // Double-tap ⌘ to toggle the splayed stage overview; long-press ⌘ (bare, no other key) opens the
+  // workspace selector — the keyboard path to everything the home orb does. A bare ⌘ tap from a focused
   // WebContentsView arrives via onMetaTap (main); plain keydown/keyup covers the browser/server transport.
   useEffect(() => {
     let metaDown = false
     let sawOther = false
     let lastTap = 0
+    let holdTimer: number | null = null
+    const clearHold = (): void => {
+      if (holdTimer != null) {
+        window.clearTimeout(holdTimer)
+        holdTimer = null
+      }
+    }
     const registerTap = (): void => {
       const now = performance.now()
       if (now - lastTap < 450) {
@@ -899,23 +977,43 @@ export default function App(): JSX.Element {
         if (!e.repeat) {
           metaDown = true
           sawOther = false
+          clearHold()
+          holdTimer = window.setTimeout(() => {
+            holdTimer = null
+            if (metaDown && !sawOther) {
+              sawOther = true // consume the hold: the release must not count as a tap
+              void openOverview()
+            }
+          }, 500)
         }
       } else if (metaDown) {
         sawOther = true
+        clearHold()
       }
     }
     const up = (e: KeyboardEvent): void => {
       if (e.key === 'Meta') {
+        clearHold()
         if (metaDown && !sawOther) registerTap()
         metaDown = false
       }
     }
+    // ⌘ used with the mouse (⌘-drag pops tiles, ⌘-click) is not a bare hold or a tap.
+    const pointer = (): void => {
+      if (metaDown) {
+        sawOther = true
+        clearHold()
+      }
+    }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
+    window.addEventListener('pointerdown', pointer, true)
     const off = window.agentOS?.onMetaTap(registerTap)
     return () => {
+      clearHold()
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
+      window.removeEventListener('pointerdown', pointer, true)
       off?.()
     }
   }, [])
@@ -978,7 +1076,7 @@ export default function App(): JSX.Element {
           setActiveWs(a.workspace)
           activeWsRef.current = a.workspace
         }
-        setShowOverview(false)
+        closeOverview()
       } else if (a.type === 'reconcile') {
         // External folder change (dropped/edited/removed files) — merge live, keeping the camera +
         // the runtime chat/activity panels. Only once we already have a canvas (post first hydrate).
@@ -1592,8 +1690,10 @@ export default function App(): JSX.Element {
       createSurfaceFromSource({ kind: 'native', component: 'note', title: 'Note', w: 280, h: 260, props: { text: '', color: 'yellow' } }, source)
       return
     }
-    if (kind === 'app') {
-      createSurfaceFromSource({ kind: 'app', title: 'App', w: 520, h: 360 }, source)
+    if (kind === 'chat') {
+      // A new chat = a fresh peer agent + its own chat widget; the host broadcasts the surface
+      // create, so it appears without a refresh (Electron-only — the server shim has no agents).
+      window.agentOS?.spawnAgent?.()
       return
     }
     if (kind === 'widget') {
@@ -1626,9 +1726,52 @@ export default function App(): JSX.Element {
       /* best-effort snapshot */
     }
   }
-  async function openOverview(): Promise<void> {
-    await captureCurrent() // refresh the active board's tile first
+  async function openOverview(capture = true): Promise<void> {
+    if (overviewOpening.current || showOverviewRef.current) return
+    overviewOpening.current = true
+    if (capture) await captureCurrent() // refresh the active board's tile first
+    if (!overviewOpening.current) return
+    showOverviewRef.current = true
     setShowOverview(true)
+    overviewOpening.current = false
+  }
+  function closeOverview(): void {
+    overviewOpening.current = false
+    showOverviewRef.current = false
+    setShowOverview(false)
+  }
+  function handleHomeSingleTap(): void {
+    closeToolbarTooltip()
+    if (showOverviewRef.current || overviewOpening.current) {
+      closeOverview()
+      enterStageOverview()
+      return
+    }
+    if (useDesktop.getState().mode === 'canvas') {
+      enterStage(useDesktop.getState().currentStage)
+      return
+    }
+    enterStageOverview()
+  }
+
+  async function handleHomeDoubleTap(): Promise<void> {
+    closeToolbarTooltip()
+    if (showOverviewRef.current || overviewOpening.current) return
+    await openOverview(useDesktop.getState().mode !== 'canvas')
+  }
+
+  function handleHomePress(): void {
+    closeToolbarTooltip()
+    if (homeTapTimer.current != null) {
+      window.clearTimeout(homeTapTimer.current)
+      homeTapTimer.current = null
+      void handleHomeDoubleTap()
+      return
+    }
+    homeTapTimer.current = window.setTimeout(() => {
+      homeTapTimer.current = null
+      handleHomeSingleTap()
+    }, HOME_DOUBLE_TAP_MS)
   }
   async function switchWorkspace(name: string): Promise<{ ok: boolean; error?: string }> {
     // Don't capture here: this only runs from the OPEN overview, so the board we're leaving is obscured by
@@ -1850,7 +1993,7 @@ export default function App(): JSX.Element {
     <div
       id="root-canvas"
       ref={rootRef}
-      className={grabMode ? 'grab-mode' : undefined}
+      className={[grabMode ? 'grab-mode' : null, mode === 'canvas' ? 'stage-overview-mode' : 'stage-fixed-mode'].filter(Boolean).join(' ')}
       onDragOver={onDragOver}
       onDrop={onDrop}
       onPointerDownCapture={() => {
@@ -1899,7 +2042,7 @@ export default function App(): JSX.Element {
         onContextMenu={onBgContextMenu}
       />
 
-      <Sidebar onRequestRestore={requestRestore} animating={dockAnimations} />
+      <Sidebar onRequestRestore={requestRestore} onCreateSurface={createFromLauncher} animating={dockAnimations} />
 
       <div
         className="world"
@@ -1937,7 +2080,7 @@ export default function App(): JSX.Element {
 
       {mode === 'canvas' && (
         <div className="pan-overlay">
-          <span className="pan-hint">Control mode · drag cards to rearrange · scroll or drag the void to pan · double-tap ⌘ to exit</span>
+          <span className="pan-hint">Stage overview</span>
         </div>
       )}
 
@@ -1948,64 +2091,30 @@ export default function App(): JSX.Element {
         />
       )}
 
-      <div className="toolbar-shell">
-        <div className="toolbar toolbar-nav">
-          {hasWorkspaces && (
-            <button className="ws-btn" onClick={() => void openOverview()} {...toolbarTip('Workspaces')}>
-              <IconGrid size={14} />
-              <span className="ws-name">{activeWs ?? '…'}</span>
-              <IconChevronDown size={13} />
-            </button>
-          )}
-          {/* Workspace stages (#45): the indicator appears once there's more than one. Create a new stage
-              with Cmd/Ctrl + N; switch stages with Cmd/Ctrl + ← →. */}
-          {stageCount > 1 && (
-            <span className="area-ctl" {...toolbarTip('Workspace areas')}>
-              <button className="area-arrow" disabled={currentStage <= 0} onClick={() => switchStage(-1)} aria-label="Previous area">‹</button>
-              <span className="area-ind">Area {currentStage + 1}/{stageCount}</span>
-              <button className="area-arrow" disabled={currentStage >= stageCount - 1} onClick={() => switchStage(1)} aria-label="Next area">›</button>
-            </span>
-          )}
-        </div>
-        <div className="toolbar toolbar-main">
-          <SurfaceLauncherButton onCreateSurface={createFromLauncher} buttonProps={toolbarTip('Create surface')} />
-          <button onClick={(e) => openChat(sourceRectFromElement(e.currentTarget))} {...toolbarTip('Primary chat')}>
-            <IconChat size={15} /> Chat
-          </button>
-          <button
-            onClick={(e) => openInbox(sourceRectFromElement(e.currentTarget))}
-            {...toolbarTip('Action items from your agent')}
-          >
-            <IconInbox size={15} /> Inbox
-            {inboxPending > 0 && <span className="inbox-badge">{inboxPending}</span>}
-          </button>
-          <span className="toolbar-divider" aria-hidden="true" />
-          <button onClick={() => { setShowAdvanced(false); setShowAi((v) => !v) }} {...toolbarTip('Connection URL for your agent')}>
-            <span className="connect-ai-icon" style={{ color: aiUrl ? 'var(--positive, #3fb950)' : 'var(--text-muted)' }}>
-              <IconSparkle size={17} />
-            </span>
-            Connect AI
-          </button>
-          {isServer && agentOnline !== null && (
-            <span
-              className={`agent-status${agentOnline ? ' online' : ''}`}
-              title={agentOnline ? 'Agent connected — it can see your chat and the canvas' : 'Agent link is down — reconnecting…'}
-            >
-              <span className="agent-status-dot" />
-              {agentOnline ? 'Agent online' : 'Agent reconnecting…'}
-            </span>
+      {hasWorkspaces && (
+        <div className={`toolbar-shell toolbar-shell-workspace${homeRevealed || showOverview || mode === 'canvas' ? ' revealed' : ''}`}>
+          <div className="toolbar toolbar-nav toolbar-workspace">
+            <button
+              className={`ws-home-btn${showOverview || mode === 'canvas' ? ' active' : ''}`}
+              onClick={handleHomePress}
+              aria-pressed={showOverview || mode === 'canvas'}
+              title={showOverview ? 'Back to stages' : mode === 'canvas' ? `Stages${activeWs ? ` · ${activeWs}` : ''}` : 'Stages'}
+              {...toolbarTip(showOverview ? 'Back to stages' : 'Stages')}
+            />
+          </div>
+          {SHOW_ADVANCED_TOOLBAR && (
+            <div className="toolbar toolbar-advanced">
+              <button
+                ref={advancedButtonRef}
+                onClick={toggleAdvanced}
+                {...toolbarTip('Advanced tools')}
+              >
+                Advanced
+              </button>
+            </div>
           )}
         </div>
-        <div className="toolbar toolbar-advanced">
-          <button
-            ref={advancedButtonRef}
-            onClick={toggleAdvanced}
-            {...toolbarTip('Advanced tools')}
-          >
-            Advanced
-          </button>
-        </div>
-      </div>
+      )}
       {toolbarTooltip &&
         createPortal(
           <div className="sidebar-tooltip toolbar-tooltip" style={{ left: toolbarTooltip.left, top: toolbarTooltip.top }}>
@@ -2014,13 +2123,61 @@ export default function App(): JSX.Element {
           document.body
         )}
 
-      {showAdvanced && (
+      {SHOW_ADVANCED_TOOLBAR && showAdvanced && (
         <div className="advanced-backdrop" onPointerDown={() => setShowAdvanced(false)}>
           <div
             className="advanced-popover"
             style={advancedPosition ? { left: advancedPosition.left, top: advancedPosition.top } : undefined}
             onPointerDown={(e) => e.stopPropagation()}
           >
+            <button
+              className="advanced-action"
+              onClick={(e) => {
+                const source = sourceRectFromElement(advancedButtonRef.current) ?? sourceRectFromElement(e.currentTarget)
+                setShowAdvanced(false)
+                openChat(source)
+              }}
+            >
+              <IconChat size={17} />
+              <span className="advanced-action-copy">
+                <span className="advanced-action-title">Chat</span>
+                <span className="advanced-action-sub">Primary agent conversation</span>
+              </span>
+            </button>
+            <button
+              className="advanced-action"
+              onClick={(e) => {
+                const source = sourceRectFromElement(advancedButtonRef.current) ?? sourceRectFromElement(e.currentTarget)
+                setShowAdvanced(false)
+                openInbox(source)
+              }}
+            >
+              <IconInbox size={17} />
+              <span className="advanced-action-copy">
+                <span className="advanced-action-title">
+                  Inbox
+                  {inboxPending > 0 && <span className="inbox-badge">{inboxPending}</span>}
+                </span>
+                <span className="advanced-action-sub">Action items from your agent</span>
+              </span>
+            </button>
+            <button
+              className="advanced-action"
+              onClick={() => {
+                setShowAdvanced(false)
+                setShowAi((v) => !v)
+              }}
+            >
+              <span className="connect-ai-icon" style={{ color: aiUrl ? 'var(--positive, #3fb950)' : 'var(--text-muted)' }}>
+                <IconSparkle size={17} />
+              </span>
+              <span className="advanced-action-copy">
+                <span className="advanced-action-title">Connect AI</span>
+                <span className="advanced-action-sub">
+                  {isServer && agentOnline !== null ? (agentOnline ? 'Agent online' : 'Agent reconnecting…') : 'Connection URL for your agent'}
+                </span>
+              </span>
+            </button>
             <button
               className="advanced-action"
               onClick={(e) => {
@@ -2078,7 +2235,9 @@ export default function App(): JSX.Element {
         </div>
       )}
 
-      {hasWorkspaces && showOverview && <Overview onClose={() => setShowOverview(false)} onSwitch={switchWorkspace} theme={theme} onThemeChange={chooseTheme} />}
+      <RadialSurfaceMenu center={radialMenu} onCreateSurface={createFromLauncher} onClose={() => setRadialMenu(null)} />
+
+      {hasWorkspaces && showOverview && <Overview onClose={closeOverview} onSwitch={switchWorkspace} theme={theme} onThemeChange={chooseTheme} />}
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
 
       {openFolder && <FolderOverlay folder={openFolder} />}

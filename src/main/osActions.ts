@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, webContents, app } from 'electron'
+import { BrowserWindow, ipcMain, webContents, app, screen } from 'electron'
 import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
@@ -226,7 +226,8 @@ export function initOsActions(opts: {
     onCursor: (surfaceId, cursor) => sendToRenderer('os:page-cursor', { surfaceId, cursor }),
     onFocus: (id) => send('focus', { id }),
     onContextMenu: (surfaceId, x, y) => sendToRenderer('os:action', { type: 'surface-contextmenu', surfaceId, x, y }),
-    onMetaTap: () => sendToRenderer('os:metatap', undefined)
+    onMetaTap: () => sendToRenderer('os:metatap', undefined),
+    onAltHold: (phase) => osRadialPhase(phase)
   })
 
   // Workspace launcher / Mission-Control IPC — mirrors the server's /api/os/workspace* routes.
@@ -518,6 +519,23 @@ function send(type: string, payload: Record<string, unknown> = {}): void {
 export function osBroadcast(action: Record<string, unknown>): void {
   tel('act', action) // telemetry: session/action-item events emit here (the shared-core seam)
   sendToRenderer('os:action', action)
+}
+
+/** Bare-Option (Alt) hold → the renderer's radial create menu. Fed from main's before-input-event
+ *  trackers (host webContents in index.ts covers the renderer DOM + all its iframes; browser guests
+ *  via webcontents-view-host onAltHold), so the gesture works no matter what holds keyboard focus.
+ *  'down' carries the TRUE cursor position (screen point → UI-window content coords): the renderer's
+ *  own pointermove never fires while the cursor sits over an iframe, so its cache can be stale. */
+export function osRadialPhase(phase: 'down' | 'up' | 'cancel'): void {
+  if (phase === 'down') {
+    const win = getWin()
+    if (!win || win.isDestroyed()) return
+    const pt = screen.getCursorScreenPoint()
+    const b = win.getContentBounds()
+    sendToRenderer('os:radial', { phase, x: pt.x - b.x, y: pt.y - b.y })
+  } else {
+    sendToRenderer('os:radial', { phase })
+  }
 }
 
 // ---- canvas perception (the brain sees window movement — issues/open/perception-blind-spot…):

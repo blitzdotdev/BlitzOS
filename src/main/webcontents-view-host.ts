@@ -52,6 +52,9 @@ interface HostCallbacks {
   onFocus: (surfaceId: string) => void
   onContextMenu: (surfaceId: string, x: number, y: number) => void
   onMetaTap: () => void
+  /** Bare-Option hold state from a focused guest (radial create menu); 'cancel' = another key
+   *  joined the hold (the user is typing an Option-modified shortcut, not asking for the menu). */
+  onAltHold: (phase: 'down' | 'up' | 'cancel') => void
 }
 
 interface TabEntry {
@@ -229,6 +232,7 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
 
   let metaDown = false
   let sawOther = false
+  let altHeld = false
   wc.on('before-input-event', (ev, input) => {
     if (inputForwarder?.(input)) {
       ev.preventDefault()
@@ -241,9 +245,23 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
       } else if (metaDown) {
         sawOther = true
       }
-    } else if (input.type === 'keyUp' && input.key === 'Meta') {
-      if (metaDown && !sawOther) cb.onMetaTap()
-      metaDown = false
+      if (input.key === 'Alt') {
+        if (!input.isAutoRepeat && !input.meta && !input.control && !input.shift) {
+          altHeld = true
+          cb.onAltHold('down')
+        }
+      } else if (altHeld) {
+        altHeld = false
+        cb.onAltHold('cancel')
+      }
+    } else if (input.type === 'keyUp') {
+      if (input.key === 'Meta') {
+        if (metaDown && !sawOther) cb.onMetaTap()
+        metaDown = false
+      } else if (input.key === 'Alt' && altHeld) {
+        altHeld = false
+        cb.onAltHold('up')
+      }
     }
   })
 
