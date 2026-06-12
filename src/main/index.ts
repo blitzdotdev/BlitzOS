@@ -1,4 +1,5 @@
-import { app, BrowserWindow, protocol, ipcMain, crashReporter } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu } from 'electron'
+import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { readdirSync, readFileSync, statSync } from 'fs'
 import { startControlServer } from './control-server'
@@ -65,6 +66,45 @@ let bootJournal: BootJournal | null = null
 // real macOS desktops, plus four-finger swipe, ⌘Tab and ⌃⌘F all work. We deliberately do NOT use kiosk:
 // suppressing ⌘Tab is the same presentation lock that kills desktop-switching, which is what trapped you.
 const FULLSCREEN = process.env.BLITZ_FULLSCREEN === '1'
+
+// App fullscreen is a PAIR operation (sandwich.ts): fullscreen the PARENT pages window and the
+// attached UI child rides into its Space. The default menu's "Toggle Full Screen" role targets the
+// FOCUSED window — the UI child, which is deliberately fullscreenable:false (native fullscreen on a
+// macOS child window detaches it from the parent) — so the role item sits permanently disabled.
+// This menu keeps every standard role but wires that one item to the pair toggle. (The green
+// traffic light stays inert on the child for the same macOS constraint as its yellow sibling.)
+function installAppMenu(): void {
+  const isMac = process.platform === 'darwin'
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac ? ([{ role: 'appMenu' }] as MenuItemConstructorOptions[]) : []),
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        {
+          label: 'Toggle Full Screen',
+          accelerator: 'Ctrl+Cmd+F',
+          click: () => {
+            const s = sandwich
+            if (!s || s.pages.isDestroyed()) return
+            s.setFullScreen(!s.pages.isFullScreen())
+          }
+        }
+      ]
+    },
+    { role: 'windowMenu' }
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
 
 function createWindow(): void {
   // The sandwich compositor (plans/blitzos-sandwich-compositor.md): two congruent windows — L0
@@ -144,6 +184,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  installAppMenu() // restores ⌃⌘F / View → Toggle Full Screen (pair-level; see installAppMenu)
   createWindow()
 
   // Durably flush cookies + localStorage to disk (web surfaces persist their logins;

@@ -390,6 +390,10 @@ export default function App(): JSX.Element {
   // Agent relay connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [showOverview, setShowOverview] = useState(false)
+  // Pair-level fullscreen (the sandwich parent): hide the shell titlebar — the attached child
+  // window never enters native fullscreen, so its chrome would not auto-hide by itself.
+  const [shellFullscreen, setShellFullscreen] = useState(false)
+  useEffect(() => window.agentOS?.onShellFullScreen?.(setShellFullscreen), [])
   // The home orb is hidden until the pointer nears the bottom-center screen edge. Hysteresis:
   // a thin edge strip reveals it, a taller zone around the revealed button keeps it shown.
   const [homeRevealed, setHomeRevealed] = useState(false)
@@ -1691,7 +1695,18 @@ export default function App(): JSX.Element {
       return
     }
     if (kind === 'chat') {
-      // A new chat = a fresh peer agent + its own chat widget; the host broadcasts the surface
+      // One chat per stage: if the CURRENT stage already has a chat, select it — never spawn a
+      // duplicate (a fresh agent's chat would land in a DIFFERENT stage, stage N for agent N).
+      const st = useDesktop.getState()
+      const existing = st.surfaces.find(
+        (w) => w.role === 'chat' && (w.agentId != null ? stageForAgent(w.agentId) : 0) === st.currentStage
+      )
+      if (existing) {
+        if (existing.minimized) restoreOrFocusFromSource(existing.id, source)
+        else st.focusSurface(existing.id)
+        return
+      }
+      // No chat here → a fresh peer agent + its own chat widget; the host broadcasts the surface
       // create, so it appears without a refresh (Electron-only — the server shim has no agents).
       window.agentOS?.spawnAgent?.()
       return
@@ -2005,7 +2020,9 @@ export default function App(): JSX.Element {
       }}
     >
       {/* draggable shell title bar — MANUAL drag (pointer deltas → main moves the sandwich's parent
-          window; CSS app-region would drag only the attached child and detach the layers) */}
+          window; CSS app-region would drag only the attached child and detach the layers).
+          Hidden while the pair is fullscreen (a fullscreen shell can't be dragged anyway). */}
+      {!shellFullscreen && (
       <div
         className="titlebar"
         onPointerDown={(e) => {
@@ -2032,6 +2049,7 @@ export default function App(): JSX.Element {
       >
         <span className="titlebar-label">BlitzOS</span>
       </div>
+      )}
 
       <div
         className="bg"

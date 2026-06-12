@@ -157,6 +157,14 @@ const api = {
     ipcRenderer.on('os:metatap', listener)
     return () => ipcRenderer.removeListener('os:metatap', listener)
   },
+  /** Pair-level fullscreen state (the sandwich's parent window): the renderer hides its titlebar
+   *  strip while fullscreen — the attached child never enters NATIVE fullscreen, so its chrome
+   *  would not auto-hide on its own. */
+  onShellFullScreen(cb: (on: boolean) => void): () => void {
+    const listener = (_e: unknown, m: { on: boolean }): void => cb(!!m?.on)
+    ipcRenderer.on('os:fullscreen', listener)
+    return () => ipcRenderer.removeListener('os:fullscreen', listener)
+  },
   /** Bare-Option hold/release for the radial create menu, forwarded from main's before-input-event —
    *  fires no matter what holds keyboard focus (host DOM, an app/srcdoc iframe, a browser guest).
    *  'down' carries the true cursor position in window coords (the renderer's own pointermove never

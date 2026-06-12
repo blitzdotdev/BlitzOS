@@ -107,8 +107,30 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
     const b: Rectangle = pages.getBounds()
     ui.setBounds(b)
   }
-  pages.on('enter-full-screen', () => setTimeout(syncFs, 50))
-  pages.on('leave-full-screen', () => setTimeout(syncFs, 50))
+  // The child never enters NATIVE fullscreen (it can't — attached), so its chrome won't auto-hide
+  // like a normal fullscreen window's: hide the traffic lights + tell the renderer to drop its
+  // titlebar strip while the pair is fullscreen. Resent on every renderer load (boot fullscreen
+  // via BLITZ_FULLSCREEN, dev reloads) so the state never goes stale.
+  const setChromeFs = (on: boolean): void => {
+    if (ui.isDestroyed()) return
+    ui.setWindowButtonVisibility(!on)
+    try {
+      ui.webContents.send('os:fullscreen', { on })
+    } catch {
+      /* window mid-teardown */
+    }
+  }
+  pages.on('enter-full-screen', () => {
+    setTimeout(syncFs, 50)
+    setChromeFs(true)
+  })
+  pages.on('leave-full-screen', () => {
+    setTimeout(syncFs, 50)
+    setChromeFs(false)
+  })
+  ui.webContents.on('did-finish-load', () => {
+    if (!pages.isDestroyed() && pages.isFullScreen()) setChromeFs(true)
+  })
   const setFullScreen = (on: boolean): void => {
     if (!pages.isDestroyed()) pages.setFullScreen(on)
   }
