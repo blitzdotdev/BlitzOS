@@ -81,7 +81,15 @@ async function main() {
 
   console.log(`stride=${stride}`)
   console.log('\n[1] self-heal: existing agent chats hydrate into their own stages')
-  const m1 = await stageMap()
+  // Poll until the primary chat has actually rendered before snapshotting — a single snapshot races the
+  // first paint (the merged sandwich compositor makes the canvas slower to settle on load), which showed
+  // up as an intermittent `chat: undefined`. Retry stageMap() until 'chat' lands in stage 0, or ~12s.
+  let m1 = {}
+  for (let i = 0; i < 10; i++) {
+    m1 = await stageMap()
+    if (m1['chat'] === 0) break
+    await delay(1200)
+  }
   console.log('  stage map: ' + JSON.stringify(m1))
   check(m1['chat'] === 0, `primary chat in stage 0 (got ${m1['chat']})`)
   for (const sid of Object.keys(m1)) {

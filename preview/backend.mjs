@@ -679,6 +679,17 @@ const serverOps = {
     return wsHost.appendChat('agent', String(text), agentId) // append to that agent's chat.md + broadcast
   },
   customizeWidget: (name, html, agentId) => wsHost.customizeWidget(String(name), String(html), agentId),
+  // Live OS theme (the onboarding wardrobe card / an agent picking an accent). Mirrors Electron's
+  // osSetTheme: sanitize each role to a #rrggbb hex, then broadcast the SAME `set-theme` action the
+  // shared renderer applies (App.tsx) — so theming works identically in both transports, not Electron-only.
+  setTheme: (theme) => {
+    const hex = (v) => (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.trim()) ? v.trim().toLowerCase() : null)
+    const out = {}
+    for (const k of ['accent', 'accentDeep', 'marker', 'positive', 'danger', 'info']) { const h = hex((theme || {})[k]); if (h) out[k] = h }
+    if (!Object.keys(out).length) return { ok: false, error: 'pass at least one role as a #rrggbb hex (accent, marker, …)' }
+    broadcast({ type: 'set-theme', theme: out })
+    return { ok: true }
+  },
   closeAgent: (id) => wsHost.closeAgent(String(id)),
   renameAgent: (id, title) => wsHost.renameAgent(String(id), String(title ?? '')),
   // Open a new agent: register + surface it; addAgent launches its claude terminal (launchAgent).
