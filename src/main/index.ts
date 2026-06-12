@@ -261,6 +261,9 @@ app.whenReady().then(() => {
       const op = String(p?.op || ''); const a = p?.args || {}
       if (op === 'new') return osSpawnAgent(a.title != null ? String(a.title) : undefined, true)
       if (op === 'rename') return osRenameAgent(String(a.id ?? ''), String(a.title ?? ''))
+      // 'clear' → start a FRESH context for this agent (rotate its claude session id + restart). Uniform for
+      // every agent incl '0'; the server mirrors it via the shim → /api/os/agent-clear (no divergence).
+      if (op === 'clear') return Promise.resolve(electronTerminalOps.clearAgentContext(String(a.id ?? '0'))).then((okv) => ({ ok: !!okv }))
       return { ok: false, error: `unknown chat op: ${op}` }
     } catch (e) { return { ok: false, error: (e as Error)?.message } }
   })

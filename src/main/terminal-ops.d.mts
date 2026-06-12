@@ -11,6 +11,8 @@ export interface TerminalOps {
   removeTerminal(id: string): boolean
   /** Re-spawn a dead terminal from its persisted meta (one-click resume). */
   restartTerminal(id: string): Promise<TerminalMeta | null>
+  /** Clear an agent's claude context on demand (rotate its session id + restart → empty conversation). */
+  clearAgentContext(id: string): Promise<boolean>
   /** A terminal's current record (live or persisted), or null — tells a reattached survivor from a dead one. */
   getTerminal(id: string): TerminalMeta | null
   /** Whether a terminal is wired to a live tmux window THIS run (survivor or fresh spawn) — for boot resume. */

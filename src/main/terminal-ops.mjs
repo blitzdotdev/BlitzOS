@@ -104,6 +104,8 @@ export function makeTerminalOps({ getWorkspacePath, emit = () => {}, markWrite =
     removeTerminal: (id) => { const m = mgrFor(); return m ? m.removeTerminal(id) : false },
     /** Re-spawn a dead terminal from its persisted meta (one-click resume of an exited/stopped terminal). */
     restartTerminal: (id) => { const m = mgrFor(); return m ? m.restartTerminal(id) : Promise.resolve(null) },
+    /** Clear an agent's claude context on demand (rotate its session id + restart → empty conversation). Uniform for any agent. */
+    clearAgentContext: (id) => { const m = mgrFor(); return m ? m.clearAgentContext(id) : Promise.resolve(false) },
     /** Flush transcripts + close every control client on shutdown (terminals SURVIVE in their tmux servers). */
     stopHosts: () => { for (const { host, mgr } of mgrs.values()) { try { mgr.flushAll(); host.stop() } catch { /* ignore */ } } }
   }

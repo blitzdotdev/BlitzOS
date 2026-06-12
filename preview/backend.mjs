@@ -994,6 +994,14 @@ const server = createServer(async (req, res) => {
     req.on('end', () => { const b = toolBody(body); json(res, 200, serverOps.renameAgent(String(b.id || ''), String(b.title ?? ''))) })
     return
   }
+  // Clear an agent's context (the chat widget's "new context" button) — rotate its claude session id +
+  // restart → empty conversation. Mirrors the Electron os:chat-control 'clear' op (no divergence).
+  if (path === '/api/os/agent-clear' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverTerminalOps.clearAgentContext(String(b.id || '0'))).then((okv) => json(res, 200, { ok: !!okv })).catch(() => json(res, 200, { ok: false })) })
+    return
+  }
   if (path === '/api/os/terminal-list' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 1000) req.destroy() })
