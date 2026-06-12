@@ -70,9 +70,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const minimizeSurface = useDesktop((s) => s.minimizeSurface)
   const setActiveTab = useDesktop((s) => s.setActiveTab)
   const closeTab = useDesktop((s) => s.closeTab)
-  // macOS-style: the front-most (highest-z) surface is "active"; only its lights colorize.
-  const maxZ = useDesktop((s) => s.surfaces.reduce((m, w) => Math.max(m, w.z), -Infinity))
-  const isActive = surface.z === maxZ
+  const isActive = useDesktop((s) => s.activeSurfaceId === surface.id)
   const isSelected = useDesktop((s) => s.selection.includes(surface.id))
   const isDropTarget = useDesktop((s) => s.dragTarget === surface.id)
   const isAbsorbing = useDesktop((s) => s.absorbing.includes(surface.id))

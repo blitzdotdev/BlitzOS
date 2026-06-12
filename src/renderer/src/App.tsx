@@ -11,7 +11,7 @@ import { Overview } from './components/Overview'
 import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame } from './components/SurfaceFrame'
 import { AnnotationLayer } from './components/AnnotationLayer'
-import { PrimarySpace } from './components/PrimarySpace'
+import { AreaChromeOverlay, PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
 import { SurfaceLauncherButton, type SurfaceLauncherKind } from './components/SurfaceLauncherButton'
 import { IconChat, IconSparkle, IconGrid, IconChevronDown, IconCheck, IconInbox, IconSessions, IconTerminal } from './components/Icons'
@@ -28,6 +28,24 @@ type ToolbarTooltip = { text: string; left: number; top: number }
 type AdvancedPopoverPosition = { left: number; top: number }
 type ThemeMode = 'light' | 'dark'
 const THEME_STORAGE_KEY = 'blitzos.theme'
+const AREA_FRAME_SCALE_THRESHOLD = 0.92
+const AREA_ADD_SCALE_THRESHOLD = 0.8
+const HOME_TRANSFORM_EPS = 0.75
+const HOME_SCALE_EPS = 0.006
+const CANVAS_WHEEL_GESTURE_MS = 220
+const CANVAS_GESTURE_BLOCK_SELECTOR = [
+  '.sidebar',
+  '.titlebar',
+  '.toolbar-shell',
+  '.advanced-popover',
+  '.hud',
+  '.overview',
+  '.folder-overlay',
+  '.context-menu',
+  '.consent',
+  '.connect-panel',
+  '.onboarding'
+].join(', ')
 
 function systemTheme(): ThemeMode {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
@@ -36,6 +54,50 @@ function systemTheme(): ThemeMode {
 function readInitialTheme(): ThemeMode {
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
   return stored === 'dark' || stored === 'light' ? stored : systemTheme()
+}
+
+function isCanvasGestureTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  if (!target.closest('#root-canvas')) return false
+  return !target.closest(`.window.is-active, ${CANVAS_GESTURE_BLOCK_SELECTOR}`)
+}
+
+function isCanvasGestureBlockedTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return true
+  if (!target.closest('#root-canvas')) return true
+  return !!target.closest(CANVAS_GESTURE_BLOCK_SELECTOR)
+}
+
+function isActiveWindowTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest('.window.is-active')
+}
+
+function isScrollableSurfaceTarget(target: EventTarget | null, deltaX: number, deltaY: number): boolean {
+  if (!(target instanceof Element)) return false
+  const activeWindow = target.closest('.window.is-active')
+  if (!(activeWindow instanceof Element)) return false
+  if (target.closest('textarea, input, select, [contenteditable="true"], [data-surface-scroll="true"]')) return true
+
+  const wantsX = Math.abs(deltaX) > Math.abs(deltaY)
+  for (let el: Element | null = target; el && el !== activeWindow; el = el.parentElement) {
+    if (!(el instanceof HTMLElement)) continue
+    const style = window.getComputedStyle(el)
+    const scrollsY = /auto|scroll|overlay/.test(style.overflowY) && el.scrollHeight > el.clientHeight
+    const scrollsX = /auto|scroll|overlay/.test(style.overflowX) && el.scrollWidth > el.clientWidth
+    if ((wantsX && scrollsX) || (!wantsX && scrollsY)) return true
+  }
+  return false
+}
+
+function isHomeTransform(a: CanvasTransform, b: CanvasTransform): boolean {
+  return Math.abs(a.x - b.x) < HOME_TRANSFORM_EPS && Math.abs(a.y - b.y) < HOME_TRANSFORM_EPS && Math.abs(a.scale - b.scale) < HOME_SCALE_EPS
+}
+
+function preserveWorldCenterForViewport(t: CanvasTransform, fromVp: { w: number; h: number }, toVp: { w: number; h: number }): CanvasTransform {
+  const scale = t.scale || 1
+  const cx = (fromVp.w / 2 - t.x) / scale
+  const cy = (fromVp.h / 2 - t.y) / scale
+  return { scale, x: toVp.w / 2 - cx * scale, y: toVp.h / 2 - cy * scale }
 }
 type AnimationSourceRect = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
 const WIDGET_PLACEHOLDER_HTML = `
@@ -395,6 +457,8 @@ export default function App(): JSX.Element {
   // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
   const activeWsRef = useRef<string | null>(null)
   const animRef = useRef<number | null>(null)
+  const viewportReady = useRef(false)
+  const canvasWheelGestureUntil = useRef(0)
 
   useEffect(() => {
     if (!showAi) setAiCopied(false)
@@ -539,7 +603,7 @@ export default function App(): JSX.Element {
     animRef.current = requestAnimationFrame(step)
   }
   // Double-tap ⌘ toggles "Control mode" (the zoomed-out bird's-eye): animate the camera to the
-  // control viewport on enter and back to the locked primary-area view on exit. Both modes exist in
+  // control viewport on enter and back to the current area's home view on exit. Both modes exist in
   // BOTH transports (Electron + server/Chrome); normal mode is the default everywhere.
   function toggleControlMode(): void {
     const st = useDesktop.getState()
@@ -553,7 +617,7 @@ export default function App(): JSX.Element {
       st.setMode('canvas')
       animateTransform(target)
     } else {
-      // Leaving control mode: animate back to the view-locked CURRENT area. controlTransform was
+      // Leaving control mode: animate back to the CURRENT area's home frame. controlTransform was
       // already kept current by every pan/zoom/center in canvas mode, so there's nothing to capture
       // here (capturing st.transform now could grab a mid-animation frame — the ISSUE-3 trap).
       st.setMode('desktop')
@@ -561,8 +625,8 @@ export default function App(): JSX.Element {
     }
   }
 
-  // Switch to an adjacent workspace area (#45). In normal mode the camera animates to the new area
-  // (each area locks to the same on-screen desktop region); in control mode the bird's-eye already
+  // Switch to an adjacent workspace area (#45). In normal mode the camera animates to the new area's
+  // home frame; in control mode the bird's-eye already
   // shows every area, so we only move the highlight. No-op past the ends.
   function switchArea(delta: number): void {
     const st = useDesktop.getState()
@@ -571,6 +635,27 @@ export default function App(): JSX.Element {
     st.setCurrentArea(next)
     if (st.mode === 'desktop') animateTransform(viewTransform('desktop', st.viewport, next, st.areaCount))
   }
+
+  function enterArea(area: number): void {
+    const st = useDesktop.getState()
+    st.clearActiveSurface()
+    const next = Math.max(0, Math.min(st.areaCount - 1, Math.round(area)))
+    st.setCurrentArea(next)
+    if (st.mode !== 'desktop') st.setMode('desktop')
+    const now = useDesktop.getState()
+    animateTransform(viewTransform('desktop', now.viewport, next, now.areaCount))
+  }
+
+  function addAreaFromOverview(): void {
+    const st = useDesktop.getState()
+    st.clearActiveSurface()
+    st.addArea()
+    const now = useDesktop.getState()
+    if (now.mode !== 'desktop') now.setMode('desktop')
+    const latest = useDesktop.getState()
+    animateTransform(viewTransform('desktop', latest.viewport, latest.currentArea, latest.areaCount))
+  }
+
   // Add a new (empty) area to the right and go to it (re-fits the bird's-eye in control mode).
   function addAreaAndGo(): void {
     useDesktop.getState().addArea()
@@ -596,11 +681,23 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     const onResize = (): void => {
-      useDesktop.getState().setViewport(window.innerWidth, window.innerHeight)
-      useDesktop.getState().goToPrimary() // re-fit the camera to the new viewport in BOTH modes (control too)
+      const st = useDesktop.getState()
+      const fromVp = st.viewport
+      const toVp = { w: window.innerWidth, h: window.innerHeight }
+      const wasHome = viewportReady.current && isHomeTransform(st.transform, viewTransform(st.mode, fromVp, st.currentArea, st.areaCount))
+      const previous = st.transform
+      st.setViewport(toVp.w, toVp.h)
+      const next = useDesktop.getState()
+      if (!viewportReady.current || wasHome) {
+        next.goToPrimary()
+      } else {
+        const transform = preserveWorldCenterForViewport(previous, fromVp, toVp)
+        next.setTransform(transform)
+        if (next.mode === 'canvas') next.setControlTransform(transform)
+      }
+      viewportReady.current = true
     }
     onResize()
-    useDesktop.getState().goToPrimary()
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -609,17 +706,52 @@ export default function App(): JSX.Element {
     const el = rootRef.current
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
-      // pan/zoom only on an UNLOCKED canvas; when locked (⌘⌘) or in desktop mode,
-      // let webviews/iframes scroll normally
+      // Route gestures by what is under the cursor: surface content keeps its native scroll/pinch,
+      // while empty canvas gestures pan/zoom the Blitz camera. This listener runs in capture phase
+      // because xterm and other custom scrollers can otherwise consume wheel events before the canvas
+      // can preserve ownership of an already-started pan.
+      const activeWindowTarget = isActiveWindowTarget(e.target)
+      const isPanGesture = !e.ctrlKey
+      // Trackpad wheel gestures are a burst, not one event. Once a burst begins as canvas pan, keep it
+      // owned by the canvas even if the cursor crosses a terminal or other custom scroll surface.
+      const continuingCanvasPan =
+        isPanGesture && canvasWheelGestureUntil.current > performance.now() && !isCanvasGestureBlockedTarget(e.target)
+      if (continuingCanvasPan) {
+        e.preventDefault()
+        e.stopPropagation()
+        const w = useDesktop.getState()
+        w.clearActiveSurface()
+        canvasWheelGestureUntil.current = performance.now() + CANVAS_WHEEL_GESTURE_MS
+        w.panBy(-e.deltaX, -e.deltaY)
+        return
+      }
+      if (activeWindowTarget && e.ctrlKey) return
+      if (activeWindowTarget && isScrollableSurfaceTarget(e.target, e.deltaX, e.deltaY)) return
+      if (!activeWindowTarget && !isCanvasGestureTarget(e.target)) return
       const w = useDesktop.getState()
-      if (w.mode !== 'canvas' || w.locked) return
+      if (activeWindowTarget || isPanGesture) w.clearActiveSurface()
+      if (w.mode === 'canvas') {
+        e.preventDefault()
+        if (isPanGesture) {
+          e.stopPropagation()
+          canvasWheelGestureUntil.current = performance.now() + CANVAS_WHEEL_GESTURE_MS
+        }
+        if (e.ctrlKey) w.zoomAt(e.clientX, e.clientY, e.deltaY)
+        else w.panBy(-e.deltaX, -e.deltaY)
+        return
+      }
+      if (e.ctrlKey) {
+        e.preventDefault()
+        w.zoomAt(e.clientX, e.clientY, e.deltaY)
+        return
+      }
       e.preventDefault()
-      const st = useDesktop.getState()
-      if (e.ctrlKey) st.zoomAt(e.clientX, e.clientY, e.deltaY)
-      else st.panBy(-e.deltaX, -e.deltaY)
+      e.stopPropagation()
+      canvasWheelGestureUntil.current = performance.now() + CANVAS_WHEEL_GESTURE_MS
+      w.panBy(-e.deltaX, -e.deltaY)
     }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
+    el.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => el.removeEventListener('wheel', onWheel, { capture: true })
   }, [])
 
   // ⌘T / ⇧⌘T — tile toggle + size cycle on the window the user means: the single selection if there
@@ -1253,11 +1385,12 @@ export default function App(): JSX.Element {
     // would never show (the right-click's pointerdown was wiping the very selection the menu groups).
     if (e.button !== 0) return
     const st = useDesktop.getState()
-    if (st.mode === 'canvas' && !st.locked) {
-      // unlocked canvas: drag the background to pan
+    st.clearActiveSurface()
+    if (st.mode === 'canvas') {
+      // Control mode: drag the background void to pan.
       pan.current = { x: e.clientX, y: e.clientY }
     } else {
-      // locked canvas (or desktop): rubber-band (marquee) selection. Shift adds to the selection.
+      // Normal mode: rubber-band (marquee) selection. Shift adds to the selection.
       if (!e.shiftKey) st.clearSelection()
       marquee.current = { x0: e.clientX, y0: e.clientY }
       setMarqueeRect({ x: e.clientX, y: e.clientY, w: 0, h: 0 })
@@ -1624,6 +1757,8 @@ export default function App(): JSX.Element {
     const p = surfaces.find((s) => s.kind === 'native' && s.component === 'inbox')
     return ((p?.props?.items as Array<{ status?: string }>) ?? []).filter((i) => i.status === 'pending').length
   })()
+  const showAreaFrames = mode === 'canvas' || (mode === 'desktop' && transform.scale < AREA_FRAME_SCALE_THRESHOLD)
+  const showAddAreaFrame = showAreaFrames && transform.scale < AREA_ADD_SCALE_THRESHOLD
 
   return (
     <div
@@ -1653,7 +1788,7 @@ export default function App(): JSX.Element {
         className="world"
         style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
       >
-        {mode === 'canvas' && <PrimarySpace />}
+        {showAreaFrames && <PrimarySpace showAddArea={showAddAreaFrame} />}
         {snapPreview && (
           <div
             className="snap-preview"
@@ -1680,6 +1815,8 @@ export default function App(): JSX.Element {
         {/* Item 5b: spatial annotations pin to surfaces (in-world so they pan/zoom with their surface). */}
         <AnnotationLayer />
       </div>
+
+      {showAreaFrames && <AreaChromeOverlay showAddArea={showAddAreaFrame} onEnterArea={enterArea} onAddArea={addAreaFromOverview} />}
 
       {mode === 'canvas' && (
         <div className="pan-overlay">

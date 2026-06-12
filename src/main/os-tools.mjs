@@ -20,7 +20,7 @@ import { latticeFor, cardRect, findSlot, budgetUsed, stageSummary, sizeForDims, 
 
 // OFF-STAGE = the open infinite canvas OUTSIDE the stage (the bounded per-workspace "area" the user's
 // desktop-mode camera frames). There is no separate hidden pool: a work surface parks below the area,
-// naturally off-screen at scale 1 and revealed when the user zooms out (control mode). Computed
+// naturally off-screen at scale 1 and revealed when the user zooms out or enters Control Mode. Computed
 // geometrically — a surface is offstage iff it has no slot and sits outside its area's rect.
 function isOffstage(s, vp) {
   if (!s || s.slot) return false
@@ -220,7 +220,7 @@ export function makeOsTools(ops) {
     {
       path: '/open_window',
       description:
-        'Open a third-party website as a live web surface. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame): drive it freely with surface_control/read_window — it is out of their view at their normal zoom, and visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary sessions pass {session:"<your id>"}.',
+        'Open a third-party website as a live web surface. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame): drive it freely with surface_control/read_window — it is out of their home view, and visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary sessions pass {session:"<your id>"}.',
       input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, title: { type: 'string' }, session: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)

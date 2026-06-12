@@ -116,6 +116,7 @@ button {
   border-radius: var(--radius-window);
   background: color-mix(in srgb, var(--accent) 5%, transparent);
   z-index: 1;
+  pointer-events: none;
 }
 /* The active area among several (#45) — solid, brighter frame so you can see which desktop you're on. */
 .primary-space.is-current {
@@ -123,14 +124,53 @@ button {
   border-color: color-mix(in srgb, var(--accent) 75%, transparent);
   background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
-.primary-label {
+.primary-space.primary-space-add {
+  border-color: color-mix(in srgb, var(--text-muted) 34%, transparent);
+  background: color-mix(in srgb, var(--surface) 28%, transparent);
+}
+.area-chrome-overlay {
   position: absolute;
-  top: 10px;
-  left: 14px;
+  inset: 0;
+  z-index: 900; /* above the transformed world/surfaces, below toolbar/sidebar/titlebar chrome */
+  pointer-events: none;
+}
+.area-chrome-label,
+.area-chrome-create {
+  appearance: none;
+  position: absolute;
+  pointer-events: auto;
   font-family: var(--font-mono);
-  font-size: 11px;
   letter-spacing: var(--track-label);
-  color: color-mix(in srgb, var(--accent) 70%, transparent);
+  white-space: nowrap;
+  color: var(--text-secondary);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+.area-chrome-label {
+  transform: translateY(-100%);
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.area-chrome-label.is-current {
+  color: color-mix(in srgb, var(--accent) 76%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+}
+.area-chrome-create {
+  transform: translate(-50%, -50%);
+  padding: 8px 14px;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.area-chrome-label:hover,
+.area-chrome-create:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
 }
 
 /* Ground plane: widgets + icons (legacy ground-plane items). */
