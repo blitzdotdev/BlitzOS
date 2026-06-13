@@ -1,0 +1,268 @@
+// BlitzOS Computer Use helper — lifecycle manager (plans/blitzos-computer-use-helper.md).
+//
+// Owns the separate native helper (BlitzComputerUse.app) that HOLDS the Accessibility + Screen
+// Recording TCC grants, so BlitzOS never quits/reopens for them. The load-bearing trick: the helper
+// is launched via LaunchServices (`open -n`), which makes it its OWN responsible process with its
+// OWN TCC identity (dev.blitz.os.computeruse), distinct from BlitzOS/Electron. A child spawned by us
+// would inherit OUR identity (exactly why the scan child inherits our FDA) and defeat the point.
+//
+// IPC is a Unix domain socket BlitzOS listens on (no inherited stdio across a LaunchServices launch);
+// the helper connects on launch. Liveness = the socket connection. "Quit and reopen for the grant
+// to take effect" = quit + relaunch THE HELPER; BlitzOS is untouched.
+
+import { app } from 'electron'
+import net from 'node:net'
+import { execFile } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+
+export type DragPerm = 'accessibility' | 'screen'
+export interface HelperTcc {
+  accessibility: boolean
+  screenRecording: boolean
+}
+
+// Where the SIGNED helper bundle ships: packaged → resourcesPath (electron-builder extraResources);
+// dev → the build output. Overridable for testing a specific bundle.
+function bundledHelperApp(): string {
+  if (process.env.BLITZ_COMPUTER_USE_APP) return process.env.BLITZ_COMPUTER_USE_APP
+  if (app.isPackaged) return join(process.resourcesPath, 'BlitzComputerUse.app')
+  return join(app.getAppPath(), 'native', 'computer-use-helper', 'build', 'BlitzComputerUse.app')
+}
+
+// Stable install location (same in dev + packaged, independent of userData naming) so the bundle the
+// user GRANTED stays put across app updates and never needs re-granting — Codex's installer pattern.
+function installedHelperApp(): string {
+  return join(app.getPath('appData'), 'BlitzOS', 'BlitzComputerUse.app')
+}
+
+function plistVersion(appPath: string): string | null {
+  try {
+    const plist = readFileSync(join(appPath, 'Contents', 'Info.plist'), 'utf8')
+    const m = plist.match(/<key>CFBundleVersion<\/key>\s*<string>([^<]+)<\/string>/)
+    return m ? m[1] : null
+  } catch {
+    return null
+  }
+}
+
+const exec = (cmd: string, args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> =>
+  new Promise((resolve) => execFile(cmd, args, { timeout: 20_000 }, (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout), stderr: String(stderr) })))
+
+class HelperManager {
+  private server: net.Server | null = null
+  private sock: net.Socket | null = null
+  private sockPath = join(tmpdir(), `blitzcu-${process.pid}.sock`)
+  private buf = ''
+  private pending = new Map<number, (m: Record<string, unknown>) => void>()
+  private nextId = 1
+  private hello: Record<string, unknown> | null = null
+  private wantQuit = false // distinguishes a deliberate relaunch from a crash
+  private connectWaiters: Array<() => void> = []
+  private supervise = false
+
+  /** Copy the signed bundle to the stable install location if missing or version-changed. cp -R
+   *  (not fs.cp) preserves the code signature + symlinks the signature depends on. */
+  private async install(): Promise<boolean> {
+    const src = bundledHelperApp()
+    if (!existsSync(src)) return false
+    const dst = installedHelperApp()
+    if (existsSync(dst) && plistVersion(dst) === plistVersion(src) && plistVersion(src) != null) return true
+    try {
+      mkdirSync(join(app.getPath('appData'), 'BlitzOS'), { recursive: true })
+      if (existsSync(dst)) rmSync(dst, { recursive: true, force: true })
+      const r = await exec('/bin/cp', ['-R', src, dst])
+      return r.ok && existsSync(dst)
+    } catch {
+      return false
+    }
+  }
+
+  private ensureServer(): void {
+    if (this.server) return
+    try {
+      rmSync(this.sockPath, { force: true })
+    } catch {
+      /* fresh */
+    }
+    this.server = net.createServer((s) => {
+      this.sock = s
+      this.buf = ''
+      s.on('data', (d) => this.onData(d))
+      s.on('close', () => this.onClose())
+      s.on('error', () => {})
+    })
+    this.server.on('error', (e) => console.error('[computer-use] socket server error:', (e as Error)?.message))
+    this.server.listen(this.sockPath)
+  }
+
+  private onData(d: Buffer): void {
+    this.buf += d.toString('utf8')
+    let nl: number
+    while ((nl = this.buf.indexOf('\n')) >= 0) {
+      const line = this.buf.slice(0, nl)
+      this.buf = this.buf.slice(nl + 1)
+      if (!line.trim()) continue
+      let msg: Record<string, unknown>
+      try {
+        msg = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (msg.type === 'hello') {
+        this.hello = msg
+        const waiters = this.connectWaiters
+        this.connectWaiters = []
+        for (const w of waiters) w()
+      } else if (msg.type === 'reply' && typeof msg.id === 'number') {
+        const cb = this.pending.get(msg.id)
+        if (cb) {
+          this.pending.delete(msg.id)
+          cb(msg)
+        }
+      }
+    }
+  }
+
+  private onClose(): void {
+    this.sock = null
+    this.hello = null
+    // Reject in-flight RPCs so callers never hang on a dropped helper.
+    for (const cb of this.pending.values()) cb({ type: 'reply', error: 'helper disconnected' })
+    this.pending.clear()
+    if (this.wantQuit) {
+      this.wantQuit = false
+      return
+    }
+    if (this.supervise) {
+      // Unexpected drop (crash) → bring it back. shutdown() clears `supervise`, so a deliberate
+      // app quit never respawns. Small delay avoids a tight respawn loop.
+      setTimeout(() => void this.launch().catch(() => {}), 800)
+    }
+  }
+
+  /** LaunchServices launch (own TCC identity). `-n` forces a fresh instance (used by relaunch). */
+  private async launch(): Promise<boolean> {
+    const appPath = installedHelperApp()
+    if (!existsSync(appPath)) return false
+    const r = await exec('/usr/bin/open', ['-n', appPath, '--args', '--connect', this.sockPath])
+    return r.ok
+  }
+
+  private waitForConnect(ms = 6000): Promise<boolean> {
+    if (this.hello) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const t = setTimeout(() => resolve(!!this.hello), ms)
+      this.connectWaiters.push(() => {
+        clearTimeout(t)
+        resolve(true)
+      })
+    })
+  }
+
+  private rpc(cmd: string, ms = 8000): Promise<Record<string, unknown>> {
+    const s = this.sock
+    if (!s) return Promise.resolve({ error: 'helper not connected' })
+    const id = this.nextId++
+    return new Promise((resolve) => {
+      const t = setTimeout(() => {
+        this.pending.delete(id)
+        resolve({ error: 'helper timeout' })
+      }, ms)
+      this.pending.set(id, (m) => {
+        clearTimeout(t)
+        resolve(m)
+      })
+      try {
+        s.write(JSON.stringify({ id, cmd }) + '\n')
+      } catch {
+        clearTimeout(t)
+        this.pending.delete(id)
+        resolve({ error: 'helper write failed' })
+      }
+    })
+  }
+
+  /** Install (if needed) + launch + wait for the helper to connect. Idempotent. */
+  async ensure(): Promise<{ ok: boolean; error?: string }> {
+    if (process.platform !== 'darwin') return { ok: false, error: 'macOS only' }
+    if (this.hello) return { ok: true }
+    this.ensureServer()
+    if (!(await this.install())) return { ok: false, error: 'helper bundle not found' }
+    this.supervise = true
+    if (!(await this.launch())) return { ok: false, error: 'launch failed' }
+    const connected = await this.waitForConnect()
+    return connected ? { ok: true } : { ok: false, error: 'helper did not connect' }
+  }
+
+  available(): boolean {
+    return process.platform === 'darwin' && existsSync(bundledHelperApp())
+  }
+
+  connected(): boolean {
+    return !!this.hello
+  }
+
+  private tccOf(m: Record<string, unknown> | null): HelperTcc {
+    const t = (m?.tcc as { accessibility?: boolean; screenRecording?: boolean }) || {}
+    return { accessibility: !!t.accessibility, screenRecording: !!t.screenRecording }
+  }
+
+  async status(): Promise<HelperTcc | null> {
+    if (!this.hello) return null
+    const r = await this.rpc('tcc_status')
+    if (r.error) return this.tccOf(this.hello)
+    return this.tccOf(r)
+  }
+
+  /** Ask the helper to request a grant — raises the system prompt AND lists the helper in the pane. */
+  async request(kind: DragPerm): Promise<HelperTcc | null> {
+    if (!this.hello) return null
+    const r = await this.rpc(kind === 'accessibility' ? 'request_accessibility' : 'request_screen')
+    return r.error ? this.tccOf(this.hello) : this.tccOf(r)
+  }
+
+  /** THE insight: quit + relaunch the HELPER so a just-granted permission takes effect, leaving
+   *  BlitzOS running. Returns once the fresh helper has reconnected. */
+  async relaunchForGrant(): Promise<{ ok: boolean }> {
+    if (process.platform !== 'darwin') return { ok: false }
+    this.wantQuit = true
+    if (this.sock) await this.rpc('quit', 3000)
+    // Give the old instance a beat to exit before the new one launches (LaunchServices `-n`).
+    await new Promise((r) => setTimeout(r, 600))
+    if (!(await this.launch())) return { ok: false }
+    return { ok: await this.waitForConnect() }
+  }
+
+  /** The installed bundle path — what the pre-board drag tile drags into the Settings list. */
+  installedAppPath(): string {
+    return installedHelperApp()
+  }
+
+  shutdown(): void {
+    this.supervise = false
+    this.wantQuit = true
+    try {
+      if (this.sock) this.sock.write(JSON.stringify({ id: -1, cmd: 'quit' }) + '\n')
+    } catch {
+      /* gone */
+    }
+    try {
+      this.server?.close()
+    } catch {
+      /* gone */
+    }
+    try {
+      rmSync(this.sockPath, { force: true })
+    } catch {
+      /* gone */
+    }
+  }
+}
+
+let manager: HelperManager | null = null
+export function computerUseHelper(): HelperManager {
+  if (!manager) manager = new HelperManager()
+  return manager
+}

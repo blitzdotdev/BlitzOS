@@ -25,6 +25,7 @@ import { initUpdater, openBuildPicker, isDevMachine } from './update'
 import { resolveTmuxBin } from './tmux-host.mjs'
 import { setWebContentsViewInputForwarder } from './webcontents-view-host'
 import { createSandwich, type Sandwich } from './sandwich'
+import { computerUseHelper } from './computer-use-helper'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -482,6 +483,7 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   osFlushWorkspace()
   try { electronTerminalOps.stopHosts() } catch { /* ignore */ } // flush terminal scrollback + close tmux control clients (terminals survive)
+  try { computerUseHelper().shutdown() } catch { /* ignore */ } // quit the CU helper + close its socket
   bootJournal?.markClean() // LAST: "clean shutdown" means everything above flushed first
 })
 

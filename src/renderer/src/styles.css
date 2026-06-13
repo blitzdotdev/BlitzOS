@@ -110,7 +110,9 @@ button {
 /* Window-snap preview: where a dragged window will dock (full / half / quarter of the primary stage). */
 .snap-preview {
   position: absolute;
-  z-index: 1500000; /* above normal windows, below the pinned chat/activity band (2,000,000) */
+  z-index: 2; /* UNDER every surface — slotted tiles (raw z ≥ 11), free windows (+500k), focus (+1.5M),
+                 pinned panels (+2M) — so the landing cell reads as a slot in the desktop substrate and any
+                 surface over it (slotted or free) occludes it. Above the stage-frame backdrop (.primary-space, z:1). */
   border: 2px solid color-mix(in srgb, var(--accent) 80%, transparent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-radius: var(--radius-window);

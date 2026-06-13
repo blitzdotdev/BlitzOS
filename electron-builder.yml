@@ -23,6 +23,12 @@ extraResources:
   # runtime ships WITH the app — the user never installs dependencies (docs/prod-ci.md).
   - from: vendor/bin/tmux
     to: bin/tmux
+  # The Computer Use helper (separate Developer-ID-signed .app that holds Accessibility + Screen
+  # Recording TCC, so BlitzOS never quits/reopens for them — plans/blitzos-computer-use-helper.md).
+  # Built + signed by scripts/dist-mac.sh before packaging; the lifecycle manager (computer-use-
+  # helper.ts) installs it to ~/Library/Application Support/BlitzOS and launches it via LaunchServices.
+  - from: native/computer-use-helper/build/BlitzComputerUse.app
+    to: BlitzComputerUse.app
 asarUnpack:
   - scripts/onboarding-scan.mjs
   - src/main/blitzos-onboarding.md

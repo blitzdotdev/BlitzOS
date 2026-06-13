@@ -1,6 +1,6 @@
 # BlitzOS Computer Use helper — separate-app TCC architecture
 
-Status: **building 2026-06-12.** Subplan of `plans/onboarding-case-file.md` (pre-board permissions)
+Status: **slices A+B+C shipped 2026-06-12** (helper builds+signs+protocol-tested; lifecycle manager; pre-board retargeted; bundled+signed in dist). Live TCC-identity + grant verification is on a packaged build (the user's). Below is the as-built design. Subplan of `plans/onboarding-case-file.md` (pre-board permissions)
 and the eventual computer-use feature. Anchored on the reverse-engineered Codex Computer Use
 structure (`plans/codex-computer-use-tcc-reference.md`).
 

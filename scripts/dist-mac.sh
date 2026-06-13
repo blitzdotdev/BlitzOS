@@ -5,6 +5,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Build + sign the Computer Use helper FIRST so electron-builder bundles the signed bundle
+# (plans/blitzos-computer-use-helper.md). Its TCC identity needs a real Developer-ID signature, so
+# pass the dist identity through. NOTE: verify on a notarized build that electron-builder's deep
+# sign preserved the helper's apple-events entitlement (an afterSign re-sign is the fallback).
+if [[ "$(uname)" == "Darwin" ]]; then
+  BLITZ_HELPER_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:-}" bash native/computer-use-helper/build.sh || echo "[dist] WARN: CU helper build failed — packaging without it"
+fi
+
 npm run build
 
 ARGS=(--mac zip --arm64 --publish never)

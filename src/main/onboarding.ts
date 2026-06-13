@@ -21,6 +21,7 @@ import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, read
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain, osRestartBrain } from './osActions'
+import { computerUseHelper } from './computer-use-helper'
 import { getWidgetSource } from './widget-catalog.mjs'
 import { buildBoardPlan, unlockCardProps, findUnlockSlot, BRANCH_A_LAYOUT } from './onboarding-board.mjs'
 import type { ScanJson, StagedSurface } from './onboarding-board.mjs'
@@ -92,10 +93,11 @@ function appBundlePath(): string | null {
   return i < 0 ? null : process.execPath.slice(0, i + 4)
 }
 
-/** The app icon as a data URL for the drag tile. Codex's trick: sips-convert the bundle's .icns
- *  (crisp at tile size); fall back to app.getFileIcon (48px max) when anything is missing. */
-async function appIconDataUrl(): Promise<string | null> {
-  const bundle = appBundlePath()
+/** A bundle's icon as a data URL for the drag tile. Codex's trick: sips-convert the bundle's .icns
+ *  (crisp at tile size); fall back to app.getFileIcon (48px max) when anything is missing. Defaults
+ *  to the running app; pass a path (e.g. the CU helper bundle) for that bundle's icon. */
+async function appIconDataUrl(bundlePath?: string): Promise<string | null> {
+  const bundle = bundlePath ?? appBundlePath()
   if (!bundle) return null
   try {
     const plist = readFileSync(join(bundle, 'Contents', 'Info.plist'), 'utf8')
@@ -200,10 +202,31 @@ function dragHelperHtml(kind: DragPerm, iconUrl: string | null, appName: string)
 </script></body></html>`
 }
 
+// What the floating tile drags into the Settings list. FDA → the BlitzOS app (its own grant). The
+// computer-use pair → the SEPARATE helper bundle, so the grant + the quit-and-reopen land on it,
+// never on BlitzOS (plans/blitzos-computer-use-helper.md). Set per openDragHelper, read by the drag IPC.
+let currentDragBundle: string | null = null
+const HELPER_NAME = 'BlitzOS Computer Use'
+
 async function openDragHelper(kind: DragPerm): Promise<void> {
   if (process.platform !== 'darwin') return
+  // The computer-use pair is held by the separate helper: launch it (LaunchServices → its OWN TCC
+  // identity), ask it to request the grant (raises the prompt AS the helper + lists it in the pane),
+  // and the tile drags the HELPER bundle. FDA stays on the BlitzOS app.
+  const useHelper = (kind === 'accessibility' || kind === 'screen') && computerUseHelper().available()
+  let dragBundle = appBundlePath()
+  let dragName = fdaAppName()
+  if (useHelper) {
+    const ok = await computerUseHelper().ensure()
+    if (ok.ok) {
+      await computerUseHelper().request(kind)
+      dragBundle = computerUseHelper().installedAppPath()
+      dragName = HELPER_NAME
+    }
+  }
+  currentDragBundle = dragBundle
   void shell.openExternal(PERM_DEEPLINK[kind]) // navigate Settings to the exact pane
-  const html = dragHelperHtml(kind, await appIconDataUrl(), fdaAppName())
+  const html = dragHelperHtml(kind, await appIconDataUrl(useHelper ? dragBundle ?? undefined : undefined), dragName)
   if (!dragHelper || dragHelper.isDestroyed()) {
     dragHelper = new BrowserWindow({
       width: DRAG_HELPER_W,
@@ -240,7 +263,7 @@ async function openDragHelper(kind: DragPerm): Promise<void> {
   win.setBounds({ x: Math.round(disp.x + (disp.width - DRAG_HELPER_W) / 2), y: Math.round(disp.y + disp.height - DRAG_HELPER_H - 28), width: DRAG_HELPER_W, height: DRAG_HELPER_H })
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
   win.showInactive() // visible without taking focus from Settings
-  startDragPoll(kind)
+  startDragPoll(kind, useHelper)
 }
 
 function closeDragHelper(): void {
@@ -253,15 +276,32 @@ function closeDragHelper(): void {
 }
 
 // Poll the just-requested permission; the moment macOS reports it granted, tear down the helper and
-// tell the pre-board card to celebrate + advance. Forced dev mode never auto-grants (inherited).
-function startDragPoll(kind: DragPerm): void {
+// tell the pre-board card to celebrate + advance. For the computer-use pair the grant lives on the
+// SEPARATE helper, so we read ITS status and, on grant, relaunch the HELPER (not BlitzOS) so the
+// grant takes effect — the whole point. Forced dev mode never auto-grants (terminal-inherited).
+let dragPolling = false
+function startDragPoll(kind: DragPerm, useHelper: boolean): void {
   if (dragPollTimer) clearInterval(dragPollTimer)
-  dragPollTimer = setInterval(() => {
-    if (forcePreboard()) return
-    if (!permGranted(kind)) return
-    closeDragHelper()
-    send('onboarding:permission-granted', { kind })
-  }, 1200)
+  dragPollTimer = setInterval(async () => {
+    if (forcePreboard() || dragPolling) return
+    dragPolling = true
+    try {
+      let granted: boolean
+      if (useHelper) {
+        const tcc = await computerUseHelper().status()
+        granted = !!(kind === 'accessibility' ? tcc?.accessibility : tcc?.screenRecording)
+        if (!granted) return
+        await computerUseHelper().relaunchForGrant() // quit+reopen the HELPER so the grant applies
+      } else {
+        granted = permGranted(kind)
+        if (!granted) return
+      }
+      closeDragHelper()
+      send('onboarding:permission-granted', { kind })
+    } finally {
+      dragPolling = false
+    }
+  }, 1500)
 }
 
 /** Machine-level pre-board outcomes (userData/preboard.json) — which steps are settled, so the
@@ -723,8 +763,12 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     forced: forcePreboard(),
     steps: forcePreboard() ? {} : readPreboard().steps,
     fda: forcePreboard() ? false : permGranted('fda'),
-    accessibility: forcePreboard() ? false : permGranted('accessibility'),
-    screen: forcePreboard() ? false : permGranted('screen'),
+    // accessibility/screen live on the SEPARATE helper, which isn't running at query time (and we
+    // don't launch it before the user opts in). Report false; the settled-steps marker skips a
+    // completed grant on later runs, and if granted-but-unmarked, the step's live poll catches it
+    // the instant the helper launches and auto-advances.
+    accessibility: false,
+    screen: false,
     appName: fdaAppName(),
     browser: detectBrowser(),
     canDrag: !!appBundlePath(),
@@ -734,10 +778,12 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     if (typeof step === 'string' && step && ['granted', 'denied', 'skipped'].includes(outcome)) markPreboard(step, outcome)
     return { ok: true }
   })
-  // The Codex drag: a native file drag of the .app bundle that the Settings FDA list accepts as a
-  // drop. Must be ipcMain.on (startDrag rides the sender's drag gesture, not an invoke roundtrip).
+  // The Codex drag: a native file drag of a .app bundle the Settings list accepts as a drop. The
+  // bundle is whatever the current step targets (currentDragBundle): BlitzOS for FDA, the separate
+  // CU helper for Accessibility/Screen Recording. Must be ipcMain.on (startDrag rides the sender's
+  // drag gesture, not an invoke roundtrip).
   ipcMain.on('onboarding:preboard-drag', (e) => {
-    const bundle = appBundlePath()
+    const bundle = currentDragBundle ?? appBundlePath()
     if (!bundle) return
     void app.getFileIcon(bundle, { size: 'normal' }).then((icon) => {
       try {
