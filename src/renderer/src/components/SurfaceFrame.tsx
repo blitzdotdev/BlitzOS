@@ -909,7 +909,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
               along the top keeps the full drag gesture set (move, ⌘-drag, drag-to-pop-out all ride
               the same bar handlers), and the pop-in/out toggle floats in the far right corner. */}
           <div className="tile-grip" onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerCancel={onBarUp} />
-          <button className="tile-toggle" title="Pop out of the grid — free-form, restores its size (⌘T; ⇧⌘T cycles size)" onClick={toggleSlot} onPointerDown={stop}>
+          <button className="tile-toggle" aria-label="Pop out of the grid" title="Pop out of the grid — free-form, restores its size (⌘T; ⇧⌘T cycles size)" onClick={toggleSlot} onPointerDown={stop}>
             ⤢
           </button>
         </>
