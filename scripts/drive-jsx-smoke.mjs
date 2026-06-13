@@ -18,10 +18,19 @@ const child = spawn(bin, [
   '--no-first-run', '--no-default-browser-check',
   '--window-size=900,600', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
   'about:blank'
-], { stdio: ['ignore', 'pipe', 'pipe'] })
+], { stdio: ['ignore', 'pipe', 'pipe'], detached: true })
 
 let stderr = ''
-function cleanup(code) { try { child.kill('SIGKILL') } catch {} process.exit(code) }
+let send = null // assigned once the ws is up (main); cleanup uses it for a graceful Browser.close
+// Graceful teardown — Browser.close lets chromium reap its renderer children. PID 1 in this sandbox is
+// `sleep infinity` (never reaps), so a bare SIGKILL would orphan them as permanent zombies. Group-kill
+// is only the timeout fallback.
+function cleanup(code) {
+  try { if (send) send('Browser.close').catch(() => {}) } catch {}
+  let done = false; const fin = () => { if (!done) { done = true; process.exit(code) } }
+  try { child.once('exit', fin) } catch {}
+  setTimeout(() => { if (!done) { try { process.kill(-child.pid, 'SIGKILL') } catch { try { child.kill('SIGKILL') } catch {} } fin() } }, 3000)
+}
 
 async function main() {
   const wsUrl = await new Promise((resolve, reject) => {
@@ -32,7 +41,7 @@ async function main() {
   const ws = new WebSocket(wsUrl)
   let id = 0
   const pending = new Map()
-  const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
+  send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
     const i = ++id
     pending.set(i, { resolve, reject })
     ws.send(JSON.stringify(sessionId ? { id: i, method, params, sessionId } : { id: i, method, params }))

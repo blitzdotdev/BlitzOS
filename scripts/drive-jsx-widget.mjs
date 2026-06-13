@@ -103,8 +103,7 @@ async function main() {
   // cleanup
   log('[cleanup] closing created surfaces')
   for (const id of created) await tool('close_surface', { id })
-  try { cdp.ws.close() } catch {}
-  try { cdp.child.kill('SIGKILL') } catch {}
+  await closeCdp(cdp)
 
   log(fails.length ? `\n${fails.length} FAILURE(S):\n - ` + fails.join('\n - ') : '\nALL E2E CHECKS PASSED')
   process.exit(fails.length ? 1 : 0)
@@ -126,7 +125,7 @@ async function probeClock() {
 async function launchChromium() {
   const bin = process.env.CHROMIUM || '/usr/bin/chromium'
   const profile = mkdtempSync(join(tmpdir(), 'blitz-jsxshot-'))
-  const child = spawn(bin, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio', '--no-first-run', '--window-size=1400,900', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(bin, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio', '--no-first-run', '--window-size=1400,900', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'], detached: true })
   let errbuf = ''
   const wsUrl = await new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('no ws')), 20000); child.stderr.on('data', (d) => { errbuf += d; const m = errbuf.match(/ws:\/\/[^\s]+/); if (m) { clearTimeout(t); res(m[0]) } }) })
   const ws = new WebSocket(wsUrl)
@@ -152,4 +151,18 @@ async function launchChromium() {
   return { ws, child, send, sessionId, iframeSessions }
 }
 
-main().catch((e) => { log('DRIVER ERROR: ' + (e.stack || e.message)); try { cdp && cdp.child.kill('SIGKILL') } catch {} process.exit(2) })
+// Graceful teardown: Browser.close lets chromium reap its OWN renderer children, so they never orphan
+// to PID 1 (in this sandbox PID 1 is `sleep infinity` and never reaps → SIGKILL leaks zombie subprocesses).
+// Detached spawn + a process-GROUP kill is only the timeout fallback.
+async function closeCdp(cdp) {
+  if (!cdp) return
+  try { cdp.send('Browser.close').catch(() => {}) } catch {}
+  await new Promise((r) => {
+    let done = false; const fin = () => { if (!done) { done = true; r() } }
+    cdp.child.once('exit', fin)
+    setTimeout(() => { if (!done) { try { process.kill(-cdp.child.pid, 'SIGKILL') } catch { try { cdp.child.kill('SIGKILL') } catch {} } fin() } }, 3000)
+  })
+  try { cdp.ws.close() } catch {}
+}
+
+main().catch(async (e) => { log('DRIVER ERROR: ' + (e.stack || e.message)); await closeCdp(cdp); process.exit(2) })

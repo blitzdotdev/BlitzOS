@@ -111,14 +111,27 @@ async function main() {
   const texts = []
   for (const sid of [...cdp.iframeSessions]) { try { const ev = await cdp.send('Runtime.evaluate', { expression: "(document.querySelector('[data-testid=w]')?.innerText)||''", returnByValue: true }, sid); if (ev.result && ev.result.value) texts.push(ev.result.value.replace(/\s+/g, ' ').trim()) } catch {} }
   for (const w of WIDGETS) { const hit = texts.find((t) => t.toUpperCase().includes(w.marker)); console.log((hit ? '  ✓ ' : '  ✗ ') + w.title + (hit ? ' → "' + hit.slice(0, 50) + '"' : ' (missing)')) }
-  try { cdp.ws.close() } catch {}; try { cdp.child.kill('SIGKILL') } catch {}
+  await closeCdp(cdp)
   console.log('\nleft up on the "' + WS + '" workspace.')
+}
+
+// Graceful teardown — Browser.close lets chromium reap its renderer children (PID 1 here is `sleep` and
+// never reaps, so SIGKILL would orphan them as permanent zombies). Group-kill is only the fallback.
+async function closeCdp(cdp) {
+  if (!cdp) return
+  try { cdp.send('Browser.close').catch(() => {}) } catch {}
+  await new Promise((r) => {
+    let done = false; const fin = () => { if (!done) { done = true; r() } }
+    cdp.child.once('exit', fin)
+    setTimeout(() => { if (!done) { try { process.kill(-cdp.child.pid, 'SIGKILL') } catch { try { cdp.child.kill('SIGKILL') } catch {} } fin() } }, 3000)
+  })
+  try { cdp.ws.close() } catch {}
 }
 
 async function launchChromium() {
   const bin = process.env.CHROMIUM || '/usr/bin/chromium'
   const profile = mkdtempSync(join(tmpdir(), 'blitz-show-'))
-  const child = spawn(bin, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio', '--no-first-run', '--window-size=1500,950', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(bin, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio', '--no-first-run', '--window-size=1500,950', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'], detached: true })
   let eb = ''
   const wsUrl = await new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('no ws')), 20000); child.stderr.on('data', (d) => { eb += d; const m = eb.match(/ws:\/\/[^\s]+/); if (m) { clearTimeout(t); res(m[0]) } }) })
   const ws = new WebSocket(wsUrl)
