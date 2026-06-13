@@ -774,7 +774,20 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')
     return { ok: true, appName: fdaAppName() }
   })
-  ipcMain.handle('onboarding:preboard-state', async () => ({
+  ipcMain.handle('onboarding:preboard-state', async () => {
+    // Pre-warm the Computer Use helper the moment onboarding opens: install + launch it (LaunchServices
+    // → its OWN TCC identity) in the background so by the time the user reaches the Accessibility /
+    // Screen Recording step it is already up and listed. Fire-and-forget; logs the outcome so the
+    // helper chain is verifiable from boot without any click. (No prompt is raised until request().)
+    if (computerUseHelper().available()) {
+      void computerUseHelper()
+        .ensure()
+        .then((r) => console.log(`[computer-use] prewarm ensure → ${JSON.stringify(r)} connected=${computerUseHelper().connected()}`))
+        .catch((e) => console.error('[computer-use] prewarm failed:', (e as Error)?.message))
+    } else {
+      console.error('[computer-use] prewarm skipped — helper bundle not available (build native/computer-use-helper)')
+    }
+    return {
     // BLITZ_PREBOARD_FORCE (dev only): show EVERY step from zero regardless of real grant state.
     // Needed in dev because FDA is attributed to the responsible process — the TERMINAL that ran
     // `npm run dev`, whose grant the Electron binary inherits — so hasFDA() reads true and the FDA
@@ -794,7 +807,8 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     browser: detectBrowser(),
     canDrag: !!appBundlePath(),
     appIcon: await appIconDataUrl()
-  }))
+    }
+  })
   ipcMain.handle('onboarding:preboard-mark', (_e, step: string, outcome: 'granted' | 'denied' | 'skipped') => {
     if (typeof step === 'string' && step && ['granted', 'denied', 'skipped'].includes(outcome)) markPreboard(step, outcome)
     return { ok: true }

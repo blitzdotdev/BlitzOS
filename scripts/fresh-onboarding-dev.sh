@@ -103,6 +103,10 @@ if [[ "$RESET_PERMS" == "1" ]]; then
   # tccutil exits non-zero when the service has no entry for the id — fine, treat as already-clear.
   tccutil reset SystemPolicyAllFiles "$TCC_BUNDLE_ID" 2>/dev/null || echo "  (FDA already clear or tccutil declined)"
   tccutil reset AppleEvents "$TCC_BUNDLE_ID" 2>/dev/null || echo "  (Automation already clear or tccutil declined)"
+  # Clear any STALE Electron entry from the Accessibility / Screen Recording lists (an earlier buggy
+  # drag could have added BlitzOS/Electron there; toggling that stale entry is what restarts Electron).
+  tccutil reset Accessibility "$TCC_BUNDLE_ID" 2>/dev/null || echo "  (Electron Accessibility already clear)"
+  tccutil reset ScreenCapture "$TCC_BUNDLE_ID" 2>/dev/null || echo "  (Electron Screen Recording already clear)"
   # The Computer Use HELPER holds Accessibility + Screen Recording on its OWN bundle id — reset
   # those so the helper-backed pre-board steps start ungranted (the helper's grant is real in dev).
   HELPER_BUNDLE_ID="${BLITZ_HELPER_BUNDLE_ID:-dev.blitz.os.computeruse}"
