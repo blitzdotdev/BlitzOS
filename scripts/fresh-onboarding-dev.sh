@@ -99,10 +99,16 @@ NODE
 if [[ "$RESET_PERMS" == "1" ]]; then
   echo "[fresh-onboarding] clearing pre-board state: $PREBOARD_FILE"
   rm -f "$PREBOARD_FILE"
-  echo "[fresh-onboarding] revoking FDA + Automation for $TCC_BUNDLE_ID (pre-board steps will reappear)"
+  echo "[fresh-onboarding] revoking FDA + Automation for $TCC_BUNDLE_ID (correct for a packaged build)"
   # tccutil exits non-zero when the service has no entry for the id — fine, treat as already-clear.
   tccutil reset SystemPolicyAllFiles "$TCC_BUNDLE_ID" 2>/dev/null || echo "  (FDA already clear or tccutil declined)"
   tccutil reset AppleEvents "$TCC_BUNDLE_ID" 2>/dev/null || echo "  (Automation already clear or tccutil declined)"
+  # In DEV the Electron binary inherits the TERMINAL's FDA grant (macOS attributes TCC to the
+  # responsible process), so the reset above can't actually revoke it and the FDA step would
+  # self-skip. Force the pre-board to offer every step for visual testing; the drag + open-settings
+  # actions stay real, only the live grant-detection poll is skipped (it needs a packaged build).
+  export BLITZ_PREBOARD_FORCE=1
+  echo "[fresh-onboarding] BLITZ_PREBOARD_FORCE=1 (dev: show every pre-board step regardless of inherited grants)"
 fi
 
 if [[ "$BACKGROUND" == "1" ]]; then

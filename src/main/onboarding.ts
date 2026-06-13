@@ -75,6 +75,10 @@ function fdaAppName(): string {
   return m ? m[1] : app.getName()
 }
 
+/** Dev-only: force the pre-board sequence to offer every step regardless of real grant state (see
+ *  the preboard-state handler for why dev FDA inheritance makes this necessary). */
+const forcePreboard = (): boolean => process.env.BLITZ_PREBOARD_FORCE === '1'
+
 // ---- pre-board permission sequence (Dia-style frontloading; plans/onboarding-case-file.md) ----
 // The Codex-style drag: System Settings' permission lists accept a DROPPED .app bundle, so the
 // pre-board screen offers the app icon as a native file drag (webContents.startDrag of the bundle)
@@ -578,8 +582,15 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     return { ok: true, appName: fdaAppName() }
   })
   ipcMain.handle('onboarding:preboard-state', async () => ({
-    steps: readPreboard().steps,
-    fda: hasFDA(),
+    // BLITZ_PREBOARD_FORCE (dev only): show EVERY step from zero regardless of real grant state.
+    // Needed in dev because FDA is attributed to the responsible process — the TERMINAL that ran
+    // `npm run dev`, whose grant the Electron binary inherits — so hasFDA() reads true and the FDA
+    // step would self-skip (the tccutil reset in fresh-onboarding-dev.sh is a no-op in dev, correct
+    // only for a packaged BlitzOS.app). `forced` tells the renderer to skip the grant poll so the
+    // step stays up for visual testing; the drag + open-settings actions are still real.
+    forced: forcePreboard(),
+    steps: forcePreboard() ? {} : readPreboard().steps,
+    fda: forcePreboard() ? false : hasFDA(),
     appName: fdaAppName(),
     browser: detectBrowser(),
     canDrag: !!appBundlePath(),

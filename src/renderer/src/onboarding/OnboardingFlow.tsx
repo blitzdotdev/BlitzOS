@@ -48,6 +48,7 @@ export function OnboardingFlow({ onComplete }: { onComplete: () => void }): JSX.
 }
 
 type PreboardState = {
+  forced?: boolean
   steps: Record<string, 'granted' | 'denied' | 'skipped' | undefined>
   fda: boolean
   appName: string
@@ -98,8 +99,10 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
   }, [])
 
   // FDA: poll while the step is up — the moment Settings grants us, celebrate and move on.
+  // Skipped when forced (dev visual testing): real FDA is already true via terminal inheritance,
+  // so polling would auto-advance instantly; the tester drives the step manually instead.
   useEffect(() => {
-    if (step !== 'fda' || !api) return
+    if (step !== 'fda' || !api || st?.forced) return
     const t = window.setInterval(() => {
       void api.fdaStatus().then(({ fda }) => {
         if (!fda) return

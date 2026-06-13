@@ -390,6 +390,7 @@ const api = {
     },
     /** Pre-board permission sequence (Dia-style frontloading): settled outcomes + live status. */
     preboardState(): Promise<{
+      forced?: boolean
       steps: Record<string, 'granted' | 'denied' | 'skipped' | undefined>
       fda: boolean
       appName: string
