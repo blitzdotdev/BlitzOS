@@ -213,20 +213,36 @@ async function openDragHelper(kind: DragPerm): Promise<void> {
   // The computer-use pair is held by the separate helper: launch it (LaunchServices → its OWN TCC
   // identity), ask it to request the grant (raises the prompt AS the helper + lists it in the pane),
   // and the tile drags the HELPER bundle. FDA stays on the BlitzOS app.
-  const useHelper = (kind === 'accessibility' || kind === 'screen') && computerUseHelper().available()
+  const wantHelper = kind === 'accessibility' || kind === 'screen'
+  const avail = computerUseHelper().available()
   let dragBundle = appBundlePath()
   let dragName = fdaAppName()
-  if (useHelper) {
-    const ok = await computerUseHelper().ensure()
-    if (ok.ok) {
-      await computerUseHelper().request(kind)
-      dragBundle = computerUseHelper().installedAppPath()
+  let usingHelper = false
+  if (wantHelper) {
+    console.log(`[computer-use] step=${kind} available=${avail}`)
+    if (avail) {
+      const ok = await computerUseHelper().ensure()
+      console.log(`[computer-use] ensure → ${JSON.stringify(ok)}`)
+      if (ok.ok) {
+        await computerUseHelper().request(kind)
+        dragBundle = computerUseHelper().installedAppPath()
+        dragName = HELPER_NAME
+        usingHelper = true
+      }
+    }
+    // NEVER silently fall back to dragging the BlitzOS bundle for the computer-use pair — granting
+    // BlitzOS is exactly the quit-and-reopen we are avoiding. If the helper is unavailable, surface
+    // it loudly (the step still opens Settings, but the drag tile is suppressed so BlitzOS can't be
+    // added to the list by accident).
+    if (!usingHelper) {
+      console.error(`[computer-use] HELPER UNAVAILABLE for ${kind} (available=${avail}) — NOT dragging BlitzOS; build native/computer-use-helper`)
+      dragBundle = null
       dragName = HELPER_NAME
     }
   }
   currentDragBundle = dragBundle
   void shell.openExternal(PERM_DEEPLINK[kind]) // navigate Settings to the exact pane
-  const html = dragHelperHtml(kind, await appIconDataUrl(useHelper ? dragBundle ?? undefined : undefined), dragName)
+  const html = dragHelperHtml(kind, dragBundle ? await appIconDataUrl(usingHelper ? dragBundle : undefined) : null, dragName)
   if (!dragHelper || dragHelper.isDestroyed()) {
     dragHelper = new BrowserWindow({
       width: DRAG_HELPER_W,
@@ -263,7 +279,7 @@ async function openDragHelper(kind: DragPerm): Promise<void> {
   win.setBounds({ x: Math.round(disp.x + (disp.width - DRAG_HELPER_W) / 2), y: Math.round(disp.y + disp.height - DRAG_HELPER_H - 28), width: DRAG_HELPER_W, height: DRAG_HELPER_H })
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
   win.showInactive() // visible without taking focus from Settings
-  startDragPoll(kind, useHelper)
+  startDragPoll(kind, wantHelper)
 }
 
 function closeDragHelper(): void {
@@ -283,16 +299,21 @@ let dragPolling = false
 function startDragPoll(kind: DragPerm, useHelper: boolean): void {
   if (dragPollTimer) clearInterval(dragPollTimer)
   dragPollTimer = setInterval(async () => {
-    if (forcePreboard() || dragPolling) return
+    if (dragPolling) return
     dragPolling = true
     try {
       let granted: boolean
       if (useHelper) {
+        // The HELPER's status is REAL even in dev (separately signed + LaunchServices-launched, so
+        // its identity is its own — not inherited like BlitzOS's). So poll it even in force mode:
+        // it stays ungranted until the user genuinely grants it, so there is no false auto-advance.
         const tcc = await computerUseHelper().status()
         granted = !!(kind === 'accessibility' ? tcc?.accessibility : tcc?.screenRecording)
         if (!granted) return
         await computerUseHelper().relaunchForGrant() // quit+reopen the HELPER so the grant applies
       } else {
+        // FDA's status is BlitzOS's own — inherited-true in dev, so force mode must NOT auto-advance.
+        if (forcePreboard()) return
         granted = permGranted(kind)
         if (!granted) return
       }
@@ -783,7 +804,10 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
   // CU helper for Accessibility/Screen Recording. Must be ipcMain.on (startDrag rides the sender's
   // drag gesture, not an invoke roundtrip).
   ipcMain.on('onboarding:preboard-drag', (e) => {
-    const bundle = currentDragBundle ?? appBundlePath()
+    // Drag EXACTLY currentDragBundle — never fall back to the BlitzOS app. For the computer-use
+    // pair currentDragBundle is the HELPER (or null if unavailable); falling back to BlitzOS here
+    // is precisely what put Electron in the list and caused the quit-and-reopen.
+    const bundle = currentDragBundle
     if (!bundle) return
     void app.getFileIcon(bundle, { size: 'normal' }).then((icon) => {
       try {

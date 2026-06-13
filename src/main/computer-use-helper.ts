@@ -15,6 +15,7 @@ import net from 'node:net'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 
 export type DragPerm = 'accessibility' | 'screen'
@@ -24,11 +25,26 @@ export interface HelperTcc {
 }
 
 // Where the SIGNED helper bundle ships: packaged → resourcesPath (electron-builder extraResources);
-// dev → the build output. Overridable for testing a specific bundle.
+// dev → the build output. Resolution is robust: try several candidates and return the first that
+// exists (app.getAppPath() can vary under electron-vite, so we also derive the repo root from
+// __dirname = <repo>/out/main in dev). Overridable with BLITZ_COMPUTER_USE_APP.
 function bundledHelperApp(): string {
-  if (process.env.BLITZ_COMPUTER_USE_APP) return process.env.BLITZ_COMPUTER_USE_APP
-  if (app.isPackaged) return join(process.resourcesPath, 'BlitzComputerUse.app')
-  return join(app.getAppPath(), 'native', 'computer-use-helper', 'build', 'BlitzComputerUse.app')
+  const rel = ['native', 'computer-use-helper', 'build', 'BlitzComputerUse.app']
+  const here = (() => {
+    try {
+      return typeof __dirname !== 'undefined' ? __dirname : fileURLToPath(new URL('.', import.meta.url))
+    } catch {
+      return ''
+    }
+  })()
+  const candidates = [
+    process.env.BLITZ_COMPUTER_USE_APP,
+    app.isPackaged ? join(process.resourcesPath, 'BlitzComputerUse.app') : null,
+    join(app.getAppPath(), ...rel),
+    here ? join(here, '..', '..', ...rel) : null // out/main → repo root in dev
+  ].filter((p): p is string => !!p)
+  for (const c of candidates) if (existsSync(c)) return c
+  return candidates[candidates.length - 1] ?? join(app.getAppPath(), ...rel)
 }
 
 // Stable install location (same in dev + packaged, independent of userData naming) so the bundle the

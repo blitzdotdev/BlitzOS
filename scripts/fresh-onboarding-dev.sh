@@ -103,6 +103,11 @@ if [[ "$RESET_PERMS" == "1" ]]; then
   # tccutil exits non-zero when the service has no entry for the id — fine, treat as already-clear.
   tccutil reset SystemPolicyAllFiles "$TCC_BUNDLE_ID" 2>/dev/null || echo "  (FDA already clear or tccutil declined)"
   tccutil reset AppleEvents "$TCC_BUNDLE_ID" 2>/dev/null || echo "  (Automation already clear or tccutil declined)"
+  # The Computer Use HELPER holds Accessibility + Screen Recording on its OWN bundle id — reset
+  # those so the helper-backed pre-board steps start ungranted (the helper's grant is real in dev).
+  HELPER_BUNDLE_ID="${BLITZ_HELPER_BUNDLE_ID:-dev.blitz.os.computeruse}"
+  tccutil reset Accessibility "$HELPER_BUNDLE_ID" 2>/dev/null || echo "  (helper Accessibility already clear)"
+  tccutil reset ScreenCapture "$HELPER_BUNDLE_ID" 2>/dev/null || echo "  (helper Screen Recording already clear)"
   # In DEV the Electron binary inherits the TERMINAL's FDA grant (macOS attributes TCC to the
   # responsible process), so the reset above can't actually revoke it and the FDA step would
   # self-skip. Force the pre-board to offer every step for visual testing; the drag + open-settings
