@@ -176,16 +176,17 @@ export function AreaChromeOverlay({ showAddArea = false, onEnterStage, onAddArea
               onClick={() => onEnterStage?.(i)}
             />
             {mode === 'canvas' && i > agentMax && !drag?.active && (
-              <button
-                className="area-chrome-close"
-                type="button"
-                aria-label={`Delete Stage ${i + 1}`}
-                title={`Delete Stage ${i + 1} (windows move to Stage 1)`}
-                style={{ left: r.left + r.width - 12, top: r.top - 10 }}
-                onClick={() => deleteStage(i)}
-              >
-                ×
-              </button>
+              <div className="area-chrome-corner" style={{ left: r.left + r.width, top: r.top }}>
+                <button
+                  className="area-chrome-close"
+                  type="button"
+                  aria-label={`Delete Stage ${i + 1}`}
+                  title={`Delete Stage ${i + 1} (windows move to Stage 1)`}
+                  onClick={() => deleteStage(i)}
+                >
+                  ×
+                </button>
+              </div>
             )}
             <button
               className={`area-chrome-label${i === currentStage ? ' is-current' : ''}${isDragged ? ' dragging' : ''}`}
