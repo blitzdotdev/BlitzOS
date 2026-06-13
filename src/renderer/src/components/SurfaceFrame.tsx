@@ -156,7 +156,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const isAbsorbing = useDesktop((s) => s.absorbing.includes(surface.id))
   const grabMode = useDesktop((s) => s.grabMode)
   // Control view = the UNLOCKED canvas (pan/zoom/arrange: drag cards from anywhere, don't interact).
-  // The view lock (double-tap ⌘ / toolbar) flips to work mode: the overlay drops and clicks reach the
+  // The view lock (single-tap ⇧ / toolbar) flips to work mode: the overlay drops and clicks reach the
   // surface content. `mode === 'canvas'` alone broke when canvas became the DEFAULT mode — it covered
   // every widget with the drag overlay permanently ("can't even click the theme picker").
   const isControl = useDesktop((s) => s.mode === 'canvas' && !s.locked)

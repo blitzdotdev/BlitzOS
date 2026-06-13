@@ -5,7 +5,7 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setRestartAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, osRadialPhase } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, osRadialPhase } from './osActions'
 import { emitSystemMoment } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -350,8 +350,8 @@ app.whenReady().then(() => {
   startAgentSocket(() => mainWindow, (url) => osSetRelayUrl(url))
   setTerminalGetUrl(() => getAgentSocketUrl()) // so a dead agent's re-exec rebuilds its command with the live url
 
-  // Agents run as managed tmux terminals. The backend is pluggable: Codex serverless (`codex exec`) is
-  // the default when available, while Claude Code stays selectable for the visible TUI/resume path.
+  // Agents run as managed tmux terminals. The backend is pluggable: Claude Code (`claude`) is the default
+  // when available (the visible TUI/resume path), while Codex serverless (`codex exec`) stays selectable.
   // BLITZ_AGENT_BACKEND/BLITZ_AGENT_RUNTIME can force `codex`, `codex-serverless`, or `claude`.
   // BLITZ_AGENT remains the command override; `BLITZ_AGENT=1` preserves the old "force claude" meaning
   // unless a backend env var is also set.
@@ -437,7 +437,7 @@ app.whenReady().then(() => {
     }
     setLaunchAgent(launchAgent)
     setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
-    setRestartAgent((id) => { void electronTerminalOps.restartTerminal(id) }) // re-exec in place (onboarding: restore full effort once the interview is done)
+    setClearBrainContext((id) => { void electronTerminalOps.clearAgentContext(id) }) // interview→resident HANDOFF: rotate the session (fresh context) so the resident rebuilds from the .md files + chat.md at resident (xhigh) effort
     setActionItemsProvider(() => electronActionItems.listActions()) // host reconciles the inbox surface against the authoritative store
     // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
     let resumed = false

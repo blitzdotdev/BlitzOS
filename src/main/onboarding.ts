@@ -20,11 +20,12 @@ const appRoot = (): string => app.getAppPath().replace(/app\.asar$/, 'app.asar.u
 import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain, osRestartBrain } from './osActions'
+import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain, osClearBrainContext } from './osActions'
 import { computerUseHelper } from './computer-use-helper'
 import { getWidgetSource } from './widget-catalog.mjs'
 import { buildBoardPlan, unlockCardProps, findUnlockSlot, BRANCH_A_LAYOUT } from './onboarding-board.mjs'
 import type { ScanJson, StagedSurface } from './onboarding-board.mjs'
+import { importGoogleSignin, importSources } from './browser-import'
 
 const WS_NAME = 'case-file'
 const POLL_MS = 3000
@@ -519,10 +520,35 @@ async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
   // Branch A: tile the pinned chat hub into its hand-tuned slot (xxl, top-left) so it is EMBEDDED, not
   // free-float covering cards. Persists via the runtime-panel slot (workspace.mjs) so it stays put.
   if (branchA && BRANCH_A_LAYOUT.chat) osUpdateSurface('chat', { slot: BRANCH_A_LAYOUT.chat, slotStage: 0 })
+  // If they brought their browser in, open it on the stage with their captured tabs (lazy-restored) —
+  // signed-in (if they imported the Google sign-in), so the first thing they see feels like home.
+  const browserId = openWorkingSetBrowser()
+  if (browserId) board.ids.browser = browserId
   writeBoard(wsPath, board)
   osGoToPrimary()
   progress({ phase: 'board-ready', fda: scan.meta.fda })
   return board
+}
+
+/** Open ONE browser surface on the stage holding every captured open tab (the pre-board working set),
+ *  as a tab strip. The host lazy-restores: only the active tab loads, the rest load on click. Returns
+ *  the surface id, or null when no tabs were captured (the browser step was skipped). */
+function openWorkingSetBrowser(): string | null {
+  let snap: { windows?: { tabs?: { title?: string; url?: string }[] }[] } | null = null
+  try { snap = JSON.parse(readFileSync(preboardTabsPath(), 'utf8')) } catch { return null }
+  const seen = new Set<string>()
+  const tabs: { id: string; title: string; url: string }[] = []
+  for (const w of snap?.windows || []) {
+    for (const t of w?.tabs || []) {
+      const url = String(t?.url || '')
+      if (!/^https?:/i.test(url) || seen.has(url)) continue
+      seen.add(url)
+      tabs.push({ id: `wt${tabs.length}`, title: String(t?.title || url).slice(0, 200), url })
+    }
+  }
+  if (!tabs.length) return null
+  // No explicit x/y: the store centers it on the current stage (stage 0). focus:true ⇒ frontmost.
+  return osCreateSurface({ kind: 'web', title: tabs[0].title, tabs, activeTab: 0, w: 1200, h: 780, focus: true })
 }
 
 // ---- the interview (P2): resident brain only --------------------------------------------------
@@ -646,7 +672,7 @@ const INTERVIEW_BOOT_TASK =
   'THE ONBOARDING INTERVIEW. You are the interviewer. If `.blitzos/onboarding/context.md` or `.blitzos/onboarding/board.json` is not present yet, wait for those files instead of asking from generic assumptions. Then read `.blitzos/onboarding/interview.md`, skim `.blitzos/onboarding/context.md` only long enough to ask the first high-value choice-card question immediately, and continue the interview from the human answers. Ask at most 4 multiple-choice questions TOTAL, plus one open voice sample, then write `.blitzos/onboarding/profile.md` and mark `.blitzos/onboarding/interview.json` done. Onboarding will write the compact Notepad restart anchor after completion. If the chat already shows prior Q&A, continue it, do not restart.'
 
 const RESIDENT_INITIATIVE_BOOT_TASK =
-  'THE RESIDENT INITIATIVE DUTY. The onboarding interview is done, so do not sit in passive watch mode. Read the Notepad restart anchor first if it exists, then read `.blitzos/onboarding/profile.md`, `.blitzos/onboarding/board.json`, `.blitzos/onboarding/initiative.md` if it exists, and the recent chat. Then act on the initiative gradient from the onboarding plan: propose useful work the user did not explicitly ask for, and start one safe reversible initiative immediately. If no current initiative is recorded, send one short chat message with 2 or 3 concrete initiatives grounded in the profile, say which one you are starting now, write `.blitzos/onboarding/initiative.md` with the active initiative and next step, then make visible progress on that initiative. If an initiative is already recorded or visible, continue it instead of re-proposing. Use quiet surfaces, action items, or board updates, not modals. Stay inside the user boundaries in the profile: reversible testing and preparation can proceed; ask before outward-facing actions, destructive changes, sends, money, credentials, deploys, or account actions. Do not merely say you are watching. Keep polling `/events`, but use idle time to originate, execute, and update the case file.'
+  'THE RESIDENT INITIATIVE DUTY. The onboarding interview is done, so do not sit in passive watch mode. Read the Notepad restart anchor first if it exists, then read `.blitzos/onboarding/profile.md`, `.blitzos/onboarding/board.json`, `.blitzos/onboarding/initiative.md` if it exists, and the recent chat. Then act on the initiative gradient from the onboarding plan: propose useful work the user did not explicitly ask for, and start one safe reversible initiative immediately. If no current initiative is recorded, send one short chat message with 2 or 3 concrete initiatives grounded in the profile, say which one you are starting now, write `.blitzos/onboarding/initiative.md` with the active initiative and next step, then make visible progress on that initiative. If an initiative is already recorded or visible, continue it instead of re-proposing. Use quiet surfaces, action items, or board updates, not modals. Stay inside the user boundaries in the profile, and apply them precisely. Do ALL reversible work automatically and NEVER ask permission for it: research, DRAFTING and staging any message, post, or outreach copy, file and surface edits, board updates. Ask ONLY before the irreversible outward act itself: actually sending or posting, deploying, spending money, using credentials, account actions, or destructive changes. Concretely: write and stage the draft, show it on a surface, and ask only before it is sent, never before it is written. Do not merely say you are watching. Keep polling `/events`, but use idle time to originate, execute, and update the case file.'
 
 /** index.ts threads this into session '0': interview first, then the resident initiative duty. */
 export function interviewBootTask(): string | null {
@@ -665,10 +691,10 @@ export function interviewBootTask(): string | null {
   return null
 }
 
-// Restore the brain to full thinking effort once the interview is done: poll interview.json and, on
-// the pending to done flip, re-exec agent '0' ONCE. The next bootstrap carries the resident initiative
-// duty, not the interview duty, so it no longer caps effort. Single-shot; unref'd so it never holds
-// the process open.
+// Interview→resident HANDOFF: poll interview.json and, on the pending→done flip, re-exec agent '0' ONCE
+// with a FRESH context (rotated session) into the resident duty at xhigh effort. The fresh resident
+// rebuilds from profile.md + board.json + chat.md (its bootstrap reads them). Single-shot; unref'd so it
+// never holds the process open.
 let interviewDoneTimer: ReturnType<typeof setInterval> | null = null
 function watchInterviewDone(wsPath: string): void {
   if (interviewDoneTimer) return
@@ -678,9 +704,10 @@ function watchInterviewDone(wsPath: string): void {
       if (interviewDoneTimer) clearInterval(interviewDoneTimer)
       interviewDoneTimer = null
       refreshRestartAnchor(wsPath)
-      osRestartBrain('0') // resident phase resumes at the default (max) effort
+      osClearBrainContext('0') // HANDOFF: fresh-context re-exec into the resident duty (rebuilds from .md + chat.md, RESIDENT_EFFORT / xhigh)
     }
-  }, 4000)
+  }, 100) // tight 100ms poll: the interview→resident handoff latency is user-visible. Single-shot — the
+          // interval clears itself the instant interview.json flips to done, so it never polls for long.
   if (interviewDoneTimer.unref) interviewDoneTimer.unref()
 }
 
@@ -839,7 +866,10 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     appName: fdaAppName(),
     browser: detectBrowser(),
     canDrag: !!appBundlePath(),
-    appIcon: await appIconDataUrl()
+    appIcon: await appIconDataUrl(),
+    // Chromium profiles available to import a Google sign-in from (the account picker). Read-only,
+    // no prompt — decryption + the Keychain prompt happen only when the user picks one and confirms.
+    importSources: importSources()
     }
   })
   ipcMain.handle('onboarding:preboard-mark', (_e, step: string, outcome: 'granted' | 'denied' | 'skipped') => {
@@ -881,6 +911,14 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
   ipcMain.handle('onboarding:open-automation-settings', () => {
     void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Automation')
     return { ok: true }
+  })
+  // Google sign-in import (the Dia move): list the user's Chrome profiles for the account picker,
+  // then import the chosen profile's Google cookies into the BlitzOS session (one Keychain prompt).
+  ipcMain.handle('onboarding:list-import-profiles', () => importSources())
+  ipcMain.handle('onboarding:import-signin', async (_e, src: string, profileId: string) => {
+    const r = await importGoogleSignin(src || 'chrome', profileId)
+    markPreboard('signin', r.ok ? 'granted' : 'denied')
+    return r
   })
   ipcMain.handle('onboarding:dismiss-unlock', () => {
     const wsPath = osWorkspaceContext().workspace_path

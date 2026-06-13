@@ -48,7 +48,9 @@ export function OnboardingFlow({ onComplete }: { onComplete: () => void }): JSX.
 }
 
 type DragKind = 'fda' | 'accessibility' | 'screen'
-type StepKey = DragKind | 'browser'
+type StepKey = DragKind | 'signin' | 'browser'
+type ImportProfile = { id: string; name: string; email: string | null }
+type ImportSource = { id: string; name: string; profiles: ImportProfile[] }
 
 type PreboardState = {
   forced?: boolean
@@ -60,6 +62,7 @@ type PreboardState = {
   browser: { id: string; name: string } | null
   canDrag: boolean
   appIcon: string | null
+  importSources?: ImportSource[]
 }
 
 // The three drag-list TCC permissions, in ask order: the personal layer first (the scan), then the
@@ -103,6 +106,9 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
   const [opened, setOpened] = useState(false) // current drag-step's helper is up
   const [browserResult, setBrowserResult] = useState<{ status: string; windows?: number; tabs?: number } | null>(null)
   const [connecting, setConnecting] = useState(false)
+  const [picked, setPicked] = useState<{ src: string; id: string; email: string | null } | null>(null) // signin account picker
+  const [importing, setImporting] = useState(false)
+  const [signinResult, setSigninResult] = useState<{ ok: boolean; account?: string | null; imported?: number; reason?: string } | null>(null)
   const doneRef = useRef(onDone)
   doneRef.current = onDone
   const stepRef = useRef<StepKey | null>(null)
@@ -113,6 +119,7 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
     const g = granteds(s)
     const q: StepKey[] = []
     for (const d of DRAG_STEPS) if (!g[d.key] && !s.steps[d.key]) q.push(d.key)
+    if (s.importSources?.some((x) => x.profiles.length) && !s.steps.signin) q.push('signin') // sign-in import leads the browser pair
     if (s.browser && !s.steps.browser) q.push('browser')
     return q
   }
@@ -152,6 +159,9 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
     setGranted(false)
     setOpened(false)
     setBrowserResult(null)
+    setPicked(null)
+    setImporting(false)
+    setSigninResult(null)
     const q = queue(next)
     if (!q.length) doneRef.current()
     else setStep(q[0])
@@ -161,7 +171,8 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
     void api?.closePermissionDrag?.()
     setSt((cur) => {
       if (!cur) return cur
-      const g = didGrant && from !== 'browser' ? { [from]: true } : {}
+      // only the three TCC drag grants carry a live boolean; signin/browser ride their persisted marker
+      const g = didGrant && (from === 'fda' || from === 'accessibility' || from === 'screen') ? { [from]: true } : {}
       const next: PreboardState = { ...cur, ...g, steps: { ...cur.steps, [from]: cur.steps[from] ?? (didGrant ? 'granted' : 'skipped') } }
       goNext(next)
       return next
@@ -192,6 +203,17 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
       setBrowserResult(r)
       void api.preboardMark?.('browser', r.status === 'granted' ? 'granted' : r.status === 'denied' ? 'denied' : 'skipped')
       window.setTimeout(() => advance('browser', false), r.status === 'granted' ? 1400 : 900)
+    })
+  }
+
+  // Import the picked Google account's sign-in (raises the one Keychain prompt; main marks the step).
+  const runImportSignin = (): void => {
+    if (!api?.importSignin || !picked || importing) return
+    setImporting(true)
+    void api.importSignin(picked.src, picked.id).then((r) => {
+      setImporting(false)
+      setSigninResult(r)
+      window.setTimeout(() => advance('signin', !!r.ok), r.ok ? 1700 : 1000)
     })
   }
 
@@ -231,6 +253,57 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
           </div>
         </div>
       )}
+      {step === 'signin' && (() => {
+        const accounts = (st.importSources || []).flatMap((s) => s.profiles.map((p) => ({ src: s.id, id: p.id, name: p.name, email: p.email })))
+        return (
+          <div className="pre-step">
+            <div className="pre-kicker">Sign in once</div>
+            <h1 className="pre-title">Bring your Google sign-in</h1>
+            <p className="pre-body">
+              Pick an account. Blitz carries its Google sign-in from Chrome into your browser here, so Gmail and Docs are already open and every
+              &quot;Sign in with Google&quot; site is one tap. Your password never leaves Chrome.
+            </p>
+            {!signinResult && (
+              <div className="pre-accounts">
+                {accounts.map((a) => (
+                  <button
+                    key={a.src + a.id}
+                    className={`pre-account${picked && picked.src === a.src && picked.id === a.id ? ' on' : ''}`}
+                    onClick={() => setPicked({ src: a.src, id: a.id, email: a.email })}
+                  >
+                    <span className="pre-account-name">{a.email || a.name}</span>
+                    {a.email && a.name !== a.email ? <span className="pre-account-sub">{a.name}</span> : null}
+                  </button>
+                ))}
+              </div>
+            )}
+            {signinResult?.ok && (
+              <div className="pre-drop granted">
+                <div className="pre-drop-copy">
+                  <strong>Signed in as {signinResult.account || 'your Google account'}. Gmail, Docs, and Google sign-in are ready.</strong>
+                </div>
+              </div>
+            )}
+            {signinResult && !signinResult.ok && (
+              <div className="pre-drop">
+                <div className="pre-drop-copy">
+                  {signinResult.reason === 'denied'
+                    ? 'No problem. Keychain access was declined. You can do this later from the board.'
+                    : 'Could not import that sign-in. You can try again later from the board.'}
+                </div>
+              </div>
+            )}
+            <div className="pre-actions">
+              <button className="pre-primary" onClick={runImportSignin} disabled={!picked || importing || !!signinResult?.ok}>
+                {importing ? 'Approve the Keychain prompt…' : 'Bring in sign-in'}
+              </button>
+              <button className="pre-skip" onClick={() => skip('signin')}>
+                Not now
+              </button>
+            </div>
+          </div>
+        )
+      })()}
       {step === 'browser' && (
         <div className="pre-step">
           <div className="pre-kicker">One more thing</div>

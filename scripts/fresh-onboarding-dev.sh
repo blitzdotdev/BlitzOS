@@ -99,6 +99,9 @@ NODE
 if [[ "$RESET_PERMS" == "1" ]]; then
   echo "[fresh-onboarding] clearing pre-board state: $PREBOARD_FILE"
   rm -f "$PREBOARD_FILE"
+  # The captured working set (open-tabs snapshot) the browser step writes — delete it so a fresh run
+  # re-captures rather than reopening stale tabs on the stage if the browser step is skipped.
+  rm -f "$(dirname "$PREBOARD_FILE")/preboard-tabs.json"
   echo "[fresh-onboarding] revoking FDA + Automation for $TCC_BUNDLE_ID (correct for a packaged build)"
   # tccutil exits non-zero when the service has no entry for the id — fine, treat as already-clear.
   tccutil reset SystemPolicyAllFiles "$TCC_BUNDLE_ID" 2>/dev/null || echo "  (FDA already clear or tccutil declined)"

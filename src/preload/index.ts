@@ -155,11 +155,12 @@ const api = {
     ipcRenderer.on('os:keybind', listener)
     return () => ipcRenderer.removeListener('os:keybind', listener)
   },
-  /** A bare ⌘ tap forwarded from a focused browser guest (for double-tap-⌘ pan toggle). */
-  onMetaTap(cb: () => void): () => void {
+  /** A bare ⇧ tap forwarded from a focused browser guest (drives the home gesture: single tap → splay
+   *  stages, double tap → workspace selector). */
+  onShiftTap(cb: () => void): () => void {
     const listener = (): void => cb()
-    ipcRenderer.on('os:metatap', listener)
-    return () => ipcRenderer.removeListener('os:metatap', listener)
+    ipcRenderer.on('os:shifttap', listener)
+    return () => ipcRenderer.removeListener('os:shifttap', listener)
   },
   /** Pair-level fullscreen state (the sandwich's parent window): the renderer hides its titlebar
    *  strip while fullscreen — the attached child never enters NATIVE fullscreen, so its chrome
@@ -431,6 +432,14 @@ const api = {
     },
     openAutomationSettings(): Promise<{ ok: boolean }> {
       return ipcRenderer.invoke('onboarding:open-automation-settings')
+    },
+    /** Chrome/Chromium profiles available to import a sign-in from (the account picker). */
+    listImportProfiles(): Promise<{ id: string; name: string; profiles: { id: string; name: string; email: string | null }[] }[]> {
+      return ipcRenderer.invoke('onboarding:list-import-profiles')
+    },
+    /** Import the chosen profile's Google sign-in into the BlitzOS session (raises one Keychain prompt). */
+    importSignin(src: string, profileId: string): Promise<{ ok: boolean; reason?: string; account?: string | null; imported?: number; signedIn?: boolean }> {
+      return ipcRenderer.invoke('onboarding:import-signin', src, profileId)
     },
     onProgress(cb: (p: Record<string, unknown>) => void): () => void {
       const listener = (_e: unknown, p: Record<string, unknown>): void => cb(p)

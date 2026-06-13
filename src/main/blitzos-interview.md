@@ -55,11 +55,12 @@ The board cards are TILES on the user's stage, a fixed slot grid. Tiles never ov
 
 ## Finish (and only then)
 
+Do these IN ORDER. Steps 1 and 2 must complete BEFORE step 3, because marking the interview done instantly hands the desk to the resident agent (within ~0.1s), so anything you try after step 3 is interrupted.
+
 1. `say` a tight **"What I learned"** summary (scope, act vs ask, priorities, people, voice, attention, privacy) and invite corrections.
-2. Write `.blitzos/onboarding/profile.md`, the durable principal model a future session reads first: the summary above plus every correction, in plain markdown.
+2. Write `.blitzos/onboarding/profile.md`, the durable principal model the resident agent reads first: the summary above plus every correction, in plain markdown.
 3. Mark the duty done: write `.blitzos/onboarding/interview.json` as `{"state":"done","finishedAt":<epoch-ms>}`.
-4. Tip into initiative immediately. Do not say only that you are watching. Propose 2 or 3 concrete next initiatives grounded in the profile, choose the safest reversible one, start it, and write `.blitzos/onboarding/initiative.md` with the active initiative and next step. Use a quiet surface, action item, or board update so the user sees progress. Ask only before outward-facing actions, destructive changes, sends, money, credentials, deploys, or account actions.
-5. Resume your resident loop (the events long-poll). From now on, when an answer, an edit, an annotation, or an initiative result changes your model of the human, update BOTH the board card and `profile.md`. They must never drift.
+4. **STOP. Your onboarding job ends at step 3.** Do NOT propose or start an initiative, open new work, write `initiative.md`, or resume a watch loop. The instant `interview.json` is marked done, BlitzOS hands off to a FRESH resident agent (clean context, higher reasoning) that reads your `profile.md`, the board, and the chat, then proposes and runs initiatives from there. Your last act is step 3; let the handoff take over.
 
 ## Style (strict, for everything the human reads)
 

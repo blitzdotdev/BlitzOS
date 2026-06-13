@@ -404,7 +404,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   grabMode: false,
   osAccent: null,
   // Boot LOCKED = work mode: the desktop is interactive at rest (click widgets, marquee on the
-  // background), the camera frozen at the stage frame. Double-tap ⌘ unlocks for pan/zoom/arrange.
+  // background), the camera frozen at the stage frame. Single-tap ⇧ unlocks for pan/zoom/arrange.
   // (Canvas-first made 'canvas' the permanent mode, so the lock — not the mode — is the interact gate.)
   locked: true,
 

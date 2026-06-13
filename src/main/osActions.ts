@@ -36,6 +36,12 @@ export interface SurfaceDescriptor {
   /** A tile on the stage slot lattice — geometry derives from the cell (stage-core). */
   slot?: { col: number; row: number; size: string }
   slotStage?: number
+  /** Browser (web) tabs declared up front — opens a multi-tab browser with its strip pre-filled
+   *  (the host lazy-restores: only activeTab loads, the rest load on click). */
+  tabs?: Array<{ id: string; title?: string; url?: string }>
+  activeTab?: number
+  /** Born frontmost (effectiveZ's top focus band) — a surface the user just summoned. */
+  focus?: boolean
 }
 
 export interface OsState {
@@ -231,7 +237,7 @@ export function initOsActions(opts: {
     onCursor: (surfaceId, cursor) => sendToRenderer('os:page-cursor', { surfaceId, cursor }),
     onFocus: (id) => send('focus', { id }),
     onContextMenu: (surfaceId, x, y) => sendToRenderer('os:action', { type: 'surface-contextmenu', surfaceId, x, y }),
-    onMetaTap: () => sendToRenderer('os:metatap', undefined),
+    onShiftTap: () => sendToRenderer('os:shifttap', undefined),
     onAltHold: (phase) => osRadialPhase(phase)
   })
 
@@ -803,13 +809,14 @@ let stopAgentHook: ((agentId: string) => void) | null = null
 export function setStopAgent(fn: (agentId: string) => void): void {
   stopAgentHook = fn
 }
-// Re-exec a running agent in place (kill + relaunch from its persisted meta). The onboarding director
-// uses it to upgrade the interview brain back to full thinking effort once the duty is done — the
-// re-exec rebuilds the command (resident initiative duty, no interview effort cap). Always-fresh, so it just
-// re-reads chat.md; no conversation is lost.
-let restartAgentHook: ((agentId: string) => void) | null = null
-export function setRestartAgent(fn: (agentId: string) => void): void {
-  restartAgentHook = fn
+// Re-exec a running agent with a FRESH context. The onboarding director calls this at the
+// interview→resident HANDOFF; the transport wires it to a session-id rotation + restart, so the resident
+// boots a clean conversation and rebuilds state from profile.md + board.json + initiative.md + chat.md
+// (its bootstrap reads them), at the resident effort (xhigh). The full interview transcript stays in
+// chat.md, so nothing is lost.
+let clearBrainContextHook: ((agentId: string) => void) | null = null
+export function setClearBrainContext(fn: (agentId: string) => void): void {
+  clearBrainContextHook = fn
 }
 // The authoritative action-items list, wired by index.ts (osActions can't import electronActionItems — that
 // lives in electron-os-tools, which imports osActions). The host reconciles the inbox surface against it.
@@ -817,8 +824,8 @@ let actionItemsProvider: (() => unknown[]) | null = null
 export function setActionItemsProvider(fn: () => unknown[]): void {
   actionItemsProvider = fn
 }
-export function osRestartBrain(agentId = '0'): void {
-  restartAgentHook?.(String(agentId))
+export function osClearBrainContext(agentId = '0'): void {
+  clearBrainContextHook?.(String(agentId))
 }
 /** Ensure an agent is up WITHOUT a chat message — the onboarding director uses this to start the
  *  resident interviewer at board-ready (its standing duty rides the bootstrap). Re-execs via the tmux

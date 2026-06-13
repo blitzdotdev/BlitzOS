@@ -84,7 +84,7 @@ export const electronOps = {
 // agentSocket (which imports OS_TOOLS from here). Used to rebuild an agent's command on re-exec.
 let terminalGetUrl: (() => string | null) | null = null
 export function setTerminalGetUrl(fn: () => string | null): void { terminalGetUrl = fn }
-let terminalAgentRuntime = process.env.BLITZ_AGENT_RUNTIME || process.env.BLITZ_AGENT_BACKEND || 'codex-serverless'
+let terminalAgentRuntime = process.env.BLITZ_AGENT_RUNTIME || process.env.BLITZ_AGENT_BACKEND || 'claude'
 let terminalAgentCmd = process.env.BLITZ_AGENT && process.env.BLITZ_AGENT !== '1' ? process.env.BLITZ_AGENT : terminalAgentRuntime === 'codex-serverless' || terminalAgentRuntime === 'codex' ? 'codex' : 'claude'
 export function setTerminalAgentRuntime(spec: { runtime?: string; cmd?: string } | null): void {
   if (spec?.runtime) terminalAgentRuntime = spec.runtime

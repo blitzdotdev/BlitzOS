@@ -51,7 +51,7 @@ interface HostCallbacks {
   onCursor: (surfaceId: string, cursor: string) => void
   onFocus: (surfaceId: string) => void
   onContextMenu: (surfaceId: string, x: number, y: number) => void
-  onMetaTap: () => void
+  onShiftTap: () => void
   /** Bare-Option hold state from a focused guest (radial create menu); 'cancel' = another key
    *  joined the hold (the user is typing an Option-modified shortcut, not asking for the menu). */
   onAltHold: (phase: 'down' | 'up' | 'cancel') => void
@@ -80,6 +80,13 @@ const entries = new Map<string, Entry>()
 const pendingCloses = new Map<string, ReturnType<typeof setTimeout>>()
 let callbacks: HostCallbacks | null = null
 let inputForwarder: ((input: Input) => boolean) | null = null
+
+// Console-safe url: origin + a short path slice, NO query or fragment. Auth tokens ride in the query
+// (e.g. a Cloudflare ?token=<JWT>, a session redirect) — never log them. Used only for dev logs; the
+// real url still flows to the chrome via pushNavState for the address bar.
+const redactUrl = (u: string | undefined): string => {
+  try { const x = new URL(String(u)); return x.origin + (x.pathname.length > 1 ? x.pathname.slice(0, 32) : '') } catch { return String(u ?? '').split('?')[0].slice(0, 48) }
+}
 
 export function setWebContentsViewInputForwarder(fn: ((input: Input) => boolean) | null): void {
   inputForwarder = fn
@@ -202,7 +209,7 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
     const cur = entries.get(e.id)
     if (cur && activeEntry(cur)?.tabId === t.tabId) cb.onActiveContent(e.id, wc.id)
   })
-  wc.on('did-finish-load', () => console.log('[guest] loaded:', wc.getURL()))
+  wc.on('did-finish-load', () => console.log('[guest] loaded:', redactUrl(wc.getURL())))
   wc.on('did-fail-load', (_ev, code, desc, failedUrl) => {
     if (code !== -3) console.log(`[guest] fail-load ${code} ${desc} ${failedUrl}`)
   })
@@ -230,7 +237,7 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
     }
   })
 
-  let metaDown = false
+  let shiftDown = false
   let sawOther = false
   let altHeld = false
   wc.on('before-input-event', (ev, input) => {
@@ -239,10 +246,10 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
       return
     }
     if (input.type === 'keyDown') {
-      if (input.key === 'Meta') {
-        metaDown = true
+      if (input.key === 'Shift') {
+        shiftDown = true
         sawOther = false
-      } else if (metaDown) {
+      } else if (shiftDown) {
         sawOther = true
       }
       if (input.key === 'Alt') {
@@ -255,9 +262,14 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
         cb.onAltHold('cancel')
       }
     } else if (input.type === 'keyUp') {
-      if (input.key === 'Meta') {
-        if (metaDown && !sawOther) cb.onMetaTap()
-        metaDown = false
+      if (input.key === 'Shift') {
+        // TODO: a bare ⇧ then a mouse click IN this page (⇧-click / range-select) still reads as a tap —
+        // before-input-event is keyboard-only, so the click never sets sawOther here (the renderer sees
+        // that pointerdown, not main). A single ⇧ tap now splays the stages (two open the workspace
+        // selector), so a stray ⇧-click in a focused page can trigger that. A full fix needs main to
+        // forward the ⇧ down/up edges so the renderer (which sees page clicks) can arbitrate the bare tap.
+        if (shiftDown && !sawOther) cb.onShiftTap()
+        shiftDown = false
       } else if (input.key === 'Alt' && altHeld) {
         altHeld = false
         cb.onAltHold('up')
@@ -317,7 +329,7 @@ function applyEntry(e: Entry): void {
 export function syncWebContentsViewTabs(surfaceId: string, tabs: TabDecl[], active: string | null, zoom = 1): void {
   const cb = callbacks
   if (!cb || !cb.getWindow()) return
-  console.log('[host] sync', surfaceId.slice(0, 8), JSON.stringify(tabs.map((t) => ({ id: t.id.slice(0, 8), url: t.url }))), 'active', active?.slice(0, 8))
+  console.log('[host] sync', surfaceId.slice(0, 8), JSON.stringify(tabs.map((t) => ({ id: t.id.slice(0, 8), url: redactUrl(t.url) }))), 'active', active?.slice(0, 8))
   const pending = pendingCloses.get(surfaceId)
   if (pending) {
     clearTimeout(pending) // remount within the grace window (StrictMode) — keep the live views
@@ -335,9 +347,18 @@ export function syncWebContentsViewTabs(surfaceId: string, tabs: TabDecl[], acti
   const prevActive = activeEntry(e)
   const want = new Map(tabs.filter((t) => t && t.id).map((t) => [t.id, t]))
   for (const t of [...e.tabs]) if (!want.has(t.tabId)) destroyTab(e, t)
-  for (const decl of want.values()) if (!e.tabs.some((t) => t.tabId === decl.id)) createTab(e, decl)
+  // LAZY session restore: materialize ONLY the active tab on first sight; a background tab stays
+  // DEFERRED (no view, no process, no load) until it is first activated, then keeps its live view.
+  // Restoring/opening a browser with N tabs otherwise spawned N WebContentsViews + N loads at once
+  // (the spike behind "open my Chrome tabs"). Activating a deferred tab re-syncs (the renderer's
+  // active-id dep) → it materializes here; navigate is a no-op for the unmaterialized (below).
+  const activeId = active && want.has(active) ? active : (e.tabs.find((t) => want.has(t.tabId))?.tabId ?? [...want.keys()][0] ?? null)
+  for (const decl of want.values()) {
+    if (e.tabs.some((t) => t.tabId === decl.id)) continue // already materialized → keep its live view
+    if (decl.id === activeId) createTab(e, decl) // the visible tab loads now; the rest wait for a click
+  }
 
-  e.activeTab = active && e.tabs.some((t) => t.tabId === active) ? active : (e.tabs[0]?.tabId ?? null)
+  e.activeTab = activeId && e.tabs.some((t) => t.tabId === activeId) ? activeId : (e.tabs[0]?.tabId ?? null)
   applyEntry(e)
 
   const nowActive = activeEntry(e)
@@ -373,7 +394,10 @@ export function updateWebContentsViewBounds(surfaceId: string, rect: Rectangle, 
 export function navigateWebContentsView(surfaceId: string, tabId: string | null, url: string): void {
   const e = entries.get(surfaceId)
   if (!e) return
-  const t = (tabId ? e.tabs.find((x) => x.tabId === tabId) : null) ?? activeEntry(e)
+  // A specified-but-unmaterialized tab (a deferred lazy-restore tab) is a NO-OP — it loads when first
+  // activated. NEVER fall back to the active tab here, or a per-tab navigate would hijack the visible
+  // tab to a background tab's url. tabId:null still means "the active tab" (chrome address bar).
+  const t = tabId ? e.tabs.find((x) => x.tabId === tabId) : activeEntry(e)
   const wc = t?.view.webContents
   if (!wc || wc.isDestroyed()) return
   try {

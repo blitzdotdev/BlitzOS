@@ -18,9 +18,17 @@ const metaPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'meta.js
 const bootstrapPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'bootstrap.txt')
 export const INTERVIEW_FAST_MODEL = 'sonnet'
 export const INTERVIEW_FAST_SETTINGS = { model: INTERVIEW_FAST_MODEL, effortLevel: 'low', env: { CLAUDE_CODE_EFFORT_LEVEL: 'low' } }
+// Reasoning effort by phase (the speed/quality split). The onboarding INTERVIEW runs LOW so its dynamic
+// Q&A stays snappy (and pins the fast standard-context model above). The RESIDENT agent runs XHIGH so it
+// follows the act/ask boundary precisely and makes better autonomous calls, keeping the USER's own model.
+// Tunable here. (Earlier "always low" pinned the resident low too, which made it over-ask on reversible work.)
+export const INTERVIEW_EFFORT = 'low'
+export const RESIDENT_EFFORT = 'xhigh'
 export const AGENT_RUNTIME_CLAUDE = 'claude'
 export const AGENT_RUNTIME_CODEX_SERVERLESS = 'codex-serverless'
-export const DEFAULT_AGENT_RUNTIME = AGENT_RUNTIME_CODEX_SERVERLESS
+// Claude Code is the default backend (codex-serverless stays selectable via BLITZ_AGENT_BACKEND). The
+// server transport (preview/backend.mjs) already defaults to Claude; this aligns the Electron desktop.
+export const DEFAULT_AGENT_RUNTIME = AGENT_RUNTIME_CLAUDE
 function readMeta(sessionsDir, id) { try { return JSON.parse(readFileSync(metaPath(sessionsDir, id), 'utf8')) } catch { return {} } }
 
 export function normalizeAgentRuntime(value) {
@@ -95,17 +103,22 @@ export function shellQuote(s) {
  *  INTERACTIVE (no -p): claude renders its full TUI in the terminal so the user can WATCH it work — print
  *  mode (-p) ran silently, leaving the terminal blank. --dangerously-skip-permissions: the agent acts
  *  unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
-export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, lowThinking = false }) {
+export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, effort = null, pinFastModel = false }) {
   const sessionArg = mode === 'resume' ? `--resume ${claudeSid}` : `--session-id ${claudeSid}`
-  // The interview asks dynamic questions, so the brain must run FAST. The real lever is `--settings`,
-  // NOT env vars or --effort alone: Claude Code's settings precedence is CLI args > project > USER
-  // (~/.claude/settings.json). A user's global `model` may also be a 1M-context variant that requires
-  // usage credits, so force standard-context sonnet for this once-per-user interview. Standalone timing
-  // with global xhigh: baseline 7.9s, --effort low 3.9s, --settings effort+env low 2.7s for a small
-  // onboarding-question prompt. The resident phase passes nothing, so it returns to the user's normal
-  // model/effort after the duty is done and agent 0 is re-exec'd.
-  const fast = lowThinking ? `--model ${INTERVIEW_FAST_MODEL} --effort low --settings ${shellQuote(JSON.stringify(INTERVIEW_FAST_SETTINGS))} ` : ''
-  return `${cmd} ${sessionArg} ${fast}--dangerously-skip-permissions "$(cat ${shellQuote(bootstrapFile)})"`
+  // `effort` sets the reasoning level for THIS launch (INTERVIEW_EFFORT 'low' for the snappy interview,
+  // RESIDENT_EFFORT 'xhigh' for the resident so it follows the boundary and decides well). The real control
+  // is `--settings`, NOT --effort or env alone: Claude Code's precedence is CLI args > project > USER
+  // (~/.claude/settings.json), so we pass both and override the user's global either way, leaving the user's
+  // own MODEL untouched. pinFastModel ALSO pins the fast standard-context model — INTERVIEW ONLY (a user's
+  // 1M-context model would burn a usage credit per dynamic question). Timing on a small prompt: xhigh ~7.9s,
+  // --effort low ~3.9s, --settings low ~2.7s.
+  let tuned = ''
+  if (effort) {
+    const model = pinFastModel ? `--model ${INTERVIEW_FAST_MODEL} ` : ''
+    const settings = pinFastModel ? INTERVIEW_FAST_SETTINGS : { effortLevel: effort, env: { CLAUDE_CODE_EFFORT_LEVEL: effort } }
+    tuned = `${model}--effort ${effort} --settings ${shellQuote(JSON.stringify(settings))} `
+  }
+  return `${cmd} ${sessionArg} ${tuned}--dangerously-skip-permissions "$(cat ${shellQuote(bootstrapFile)})"`
 }
 
 /** Codex serverless backend: one non-interactive `codex exec` turn that receives the same BlitzOS
@@ -118,10 +131,11 @@ export function buildCodexServerlessCommand({ cmd = 'codex', bootstrapFile, lowT
   return `${cmd} exec ${effort}--disable plugins --ignore-user-config --ignore-rules --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --color never "$(cat ${shellQuote(bootstrapFile)})"`
 }
 
-export function buildAgentCommand({ runtime = AGENT_RUNTIME_CLAUDE, cmd, claudeSid, mode = 'create', bootstrapFile, lowThinking = false }) {
+export function buildAgentCommand({ runtime = AGENT_RUNTIME_CLAUDE, cmd, claudeSid, mode = 'create', bootstrapFile, effort = null, pinFastModel = false }) {
   const r = normalizeAgentRuntime(runtime)
-  if (r === AGENT_RUNTIME_CODEX_SERVERLESS) return buildCodexServerlessCommand({ cmd: cmd || 'codex', bootstrapFile, lowThinking })
-  return buildClaudeCommand({ cmd: cmd || 'claude', claudeSid, mode, bootstrapFile, lowThinking })
+  // Codex only has the low cap (its reasoning effort lever is a single low/default), so map effort 'low' → it.
+  if (r === AGENT_RUNTIME_CODEX_SERVERLESS) return buildCodexServerlessCommand({ cmd: cmd || 'codex', bootstrapFile, lowThinking: effort === 'low' })
+  return buildClaudeCommand({ cmd: cmd || 'claude', claudeSid, mode, bootstrapFile, effort, pinFastModel })
 }
 
 /** Has claude ALREADY created this conversation on disk? claude writes `<configDir>/projects/<encoded-cwd>/
@@ -182,9 +196,13 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
     writeWaitScript(dirname(sessionsDir)) // <ws>/.blitzos/wait.sh — the blocking event-wait the bootstrap points at
     ensureWorkspaceTrusted(dirname(dirname(sessionsDir))) // unattended spawn must never stall on the trust dialog
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
-  // The onboarding interview runs at reduced thinking effort so its dynamic follow-ups are snappy.
-  // Other resident duties, such as post-onboarding initiative work, use the normal effort.
+  // Reasoning effort by phase (Claude). The onboarding interview runs LOW + pins the fast model so its
+  // dynamic Q&A stays snappy; the RESIDENT agent runs XHIGH (RESIDENT_EFFORT) so it follows the act/ask
+  // boundary and decides well, keeping the user's own model. Codex only has the low cap, during the interview.
   const interview = String(id) === '0' && typeof bootTask === 'string' && bootTask.includes('THE ONBOARDING INTERVIEW')
+  const isClaude = agentRuntime === AGENT_RUNTIME_CLAUDE
+  const effort = interview ? INTERVIEW_EFFORT : isClaude ? RESIDENT_EFFORT : null
+  const pinFastModel = interview && isClaude
   return {
     agentRuntime,
     agentSessionId,
@@ -196,7 +214,8 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
       claudeSid: claudeState.claudeSessionId,
       mode: claudeState.established ? 'resume' : 'create',
       bootstrapFile: file,
-      lowThinking: interview
+      effort,
+      pinFastModel
     })
   }
 }

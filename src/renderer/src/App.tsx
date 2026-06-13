@@ -639,23 +639,6 @@ export default function App(): JSX.Element {
     }
     animRef.current = requestAnimationFrame(step)
   }
-  // Double-tap ⌘ toggles the stage overview: animate the camera to the splayed stage view on enter
-  // and back to the current stage's fixed desktop frame on exit.
-  function toggleControlMode(): void {
-    const st = useDesktop.getState()
-    st.setSnapPreview(null) // a mode switch cancels any in-flight drag UI
-    st.setDragTarget(null)
-    const next = st.mode === 'desktop' ? 'canvas' : 'desktop'
-    if (next === 'canvas') {
-      const target = viewTransform('canvas', st.viewport, st.currentStage, st.stageCount, st.stageOrder)
-      st.setMode('canvas')
-      animateTransform(target)
-    } else {
-      st.setMode('desktop')
-      animateTransform(viewTransform('desktop', st.viewport, st.currentStage, st.stageCount, st.stageOrder))
-    }
-  }
-
   function enterStageOverview(): void {
     const st = useDesktop.getState()
     st.setSnapPreview(null)
@@ -883,7 +866,7 @@ export default function App(): JSX.Element {
   // (and select it); release to interact with content again. Option is reserved for the radial create menu.
   // NOTE: a key held while a browser guest has keyboard focus is delivered to that guest, not
   // here — so grab-mode may not engage until you click off a focused web page. A robust
-  // fix is to forward Space from guests via main (like onMetaTap); deferred.
+  // fix is to forward Space from guests via main (like onShiftTap); deferred.
   useEffect(() => {
     const editable = (): boolean => {
       const ae = document.activeElement as HTMLElement | null
@@ -953,68 +936,49 @@ export default function App(): JSX.Element {
     }
   }, [])
 
-  // Double-tap ⌘ to toggle the splayed stage overview; long-press ⌘ (bare, no other key) opens the
-  // workspace selector — the keyboard path to everything the home orb does. A bare ⌘ tap from a focused
-  // WebContentsView arrives via onMetaTap (main); plain keydown/keyup covers the browser/server transport.
+  // ⇧ is the keyboard twin of the home orb: a single bare ⇧ tap toggles the splayed all-stages overview
+  // (Control Mode), a double tap opens the workspace selector. Both route through the SAME handleHomePress
+  // arbiter so the key and the orb never diverge — and because handleHomePress defers the single-tap action
+  // one HOME_DOUBLE_TAP_MS, a double tap opens workspaces WITHOUT first flashing the splay. No long-press.
+  // A bare ⇧ tap from a focused WebContentsView arrives via onShiftTap (main); plain keydown/keyup covers
+  // the browser/server transport.
+  // GUARD: ⇧ is a typing/selection modifier, so a tap is suppressed whenever a renderer text field or
+  // contenteditable holds focus (priming a capital must never move the camera). Combos (⇧⌘T, ⇧-click)
+  // self-cancel via the keydown/pointer `sawOther` paths; browser-page typing leans on the same
+  // "any other key cancels it" rule in main's before-input-event tracker.
   useEffect(() => {
-    let metaDown = false
+    let shiftDown = false
     let sawOther = false
-    let lastTap = 0
-    let holdTimer: number | null = null
-    const clearHold = (): void => {
-      if (holdTimer != null) {
-        window.clearTimeout(holdTimer)
-        holdTimer = null
-      }
-    }
-    const registerTap = (): void => {
-      const now = performance.now()
-      if (now - lastTap < 450) {
-        lastTap = 0
-        toggleControlMode()
-      } else {
-        lastTap = now
-      }
+    const editable = (): boolean => {
+      const ae = document.activeElement as HTMLElement | null
+      return !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
     }
     const down = (e: KeyboardEvent): void => {
-      if (e.key === 'Meta') {
+      if (e.key === 'Shift') {
+        // a ⇧ pressed while typing is not a gesture: pre-seed sawOther so the release won't count
         if (!e.repeat) {
-          metaDown = true
-          sawOther = false
-          clearHold()
-          holdTimer = window.setTimeout(() => {
-            holdTimer = null
-            if (metaDown && !sawOther) {
-              sawOther = true // consume the hold: the release must not count as a tap
-              void openOverview()
-            }
-          }, 500)
+          shiftDown = true
+          sawOther = editable()
         }
-      } else if (metaDown) {
+      } else if (shiftDown) {
         sawOther = true
-        clearHold()
       }
     }
     const up = (e: KeyboardEvent): void => {
-      if (e.key === 'Meta') {
-        clearHold()
-        if (metaDown && !sawOther) registerTap()
-        metaDown = false
+      if (e.key === 'Shift') {
+        if (shiftDown && !sawOther) handleHomePress() // single → splay stages, double → workspace selector
+        shiftDown = false
       }
     }
-    // ⌘ used with the mouse (⌘-drag pops tiles, ⌘-click) is not a bare hold or a tap.
+    // ⇧ used with the mouse (⇧-click / ⇧-drag = additive select) is not a bare tap.
     const pointer = (): void => {
-      if (metaDown) {
-        sawOther = true
-        clearHold()
-      }
+      if (shiftDown) sawOther = true
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
     window.addEventListener('pointerdown', pointer, true)
-    const off = window.agentOS?.onMetaTap(registerTap)
+    const off = window.agentOS?.onShiftTap(handleHomePress)
     return () => {
-      clearHold()
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
       window.removeEventListener('pointerdown', pointer, true)
