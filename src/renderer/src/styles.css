@@ -224,17 +224,27 @@ button {
   border-radius: var(--radius-window);
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
-/* Delete-stage control: top-right of each deletable stage (control mode only) — windows MOVE to
-   the primary on delete, so no confirm step; the hover state still reads destructive. */
+/* Delete-stage control: the × straddles the stage's top-right corner TIP (macOS-Spaces style) and
+   only reveals while the pointer is inside the corner hover zone — windows MOVE to the primary on
+   delete, so no confirm step; the hover state still reads destructive. The zone eats clicks in its
+   56px square (a miss near a destructive control must do nothing, not enter the stage). */
+.area-chrome-corner {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  z-index: 2;
+}
 .area-chrome-close {
   appearance: none;
-  position: absolute;
-  pointer-events: auto;
-  transform: translate(-100%, -100%);
   width: 26px;
   height: 26px;
   display: grid;
   place-items: center;
+  padding: 0;
   font-size: 15px;
   line-height: 1;
   color: var(--text-secondary);
@@ -245,6 +255,15 @@ button {
   -webkit-backdrop-filter: blur(18px) saturate(1.35);
   box-shadow: var(--shadow-sm);
   cursor: pointer;
+  opacity: 0;
+  transform: scale(0.8);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+.area-chrome-corner:hover .area-chrome-close {
+  opacity: 1;
+  transform: scale(1);
 }
 .area-chrome-close:hover {
   color: #fff;
