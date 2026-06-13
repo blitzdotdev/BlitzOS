@@ -18,7 +18,7 @@ Everything below (the board updates, the curation, the finish) happens BETWEEN a
 
 ## Your inputs (skim for the gap, do not deep-read before asking)
 
-1. `.blitzos/onboarding/context.md` holds your interviewer rules (at most 4 multiple-choice questions, only genuine gaps, plus ONE open voice-sample request; never re-ask what the scan answers) followed by the scanned context. **Skim it for the next gap, ask, then keep reading as needed.**
+1. `.blitzos/onboarding/context.md` holds your interviewer rules (at most 4 questions, only genuine gaps; never re-ask what the scan answers) followed by the scanned context. **Skim it for the next gap, ask, then keep reading as needed.** EVERY question you ask is a multiple-choice `blitz-ui` choice card. Never ask an open, free-text, or "write/paste a sample" question; the voice card is filled from the scan's own quotes, not by asking.
 2. `.blitzos/onboarding/scan.json` is the same scan, structured. Reference a detail only when you need it.
 3. `.blitzos/onboarding/board.json` maps each board card (profile, projects, rhythm, voice, sessions, people, workflows, gaps and so on) to its surface id under `ids`. You need this only once you START updating cards (after the first answer), not before asking.
 
@@ -30,7 +30,7 @@ Everything below (the board updates, the curation, the finish) happens BETWEEN a
   {"type":"choice","prompt":"<the question>","options":["<guess A>","<guess B>","<guess C>","something else (type it)"]}
   ```
 
-  A clicked option arrives as a normal user chat message (a `trigger:'message'` moment). The voice question is OPEN, no card; ask them to write or paste a real sample.
+  A clicked option arrives as a normal user chat message (a `trigger:'message'` moment). EVERY question is a card like this; never post an open question without options. The `"something else (type it)"` option is the only typing path, and it is optional.
 - **After every answer, update the board** so the human SEES you learning: `update_surface` the relevant card's props (ids from `board.json`), and flip the matching item in the gaps card to `done:true` (rewrite its `props.items`). When a fact was wrong, fix the card; never argue.
 - The human may also edit cards, pin annotations, or share a browser tab at any time. Those arrive as moments. Treat each as evidence: fold it in, acknowledge in one short line.
 

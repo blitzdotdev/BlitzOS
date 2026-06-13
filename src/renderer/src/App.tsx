@@ -1224,8 +1224,9 @@ export default function App(): JSX.Element {
         // Backend heartbeat: is the agent's relay link up? Drives the toolbar status pill.
         setAgentOnline(!!a.online)
       } else if (a.type === 'activity') {
-        // A live feed of what the agent is doing (its tool calls) -> the Agent-activity
-        // panel (auto-created, pinned), so the user can see it working during latency.
+        // A live feed of the agent's tool calls. It feeds an activity panel ONLY IF the user has one
+        // open — it NEVER auto-creates one (the chat is the agent's interface; an auto-popping feed
+        // clutters the stage — user, 2026-06-12). The feed is opt-in via the Runtime tray.
         const text = String(a.text ?? '')
         if (!text) return
         const evt = { at: Number(a.at) || Date.now(), text }
@@ -1233,8 +1234,6 @@ export default function App(): JSX.Element {
         if (panel) {
           const evs = (panel.props?.events as Array<{ at: number; text: string }>) ?? []
           st.updateSurfaceProps(panel.id, { events: [...evs, evt].slice(-60) })
-        } else {
-          st.createSurface(activitySurfaceInput([evt]))
         }
       } else if (a.type === 'terminal-data') {
         // live tmux %output for a terminal -> its terminal surface (terminalStream routes by id)
@@ -1247,12 +1246,11 @@ export default function App(): JSX.Element {
         // restore() replay that brings back tmux survivors after a restart. Agents auto-show too (an agent
         // IS a terminal you watch claude work in); plain terminals additionally animate from their launcher.
         const term = (a.terminal ?? {}) as { title?: string; stage?: number | null; area?: number | null; kind?: string }
-        // MERGE-RECONCILED: an agent IS a terminal you watch claude work in, so auto-show its terminal tab
-        // (the user's explicit "still dont see anything in the term" fix — agents are NOT opt-in). A plain
-        // terminal launched from a toolbar control animates open from that control's rect (branch UX).
-        if (term.kind === 'agent') {
-          ensureTerminalTab(String(a.id), term.title || 'Agent', term.stage ?? term.area)
-        } else {
+        // Agents run HEADLESS in tmux; their visible interface is the chat widget, not the raw terminal,
+        // so an agent's terminal NEVER auto-opens (it would clutter the stage — user, 2026-06-12). It's
+        // opt-in via the Runtime tray. Only a PLAIN terminal the user spawned from a control opens, and
+        // it animates from that control's rect.
+        if (term.kind !== 'agent') {
           const pending = pendingTerminalSource.current
           const source = pending && performance.now() - pending.at < 5000 ? pending.rect : null
           if (source) pendingTerminalSource.current = null
@@ -1638,18 +1636,6 @@ export default function App(): JSX.Element {
     const x = Math.round(-tx / scale + 24) // 24 world-px from the left edge of the view
     const y = Math.round((st.viewport.h / 2 - ty) / scale - H / 2) // vertically centered
     return { kind: 'native', component: 'chat', title: 'Chat', w: W, h: H, x, y, props: { messages } }
-  }
-
-  // The Agent-activity feed docks to the TOP-LEFT of the view (above the centered chat).
-  function activitySurfaceInput(events: Array<{ at: number; text: string }>): CreateSurfaceInput {
-    // BACKSTAGE by default: the feed must never pop a window onto the user's desktop — it parks on
-    // the canvas just below the stage frame (right side, clear of parked terminals/cards), visible
-    // when the user zooms out to watch the agent work.
-    const st = useDesktop.getState()
-    const r = orderedStageRect(st.currentStage, st.viewport, st.stageOrder, st.stageCount)
-    const W = 320
-    const H = 200
-    return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x: Math.round(r.x + r.w - W - 40), y: Math.round(r.y + r.h + 140), props: { events } }
   }
 
   // Open/focus a terminal tab (idempotent). Shared by the live terminal-spawn action, resume-on-load,
