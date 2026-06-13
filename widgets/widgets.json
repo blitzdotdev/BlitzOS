@@ -96,5 +96,37 @@
     "needs": [],
     "props": { "title": "Remix" },
     "version": 1
+  },
+  {
+    "name": "kpi-spark",
+    "description": "React reference (lang:jsx). A KPI tile: accent kicker, big hero number, delta, and a recharts area sparkline bleeding off the bottom. The pattern for any single metric-with-trend. Drive with update_surface{props:{kicker,value,delta,up?,series?:[numbers]}}. Fork it (get_widget_source) for the house LOOK + the recharts-color-via-getComputedStyle pattern.",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Revenue" },
+    "version": 1
+  },
+  {
+    "name": "kpi-counter",
+    "description": "React reference (lang:jsx). An animated metric: a number that springs up on mount (framer-motion) over a token-accent progress bar. For a single count you want to feel alive. Drive with update_surface{props:{kicker,value,target?,delta?,up?}}. Fork for the framer-motion spring + token pattern.",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Signups" },
+    "version": 1
+  },
+  {
+    "name": "status-list",
+    "description": "React reference (lang:jsx). A labelled status list: accent kicker, hairline rows of icon + label + bold value (lucide-react). For a small set of named readings. Drive with update_surface{props:{kicker,rows:[{icon,label,value}]}}. Fork for the lucide-via-currentColor theming pattern.",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "System" },
+    "version": 1
+  },
+  {
+    "name": "markdown-card",
+    "description": "React reference (lang:jsx). A styled markdown card (react-markdown + remark-gfm) mapping headings/prose to the OS type scale. For notes, release notes, agent summaries. Drive with update_surface{props:{markdown}}. Fork for the element-to-token component map.",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Notes" },
+    "version": 1
   }
 ]

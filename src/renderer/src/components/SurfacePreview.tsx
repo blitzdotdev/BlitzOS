@@ -3,6 +3,9 @@ import { NoteWidget } from './NoteWidget'
 import { ChatPanel } from './ChatPanel'
 import { ActivityPanel } from './ActivityPanel'
 import { paperFor } from '../paper'
+import { peekJsxSrcdoc, isJsxLang } from '../widget-jsx'
+import { BRIDGE_SHIM } from '../widget-bridge'
+import { UI_KIT } from '../widget-ui-kit'
 
 /**
  * A scaled, non-interactive LIVE preview of a surface — the miniature inside an
@@ -54,8 +57,17 @@ function PreviewBody({ surface }: { surface: Surface }): JSX.Element {
       </div>
     )
   }
-  if (surface.kind === 'srcdoc')
+  if (surface.kind === 'srcdoc') {
+    // jsx/tsx: raw source must NEVER render as html (it paints as garbage text). Reuse the
+    // compiled composition if SurfaceFrame already cached it; else a quiet label — previews
+    // must stay cheap, so they never trigger a compile themselves.
+    if (isJsxLang(surface.lang)) {
+      const composed = peekJsxSrcdoc(surface.html ?? '', surface.lang)
+      if (!composed) return <div className="preview-web"><div className="preview-web-icon">⌘</div><div className="preview-web-title">{surface.title || 'Widget'}</div><div className="preview-web-url">{surface.lang}</div></div>
+      return <iframe title={surface.title} sandbox="allow-scripts" srcDoc={BRIDGE_SHIM + UI_KIT + composed} style={{ ...fill, display: 'block', background: 'var(--surface)' }} />
+    }
     return <iframe title={surface.title} sandbox="allow-scripts" srcDoc={surface.html ?? ''} style={{ ...fill, display: 'block', background: 'var(--surface)' }} />
+  }
   if (surface.component === 'note') {
     const p = paperFor(surface.props?.color)
     return (

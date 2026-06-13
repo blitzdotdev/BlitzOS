@@ -41,6 +41,9 @@ export interface Surface {
   url?: string
   /** srcdoc */
   html?: string
+  /** srcdoc source language. 'jsx'/'tsx' compile at mount (React + curated imports via the
+   *  runtime registry); absent/'html' renders verbatim. Persists as the content file's extension. */
+  lang?: 'html' | 'jsx' | 'tsx'
   /** native: which built-in component to render */
   component?: string
   /** native: component props (e.g. { text, color }) */
