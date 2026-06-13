@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop, snapTargetFor, primaryRect, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, stageOfX, webTabsOf, effectiveZ } from '../store'
+import { useDesktop, snapTargetFor, primaryRect, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, webTabsOf, effectiveZ } from '../store'
 import { BrowserNav } from './BrowserNav'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
@@ -584,7 +584,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       const me = d.items[0]
       const sl = slotOf(surface)
       const stage = surface.slotStage ?? 0
-      const lat = latticeFor(st.viewport, stage)
+      const lat = latticeFor(st.viewport, stage, st.stageOrder, st.stageCount)
       const ghost = nearestFreeSlot(st.surfaces, lat, sl ? sl.size : 's', me.ox + dx + me.ow / 2, me.oy + dy + me.oh / 2, stage, surface.id)
       slotGhost.current = ghost
       const gr = ghost && sl ? slotRect(lat, ghost.col, ghost.row, sl.size) : null
@@ -608,7 +608,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     // Snap preview (BOTH modes, #42): dragging a single window so the cursor reaches a primary-stage
     // side/corner shows where it will tile on release (left|right half / quarter — never full-screen).
     // Suppressed over a folder target and for file/dir tiles (they aren't windows).
-    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport, st.currentStage, st.mode) : null)
+    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport, st.currentStage, st.mode, st.stageOrder, st.stageCount) : null)
   }
   function onBarUp(e: React.PointerEvent): void {
     try {

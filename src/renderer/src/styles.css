@@ -201,6 +201,56 @@ button {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   background: color-mix(in srgb, var(--surface) 90%, transparent);
 }
+/* Drag-to-reorder (splay lattice): while a stage label is dragged, OTHER stages animate to their
+   insertion-reflowed cells — transitions scoped to .reflowing so camera pans never lag the chrome. */
+.area-chrome-overlay.reflowing .area-chrome-hit,
+.area-chrome-overlay.reflowing .area-chrome-label {
+  transition:
+    left 160ms var(--ease-out),
+    top 160ms var(--ease-out);
+}
+.area-chrome-label.dragging {
+  transition: none;
+  z-index: 3;
+  cursor: grabbing;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  box-shadow: var(--shadow-md);
+}
+.area-chrome-ghost {
+  position: absolute;
+  pointer-events: none;
+  border: 2px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--radius-window);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+/* Delete-stage control: top-right of each deletable stage (control mode only) — windows MOVE to
+   the primary on delete, so no confirm step; the hover state still reads destructive. */
+.area-chrome-close {
+  appearance: none;
+  position: absolute;
+  pointer-events: auto;
+  transform: translate(-100%, -100%);
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-secondary);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+.area-chrome-close:hover {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
 
 /* Ground plane: widgets + icons (legacy ground-plane items). */
 .ground-item {

@@ -932,7 +932,7 @@ const server = createServer(async (req, res) => {
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
     res.write(
-      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', stageCount: osState.stageCount || 1, workspace: wsHost.active() })}\n\n`
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', stageCount: osState.stageCount || 1, stageOrder: osState.stageOrder, workspace: wsHost.active() })}\n\n`
     )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))

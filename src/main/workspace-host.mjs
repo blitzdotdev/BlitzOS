@@ -40,7 +40,7 @@ import {
 } from './workspace.mjs'
 // Stage grid: an agent N owns stage N (stageForAgent), so its chat widget + the windows it
 // opens land in stage N — isolated from the user's primary (stage 0). Shared with the renderer (one grid).
-import { stageForAgent, stageCenterX, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
+import { stageForAgent, orderedStageRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 // The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
 import { writeRelayUrl } from './agent-runtime.mjs'
 
@@ -101,7 +101,15 @@ export function createWorkspaceHost(a) {
   let watchers = []
 
   const active = () => basename(activeWorkspace)
-  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode, stageCount: 1 })
+  /** Stage growth keeps the splay reading order: existing order survives, new ids append. */
+  const growOrder = (order, count) => {
+    const out = []
+    const seen = new Set()
+    if (Array.isArray(order)) for (const v of order) { const n = Number(v); if (Number.isInteger(n) && n >= 0 && n < count && !seen.has(n)) { seen.add(n); out.push(n) } }
+    for (let k = 0; k < count; k++) if (!seen.has(k)) out.push(k)
+    return out
+  }
+  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode, stageCount: 1, stageOrder: [0] })
 
   function flush() {
     if (writeTimer) {
@@ -282,9 +290,17 @@ export function createWorkspaceHost(a) {
     const primary = !agentId || String(agentId) === '0'
     const w = 360
     // Agent N owns stage N: anchor its chat at the SAME relative spot in ITS stage that the primary chat
-    // sits at in stage 0 (left-of-center, −700 from the stage center). stageCenterX(0)=0 → primary x=−700,
-    // byte-identical to before; agent N's chat sits at the same on-screen place when you switch to stage N.
-    const x = Math.round(stageCenterX(stageForAgent(agentId), viewportOf()) - 700)
+    // sits at in stage 0 (left-of-center, −700 from the stage center; −210 above it). The stage's cell
+    // comes from the splay lattice READING ORDER, so the chat lands in the cell the user actually sees.
+    const hostStateForChat = (typeof a.getState === 'function' && a.getState()) || {}
+    const chatStage = stageForAgent(agentId)
+    const chatCell = orderedStageRect(
+      chatStage,
+      viewportOf(),
+      Array.isArray(hostStateForChat.stageOrder) ? hostStateForChat.stageOrder : null,
+      Math.max(Number(hostStateForChat.stageCount) || 1, chatStage + 1)
+    )
+    const x = Math.round(chatCell.x + chatCell.w / 2 - 700)
     // Restore a persisted tile slot (the user tiled the chat, or onboarding seeded it) so it comes back
     // EMBEDDED, not free-float. No persisted slot → the legacy free-float default (every existing
     // workspace stays exactly as it was). Geometry derives from the slot in the renderer on hydrate.
@@ -297,7 +313,7 @@ export function createWorkspaceHost(a) {
       agentId: String(agentId),
       title: primary ? 'Chat' : `Chat ${agentId}`,
       x,
-      y: -210,
+      y: Math.round(chatCell.y + chatCell.h / 2 - 210),
       w,
       h: 460,
       z: 5,
@@ -328,7 +344,7 @@ export function createWorkspaceHost(a) {
         ))
       : [...surfaces, chat]
     const stageCount = Math.max(Number(st.stageCount) || 1, maxAgentStageCount())
-    a.setState({ ...st, surfaces: nextSurfaces, stageCount })
+    a.setState({ ...st, surfaces: nextSurfaces, stageCount, stageOrder: growOrder(st.stageOrder, stageCount) })
     a.broadcast({ type: 'create', surface: { ...chat, minimized: false }, focus: true })
     return { ok: true, id: chat.id }
   }
@@ -365,7 +381,7 @@ export function createWorkspaceHost(a) {
         // Grow stageCount so this agent's stage exists + is navigable (persisted via writeWorkspace). The
         // renderer also bumps on the 'create' below, then pushes it back — this keeps osState correct meanwhile.
         const stageCount = Math.max(Number(st.stageCount) || 1, stage + 1)
-        a.setState({ ...st, surfaces: [...without, surface], stageCount })
+        a.setState({ ...st, surfaces: [...without, surface], stageCount, stageOrder: growOrder(st.stageOrder, stageCount) })
       }
     } catch { /* adapter without getState/setState */ }
     // focus:true (a USER '+ New') tells the renderer to follow the camera to the new stage; an AGENT's
@@ -550,7 +566,7 @@ export function createWorkspaceHost(a) {
       // stageCount self-heals to fit every agent's stage (max agent id + 1), so an old workspace whose
       // stageCount wasn't bumped — or a hand-added agent — still lands its widget in a reachable stage.
       const stageCount = Math.max(base.stageCount ?? 1, maxAgentStageCount())
-      a.setState({ surfaces, camera: base.camera, mode: base.mode, stageCount })
+      a.setState({ surfaces, camera: base.camera, mode: base.mode, stageCount, stageOrder: growOrder(base.stageOrder, stageCount) })
       if (surfaces.length) console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
     } catch (e) {
       console.error('[workspace] hydrate failed:', e?.message || e)
@@ -591,11 +607,12 @@ export function createWorkspaceHost(a) {
       migrateChatToFile()
       const surfaces = [...next.surfaces, ...buildAgentSurfaces(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
       const stageCount = Math.max(next.stageCount ?? 1, maxAgentStageCount()) // self-heal for the destination's agents
-      a.setState({ surfaces, camera: next.camera, mode: next.mode, stageCount, view: { cx: next.camera.x, cy: next.camera.y } })
+      const stageOrder = growOrder(next.stageOrder, stageCount)
+      a.setState({ surfaces, camera: next.camera, mode: next.mode, stageCount, stageOrder, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
       rememberActive() // boot returns the user HERE, not to the default
-      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, stageCount, workspace: name })
+      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, stageCount, stageOrder, workspace: name })
       console.log(`[workspace] switched → ${name}`)
       return { status: 200, body: { ok: true, active: name } }
     } finally {

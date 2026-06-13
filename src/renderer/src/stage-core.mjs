@@ -10,7 +10,7 @@
 // workspace stage's rect (stages-core stageRect), centered, so slot -> world x/y is a pure function and
 // x/y/w/h stay the rendering+persistence truth (slots re-derive them on viewport change).
 
-import { stageRect } from './stages-core.mjs'
+import { orderedStageRect } from './stages-core.mjs'
 
 export const TILE = 180 // cell pitch, edge-to-edge (Apple's exact metric)
 export const CARD_INSET = 8 // visible card inset per side (16pt visible gap between neighbors)
@@ -47,8 +47,8 @@ export function sizePx(size) {
 
 /** The lattice inside stage `i`: integer cols/rows that fit the stage rect, centered (equal margins).
  *  Returns { stage, cols, rows, x, y } where (x,y) is the world top-left of cell (0,0). */
-export function latticeFor(vp, stage = 0) {
-  const r = stageRect(stage, vp || { w: 1600, h: 1000 })
+export function latticeFor(vp, stage = 0, order = null, count = undefined) {
+  const r = orderedStageRect(stage, vp || { w: 1600, h: 1000 }, order, count ?? stage + 1)
   const cols = Math.max(2, Math.floor(r.w / TILE))
   const rows = Math.max(2, Math.floor(r.h / TILE))
   return { stage, cols, rows, x: r.x + (r.w - cols * TILE) / 2, y: r.y + (r.h - rows * TILE) / 2 }
@@ -234,9 +234,9 @@ export function stageSummary(surfaces, vp, stage = 0) {
  *  [{id, x, y}] placements on a fine icon grid (column-major from the stage's top-RIGHT, like the Mac
  *  desktop), skipping any icon cell whose rect intersects a slotted tile or the avoid rect (the
  *  in-flight drag ghost). Sizes come from each file surface's own w/h. */
-export function flowFiles(files, surfaces, vp, stage = 0, avoid = null) {
-  const r = stageRect(stage, vp || { w: 1600, h: 1000 })
-  const lat = latticeFor(vp, stage)
+export function flowFiles(files, surfaces, vp, stage = 0, avoid = null, order = null, count = undefined) {
+  const r = orderedStageRect(stage, vp || { w: 1600, h: 1000 }, order, count ?? stage + 1)
+  const lat = latticeFor(vp, stage, order, count)
   const blocked = []
   for (const s of surfaces || []) {
     if (!s || s.minimized || s.groupId || (s.slotStage ?? 0) !== stage) continue

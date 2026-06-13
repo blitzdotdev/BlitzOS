@@ -63,6 +63,10 @@ export interface OsState {
   // #45 workspace stages: how many tiled desktops + which is active + the current one's world rect (so
   // the agent places surfaces in the stage the human is looking at, not blindly at the origin).
   stageCount?: number
+  /** Reading order of stages on the splay lattice (stageOrder[orderIndex] = stage id); persisted. */
+  stageOrder?: number[]
+  /** Last bulk layout transaction (stage reorder) — perception treats the push as ONE gesture. */
+  bulkAt?: number
   currentStage?: number
   currentStageRect?: { x: number; y: number; w: number; h: number }
   workspace?: string
@@ -264,6 +268,12 @@ export function initOsActions(opts: {
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) {
       const prev = cached // BEFORE the host replaces it — the diff baseline for human canvas ops
+      // A stage reorder translates MANY windows in one transaction; the renderer stamps the push
+      // with bulkAt so the differ reports nothing (else: a storm of phantom "human moved" ops).
+      if (typeof state.bulkAt === 'number' && state.bulkAt !== lastRendererBulkAt) {
+        lastRendererBulkAt = state.bulkAt
+        canvasBulkAt = Date.now()
+      }
       wsHost?.onStatePush(state)
       diffCanvasOps(prev, state)
       // telemetry: a compact layout keyframe (~every 20s, not every push) — replay resyncs from these;
@@ -547,6 +557,7 @@ export function osRadialPhase(phase: 'down' | 'up' | 'cancel'): void {
 const canvasEcho = new Map<string, number>() // `${op}:${id}` -> armed-at
 const CANVAS_ECHO_TTL = 5000
 let canvasBulkAt = 0
+let lastRendererBulkAt = 0 // last bulk stamp seen on an os:state push (stage reorders)
 const CANVAS_BULK_WINDOW = 3000
 const CANVAS_MOVE_MIN = 8 // px; below this a "move" is layout jitter, not a gesture
 
@@ -964,7 +975,7 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
 /** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
 export function osSendHydrate(): void {
   if (!wsHost) return
-  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, workspace: wsHost.active() })
+  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, stageOrder: cached.stageOrder, workspace: wsHost.active() })
 }
 export function osRestoreChatHub(): { ok: boolean; id?: string; error?: string } {
   try {
