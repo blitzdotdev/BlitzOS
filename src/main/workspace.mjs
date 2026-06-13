@@ -1,7 +1,7 @@
 // Workspace serializer — the workspaces design (agent-os-workspaces.md), Phases 1–3.
 //
 // Maps the canvas <-> a workspace FOLDER, both ways:
-//   <dir>/.blitzos/workspace.json   ← the one layout file: { version, id, kind, camera, mode, stack, nodes[] }
+//   <dir>/.blitzos/workspace.json   ← the one layout file: { version, id, kind, camera, mode, stack, nodes[], groups[] }
 //   <dir>/<content files>           ← everything-is-a-file: note→.md, web→.weblink, srcdoc→.html
 //
 //   writeWorkspace()      project the live desktop (osState) onto the folder.
@@ -188,6 +188,96 @@ function viewFor(kind, s) {
     }
   }
   return v
+}
+
+function visualGroupsFromSurfaces(surfaces, nodeIds) {
+  const groups = []
+  const usedMembers = new Set()
+  for (const s of surfaces) {
+    if (!s || s.kind !== 'native' || s.component !== 'folder' || typeof s.id !== 'string' || !s.id) continue
+    const raw = Array.isArray(s.props?.members) ? s.props.members : []
+    const members = []
+    for (const id of raw) {
+      const sid = String(id || '')
+      if (!sid || !nodeIds.has(sid) || usedMembers.has(sid)) continue
+      members.push(sid)
+    }
+    if (members.length < 2) continue
+    for (const id of members) usedMembers.add(id)
+    groups.push({
+      id: s.id,
+      title: typeof s.title === 'string' && s.title ? s.title : 'Folder',
+      x: Math.round(Number(s.x) || 0),
+      y: Math.round(Number(s.y) || 0),
+      w: Math.round(Number(s.w) || 232),
+      h: Math.round(Number(s.h) || 248),
+      z: Math.round(Number(s.z) || 0),
+      members
+    })
+  }
+  return groups
+}
+
+function visualGroupsFromMeta(groups, nodeIds) {
+  const out = []
+  const usedMembers = new Set()
+  for (const g of Array.isArray(groups) ? groups : []) {
+    if (!g || typeof g.id !== 'string' || !g.id) continue
+    const members = []
+    for (const id of Array.isArray(g.members) ? g.members : []) {
+      const sid = String(id || '')
+      if (!sid || !nodeIds.has(sid) || usedMembers.has(sid)) continue
+      members.push(sid)
+    }
+    if (members.length < 2) continue
+    for (const id of members) usedMembers.add(id)
+    out.push({
+      id: g.id,
+      title: typeof g.title === 'string' && g.title ? g.title : 'Folder',
+      x: Math.round(Number(g.x) || 0),
+      y: Math.round(Number(g.y) || 0),
+      w: Math.max(40, Math.round(Number(g.w) || 232)),
+      h: Math.max(40, Math.round(Number(g.h) || 248)),
+      z: Math.round(Number(g.z) || 0),
+      members
+    })
+  }
+  return out
+}
+
+function applyVisualGroups(surfaces, groups) {
+  if (!Array.isArray(groups) || !groups.length || !Array.isArray(surfaces) || !surfaces.length) return surfaces
+  const surfaceIds = new Set(surfaces.map((s) => s && s.id).filter(Boolean))
+  const memberToGroup = new Map()
+  const folders = []
+  for (const g of groups) {
+    if (!g || typeof g.id !== 'string' || !g.id || surfaceIds.has(g.id)) continue
+    const members = []
+    for (const id of Array.isArray(g.members) ? g.members : []) {
+      const sid = String(id || '')
+      if (!sid || !surfaceIds.has(sid) || memberToGroup.has(sid)) continue
+      members.push(sid)
+    }
+    if (members.length < 2) continue
+    for (const id of members) memberToGroup.set(id, g.id)
+    folders.push({
+      id: g.id,
+      kind: 'native',
+      component: 'folder',
+      x: Math.round(Number(g.x) || 0),
+      y: Math.round(Number(g.y) || 0),
+      w: Math.max(40, Math.round(Number(g.w) || 232)),
+      h: Math.max(40, Math.round(Number(g.h) || 248)),
+      z: Math.round(Number(g.z) || 0),
+      title: typeof g.title === 'string' && g.title ? g.title : 'Folder',
+      props: { members, open: false }
+    })
+  }
+  if (!folders.length) return surfaces
+  return [
+    ...surfaces.map((s) => (memberToGroup.has(s.id) ? { ...s, groupId: memberToGroup.get(s.id), peek: false } : s)),
+    ...folders
+  ]
 }
 
 function atomicWrite(file, data) {
@@ -452,6 +542,8 @@ export function writeWorkspace(dir, osState) {
     })
     order.push({ id: s.id, z: s.z || 0 })
   }
+  const nodeIds = new Set(nodes.map((n) => n.id))
+  const groups = visualGroupsFromSurfaces(surfaces, nodeIds)
 
   // Runtime panels (chat / agent-activity) aren't folder nodes, but their content (the chat
   // transcript, the activity feed) must survive a backend RESTART — persist them to
@@ -490,6 +582,7 @@ export function writeWorkspace(dir, osState) {
     stageCount,
     stageOrder: safeStageOrder(osState?.stageOrder, stageCount),
     stack,
+    groups,
     nodes
   }
   writeMeta(metaFile, ws) // atomic + keeps workspace.json.bak
@@ -755,8 +848,9 @@ export function readWorkspace(dir) {
     seq++
     if (s) surfaces.push(s)
   }
+  const groupedSurfaces = applyVisualGroups(surfaces, ws.groups)
   const rsc = safeStageCount(ws.stageCount ?? ws.areaCount) // ?? areaCount: pre-rename folders
-  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', stageCount: rsc, stageOrder: safeStageOrder(ws.stageOrder, rsc) }
+  return { surfaces: groupedSurfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', stageCount: rsc, stageOrder: safeStageOrder(ws.stageOrder, rsc) }
 }
 
 // Which loose root files auto-surface as new nodes on reconcile, and as what kind. Conservative
@@ -1075,7 +1169,8 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   const stageOrder = safeStageOrder(ws.stageOrder, stageCount)
 
   if (changed) {
-    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stageCount, stageOrder, stack: surfaces.map((s) => s.id), nodes: alive }
+    const groups = visualGroupsFromMeta(ws.groups, new Set(alive.map((n) => n.id)))
+    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stageCount, stageOrder, stack: surfaces.map((s) => s.id), groups, nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
   return { surfaces, camera, mode, stageCount, stageOrder, changed, knownIds }
