@@ -798,6 +798,11 @@ arrange; edit the files and the canvas updates live. The workspace IS this folde
 Operate this workspace with plain file tools — no API needed:
 - new note → write a \`.md\`; open a site → write a \`.weblink\`; move/resize → edit the node in
   \`.blitzos/workspace.json\`; delete → remove the file.
+- before writing or replacing \`.html\`, \`.jsx\`, or \`.tsx\` widget source, self-review it against
+  the BlitzOS widget rules: sandbox/bridge use, interaction, tokens, scroll safety, copy, imports,
+  and \`needs\`. Fix basics before creating it on the user's canvas.
+- after creating or updating widget source, verify with \`list_state\`/\`get_surface\`; for JSX/TSX,
+  \`lastError\` must be absent before you treat the widget as done.
 - multiple web pages in the same research lane -> MUST be ONE tabbed \`.weblink\` with \`tabs\`; create
   separate \`.weblink\` files only for genuinely different lanes.
 - A node's content = its file. \`.blitzos/state/\` is BlitzOS runtime state — do not read or edit it.

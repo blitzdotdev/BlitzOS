@@ -278,6 +278,33 @@ the agent. Prefer \`window.blitz.tool('open_window', { url })\` for source rows,
 \`window.blitz.sendMessage(text)\` for chat actions, and \`window.blitz.setProps(next)\`
 for state the widget itself should remember.
 
+## Review before creating
+
+Before you call \`create_surface\`, \`place_widget\`, \`update_surface\`, or \`save_widget\`
+with new or changed widget source, read your own code once like a reviewer and fix the
+obvious mistakes. This is mandatory for authored, forked, and replacement widgets;
+trusted library widgets can be spawned as-is unless you edit them.
+
+- No secrets, tokens, localStorage/sessionStorage, parent/window-top access, external
+  scripts, external stylesheets, or network fetches outside the allowed bridge/registry.
+- Use \`window.blitz\` for OS actions, source-opening rows, chat actions, integration
+  data, and durable widget props. Declare the right \`needs\` when saving.
+- Keep interaction meaningful unless the widget is truly atomic. If a row has a source,
+  make it clickable with \`window.blitz.tool('open_window', { url })\`.
+- Use Blitz tokens and kit components. Do not paste a separate palette, default-blue
+  link styling, or a generic web-card layout. Do not add \`<blitz-titlebar>\` to a plain
+  widget.
+- Keep scroll safe: no \`overflow:hidden\`, fixed body \`height\`, or \`100vh\` body trap
+  unless you intentionally build one internal scroller with \`<blitz-list>\`.
+- Keep copy short and polished. No em dashes in human-readable widget text.
+- For JSX/TSX, confirm \`export default\`, registry-only imports, valid hook/state
+  usage, concrete chart heights, and concrete SVG/chart colors where CSS vars would not
+  resolve in attributes.
+
+After mounting or updating a JSX/TSX widget, check \`list_state\` or \`get_surface\` for
+\`lastError\`. If it appears, fix the source and update again before calling the widget
+done.
+
 ## Look like a WIDGET, not a web page (the design language)
 
 A widget on the stage is a macOS-desktop-widget peer, not a document. The OS already draws the

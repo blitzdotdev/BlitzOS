@@ -226,7 +226,7 @@ export function makeOsTools(ops) {
     {
       path: '/create_surface',
       description:
-        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html (+ lang:"jsx"|"tsx" for a React widget — see get_widget_authoring), native takes component+props. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.jsx`=React widget, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary agent, pass {agent:"<your id>"} so it opens in YOUR stage (do NOT also pass x/y unless repositioning within your stage).',
+        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html (+ lang:"jsx"|"tsx" for a React widget — see get_widget_authoring), native takes component+props. Before passing authored srcdoc/JSX/TSX source, self-review it against get_widget_authoring, fix obvious issues, then verify after mount. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.jsx`=React widget, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary agent, pass {agent:"<your id>"} so it opens in YOUR stage (do NOT also pass x/y unless repositioning within your stage).',
       input_schema: {
         type: 'object',
         required: ['kind'],
@@ -285,7 +285,7 @@ export function makeOsTools(ops) {
     {
       path: '/place_widget',
       description:
-        "Put a widget on the user's desktop (the STAGE — a slot grid that never overlaps and never reflows). You pick a SIZE + optional position HINT; the OS picks the exact free slot — there is NO x/y. size: s (1x1 square) | m (2x1 wide) | l (2x2 big) | xl (4x2 hero) | tall (2x3, chat-shaped) | xxl (4x4 full-focus — alone it IS the stage). near: 'top-left'|'top-right'|'bottom-left'|'bottom-right'|'center' or another surface's id (lands adjacent). Pass an EXISTING surface id to stage it, OR kind+html/component/props to create directly into the slot. Returns { id, slot } or { error:'stage_full', tiles, budget } — then evict (send_backstage) or queue. The stage is the user's ATTENTION: one widget that lets them act beats N raw windows.",
+        "Put a widget on the user's desktop (the STAGE — a slot grid that never overlaps and never reflows). You pick a SIZE + optional position HINT; the OS picks the exact free slot — there is NO x/y. size: s (1x1 square) | m (2x1 wide) | l (2x2 big) | xl (4x2 hero) | tall (2x3, chat-shaped) | xxl (4x4 full-focus — alone it IS the stage). near: 'top-left'|'top-right'|'bottom-left'|'bottom-right'|'center' or another surface's id (lands adjacent). Pass an EXISTING surface id to stage it, OR kind+html/component/props to create directly into the slot. Before creating from authored srcdoc/JSX/TSX source, self-review it against get_widget_authoring and fix obvious issues. Returns { id, slot } or { error:'stage_full', tiles, budget } — then evict (send_backstage) or queue. The stage is the user's ATTENTION: one widget that lets them act beats N raw windows.",
       input_schema: {
         type: 'object',
         properties: {
@@ -363,7 +363,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/update_surface',
-      description: 'Patch a surface in place: set html (srcdoc; pass lang too when switching a widget between html and jsx/tsx), props (native, e.g. note text), url, title, or geometry.',
+      description: 'Patch a surface in place: set html (srcdoc; pass lang too when switching a widget between html and jsx/tsx), props (native, e.g. note text), url, title, or geometry. Before replacing widget source, self-review against get_widget_authoring; after JSX/TSX updates, check list_state/get_surface for lastError and fix before calling it done.',
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, url: { type: 'string' }, title: { type: 'string' }, props: { type: 'object' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } } },
       handler: ({ body }) => {
         const { id, ...patch } = parse(body)
@@ -562,7 +562,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/save_widget',
-      description: 'Save a NEW or forked widget (sandboxed HTML, or React via lang:"jsx"/"tsx", using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST to learn the bridge, JSX/TSX rules, and interactivity-by-default rules; most saved widgets should expose a useful action, not just static content. Returns { name, version }.',
+      description: 'Save a NEW or forked widget (sandboxed HTML, or React via lang:"jsx"/"tsx", using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST, then self-review the source with its checklist and fix obvious issues before saving; most saved widgets should expose a useful action, not just static content. Returns { name, version }.',
       input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string', description: 'a-z 0-9 -, 2-49 chars' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, description: { type: 'string' }, needs: { type: 'array', items: { type: 'string' } }, props: { type: 'object' }, forkedFrom: { type: 'string' } } },
       handler: ({ body }) => {
         try {
@@ -579,7 +579,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/get_widget_authoring',
-      description: 'Get the widget-authoring guide: how to write HTML or JSX/TSX widgets that read integration data and expose useful actions via the sandboxed window.blitz bridge. Read this BEFORE authoring a new widget with save_widget.',
+      description: 'Get the widget-authoring guide: how to write HTML or JSX/TSX widgets that read integration data and expose useful actions via the sandboxed window.blitz bridge, including the required pre-create review checklist. Read this BEFORE authoring a new widget with save_widget.',
       handler: () => ({ markdown: widgetAuthoringMd() })
     },
     {
@@ -631,7 +631,7 @@ export function makeOsTools(ops) {
     {
       path: '/customize_widget',
       description:
-        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Agent messages may embed markdown images / inline <svg> / a ```blitz-ui {type,prompt,options} card. Read the current source with get_system_ui first. Args: {name, html, agent? (which agent's chat widget; default '0')}.",
+        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Preserve required chat behavior, read the current source with get_system_ui first, self-review the replacement against get_widget_authoring, then customize. Agent messages may embed markdown images / inline <svg> / a ```blitz-ui {type,prompt,options} card. Args: {name, html, agent? (which agent's chat widget; default '0')}.",
       input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' }, agent: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
