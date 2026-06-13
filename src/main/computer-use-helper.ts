@@ -18,10 +18,17 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 
-export type DragPerm = 'accessibility' | 'screen'
+export type DragPerm = 'accessibility' | 'screen' | 'fda'
 export interface HelperTcc {
   accessibility: boolean
   screenRecording: boolean
+  fullDisk: boolean
+}
+export interface ScanRequest {
+  node: string
+  script: string
+  args: string[]
+  env: Record<string, string>
 }
 
 // Where the SIGNED helper bundle ships: packaged → resourcesPath (electron-builder extraResources);
@@ -72,6 +79,7 @@ class HelperManager {
   private sockPath = join(tmpdir(), `blitzcu-${process.pid}.sock`)
   private buf = ''
   private pending = new Map<number, (m: Record<string, unknown>) => void>()
+  private scanProgress = new Map<number, (line: string) => void>()
   private nextId = 1
   private hello: Record<string, unknown> | null = null
   private wantQuit = false // distinguishes a deliberate relaunch from a crash
@@ -131,6 +139,9 @@ class HelperManager {
         const waiters = this.connectWaiters
         this.connectWaiters = []
         for (const w of waiters) w()
+      } else if (msg.type === 'scan_progress' && typeof msg.id === 'number') {
+        const h = this.scanProgress.get(msg.id)
+        if (h && typeof msg.line === 'string') h(msg.line)
       } else if (msg.type === 'reply' && typeof msg.id === 'number') {
         const cb = this.pending.get(msg.id)
         if (cb) {
@@ -221,8 +232,8 @@ class HelperManager {
   }
 
   private tccOf(m: Record<string, unknown> | null): HelperTcc {
-    const t = (m?.tcc as { accessibility?: boolean; screenRecording?: boolean }) || {}
-    return { accessibility: !!t.accessibility, screenRecording: !!t.screenRecording }
+    const t = (m?.tcc as { accessibility?: boolean; screenRecording?: boolean; fullDisk?: boolean }) || {}
+    return { accessibility: !!t.accessibility, screenRecording: !!t.screenRecording, fullDisk: !!t.fullDisk }
   }
 
   async status(): Promise<HelperTcc | null> {
@@ -232,11 +243,45 @@ class HelperManager {
     return this.tccOf(r)
   }
 
-  /** Ask the helper to request a grant — raises the system prompt AND lists the helper in the pane. */
+  /** Grant state for a specific permission (accessibility | screen | fda) from the helper. */
+  grantedFor(kind: DragPerm, tcc: HelperTcc | null): boolean {
+    if (!tcc) return false
+    return kind === 'accessibility' ? tcc.accessibility : kind === 'screen' ? tcc.screenRecording : tcc.fullDisk
+  }
+
+  /** Ask the helper to request a grant — raises the system prompt AND lists the helper in the pane.
+   *  FDA has NO request API (the user adds the app manually / by drag), so for fda we just return
+   *  the current status; the pre-board's drag tile + poll drive it. */
   async request(kind: DragPerm): Promise<HelperTcc | null> {
     if (!this.hello) return null
+    if (kind === 'fda') return this.status()
     const r = await this.rpc(kind === 'accessibility' ? 'request_accessibility' : 'request_screen')
     return r.error ? this.tccOf(this.hello) : this.tccOf(r)
+  }
+
+  /** Run the onboarding scan UNDER the helper (→ the helper's Full Disk Access, not BlitzOS's).
+   *  Forwards the scan's @progress stderr lines to onLine; resolves when the scan exits. Long-lived,
+   *  so it uses a dedicated wait, not the short rpc timeout. */
+  runScan(req: ScanRequest, onLine?: (line: string) => void, timeoutMs = 180_000): Promise<{ ok: boolean; exit?: number; error?: string }> {
+    const s = this.sock
+    if (!s || !this.hello) return Promise.resolve({ ok: false, error: 'helper not connected' })
+    const id = this.nextId++
+    if (onLine) this.scanProgress.set(id, onLine)
+    return new Promise((resolve) => {
+      const done = (r: { ok: boolean; exit?: number; error?: string }): void => {
+        clearTimeout(t)
+        this.pending.delete(id)
+        this.scanProgress.delete(id)
+        resolve(r)
+      }
+      const t = setTimeout(() => done({ ok: false, error: 'scan timeout' }), timeoutMs)
+      this.pending.set(id, (m) => done({ ok: !!m.ok, exit: typeof m.exit === 'number' ? m.exit : undefined, error: typeof m.error === 'string' ? m.error : undefined }))
+      try {
+        s.write(JSON.stringify({ id, cmd: 'scan', node: req.node, script: req.script, args: req.args, env: req.env }) + '\n')
+      } catch {
+        done({ ok: false, error: 'helper write failed' })
+      }
+    })
   }
 
   /** THE insight: quit + relaunch the HELPER so a just-granted permission takes effect, leaving

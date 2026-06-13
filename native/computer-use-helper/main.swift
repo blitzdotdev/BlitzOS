@@ -36,8 +36,27 @@ func requestScreen() {
     CGRequestScreenCaptureAccess()
 }
 
+// Full Disk Access: there is no API, so probe a TCC-only file (the canonical TCC.db). EPERM/EACCES
+// = denied. This reads THIS process's (the helper's) FDA — which is the whole point: FDA lands on
+// the helper, not BlitzOS, so granting it restarts only the helper.
+func fullDiskGranted() -> Bool {
+    let home = NSHomeDirectory()
+    let probes = [
+        "\(home)/Library/Application Support/com.apple.TCC/TCC.db",
+        "\(home)/Library/Safari/History.db"
+    ]
+    for p in probes {
+        if let fh = FileHandle(forReadingAtPath: p) {
+            _ = try? fh.read(upToCount: 1)
+            try? fh.close()
+            return true
+        }
+    }
+    return false
+}
+
 func tccStatus() -> [String: Any] {
-    ["accessibility": accessibilityGranted(), "screenRecording": screenRecordingGranted()]
+    ["accessibility": accessibilityGranted(), "screenRecording": screenRecordingGranted(), "fullDisk": fullDiskGranted()]
 }
 
 // PROOF the Screen-Recording grant works on the helper: capture the main display to a base64 PNG.
@@ -47,6 +66,42 @@ func screenshotBase64() -> String? {
     let rep = NSBitmapImageRep(cgImage: image)
     guard let png = rep.representation(using: .png, properties: [:]) else { return nil }
     return png.base64EncodedString()
+}
+
+// Run the onboarding scan AS A CHILD of the helper. The child's responsible process is the helper
+// (a LaunchServices app, its own TCC identity), so the scan reads Messages/Mail/Safari with the
+// HELPER's Full Disk Access — never BlitzOS's. BlitzOS reads the scan's OUTPUT files; the helper
+// only forwards the scan's stderr (@progress lines) so the boot bar stays live, then replies done.
+func runScan(_ conn: HelperConnection, id: Int, node: String, script: String, args: [String], env: [String: String]) {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: node)
+    proc.arguments = [script] + args
+    var e = ProcessInfo.processInfo.environment
+    for (k, v) in env { e[k] = v }
+    proc.environment = e
+    let errPipe = Pipe()
+    proc.standardError = errPipe
+    proc.standardOutput = FileHandle.nullDevice
+    var errBuf = Data()
+    errPipe.fileHandleForReading.readabilityHandler = { fh in
+        let d = fh.availableData
+        if d.isEmpty { return }
+        errBuf.append(d)
+        while let nl = errBuf.firstIndex(of: 0x0A) {
+            let line = String(data: errBuf.subdata(in: errBuf.startIndex..<nl), encoding: .utf8) ?? ""
+            errBuf.removeSubrange(errBuf.startIndex...nl)
+            conn.send(["type": "scan_progress", "id": id, "line": line])
+        }
+    }
+    proc.terminationHandler = { p in
+        errPipe.fileHandleForReading.readabilityHandler = nil
+        conn.send(["type": "reply", "id": id, "ok": p.terminationStatus == 0, "exit": Int(p.terminationStatus)])
+    }
+    do {
+        try proc.run()
+    } catch {
+        conn.send(["type": "reply", "id": id, "ok": false, "error": "scan spawn failed: \(error)"])
+    }
 }
 
 // ---- the connection to BlitzOS (a Unix domain socket BlitzOS owns; we connect on launch) ----
@@ -143,6 +198,13 @@ conn.run { msg in
         case "request_screen": requestScreen(); reply(["tcc": tccStatus()])
         case "screenshot":
             if let b64 = screenshotBase64() { reply(["ok": true, "png": b64]) } else { reply(["ok": false, "error": "capture failed (Screen Recording not granted?)"]) }
+        case "scan":
+            // Run the onboarding scan under the helper (→ helper's FDA). Reply comes async on exit.
+            let node = msg["node"] as? String ?? ""
+            let script = msg["script"] as? String ?? ""
+            let sargs = msg["args"] as? [String] ?? []
+            let senv = msg["env"] as? [String: String] ?? [:]
+            if node.isEmpty || script.isEmpty { reply(["ok": false, "error": "scan: node+script required"]) } else { runScan(conn, id: id, node: node, script: script, args: sargs, env: senv) }
         case "ping": reply(["pong": true])
         case "quit": reply(["ok": true]); NSApp.terminate(nil)
         default: reply(["ok": false, "error": "unknown cmd: \(cmd)"])

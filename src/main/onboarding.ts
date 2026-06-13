@@ -10,7 +10,7 @@
 // poll the TCC probe (the app's own FDA, which the scan child inherits), and on grant re-scan and
 // visibly deepen the board (real focus time, Messages/Mail cadence), then retire the card.
 //
-import { app, ipcMain, shell, systemPreferences, screen, BrowserWindow } from 'electron'
+import { app, ipcMain, shell, screen, BrowserWindow } from 'electron'
 import { execFileSync, execFile, spawn } from 'node:child_process'
 
 // Repo root in dev; app.asar.UNPACKED in a packaged build — the scan runs as a PLAIN-NODE child
@@ -146,19 +146,6 @@ const PERM_DEEPLINK: Record<DragPerm, string> = {
 }
 const PERM_LABEL: Record<DragPerm, string> = { fda: 'Full Disk Access', accessibility: 'Accessibility', screen: 'Screen Recording' }
 
-/** Live grant state per drag-permission — the exact getters Codex uses (the Accessibility query
- *  passes false so it never raises the system prompt; Screen Recording reads the media status). */
-function permGranted(kind: DragPerm): boolean {
-  if (process.platform !== 'darwin') return true
-  try {
-    if (kind === 'fda') return hasFDA()
-    if (kind === 'accessibility') return systemPreferences.isTrustedAccessibilityClient(false)
-    return systemPreferences.getMediaAccessStatus('screen') === 'granted'
-  } catch {
-    return false
-  }
-}
-
 // The floating drag-helper window: a frameless, non-activating, always-on-top panel pinned to the
 // bottom-center of the active display, floating OVER System Settings so the drag SOURCE (the app
 // icon) and the drag TARGET (the Settings list) are both visible. One window, reused per step.
@@ -210,39 +197,28 @@ const HELPER_NAME = 'BlitzOS Computer Use'
 
 async function openDragHelper(kind: DragPerm): Promise<void> {
   if (process.platform !== 'darwin') return
-  // The computer-use pair is held by the separate helper: launch it (LaunchServices → its OWN TCC
-  // identity), ask it to request the grant (raises the prompt AS the helper + lists it in the pane),
-  // and the tile drags the HELPER bundle. FDA stays on the BlitzOS app.
-  const wantHelper = kind === 'accessibility' || kind === 'screen'
+  // ALL THREE grants (FDA, Accessibility, Screen Recording) require the granted process to quit and
+  // reopen, so ALL THREE live on the separate helper — never on BlitzOS. Launch it (LaunchServices →
+  // its OWN TCC identity), ask it to request the grant (a11y/screen raise the prompt AS the helper +
+  // list it; FDA has no request API so this is a no-op status read), and the tile drags the HELPER.
   const avail = computerUseHelper().available()
-  let dragBundle = appBundlePath()
-  let dragName = fdaAppName()
+  let dragBundle: string | null = null
   let usingHelper = false
-  if (wantHelper) {
-    console.log(`[computer-use] step=${kind} available=${avail}`)
-    if (avail) {
-      const ok = await computerUseHelper().ensure()
-      console.log(`[computer-use] ensure → ${JSON.stringify(ok)}`)
-      if (ok.ok) {
-        await computerUseHelper().request(kind)
-        dragBundle = computerUseHelper().installedAppPath()
-        dragName = HELPER_NAME
-        usingHelper = true
-      }
-    }
-    // NEVER silently fall back to dragging the BlitzOS bundle for the computer-use pair — granting
-    // BlitzOS is exactly the quit-and-reopen we are avoiding. If the helper is unavailable, surface
-    // it loudly (the step still opens Settings, but the drag tile is suppressed so BlitzOS can't be
-    // added to the list by accident).
-    if (!usingHelper) {
-      console.error(`[computer-use] HELPER UNAVAILABLE for ${kind} (available=${avail}) — NOT dragging BlitzOS; build native/computer-use-helper`)
-      dragBundle = null
-      dragName = HELPER_NAME
+  console.log(`[computer-use] step=${kind} available=${avail}`)
+  if (avail) {
+    const ok = await computerUseHelper().ensure()
+    console.log(`[computer-use] ensure → ${JSON.stringify(ok)}`)
+    if (ok.ok) {
+      await computerUseHelper().request(kind)
+      dragBundle = computerUseHelper().installedAppPath()
+      usingHelper = true
     }
   }
+  // NEVER fall back to dragging BlitzOS — granting BlitzOS is exactly the quit-and-reopen we avoid.
+  if (!usingHelper) console.error(`[computer-use] HELPER UNAVAILABLE for ${kind} (available=${avail}) — drag suppressed; build native/computer-use-helper`)
   currentDragBundle = dragBundle
   void shell.openExternal(PERM_DEEPLINK[kind]) // navigate Settings to the exact pane
-  const html = dragHelperHtml(kind, dragBundle ? await appIconDataUrl(usingHelper ? dragBundle : undefined) : null, dragName)
+  const html = dragHelperHtml(kind, dragBundle ? await appIconDataUrl(dragBundle) : null, HELPER_NAME)
   if (!dragHelper || dragHelper.isDestroyed()) {
     dragHelper = new BrowserWindow({
       width: DRAG_HELPER_W,
@@ -279,7 +255,7 @@ async function openDragHelper(kind: DragPerm): Promise<void> {
   win.setBounds({ x: Math.round(disp.x + (disp.width - DRAG_HELPER_W) / 2), y: Math.round(disp.y + disp.height - DRAG_HELPER_H - 28), width: DRAG_HELPER_W, height: DRAG_HELPER_H })
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
   win.showInactive() // visible without taking focus from Settings
-  startDragPoll(kind, wantHelper)
+  startDragPoll(kind)
 }
 
 function closeDragHelper(): void {
@@ -291,32 +267,21 @@ function closeDragHelper(): void {
   dragHelper = null
 }
 
-// Poll the just-requested permission; the moment macOS reports it granted, tear down the helper and
-// tell the pre-board card to celebrate + advance. For the computer-use pair the grant lives on the
-// SEPARATE helper, so we read ITS status and, on grant, relaunch the HELPER (not BlitzOS) so the
-// grant takes effect — the whole point. Forced dev mode never auto-grants (terminal-inherited).
+// Poll the helper's grant for this permission; the moment it lands, relaunch the HELPER (so the grant
+// takes effect — the whole point), tear down the drag window, and tell the card to celebrate + advance.
+// The helper's status is REAL even in dev (separately signed + LaunchServices-launched → its own
+// identity, not inherited), so we poll it even in force mode: it stays ungranted until the user
+// genuinely grants it, so there is never a false auto-advance.
 let dragPolling = false
-function startDragPoll(kind: DragPerm, useHelper: boolean): void {
+function startDragPoll(kind: DragPerm): void {
   if (dragPollTimer) clearInterval(dragPollTimer)
   dragPollTimer = setInterval(async () => {
     if (dragPolling) return
     dragPolling = true
     try {
-      let granted: boolean
-      if (useHelper) {
-        // The HELPER's status is REAL even in dev (separately signed + LaunchServices-launched, so
-        // its identity is its own — not inherited like BlitzOS's). So poll it even in force mode:
-        // it stays ungranted until the user genuinely grants it, so there is no false auto-advance.
-        const tcc = await computerUseHelper().status()
-        granted = !!(kind === 'accessibility' ? tcc?.accessibility : tcc?.screenRecording)
-        if (!granted) return
-        await computerUseHelper().relaunchForGrant() // quit+reopen the HELPER so the grant applies
-      } else {
-        // FDA's status is BlitzOS's own — inherited-true in dev, so force mode must NOT auto-advance.
-        if (forcePreboard()) return
-        granted = permGranted(kind)
-        if (!granted) return
-      }
+      const tcc = await computerUseHelper().status()
+      if (!computerUseHelper().grantedFor(kind, tcc)) return
+      await computerUseHelper().relaunchForGrant() // quit+reopen the HELPER so the grant applies
       closeDragHelper()
       send('onboarding:permission-granted', { kind })
     } finally {
@@ -382,59 +347,77 @@ function onboardingDir(wsPath: string): string {
   return join(wsPath, '.blitzos', 'onboarding')
 }
 
-function runScan(wsPath: string): Promise<ScanJson | null> {
-  return new Promise((resolve) => {
-    const dir = onboardingDir(wsPath)
-    mkdirSync(dir, { recursive: true })
-    const script = join(appRoot(), 'scripts', 'onboarding-scan.mjs')
-    const jsonPath = join(dir, 'scan.json')
-    if (!existsSync(script)) {
-      progress({ phase: 'error', error: 'scan script not found' })
-      resolve(null)
-      return
+// Parse a scan stderr line for @progress events → the boot screen.
+function feedScanProgress(line: string): void {
+  if (line.startsWith('@progress ')) {
+    try {
+      progress(JSON.parse(line.slice(10)))
+    } catch {
+      /* malformed progress line — skip */
     }
-    // --prompt prepends the interviewer instructions, so context.md = the brain's full briefing
-    // (rules + scan) in one read. Missing prompt file (packaged build) just degrades to scan-only.
-    const promptMd = join(appRoot(), 'src', 'main', 'blitzos-onboarding.md')
-    const child = spawn(
-      process.execPath,
-      [script, '--quiet', '--progress', '--out', join(dir, 'context.md'), '--json', jsonPath, ...(existsSync(promptMd) ? ['--prompt', promptMd] : [])],
-      {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-        stdio: ['ignore', 'ignore', 'pipe']
-      }
-    )
+  }
+}
+
+async function runScan(wsPath: string): Promise<ScanJson | null> {
+  const dir = onboardingDir(wsPath)
+  mkdirSync(dir, { recursive: true })
+  const script = join(appRoot(), 'scripts', 'onboarding-scan.mjs')
+  const jsonPath = join(dir, 'scan.json')
+  if (!existsSync(script)) {
+    progress({ phase: 'error', error: 'scan script not found' })
+    return null
+  }
+  // --prompt prepends the interviewer instructions, so context.md = the brain's full briefing
+  // (rules + scan) in one read. Missing prompt file (packaged build) just degrades to scan-only.
+  const promptMd = join(appRoot(), 'src', 'main', 'blitzos-onboarding.md')
+  const args = ['--quiet', '--progress', '--out', join(dir, 'context.md'), '--json', jsonPath, ...(existsSync(promptMd) ? ['--prompt', promptMd] : [])]
+  const readOut = (ok: boolean): ScanJson | null => {
+    if (!ok) {
+      progress({ phase: 'error', error: 'scan failed' })
+      return null
+    }
+    try {
+      return JSON.parse(readFileSync(jsonPath, 'utf8')) as ScanJson
+    } catch {
+      progress({ phase: 'error', error: 'scan output unreadable' })
+      return null
+    }
+  }
+
+  // PREFERRED: run the scan UNDER the helper, so it reads Messages/Mail/Safari with the HELPER's
+  // Full Disk Access — BlitzOS itself never needs FDA (the grant that forces a quit-and-reopen). The
+  // helper spawns process.execPath (Electron-as-node) as ITS child, so the responsible process is the
+  // helper. BlitzOS reads only the scan's output files.
+  if (computerUseHelper().available()) {
+    const ok = await computerUseHelper().ensure()
+    if (ok.ok) {
+      const r = await computerUseHelper().runScan(
+        { node: process.execPath, script, args, env: { ELECTRON_RUN_AS_NODE: '1' } },
+        (line) => feedScanProgress(line)
+      )
+      if (r.ok) return readOut(true)
+      // Helper ran but the scan failed (e.g. FDA not granted on the helper yet) → fall through to a
+      // direct attempt (covers a dev machine where BlitzOS itself already has inherited FDA).
+      console.error(`[computer-use] helper scan failed (${r.error || 'exit ' + r.exit}); trying direct`)
+    }
+  }
+
+  // FALLBACK: spawn directly (BlitzOS's own FDA — dev-inherited, or non-macOS). On a packaged build
+  // with FDA on the helper this would hit the no-permission scan branch; the helper path above is the
+  // real one. Kept so dev + non-mac + helper-absent still produce a board.
+  return await new Promise<ScanJson | null>((resolve) => {
+    const child = spawn(process.execPath, [script, ...args], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'ignore', 'pipe'] })
     let buf = ''
     child.stderr.on('data', (c: Buffer) => {
       buf += c.toString()
       let nl
       while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl)
+        feedScanProgress(buf.slice(0, nl))
         buf = buf.slice(nl + 1)
-        if (line.startsWith('@progress ')) {
-          try {
-            progress(JSON.parse(line.slice(10)))
-          } catch {
-            /* malformed progress line — skip */
-          }
-        }
       }
     })
-    const finish = (ok: boolean): void => {
-      if (!ok) {
-        progress({ phase: 'error', error: 'scan failed' })
-        resolve(null)
-        return
-      }
-      try {
-        resolve(JSON.parse(readFileSync(jsonPath, 'utf8')) as ScanJson)
-      } catch {
-        progress({ phase: 'error', error: 'scan output unreadable' })
-        resolve(null)
-      }
-    }
-    child.on('error', () => finish(false))
-    child.on('exit', (code) => finish(code === 0))
+    child.on('error', () => resolve(readOut(false)))
+    child.on('exit', (code) => resolve(readOut(code === 0)))
   })
 }
 
@@ -680,6 +663,16 @@ function startInterviewPhase(wsPath: string): void {
 }
 
 // ---- FDA unlock: poll → rescan → deepen --------------------------------------------------------
+// FDA now lives on the HELPER (it forces a quit-and-reopen, so it can't sit on BlitzOS). The effective
+// FDA = the helper's fullDisk when the helper is available, else BlitzOS's own (dev-inherited / the
+// legacy path). The scan reads files through whichever holds it.
+async function fdaGrantedEffective(): Promise<boolean> {
+  if (computerUseHelper().available()) {
+    const ok = await computerUseHelper().ensure()
+    if (ok.ok) return !!(await computerUseHelper().status())?.fullDisk
+  }
+  return hasFDA()
+}
 function startFdaPoll(wsPath: string): void {
   if (pollTimer) return
   pollTimer = setInterval(() => {
@@ -688,9 +681,11 @@ function startFdaPoll(wsPath: string): void {
       stopFdaPoll()
       return
     }
-    if (!hasFDA()) return
-    stopFdaPoll()
-    void deepen(wsPath)
+    void fdaGrantedEffective().then((granted) => {
+      if (!granted || !pollTimer) return
+      stopFdaPoll()
+      void deepen(wsPath)
+    })
   }, POLL_MS)
 }
 function stopFdaPoll(): void {
@@ -745,13 +740,14 @@ async function start(): Promise<{ ok: boolean; cached?: boolean }> {
       // Board already seeded (a restart mid-onboarding, or dev re-run): don't re-scan or duplicate —
       // surfaces are file-backed and just rehydrated with the workspace. Re-ensure the unlock card
       // (native = runtime-only, it does not persist) and the poll, then hand straight to the canvas.
-      if (!hasFDA() && !prior.unlockDismissed) {
+      const fdaNow = await fdaGrantedEffective()
+      if (!fdaNow && !prior.unlockDismissed) {
         prior.ids.unlock = spawnUnlockCard()
         writeBoard(wsPath, prior)
         startFdaPoll(wsPath)
       }
       osGoToPrimary()
-      progress({ phase: 'board-ready', cached: true, fda: hasFDA() })
+      progress({ phase: 'board-ready', cached: true, fda: fdaNow })
       startInterviewPhase(wsPath) // resume a half-finished interview (or no-op when done)
       return { ok: true, cached: true }
     }
@@ -769,7 +765,7 @@ async function start(): Promise<{ ok: boolean; cached?: boolean }> {
 export function registerOnboarding(getWindow: () => BrowserWindow | null): void {
   mainWindow = getWindow
   ipcMain.handle('onboarding:start', () => start())
-  ipcMain.handle('onboarding:fda-status', () => ({ fda: hasFDA(), appName: fdaAppName() }))
+  ipcMain.handle('onboarding:fda-status', async () => ({ fda: await fdaGrantedEffective(), appName: fdaAppName() }))
   ipcMain.handle('onboarding:open-fda-settings', () => {
     void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')
     return { ok: true, appName: fdaAppName() }
@@ -796,11 +792,10 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     // step stays up for visual testing; the drag + open-settings actions are still real.
     forced: forcePreboard(),
     steps: forcePreboard() ? {} : readPreboard().steps,
-    fda: forcePreboard() ? false : permGranted('fda'),
-    // accessibility/screen live on the SEPARATE helper, which isn't running at query time (and we
-    // don't launch it before the user opts in). Report false; the settled-steps marker skips a
-    // completed grant on later runs, and if granted-but-unmarked, the step's live poll catches it
-    // the instant the helper launches and auto-advances.
+    // All three (fda, accessibility, screen) live on the HELPER. We don't query it at state time;
+    // report false and let the settled-steps marker skip a completed grant on later runs, while the
+    // step's live poll auto-advances if it's granted-but-unmarked the instant the helper is up.
+    fda: false,
     accessibility: false,
     screen: false,
     appName: fdaAppName(),
@@ -822,6 +817,7 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     // pair currentDragBundle is the HELPER (or null if unavailable); falling back to BlitzOS here
     // is precisely what put Electron in the list and caused the quit-and-reopen.
     const bundle = currentDragBundle
+    console.log(`[computer-use] DRAG fired → file=${bundle ?? '(none — suppressed)'}`)
     if (!bundle) return
     void app.getFileIcon(bundle, { size: 'normal' }).then((icon) => {
       try {
@@ -834,6 +830,7 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
   // Open a drag-list permission step (FDA / Accessibility / Screen Recording): navigate Settings to
   // the pane + raise the floating drag-helper over it + poll until granted (→ permission-granted).
   ipcMain.handle('onboarding:open-permission-drag', async (_e, kind: DragPerm) => {
+    console.log(`[computer-use] open-permission-drag kind=${kind}`)
     if (kind !== 'fda' && kind !== 'accessibility' && kind !== 'screen') return { ok: false }
     await openDragHelper(kind)
     return { ok: true, appName: fdaAppName() }

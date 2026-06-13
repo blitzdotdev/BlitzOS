@@ -5,7 +5,7 @@
 //   node scripts/test-computer-use-helper.mjs   (run native/computer-use-helper/build.sh first)
 import net from 'node:net'
 import { spawn } from 'node:child_process'
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
@@ -31,6 +31,7 @@ const check = (name, ok, detail = '') => {
 }
 
 const pending = new Map()
+const scanProgressHandlers = []
 let nextId = 1
 let helper = null
 let buf = ''
@@ -60,6 +61,7 @@ const server = net.createServer((sock) => {
         continue
       }
       if (msg.type === 'hello') helloResolve(msg)
+      else if (msg.type === 'scan_progress') scanProgressHandlers.forEach((h) => h(msg))
       else if (msg.type === 'reply' && pending.has(msg.id)) {
         pending.get(msg.id)(msg)
         pending.delete(msg.id)
@@ -84,7 +86,41 @@ async function drive(sock, helloPromise) {
   check('ping → pong', pong?.pong === true)
 
   const status = await rpc(sock, 'tcc_status')
-  check('tcc_status shape', status?.tcc && typeof status.tcc.accessibility === 'boolean' && typeof status.tcc.screenRecording === 'boolean')
+  check(
+    'tcc_status shape (a11y/screen/fullDisk)',
+    status?.tcc && typeof status.tcc.accessibility === 'boolean' && typeof status.tcc.screenRecording === 'boolean' && typeof status.tcc.fullDisk === 'boolean'
+  )
+
+  // scan: the helper runs a child process (here a fake scan), forwards @progress stderr, reports done.
+  const fakeScan = join(tmpdir(), `blitz-cu-fakescan-${process.pid}.mjs`)
+  const fakeOut = join(tmpdir(), `blitz-cu-fakescan-out-${process.pid}.json`)
+  try {
+    rmSync(fakeOut, { force: true })
+  } catch {
+    /* fresh */
+  }
+  writeFileSync(
+    fakeScan,
+    ["import {writeFileSync} from 'node:fs';", "process.stderr.write('@progress {\"phase\":\"begin\"}\\n');", `writeFileSync(${JSON.stringify(fakeOut)}, '{"ok":true}');`, 'process.exit(0);'].join('\n')
+  )
+  let scanProgress = 0
+  const onProg = (m) => {
+    if (m?.type === 'scan_progress') scanProgress++
+  }
+  scanProgressHandlers.push(onProg)
+  const scan = await new Promise((resolve) => {
+    const id = nextId++
+    pending.set(id, resolve)
+    sock.write(JSON.stringify({ id, cmd: 'scan', node: process.execPath, script: fakeScan, args: [], env: {} }) + '\n')
+  })
+  let scanOut = null
+  try {
+    scanOut = readFileSync(fakeOut, 'utf8')
+  } catch {
+    /* missing */
+  }
+  check('scan ran as helper child (exit 0 + output written)', scan?.ok === true && scanOut === '{"ok":true}', `exit=${scan?.exit} out=${scanOut}`)
+  check('scan forwarded @progress', scanProgress >= 1)
 
   const shot = await rpc(sock, 'screenshot')
   // Headless / no grant → ok:false is acceptable; granted → a base64 PNG. Either is a valid reply.
