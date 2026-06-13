@@ -51,7 +51,11 @@ const WINDOW_RADIUS = typeof document !== 'undefined' ? parseFloat(getComputedSt
 export function holesPath(w: number, h: number, holes: Array<{ x1: number; y1: number; x2: number; y2: number }>, radius = 0): HolesClip {
   if (!holes.length) return undefined
   if (holes.some((r) => r.x1 <= 0 && r.y1 <= 0 && r.x2 >= w && r.y2 >= h)) return 'HIDE'
-  const PAD = 8
+  // PAD must exceed the clipped element's box-shadow extent. The window shadow is --shadow-md
+  // (0 8px 24px → ~32px reach), and clip-path clips the shadow too: a small PAD HARD-CUTS the
+  // shadow into a visible outset hairline around every clipped card (the "widget outline" artifact
+  // over a browser page). 40 puts the cut where the shadow has fallen to ~0, so it dies smoothly.
+  const PAD = 40
   const subs = holes
     .map((r) => {
       const rad = Math.max(0, Math.min(radius, (r.x2 - r.x1) / 2, (r.y2 - r.y1) / 2))
@@ -92,6 +96,12 @@ function pageHolesClip(me: Surface, all: Surface[]): HolesClip {
   for (const w of all) {
     if (w.id === me.id || w.kind !== 'web' || w.minimized || (w.groupId && !w.peek)) continue
     if (effectiveZ(w) <= meZ) continue
+    // If a higher-z browser's FULL window rect (chrome + page) entirely covers `me`, `me` is never
+    // visible — hide it outright. The hole below uses the page rect (chrome inset), so a widget
+    // straddling the chrome/page line would NOT trigger holesPath's HIDE and would get a degenerate
+    // partial clip that ghosts its outline onto the page (the "widget outline" artifact). The full
+    // window rect is the correct cover test (chrome is opaque DOM over the top; the page hole the rest).
+    if (w.x <= me.x && w.y <= me.y && w.x + w.w >= me.x + me.w && w.y + w.h >= me.y + me.h) return 'HIDE'
     const inset = slotOf(w) ? WEB_CHROME_H_SLOTTED : WEB_CHROME_H
     const x1 = w.x - me.x
     const y1 = w.y + inset - me.y
