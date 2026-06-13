@@ -217,16 +217,25 @@ class HelperManager {
     })
   }
 
-  /** Install (if needed) + launch + wait for the helper to connect. Idempotent. */
-  async ensure(): Promise<{ ok: boolean; error?: string }> {
-    if (process.platform !== 'darwin') return { ok: false, error: 'macOS only' }
-    if (this.hello) return { ok: true }
-    this.ensureServer()
-    if (!(await this.install())) return { ok: false, error: 'helper bundle not found' }
-    this.supervise = true
-    if (!(await this.launch())) return { ok: false, error: 'launch failed' }
-    const connected = await this.waitForConnect()
-    return connected ? { ok: true } : { ok: false, error: 'helper did not connect' }
+  /** Install (if needed) + launch + wait for the helper to connect. Idempotent, and SINGLE-FLIGHT:
+   *  concurrent callers (e.g. the prewarm + a step) share one in-flight ensure, so two installs never
+   *  race on the same dst (one rm -rf while the other cp -R, which produced a spurious "not found"). */
+  ensure(): Promise<{ ok: boolean; error?: string }> {
+    if (process.platform !== 'darwin') return Promise.resolve({ ok: false, error: 'macOS only' })
+    if (this.hello) return Promise.resolve({ ok: true })
+    if (this.ensuring) return this.ensuring
+    this.ensuring = (async () => {
+      this.ensureServer()
+      if (!(await this.install())) return { ok: false, error: 'helper bundle not found' }
+      this.supervise = true
+      if (!(await this.launch())) return { ok: false, error: 'launch failed' }
+      const connected = await this.waitForConnect()
+      return connected ? { ok: true } : { ok: false, error: 'helper did not connect' }
+    })()
+    void this.ensuring.finally(() => {
+      this.ensuring = null
+    })
+    return this.ensuring
   }
 
   available(): boolean {
