@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useDesktop } from '../store'
+import { useDesktop, surfaceStage } from '../store'
 import { KindIcon } from './Icons'
 import { SurfaceLauncherButton, type SurfaceLauncherKind } from './SurfaceLauncherButton'
 
@@ -19,9 +19,20 @@ type TooltipState = {
   closing?: boolean
 }
 
-/** Left dock: an icon per open surface. Click to bring it forward at real size. */
+/** Left dock: an icon per surface ATTACHED TO THE CURRENT STAGE (the per-stage dock,
+ *  plans/blitzos-stage-splay-lattice.md) — switching stages refreshes it to that stage's set.
+ *  Membership is the SAME shared rule the splay drag moves by: slotStage, else the owning agent's
+ *  stage (chat), else the lattice cell holding the surface's center (free/minimized/parked alike). */
 export function Sidebar({ onRequestRestore, onCreateSurface, animating = {} }: Props): JSX.Element {
-  const surfaces = useDesktop((s) => s.surfaces)
+  const allSurfaces = useDesktop((s) => s.surfaces)
+  const currentStage = useDesktop((s) => s.currentStage)
+  const stageOrder = useDesktop((s) => s.stageOrder)
+  const stageCount = useDesktop((s) => s.stageCount)
+  const viewport = useDesktop((s) => s.viewport)
+  const surfaces = useMemo(
+    () => allSurfaces.filter((s) => surfaceStage(s, viewport, stageOrder, stageCount) === currentStage),
+    [allSurfaces, viewport, stageOrder, stageCount, currentStage]
+  )
   const focusAndZoom = useDesktop((s) => s.focusAndZoom)
   const closeSurface = useDesktop((s) => s.closeSurface)
   const tooltipCloseTimer = useRef<number | null>(null)

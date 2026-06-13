@@ -68,6 +68,24 @@ function safeUrl(u) {
   return /^https?:\/\//i.test(s) ? s : '' // never hydrate javascript:/data:/file: into a web surface
 }
 // Number of workspace stages (#45). Default 1 for old folders / missing / invalid (NaN/0/negative).
+/** A valid stageOrder is a permutation of 0..count-1; repair = valid prefix + missing ids ascending
+ *  (plans/blitzos-stage-splay-lattice.md — the splay lattice reading order, user-curated). */
+function safeStageOrder(order, count) {
+  const out = []
+  const seen = new Set()
+  if (Array.isArray(order)) {
+    for (const v of order) {
+      const n = Number(v)
+      if (Number.isInteger(n) && n >= 0 && n < count && !seen.has(n)) {
+        seen.add(n)
+        out.push(n)
+      }
+    }
+  }
+  for (let i = 0; i < count; i++) if (!seen.has(i)) out.push(i)
+  return out
+}
+
 function safeStageCount(n) {
   return Number.isInteger(n) && n > 0 ? n : 1
 }
@@ -470,6 +488,7 @@ export function writeWorkspace(dir, osState) {
     camera,
     mode: osState?.mode === 'desktop' ? 'desktop' : 'canvas',
     stageCount,
+    stageOrder: safeStageOrder(osState?.stageOrder, stageCount),
     stack,
     nodes
   }
@@ -736,7 +755,8 @@ export function readWorkspace(dir) {
     seq++
     if (s) surfaces.push(s)
   }
-  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', stageCount: safeStageCount(ws.stageCount ?? ws.areaCount) } // ?? areaCount: pre-rename folders
+  const rsc = safeStageCount(ws.stageCount ?? ws.areaCount) // ?? areaCount: pre-rename folders
+  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', stageCount: rsc, stageOrder: safeStageOrder(ws.stageOrder, rsc) }
 }
 
 // Which loose root files auto-surface as new nodes on reconcile, and as what kind. Conservative
@@ -1045,12 +1065,13 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   const camera = safeCamera(ws.camera)
   const mode = ws.mode === 'desktop' ? 'desktop' : 'canvas'
   const stageCount = safeStageCount(ws.stageCount ?? ws.areaCount) // ?? areaCount: pre-rename folders; preserve across reconcile
+  const stageOrder = safeStageOrder(ws.stageOrder, stageCount)
 
   if (changed) {
-    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stageCount, stack: surfaces.map((s) => s.id), nodes: alive }
+    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stageCount, stageOrder, stack: surfaces.map((s) => s.id), nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
-  return { surfaces, camera, mode, stageCount, changed, knownIds }
+  return { surfaces, camera, mode, stageCount, stageOrder, changed, knownIds }
 }
 
 // ---- cross-workspace surface addressing (item 4): a surface id lives in exactly one workspace folder.

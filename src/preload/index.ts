@@ -51,6 +51,10 @@ export interface OsState {
   /** #45 workspace stages: count of tiled desktops (persisted), the active one, and its world rect (so
    *  the agent places surfaces in the stage the human is on). currentStage/currentStageRect are live-only. */
   stageCount?: number
+  /** Reading order of stages on the splay lattice (stageOrder[orderIndex] = stage id); persisted. */
+  stageOrder?: number[]
+  /** Last bulk layout transaction (stage reorder) — perception treats the push as ONE gesture. */
+  bulkAt?: number
   currentStage?: number
   currentStageRect?: { x: number; y: number; w: number; h: number }
   /** Which workspace this state belongs to — lets the backend drop a stale push after a switch. */

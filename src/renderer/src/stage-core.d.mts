@@ -35,7 +35,7 @@ export const SIZE_ORDER: string[]
 
 export function spanOf(size: unknown): { c: number; r: number }
 export function sizePx(size: unknown): { w: number; h: number }
-export function latticeFor(vp: { w: number; h: number } | null | undefined, stage?: number): Lattice
+export function latticeFor(vp: { w: number; h: number } | null | undefined, stage?: number, order?: number[] | null, count?: number): Lattice
 export function slotRect(lat: Lattice, col: number, row: number, size: string): Rect
 export function cardRect(lat: Lattice, col: number, row: number, size: string): Rect
 export function slotOf(s: unknown): Slot | null
@@ -45,4 +45,4 @@ export function findSlot(surfaces: SlottedLike[], lat: Lattice, size: string, ne
 export function nearestFreeSlot(surfaces: SlottedLike[], lat: Lattice, size: string, wx: number, wy: number, stage?: number, excludeId?: string | null): SlotPos | null
 export function sizeForDims(w: number, h: number): string
 export function stageSummary(surfaces: SlottedLike[], vp: { w: number; h: number } | null | undefined, stage?: number): Record<string, unknown>
-export function flowFiles(files: Array<{ id: string; w?: number; h?: number }>, surfaces: SlottedLike[], vp: { w: number; h: number } | null | undefined, stage?: number, avoid?: Rect | null): Array<{ id: string; x: number; y: number }>
+export function flowFiles(files: Array<{ id: string; w?: number; h?: number }>, surfaces: SlottedLike[], vp: { w: number; h: number } | null | undefined, stage?: number, avoid?: Rect | null, order?: number[] | null, count?: number): Array<{ id: string; x: number; y: number }>

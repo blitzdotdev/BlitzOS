@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FocusEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent } from 'react'
 import { createPortal, flushSync } from 'react-dom'
-import { useDesktop, viewTransform, stageRect, stageForAgent, stageCenterX, nextTerminalName, latticeFor, nearestFreeSlot, type CreateSurfaceInput } from './store'
+import { useDesktop, viewTransform, orderedStageRect, addStageRect, stageForAgent, nextTerminalName, latticeFor, nearestFreeSlot, type CreateSurfaceInput } from './store'
 import { applyTheme, saveTheme, type Theme } from './theme'
 import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface, CanvasTransform } from './types'
@@ -302,8 +302,8 @@ function ensureNotepad(): void {
   if (st.surfaces.some((s) => s.kind === 'native' && s.component === 'note' && s.title === 'Notepad')) return
   // Born SLOTTED (an s tile near the stage's bottom-right), never a free float over the middle of
   // the desktop; a packed lattice parks it below the stage frame instead.
-  const lat = latticeFor(st.viewport, st.currentStage)
-  const r = stageRect(st.currentStage, st.viewport)
+  const lat = latticeFor(st.viewport, st.currentStage, st.stageOrder, st.stageCount)
+  const r = orderedStageRect(st.currentStage, st.viewport, st.stageOrder, st.stageCount)
   const slot = nearestFreeSlot(st.surfaces, lat, 's', r.x + r.w - 90, r.y + r.h - 90, st.currentStage)
   st.createSurface({
     kind: 'native',
@@ -647,12 +647,12 @@ export default function App(): JSX.Element {
     st.setDragTarget(null)
     const next = st.mode === 'desktop' ? 'canvas' : 'desktop'
     if (next === 'canvas') {
-      const target = viewTransform('canvas', st.viewport, st.currentStage, st.stageCount)
+      const target = viewTransform('canvas', st.viewport, st.currentStage, st.stageCount, st.stageOrder)
       st.setMode('canvas')
       animateTransform(target)
     } else {
       st.setMode('desktop')
-      animateTransform(viewTransform('desktop', st.viewport, st.currentStage, st.stageCount))
+      animateTransform(viewTransform('desktop', st.viewport, st.currentStage, st.stageCount, st.stageOrder))
     }
   }
 
@@ -662,7 +662,7 @@ export default function App(): JSX.Element {
     st.setDragTarget(null)
     st.clearActiveSurface()
     const now = useDesktop.getState()
-    const target = viewTransform('canvas', now.viewport, now.currentStage, now.stageCount)
+    const target = viewTransform('canvas', now.viewport, now.currentStage, now.stageCount, now.stageOrder)
     now.setMode('canvas')
     now.setControlTransform(target)
     animateTransform(target)
@@ -675,7 +675,7 @@ export default function App(): JSX.Element {
     const next = Math.max(0, Math.min(st.stageCount - 1, st.currentStage + delta))
     if (next === st.currentStage) return
     st.setCurrentStage(next)
-    if (st.mode === 'desktop') animateTransform(viewTransform('desktop', st.viewport, next, st.stageCount))
+    if (st.mode === 'desktop') animateTransform(viewTransform('desktop', st.viewport, next, st.stageCount, st.stageOrder))
   }
   function enterStage(stage: number): void {
     const st = useDesktop.getState()
@@ -684,7 +684,7 @@ export default function App(): JSX.Element {
     st.setCurrentStage(next)
     if (st.mode !== 'desktop') st.setMode('desktop')
     const now = useDesktop.getState()
-    animateTransform(viewTransform('desktop', now.viewport, next, now.stageCount))
+    animateTransform(viewTransform('desktop', now.viewport, next, now.stageCount, now.stageOrder))
   }
 
   function addAreaFromOverview(): void {
@@ -694,14 +694,14 @@ export default function App(): JSX.Element {
     const now = useDesktop.getState()
     if (now.mode !== 'desktop') now.setMode('desktop')
     const latest = useDesktop.getState()
-    animateTransform(viewTransform('desktop', latest.viewport, latest.currentStage, latest.stageCount))
+    animateTransform(viewTransform('desktop', latest.viewport, latest.currentStage, latest.stageCount, latest.stageOrder))
   }
 
   // Add a new (empty) stage to the right and go to it (re-fits the bird's-eye in control mode).
   function addStageAndGo(): void {
     useDesktop.getState().addArea()
     const now = useDesktop.getState()
-    animateTransform(viewTransform(now.mode, now.viewport, now.currentStage, now.stageCount))
+    animateTransform(viewTransform(now.mode, now.viewport, now.currentStage, now.stageCount, now.stageOrder))
   }
 
   useEffect(() => {
@@ -725,7 +725,7 @@ export default function App(): JSX.Element {
       const st = useDesktop.getState()
       const fromVp = st.viewport
       const toVp = { w: window.innerWidth, h: window.innerHeight }
-      const wasHome = viewportReady.current && isHomeTransform(st.transform, viewTransform(st.mode, fromVp, st.currentStage, st.stageCount))
+      const wasHome = viewportReady.current && isHomeTransform(st.transform, viewTransform(st.mode, fromVp, st.currentStage, st.stageCount, st.stageOrder))
       const previous = st.transform
       st.setViewport(toVp.w, toVp.h)
       const next = useDesktop.getState()
@@ -1060,7 +1060,7 @@ export default function App(): JSX.Element {
         const surfs = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
         // Control mode is a transient view toggle, never persisted — always boot the normal desktop.
-        st.hydrate(surfs, cam, 'desktop', Number(a.stageCount) || 1)
+        st.hydrate(surfs, cam, 'desktop', Number(a.stageCount) || 1, Array.isArray(a.stageOrder) ? (a.stageOrder as number[]) : undefined)
         ensureNotepad()
         hydrated.current = true
         if (typeof a.workspace === 'string') {
@@ -1073,7 +1073,7 @@ export default function App(): JSX.Element {
         // reconnect's hydrate still can't clobber the new board.
         const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        st.hydrate(sf, cm, 'desktop', Number(a.stageCount) || 1)
+        st.hydrate(sf, cm, 'desktop', Number(a.stageCount) || 1, Array.isArray(a.stageOrder) ? (a.stageOrder as number[]) : undefined)
         ensureNotepad()
         hydrated.current = true // a switch is also a valid first hydrate — don't depend on a prior 'hydrate'
         if (typeof a.workspace === 'string') {
@@ -1128,7 +1128,7 @@ export default function App(): JSX.Element {
           // stage tags it for createSurface's clamp (else it clamps to the CURRENT stage); x sets the precise
           // left-of-center spot in stage N using the real viewport.
           surf.stage = chatStage
-          surf.x = Math.round(stageCenterX(chatStage, useDesktop.getState().viewport) - 700)
+          surf.x = Math.round((() => { const g = useDesktop.getState(); const sr = orderedStageRect(chatStage, g.viewport, g.stageOrder, Math.max(g.stageCount, chatStage + 1)); return sr.x + sr.w / 2 })() - 700)
         }
         const shouldAnimateChat = !!(chatSource && surf?.role === 'chat' && !prefersReducedMotion())
         let createdId = ''
@@ -1150,7 +1150,7 @@ export default function App(): JSX.Element {
           if (a.focus) {
             const now = useDesktop.getState()
             now.setCurrentStage(chatStage)
-            animateTransform(viewTransform(now.mode, now.viewport, chatStage, now.stageCount))
+            animateTransform(viewTransform(now.mode, now.viewport, chatStage, now.stageCount, now.stageOrder))
           }
         } else if (a.focus && createdId) {
           useDesktop.getState().focusAndZoom(createdId)
@@ -1441,7 +1441,7 @@ export default function App(): JSX.Element {
       // correctly on a different screen size — view.cx/cy are exactly that world point).
       // #45: also push the stage count + which stage is active + the CURRENT stage's world rect, so the
       // agent (list_state) places surfaces in the stage the human is looking at, not blindly at origin.
-      const currentStageRect = stageRect(st.currentStage, st.viewport)
+      const currentStageRect = orderedStageRect(st.currentStage, st.viewport, st.stageOrder, st.stageCount)
       window.agentOS?.sendState({
         workspace: activeWsRef.current ?? undefined,
         surfaces,
@@ -1450,6 +1450,8 @@ export default function App(): JSX.Element {
         mode: st.mode,
         camera: { x: view.cx, y: view.cy, scale },
         stageCount: st.stageCount,
+        stageOrder: st.stageOrder,
+        bulkAt: st.lastBulkAt || undefined,
         currentStage: st.currentStage,
         currentStageRect
       })
@@ -1648,7 +1650,7 @@ export default function App(): JSX.Element {
     // the canvas just below the stage frame (right side, clear of parked terminals/cards), visible
     // when the user zooms out to watch the agent work.
     const st = useDesktop.getState()
-    const r = stageRect(st.currentStage, st.viewport)
+    const r = orderedStageRect(st.currentStage, st.viewport, st.stageOrder, st.stageCount)
     const W = 320
     const H = 200
     return { kind: 'native', component: 'activity', title: 'Agent activity', w: W, h: H, x: Math.round(r.x + r.w - W - 40), y: Math.round(r.y + r.h + 140), props: { events } }

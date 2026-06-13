@@ -16,8 +16,42 @@ import {
 // The stage-grid geometry (insets, primaryRect, stageStride, stageRect, stageCenterX, stageForAgent) lives
 // in the shared stages-core so the renderer and the main-process cores share ONE definition (no divergence).
 // Re-exported below so existing `from './store'` importers (capture/App/SurfaceFrame/PrimarySpace) don't churn.
-import { primaryRect, stageStride, stageRect, stageCenterX, stageForAgent, stageOfX } from './stages-core.mjs'
-export { primaryRect, stageStride, stageRect, stageCenterX, stageForAgent, stageOfX }
+import {
+  primaryRect,
+  stageStride,
+  stageRect,
+  stageCenterX,
+  stageForAgent,
+  stageOfX,
+  splayLayout,
+  splaySlotRect,
+  orderedStageRect,
+  addStageRect,
+  parkBandRect,
+  stageOfPoint,
+  surfaceStage,
+  insertAt,
+  identityOrder,
+  stagePitchY
+} from './stages-core.mjs'
+export {
+  primaryRect,
+  stageStride,
+  stageRect,
+  stageCenterX,
+  stageForAgent,
+  stageOfX,
+  splayLayout,
+  splaySlotRect,
+  orderedStageRect,
+  addStageRect,
+  parkBandRect,
+  stageOfPoint,
+  surfaceStage,
+  insertAt,
+  identityOrder,
+  stagePitchY
+}
 // Stage slot lattice (plans/blitzos-stage-slot-desktop.md): pure shared placer — tiles at integer
 // cells, geometry derived; the SAME module places in main (place_widget) and snaps drags here.
 import { latticeFor, slotRect, cardRect, slotOf, nearestFreeSlot, flowFiles, sizeForDims, occupancy, spanOf, SIZE_ORDER } from './stage-core.mjs'
@@ -35,6 +69,22 @@ function overlaps(a: Vec2, b: Vec2): boolean {
 function sameCamera(a: CanvasTransform, b: CanvasTransform): boolean {
   return Math.abs(a.x - b.x) < 0.75 && Math.abs(a.y - b.y) < 0.75 && Math.abs(a.scale - b.scale) < 0.006
 }
+/** A valid stageOrder is a permutation of 0..count-1. Anything else (legacy folders, partial
+ *  payloads, deleted stages) repairs to: the valid prefix in given order + missing ids ascending. */
+function sanitizeOrder(order: unknown, count: number): number[] {
+  if (!Array.isArray(order)) return identityOrder(count)
+  const seen = new Set<number>()
+  const out: number[] = []
+  for (const v of order) {
+    const n = Number(v)
+    if (Number.isInteger(n) && n >= 0 && n < count && !seen.has(n)) {
+      seen.add(n)
+      out.push(n)
+    }
+  }
+  for (let i = 0; i < count; i++) if (!seen.has(i)) out.push(i)
+  return out
+}
 
 // (stage-grid geometry moved to ./stages-core — imported + re-exported above)
 // These two insets are still used by the camera anchor below (cx = SIDEBAR + r.w/2, cy = TITLEBAR + r.h/2).
@@ -43,8 +93,8 @@ const TITLEBAR = 32
 /** Clamp a window so it stays inside its workspace stage (its title bar therefore can't slide under
  *  the top titlebar in normal mode — #29). `stage` defaults to 0, whose rect IS primaryRect, so the
  *  single-stage path is byte-identical to before. */
-function desktopClamp(x: number, y: number, w: number, h: number, vp: { w: number; h: number }, stage = 0): Vec2 {
-  const r = stage === 0 ? primaryRect(vp) : stageRect(stage, vp)
+function desktopClamp(x: number, y: number, w: number, h: number, vp: { w: number; h: number }, stage = 0, order?: number[] | null, count?: number): Vec2 {
+  const r = orderedStageRect(stage, vp, order ?? null, count ?? stage + 1)
   return { x: clamp(x, r.x, Math.max(r.x, r.x + r.w - w)), y: clamp(y, r.y, Math.max(r.y, r.y + r.h - h)) }
 }
 /** Home camera per mode. Normal's home = scale 1 on the CURRENT stage (its center maps to a fixed
@@ -55,27 +105,47 @@ export function viewTransform(
   mode: 'desktop' | 'canvas',
   vp: { w: number; h: number },
   stage = 0,
-  stageCount = 1
+  stageCount = 1,
+  order?: number[] | null
 ): CanvasTransform {
   const r = primaryRect(vp)
   const cx = SIDEBAR + r.w / 2 // screen point of stage 0's center (world origin) — today's anchor
   const cy = TITLEBAR + r.h / 2
   if (mode === 'desktop') {
-    // Home the current stage: put its center at the same (cx,cy) screen anchor. stage 0's center is
-    // the world origin, so t = (cx,cy) — byte-identical to today; stage i shifts the camera by i*stride.
-    const acx = stage === 0 ? 0 : stage * stageStride(vp)
-    return { scale: 1, x: cx - acx, y: cy }
+    // Home the current stage: put its center at the same (cx,cy) screen anchor. In a 1-row layout
+    // stage 0's center is the world origin (t = (cx,cy), byte-identical); the splay lattice can put
+    // a stage on a lower row, so the camera homes on BOTH axes of its ordered cell.
+    const sr = orderedStageRect(stage, vp, order ?? null, stageCount)
+    return { scale: 1, x: cx - (sr.x + sr.w / 2), y: cy - (sr.y + sr.h / 2) }
   }
   // CONTROL = a GENTLE zoom-out (controlScale 0.7; was a 0.31 wide bird's-eye, which was too much).
-  // Single stage → 0.7. Multiple stages → scale so the union of all stages spans the same screen width
-  // one stage did at 0.7, union center kept at the (cx,cy) anchor. Tune controlScale: 1 = no zoom-out.
+  // FIT the bounding box of the WHOLE splay lattice (every stage cell plus the create-stage
+  // placeholder slot). The top row's "Stage N" pills are SCREEN-SPACE chrome (~36px) hanging ABOVE
+  // the lattice bbox, so the fit reserves EXPLICIT headroom for them (LABEL_HEAD) instead of hoping
+  // a symmetric margin covers it — clearance by construction at any viewport. Tile size comes from
+  // tight WORLD gaps (stages-core STAGE_GAP/PARK_GAP), never from overflowing the frame. Capped at
+  // the single-stage 0.7 (never zoom IN past baseline). No single-stage early return: even with ONE
+  // stage the lattice has TWO cells (the stage + the placeholder — it IS stage N+1).
   const controlScale = 0.7
-  if (stageCount <= 1) return { scale: controlScale, x: cx, y: cy }
-  const stride = stageStride(vp)
-  const unionW = (stageCount - 1) * stride + r.w
-  const scale = (controlScale * r.w) / unionW
-  const ucx = ((stageCount - 1) * stride) / 2 // world x of the tiled row's center
-  return { scale, x: cx - ucx * scale, y: cy }
+  const LABEL_HEAD = 52 // screen px above the top row: 10 gap + 26 pill + clearance under the titlebar
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (let idx = 0; idx <= stageCount; idx++) {
+    const c = splaySlotRect(idx, stageCount, vp)
+    minX = Math.min(minX, c.x)
+    minY = Math.min(minY, c.y)
+    maxX = Math.max(maxX, c.x + c.w)
+    maxY = Math.max(maxY, c.y + c.h)
+  }
+  const availW = r.w * 0.96
+  const availH = r.h - LABEL_HEAD
+  const scale = Math.min(controlScale, availW / (maxX - minX), availH / (maxY - minY))
+  const x = cx - ((minX + maxX) / 2) * scale
+  // top-anchored under the reserved label band, centered in the remaining height
+  const yTop = TITLEBAR + LABEL_HEAD + (availH - (maxY - minY) * scale) / 2
+  return { scale, x, y: yTop - minY * scale }
 }
 /** While dragging a window, if the CURSOR (world coords) reaches a primary-stage edge, return the
  *  macOS tiling target: left/right half (a side edge) or a quarter (a corner). There is intentionally
@@ -87,9 +157,11 @@ export function snapTargetFor(
   wy: number,
   vp: { w: number; h: number },
   stage = 0,
-  mode: 'desktop' | 'canvas' = 'canvas'
+  mode: 'desktop' | 'canvas' = 'canvas',
+  order?: number[] | null,
+  count?: number
 ): { x: number; y: number; w: number; h: number } | null {
-  const r = stage === 0 ? primaryRect(vp) : stageRect(stage, vp)
+  const r = orderedStageRect(stage, vp, order ?? null, count ?? stage + 1)
   const nx = (wx - r.x) / r.w
   const ny = (wy - r.y) / r.h
   if (nx < -0.05 || nx > 1.05 || ny < -0.05 || ny > 1.05) return null // cursor well outside the stage
@@ -212,6 +284,19 @@ interface DesktopState {
   setControlTransform: (t: CanvasTransform | null) => void
   setCurrentStage: (i: number) => void
   setStageCount: (n: number) => void
+  /** Reading order of stages on the splay lattice (stageOrder[orderIndex] = stage id). Identity by
+   *  default; ONLY explicit user drags reorder it (plans/blitzos-stage-splay-lattice.md). */
+  stageOrder: number[]
+  /** Commit a reorder: stages whose lattice cell changes are MOVED in world space — every member
+   *  surface (tiles, free windows, parked work) translates with its stage, one transaction. */
+  applyStageOrder: (next: number[]) => void
+  /** Delete stage k (the splay's × button). macOS Spaces semantics: its windows MOVE to the
+   *  primary stage (never closed), stages above renumber down one, the lattice reflows. Stage 0
+   *  and any stage ≤ an agent's are not deletable (agent N owns stage N by identity). */
+  deleteStage: (stage: number) => void
+  /** Timestamp of the last BULK layout transaction (stage reorder/delete). Rides the os:state push
+   *  so the main-side perception differ suppresses it (one gesture, not N human window-moves). */
+  lastBulkAt: number
   /** Jump the camera to a workspace stage (set currentStage + retarget the view) — e.g. the Runtime tray's "Stage N". */
   goToStage: (area: number) => void
   addArea: () => void
@@ -241,7 +326,7 @@ interface DesktopState {
 
   createSurface: (input: CreateSurfaceInput) => string
   // Phase 2: adopt a persisted workspace (restore surfaces + camera + mode + stage count from disk).
-  hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas', stageCount?: number) => void
+  hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas', stageCount?: number, stageOrder?: number[]) => void
   applyReconcile: (surfaces: Surface[]) => void
   moveSurface: (id: string, x: number, y: number) => void
   closeSurface: (id: string) => void
@@ -302,6 +387,8 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   mode: 'desktop',
   stageCount: 1,
   currentStage: 0,
+  stageOrder: [0],
+  lastBulkAt: 0,
   integrations: [],
   positions: {},
   surfaces: [],
@@ -333,7 +420,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const latOf = (a: number): ReturnType<typeof latticeFor> => {
         let l = lats.get(a)
         if (!l) {
-          l = latticeFor(vp, a)
+          l = latticeFor(vp, a, s.stageOrder, s.stageCount)
           lats.set(a, l)
         }
         return l
@@ -360,7 +447,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       if (!cur) return {}
       const sz = size || slotOf(cur)?.size || sizeForDims(cur.w, cur.h)
       const stage = Number.isInteger(stageArg) ? (stageArg as number) : (cur.slotStage ?? 0)
-      const r = cardRect(latticeFor(s.viewport, stage), col, row, sz)
+      const r = cardRect(latticeFor(s.viewport, stage, s.stageOrder, s.stageCount), col, row, sz)
       const keepFree = cur.slot ? cur.preSnap : { w: cur.w, h: cur.h }
       return {
         surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, slot: { col, row, size: sz }, ...(stage > 0 ? { slotStage: stage } : { slotStage: undefined }), x: r.x, y: r.y, w: r.w, h: r.h, focus: undefined, ...(keepFree ? { preSnap: keepFree } : {}) } : x))
@@ -376,7 +463,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const free = cur.preSnap ?? { w: cur.w, h: cur.h }
       const cx = cur.x + cur.w / 2
       const cy = cur.y + cur.h / 2
-      const p = desktopClamp(cx - free.w / 2, cy - free.h / 2, free.w, free.h, s.viewport, cur.slotStage ?? 0)
+      const p = desktopClamp(cx - free.w / 2, cy - free.h / 2, free.w, free.h, s.viewport, cur.slotStage ?? 0, s.stageOrder, s.stageCount)
       return {
         surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, slot: undefined, preSnap: undefined, x: p.x, y: p.y, w: free.w, h: free.h } : x))
       }
@@ -389,14 +476,14 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     if (slotOf(cur)) {
       st.clearSurfaceSlot(id)
     } else {
-      const stage = stageOfX(cur.x + cur.w / 2, st.viewport)
+      const stage = stageOfPoint(cur.x + cur.w / 2, cur.y, st.viewport, st.stageOrder, st.stageCount)
       // A crowded stage must not make ⌘T a silent no-op: when the window's natural span has no
       // free cells, fall back through smaller spans until one fits (truly full → nothing happens,
       // matching the placer's contract that tiles never overlap).
       const start = SIZE_ORDER.indexOf(sizeForDims(cur.w, cur.h))
       for (let i = start; i >= 0; i--) {
         const size = SIZE_ORDER[i]
-        const slot = nearestFreeSlot(st.surfaces, latticeFor(st.viewport, stage), size, cur.x + cur.w / 2, cur.y + cur.h / 2, stage, id)
+        const slot = nearestFreeSlot(st.surfaces, latticeFor(st.viewport, stage, st.stageOrder, st.stageCount), size, cur.x + cur.w / 2, cur.y + cur.h / 2, stage, id)
         if (slot) {
           st.placeSurfaceSlot(id, slot.col, slot.row, size, stage)
           break
@@ -418,7 +505,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     }
     if (!cur || !sl) return
     const stage = cur.slotStage ?? 0
-    const lat = latticeFor(st.viewport, stage)
+    const lat = latticeFor(st.viewport, stage, st.stageOrder, st.stageCount)
     const occ = occupancy(st.surfaces, stage, id)
     const idx = SIZE_ORDER.indexOf(sl.size)
     const n = SIZE_ORDER.length
@@ -455,7 +542,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const isFile = (x: Surface): boolean => x.kind === 'native' && (x.component === 'file' || x.component === 'dir') && !x.groupId && !x.minimized
       const files = s.surfaces.filter(isFile)
       if (!files.length) return {}
-      const placed = flowFiles(files, s.surfaces, s.viewport, 0, avoid ?? null)
+      const placed = flowFiles(files, s.surfaces, s.viewport, 0, avoid ?? null, s.stageOrder, s.stageCount)
       const pos = new Map(placed.map((p) => [p.id, p]))
       let changed = false
       const surfaces = s.surfaces.map((x) => {
@@ -471,13 +558,96 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   setControlTransform: (t) => set({ controlTransform: t }),
   // Pure state mutations (the camera animation on switch is wired by the caller in App.tsx).
   setCurrentStage: (i) => set((s) => ({ currentStage: clamp(Math.round(i), 0, s.stageCount - 1) })),
-  setStageCount: (n) => set((s) => ({ stageCount: Math.max(1, Math.round(n)), currentStage: clamp(s.currentStage, 0, Math.max(0, Math.round(n) - 1)) })),
+  setStageCount: (n) =>
+    set((s) => {
+      const count = Math.max(1, Math.round(n))
+      return { stageCount: count, currentStage: clamp(s.currentStage, 0, count - 1), stageOrder: sanitizeOrder(s.stageOrder, count) }
+    }),
   goToStage: (area) =>
     set((s) => {
       const a = clamp(Math.round(area), 0, s.stageCount - 1)
-      return { currentStage: a, transform: viewTransform(s.mode, s.viewport, a, s.stageCount) }
+      return { currentStage: a, transform: viewTransform(s.mode, s.viewport, a, s.stageCount, s.stageOrder) }
     }),
-  addArea: () => set((s) => ({ stageCount: s.stageCount + 1, currentStage: s.stageCount })),
+  addArea: () =>
+    set((s) => ({
+      stageCount: s.stageCount + 1,
+      currentStage: s.stageCount,
+      // the new stage takes the placeholder's slot: appended to reading order (it WAS slot N)
+      stageOrder: [...sanitizeOrder(s.stageOrder, s.stageCount), s.stageCount]
+    })),
+  deleteStage: (k) =>
+    set((s) => {
+      const count = s.stageCount
+      if (!Number.isInteger(k) || k <= 0 || k >= count) return {} // stage 0 is the primary — never deletable
+      // Agent N owns stage N by IDENTITY: deleting any stage ≤ an agent's would renumber it away.
+      const agentMax = s.surfaces.reduce(
+        (m, w) => (w.role === 'chat' && w.agentId != null ? Math.max(m, stageForAgent(w.agentId)) : m),
+        0
+      )
+      if (k <= agentMax) return {}
+      const prevOrder = sanitizeOrder(s.stageOrder, count)
+      const nextCount = count - 1
+      const nextOrder = prevOrder.filter((id) => id !== k).map((id) => (id > k ? id - 1 : id))
+      // macOS Spaces semantics: the deleted stage's windows MOVE to the primary (same relative
+      // spot in its cell); everything else rides its (possibly renumbered) cell. A slotted tile
+      // from the deleted stage becomes a free float — its cell may be occupied in stage 0, and
+      // tiles never overlap.
+      const surfaces = s.surfaces.map((w) => {
+        const from = surfaceStage(w, s.viewport, prevOrder, count)
+        const target = from === k ? 0 : from > k ? from - 1 : from
+        const a0 = orderedStageRect(from, s.viewport, prevOrder, count)
+        const b0 = orderedStageRect(target, s.viewport, nextOrder, nextCount)
+        const dx = b0.x - a0.x
+        const dy = b0.y - a0.y
+        const reslot = w.slotStage != null && w.slotStage > k
+        if (!dx && !dy && from !== k && !reslot) return w
+        const moved: Surface = { ...w, x: w.x + dx, y: w.y + dy }
+        if (from === k) {
+          moved.slot = undefined
+          moved.slotStage = undefined
+        } else if (reslot) {
+          moved.slotStage = (w.slotStage as number) - 1
+        }
+        return moved
+      })
+      return {
+        stageCount: nextCount,
+        stageOrder: nextOrder,
+        currentStage: s.currentStage === k ? 0 : s.currentStage > k ? s.currentStage - 1 : s.currentStage,
+        surfaces,
+        lastBulkAt: Date.now(),
+        ...(s.mode === 'desktop'
+          ? { transform: viewTransform('desktop', s.viewport, s.currentStage === k ? 0 : s.currentStage > k ? s.currentStage - 1 : s.currentStage, nextCount, nextOrder) }
+          : {})
+      }
+    }),
+  applyStageOrder: (next) =>
+    set((s) => {
+      const order = sanitizeOrder(next, s.stageCount)
+      if (order.join() === sanitizeOrder(s.stageOrder, s.stageCount).join()) return {}
+      // World-real reorder: a stage whose lattice cell changed carries every member surface with
+      // it (membership = the SAME shared rule the per-stage dock uses), one store transaction.
+      const prev = sanitizeOrder(s.stageOrder, s.stageCount)
+      const deltas = new Map<number, { dx: number; dy: number }>()
+      for (let id = 0; id < s.stageCount; id++) {
+        const a = orderedStageRect(id, s.viewport, prev, s.stageCount)
+        const b = orderedStageRect(id, s.viewport, order, s.stageCount)
+        if (a.x !== b.x || a.y !== b.y) deltas.set(id, { dx: b.x - a.x, dy: b.y - a.y })
+      }
+      if (!deltas.size) return { stageOrder: order }
+      const surfaces = s.surfaces.map((w) => {
+        const d = deltas.get(surfaceStage(w, s.viewport, prev, s.stageCount))
+        return d ? { ...w, x: w.x + d.dx, y: w.y + d.dy } : w
+      })
+      // Desktop mode re-homes the camera on the current stage's (possibly moved) cell; the splay
+      // camera needs nothing — a permutation never changes the lattice's bounding box.
+      return {
+        stageOrder: order,
+        surfaces,
+        lastBulkAt: Date.now(),
+        ...(s.mode === 'desktop' ? { transform: viewTransform('desktop', s.viewport, s.currentStage, s.stageCount, order) } : {})
+      }
+    }),
 
   setSelection: (ids) => set({ selection: ids }),
   clearSelection: () => set({ selection: [] }),
@@ -606,7 +776,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
   goToPrimary: () =>
     set((s) => {
-      const transform = viewTransform(s.mode, s.viewport, s.currentStage, s.stageCount)
+      const transform = viewTransform(s.mode, s.viewport, s.currentStage, s.stageCount, s.stageOrder)
       return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
     }),
 
@@ -616,7 +786,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
       if (s.mode === 'desktop') {
-        const p = desktopClamp(surf.x, surf.y, surf.w, surf.h, s.viewport, s.currentStage)
+        const p = desktopClamp(surf.x, surf.y, surf.w, surf.h, s.viewport, s.currentStage, s.stageOrder, s.stageCount)
         return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y, z: ++zCounter } : w)), activeSurfaceId: id }
       }
       const m = 56
@@ -709,11 +879,13 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     // stage 0 ⇒ the world origin ⇒ byte-identical to before; a later stage shifts the cascade by its offset.
     const targetStage = Number.isInteger(input.stage) ? (input.stage as number) : st.currentStage
     const n = st.surfaces.length % 7
-    const ax = targetStage === 0 ? 0 : targetStage * stageStride(st.viewport)
+    const tr = orderedStageRect(targetStage, st.viewport, st.stageOrder, Math.max(st.stageCount, targetStage + 1))
+    const ax = tr.x + tr.w / 2
+    const ay = tr.y + tr.h / 2
     let x = input.x ?? ax - w / 2 + n * 34 - 100
-    let y = input.y ?? -h / 2 + n * 30 - 70
+    let y = input.y ?? ay - h / 2 + n * 30 - 70
     if (st.mode === 'desktop') {
-      const p = desktopClamp(x, y, w, h, st.viewport, targetStage)
+      const p = desktopClamp(x, y, w, h, st.viewport, targetStage, st.stageOrder, st.stageCount)
       x = p.x
       y = p.y
     }
@@ -744,7 +916,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     // cascade — so a place_widget create lands exactly on its slot, immune to clamp/stagger drift.
     if (input.slot && typeof input.slot === 'object') {
       const sa = Number.isInteger(input.slotStage) ? (input.slotStage as number) : targetStage
-      const lat = latticeFor(st.viewport, sa)
+      const lat = latticeFor(st.viewport, sa, st.stageOrder, st.stageCount)
       const r = cardRect(lat, Number(input.slot.col) || 0, Number(input.slot.row) || 0, String(input.slot.size || 's'))
       surface.slot = { col: Number(input.slot.col) || 0, row: Number(input.slot.row) || 0, size: String(input.slot.size || 's') }
       if (sa > 0) surface.slotStage = sa
@@ -757,14 +929,15 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     return id
   },
 
-  hydrate: (surfaces, camera, mode, stageCount) =>
+  hydrate: (surfaces, camera, mode, stageCount, stageOrder) =>
     set((s) => {
       // Normalize incoming descriptors to full Surface objects (defaults for anything the
       // persisted node didn't carry), and lift the z-allocator above the restored max so
       // surfaces created after a restore land on top.
-      // Restore the persisted stage count (default 1 for old folders / when omitted); currentStage always
-      // boots to 0 (control mode + which stage you're on are transient, never persisted).
+      // Restore the persisted stage count + reading order (defaults for old folders); currentStage
+      // always boots to 0 (control mode + which stage you're on are transient, never persisted).
       const nAreas = Number.isInteger(stageCount) && (stageCount as number) > 0 ? (stageCount as number) : 1
+      const order = sanitizeOrder(stageOrder, nAreas)
       const restored: Surface[] = surfaces.map((w) => {
         const base = { zoom: 1, props: {}, ...w, z: w.z ?? ++zCounter } as Surface
         // A slotted tile's geometry derives from its lattice cell at THIS renderer's real viewport
@@ -772,19 +945,22 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         const sl = slotOf(base)
         if (sl) {
           const stage = base.slotStage ?? 0
-          const lat0 = latticeFor(s.viewport, stage)
+          const lat0 = latticeFor(s.viewport, stage, order, nAreas)
           const r = cardRect(lat0, sl.col, sl.row, sl.size)
           return { ...base, x: r.x, y: r.y, w: r.w, h: r.h }
         }
         // Runtime chat/activity panels persist absolute x/y. A per-agent chat lives in ITS OWN stage
         // (stage N for agent N); the activity feed + the primary chat live in stage 0. Recompute an agent
-        // chat's x from its stage using the renderer's REAL viewport (authoritative — the host may have
-        // guessed a default vp), then clamp into that stage. Single-stage / primary case is byte-identical
-        // (stageForAgent('0')=0, stageCenterX(0)=0 → x=-700). The camera can reach any stage (stageCount below).
+        // chat's position from its stage's ORDERED cell using the renderer's REAL viewport (authoritative —
+        // the host may have guessed a default vp), then clamp into that stage. Single-stage / primary case
+        // is byte-identical (stage 0's cell center is the world origin in a 1-row layout → x=-700).
         if (isRuntimePanel(base)) {
           const stage = base.role === 'chat' && base.agentId != null ? stageForAgent(base.agentId) : 0
-          const x = base.role === 'chat' && base.agentId != null ? Math.round(stageCenterX(stage, s.viewport) - 700) : base.x
-          const p = desktopClamp(x, base.y, base.w, base.h, s.viewport, stage)
+          const sr = orderedStageRect(stage, s.viewport, order, Math.max(nAreas, stage + 1))
+          const isAgentChat = base.role === 'chat' && base.agentId != null
+          const x = isAgentChat ? Math.round(sr.x + sr.w / 2 - 700) : base.x
+          const y = isAgentChat ? Math.round(sr.y + sr.h / 2 - base.h / 2) : base.y
+          const p = desktopClamp(x, y, base.w, base.h, s.viewport, stage, order, Math.max(nAreas, stage + 1))
           return { ...base, x: p.x, y: p.y }
         }
         return base
@@ -796,10 +972,10 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       // not persisted workspace layout. Control mode restores the saved camera.
       const transform =
         mode === 'desktop'
-          ? viewTransform('desktop', s.viewport, 0, nAreas)
+          ? viewTransform('desktop', s.viewport, 0, nAreas, order)
           : { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc }
       // A fresh board starts control mode from the default bird's-eye (no stale camera from a prior workspace).
-      return { surfaces: restored, activeSurfaceId: null, transform, mode, stageCount: nAreas, currentStage: 0, layoutHistory: [], controlTransform: null }
+      return { surfaces: restored, activeSurfaceId: null, transform, mode, stageCount: nAreas, stageOrder: order, currentStage: 0, layoutHistory: [], controlTransform: null }
     }),
 
   // Apply an external folder reconcile (dropped/edited/removed files) to a LIVE canvas WITHOUT
@@ -878,7 +1054,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       if (!surf) return {}
       // At the normal home frame, keep the old safety rail: the title bar can't slide above the stage's top
       // edge. Once the human has zoomed/panned the canvas, all sides are reachable, so free drag is truly free.
-      const home = viewTransform('desktop', s.viewport, s.currentStage, s.stageCount)
+      const home = viewTransform('desktop', s.viewport, s.currentStage, s.stageCount, s.stageOrder)
       const clampTop = s.mode === 'desktop' && sameCamera(s.transform, home)
       const p = clampTop ? { x, y: Math.max(primaryRect(s.viewport).y, y) } : { x, y }
       return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y } : w)) }
@@ -976,7 +1152,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     // terminal window ALREADY in that stage, else open one there (createSurface honors the `stage` hint).
     const want = Number.isInteger(stage) ? (stage as number) : s.currentStage
     const term = s.surfaces.find(
-      (w) => w.kind === 'native' && w.component === 'terminal' && stageOfX(w.x + (w.w || 0) / 2, s.viewport) === want
+      (w) => w.kind === 'native' && w.component === 'terminal' && stageOfPoint(w.x + (w.w || 0) / 2, w.y, s.viewport, s.stageOrder, s.stageCount) === want
     )
     if (term) get().addTab(term.id, { id: terminalId, title, terminalId })
     else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, stage: want, tabs: [{ id: terminalId, title, terminalId }], activeTab: 0 })
@@ -1039,7 +1215,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       }
       // fill the CURRENT AREA (with a small inset), not the viewport — so 'zoom' means full-screen
       // inside the workspace stage, consistent in both normal and control mode (#35). Stage 0 ⇒ primaryRect.
-      const r = s.currentStage === 0 ? primaryRect(s.viewport) : stageRect(s.currentStage, s.viewport)
+      const r = orderedStageRect(s.currentStage, s.viewport, s.stageOrder, s.stageCount)
       const inset = 8
       const fill = { x: r.x + inset, y: r.y + inset, w: r.w - inset * 2, h: r.h - inset * 2 }
       return {
@@ -1087,7 +1263,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const sl = cur && slotOf(cur)
       if (cur && sl) {
         const stage = cur.slotStage ?? 0
-        const lat = latticeFor(st.viewport, stage)
+        const lat = latticeFor(st.viewport, stage, st.stageOrder, st.stageCount)
         const occ = occupancy(st.surfaces, stage, id)
         const sp = spanOf(sl.size)
         let blocked = sl.col + sp.c > lat.cols || sl.row + sp.r > lat.rows

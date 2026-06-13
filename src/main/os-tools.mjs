@@ -13,7 +13,7 @@ import { listWidgets, getWidgetSource, saveWidget, widgetAuthoringMd } from './w
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
 // Stage grid: agent N owns stage N (stageForAgent). When an agent-scoped call creates a surface, we tag it
 // with {stage} so the renderer cascades it into that agent's stage — isolated from the user's primary (stage 0).
-import { stageForAgent, stageRect, stageOfX, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
+import { stageForAgent, orderedStageRect, stageOfPoint, parkBandRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 // Stage slot lattice (plans/blitzos-stage-slot-desktop.md): the SAME pure placer the renderer uses,
 // so an agent placement and a human drag-snap can never disagree about what is free.
 import { latticeFor, cardRect, findSlot, budgetUsed, stageSummary, sizeForDims, spanOf, STAGE_BUDGET } from '../renderer/src/stage-core.mjs'
@@ -22,10 +22,12 @@ import { latticeFor, cardRect, findSlot, budgetUsed, stageSummary, sizeForDims, 
 // desktop-mode camera frames). There is no separate hidden pool: a work surface parks below the stage,
 // naturally off-screen at scale 1 and revealed when the user zooms out or enters Control Mode. Computed
 // geometrically — a surface is offstage iff it has no slot and sits outside its stage's rect.
-function isOffstage(s, vp) {
+function isOffstage(s, vp, order, count) {
   if (!s || s.slot) return false
   const v = vp || DEFAULT_VP
-  const r = stageRect(stageOfX((Number(s.x) || 0) + (Number(s.w) || 0) / 2, v), v)
+  const cx = (Number(s.x) || 0) + (Number(s.w) || 0) / 2
+  const ty = Number(s.y) || 0 // TOP probe: a parked window belongs to the stage it hangs from
+  const r = orderedStageRect(stageOfPoint(cx, ty, v, order, count), v, order, count)
   return s.x + s.w <= r.x || s.x >= r.x + r.w || s.y + s.h <= r.y || s.y >= r.y + r.h
 }
 
@@ -121,7 +123,7 @@ export function serializeStateForAgent(state, integrations) {
         ...(x.kind === 'web' && Array.isArray(x.tabs) && x.tabs.length ? { tabs: x.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url })), activeTab: x.activeTab || 0 } : {}),
         // Stage desktop: a slotted surface is ON the user's stage; offstage = parked on the open canvas.
         ...(x.slot ? { slot: x.slot, ...(x.slotStage ? { slotStage: x.slotStage } : {}) } : {}),
-        ...(isOffstage(x, s.viewport) ? { offstage: true } : {}),
+        ...(isOffstage(x, s.viewport, s.stageOrder, Number(s.stageCount) || 1) ? { offstage: true } : {}),
         ...(x.focus ? { focus: true } : {}),
         ...(hint ? { account_hint: hint } : {}),
         // jsx/tsx widgets advertise their lang; a compile/runtime failure surfaces as lastError
@@ -138,7 +140,7 @@ export function serializeStateForAgent(state, integrations) {
     // The user's desktop at a glance: the slot grid, what's tiled, the attention budget, and the
     // offstage pool (work parked on the canvas around the stage) — reason in slots, never pixels.
     stage: stageSummary(s.surfaces || [], s.viewport, 0),
-    backstage: (s.surfaces || []).filter((x) => isOffstage(x, s.viewport)).map((x) => ({ id: x.id, kind: x.kind, title: x.title, url: x.url }))
+    backstage: (s.surfaces || []).filter((x) => isOffstage(x, s.viewport, s.stageOrder, Number(s.stageCount) || 1)).map((x) => ({ id: x.id, kind: x.kind, title: x.title, url: x.url }))
   }
 }
 
@@ -201,7 +203,7 @@ export function makeOsTools(ops) {
     if (!pinned && budgetUsed(surfaces, stage) + sp.c * sp.r > STAGE_BUDGET) {
       return { full: { error: 'stage_full', reason: 'attention budget', ...stageSummary(surfaces, st.viewport, stage) } }
     }
-    const lat = latticeFor(st.viewport, stage)
+    const lat = latticeFor(st.viewport, stage, st.stageOrder, Math.max(Number(st.stageCount) || 1, stage + 1))
     const slot = findSlot(surfaces, lat, size, near || null, stage)
     if (!slot) return { full: { error: 'stage_full', reason: 'no free span for ' + size, ...stageSummary(surfaces, st.viewport, stage) } }
     return { slot: { col: slot.col, row: slot.row, size }, slotStage: stage, rect: cardRect(lat, slot.col, slot.row, size) }
@@ -211,9 +213,14 @@ export function makeOsTools(ops) {
   const parkOffstage = (agentId) => {
     const st = ops.getState() || {}
     const vp = st.viewport || DEFAULT_VP
-    const r = stageRect(agentId != null ? stageForAgent(agentId) : 0, vp)
-    const parked = (st.surfaces || []).filter((s) => s && !s.slot && s.y >= r.y + r.h).length % 8
-    return { x: Math.round(r.x + 60 + parked * 64), y: Math.round(r.y + r.h + 100 + parked * 48) }
+    const stage = agentId != null ? stageForAgent(agentId) : 0
+    const count = Math.max(Number(st.stageCount) || 1, stage + 1)
+    // The stage's own park band: the gutter strip below ITS splay cell (never another stage's row).
+    const band = parkBandRect(stage, vp, st.stageOrder, count)
+    const parked = (st.surfaces || []).filter(
+      (s) => s && !s.slot && s.y >= band.y && s.y < band.y + band.h && s.x + (s.w || 0) > band.x && s.x < band.x + band.w
+    ).length % 8
+    return { x: Math.round(band.x + 60 + parked * 64), y: Math.round(band.y + 24 + parked * 24) }
   }
   return [
     {
