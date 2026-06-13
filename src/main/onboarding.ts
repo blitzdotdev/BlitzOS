@@ -317,27 +317,61 @@ function markPreboard(step: string, outcome: PreboardOutcome): void {
   }
 }
 
-/** Probe Automation (AppleEvents) consent by ASKING: a one-line AppleScript to the detected
- *  browser. The FIRST call raises the macOS consent prompt (attributed to this app — the scan-child
- *  pattern); the promise resolves AFTER the user answers. Returns live window/tab counts as the
+/** Where the captured live working set (open tabs) is persisted — machine-level (pre-workspace), so
+ *  the scan child (run later by the director) can fold it in via --open-tabs. */
+function preboardTabsPath(): string { return join(app.getPath('userData'), 'preboard-tabs.json') }
+
+/** Probe Automation (AppleEvents) consent by ASKING: ONE AppleScript to the detected browser that
+ *  dumps the title+URL of every open tab, grouped by window. The FIRST call raises the macOS consent
+ *  prompt (attributed to this app — the scan-child pattern); the promise resolves AFTER the user
+ *  answers. On success we PERSIST the working set (the single highest-signal browser artifact — what
+ *  the user is doing RIGHT NOW) to userData for the scan to fold in, and return live counts as the
  *  immediate visible reward. Errors: -1743 = user denied; -600/-10810 = browser not running (the
  *  tell launches it, so these are rare). */
 function requestAutomation(): Promise<{ status: 'granted' | 'denied' | 'unavailable'; windows?: number; tabs?: number; browser?: string }> {
   const browser = detectBrowser()
   if (process.platform !== 'darwin' || !browser) return Promise.resolve({ status: 'unavailable' })
   return new Promise((resolve) => {
-    const script = `tell application id "${browser.id}" to count windows`
-    execFile('/usr/bin/osascript', ['-e', script], { timeout: 180_000 }, (err, stdout, stderr) => {
+    // Delimited dump: a @@WIN@@ line opens each window, then "title @@T@@ url" per tab. URLs never
+    // contain newlines, so a title that somehow does just yields a skipped row (no @@T@@) — it can
+    // never corrupt the parse or the JSON we persist.
+    const script = [
+      `tell application id "${browser.id}"`,
+      '  set out to ""',
+      '  repeat with w in windows',
+      '    set out to out & "@@WIN@@" & linefeed',
+      '    repeat with t in tabs of w',
+      '      set out to out & (title of t) & "@@T@@" & (URL of t) & linefeed',
+      '    end repeat',
+      '  end repeat',
+      '  return out',
+      'end tell'
+    ].join('\n')
+    execFile('/usr/bin/osascript', ['-e', script], { timeout: 180_000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         const denied = /-1743/.test(String(stderr)) || /not allowed/i.test(String(stderr))
         resolve({ status: denied ? 'denied' : 'unavailable', browser: browser.name })
         return
       }
-      const windows = parseInt(String(stdout).trim(), 10) || 0
-      // tabs are a separate best-effort count (0 windows would make the expression error)
-      execFile('/usr/bin/osascript', ['-e', `tell application id "${browser.id}" to count every tab of every window`], { timeout: 20_000 }, (e2, out2) => {
-        resolve({ status: 'granted', windows, tabs: e2 ? 0 : parseInt(String(out2).trim(), 10) || 0, browser: browser.name })
-      })
+      const windows: { tabs: { title: string; url: string }[] }[] = []
+      let cur: { tabs: { title: string; url: string }[] } | null = null
+      let tabs = 0
+      for (const line of String(stdout).split('\n')) {
+        if (line.startsWith('@@WIN@@')) { cur = { tabs: [] }; windows.push(cur); continue }
+        const i = line.indexOf('@@T@@')
+        if (i < 0 || !cur) continue
+        const url = line.slice(i + 5).trim()
+        if (!/^https?:/i.test(url)) continue // skip chrome://, about:, file:// — not working-set signal
+        cur.tabs.push({ title: line.slice(0, i), url })
+        tabs++
+      }
+      const live = windows.filter((w) => w.tabs.length)
+      try {
+        writeFileSync(preboardTabsPath(), JSON.stringify({ browser: browser.name, capturedAt: Date.now(), windows: live }, null, 2))
+      } catch (e) {
+        console.error('[onboarding] could not persist open tabs:', (e as Error).message)
+      }
+      resolve({ status: 'granted', windows: live.length, tabs, browser: browser.name })
     })
   })
 }
@@ -371,6 +405,10 @@ async function runScan(wsPath: string): Promise<ScanJson | null> {
   // (rules + scan) in one read. Missing prompt file (packaged build) just degrades to scan-only.
   const promptMd = join(appRoot(), 'src', 'main', 'blitzos-onboarding.md')
   const args = ['--quiet', '--progress', '--out', join(dir, 'context.md'), '--json', jsonPath, ...(existsSync(promptMd) ? ['--prompt', promptMd] : [])]
+  // Fold the pre-board live working set (open tabs) into the scan when it was captured. Absolute
+  // userData path, readable by both the direct spawn AND the helper's child (--open-tabs).
+  const tabsSnap = preboardTabsPath()
+  if (existsSync(tabsSnap)) args.push('--open-tabs', tabsSnap)
   const readOut = (ok: boolean): ScanJson | null => {
     if (!ok) {
       progress({ phase: 'error', error: 'scan failed' })

@@ -72,6 +72,19 @@ const BUILDERS = {
     if (items.length < 3) return null
     return { title: s.web.webFirst ? 'Where your work lives' : 'Web workflows', items }
   },
+  // The LIVE working set: the open tabs captured at onboarding, grouped by the user's own windows.
+  // The titles are the signal — this is the "BlitzOS sees what I'm doing right now" card, and the
+  // interviewer leads the scope question from it. Tap a row to reopen that tab as a live surface.
+  worktabs: (s) => {
+    const ot = s.web && s.web.openTabs
+    if (!ot || !Array.isArray(ot.windows) || !ot.windows.length) return null
+    const items = []
+    ot.windows.forEach((w, wi) => { for (const t of (w.tabs || [])) items.push({ title: t.title, host: t.host, url: t.url, win: wi + 1 }) })
+    if (items.length < 2) return null
+    const c = ot.counts || { tabs: items.length, windows: ot.windows.length }
+    const sub = `${c.tabs} tab${c.tabs === 1 ? '' : 's'} · ${c.windows} window${c.windows === 1 ? '' : 's'}${ot.browser ? ' · ' + ot.browser : ''}`
+    return { title: 'Open right now', sub, items: items.slice(0, 24) }
+  },
   schedule: (s) => {
     const up = (s.calendar && s.calendar.upcoming) || []
     if (up.length < 2) return null
@@ -147,8 +160,8 @@ export const BRANCH_A_LAYOUT = {
   notepad: { col: 6, row: 3, size: 's' }
 }
 
-const WIDGET_OF = { profile: 'profile', projects: 'dossiers', workflows: 'workflows', schedule: 'timeline', rhythm: 'rhythm', voice: 'quotes', sessions: 'timeline', people: 'dossiers', gaps: 'gaps' }
-const TITLE_OF = { profile: 'Case File', projects: 'Projects', workflows: 'Web workflows', schedule: 'Coming up', rhythm: 'Working rhythm', voice: 'In their own words', sessions: 'Recent sessions', people: 'Known associates', gaps: 'Open questions', unlock: 'Unlock the personal layer' }
+const WIDGET_OF = { profile: 'profile', projects: 'dossiers', workflows: 'workflows', worktabs: 'worktabs', schedule: 'timeline', rhythm: 'rhythm', voice: 'quotes', sessions: 'timeline', people: 'dossiers', gaps: 'gaps' }
+const TITLE_OF = { profile: 'Case File', projects: 'Projects', workflows: 'Web workflows', worktabs: 'Open right now', schedule: 'Coming up', rhythm: 'Working rhythm', voice: 'In their own words', sessions: 'Recent sessions', people: 'Known associates', gaps: 'Open questions', unlock: 'Unlock the personal layer' }
 
 // Card accents rotate through the four picked theme colors (2026-06-11: slate, dusty blue, sage,
 // marker), varied across the board, stable per role. The UI kit paints props.accent/accentInk onto
@@ -160,6 +173,7 @@ const ACCENT_OF = {
   profile: { accent: '#5874A4', accentInk: '#FFFFFF' }, // slate
   projects: { accent: '#7FA0C8', accentInk: '#16202F' }, // dusty blue
   workflows: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
+  worktabs: { accent: '#5874A4', accentInk: '#FFFFFF' }, // slate (the live web cluster, near workflows)
   schedule: { accent: '#5874A4', accentInk: '#FFFFFF' }, // slate
   rhythm: { accent: '#7FA0C8', accentInk: '#16202F' }, // dusty blue (heat ramp supplies the rest)
   voice: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
@@ -183,6 +197,8 @@ const GROWS = [
   { role: 'rhythm', to: 'l', want: (p) => Object.keys((p && p.punch) || {}).length > 12 },
   { role: 'workflows', to: 'tall', want: (p) => count(p) >= 6 },
   { role: 'workflows', to: 'l', want: (p) => count(p) >= 4 },
+  { role: 'worktabs', to: 'tall', want: (p) => count(p) >= 8 },
+  { role: 'worktabs', to: 'l', want: (p) => count(p) >= 4 },
   { role: 'people', to: 'l', want: (p) => count(p) >= 4 },
   { role: 'voice', to: 'l', want: (p) => count(p) >= 3 },
   { role: 'schedule', to: 'l', want: (p) => count(p) >= 5 },
@@ -209,6 +225,7 @@ const NEAR_OF = {
   profile: 'top-left',
   projects: 'top-left',
   workflows: 'top-right',
+  worktabs: 'top-right',
   schedule: 'center',
   rhythm: 'bottom-left',
   people: 'center',
@@ -271,6 +288,19 @@ function slotFits(slot, lat) {
   const sp = spanOf(slot.size)
   return slot.col >= 0 && slot.row >= 0 && slot.col + sp.c <= lat.cols && slot.row + sp.r <= lat.rows
 }
+/** Does a candidate slot's cells overlap anything already placed on stage 0? (slotFits only checks
+ *  lattice BOUNDS — this checks OCCUPANCY, so a fixed-layout card never lands on the chat hub or a
+ *  card a dynamic placement already took.) */
+function slotTaken(slot, occupied) {
+  const a = spanOf(slot.size), ax2 = slot.col + a.c, ay2 = slot.row + a.r
+  for (const o of occupied || []) {
+    const os = o && o.slot
+    if (!os || (o.slotStage ?? 0) !== 0) continue
+    const b = spanOf(os.size)
+    if (slot.col < os.col + b.c && ax2 > os.col && slot.row < os.row + b.r && ay2 > os.row) return true
+  }
+  return false
+}
 
 export function buildBoardPlan(scan, { surfaces = [], viewport = null, layout = null } = {}) {
   const props = {}
@@ -285,7 +315,7 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null, layout = 
   const hero = webFirst ? 'workflows' : ['projects', 'workflows', 'schedule'].find((r) => props[r])
   const fdaOff = !(scan.meta && scan.meta.fda)
   if (fdaOff) props.unlock = {} // placement reservation; the director supplies the real props
-  const ORDER = ['profile', hero, 'rhythm', 'gaps', ...(fdaOff ? ['unlock'] : []), 'workflows', 'people', 'schedule', 'voice', 'sessions', 'projects']
+  const ORDER = ['profile', hero, 'worktabs', 'rhythm', 'gaps', ...(fdaOff ? ['unlock'] : []), 'workflows', 'people', 'schedule', 'voice', 'sessions', 'projects']
 
   const vp = viewport || DEFAULT_VP
   const lat = latticeFor(vp, 0)
@@ -313,40 +343,43 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null, layout = 
     free -= cost
   }
 
-  const plan = []
-  const emitted = new Set()
-  let parked = 0
-  for (const role of ORDER) {
-    if (!role || emitted.has(role) || !props[role]) continue
-    emitted.add(role)
-    const card = {
-      role,
-      ...(role === 'unlock' ? { native: 'unlock' } : { widget: WIDGET_OF[role] }),
-      title: TITLE_OF[role],
-      props: { ...props[role], ...(ACCENT_OF[role] || {}) }
-    }
-    // Fixed layout (Branch A): place at the hand-tuned slot when it fits the live lattice; otherwise
-    // fall through to dynamic placement (smaller screen, or a card the layout does not pin).
+  const seen = new Set()
+  const roles = ORDER.filter((r) => r && props[r] && !seen.has(r) && (seen.add(r), true))
+  const cards = new Map(roles.map((role) => [role, {
+    role,
+    ...(role === 'unlock' ? { native: 'unlock' } : { widget: WIDGET_OF[role] }),
+    title: TITLE_OF[role],
+    props: { ...props[role], ...(ACCENT_OF[role] || {}) }
+  }]))
+  const place = (role, at, size) => {
+    const c = cards.get(role)
+    c.slot = { col: at.col, row: at.row, size }
+    c.slotStage = 0
+    occupied.push({ id: 'plan:' + role, slot: c.slot, slotStage: 0 })
+  }
+
+  // Pass 1 — fixed-layout (Branch A) cards claim their hand-tuned slots FIRST (only when the slot
+  // fits the live lattice AND is still free), so a dynamic card placed earlier in ORDER can never
+  // steal a pinned slot (slotFits checks bounds, not occupancy). Everything else flows in pass 2.
+  const dynamic = []
+  for (const role of roles) {
     const fixed = layout && layout[role]
-    let at = fixed && slotFits(fixed, lat) ? { col: fixed.col, row: fixed.row } : null
-    let size = at ? fixed.size : sizes[role] || 'm'
-    while (!at && size) {
+    if (fixed && slotFits(fixed, lat) && !slotTaken(fixed, occupied)) place(role, { col: fixed.col, row: fixed.row }, fixed.size)
+    else dynamic.push(role)
+  }
+  // Pass 2 — dynamic cards fill the remaining gaps in ORDER priority: shrink one step at a time to
+  // the role's floor before giving up, then PARK off-stage (alive, zoom-out visible, bring_to_stage-able).
+  let parked = 0
+  for (const role of dynamic) {
+    let size = sizes[role] || 'm', at = null
+    while (size) {
       at = findSlot(occupied, lat, size, NEAR_OF[role] || 'center', 0)
       if (at) break
-      size = shrinkFrom(role, size) // fragmentation: step down (to the role's floor) before giving up
+      size = shrinkFrom(role, size)
     }
-    if (at) {
-      card.slot = { col: at.col, row: at.row, size }
-      card.slotStage = 0
-      occupied.push({ id: 'plan:' + role, slot: card.slot, slotStage: 0 })
-    } else {
-      // truly no span left: BACKSTAGE — parked on the canvas below the stage frame, alive and
-      // zoom-out visible, never overlapping a tile; the brain can bring_to_stage it later
-      const px = sizePx('m')
-      Object.assign(card, { offstage: true, ...parkSpot(vp, parked), w: px.w, h: px.h })
-      parked++
-    }
-    plan.push(card)
+    if (at) place(role, at, size)
+    else { const px = sizePx('m'); Object.assign(cards.get(role), { offstage: true, ...parkSpot(vp, parked), w: px.w, h: px.h }); parked++ }
   }
-  return plan
+
+  return roles.map((role) => cards.get(role)) // spawn order = ORDER priority
 }

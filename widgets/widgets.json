@@ -70,6 +70,13 @@
     "version": 1
   },
   {
+    "name": "worktabs",
+    "description": "Thinking-widget. The LIVE working set — the browser tabs someone has open right now, as a list grouped by window; the titles are the signal (what they are doing this moment). Tap a row to open that exact tab as a live web surface. Drive with update_surface{props:{title?,sub?,items:[{title,host,url,win?}]}}.",
+    "needs": [],
+    "props": { "title": "Open right now" },
+    "version": 1
+  },
+  {
     "name": "gaps",
     "description": "Thinking-widget. Open questions as a clean checklist — what is NOT known yet; flip an item with done:true when answered. Drive with update_surface{props:{items:[{q,hint?,done?}]}}.",
     "needs": [],

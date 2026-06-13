@@ -56,7 +56,7 @@ const CFG = {
   topProjects: 14, topEntities: 24, topDirectives: 24, voiceSamples: 8,
   verbatim: true, stochastic: false, quiet: false,
   commsContent: false, notesBodies: false, fda: null /* null=detect, true/false=override */,
-  promptFile: null, json: null, progress: false,
+  promptFile: null, json: null, progress: false, openTabs: null,
   out: join(HOME, '.blitzos', 'fs', 'journal', 'onboarding-context.md')
 }
 function parseArgs(argv) {
@@ -70,6 +70,7 @@ function parseArgs(argv) {
     else if (a === '--json') str((v) => { CFG.json = v })
     else if (a === '--progress') CFG.progress = true
     else if (a === '--prompt') str((v) => { CFG.promptFile = v })
+    else if (a === '--open-tabs') str((v) => { CFG.openTabs = v })
     else if (a === '--budget') num((v) => { CFG.tokenBudget = v })
     else if (a === '--halflife') num((v) => { CFG.halflifeDays = v })
     else if (a === '--window') num((v) => { CFG.windowDays = v })
@@ -102,6 +103,7 @@ function printHelp() {
     'FLAGS:',
     '  --out PATH|-      file path, or - for stdout (default: ~/.blitzos/fs/journal/onboarding-context.md)',
     '  --prompt FILE     prepend an onboarding prompt above the scan (one combined doc)',
+    '  --open-tabs PATH  fold a captured live-open-tabs snapshot (pre-board Automation) into the web signal',
     '  --no-fda          skip Full-Disk-Access sources (Branch B only)',
     '  --assume-fda      force Branch A sources on',
     '  --comms-content   include verbatim Messages/Mail text (default: summary-only)',
@@ -232,6 +234,8 @@ function newCtx() {
     contactNames: new Map(), // normalized email / last-10-digits → "First L." (AddressBook join, FDA)
     calendar: { upcoming: [], meetingsPerWeek: 0 }, // {title,start,allDay,attendees}
     census: [],    // {kind, n} — document-type census (what this person MAKES; mdfind, no permission)
+    openTabs: null,        // {browser, capturedAt, windows:[{tabs:[{title,host,url}]}], counts} — live working set (--open-tabs)
+    openTabHosts: new Set(), // hosts of the open tabs → intentionality boost in matchWorkflow ("you're using this NOW")
     appUse: new Map(),  // app → launch count (Spotlight, Branch-B proxy for knowledgeC time)
     tooling: new Map(), // tool/pkg → count
     facts: { installedApps: [], dockApps: [], loginItems: [], accounts: [], gitRepos: [], editorExtensions: [], brewLeaves: [], locale: {}, defaultBrowser: null, gitName: null, computerName: null, fullName: null },
@@ -342,6 +346,36 @@ function srcFirefox(ctx) {
     for (const r of rows) { const ms = firefoxTime(r.lvd); if (!ms) continue; const host = hostOf(r.url); if (host) { pushEvent(ctx, 'firefox', ms, 'visit', host); visits++ }; const q = searchQuery(r.url); if (q) pushText(ctx, 'firefox-search', ms, q); addTitle(ctx, seenTitles, r.title, ms) }
   }
   if (visits) log(`· browsers(firefox): ${visits} visits`)
+}
+// The LIVE working set: the open-tabs snapshot the pre-board Automation step captured (--open-tabs).
+// This is the single highest-signal browser artifact — what the user is doing RIGHT NOW, with the
+// tabs grouped by the window the user themselves grouped them in. We capture+group it (perception);
+// the interview agent clusters it by intent (policy). Tab hosts also boost matchWorkflow (you're
+// using these now). Read-only of a local JSON snapshot, no network, no Automation here.
+function srcOpenTabs(ctx) {
+  if (!CFG.openTabs || !existsSync(CFG.openTabs)) return
+  let snap; try { snap = JSON.parse(readFileSync(CFG.openTabs, 'utf8')) } catch (e) { log(`· open-tabs skip (${(e.message || '').slice(0, 40)})`); return }
+  const rawWins = Array.isArray(snap?.windows) ? snap.windows : []
+  const seen = new Set()
+  const windows = []
+  let total = 0
+  for (const w of rawWins) {
+    const tabs = []
+    for (const t of (Array.isArray(w?.tabs) ? w.tabs : [])) {
+      const url = String(t?.url || '')
+      if (!/^https?:/i.test(url)) continue // skip chrome://, about:, file:// — not working-set signal
+      const host = hostOf(url); if (!host) continue
+      const key = host + '|' + (t?.title || '') // dedup identical tabs within the snapshot
+      if (seen.has(key)) continue; seen.add(key)
+      ctx.openTabHosts.add(host.replace(/^www\./, ''))
+      tabs.push({ title: clamp(clean(t?.title || host), 140), host, url: clamp(url, 300) })
+      total++
+    }
+    if (tabs.length) windows.push({ tabs })
+  }
+  if (!windows.length) return
+  ctx.openTabs = { browser: snap?.browser || null, capturedAt: +snap?.capturedAt || 0, windows, counts: { windows: windows.length, tabs: total } }
+  log(`· open-tabs: ${total} tabs across ${windows.length} window(s) in ${snap?.browser || 'browser'}`)
 }
 function srcSpotlightFiles(ctx) {
   let out = sh('/usr/bin/mdfind', ['kMDItemLastUsedDate >= $time.this_month'], { timeout: 12_000 })
@@ -643,6 +677,7 @@ const SOURCES = [
   { id: 'agents', tier: 'none', run: loadGenericAgents },
   { id: 'chromium', tier: 'none', run: srcChromium },
   { id: 'firefox', tier: 'none', run: srcFirefox },
+  { id: 'openTabs', tier: 'none', run: srcOpenTabs },
   { id: 'spotlight', tier: 'none', run: srcSpotlightFiles },
   { id: 'apps', tier: 'none', run: srcInstalledApps },
   { id: 'dock', tier: 'none', run: srcDock },
@@ -688,33 +723,95 @@ const WORKFLOW_SITES = {
   'airtable.com': { name: 'Airtable', color: '#FCB400' },
   'miro.com': { name: 'Miro', color: '#050038' },
   'canva.com': { name: 'Canva', color: '#00C4CC' },
-  'x.com': { name: 'X', color: '#0F1419' },
-  'twitter.com': { name: 'X', color: '#0F1419' },
-  'linkedin.com': { name: 'LinkedIn', color: '#0A66C2' },
-  'chatgpt.com': { name: 'ChatGPT', color: '#10A37F' },
-  'claude.ai': { name: 'Claude', color: '#D97757' },
+  'x.com': { name: 'X', color: '#0F1419', kind: 'social' },
+  'twitter.com': { name: 'X', color: '#0F1419', kind: 'social' },
+  'linkedin.com': { name: 'LinkedIn', color: '#0A66C2', kind: 'social' },
+  'chatgpt.com': { name: 'ChatGPT', color: '#10A37F', kind: 'ai' },
+  'claude.ai': { name: 'Claude', color: '#D97757', kind: 'ai' },
+  'openrouter.ai': { name: 'OpenRouter', color: '#6566F1', kind: 'ai' },
+  'aistudio.google.com': { name: 'AI Studio', color: '#4285F4', kind: 'ai' },
+  'huggingface.co': { name: 'Hugging Face', color: '#FFD21E', kind: 'ai' },
   'overleaf.com': { name: 'Overleaf', color: '#138A07' },
   'salesforce.com': { name: 'Salesforce', color: '#00A1E0' },
   'hubspot.com': { name: 'HubSpot', color: '#FF7A59' },
   'stripe.com': { name: 'Stripe', color: '#635BFF' },
   'vercel.com': { name: 'Vercel', color: '#171717' },
   'supabase.com': { name: 'Supabase', color: '#3ECF8E' },
+  'cloudflare.com': { name: 'Cloudflare', color: '#F38020' },
   'shopify.com': { name: 'Shopify', color: '#96BF48' }
 }
-function matchWorkflow(topDomains) {
-  const hits = new Map() // name → {host, name, n, color, integration?}
-  for (const [host, w] of topDomains) {
-    for (const key of Object.keys(WORKFLOW_SITES)) {
-      if (host === key || host.endsWith('.' + key)) {
-        const site = WORKFLOW_SITES[key]
-        const prev = hits.get(site.name)
-        const n = Math.round(w) + (prev ? prev.n : 0)
-        hits.set(site.name, { host: prev ? prev.host : host, name: site.name, n, color: site.color, ...(site.integration ? { integration: site.integration } : {}) })
-        break
-      }
+// Pure consumption — never "where your work lives", even if visited heavily or open right now (the
+// ambient noise the 90-day frequency ranking otherwise rewards). SUFFIX-matched (social/video/shop:
+// m.youtube.com is still youtube), so every subdomain is excluded too.
+const NON_TOOL_SUFFIX = new Set([
+  'instagram.com', 'reddit.com', 'youtube.com', 'youtu.be', 'facebook.com', 'tiktok.com', 'netflix.com',
+  'amazon.com', 'twitch.tv', 'pinterest.com', 'spotify.com', 'snapchat.com', 't.co'
+])
+// Search engines: the BARE host is noise, but subdomains can be real tools (docs.google.com,
+// aistudio.google.com), so these match EXACT host only — never as a suffix.
+const NON_TOOL_EXACT = new Set(['google.com', 'bing.com', 'duckduckgo.com', 'ecosia.org', 'kagi.com', 'yahoo.com'])
+const isExcludedHost = (host) => NON_TOOL_EXACT.has(host) || [...NON_TOOL_SUFFIX].some((k) => suffixMatch(host, k))
+// A domain's first label that reads as an app surface (not the marketing root) → it's a tool.
+const TOOL_PREFIX = new Set(['app', 'dash', 'dashboard', 'console', 'admin', 'portal', 'studio', 'platform', 'developers', 'developer', 'dev', 'api', 'my', 'account', 'manage', 'cloud', 'workspace'])
+// SLDs too generic to name a tool by (use the distinctive subdomain instead).
+const GENERIC_SLD = new Set(['google', 'microsoft', 'apple', 'amazonaws', 'azure', 'herokuapp'])
+const suffixMatch = (host, key) => host === key || host.endsWith('.' + key)
+// Readable tool name from a host the curated map didn't cover (dash.cloudflare.com → Cloudflare,
+// aistudio.google.com → Aistudio, outreach.app.blitz.dev → Outreach).
+function prettyName(host) {
+  const labels = host.replace(/^www\./, '').split('.').slice(0, -1) // drop TLD
+  if (!labels.length) return host
+  let label
+  if (labels.length >= 2 && (TOOL_PREFIX.has(labels[0]) || GENERIC_SLD.has(labels[labels.length - 1]))) {
+    label = GENERIC_SLD.has(labels[labels.length - 1]) ? labels[0] : labels[labels.length - 1]
+  } else label = labels[0]
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+// Classify a host. Returns {kind:'tool'|'ai', name, color?, integration?} for a work tool, the
+// sentinel 'EXCLUDE' for a hard non-tool (social/consumer/search — never a tool, even open), or
+// null for unknown (the caller may still treat an OPEN unknown as a tool). Curated map FIRST so a
+// named tool under a search root wins (docs.google.com → Google Docs, not the google.com exclude);
+// then the consumer/search exclusion; then a structural heuristic (app-surface subdomain or the
+// user's own *.blitz.dev deploys).
+function classifyDomain(host) {
+  for (const key of Object.keys(WORKFLOW_SITES)) {
+    if (suffixMatch(host, key)) {
+      const s = WORKFLOW_SITES[key]
+      if (s.kind === 'social') return 'EXCLUDE' // curated, but social → never a workflow tool
+      return { kind: s.kind || 'tool', name: s.name, ...(s.color ? { color: s.color } : {}), ...(s.integration ? { integration: s.integration } : {}) }
     }
   }
-  return [...hits.values()].sort((a, b) => b.n - a.n).slice(0, 8)
+  if (isExcludedHost(host)) return 'EXCLUDE'
+  const sub = host.split('.')[0]
+  if (TOOL_PREFIX.has(sub) || /\.blitz\.dev$/.test(host)) return { kind: 'tool', name: prettyName(host) }
+  return null
+}
+// "Where your work lives": the tools the user actually uses, ranked by intentionality — a tab OPEN
+// right now ('using') beats raw 90-day frequency. An open tab that isn't a known consumer/social
+// site counts as a tool even when the heuristic can't name it structurally (you opened it on purpose).
+function matchWorkflow(topDomains, openTabHosts = new Set()) {
+  const hits = new Map() // name → {host, name, n, color?, integration?, kind, using?}
+  const consider = (rawHost, weight, using) => {
+    const host = String(rawHost || '').replace(/^www\./, '')
+    if (!host) return
+    let c = classifyDomain(host)
+    if (c === 'EXCLUDE') return // social/consumer/search — never a tool, even if open right now
+    if (!c) { if (!using) return; c = { kind: 'tool', name: prettyName(host) } } // open unknown ⇒ a tool by intent
+    const prev = hits.get(c.name)
+    hits.set(c.name, {
+      host: prev ? prev.host : host, name: c.name, kind: c.kind,
+      n: Math.round(weight) + (prev ? prev.n : 0),
+      ...(c.color || prev?.color ? { color: c.color || prev.color } : {}),
+      ...(c.integration || prev?.integration ? { integration: c.integration || prev.integration } : {}),
+      ...(using || prev?.using ? { using: true } : {})
+    })
+  }
+  const norm = new Set()
+  for (const [host, w] of topDomains) { const h = String(host).replace(/^www\./, ''); norm.add(h); consider(host, w, openTabHosts.has(h)) }
+  for (const h of openTabHosts) if (!norm.has(h)) consider(h, 0, true) // open but not in history (fresh/private)
+  return [...hits.values()]
+    .sort((a, b) => (b.using ? 1 : 0) - (a.using ? 1 : 0) || b.n - a.n)
+    .slice(0, 10)
 }
 
 function selfAuthored(ctx) {
@@ -792,7 +889,7 @@ function analyze(ctx, now) {
     projects, domains, hours, weekdays, punch, entityRanked, topApps, appUse: ctx.appUse, topDomains, topFiles,
     directives: directives.sort(byW), corrections: corrections.sort(byW), voice: voice.sort(byW),
     collab: ctx.collab, collabVia: ctx.collabVia, calendar: ctx.calendar, census: ctx.census,
-    tooling: ctx.tooling, facts: ctx.facts
+    tooling: ctx.tooling, facts: ctx.facts, openTabs: ctx.openTabs, openTabHosts: ctx.openTabHosts
   }
 }
 
@@ -873,10 +970,32 @@ function render(A, sessions, authored, now, fdaOn) {
   if (projs.length) pD('Projects (by prompt volume): ' + projs.map(([p, n]) => `\`${p}\` (${n})`).join(', ') + '.')
   if (repoSet.length) pD('Repos / dirs on disk + recents: ' + repoSet.map((r) => `\`${r}\``).join(', ') + '.')
   if (A.topDomains.size) pD('Top web domains: ' + topN(A.topDomains, CFG.maxDomains).map(([d]) => d).join(', ') + '.')
-  const wf = matchWorkflow(A.topDomains)
-  if (wf.length) pD(`Web workflow tools: ${wf.map((w) => w.name).join(', ')}.${A.visits > 400 && A.devText < 150 ? ' **Web-first user** — their work lives in the browser; consider importing/integrating these.' : ''}`)
+  const wf = matchWorkflow(A.topDomains, A.openTabHosts)
+  if (wf.length) {
+    const oauth = wf.filter((w) => w.integration).map((w) => w.name)
+    pD(`Where their work lives (tools, not reading): ${wf.map((w) => w.name + (w.using ? ' (open now)' : '')).join(', ')}.`
+      + ' Their work lives substantially in the browser; offer to bring it in (open the key tools as live surfaces, import tabs).'
+      + (oauth.length ? ` Connectable via OAuth so the agent can act, not just look: ${oauth.join(', ')}.` : ''))
+  }
   if (A.domains.size) pD('Inferred stack: ' + topN(A.domains, 16).map(([d, n]) => `${d} (${n})`).join(', ') + '.')
   add('')
+
+  // 4b. the LIVE working set — the open tabs captured at onboarding, grouped by the user's own
+  // windows. Highest-signal browser artifact (what they're doing NOW). We list it raw; the
+  // interviewer clusters it by intent and leads the scope question from it.
+  if (A.openTabs && A.openTabs.windows.length) {
+    add('## Working set (open right now)')
+    const c = A.openTabs.counts
+    add(`> ${c.tabs} tabs across ${c.windows} window(s) in ${A.openTabs.browser || 'the browser'}, captured at onboarding. This is the live working set — cluster it by intent and lead the first scope question from it.`)
+    const pW = cap(0.16)
+    let shown = 0
+    A.openTabs.windows.forEach((w, i) => {
+      if (shown >= 40) return
+      if (!pW(`- **Window ${i + 1}** (${w.tabs.length} tab${w.tabs.length === 1 ? '' : 's'}):`)) return
+      for (const t of w.tabs) { if (shown >= 40) break; if (!pW(`  - ${t.title} — ${t.host}`)) break; shown++ }
+    })
+    add('')
+  }
 
   // 5. self-authored
   if (authored.length) {
@@ -1008,13 +1127,20 @@ function buildJson(A, sessions, authored, now, fdaOn) {
     people: topN(A.collab, 24).map(([label, n]) => ({ label, n, kind: personKind(label), via: A.collabVia.get(label) || null })),
     calendar: { upcoming: A.calendar.upcoming.slice(0, 10), meetingsPerWeek: A.calendar.meetingsPerWeek },
     census: A.census,
-    web: {
-      // web-first = heavy browsing, thin local/dev footprint → their life is in the browser
-      webFirst: A.visits > 400 && A.devText < 150,
-      visits: A.visits,
-      devSignals: A.devText,
-      workflow: matchWorkflow(A.topDomains)
-    },
+    web: (() => {
+      const workflow = matchWorkflow(A.topDomains, A.openTabHosts)
+      return {
+        // web-first = the browser is a primary work surface. Keyed on browser intensity + tool
+        // breadth, NOT the absence of dev signal (the old `devSignals < 150` gate excluded every
+        // developer — exactly the builders whose work IS the browser). Import is always offered now.
+        webFirst: A.visits > 1000 || workflow.length >= 5 || A.openTabHosts.size >= 6,
+        visits: A.visits,
+        devSignals: A.devText,
+        workflow,
+        // the live working set (--open-tabs snapshot), grouped by window. null when not captured.
+        openTabs: A.openTabs || null
+      }
+    })(),
     topics: A.entityRanked.slice(0, CFG.topEntities).map(([t, n]) => ({ t, n })),
     directives: A.directives.slice(0, CFG.topDirectives).map((d) => ({ text: clamp(d.text, CFG.perPromptMaxChars), source: d.source })),
     corrections: A.corrections.slice(0, CFG.topDirectives).map((c) => ({ text: clamp(c.text, CFG.perPromptMaxChars), source: c.source })),
@@ -1034,7 +1160,7 @@ function buildJson(A, sessions, authored, now, fdaOn) {
 // ---- main ----------------------------------------------------------------------------
 const SRC_LABELS = {
   claude: 'your Claude sessions', codex: 'your Codex history', agents: 'other AI agents',
-  chromium: 'Chrome history', firefox: 'Firefox history', spotlight: 'recent files',
+  chromium: 'Chrome history', firefox: 'Firefox history', openTabs: 'your open tabs', spotlight: 'recent files',
   apps: 'installed apps', dock: 'your Dock', loginItems: 'login items',
   defaultBrowser: 'default browser', shell: 'shell history', git: 'git repositories',
   editor: 'editor projects', downloads: 'downloads', census: 'what you make', locale: 'system locale',

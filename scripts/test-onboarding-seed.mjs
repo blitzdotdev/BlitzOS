@@ -231,6 +231,54 @@ console.log('7) unlock card contract')
   ok(full === null, 'a truly full stage returns null instead of overlapping')
 }
 
+console.log('8) live working set — the open-tabs card is placed, populated, and never overlaps')
+{
+  const tabsScan = {
+    ...FIXTURE,
+    web: {
+      webFirst: true,
+      visits: 4000,
+      devSignals: 1100,
+      workflow: [{ host: 'github.com', name: 'GitHub', n: 50, integration: 'github' }],
+      openTabs: {
+        browser: 'Google Chrome',
+        capturedAt: 1781000000000,
+        counts: { windows: 2, tabs: 9 },
+        windows: [
+          { tabs: [
+            { title: 'analytical-engine — live dashboard', host: 'app.example.com', url: 'https://app.example.com/x' },
+            { title: 'Apply to Y Combinator', host: 'apply.ycombinator.com', url: 'https://apply.ycombinator.com' },
+            { title: 'Bernoulli numbers paper', host: 'arxiv.org', url: 'https://arxiv.org/abs/1' },
+            { title: 'New chat - Claude', host: 'claude.ai', url: 'https://claude.ai/new' },
+            { title: 'D1 SQLite', host: 'dash.cloudflare.com', url: 'https://dash.cloudflare.com/d1' },
+            { title: 'Deploy', host: 'vercel.com', url: 'https://vercel.com/deploy' }
+          ] },
+          { tabs: [
+            { title: 'Radial menu manual', host: 'doc.plasticity.xyz', url: 'https://doc.plasticity.xyz/radial' },
+            { title: 'Pie menus tutorial', host: 'youtube.com', url: 'https://youtube.com/watch?v=1' },
+            { title: 'Claude Platform', host: 'platform.claude.com', url: 'https://platform.claude.com' }
+          ] }
+        ]
+      }
+    }
+  }
+  const plan = buildBoardPlan(tabsScan, { surfaces: [CHAT_HUB], viewport: VP })
+  const wt = at(plan, 'worktabs')
+  ok(wt, 'worktabs card is in the plan when open tabs were captured')
+  ok(wt && wt.widget === 'worktabs', 'worktabs maps to the worktabs widget')
+  ok(wt && Array.isArray(wt.props.items) && wt.props.items.length === 9, `worktabs lists every captured tab (got ${wt && wt.props.items && wt.props.items.length})`)
+  ok(wt && wt.props.items[0].url && wt.props.items[0].win === 1, 'tab items carry their exact url + window index')
+  ok(wt && /9 tabs · 2 windows · Google Chrome/.test(wt.props.sub || ''), `worktabs sub summarizes the set (got "${wt && wt.props.sub}")`)
+  ok(wt && (wt.slot ? wt.slot.size === 'tall' || wt.slot.size === 'l' : wt.offstage), 'worktabs is list-shaped (tall/l) when staged, else parked')
+  const { clash } = cellsOf(plan.filter((c) => c.slot).concat([CHAT_HUB]))
+  ok(!clash, `worktabs never overlaps another tile or the chat hub${clash ? ` (${clash})` : ''}`)
+  // no openTabs → no worktabs card (graceful: Automation denied / no browser)
+  const noTabs = { ...tabsScan, web: { ...tabsScan.web, openTabs: null } }
+  ok(!at(buildBoardPlan(noTabs, { surfaces: [CHAT_HUB], viewport: VP }), 'worktabs'), 'no open-tabs snapshot → no worktabs card')
+  // the widget source exists + is registered
+  ok(!!getWidgetSource('worktabs'), 'worktabs widget is registered in the manifest + has source')
+}
+
 if (failed) {
   console.error(`\n✗ ${failed} assertion(s) failed`)
   process.exit(1)
