@@ -785,7 +785,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       if (!surf) return {}
       if (s.mode === 'desktop') {
         const p = desktopClamp(surf.x, surf.y, surf.w, surf.h, s.viewport, s.currentStage, s.stageOrder, s.stageCount)
-        return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y, z: ++zCounter } : w)), activeSurfaceId: id }
+        return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y, z: ++zCounter, focus: true } : w.focus ? { ...w, focus: false } : w)), activeSurfaceId: id }
       }
       const m = 56
       const fit = Math.min((s.viewport.w - m) / surf.w, (s.viewport.h - m) / surf.h)
@@ -794,7 +794,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const cy = surf.y + surf.h / 2
       const transform = { scale, x: s.viewport.w / 2 - cx * scale, y: s.viewport.h / 2 - cy * scale }
       return {
-        surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter } : w)),
+        surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter, focus: true } : w.focus ? { ...w, focus: false } : w)),
         activeSurfaceId: id,
         transform,
         controlTransform: transform // a dock-focus in control mode is a settled camera to remember
@@ -922,7 +922,13 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       surface.w = r.w
       surface.h = r.h
     }
-    set((s) => ({ surfaces: [...s.surfaces, surface], activeSurfaceId: id }))
+    // A surface born focused becomes the single frontmost window — clear the flag on whoever held it.
+    set((s) => ({
+      surfaces: input.focus
+        ? [...s.surfaces.map((w) => (w.focus ? { ...w, focus: false } : w)), surface]
+        : [...s.surfaces, surface],
+      activeSurfaceId: id
+    }))
     return id
   },
 
@@ -1304,7 +1310,12 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   focusSurface: (id) =>
     set((s) => {
       if (!s.surfaces.some((w) => w.id === id)) return {}
-      return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter } : w)), activeSurfaceId: id }
+      // The focused surface is the SINGLE frontmost window (effectiveZ's +2.5M top band): raise it,
+      // flag it, and clear the flag on whoever held it (only those refs change — others keep identity).
+      return {
+        surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter, focus: true } : w.focus ? { ...w, focus: false } : w)),
+        activeSurfaceId: id
+      }
     }),
 
   clearActiveSurface: () => set({ activeSurfaceId: null }),
@@ -1372,13 +1383,17 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 }))
 
 /** The layered-desktop z bands (one source — SurfaceFrame's stacking style AND the browser
- *  occlusion test use this): tiles/icons at raw z → free windows +500k → focus floater +1.5M →
- *  pinned chat/activity +2M. (A slotted tile being DRAGGED gets a transient +1.2M lift on top,
+ *  occlusion test use this): tiles/icons at raw z → free windows +500k → pinned chat/activity +2M →
+ *  the FOCUSED window +2.5M. Focus is the TOP band so the window the human is actively using (a
+ *  dragged/clicked browser) comes ABOVE the otherwise-always-on-top chat; an idle chat still floats
+ *  over idle free windows, so it stays visible until you reach for another window. `focus` marks the
+ *  SINGLE frontmost surface — focusSurface/focusAndZoom/createSurface keep that invariant (set it on
+ *  the target, clear it on every other). (A slotted tile being DRAGGED gets a transient +1.2M lift,
  *  component-local — callers add it where the gesture state lives.) */
 export function effectiveZ(s: Surface): number {
+  if (s.focus) return 2_500_000 + s.z
   const isPanel = s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity'))
   if (isPanel) return 2_000_000 + s.z
-  if (s.focus) return 1_500_000 + s.z
   if (slotOf(s)) return s.z
   if (s.kind === 'native' && (s.component === 'file' || s.component === 'dir' || s.component === 'folder')) return s.z
   return 500_000 + s.z
