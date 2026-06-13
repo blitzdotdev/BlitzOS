@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { FAKE_QUESTIONS } from './questions'
 
 /**
  * Full-screen onboarding opener (P1, plans/onboarding-case-file.md): a warm, breathing boot
  * over an aurora-washed frost of the user's wallpaper, driven by the REAL scan running in main
  * (onboarding director). Progress, stage lines and the signal counter stream from
  * `onboarding:progress`; when the board starts seeding, the overlay DISSOLVES into the canvas
- * so the human watches the Case File assemble. No interview here — the resident brain (P2)
- * owns questions; QuestionFlow below stays as the future no-model fallback tier.
+ * so the human watches the Case File assemble. No interview here: the managed agent backend (P2)
+ * owns every question.
  */
 export function OnboardingFlow({ onComplete }: { onComplete: () => void }): JSX.Element {
   const wallpaper = useWallpaper()
@@ -29,7 +28,7 @@ export function OnboardingFlow({ onComplete }: { onComplete: () => void }): JSX.
   }
 
   return (
-    <div className={`onb${leaving ? ' out' : ''}`} data-theme="light">
+    <div className={`onb${leaving ? ' out' : ''}`}>
       <div className="onb-wall" style={wallpaper ? { backgroundImage: `url("${wallpaper}")` } : undefined} />
       <div className="onb-aurora">
         <i className="a1" />
@@ -161,57 +160,6 @@ function BootScreen({ onSeeding }: { onSeeding: () => void }): JSX.Element {
       </div>
       <div className="boot-stage">{stage}</div>
       <div className={`boot-signals${signals > 0 ? ' on' : ''}`}>{signals.toLocaleString()} signals found</div>
-    </div>
-  )
-}
-
-interface Answer {
-  choice?: string
-  text?: string
-}
-
-// UNUSED in P1 — the static-question fallback tier for P2 (runs when no model is reachable).
-// Kept wired to FAKE_QUESTIONS so the flow can be revived without re-building the UI.
-export function QuestionFlow({ onDone }: { onDone: () => void }): JSX.Element {
-  const [i, setI] = useState(0)
-  const [answers, setAnswers] = useState<Record<string, Answer>>({})
-  const q = FAKE_QUESTIONS[i]
-  const total = FAKE_QUESTIONS.length
-  const last = i === total - 1
-  const a = answers[q.id] ?? {}
-  const answered = !!a.choice || !!a.text?.trim()
-
-  const patch = (p: Partial<Answer>): void => setAnswers((prev) => ({ ...prev, [q.id]: { ...prev[q.id], ...p } }))
-  const next = (): void => (last ? onDone() : setI((n) => n + 1))
-
-  return (
-    <div className="onb-q" key={q.id}>
-      <div className="onb-q-count">
-        {String(i + 1).padStart(2, '0')} <span>/ {String(total).padStart(2, '0')}</span>
-      </div>
-      <h1 className="onb-q-prompt">{q.prompt}</h1>
-      <div className="onb-q-opts">
-        {q.options.map((opt) => (
-          <button key={opt} className={`onb-opt${a.choice === opt ? ' sel' : ''}`} onClick={() => patch({ choice: opt })}>
-            {opt}
-          </button>
-        ))}
-      </div>
-      <textarea
-        className="onb-q-more"
-        placeholder="Add more context…"
-        value={a.text ?? ''}
-        rows={2}
-        onChange={(e) => patch({ text: e.target.value })}
-      />
-      <div className="onb-q-actions">
-        <button className="onb-skip" onClick={next}>
-          Skip
-        </button>
-        <button className="onb-next" disabled={!answered} onClick={next}>
-          {last ? 'Enter Desktop' : 'Continue'}
-        </button>
-      </div>
     </div>
   )
 }

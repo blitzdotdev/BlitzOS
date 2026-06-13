@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, webContents, app } from 'electron'
+import { BrowserWindow, ipcMain, webContents, app, screen } from 'electron'
 import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
@@ -194,7 +194,7 @@ export function initOsActions(opts: {
     onSurfaces: () => {}, // Electron browser guests are hosted by webcontents-view-host.ts
     getActionItems: () => (actionItemsProvider ? actionItemsProvider() : []), // authoritative inbox items (index.ts wires it)
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
-    // An agent's claude runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
+    // An agent backend runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
     // agent-runtime core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
     launchAgent: (id, stage, title) => launchAgentHook?.(id, stage, title),
     // Stop an agent (when closing it) — index.ts wires this to terminal-ops.stopTerminal.
@@ -227,7 +227,8 @@ export function initOsActions(opts: {
     onCursor: (surfaceId, cursor) => sendToRenderer('os:page-cursor', { surfaceId, cursor }),
     onFocus: (id) => send('focus', { id }),
     onContextMenu: (surfaceId, x, y) => sendToRenderer('os:action', { type: 'surface-contextmenu', surfaceId, x, y }),
-    onMetaTap: () => sendToRenderer('os:metatap', undefined)
+    onMetaTap: () => sendToRenderer('os:metatap', undefined),
+    onAltHold: (phase) => osRadialPhase(phase)
   })
 
   // Workspace launcher / Mission-Control IPC — mirrors the server's /api/os/workspace* routes.
@@ -259,6 +260,7 @@ export function initOsActions(opts: {
   // The renderer pulls its hydrate once its onAction listener is mounted (race-free; absorbs the
   // teammate's request-hydrate, replacing the old main-push on did-finish-load).
   ipcMain.on('workspace:request-hydrate', () => osSendHydrate())
+  ipcMain.handle('os:restore-chat-hub', () => osRestoreChatHub())
 
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) {
@@ -520,6 +522,23 @@ export function osBroadcast(action: Record<string, unknown>): void {
   sendToRenderer('os:action', action)
 }
 
+/** Bare-Option (Alt) hold → the renderer's radial create menu. Fed from main's before-input-event
+ *  trackers (host webContents in index.ts covers the renderer DOM + all its iframes; browser guests
+ *  via webcontents-view-host onAltHold), so the gesture works no matter what holds keyboard focus.
+ *  'down' carries the TRUE cursor position (screen point → UI-window content coords): the renderer's
+ *  own pointermove never fires while the cursor sits over an iframe, so its cache can be stale. */
+export function osRadialPhase(phase: 'down' | 'up' | 'cancel'): void {
+  if (phase === 'down') {
+    const win = getWin()
+    if (!win || win.isDestroyed()) return
+    const pt = screen.getCursorScreenPoint()
+    const b = win.getContentBounds()
+    sendToRenderer('os:radial', { phase, x: pt.x - b.x, y: pt.y - b.y })
+  } else {
+    sendToRenderer('os:radial', { phase })
+  }
+}
+
 // ---- canvas perception (the brain sees window movement — issues/open/perception-blind-spot…):
 // TOOL-driven ops ingest at the send() seam with origin 'tool'; HUMAN gestures are derived by
 // diffing successive renderer os:state pushes. The renderer ECHOES applied tool ops back in its
@@ -762,9 +781,9 @@ export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
 }
 let lastStateKeyframe = 0
-// index.ts owns the relay url + terminal-ops, so it registers HOW to launch an agent's claude in a
+// index.ts owns the relay url + terminal-ops, so it registers HOW to launch an agent backend in a
 // tmux terminal. osActions handles the workspace-side (mint id + surface the widget); addAgent then
-// calls launchAgent via the host adapter. Gated: index.ts only registers this when BLITZ_AGENT is set.
+// calls launchAgent via the host adapter.
 let launchAgentHook: ((agentId: string, stage: number, title?: string) => void) | null = null
 export function setLaunchAgent(fn: (agentId: string, stage: number, title?: string) => void): void {
   launchAgentHook = fn
@@ -775,7 +794,7 @@ export function setStopAgent(fn: (agentId: string) => void): void {
 }
 // Re-exec a running agent in place (kill + relaunch from its persisted meta). The onboarding director
 // uses it to upgrade the interview brain back to full thinking effort once the duty is done — the
-// re-exec rebuilds the command (no interview boot task → no --effort cap). Always-fresh, so it just
+// re-exec rebuilds the command (resident initiative duty, no interview effort cap). Always-fresh, so it just
 // re-reads chat.md; no conversation is lost.
 let restartAgentHook: ((agentId: string) => void) | null = null
 export function setRestartAgent(fn: (agentId: string) => void): void {
@@ -792,20 +811,20 @@ export function osRestartBrain(agentId = '0'): void {
 }
 /** Ensure an agent is up WITHOUT a chat message — the onboarding director uses this to start the
  *  resident interviewer at board-ready (its standing duty rides the bootstrap). Re-execs via the tmux
- *  launcher (replaces any stale terminal); no-op when no launcher is wired (no claude CLI / BLITZ_AGENT). */
+ *  launcher (replaces any stale terminal); no-op when no launcher is wired. */
 export function osKickBrain(agentId = '0'): void {
   const id = String(agentId)
   launchAgentHook?.(id, id === '0' ? 0 : 0)
 }
 /** Open a new agent: mint its id, register + live-surface its chat widget; addAgent launches
- *  its claude terminal (via the launchAgent seam). focus:true (a USER '+ Agent') follows the camera to it. */
+ *  its managed terminal (via the launchAgent seam). focus:true (a USER '+ Agent') follows the camera to it. */
 export function osSpawnAgent(title?: string, focus = false): { id: string; title: string } {
   if (!wsHost) throw new Error('no workspace host')
   const id = wsHost.newAgentId()
   wsHost.addAgent(id, title, { focus })
   return { id, title: title || `Chat ${id}` }
 }
-/** Close a non-primary agent (stop its claude + remove its widget/files/stage). */
+/** Close a non-primary agent (stop its backend + remove its widget/files/stage). */
 export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
   return wsHost ? wsHost.closeAgent(agentId) : { ok: false, error: 'no workspace host' }
 }
@@ -813,7 +832,7 @@ export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
 export function osRenameAgent(agentId: string, newTitle: string): { ok: boolean; error?: string; title?: string } {
   return wsHost ? wsHost.renameAgent(agentId, newTitle) : { ok: false, error: 'no workspace host' }
 }
-/** Boot: re-exec the claude terminal for every agent on the current relay url (+ --resume). */
+/** Boot: re-exec every agent terminal on the current relay url. */
 export function osResumeAgentsOnBoot(): void {
   wsHost?.resumeAgentsOnBoot()
 }
@@ -953,6 +972,13 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
 export function osSendHydrate(): void {
   if (!wsHost) return
   send('hydrate', { surfaces: wsHost.hydrateSurfaces(), camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, workspace: wsHost.active() })
+}
+export function osRestoreChatHub(): { ok: boolean; id?: string; error?: string } {
+  try {
+    return wsHost ? wsHost.restoreChatHub() : { ok: false, error: 'workspace host not ready' }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || 'restore chat failed' }
+  }
 }
 /** Serve a workspace thumbnail by name (the blitz-thumb:// protocol handler in index.ts calls this). */
 export function osReadThumb(name: string): Buffer | null {

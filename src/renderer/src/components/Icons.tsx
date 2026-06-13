@@ -1,5 +1,5 @@
 /* Thin-line icon set, Spatial-style: 24px grid, currentColor stroke, rounded caps.
-   Sized by CSS (.window-ico svg, .sidebar-btn svg, …) or the `size` prop. */
+   Sized by CSS (.window-ico svg, .sidebar-app svg, …) or the `size` prop. */
 import type { SVGProps, ReactNode } from 'react'
 
 function Svg({ size = 18, children, ...rest }: { size?: number; children: ReactNode } & SVGProps<SVGSVGElement>): JSX.Element {
@@ -30,6 +30,28 @@ export const IconPlus = (p: P): JSX.Element => (
 export const IconClose = (p: P): JSX.Element => (
   <Svg {...p}>
     <path d="M6 6l12 12M18 6L6 18" />
+  </Svg>
+)
+export const IconCheck = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M5 12.5l4.2 4.2L19 6.8" />
+  </Svg>
+)
+export const IconSettings = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2a2 2 0 0 1-4 0V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 0 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H2.8a2 2 0 0 1 0-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7A2 2 0 0 1 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V2.8a2 2 0 0 1 4 0V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 0 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2a2 2 0 0 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z" />
+  </Svg>
+)
+export const IconSun = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+  </Svg>
+)
+export const IconMoon = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 7 7 0 1 0 20.5 14.5Z" />
   </Svg>
 )
 export const IconEye = (p: P): JSX.Element => (
@@ -71,6 +93,24 @@ export const IconNote = (p: P): JSX.Element => (
     <path d="M14 3v4h4M9 13h6M9 17h4" />
   </Svg>
 )
+export const IconInbox = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M4 5h16v14H4z" />
+    <path d="M8 12l2.5 2.5L16 9" />
+  </Svg>
+)
+export const IconSessions = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M5 7h14M5 12h14M5 17h14" />
+    <path d="M3 7h.01M3 12h.01M3 17h.01" />
+  </Svg>
+)
+export const IconTerminal = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M4 5h16v14H4z" />
+    <path d="M8 9l3 3-3 3M13 15h4" />
+  </Svg>
+)
 export const IconChat = (p: P): JSX.Element => (
   <Svg {...p}>
     <path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5Z" />
@@ -84,6 +124,24 @@ export const IconSparkle = (p: P): JSX.Element => (
 export const IconChevronDown = (p: P): JSX.Element => (
   <Svg {...p}>
     <path d="M6 9l6 6 6-6" />
+  </Svg>
+)
+export const IconArrowLeft = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M19 12H5M12 5l-7 7 7 7" />
+  </Svg>
+)
+export const IconArrowRight = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M5 12h14M12 5l7 7-7 7" />
+  </Svg>
+)
+export const IconRefresh = (p: P): JSX.Element => (
+  <Svg {...p}>
+    <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" />
+    <path d="M4 4v4h4" />
+    <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16" />
+    <path d="M20 20v-4h-4" />
   </Svg>
 )
 export const IconLock = (p: P): JSX.Element => (

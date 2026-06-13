@@ -47,7 +47,7 @@ import {
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
-import { prepareAgentLaunch } from '../src/main/agent-runtime.mjs'
+import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, normalizeAgentRuntime, prepareAgentLaunch } from '../src/main/agent-runtime.mjs'
 // Boot journal (crash dirty-bit + root lease) — the SAME root-state store the Electron main uses.
 import { openBootJournal, resolveWorkspace, appendChatMessage } from '../src/main/workspace.mjs'
 // The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
@@ -238,17 +238,32 @@ let osState = { surfaces: [] }
 // after broadcast + reconcileSurfaces exist). The renderer adopts it via a `hydrate` on SSE connect.
 let agentUrl = null
 let relay = null // the SHARED relay handle ({ getUrl, isOnline, stop }) — same module Electron uses (no divergence)
-// Agents run as VISIBLE tmux terminals (no headless brain). launchAgent (the workspace-host seam)
-// starts an agent's claude in a terminal in its stage, over the same relay; the terminal-manager
-// persists + reattaches it. Gated by BLITZ_AGENT (=claude or a custom command); null ⇒ no auto-launch.
-const agentCmd = process.env.BLITZ_AGENT === '1' ? 'claude' : process.env.BLITZ_AGENT
+// Agents run as managed tmux terminals. Server mode remains opt-in via BLITZ_AGENT, but the backend can
+// be Claude or Codex serverless via BLITZ_AGENT_BACKEND/BLITZ_AGENT_RUNTIME.
+const rawAgentBackend = process.env.BLITZ_AGENT_BACKEND || process.env.BLITZ_AGENT_RUNTIME || ''
+const rawAgentCmd = process.env.BLITZ_AGENT || ''
+const rawAgentRuntime = rawAgentCmd && rawAgentCmd !== '1' ? normalizeAgentRuntime(rawAgentCmd) : ''
+const rawAgentIsRuntime = rawAgentRuntime === AGENT_RUNTIME_CODEX_SERVERLESS || rawAgentRuntime === AGENT_RUNTIME_CLAUDE
+const agentRuntime = rawAgentBackend ? normalizeAgentRuntime(rawAgentBackend) : rawAgentIsRuntime ? rawAgentRuntime : AGENT_RUNTIME_CLAUDE
+const agentCmd = rawAgentCmd === '1' ? (agentRuntime === AGENT_RUNTIME_CODEX_SERVERLESS ? 'codex' : 'claude') : rawAgentIsRuntime ? (agentRuntime === AGENT_RUNTIME_CODEX_SERVERLESS ? 'codex' : 'claude') : rawAgentCmd
 const launchAgent = process.env.BLITZ_AGENT
   ? (id, stage, title) => {
       const ws = wsHost.activePath()
       if (!ws || !agentUrl) return // not ready (no workspace / relay url yet) — boot resume retries
       const terminalsDir = join(ws, '.blitzos', 'terminals')
-      const { command, claudeSessionId } = prepareAgentLaunch({ sessionsDir: terminalsDir, id, url: agentUrl, cmd: agentCmd })
-      Promise.resolve(serverTerminalOps.spawnTerminal({ id, kind: 'agent', command, cwd: ws, stage, title: title || (id === '0' ? 'Agent' : `Agent ${id}`), claudeSessionId })).catch(() => {})
+      const launch = prepareAgentLaunch({ sessionsDir: terminalsDir, id, url: agentUrl, cmd: agentCmd, runtime: agentRuntime })
+      Promise.resolve(serverTerminalOps.spawnTerminal({
+        id,
+        kind: 'agent',
+        command: launch.command,
+        cwd: ws,
+        stage,
+        title: title || (id === '0' ? 'Agent' : `Agent ${id}`),
+        agentRuntime: launch.agentRuntime,
+        agentSessionId: launch.agentSessionId,
+        claudeSessionId: launch.claudeSessionId,
+        claudeEstablished: launch.established
+      })).catch(() => {})
     }
   : null
 const sseClients = new Set()
@@ -452,7 +467,7 @@ const wsHost = createWorkspaceHost({
   getActionItems: () => serverActionItems.listActions(), // authoritative inbox items (reconciled into hydrate + onStatePush)
   onSurfaces: (surfaces) => (SERVER_MODE ? reconcileSurfaces(surfaces) : undefined),
   defaultMode: 'canvas',
-  // An agent's claude runs in a VISIBLE terminal in its stage (no headless brain). null ⇒ BLITZ_AGENT off.
+  // An agent backend runs in a VISIBLE terminal in its stage (no headless brain). null ⇒ BLITZ_AGENT off.
   launchAgent: launchAgent ? (id, stage, title) => launchAgent(id, stage, title) : undefined,
   stopAgent: (id) => { serverTerminalOps.removeTerminal(id) } // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
 })
@@ -693,7 +708,7 @@ const serverOps = {
   },
   closeAgent: (id) => wsHost.closeAgent(String(id)),
   renameAgent: (id, title) => wsHost.renameAgent(String(id), String(title ?? '')),
-  // Open a new agent: register + surface it; addAgent launches its claude terminal (launchAgent).
+  // Open a new agent: register + surface it; addAgent launches its managed terminal (launchAgent).
   // focus:true (a USER '+ Agent') tells the renderer to follow the camera to the new stage.
   spawnAgent: async (title, focus = false) => {
     const id = wsHost.newAgentId()
@@ -722,7 +737,7 @@ const serverOps = {
 
 // Terminal ops — the SHARED workspace-keyed lifecycle (terminal-ops.mjs). Server seam: the active
 // workspace folder + the SSE broadcast emit. Electron binds the SAME makeTerminalOps with its own seam.
-const serverTerminalOps = makeTerminalOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast, getUrl: () => agentUrl, agentCmd: agentCmd || 'claude' })
+const serverTerminalOps = makeTerminalOps({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast, getUrl: () => agentUrl, agentCmd: agentCmd || 'claude', agentRuntime })
 Object.assign(serverOps, serverTerminalOps)
 
 // Action-items inbox — the SAME shared core Electron binds. Server seam: active workspace + SSE
@@ -1432,9 +1447,9 @@ server.listen(PORT, '127.0.0.1', () => {
   initServerMode()
   // Phase 3: watch the workspace folder so external file edits (agent/Finder/git) reflect live.
   wsHost.startWatch()
-  // Boot agents: each agent's claude runs in a VISIBLE tmux terminal in its stage. Survivors are
-  // reattached (tmux outlives the process); only the DEAD ones are re-exec'd with --resume of their persisted
-  // session id. Opt-in via BLITZ_AGENT (off by default — continuous LLM use has a cost). The relay URL is
+  // Boot agents: each backend runs in a VISIBLE tmux terminal in its stage. Survivors are
+  // reattached (tmux outlives the process); only the DEAD ones are re-exec'd with persisted
+  // backend metadata. Opt-in via BLITZ_AGENT (off by default — continuous LLM use has a cost). The relay URL is
   // minted async, so poll until it's up, then resume once (after survivors are adopted, to avoid double-launch).
   if (process.env.BLITZ_AGENT) {
     let resumed = false

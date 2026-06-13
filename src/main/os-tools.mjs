@@ -20,7 +20,7 @@ import { latticeFor, cardRect, findSlot, budgetUsed, stageSummary, sizeForDims, 
 
 // OFF-STAGE = the open infinite canvas OUTSIDE the stage (the bounded per-workspace "stage" the user's
 // desktop-mode camera frames). There is no separate hidden pool: a work surface parks below the stage,
-// naturally off-screen at scale 1 and revealed when the user zooms out (control mode). Computed
+// naturally off-screen at scale 1 and revealed when the user zooms out or enters Control Mode. Computed
 // geometrically — a surface is offstage iff it has no slot and sits outside its stage's rect.
 function isOffstage(s, vp) {
   if (!s || s.slot) return false
@@ -261,7 +261,7 @@ export function makeOsTools(ops) {
     {
       path: '/open_window',
       description:
-        'Open a third-party website as a live web surface. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame): drive it freely with surface_control/read_window — it is out of their view at their normal zoom, and visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary agents pass {agent:"<your id>"}.',
+        'Open a third-party website as a live web surface. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame): drive it freely with surface_control/read_window — it is out of their home view, and visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary agents pass {agent:"<your id>"}.',
       input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, title: { type: 'string' }, agent: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -689,7 +689,7 @@ export function makeOsTools(ops) {
     {
       path: '/open_terminal',
       description:
-        "Open a TERMINAL — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (claude/codex), a build/test runner, or any long job. The terminal SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/terminals/. If you are a non-primary agent, pass {agent:\"<your id>\"} so the terminal opens in YOUR stage, not the user's. Args: {command (e.g. 'bash' or \"claude -p '…'\"), cwd?, title?, cols?, rows?, agent?}. Returns { terminal }.",
+        "Open a TERMINAL — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (Codex/Claude), a build/test runner, or any long job. The terminal SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/terminals/. If you are a non-primary agent, pass {agent:\"<your id>\"} so the terminal opens in YOUR stage, not the user's. Args: {command (e.g. 'bash', \"codex exec '…'\", or \"claude '…'\"), cwd?, title?, cols?, rows?, agent?}. Returns { terminal }.",
       input_schema: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' }, agent: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)

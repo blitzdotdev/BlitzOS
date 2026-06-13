@@ -25,9 +25,9 @@ So the OS stays minimal. Guardrails come from **(a) the model's own training** a
 
 The mechanism for the agent to seek approval **already exists**: `request_action` (`os-tools.mjs` `/request_action`, kind `'approve'`) surfaces a checkable card in the Action-items inbox and wakes the agent via `/events` `trigger:'action'` when the human ticks it. So when the agent's policy says "ask first," it can.
 
-What's **missing**: the user's onboarding guardrails never reach the agent.
-- Onboarding already asks the right questions (`src/renderer/src/onboarding/questions.ts`): *"Always ask first / Ask before anything is sent / Trust me on routine stuff"*, *"Anything Blitz should never touch?"*, *"Proactive / Suggestive / Quiet"*.
-- But those answers are not persisted anywhere the agent reads, and the served doctrine (`src/main/blitzos-agents.md`) has **no slot** for user rules — it only injects `{{CONNECTORS}}`.
+What's **missing**: the user's onboarding guardrails need to reach the agent.
+- The real onboarding interviewer should ask about approval posture, never-touch boundaries, and proactivity level.
+- Those answers need to be persisted somewhere the agent reads, and the served doctrine (`src/main/blitzos-agents.md`) has **no slot** for user rules — it only injects `{{CONNECTORS}}`.
 
 So "seek approval before sending messages to a real human" is a rule the user *can express* but that *never binds the agent*. Closing that is the whole task.
 
@@ -64,6 +64,6 @@ So "seek approval before sending messages to a real human" is a rule the user *c
 
 - Approval mechanism: `src/main/os-tools.mjs` `/request_action` (kind `approve`) + the Action-items inbox.
 - Doctrine + injection: `src/main/blitzos-agents.md` (`{{CONNECTORS}}` only today); `injectConnectors` in `src/main/agentSocket.ts` + `preview/backend.mjs` (+ the shared filler in `integrations.ts`).
-- Onboarding capture (answers, not yet persisted to the agent): `src/renderer/src/onboarding/questions.ts` + `OnboardingFlow.tsx`.
+- Onboarding capture (answers, not yet persisted to the agent): resident Claude interview via `src/main/blitzos-interview.md`.
 - Root-state location for a machine-global file: `<root>/.blitzos/` (the item-1 journal lives here as `state.json`).
 - Kept rails: `provider-call.mjs` (write approval ledger), `osStopChatSession` (STOP).

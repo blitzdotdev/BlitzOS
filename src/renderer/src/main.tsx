@@ -6,6 +6,14 @@ import './tokens.css'
 import './styles.css'
 import './onboarding/onboarding.css'
 
+const storedTheme = window.localStorage.getItem('blitzos.theme')
+document.documentElement.dataset.theme =
+  storedTheme === 'dark' || storedTheme === 'light'
+    ? storedTheme
+    : window.matchMedia?.('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light'
+
 // Re-apply the saved accent before first paint (overrides the tokens.css default at runtime).
 bootTheme()
 

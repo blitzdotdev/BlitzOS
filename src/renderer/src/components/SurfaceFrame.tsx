@@ -138,9 +138,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const setActiveTab = useDesktop((s) => s.setActiveTab)
   const closeTab = useDesktop((s) => s.closeTab)
   const addWebTab = useDesktop((s) => s.addWebTab)
-  // macOS-style: the front-most (highest-z) surface is "active"; only its lights colorize.
+  // Prefer explicit active-surface tracking; fall back to highest-z for initial hydrate before focus.
+  const activeSurfaceId = useDesktop((s) => s.activeSurfaceId)
   const maxZ = useDesktop((s) => s.surfaces.reduce((m, w) => Math.max(m, w.z), -Infinity))
-  const isActive = surface.z === maxZ
+  const isActive = activeSurfaceId ? activeSurfaceId === surface.id : surface.z === maxZ
   const isSelected = useDesktop((s) => s.selection.includes(surface.id))
   const isDropTarget = useDesktop((s) => s.dragTarget === surface.id)
   const isAbsorbing = useDesktop((s) => s.absorbing.includes(surface.id))
@@ -526,7 +527,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     setIsDragging(true)
     const st = useDesktop.getState()
     // drag the whole selection if this surface is part of a multi-selection; else just this one.
-    // A ⌥/Space "grab" of a single surface also selects it.
+    // A Space "grab" of a single surface also selects it.
     let ids: string[]
     if (st.selection.includes(surface.id) && st.selection.length > 1) {
       ids = st.selection
@@ -1042,7 +1043,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           onPointerCancel={onResizeUp}
         />
       ))}
-      {/* ⌥/Space grab-mode or selected → drag the surface from anywhere on its body. Always
+      {/* Space grab-mode or selected → drag the surface from anywhere on its body. Always
           mounted (so an in-flight drag survives releasing the key); inert otherwise. */}
       <div
         className={`drag-overlay${isSelected || grabMode || isDragging || isControl ? ' active' : ''}${isControl ? ' control' : ''}`}

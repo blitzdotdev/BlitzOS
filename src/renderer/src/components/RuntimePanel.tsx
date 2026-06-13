@@ -7,8 +7,8 @@ import { IconChat, IconCode } from './Icons'
 // workspace (live + the persisted-but-dead ones that survive in the workspace folder). It's the answer
 // to "where do I see all my terminals and agents": title, status, command, cwd, plus one-click
 // Open / Resume / Stop (and Delete for an agent). Terminals are file-backed under
-// <workspace>/.blitzos/terminals/<id>/, so this list survives a BlitzOS restart. An Agent is a Terminal
-// running claude plus its chat widget; a plain Terminal is a shell/program.
+// <workspace>/.blitzos/terminals/<id>/, so this list survives a BlitzOS restart. An Agent is a managed
+// agent terminal plus its chat widget; a plain Terminal is a shell/program.
 type TerminalMeta = {
   id: string
   kind: string
@@ -205,7 +205,7 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
           <span className="runtime-group-title">Agents</span>
           <button
             className="runtime-add"
-            title="Spawn a new agent — a fresh claude with its own chat widget"
+            title="Spawn a new agent with its own chat widget"
             onClick={() => tapi().spawnAgent?.()}
           >
             +

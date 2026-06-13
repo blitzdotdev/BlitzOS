@@ -48,7 +48,7 @@ BACKEND_PORT=8801 bash preview/start-all.sh                        # if 8799 is 
 ## Using it
 
 - Click **`+`** (left sidebar) → a live site (Hacker News) renders server-side and streams to the canvas; type any URL in the window's address bar, click links, scroll. Try a site that blocks iframes (e.g. twitter.com) — it still renders (real top-level browser).
-- **Connect AI** (toolbar) → copy the paste URL → paste into a code/HTTP-capable agent (or `claude -p`) → it opens & controls surfaces for real.
+- **Connect AI** (toolbar) → copy the paste URL → paste into a code/HTTP-capable agent such as Codex CLI or Claude Code → it opens & controls surfaces for real.
 
 ## Notes
 

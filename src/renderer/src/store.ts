@@ -32,6 +32,9 @@ function snap(v: number): number {
 function overlaps(a: Vec2, b: Vec2): boolean {
   return a.x < b.x + WIDGET_W && a.x + WIDGET_W > b.x && a.y < b.y + WIDGET_H && a.y + WIDGET_H > b.y
 }
+function sameCamera(a: CanvasTransform, b: CanvasTransform): boolean {
+  return Math.abs(a.x - b.x) < 0.75 && Math.abs(a.y - b.y) < 0.75 && Math.abs(a.scale - b.scale) < 0.006
+}
 
 // (stage-grid geometry moved to ./stages-core — imported + re-exported above)
 // These two insets are still used by the camera anchor below (cx = SIDEBAR + r.w/2, cy = TITLEBAR + r.h/2).
@@ -44,10 +47,10 @@ function desktopClamp(x: number, y: number, w: number, h: number, vp: { w: numbe
   const r = stage === 0 ? primaryRect(vp) : stageRect(stage, vp)
   return { x: clamp(x, r.x, Math.max(r.x, r.x + r.w - w)), y: clamp(y, r.y, Math.max(r.y, r.y + r.h - h)) }
 }
-/** Camera per mode. Normal = scale 1 locked to the CURRENT stage (its center maps to a fixed screen
- *  point, so every stage lands in the same on-screen desktop region). Control = a gentle zoom-out: a
- *  single stage uses controlScale (0.7); multiple stages fit the whole tiled row in the same on-screen
- *  span (so n===1 collapses to the single-stage controlScale). */
+/** Home camera per mode. Normal's home = scale 1 on the CURRENT stage (its center maps to a fixed
+ *  screen point, so every stage lands in the same on-screen desktop region). The user can temporarily
+ *  pinch/scroll away from that home frame in desktop mode. Control = a gentle zoom-out: a single stage
+ *  uses controlScale (0.7); multiple stages fit the whole tiled row in the same on-screen span. */
 export function viewTransform(
   mode: 'desktop' | 'canvas',
   vp: { w: number; h: number },
@@ -58,7 +61,7 @@ export function viewTransform(
   const cx = SIDEBAR + r.w / 2 // screen point of stage 0's center (world origin) — today's anchor
   const cy = TITLEBAR + r.h / 2
   if (mode === 'desktop') {
-    // lock to the current stage: put its center at the same (cx,cy) screen anchor. stage 0's center is
+    // Home the current stage: put its center at the same (cx,cy) screen anchor. stage 0's center is
     // the world origin, so t = (cx,cy) — byte-identical to today; stage i shifts the camera by i*stride.
     const acx = stage === 0 ? 0 : stage * stageStride(vp)
     return { scale: 1, x: cx - acx, y: cy }
@@ -169,6 +172,7 @@ interface DesktopState {
   integrations: IntegrationStatus[]
   positions: Record<string, Vec2>
   surfaces: Surface[]
+  activeSurfaceId: string | null
   layoutHistory: Surface[][]
   selection: string[]
   /** Spatial annotations (item 5b): grounded references the human placed on surfaces. `annotationDraft`
@@ -188,9 +192,8 @@ interface DesktopState {
    *  srcdoc widgets that carry no own accent, so plain + future widgets follow the OS theme. */
   osAccent: string | null
   setOsAccent: (hex: string) => void
-  /** View locked (⌘⌘): the infinite canvas is frozen at its current camera — pan/zoom are off
-   *  and a background drag becomes marquee-select. Lets you work inside surfaces without the
-   *  canvas drifting. Toggled by double-tapping ⌘ (or the toolbar lock button). */
+  /** Legacy compatibility flag for older lock UI/state. Gesture routing is cursor-aware now: surface
+   *  content keeps its own gestures and empty canvas gestures move the camera. */
   locked: boolean
 
   setViewport: (w: number, h: number) => void
@@ -241,6 +244,7 @@ interface DesktopState {
   moveSurface: (id: string, x: number, y: number) => void
   closeSurface: (id: string) => void
   focusSurface: (id: string) => void
+  clearActiveSurface: () => void
   setZoom: (id: string, zoom: number) => void
   toggleMaximize: (id: string) => void
   minimizeSurface: (id: string) => void
@@ -299,6 +303,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   integrations: [],
   positions: {},
   surfaces: [],
+  activeSurfaceId: null,
   layoutHistory: [],
   selection: [],
   annotations: [],
@@ -346,7 +351,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   /** Snap a tile to a lattice cell (drag drop / bar toggle / place_widget update). Geometry derives
    *  from the cell; never reflows neighbors — the placer only ever offers free spans, this just
    *  commits one. First snap remembers the free-form size in preSnap so popping out restores it
-   *  (a slot size that squishes a widget — the chat — must never be a one-way door). */
+   *  (a slot size that squishes a widget must never be a one-way door). */
   placeSurfaceSlot: (id, col, row, size, stageArg) =>
     set((s) => {
       const cur = s.surfaces.find((x) => x.id === id)
@@ -416,7 +421,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     const idx = SIZE_ORDER.indexOf(sl.size)
     const n = SIZE_ORDER.length
     // walk the cycle, SKIPPING sizes with no free span anywhere (a crowded stage must not turn the
-    // keybind into a silent no-op — e.g. chat tall -> xl blocked -> land on whatever fits next).
+    // keybind into a silent no-op — blocked size -> land on whatever fits next).
     for (let step = 1; step < n; step++) {
       const next = SIZE_ORDER[(idx + (dir > 0 ? step : n - step)) % n]
       const sp = spanOf(next)
@@ -589,7 +594,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   zoomAt: (cursorX, cursorY, deltaY) =>
     set((s) => {
       const { x: tx, y: ty, scale } = s.transform
-      const factor = Math.exp(-deltaY * 0.0045)
+      const factor = Math.exp(-deltaY * 0.006)
       const newScale = clamp(scale * factor, 0.2, 3)
       const wx = (cursorX - tx) / scale
       const wy = (cursorY - ty) / scale
@@ -610,7 +615,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       if (!surf) return {}
       if (s.mode === 'desktop') {
         const p = desktopClamp(surf.x, surf.y, surf.w, surf.h, s.viewport, s.currentStage)
-        return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y, z: ++zCounter } : w)) }
+        return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y, z: ++zCounter } : w)), activeSurfaceId: id }
       }
       const m = 56
       const fit = Math.min((s.viewport.w - m) / surf.w, (s.viewport.h - m) / surf.h)
@@ -620,6 +625,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const transform = { scale, x: s.viewport.w / 2 - cx * scale, y: s.viewport.h / 2 - cy * scale }
       return {
         surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter } : w)),
+        activeSurfaceId: id,
         transform,
         controlTransform: transform // a dock-focus in control mode is a settled camera to remember
       }
@@ -744,7 +750,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       surface.w = r.w
       surface.h = r.h
     }
-    set((s) => ({ surfaces: [...s.surfaces, surface] }))
+    set((s) => ({ surfaces: [...s.surfaces, surface], activeSurfaceId: id }))
     return id
   },
 
@@ -783,13 +789,14 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
       zCounter = Math.max(zCounter, maxZ + 1)
       const sc = clamp(Number(camera.scale) || 1, 0.2, 3) // never a 0/Infinity/NaN scale (would wedge the canvas)
-      // Normal mode always fits the current (stage 0 on boot) stage, view-locked; control mode restores the saved camera.
+      // Normal mode boots to the current (stage 0 on boot) stage; ad-hoc pinch zoom is live navigation,
+      // not persisted workspace layout. Control mode restores the saved camera.
       const transform =
         mode === 'desktop'
           ? viewTransform('desktop', s.viewport, 0, nAreas)
           : { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc }
       // A fresh board starts control mode from the default bird's-eye (no stale camera from a prior workspace).
-      return { surfaces: restored, transform, mode, stageCount: nAreas, currentStage: 0, layoutHistory: [], controlTransform: null }
+      return { surfaces: restored, activeSurfaceId: null, transform, mode, stageCount: nAreas, currentStage: 0, layoutHistory: [], controlTransform: null }
     }),
 
   // Apply an external folder reconcile (dropped/edited/removed files) to a LIVE canvas WITHOUT
@@ -855,7 +862,10 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const restored = [...fileBacked, ...keepRuntime]
       const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
       zCounter = Math.max(zCounter, maxZ + 1)
-      return { surfaces: restored }
+      return {
+        surfaces: restored,
+        activeSurfaceId: restored.some((w) => w.id === s.activeSurfaceId && !w.minimized) ? s.activeSurfaceId : null
+      }
     }),
 
   moveSurface: (id, x, y) => {
@@ -863,11 +873,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => {
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
-      // macOS-faithful free drag: a window may move freely OUTSIDE the stage (off the left/right/bottom),
-      // exactly like macOS — the ONLY constraint is the title bar can't slide above the stage's top edge
-      // (so it stays grabbable; the #29 invariant). All stages share the same top, so it's stage-independent.
-      // (Off-screen windows are recovered via the dock-click focus or control mode, which DO re-clamp.)
-      const p = s.mode === 'desktop' ? { x, y: Math.max(primaryRect(s.viewport).y, y) } : { x, y }
+      // At the normal home frame, keep the old safety rail: the title bar can't slide above the stage's top
+      // edge. Once the human has zoomed/panned the canvas, all sides are reachable, so free drag is truly free.
+      const home = viewTransform('desktop', s.viewport, s.currentStage, s.stageCount)
+      const clampTop = s.mode === 'desktop' && sameCamera(s.transform, home)
+      const p = clampTop ? { x, y: Math.max(primaryRect(s.viewport).y, y) } : { x, y }
       return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y } : w)) }
     })
   },
@@ -898,7 +908,12 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const w = s.surfaces.find((x) => x.id === id)
       if (!w || !w.tabs) return {}
       const tabs = w.tabs.filter((t) => t.id !== tabId)
-      if (!tabs.length) return { surfaces: s.surfaces.filter((x) => x.id !== id) } // last tab closed → close the window
+      if (!tabs.length) {
+        return {
+          surfaces: s.surfaces.filter((x) => x.id !== id),
+          activeSurfaceId: s.activeSurfaceId === id ? null : s.activeSurfaceId
+        } // last tab closed → close the window
+      }
       return { surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, tabs, activeTab: clamp(w.activeTab || 0, 0, tabs.length - 1) } : x)) }
     }),
 
@@ -1015,7 +1030,8 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         return {
           surfaces: s.surfaces.map((w) =>
             w.id === id ? { ...w, x: r.x, y: r.y, w: r.w, h: r.h, restore: undefined, z: ++zCounter } : w
-          )
+          ),
+          activeSurfaceId: id
         }
       }
       // fill the CURRENT AREA (with a small inset), not the viewport — so 'zoom' means full-screen
@@ -1030,13 +1046,17 @@ export const useDesktop = create<DesktopState>((set, get) => ({
               // to a stale floating size (and clobber `restore`)
               { ...w, restore: { x: w.x, y: w.y, w: w.w, h: w.h }, ...fill, preSnap: undefined, z: ++zCounter }
             : w
-        )
+        ),
+        activeSurfaceId: id
       }
     })
   },
 
   minimizeSurface: (id) =>
-    set((s) => ({ surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, minimized: true } : w)) })),
+    set((s) => ({
+      surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, minimized: true } : w)),
+      activeSurfaceId: s.activeSurfaceId === id ? null : s.activeSurfaceId
+    })),
 
   updateSurface: (id, patch) => {
     // Only a geometry change is "layout"; html/props updates are not undoable via Cmd+Z.
@@ -1052,7 +1072,8 @@ export const useDesktop = create<DesktopState>((set, get) => ({
           next.tabs = next.tabs.map((t, i) => (i === at ? { ...t, url: patch.url } : t))
         }
         return next
-      })
+      }),
+      activeSurfaceId: patch.minimized === true && s.activeSurfaceId === id ? null : s.activeSurfaceId
     }))
     // Restore-from-dock of a SLOTTED tile: a minimized tile releases its cells (occupancy skips it),
     // so by the time it comes back its span may be taken — re-place it through the placer (nearest
@@ -1098,13 +1119,19 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         surfaces: s.surfaces
           .filter((w) => w.id !== id)
           .map((w) => (members.includes(w.id) ? { ...w, groupId: undefined } : w)),
-        selection: s.selection.filter((x) => x !== id)
+        selection: s.selection.filter((x) => x !== id),
+        activeSurfaceId: s.activeSurfaceId === id ? null : s.activeSurfaceId
       }
     })
   },
 
   focusSurface: (id) =>
-    set((s) => ({ surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter } : w)) })),
+    set((s) => {
+      if (!s.surfaces.some((w) => w.id === id)) return {}
+      return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter } : w)), activeSurfaceId: id }
+    }),
+
+  clearActiveSurface: () => set({ activeSurfaceId: null }),
 
   updateSurfaceProps: (id, props) =>
     set((s) => ({

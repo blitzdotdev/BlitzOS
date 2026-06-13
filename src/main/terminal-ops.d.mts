@@ -33,6 +33,9 @@ export interface TerminalOpsDeps {
   getUrl?: () => string | null | undefined
   /** The agent binary/command (BLITZ_AGENT, default 'claude') — preserved when rebuilding an agent's command. */
   agentCmd?: string
+  /** Agent backend runtime (e.g. 'claude' or 'codex-serverless') used when rebuilding a command. */
+  agentRuntime?: string
+  getAgentRuntime?: (meta: TerminalMeta) => { runtime?: string; cmd?: string } | null | undefined
 }
 
 export function makeTerminalOps(deps: TerminalOpsDeps): TerminalOps

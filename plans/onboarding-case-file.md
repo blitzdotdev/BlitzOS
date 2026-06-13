@@ -49,7 +49,7 @@ The same wake loop (`/events` moments) runs from first boot forever; what change
 
 - **Three degradation tiers, no tier errors out:**
   1. Full magic — LLM interviewer (local CLI or gateway).
-  2. No model reachable — deterministic board still assembles from scan JSON; the curated static questions (today's `FAKE_QUESTIONS`) run as the canned fallback interview; answers saved for the brain to read later.
+  2. No model reachable — deterministic board still assembles from scan JSON, but no fake interview runs; the chat says the real interviewer is unavailable.
   3. Scan fails / non-macOS — straight to desktop, onboarding marked incomplete and re-offerable.
 - **Deterministic structure, LLM soul.** The LLM never authors raw per-card HTML in v1 — it drives library widgets via `update_surface{props}` (arrangement, titles, hypotheses, question text). At most ONE bespoke srcdoc centerpiece (the case-file header) for flair.
 - **Effects verified.** All board mutations ride the existing effect-verified syscalls + durable workspace flush, so the board survives a crash mid-onboarding and resumes (journal says onboarding-in-progress → reopen the Case File workspace, re-offer the next beat).
@@ -74,7 +74,7 @@ The same wake loop (`/events` moments) runs from first boot forever; what change
 ## Phasing
 
 - **P1 — the board, no mind.** Scan `--json` + real boot progress + dissolve + deterministic Case File assembly + FDA unlock loop + persistence. Shippable and already feels good; zero LLM dependency.
-- **P2 — the resident brain, v1 (its first behavior is the interview).** The GA loop (CLI backend first, gateway second) + disclosure card + questions-on-the-board + live revision loop + canned-question fallback tier. The brain does not exit after the interview — it stays resident on the wake loop.
+- **P2 — the resident brain, v1 (its first behavior is the interview).** The GA loop (CLI backend first, gateway second) + disclosure card + questions-on-the-board + live revision loop. The brain does not exit after the interview — it stays resident on the wake loop.
 - **P3 — the gradient.** Wardrobe card, editable-card polish, annotation-pinned questions, opportunistic-elicitation etiquette, and the **originate** mode: spare-initiative proposals via action-items + speculative surfaces, with disposition-as-feedback into the case file.
 
 ## TODO (user, 2026-06-11): frontload quit-and-relaunch permissions in a Dia-style pre-board screen
@@ -101,9 +101,9 @@ product second.)
 ## Test plan (repo convention: `scripts/test-*.mjs`, no display needed)
 
 - `test-onboarding-seed.mjs`: scan JSON fixture → board seeding → assert workspace.json nodes (cards, layout, ids) without any model.
-- `test-onboarding-brain.mjs`: interviewer loop against a stub model backend (scripted tool calls) → assert question cards land, corrections revise props, finale writes the summary + profile.
+- Agent-launch regression (`test-agent-fresh.mjs`): pending interview duty launches primary agent 0 with standard-context `sonnet`, low effort, and the boot task injected.
 - `test-fda-unlock.mjs`: `hasFDA()` override flags → assert rescan trigger + card deepening path.
-- Degradation: loop with no backends reachable → assert canned-question tier runs and completes.
+- Degradation: no `claude` CLI → show an explicit "real interviewer unavailable" chat error; do not run a canned interview.
 
 ---
 
@@ -128,11 +128,11 @@ product second.)
 
 ## Work log — P2 (2026-06-10, same session)
 
-**The primary agent's first duty + the canned tier shipped.** The interview rides the EXISTING per-agent machinery (`launchAgent` → `terminal-manager.mjs` → a supervised, VISIBLE `claude` tmux terminal with `--resume` continuity, auto-restarted on exit) — no separate runtime was built:
+**The primary agent's first duty shipped.** The interview rides the EXISTING per-agent machinery (`launchAgent` → `terminal-manager.mjs` → a supervised, VISIBLE `claude` tmux terminal with fresh primary sessions, auto-restarted on exit) — no separate runtime was built:
 
-- **Standing-duty seam** (`agent-runtime.mjs` `setBootTaskProvider`/`getBootTask`, policy-free): the launcher re-reads an optional duty string per (re)launch and injects it into the bootstrap prompt with an explicit license to act unprompted for its scope. Agent '0' threads `interviewBootTask()` (index.ts: `setBootTaskProvider((id) => id === '0' ? interviewBootTask() : null)`) — returns the duty while `interview.json` is `pending`, drops off the next respawn once done.
+- **Standing-duty seam** (`agent-runtime.mjs` `setBootTaskProvider`/`getBootTask`, policy-free): the launcher re-reads an optional duty string per (re)launch and injects it into the bootstrap prompt with an explicit license to act unprompted for its scope. Agent '0' threads `interviewBootTask()` (index.ts: `setBootTaskProvider((id) => id === '0' ? interviewBootTask() : null)`) — returns the interview duty while `interview.json` is `pending`, then returns the resident initiative duty after it is `done`.
 - **The duty doc** `src/main/blitzos-interview.md` → copied to `<ws>/.blitzos/onboarding/interview.md`: read `context.md` (now `--prompt`-combined interviewer rules + scan) + `scan.json` + `board.json`; ask via ```blitz-ui choice cards in chat (≤4 MC + 1 open voice); update board cards + flip gaps `done` per answer; finish = "What I learned" + write `profile.md` + mark `interview.json` done; then stay resident, folding edits/annotations into board+profile. Hard rails: props-only updates on board ids, no rearranging, no nagging.
-- **Tier branch** (`startInterviewPhase` in the director): `claude` CLI resolved via LOGIN shell (`claudeCliPath()` — GUI PATH misses homebrew; the resolved path also feeds `brainCmd`) → kick brain '0' (`osKickBrain`, new osActions export). No CLI → **canned tier**: `onboarding-interview.mjs` (pure core, injected ops) runs the static 4-question interview through the SAME chat cards via in-process `waitForEvents`, flips gaps, writes an honestly-labeled `profile.md`, resumable across restarts. Test: `node scripts/test-onboarding-brain.mjs` (15 assertions).
+- **Launch branch** (`startInterviewPhase` in the director): `claude` CLI resolved via LOGIN shell (`claudeCliPath()` — GUI PATH misses homebrew; the resolved path also feeds `brainCmd`) → kick brain '0' (`osKickBrain`, new osActions export). No CLI → explicit chat error. There is intentionally no canned/static fallback; the real Claude interviewer owns the first question and every follow-up.
 - **Verified live**: brain 0 spawned at board-ready with the duty (`cmd=/opt/homebrew/bin/claude`), interview artifacts in place, `interview.json` pending.
 - **NOT shipped — the gateway tier**: no hosted endpoint exists yet, so the disclosure card + gateway client + in-main loop remain open. The decided shape stands (full scan through the gateway, plainly disclosed, smartest model); next concrete steps: stand up the worker (blitz.dev infra), then an in-main loop bound to the same duty doc. Also open: brains still ride the RELAY url — a localhost-transport brain (control server would need to serve `agents.md` + a token-in-prompt) would cut the relay dependency for onboarding.
 ## Work log — the board moves onto the stage lattice (2026-06-11)
@@ -145,4 +145,4 @@ The stage slot desktop (`plans/blitzos-stage-slot-desktop.md`, built by the user
 - **Test** (`test-onboarding-seed.mjs`, 54 assertions): per-cell overlap detection incl. the chat hub, lattice-bounds, content→size rules, shrink-then-park under a tiny viewport, unlock-in-plan, web-first prime-span priority, em-dash sweep on all props.
 - Decided NOT yet: the gateway tier stays parked until everything works with local claude (user call, 2026-06-11).
 
-- **Strict prose style (user-mandated, 2026-06-10):** absolutely NO em dashes in anything the human reads, and Apple's Siri response guidelines are the style reference (archived verbatim at `plans/siri-prompt.md`; already present and byte-identical to the gist). Distilled rules live in the manual (`blitzos-agents.md`, "Talking with the user"): substance first in one breath, depth after in a few beats, no dash/colon title separators, plain bullets, bold sparingly, shape follows data, grounded or absent, plain honesty, steady voice. Mirrored into `blitzos-onboarding.md` (Style section), `blitzos-interview.md` (rewritten clean), and WIDGET_AUTHORING_MD (widget copy rule). All shipped human-facing copy swept (board cards, canned interview, unlock card, boot stages, widget samples, the scan's gap questions); both test suites now assert no em dash ever renders.
+- **Strict prose style (user-mandated, 2026-06-10):** absolutely NO em dashes in anything the human reads, and Apple's Siri response guidelines are the style reference (archived verbatim at `plans/siri-prompt.md`; already present and byte-identical to the gist). Distilled rules live in the manual (`blitzos-agents.md`, "Talking with the user"): substance first in one breath, depth after in a few beats, no dash/colon title separators, plain bullets, bold sparingly, shape follows data, grounded or absent, plain honesty, steady voice. Mirrored into `blitzos-onboarding.md` (Style section), `blitzos-interview.md` (rewritten clean), and WIDGET_AUTHORING_MD (widget copy rule). All shipped human-facing copy swept (board cards, unlock card, boot stages, widget samples, the scan's gap questions); both test suites now assert no em dash ever renders.

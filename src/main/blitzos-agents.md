@@ -17,7 +17,7 @@ You reach BlitzOS over plain HTTPS, no MCP, no SDK. Two paths:
 - Relay (any agent, remote): you fetched this from a URL; `$BASE` = that URL minus the trailing `/agents.md`. Call tools at `POST $BASE/<tool>`.
 - Localhost (same machine, trusted, full power): read `~/.blitzos/session.json` -> `.local = {url, token}` (the loopback control server). Call `POST $url/<tool>` with `authorization: Bearer $token`. Prefer this when co-located: no relay flakiness, and the trusted-only raw `eval` action lives here.
 
-Driving BlitzOS requires you to make HTTP requests yourself (a Bash/`curl`, code-execution, or HTTP `fetch` tool). If you have NO such tool — e.g. a plain Claude.ai / ChatGPT web chat — you CANNOT act here: do not summarize this document. Instead reply in one line: "Open this link in a tool-capable agent (Claude Code, or `claude -p '<paste the URL> drive BlitzOS'`) — a plain chat can't call BlitzOS's HTTP tools." Then stop.
+Driving BlitzOS requires you to make HTTP requests yourself (a Bash/`curl`, code-execution, or HTTP `fetch` tool). If you have NO such tool — e.g. a plain Claude.ai / ChatGPT web chat — you CANNOT act here: do not summarize this document. Instead reply in one line: "Open this link in a tool-capable agent such as Codex CLI or Claude Code — a plain chat can't call BlitzOS's HTTP tools." Then stop.
 
 FIRST: `GET $BASE/tools.json` (or read session.json) for the exact tools + schemas. Then tell the user in one line what you can do, and start. Keep the URL so you can re-read these instructions if your context resets.
 
@@ -77,18 +77,18 @@ Every tool and its exact schema lives in `$BASE/tools.json` — you already read
 Use a connected one via `provider_call` only when a task makes it relevant — surface nothing unprompted. New connections arrive as a `/events` moment.
 
 ## Terminals & Agents — run real programs (the hands for long work)
-A **terminal** is a real terminal running a command in this workspace, shown as a terminal surface and persisted under `.blitzos/terminals/<id>/`. It SURVIVES a BlitzOS/page restart (tmux-backed) and keeps its scrollback. Use a terminal for a shell, a coding agent (claude/codex), a build/test runner, or any long-running job — never fake shell output in an `srcdoc`. An **agent** is just a terminal running `claude` plus its own chat widget; it's a peer you can talk to, not a separate primitive.
+A **terminal** is a real terminal running a command in this workspace, shown as a terminal surface and persisted under `.blitzos/terminals/<id>/`. It SURVIVES a BlitzOS/page restart (tmux-backed) and keeps its scrollback. Use a terminal for a shell, a coding agent (Codex/Claude), a build/test runner, or any long-running job — never fake shell output in an `srcdoc`. An **agent** is just a managed agent terminal plus its own chat widget; it's a peer you can talk to, not a separate primitive.
 
 Terminal tools:
-- open_terminal { command, cwd?, title?, cols?, rows?, agent? } — start a terminal (e.g. `command:'bash'` or `command:"claude -p '…'"`). If you are a NON-primary agent, pass `agent:"<your id>"` so it opens in YOUR stage, not the user's. Returns { terminal:{ id, kind, title, command, status, … } } — keep the `id`.
-- list_terminals — every terminal in this workspace (running + persisted): `{ terminals:[{ id, kind, title, command, status, pid }] }`. `kind:'agent'` = a claude+chat agent, `kind:'terminal'` = a plain program.
+- open_terminal { command, cwd?, title?, cols?, rows?, agent? } — start a terminal (e.g. `command:'bash'`, `command:"codex exec '…'"`, or `command:"claude '…'"`). If you are a NON-primary agent, pass `agent:"<your id>"` so it opens in YOUR stage, not the user's. Returns { terminal:{ id, kind, title, command, status, … } } — keep the `id`.
+- list_terminals — every terminal in this workspace (running + persisted): `{ terminals:[{ id, kind, title, command, status, pid }] }`. `kind:'agent'` = a managed agent+chat, `kind:'terminal'` = a plain program.
 - send_to_terminal { id, data } — write raw input/keystrokes. Include a trailing newline to submit (e.g. `data:'git status\n'`). Returns { ok }.
 - read_terminal { id } — read the terminal's current output (scrollback). Returns { text }.
 - close_terminal { id } — STOP (kill) the terminal but keep it in the tray as RESUMABLE. Returns { ok }.
 - remove_terminal { id } — PERMANENTLY remove the terminal (kill + delete its record; not resumable). Use this to clean up a throwaway terminal you spawned once the job is done. Returns { ok }.
 
 Agent (peer-chat) lifecycle:
-- spawn_agent { title? } — start a NEW peer agent: a fresh claude with its OWN `chat-<id>.md` transcript + chat widget over this same relay. It's independent — its chat and `say`s never cross-talk with you. Returns { agent:{ id, title } }.
+- spawn_agent { title? } — start a NEW peer agent: a fresh managed agent with its OWN `chat-<id>.md` transcript + chat widget over this same relay. It's independent — its chat and `say`s never cross-talk with you. Returns { agent:{ id, title } }.
 - close_agent { id } — stop a spawned agent and delete its chat widget + terminal + files + stage. The PRIMARY agent `'0'` (the user's main chat) cannot be closed. Returns { ok } or { ok:false, error }.
 - rename_agent { id, title } — cosmetic rename in the widget + the "Terminals & Agents" tray. Returns { ok, title }.
 
@@ -163,9 +163,9 @@ HOW to reply — beautiful, plain, decisive:
 - Status is automatic: the instant a message arrives the chat shows "thinking…" until your next `say` — so reply promptly, `say` a one-line plan first, then short notes as you work. Going dark is a failure.
 
 ## The stage and the backstage — work off-screen, present in slots
-The user's desktop is a STAGE: a fixed slot grid (like macOS desktop widgets — tiles never overlap, never push each other) framing one bounded stage of the infinite canvas. Everything else lives OFF-STAGE: the open canvas around the stage (work surfaces park just below it). Nothing is hidden — the user's normal zoom simply frames only the stage, and zooming out (control mode) reveals your work around it. This split is the core of how you respect attention:
+The user's desktop is a STAGE: a fixed slot grid (like macOS desktop widgets — tiles never overlap, never push each other) framing one bounded stage of the infinite canvas. Everything else lives OFF-STAGE: the open canvas around the stage (work surfaces park just below it). Nothing is hidden: the user's normal home view frames only the stage, and zooming out or entering Control Mode reveals your work around it. This split is the core of how you respect attention:
 
-- **Work off-stage by default.** `open_window` / web/app `create_surface` park below the stage automatically — drive them freely there (`surface_control`, `read_window`); scrolling 10 sites for leads happens ENTIRELY outside the user's frame. They can always zoom out to watch you work — that transparency is a feature, never a reason to clutter the stage.
+- **Work off-stage by default.** `open_window` / web/app `create_surface` park below the stage automatically — drive them freely there (`surface_control`, `read_window`); scrolling 10 sites for leads happens ENTIRELY outside the user's home frame. They can always zoom out to watch you work — that transparency is a feature, never a reason to clutter the stage.
 - **Present on the stage, in slots — never pixels.** `place_widget {size, near?}` puts a widget on the desktop: you choose a SIZE (`s` 1×1 · `m` 2×1 wide · `l` 2×2 · `xl` 4×2 hero · `tall` 2×3 · `xxl` 4×4 full-focus — alone it IS the stage) and optionally WHERE-ish (`near: 'top-right'`, or another surface's id to land adjacent); the OS picks the exact free slot. There is no x/y. It cannot overlap, it never reflows the user's layout.
 - **One widget that lets the human ACT beats N raw windows.** Synthesize: a triage queue, a ranked list, an approve/deny card — `place_widget` that, and keep the raw sources backstage. `bring_to_stage {id}` promotes a live page ONLY when the user should look at it (they asked, or they must act on the page itself).
 - **The stage has a budget** (16 small-tile units — exactly one `xxl`). `place_widget` returns `stage_full` with the current tiles when you're over — `send_backstage {id}` something stale or queue the new thing. Never fight the budget; it IS the user's attention.

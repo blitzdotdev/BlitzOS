@@ -12,7 +12,7 @@ export interface TmuxHostConfig {
 }
 
 export interface TmuxSpawnOpts {
-  /** A shell-command string (run via the shell), e.g. "bash" or "claude -p '…' --dangerously-skip-permissions". */
+  /** A shell-command string (run via the shell), e.g. "bash", "codex exec '…'", or "claude '…'". */
   command?: string
   cwd?: string
   env?: Record<string, string>

@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { Surface } from '../types'
 import { subscribeTerminal } from '../terminalStream'
+import { useDesktop } from '../store'
 
 // The terminal surface: a real xterm.js terminal bound to a terminal id. It renders the live tmux
 // %output stream (routed via terminalStream) and sends keystrokes/resize back to the terminal over
@@ -20,6 +21,7 @@ const tapi = (): TerminalApi => (window.agentOS as unknown as TerminalApi) || {}
 export function TerminalView({ surface }: { surface: Surface }): JSX.Element {
   const id = String(surface.props?.terminalId || '')
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const focusSurface = useDesktop((s) => s.focusSurface)
 
   useEffect(() => {
     const el = hostRef.current
@@ -73,9 +75,13 @@ export function TerminalView({ surface }: { surface: Surface }): JSX.Element {
   return (
     <div
       ref={hostRef}
-      className="terminal-view"
+      className="terminal-view session-terminal"
+      data-surface-scroll="true"
       style={{ width: '100%', height: '100%', background: '#0b0c0e' }}
-      onPointerDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => {
+        e.stopPropagation()
+        focusSurface(surface.id)
+      }}
       onWheel={(e) => e.stopPropagation()}
     />
   )

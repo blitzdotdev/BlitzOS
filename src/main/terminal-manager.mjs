@@ -13,11 +13,13 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 const TRANSCRIPT_FLUSH_MS = 500 // batch tmux %output so a chatty program doesn't fsync per chunk
-const ESTABLISH_MS = 8000 // mark an agent's claude session "established" after this healthy uptime (persisted)
+const ESTABLISH_MS = 8000 // mark a Claude agent session "established" after this healthy uptime (persisted)
 
 // Normalize a persisted meta.kind to the current vocabulary. Legacy values are tolerated on read:
 // 'pty' → 'terminal', 'chat' → 'agent'. Rewritten to disk on the next writeMeta.
 const normalizeKind = (k) => (k === 'agent' || k === 'chat' ? 'agent' : 'terminal')
+const isManagedAgent = (m) => m && m.kind === 'agent' && (m.agentRuntime || m.claudeSessionId)
+const isClaudeAgent = (m) => m && m.kind === 'agent' && !!m.claudeSessionId && (!m.agentRuntime || m.agentRuntime === 'claude')
 
 export function createTerminalManager({ host, terminalsDir, emit = () => {}, markWrite = () => {}, rebuildAgentCommand = null }) {
   const live = new Map() // id -> { meta, buf, flushTimer, establishTimer, restartTimer, stopping, unsubData, unsubExit }
@@ -32,6 +34,8 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
   const publicMeta = (m) => ({
     id: m.id, kind: m.kind, title: m.title, command: m.command, cwd: m.cwd, status: m.status,
     pid: m.pid, exitCode: m.exitCode, autonomy: m.autonomy, createdAt: m.createdAt, endedAt: m.endedAt || null, cols: m.cols, rows: m.rows,
+    agentRuntime: m.agentRuntime || (m.claudeSessionId ? 'claude' : null),
+    agentSessionId: m.agentSessionId || null,
     // The workspace stage this terminal belongs to (the spawning agent's stage). Persisted so a
     // restart restores an agent's terminal into its stage. null = unscoped (a human spawn) → the renderer
     // opens it in the current stage, today's behavior. Legacy `area` (pre-stage-rename meta) tolerated on read.
@@ -63,11 +67,11 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     }
     const rec = { meta, buf: [], flushTimer: null, establishTimer: null, restartTimer: null, stopping: false, unsubData: null, unsubExit: null }
     live.set(id, rec)
-    // Mark an agent ESTABLISHED proactively after a healthy run (claude has created its --session-id
+    // Mark a Claude agent ESTABLISHED proactively after a healthy run (claude has created its --session-id
     // conversation by then), persisting to disk — so a re-exec after a crash/REBOOT (where the live exit
     // handler never runs, because the agent died while BlitzOS was down) correctly --resumes instead of
     // re-creating an existing id (which claude rejects with "already in use" → a boot crash-loop).
-    if (meta.kind === 'agent' && !meta.claudeEstablished && meta.status === 'running') {
+    if (isClaudeAgent(meta) && !meta.claudeEstablished && meta.status === 'running') {
       rec.establishTimer = setTimeout(() => {
         rec.establishTimer = null
         if (live.get(id) === rec && meta.status === 'running' && !meta.claudeEstablished) { meta.claudeEstablished = true; writeMeta(meta) }
@@ -85,20 +89,19 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
       flushTranscript(id)
       if (meta.status === 'running') {
         meta.status = 'exited'; meta.exitCode = exitCode; meta.signal = signal; meta.endedAt = Date.now()
-        // A BlitzOS claude that ran healthily (≥5s) has CREATED its --session-id conversation, so the next
+        // A BlitzOS Claude that ran healthily (≥5s) has CREATED its --session-id conversation, so the next
         // (re)launch must --resume it, not re-create. Record that here (the old headless supervisor's
         // "established-after-5s" rule, re-homed onto the terminal's own exit timing).
-        if (meta.kind === 'agent' && (meta.endedAt - (meta.createdAt || meta.endedAt)) >= 5000) meta.claudeEstablished = true
+        if (isClaudeAgent(meta) && (meta.endedAt - (meta.createdAt || meta.endedAt)) >= 5000) meta.claudeEstablished = true
         writeMeta(meta)
       }
       try { rec.unsubData && rec.unsubData() } catch { /* ignore */ } // drop the host data listener so the closure + buffer can be GC'd
       rec.buf = []
       emit({ type: 'terminal-exit', id, exitCode, signal })
-      // SUPERVISION: a chat agent should stay alive. `claude -p` exits when its turn ends (even code 0 — it
-      // set up the loop then stopped calling tools), and a crash also ends it. Auto-restart it (--resume keeps
-      // the conversation; the relay-url file gives the live url), UNLESS it was explicitly stopped or we're
-      // shutting down. Back off on rapid failures so a broken agent (auth, etc.) can't hot-loop.
-      if (meta.kind === 'agent' && meta.claudeSessionId && !rec.stopping && !shuttingDown && !stopRequested.has(id)) {
+      // SUPERVISION: a managed chat agent should stay alive. Serverless backends exit after a turn, and a
+      // crash also ends them. Auto-restart with a freshly rebuilt command unless it was explicitly stopped
+      // or the app is shutting down. Back off on rapid failures so broken auth/config can't hot-loop.
+      if (isManagedAgent(meta) && !rec.stopping && !shuttingDown && !stopRequested.has(id)) {
         const ranMs = (meta.endedAt || Date.now()) - (meta.createdAt || meta.endedAt)
         const fails = ranMs < 15000 ? (agentFails.get(id) || 0) + 1 : 0 // a healthy (≥15s) run resets the backoff
         agentFails.set(id, fails)
@@ -125,8 +128,10 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
       status: 'running', pid: null, exitCode: null, signal: null,
       createdAt: Date.now(), endedAt: null,
       cols: opts.cols || 120, rows: opts.rows || 40,
-      // agent terminals only: the persisted claude --session-id token + whether claude has established it
-      // (so a re-exec --resumes the SAME conversation). Carried through restarts so continuity survives.
+      // managed agent terminals only: backend runtime metadata. Claude keeps its own --session-id so a
+      // re-exec can resume; serverless backends use agentSessionId only for observability/supervision.
+      ...(opts.agentRuntime ? { agentRuntime: opts.agentRuntime } : {}),
+      ...(opts.agentSessionId ? { agentSessionId: opts.agentSessionId } : {}),
       ...(opts.claudeSessionId ? { claudeSessionId: opts.claudeSessionId } : {}),
       ...(opts.claudeEstablished ? { claudeEstablished: true } : {})
     }
@@ -189,17 +194,15 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     if (!meta) return null
     if (r) { try { r.unsubData && r.unsubData(); r.unsubExit && r.unsubExit() } catch { /* ignore */ } live.delete(id) }
     host.remove(id)
-    // A BlitzOS AGENT (it carries a claudeSessionId) re-execs with a FRESH command (current relay url +
-    // the right session mode), not the stale one baked at create. A plain shell — or a generic
-    // spawnTerminal kind:'agent' with its own command (no claudeSessionId) — re-runs its command verbatim.
-    // rebuildAgentCommand returns { command, claudeSessionId, established }: the always-fresh primary
-    // ROTATES its session id here, so persist the rebuilt id + flag (not the stale meta ones), else the
-    // command would --session-id a new id while meta still pointed at the old one.
-    const rebuilt = (meta.kind === 'agent' && meta.claudeSessionId && rebuildAgentCommand && rebuildAgentCommand(meta)) || null
+    // A managed BlitzOS AGENT re-execs with a FRESH command (current relay url + backend-specific metadata),
+    // not the stale one baked at create. A plain shell or unmanaged agent command re-runs verbatim.
+    const rebuilt = (isManagedAgent(meta) && rebuildAgentCommand && rebuildAgentCommand(meta)) || null
     const command = (rebuilt && rebuilt.command) || meta.command
     const claudeSessionId = rebuilt ? rebuilt.claudeSessionId : meta.claudeSessionId
     const claudeEstablished = rebuilt ? rebuilt.established : meta.claudeEstablished
-    return spawnTerminal({ id, kind: meta.kind, command, cwd: meta.cwd, title: meta.title, autonomy: meta.autonomy, cols: meta.cols, rows: meta.rows, stage: meta.stage ?? meta.area, claudeSessionId, claudeEstablished })
+    const agentRuntime = rebuilt ? rebuilt.agentRuntime : meta.agentRuntime
+    const agentSessionId = rebuilt ? rebuilt.agentSessionId : meta.agentSessionId
+    return spawnTerminal({ id, kind: meta.kind, command, cwd: meta.cwd, title: meta.title, autonomy: meta.autonomy, cols: meta.cols, rows: meta.rows, stage: meta.stage ?? meta.area, agentRuntime, agentSessionId, claudeSessionId, claudeEstablished })
   }
   /** Clear an AGENT's claude context ON DEMAND (the user's "new context" button) — uniform for EVERY agent,
    *  no primary special-case. Rotate to a FRESH claude session id + mark unestablished, then restart: the
@@ -228,7 +231,7 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
         m.status = 'exited'; m.exitCode = li.exitCode ?? m.exitCode ?? null; m.endedAt = m.endedAt || Date.now()
         // An adopted-then-exited agent that clearly ran a full session is established → a later re-exec
         // must --resume (same rule as the live exit handler, applied here since that handler didn't run).
-        if (m.kind === 'agent' && !m.claudeEstablished && (m.endedAt - (m.createdAt || m.endedAt)) >= 5000) m.claudeEstablished = true
+        if (isClaudeAgent(m) && !m.claudeEstablished && (m.endedAt - (m.createdAt || m.endedAt)) >= 5000) m.claudeEstablished = true
       } else m.status = 'running'
       m.pid = li?.pid ?? m.pid ?? null
       writeMeta(m)

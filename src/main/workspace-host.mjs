@@ -260,12 +260,12 @@ export function createWorkspaceHost(a) {
 
   // ---- The system Chat: a srcdoc widget per AGENT whose UI is blitz-[<id>-]chat.html (customizable)
   // and whose transcript is chat[-<id>].md. Agent '0' is the primary chat (legacy names, pinned). Each
-  // agent is a claude running in its own tmux terminal (launchAgent) that /says into ITS
+  // agent is a managed backend running in its own tmux terminal (launchAgent) that /says into ITS
   // transcript. The OS appends each message and broadcasts {type:'chat', agentId, messages}; the widget
   // just renders props.messages. There is NO chat hub — each agent has its OWN chat widget.
   const chatSurfaceId = (agentId = '0') => (!agentId || String(agentId) === '0' ? 'chat' : `chat-${agentId}`)
   /** The chat-bearing agents: always '0' (primary) + any .blitzos/terminals/<id> that is an AGENT (its
-   *  terminal runs a BlitzOS claude → it has a chat widget). 'chat' is the legacy kind from before agents
+   *  terminal runs a BlitzOS agent backend → it has a chat widget). 'chat' is the legacy kind from before agents
    *  ran in terminals; 'agent' is the unified kind now. Plain 'terminal' shells are NOT agents.
    *  Read-tolerant of the legacy `.blitzos/sessions` dir: the engine migration (terminal-ops) renames it to
    *  `terminals` lazily on first launch/restore, which may not have run yet when we hydrate on boot — so
@@ -330,6 +330,24 @@ export function createWorkspaceHost(a) {
   }
   /** Every agent's chat surface (primary + spawned agents) — built on hydrate/switch. */
   function buildAgentSurfaces() { return agentIds().map((id) => buildAgentSurface(id)) }
+  /** Re-open the primary chat widget after the human closes it. */
+  function restoreChatHub() {
+    const st = a.getState() || { surfaces: [], stageCount: 1 }
+    const chat = buildAgentSurface('0')
+    const surfaces = Array.isArray(st.surfaces) ? st.surfaces : []
+    const matchesPrimaryChat = (s) => s && (s.id === chat.id || (s.role === 'chat' && String(s.agentId ?? '0') === '0'))
+    const nextSurfaces = surfaces.some(matchesPrimaryChat)
+      ? surfaces.map((s) => (
+          matchesPrimaryChat(s)
+            ? { ...chat, ...s, minimized: false, html: chat.html, props: chat.props }
+            : s
+        ))
+      : [...surfaces, chat]
+    const stageCount = Math.max(Number(st.stageCount) || 1, maxAgentStageCount())
+    a.setState({ ...st, surfaces: nextSurfaces, stageCount })
+    a.broadcast({ type: 'create', surface: { ...chat, minimized: false }, focus: true })
+    return { ok: true, id: chat.id }
+  }
   /** Mint the next agent id: max existing integer id + 1 (primary '0' counts), so ids stay 1,2,3…
    *  Non-numeric ids (none today) are ignored for the max. */
   function newAgentId() {
@@ -339,13 +357,13 @@ export function createWorkspaceHost(a) {
   }
   /** Register + LIVE-surface a new agent: write its meta (kind:'agent'), build its chat widget, add it
    *  to osState, and broadcast a 'create' so every open renderer shows it without a refresh. Idempotent —
-   *  re-adding an existing agent just refreshes its surface. launchAgent (the seam below) starts its claude terminal. */
+   *  re-adding an existing agent just refreshes its surface. launchAgent (the seam below) starts its managed terminal. */
   function addAgent(agentId, title, opts = {}) {
     const id = String(agentId)
     const stage = stageForAgent(id)
     const name = title || (id === '0' ? 'Chat' : `Chat ${id}`)
     // Persist the agent RECORD up front (kind:'agent') so the agent survives a restart even when no
-    // claude is auto-launched (BLITZ_AGENT off). launchAgent (below) will overwrite this with the full live
+    // backend is auto-launched. launchAgent (below) will overwrite this with the full live
     // meta when it spawns the terminal; both keep the same id/kind/title/stage, so agentIds() finds it.
     try {
       const dir = join(agentDir(), id) // canonical `.blitzos/terminals`, or the legacy dir if migration hasn't run yet
@@ -373,11 +391,10 @@ export function createWorkspaceHost(a) {
     try { a.launchAgent?.(id, stage, name) } catch (e) { console.error('[workspace] launchAgent failed:', e?.message || e) }
     return surface
   }
-  /** Boot: (re)launch the claude terminal for EVERY agent with the CURRENT relay url + --resume of its
-   *  persisted session id. We deliberately re-exec rather than reattach a survivor: the relay url is re-minted
-   *  each run, so a survivor would hold a DEAD url and silently disconnect — re-exec'ing on the fresh url (with
-   *  --resume keeping the conversation) is the only reliable reconnect. spawnTerminal replaces any existing
-   *  window, so there's no duplicate. No-op when launchAgent is unwired (BLITZ_AGENT off). */
+  /** Boot: (re)launch EVERY agent with the CURRENT relay url and persisted backend metadata. We deliberately
+   *  re-exec rather than reattach a survivor: the relay url is re-minted each run, so a survivor would hold a
+   *  DEAD url and silently disconnect. spawnTerminal replaces any existing window, so there's no duplicate.
+   *  No-op when launchAgent is unwired. */
   function resumeAgentsOnBoot() {
     if (typeof a.launchAgent !== 'function') return
     for (const id of agentIds()) {
@@ -721,6 +738,7 @@ export function createWorkspaceHost(a) {
     customizeWidget,
     systemUi,
     agentIds,
+    restoreChatHub,
     newAgentId,
     addAgent,
     closeAgent,
