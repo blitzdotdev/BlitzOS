@@ -51,11 +51,10 @@ const WINDOW_RADIUS = typeof document !== 'undefined' ? parseFloat(getComputedSt
 export function holesPath(w: number, h: number, holes: Array<{ x1: number; y1: number; x2: number; y2: number }>, radius = 0): HolesClip {
   if (!holes.length) return undefined
   if (holes.some((r) => r.x1 <= 0 && r.y1 <= 0 && r.x2 >= w && r.y2 >= h)) return 'HIDE'
-  // PAD must exceed the clipped element's box-shadow extent. The window shadow is --shadow-md
-  // (0 8px 24px → ~32px reach), and clip-path clips the shadow too: a small PAD HARD-CUTS the
-  // shadow into a visible outset hairline around every clipped card (the "widget outline" artifact
-  // over a browser page). 40 puts the cut where the shadow has fallen to ~0, so it dies smoothly.
-  const PAD = 40
+  // PAD pushes the outer ring's antialiasing off the element's content edge. The box-shadow no
+  // longer needs covering here: surfaces overlapping a browser drop their shadow entirely
+  // (SurfaceFrame overlapsWeb), so there is no shadow to hard-cut into a hairline.
+  const PAD = 8
   const subs = holes
     .map((r) => {
       const rad = Math.max(0, Math.min(radius, (r.x2 - r.x1) / 2, (r.y2 - r.y1) / 2))
@@ -742,6 +741,26 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   // Cut a higher browser's page hole out of this frame (string-equality selector: recomputes per
   // store change, re-renders only when the polygon actually changes; world coords, camera-free).
   const clipPath = useDesktop((s) => (serverMode ? undefined : pageHolesClip(surface, s.surfaces)))
+  // A DOM box-shadow can't composite cleanly against a browser's page HOLE in EITHER direction:
+  // clipped UNDER a browser the clip hard-cuts it to a hairline; floating OVER a browser it pools
+  // dark over the transparent hole (the page shows through, darkened). So whenever this surface
+  // overlaps a live browser, drop its shadow — no shadow, no fringe. (web surfaces don't shadow
+  // each other this way; only DOM surfaces vs the page layer.)
+  const overlapsWeb = useDesktop((s) =>
+    serverMode || surface.kind === 'web'
+      ? false
+      : s.surfaces.some(
+          (w) =>
+            w.kind === 'web' &&
+            w.id !== surface.id &&
+            !w.minimized &&
+            !(w.groupId && !w.peek) &&
+            w.x < surface.x + surface.w &&
+            surface.x < w.x + w.w &&
+            w.y < surface.y + surface.h &&
+            surface.y < w.y + w.h
+        )
+  )
   // System panels (the pinned chat/activity hubs) keep the full window bar even when slotted —
   // hiding it would cost their close/minimize controls. Everything else slotted gets WIDGET chrome:
   // no bar at all, just an invisible top drag-grip + the pop-out toggle in the far right corner.
@@ -843,6 +862,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           height: surface.h,
           zIndex: surface.z,
           ...(clipPath && clipPath !== 'HIDE' ? { clipPath } : {}),
+          ...(overlapsWeb ? { boxShadow: 'none' } : {}),
           ...(clipPath === 'HIDE' ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {})
         }}
         onPointerDown={focusHere}
@@ -866,6 +886,8 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         // frame so the live page (below all DOM) shows through where it should cover us. 'HIDE' =
         // fully covered: hide outright (a degenerate clip ghosts the element's outline).
         ...(clipPath && clipPath !== 'HIDE' ? { clipPath } : {}),
+        // Overlapping a browser: drop the box-shadow so it can't fringe against the page hole.
+        ...(overlapsWeb ? { boxShadow: 'none' } : {}),
         ...(surface.minimized ? { display: 'none' } : {}),
         // Slotted tiles spring-snap into their span (the macOS settle); suspended while dragging so
         // the tile tracks the cursor 1:1, and resumed on drop for the snap animation. File tiles get
