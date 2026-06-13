@@ -114,7 +114,7 @@ export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create',
  * Auth still uses CODEX_HOME. The terminal supervisor restarts it when it exits, so it behaves like a
  * resident agent without requiring a long-lived TUI or Anthropic account quota. */
 export function buildCodexServerlessCommand({ cmd = 'codex', bootstrapFile, lowThinking = false }) {
-  const effort = lowThinking ? `-c ${shellQuote('model_reasoning_effort="low"')} ` : ''
+  const effort = `-c ${shellQuote(`model_reasoning_effort="${lowThinking ? 'low' : 'medium'}"`)} `
   return `${cmd} exec ${effort}--disable plugins --ignore-user-config --ignore-rules --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --color never "$(cat ${shellQuote(bootstrapFile)})"`
 }
 

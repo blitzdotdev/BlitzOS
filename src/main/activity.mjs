@@ -22,24 +22,30 @@ export const ACTIVITY_TOOLS = new Set([
 export function activityText(path, a) {
   a = a || {}
   const host = (u) => { try { return new URL(u).hostname } catch { return String(u || '').slice(0, 40) } }
-  const clip = (t, n) => { t = String(t || ''); return t.length > n ? t.slice(0, n) + '…' : t }
+  const text = (t) => String(t || '').replace(/\s+/g, ' ').trim()
+  const safeText = (t, n = 1000) => {
+    t = text(t)
+    if (!t) return ''
+    if (/data:image\/[a-zA-Z+.-]+;base64,/i.test(t)) return '[sent an inline image]'
+    return t.length > n ? `${t.slice(0, n)} [truncated ${t.length - n} chars]` : t
+  }
   switch (path) {
     case '/open_window': return `↗ opening ${host(a.url)}`
-    case '/create_surface': return `+ ${a.kind || 'surface'}${a.url ? ' ' + host(a.url) : ''}${a.title ? ' · ' + clip(a.title, 24) : a.component ? ' ' + a.component : ''}`
-    case '/update_surface': return `✎ updating${a.url ? ' → ' + host(a.url) : a.title ? ' · ' + clip(a.title, 24) : ''}`
+    case '/create_surface': return `+ ${a.kind || 'surface'}${a.url ? ' ' + host(a.url) : ''}${a.title ? ' · ' + safeText(a.title) : a.component ? ' ' + a.component : ''}`
+    case '/update_surface': return `✎ updating${a.url ? ' → ' + host(a.url) : a.title ? ' · ' + safeText(a.title) : ''}`
     case '/move_surface': return '⇄ moving a window'
     case '/close_surface': return '✕ closing a window'
-    case '/group': return `🗂 grouping into “${clip(a.name || 'folder', 24)}”`
-    case '/surface_control': return `⌖ ${a.action?.action || 'acting'}${a.action?.text ? ' “' + clip(a.action.text, 20) + '”' : a.action?.selector ? ' ' + clip(a.action.selector, 20) : ''}`
+    case '/group': return `🗂 grouping into “${safeText(a.name || 'folder')}”`
+    case '/surface_control': return `⌖ ${a.action?.action || 'acting'}${a.action?.text ? ' “' + safeText(a.action.text) + '”' : a.action?.selector ? ' ' + safeText(a.action.selector) : ''}`
     case '/read_window': return '👁 reading the page'
-    case '/provider_call': return `🔌 ${a.provider || 'integration'} ${a.method || 'GET'} ${clip(a.path, 28)}`
-    case '/spawn_widget': return `▣ opening widget ${a.name || ''}`
-    case '/save_widget': return `💾 saving widget ${a.name || ''}`
-    case '/new_app': return `🚀 provisioning app ${a.slug || ''}`
+    case '/provider_call': return `🔌 ${a.provider || 'integration'} ${a.method || 'GET'} ${safeText(a.path)}`
+    case '/spawn_widget': return `▣ opening widget ${safeText(a.name || '')}`
+    case '/save_widget': return `💾 saving widget ${safeText(a.name || '')}`
+    case '/new_app': return `🚀 provisioning app ${safeText(a.slug || '')}`
     case '/customize_widget': return `🎨 restyling ${a.name || 'widget'}`
-    case '/create_workspace': return `🗃 new workspace “${clip(a.name, 20)}”`
-    case '/switch_workspace': return `↪ switching to “${clip(a.name, 20)}”`
-    case '/say': return `💬 ${clip(a.text, 52)}`
+    case '/create_workspace': return `🗃 new workspace “${safeText(a.name)}”`
+    case '/switch_workspace': return `↪ switching to “${safeText(a.name)}”`
+    case '/say': return `💬 ${safeText(a.text, 4000)}`
     case '/go_to_primary': return '⌂ recenter'
     default: return path.replace(/^\//, '')
   }

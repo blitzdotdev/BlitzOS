@@ -1,7 +1,7 @@
 import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
-import { readdirSync, readFileSync, statSync } from 'fs'
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
@@ -354,14 +354,48 @@ app.whenReady().then(() => {
   // BLITZ_AGENT_BACKEND/BLITZ_AGENT_RUNTIME can force `codex`, `codex-serverless`, or `claude`.
   // BLITZ_AGENT remains the command override; `BLITZ_AGENT=1` preserves the old "force claude" meaning
   // unless a backend env var is also set.
-  const resolveAgentRuntime = (): { runtime: string; cmd: string; label: string } | null => {
+  type AgentRuntimeSpec = { runtime: string; cmd: string; label: string }
+  // ! DEBUG: temporary app-level runtime picker support. Keep this visually marked in the UI so
+  // ! DEBUG: maintainers know it is not production product surface yet.
+  const selectableAgentRuntime = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null
+    const runtime = normalizeAgentRuntime(value)
+    return runtime === AGENT_RUNTIME_CODEX_SERVERLESS || runtime === AGENT_RUNTIME_CLAUDE ? runtime : null
+  }
+  const agentRuntimePrefsFile = (): string => join(app.getPath('userData'), 'agent-runtime.json')
+  const readPreferredAgentRuntime = (): string | null => {
+    try {
+      const parsed = JSON.parse(readFileSync(agentRuntimePrefsFile(), 'utf8')) as { runtime?: unknown }
+      return selectableAgentRuntime(parsed?.runtime)
+    } catch {
+      return null
+    }
+  }
+  const writePreferredAgentRuntime = (runtime: string): void => {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(agentRuntimePrefsFile(), JSON.stringify({ runtime }, null, 2))
+  }
+  const resolveSelectedAgentRuntime = (runtime: string): AgentRuntimeSpec | null => {
+    const selected = selectableAgentRuntime(runtime)
+    if (selected === AGENT_RUNTIME_CODEX_SERVERLESS) {
+      const cmd = codexCliPath()
+      return cmd ? { runtime: AGENT_RUNTIME_CODEX_SERVERLESS, cmd, label: 'Codex CLI (`codex`)' } : null
+    }
+    if (selected === AGENT_RUNTIME_CLAUDE) {
+      const cmd = claudeCliPath()
+      return cmd ? { runtime: AGENT_RUNTIME_CLAUDE, cmd, label: 'Claude Code CLI (`claude`)' } : null
+    }
+    return null
+  }
+  const resolveAgentRuntime = (preferredRuntime?: string | null): AgentRuntimeSpec | null => {
     const rawBackend = process.env.BLITZ_AGENT_BACKEND || process.env.BLITZ_AGENT_RUNTIME || ''
     const rawAgent = process.env.BLITZ_AGENT || ''
     const rawAgentRuntime = rawAgent && rawAgent !== '1' ? normalizeAgentRuntime(rawAgent) : ''
     const rawAgentIsRuntime = rawAgentRuntime === AGENT_RUNTIME_CODEX_SERVERLESS || rawAgentRuntime === AGENT_RUNTIME_CLAUDE
     const customAgentCmd = rawAgent && rawAgent !== '1' && !rawAgentIsRuntime ? rawAgent : ''
     const explicitRuntime = rawBackend ? normalizeAgentRuntime(rawBackend) : rawAgentIsRuntime ? rawAgentRuntime : ''
-    const wanted = explicitRuntime || (customAgentCmd || rawAgent === '1' ? AGENT_RUNTIME_CLAUDE : DEFAULT_AGENT_RUNTIME)
+    const preferred = selectableAgentRuntime(preferredRuntime)
+    const wanted = explicitRuntime || preferred || (customAgentCmd || rawAgent === '1' ? AGENT_RUNTIME_CLAUDE : DEFAULT_AGENT_RUNTIME)
     if (wanted === AGENT_RUNTIME_CODEX_SERVERLESS) {
       const cmd = customAgentCmd || codexCliPath()
       if (cmd) return { runtime: AGENT_RUNTIME_CODEX_SERVERLESS, cmd, label: 'Codex CLI (`codex`)' }
@@ -378,15 +412,47 @@ app.whenReady().then(() => {
     if (claude) return { runtime: AGENT_RUNTIME_CLAUDE, cmd: claude, label: 'Claude Code CLI (`claude`)' }
     return null
   }
-  const agentRuntime = resolveAgentRuntime()
-  setInterviewAgentAvailable(!!agentRuntime)
-  if (agentRuntime) setTerminalAgentRuntime({ runtime: agentRuntime.runtime, cmd: agentRuntime.cmd })
+  // ! DEBUG: mutable runtime override used by the bottom-right debug switch. Existing agents are
+  // ! DEBUG: not hot-swapped; new launches/restarts read this current value.
+  let currentAgentRuntime: AgentRuntimeSpec | null = null
+  const applyAgentRuntime = (runtime: AgentRuntimeSpec | null): void => {
+    currentAgentRuntime = runtime
+    setInterviewAgentAvailable(!!runtime)
+    setTerminalAgentRuntime(runtime ? { runtime: runtime.runtime, cmd: runtime.cmd } : null)
+  }
+  const agentRuntimeStatus = (): {
+    ok: boolean
+    runtime: string | null
+    label: string | null
+    available: { codex: boolean; claude: boolean }
+    error?: string
+  } => ({
+    ok: true,
+    runtime: currentAgentRuntime?.runtime || null,
+    label: currentAgentRuntime?.label || null,
+    available: { codex: !!codexCliPath(), claude: !!claudeCliPath() }
+  })
+  applyAgentRuntime(resolveAgentRuntime(readPreferredAgentRuntime()))
+  // ! DEBUG: IPC backing for the temporary runtime selector.
+  ipcMain.handle('os:agent-runtime:get', () => agentRuntimeStatus())
+  ipcMain.handle('os:agent-runtime:set', (_e, value: string) => {
+    const selected = selectableAgentRuntime(value)
+    if (!selected) return { ...agentRuntimeStatus(), ok: false, error: 'Unknown agent backend' }
+    const next = resolveSelectedAgentRuntime(selected)
+    if (!next) {
+      const label = selected === AGENT_RUNTIME_CODEX_SERVERLESS ? 'Codex CLI (`codex`)' : 'Claude Code CLI (`claude`)'
+      return { ...agentRuntimeStatus(), ok: false, error: `${label} is not available on this Mac` }
+    }
+    writePreferredAgentRuntime(selected)
+    applyAgentRuntime(next)
+    return agentRuntimeStatus()
+  })
   // PRE-FLIGHT: the brain = a managed agent backend inside a tmux terminal. If either is missing on this
   // Mac (fresh VM; packaged GUI apps also don't get homebrew's PATH — both resolvers use the login shell),
   // the worst failure mode is SILENCE. Say what's missing in chat at boot and on messages while broken.
   const missingRuntime = (): string[] => {
     const m: string[] = []
-    if (!agentRuntime) m.push('an agent backend (`codex` or `claude`) — install/fix Codex or Claude Code, and make sure the command works in your terminal')
+    if (!currentAgentRuntime) m.push('an agent backend (`codex` or `claude`) — install/fix Codex or Claude Code, and make sure the command works in your terminal')
     if (!resolveTmuxBin()) m.push('tmux — run `brew install tmux` (my agent terminals run inside it)')
     return m
   }
@@ -407,7 +473,7 @@ app.whenReady().then(() => {
       })
     }
   }
-  if (agentRuntime) {
+  {
     // Agent '0' carries the onboarding standing duty. The provider is re-read on EVERY (re)launch
     // (prepareAgentLaunch rewrites bootstrap.txt): pending interview becomes the interview duty,
     // then a finished interview becomes the resident initiative duty.
@@ -418,6 +484,10 @@ app.whenReady().then(() => {
       const terminalsDir = terminalsDirOf()
       const url = getAgentSocketUrl()
       if (!ws || !terminalsDir || !url) return // not ready (no workspace / relay url yet) — boot resume retries
+      const agentRuntime = currentAgentRuntime
+      if (!agentRuntime) return
+      const existing = electronTerminalOps.getTerminal(String(id))
+      if (existing?.kind === 'agent' && existing.status === 'stopped') return // user intentionally stopped it; Resume restarts it
       // `sessionsDir` is the agent-runtime contract for persisted backend metadata; we point it at
       // our .blitzos/terminals migration.
       const launch = prepareAgentLaunch({ sessionsDir: terminalsDir, id, url, cmd: agentRuntime.cmd, runtime: agentRuntime.runtime })

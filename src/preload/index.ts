@@ -18,6 +18,15 @@ export interface ConnectResult {
   needsConfig?: boolean
 }
 
+// ! DEBUG: temporary bridge for the bottom-right runtime selector.
+export interface AgentRuntimeStatus {
+  ok: boolean
+  runtime: string | null
+  label: string | null
+  available: { codex: boolean; claude: boolean }
+  error?: string
+}
+
 export interface OsAction {
   type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme'
   [k: string]: unknown
@@ -131,6 +140,13 @@ const api = {
   /** Re-spawn a dead terminal from its persisted meta (one-click resume) — emits terminal-spawn. */
   terminalRestart(id: string): void {
     ipcRenderer.send('os:terminal-restart', id)
+  },
+  // ! DEBUG: temporary app-level Codex/Claude switch.
+  agentRuntimeGet(): Promise<AgentRuntimeStatus> {
+    return ipcRenderer.invoke('os:agent-runtime:get') as Promise<AgentRuntimeStatus>
+  },
+  agentRuntimeSet(runtime: 'codex-serverless' | 'claude'): Promise<AgentRuntimeStatus> {
+    return ipcRenderer.invoke('os:agent-runtime:set', runtime) as Promise<AgentRuntimeStatus>
   },
   /** Action-items inbox (human side): list / resolve (tick) / clear a resolved item. */
   actionList(status?: string): Promise<unknown[]> {

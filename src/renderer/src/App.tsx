@@ -30,6 +30,15 @@ type DockAnimationPhase = 'minimizing' | 'restoring'
 type ToolbarTooltip = { text: string; left: number; top: number }
 type AdvancedPopoverPosition = { left: number; top: number }
 type ThemeMode = 'light' | 'dark'
+// ! DEBUG: temporary bottom-right agent backend selector.
+type AgentRuntimeChoice = 'codex-serverless' | 'claude'
+type AgentRuntimeDebugStatus = {
+  ok: boolean
+  runtime: string | null
+  label: string | null
+  available: { codex: boolean; claude: boolean }
+  error?: string
+}
 const THEME_STORAGE_KEY = 'blitzos.theme'
 const AREA_FRAME_SCALE_THRESHOLD = 0.92
 const AREA_ADD_SCALE_THRESHOLD = 0.8
@@ -462,6 +471,9 @@ export default function App(): JSX.Element {
   const [dockAnimations, setDockAnimations] = useState<Record<string, DockAnimationPhase>>({})
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
+  // ! DEBUG: runtime switch state is intentionally UI-only; the selected value is persisted in main.
+  const [agentRuntimeDebug, setAgentRuntimeDebug] = useState<AgentRuntimeDebugStatus | null>(null)
+  const [agentRuntimePending, setAgentRuntimePending] = useState<AgentRuntimeChoice | null>(null)
   const pan = useRef<{ x: number; y: number } | null>(null)
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
   const dockAnimationIds = useRef<Set<string>>(new Set())
@@ -478,6 +490,28 @@ export default function App(): JSX.Element {
   const advancedButtonRef = useRef<HTMLButtonElement>(null)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [toolbarTooltip, setToolbarTooltip] = useState<ToolbarTooltip | null>(null)
+
+  useEffect(() => {
+    if (isServer) return
+    let alive = true
+    window.agentOS?.agentRuntimeGet?.().then((status) => {
+      if (alive) setAgentRuntimeDebug(status)
+    }).catch(() => {
+      if (alive) setAgentRuntimeDebug(null)
+    })
+    return () => { alive = false }
+  }, [isServer])
+
+  const chooseAgentRuntime = async (runtime: AgentRuntimeChoice): Promise<void> => {
+    if (agentRuntimePending || agentRuntimeDebug?.runtime === runtime) return
+    setAgentRuntimePending(runtime)
+    try {
+      const status = await window.agentOS?.agentRuntimeSet?.(runtime)
+      if (status) setAgentRuntimeDebug(status)
+    } finally {
+      setAgentRuntimePending(null)
+    }
+  }
   const [aiCopied, setAiCopied] = useState(false)
   // Phase 2: true once the backend has sent (or declined) a hydrate. The state-push is
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
@@ -1232,7 +1266,7 @@ export default function App(): JSX.Element {
         const panel = st.surfaces.find((s) => s.kind === 'native' && s.component === 'activity')
         if (panel) {
           const evs = (panel.props?.events as Array<{ at: number; text: string }>) ?? []
-          st.updateSurfaceProps(panel.id, { events: [...evs, evt].slice(-60) })
+          st.updateSurfaceProps(panel.id, { events: [...evs, evt].slice(-200) })
         } else {
           st.createSurface(activitySurfaceInput([evt]))
         }
@@ -2157,6 +2191,28 @@ export default function App(): JSX.Element {
           </div>,
           document.body
         )}
+
+      {/* ! DEBUG: temporary maintainer control for swapping future agent launches between Codex and Claude. */}
+      {!isServer && agentRuntimeDebug && (
+        <div className="agent-runtime-switch" aria-label="Agent backend">
+          <span className="agent-runtime-debug-tag">DEBUG</span>
+          <span className="agent-runtime-switch-label">AI</span>
+          <button
+            className={agentRuntimeDebug.runtime === 'codex-serverless' ? 'active' : ''}
+            disabled={!agentRuntimeDebug.available.codex || !!agentRuntimePending}
+            onClick={() => { void chooseAgentRuntime('codex-serverless') }}
+          >
+            Codex
+          </button>
+          <button
+            className={agentRuntimeDebug.runtime === 'claude' ? 'active' : ''}
+            disabled={!agentRuntimeDebug.available.claude || !!agentRuntimePending}
+            onClick={() => { void chooseAgentRuntime('claude') }}
+          >
+            Claude
+          </button>
+        </div>
+      )}
 
       {SHOW_ADVANCED_TOOLBAR && showAdvanced && (
         <div className="advanced-backdrop" onPointerDown={() => setShowAdvanced(false)}>

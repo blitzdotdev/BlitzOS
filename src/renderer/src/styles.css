@@ -1594,6 +1594,81 @@ button {
   color: var(--text-muted);
   font-size: 12px;
 }
+.terminal-view-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0c0e;
+}
+.terminal-view {
+  width: 100%;
+  height: 100%;
+}
+.terminal-agent-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, white 14%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, #0b0c0e 78%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #f5c84b 58%, transparent),
+    var(--shadow-sm);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+.terminal-agent-debug-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: #ffd84d;
+  color: #1c1500;
+  font: 900 10px/1 var(--font-ui);
+  letter-spacing: 0;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 55%, transparent);
+}
+.terminal-agent-status {
+  padding: 0 6px;
+  color: var(--text-muted);
+  font: 10px/1.8 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.terminal-agent-status.running {
+  color: var(--positive);
+}
+.terminal-agent-status.stopped {
+  color: var(--text-tertiary);
+}
+.terminal-agent-btn {
+  border: 1px solid color-mix(in srgb, white 16%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, white 10%, transparent);
+  color: var(--text);
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.terminal-agent-btn:hover {
+  background: color-mix(in srgb, white 16%, transparent);
+}
+.terminal-agent-btn.danger {
+  color: var(--danger);
+}
+.terminal-agent-btn.danger:hover {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
 
 /* A jsx/tsx widget's body while its source compiles (the iframe mounts only once, when ready). */
 .jsx-compiling {
@@ -1848,6 +1923,81 @@ button {
 .toolbar button:hover,
 .toolbar button.active {
   background: var(--control-hover);
+}
+.agent-runtime-switch {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 7400;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  color: var(--text);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #f5c84b 52%, transparent),
+    inset 0 1px 0 var(--edge-highlight),
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-md);
+  backdrop-filter: blur(18px) saturate(1.12);
+  -webkit-backdrop-filter: blur(18px) saturate(1.12);
+}
+.agent-runtime-debug-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: var(--radius-button);
+  background: #ffd84d;
+  color: #1c1500;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 55%, transparent);
+}
+.agent-runtime-switch-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  min-width: 28px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+.agent-runtime-switch button {
+  height: 30px;
+  min-width: 58px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+.agent-runtime-switch button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--control);
+}
+.agent-runtime-switch button.active {
+  color: var(--text);
+  background: var(--control-hover);
+  box-shadow: inset 0 1px 0 var(--edge-highlight);
+}
+.agent-runtime-switch button:disabled {
+  cursor: default;
+  opacity: 0.38;
 }
 .connect-ai-icon {
   display: inline-flex;
