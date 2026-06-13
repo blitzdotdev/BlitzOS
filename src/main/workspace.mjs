@@ -787,8 +787,6 @@ arrange; edit the files and the canvas updates live. The workspace IS this folde
   \`{ "url": "https://…", "tabs": [{ "id": "t1", "title": "Tab", "url": "https://…" }], "activeTab": 0 }\`.
 - \`*.html\` — an agent-authored panel.
 - \`*.jsx\` / \`*.tsx\` — a React widget compiled inside the sandboxed surface.
-- a plain folder — a collapsed tile; its contents are NOT on the canvas (good for grouping +
-  cloned repos, so a repo is one tile, not thousands of nodes).
 - images / other files — a tile.
 
 ## Layout
@@ -799,7 +797,7 @@ arrange; edit the files and the canvas updates live. The workspace IS this folde
 ## For an agent
 Operate this workspace with plain file tools — no API needed:
 - new note → write a \`.md\`; open a site → write a \`.weblink\`; move/resize → edit the node in
-  \`.blitzos/workspace.json\`; delete → remove the file; group → move files into a subfolder.
+  \`.blitzos/workspace.json\`; delete → remove the file.
 - multiple web pages in the same research lane -> MUST be ONE tabbed \`.weblink\` with \`tabs\`; create
   separate \`.weblink\` files only for genuinely different lanes.
 - A node's content = its file. \`.blitzos/state/\` is BlitzOS runtime state — do not read or edit it.

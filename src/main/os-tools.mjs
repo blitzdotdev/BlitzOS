@@ -272,7 +272,7 @@ export function makeOsTools(ops) {
     {
       path: '/open_window',
       description:
-        'Open a third-party website as a live web surface. This is the default for public/current web research: make the source visible in Blitz, then drive it with surface_control/read_window instead of hiding research in an internal search tool. Do not use internal web search unless Blitz cannot reach the source or the user explicitly asks for that. Tab rule: do not call open_window repeatedly for sources in the SAME research lane when you can write/update one tabbed .weblink in workspace_path; use open_window for a single source, the first page in a lane, or a genuinely separate lane. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame), visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary agents pass {agent:"<your id>"}.',
+        'Open a third-party website as a live web surface. This is the default way to make public/current web evidence visible in Blitz, then drive it with surface_control/read_window. Internal web search is allowed only as a discovery index for candidate URLs/query angles; every source you rely on must be opened in Blitz before you present findings. For open-ended research, use multiple query angles when useful rather than doing one visible search. Tab rule: do not call open_window repeatedly for sources in the SAME research lane when you can write/update one tabbed .weblink in workspace_path; use open_window for a single source, the first page in a lane, or a genuinely separate lane. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame), visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary agents pass {agent:"<your id>"}.',
       input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, title: { type: 'string' }, agent: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -398,18 +398,6 @@ export function makeOsTools(ops) {
         if (!ops.setTheme) return { status: 400, body: { error: 'set_theme not available in this transport' } }
         const r = ops.setTheme({ accent: a.accent, accentDeep: a.accentDeep })
         return r.ok ? { ok: true } : { status: 400, body: { error: r.error } }
-      }
-    },
-    {
-      path: '/group',
-      description:
-        'Group related surfaces into ONE REAL folder on disk for readability: makes a subdirectory and MOVES the given surfaces\' files into it. Use this when several similar windows/files belong together and should stop cluttering the workspace. The folder persists, appears as one collapsed tile, and can be opened to browse its contents. Pass 2+ ids + a name.',
-      input_schema: { type: 'object', required: ['ids', 'name'], properties: { ids: { type: 'array', items: { type: 'string' } }, name: { type: 'string' }, kind: { type: 'string', enum: ['folder'] }, x: { type: 'number' }, y: { type: 'number' } } },
-      handler: ({ body }) => {
-        const a = parse(body)
-        const ids = Array.isArray(a.ids) ? a.ids.map(String) : []
-        if (!ids.length) return { status: 400, body: { error: 'group needs surface ids' } }
-        return ops.groupIntoFolder(a.name != null ? String(a.name) : 'Folder', ids, a.x != null ? Number(a.x) : undefined, a.y != null ? Number(a.y) : undefined, 'folder')
       }
     },
     {

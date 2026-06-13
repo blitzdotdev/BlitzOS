@@ -262,7 +262,7 @@ window.blitz.ready(props => { /* boot */ })
 
 // More capabilities (each is consent-gated the first time, like data()):
 await window.blitz.tool('open_window', { url: 'https://…' }) // call an OS tool: create_surface/open_window/
-                                                             // move_surface/update_surface/close_surface/group/provider_call/list_state
+                                                             // move_surface/update_surface/close_surface/provider_call/list_state
 window.blitz.sendMessage('hi')             // send a chat message to the agent (the chat widget uses this)
 const dir = await window.blitz.listDir('') // list a workspace folder (the file manager uses this)
 window.blitz.setProps({ text })            // persist THIS widget's own state, e.g. a note's text — no prompt

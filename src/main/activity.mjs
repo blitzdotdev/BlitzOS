@@ -15,7 +15,7 @@
 export const ACTIVITY_TOOLS = new Set([
   '/open_window', '/create_surface', '/update_surface', '/move_surface', '/close_surface',
   '/surface_control', '/read_window', '/spawn_widget', '/save_widget', '/say', '/go_to_primary',
-  '/group', '/provider_call', '/new_app', '/customize_widget', '/create_workspace', '/switch_workspace'
+  '/provider_call', '/new_app', '/customize_widget', '/create_workspace', '/switch_workspace'
 ])
 
 /** A short human label for an agent tool call, for the activity feed. */
@@ -35,7 +35,6 @@ export function activityText(path, a) {
     case '/update_surface': return `✎ updating${a.url ? ' → ' + host(a.url) : a.title ? ' · ' + safeText(a.title) : ''}`
     case '/move_surface': return '⇄ moving a window'
     case '/close_surface': return '✕ closing a window'
-    case '/group': return `🗂 grouping into “${safeText(a.name || 'folder')}”`
     case '/surface_control': return `⌖ ${a.action?.action || 'acting'}${a.action?.text ? ' “' + safeText(a.action.text) + '”' : a.action?.selector ? ' ' + safeText(a.action.selector) : ''}`
     case '/read_window': return '👁 reading the page'
     case '/provider_call': return `🔌 ${a.provider || 'integration'} ${a.method || 'GET'} ${safeText(a.path)}`
