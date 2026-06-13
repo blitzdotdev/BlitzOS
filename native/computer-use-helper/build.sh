@@ -28,7 +28,7 @@ cp Info.plist "${BUNDLE}/Contents/Info.plist"
 
 # Brand the helper with the BlitzOS bubble mark (so the FDA/Accessibility list + the drag tile show
 # "BlitzOS Computer Use" with a recognizable icon, not the generic executable icon).
-ICON_SRC="../src/renderer/src/assets/aqua-bubble.png"
+ICON_SRC="../../src/renderer/src/assets/aqua-bubble.png"
 if [[ -f "$ICON_SRC" ]]; then
   ICONSET="build/AppIcon.iconset"
   mkdir -p "$ICONSET"
