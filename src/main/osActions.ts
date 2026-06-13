@@ -122,6 +122,7 @@ function durableFlush(): void {
 // server backend uses, so workspaces are ONE feature across both modes. Electron adapter: broadcast =
 // os:action IPC; web surfaces are main-owned WebContentsViews (onSurfaces no-op); mode 'desktop'.
 let wsHost: ReturnType<typeof createWorkspaceHost> | null = null
+const newWorkspaceAgentStarts = new Set<string>()
 // surfaceId -> the browser guest's WebContents id (so we can read/control its DOM)
 const browserContentIds = new Map<string, number>()
 
@@ -242,14 +243,19 @@ export function initOsActions(opts: {
   }))
   ipcMain.handle('workspace:create', (_e, name: string) => {
     try {
-      return { ok: true, name: wsHost!.create(name).name }
+      const created = wsHost!.create(name)
+      newWorkspaceAgentStarts.add(created.name)
+      return { ok: true, name: created.name }
     } catch (e) {
       return { ok: false, error: (e as Error)?.message || 'create failed' }
     }
   })
   ipcMain.handle('workspace:switch', async (_e, name: string) => {
     const r = await wsHost!.performSwitch(name)
-    return r.status === 200 ? { ok: true, active: r.body.active } : { ok: false, error: r.body.error }
+    if (r.status !== 200) return { ok: false, error: r.body.error }
+    const active = String(r.body.active || '')
+    if (newWorkspaceAgentStarts.delete(active)) osKickBrain('0')
+    return { ok: true, active }
   })
   ipcMain.handle('workspace:capture', (_e, name: string) => osCaptureThumb(name))
   // Delete a workspace + its folder (human-only, from Mission Control; never an agent tool — destructive).
@@ -920,7 +926,9 @@ export function osWorkspaceContext(): { workspace: string; workspace_path: strin
 export function osCreateWorkspace(name: string): { ok: boolean; name?: string; error?: string } {
   if (!wsHost) return { ok: false, error: 'no workspace host' }
   try {
-    return { ok: true, name: wsHost.create(String(name || '')).name }
+    const created = wsHost.create(String(name || ''))
+    newWorkspaceAgentStarts.add(created.name)
+    return { ok: true, name: created.name }
   } catch (e) {
     return { ok: false, error: (e as Error)?.message || 'create failed' }
   }
@@ -928,9 +936,10 @@ export function osCreateWorkspace(name: string): { ok: boolean; name?: string; e
 export async function osSwitchWorkspace(name: string): Promise<{ ok: boolean; active?: string; error?: string }> {
   if (!wsHost) return { ok: false, error: 'no workspace host' }
   const r = await wsHost.performSwitch(String(name || ''))
-  return r.status === 200
-    ? { ok: true, active: r.body.active as string | undefined }
-    : { ok: false, error: r.body.error as string | undefined }
+  if (r.status !== 200) return { ok: false, error: r.body.error as string | undefined }
+  const active = String(r.body.active || '')
+  if (newWorkspaceAgentStarts.delete(active)) osKickBrain('0')
+  return { ok: true, active }
 }
 /** #53: per-workspace consent persistence for the Electron transports (widget grants + sensitive-read
  *  providers), via the shared host. Load on boot, persist (merge) on each grant. */
