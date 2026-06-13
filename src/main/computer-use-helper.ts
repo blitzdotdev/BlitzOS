@@ -91,6 +91,7 @@ class HelperManager {
   private wantQuit = false // distinguishes a deliberate relaunch from a crash
   private connectWaiters: Array<() => void> = []
   private supervise = false
+  private ensuring: Promise<{ ok: boolean; error?: string }> | null = null // single-flight ensure()
 
   /** Copy the signed bundle to the stable install location if missing or version-changed. cp -R
    *  (not fs.cp) preserves the code signature + symlinks the signature depends on. */
