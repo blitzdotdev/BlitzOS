@@ -10,7 +10,7 @@
 // poll the TCC probe (the app's own FDA, which the scan child inherits), and on grant re-scan and
 // visibly deepen the board (real focus time, Messages/Mail cadence), then retire the card.
 //
-import { app, ipcMain, shell, type BrowserWindow } from 'electron'
+import { app, ipcMain, shell, systemPreferences, screen, BrowserWindow } from 'electron'
 import { execFileSync, execFile, spawn } from 'node:child_process'
 
 // Repo root in dev; app.asar.UNPACKED in a packaged build — the scan runs as a PLAIN-NODE child
@@ -130,6 +130,133 @@ const BROWSERS = [
 function detectBrowser(): { id: string; name: string } | null {
   for (const b of BROWSERS) if (existsSync(b.path)) return { id: b.id, name: b.name }
   return null
+}
+
+// ---- drag-list TCC permissions (FDA / Accessibility / Screen Recording), Codex Computer Use flow
+// (plans/codex-computer-use-tcc-reference.md). Each: a Settings deep link + a poll + ONE shared
+// floating drag-helper window that hosts the startDrag tile over the Settings list. (Automation /
+// browser import is NOT here — it uses the osascript consent prompt, not a drag list.)
+type DragPerm = 'fda' | 'accessibility' | 'screen'
+const PERM_DEEPLINK: Record<DragPerm, string> = {
+  fda: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles',
+  accessibility: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+  screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
+}
+const PERM_LABEL: Record<DragPerm, string> = { fda: 'Full Disk Access', accessibility: 'Accessibility', screen: 'Screen Recording' }
+
+/** Live grant state per drag-permission — the exact getters Codex uses (the Accessibility query
+ *  passes false so it never raises the system prompt; Screen Recording reads the media status). */
+function permGranted(kind: DragPerm): boolean {
+  if (process.platform !== 'darwin') return true
+  try {
+    if (kind === 'fda') return hasFDA()
+    if (kind === 'accessibility') return systemPreferences.isTrustedAccessibilityClient(false)
+    return systemPreferences.getMediaAccessStatus('screen') === 'granted'
+  } catch {
+    return false
+  }
+}
+
+// The floating drag-helper window: a frameless, non-activating, always-on-top panel pinned to the
+// bottom-center of the active display, floating OVER System Settings so the drag SOURCE (the app
+// icon) and the drag TARGET (the Settings list) are both visible. One window, reused per step.
+let dragHelper: BrowserWindow | null = null
+let dragPollTimer: ReturnType<typeof setInterval> | null = null
+const DRAG_HELPER_W = 460
+const DRAG_HELPER_H = 96
+
+function dragHelperHtml(kind: DragPerm, iconUrl: string | null, appName: string): string {
+  // Self-contained; the window shares the app preload, so the tile calls window.agentOS.onboarding
+  // .preboardDrag() (→ main startDrag of the bundle). CSP locks it to inline + data: only.
+  const label = PERM_LABEL[kind]
+  const icon = iconUrl ? `<img src="${iconUrl}" alt="" draggable="false">` : ''
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  :root { color-scheme: light dark; }
+  html,body { margin:0; height:100%; overflow:hidden; -webkit-user-select:none; user-select:none; font-family:-apple-system,system-ui,sans-serif; }
+  .h { height:100%; display:flex; align-items:center; gap:14px; padding:0 18px; box-sizing:border-box;
+       background:rgba(245,245,247,0.86); border-radius:16px; border:1px solid rgba(0,0,0,0.10);
+       -webkit-backdrop-filter:saturate(1.3) blur(20px); backdrop-filter:saturate(1.3) blur(20px);
+       box-shadow:0 8px 30px rgba(0,0,0,0.22); }
+  @media (prefers-color-scheme: dark){ .h{ background:rgba(40,42,46,0.86); border-color:rgba(255,255,255,0.12); color:#f5f5f7; } }
+  .tile { width:60px; height:60px; flex:0 0 auto; display:grid; place-items:center; cursor:grab; border-radius:14px; transition:transform .12s ease; }
+  .tile:hover { transform:scale(1.07); } .tile:active { cursor:grabbing; }
+  .tile img { width:56px; height:56px; pointer-events:none; }
+  .c { font-size:13px; line-height:1.45; }
+  .c b { font-weight:600; }
+  .c .sub { opacity:0.62; font-size:12px; margin-top:2px; }
+</style></head><body>
+<div class="h">
+  <span class="tile" id="t" draggable="true">${icon}</span>
+  <div class="c"><div>Drag <b>${appName}</b> into the <b>${label}</b> list above</div>
+  <div class="sub">Then flip it on. I'll notice the moment it lands.</div></div>
+</div>
+<script>
+  document.getElementById('t').addEventListener('dragstart', function(e){
+    e.preventDefault();
+    try { window.agentOS && window.agentOS.onboarding && window.agentOS.onboarding.preboardDrag(); } catch (_) {}
+  });
+</script></body></html>`
+}
+
+async function openDragHelper(kind: DragPerm): Promise<void> {
+  if (process.platform !== 'darwin') return
+  void shell.openExternal(PERM_DEEPLINK[kind]) // navigate Settings to the exact pane
+  const html = dragHelperHtml(kind, await appIconDataUrl(), fdaAppName())
+  if (!dragHelper || dragHelper.isDestroyed()) {
+    dragHelper = new BrowserWindow({
+      width: DRAG_HELPER_W,
+      height: DRAG_HELPER_H,
+      frame: false,
+      transparent: true,
+      resizable: false,
+      movable: true,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      focusable: false, // never steals key focus from Settings (Codex: focusable:false)
+      hasShadow: false,
+      show: false,
+      webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true, nodeIntegration: false }
+    })
+    dragHelper.on('closed', () => {
+      dragHelper = null
+    })
+  }
+  const win = dragHelper
+  // Float over EVERYTHING incl. a fullscreen Settings, on every Space (Codex's overlay policy).
+  win.setAlwaysOnTop(true, 'screen-saver')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
+  win.setMenuBarVisibility(false)
+  // bottom-center of the display under the cursor (where the user is heading — the Settings window)
+  const disp = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
+  win.setBounds({ x: Math.round(disp.x + (disp.width - DRAG_HELPER_W) / 2), y: Math.round(disp.y + disp.height - DRAG_HELPER_H - 28), width: DRAG_HELPER_W, height: DRAG_HELPER_H })
+  await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+  win.showInactive() // visible without taking focus from Settings
+  startDragPoll(kind)
+}
+
+function closeDragHelper(): void {
+  if (dragPollTimer) {
+    clearInterval(dragPollTimer)
+    dragPollTimer = null
+  }
+  if (dragHelper && !dragHelper.isDestroyed()) dragHelper.close()
+  dragHelper = null
+}
+
+// Poll the just-requested permission; the moment macOS reports it granted, tear down the helper and
+// tell the pre-board card to celebrate + advance. Forced dev mode never auto-grants (inherited).
+function startDragPoll(kind: DragPerm): void {
+  if (dragPollTimer) clearInterval(dragPollTimer)
+  dragPollTimer = setInterval(() => {
+    if (forcePreboard()) return
+    if (!permGranted(kind)) return
+    closeDragHelper()
+    send('onboarding:permission-granted', { kind })
+  }, 1200)
 }
 
 /** Machine-level pre-board outcomes (userData/preboard.json) — which steps are settled, so the
@@ -590,7 +717,9 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     // step stays up for visual testing; the drag + open-settings actions are still real.
     forced: forcePreboard(),
     steps: forcePreboard() ? {} : readPreboard().steps,
-    fda: forcePreboard() ? false : hasFDA(),
+    fda: forcePreboard() ? false : permGranted('fda'),
+    accessibility: forcePreboard() ? false : permGranted('accessibility'),
+    screen: forcePreboard() ? false : permGranted('screen'),
     appName: fdaAppName(),
     browser: detectBrowser(),
     canDrag: !!appBundlePath(),
@@ -613,6 +742,17 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
       }
     })
   })
+  // Open a drag-list permission step (FDA / Accessibility / Screen Recording): navigate Settings to
+  // the pane + raise the floating drag-helper over it + poll until granted (→ permission-granted).
+  ipcMain.handle('onboarding:open-permission-drag', async (_e, kind: DragPerm) => {
+    if (kind !== 'fda' && kind !== 'accessibility' && kind !== 'screen') return { ok: false }
+    await openDragHelper(kind)
+    return { ok: true, appName: fdaAppName() }
+  })
+  ipcMain.handle('onboarding:close-permission-drag', () => {
+    closeDragHelper()
+    return { ok: true }
+  })
   ipcMain.handle('onboarding:request-automation', () => requestAutomation())
   ipcMain.handle('onboarding:open-automation-settings', () => {
     void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Automation')
@@ -632,5 +772,8 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     stopFdaPoll()
     return { ok: true }
   })
-  app.on('before-quit', stopFdaPoll)
+  app.on('before-quit', () => {
+    stopFdaPoll()
+    closeDragHelper()
+  })
 }

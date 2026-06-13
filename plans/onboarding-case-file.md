@@ -103,6 +103,18 @@ there is board state to lose and the FIRST scan already runs Branch A.
   relaunch-class grants this TODO worried about — BlitzOS uses neither yet, so the sequence ships
   without them rather than asking for unused power).
 
+**Codex Computer Use flow ported (2026-06-12):** the static in-overlay drag tile is replaced by
+the real Codex Computer Use mechanism (RE'd into `plans/codex-computer-use-tcc-reference.md`): a
+frameless, non-activating, always-on-top floating drag-helper window (`openDragHelper` in
+onboarding.ts) pinned bottom-center of the cursor's display, `setVisibleOnAllWorkspaces`
++visibleOnFullScreen, hosting the `startDrag({file: bundle, icon})` tile OVER the Settings list.
+Each drag-list step (FDA, Accessibility, Screen Recording — user added the computer-use pair
+2026-06-12) opens its exact pane deep link + raises the helper + polls the real getter
+(`hasFDA()` / `isTrustedAccessibilityClient(false)` / `getMediaAccessStatus('screen')`); on grant
+main closes the helper and fires `permission-granted`, the card celebrates + advances. Browser
+import stays the Automation osascript-consent step (not a drag list). Pre-board step order:
+FDA → Accessibility → Screen Recording → browser.
+
 **Color pass (2026-06-12, same session):** the accent is live Blitz red `#e31c30`, NOT the
 design-system's stale coral — and the primary is not fixed, so onboarding reads `--accent`
 everywhere (preboard primary/dots, boot bar, unlock CTA + drag tile), zero hardcoded accent hex

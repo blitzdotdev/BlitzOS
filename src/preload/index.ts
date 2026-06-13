@@ -393,6 +393,8 @@ const api = {
       forced?: boolean
       steps: Record<string, 'granted' | 'denied' | 'skipped' | undefined>
       fda: boolean
+      accessibility: boolean
+      screen: boolean
       appName: string
       browser: { id: string; name: string } | null
       canDrag: boolean
@@ -407,6 +409,20 @@ const api = {
      *  the System Settings permission list. Call from a dragstart handler (after preventDefault). */
     preboardDrag(): void {
       ipcRenderer.send('onboarding:preboard-drag')
+    },
+    /** Open a drag-list permission step (fda|accessibility|screen): main navigates Settings to the
+     *  pane + raises the floating drag-helper window over it + polls until granted. */
+    openPermissionDrag(kind: 'fda' | 'accessibility' | 'screen'): Promise<{ ok: boolean; appName?: string }> {
+      return ipcRenderer.invoke('onboarding:open-permission-drag', kind)
+    },
+    closePermissionDrag(): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:close-permission-drag')
+    },
+    /** Fired when main's poll detects a drag-list permission was granted (helper window closes). */
+    onPermissionGranted(cb: (m: { kind: 'fda' | 'accessibility' | 'screen' }) => void): () => void {
+      const listener = (_e: unknown, m: { kind: 'fda' | 'accessibility' | 'screen' }): void => cb(m)
+      ipcRenderer.on('onboarding:permission-granted', listener)
+      return () => ipcRenderer.removeListener('onboarding:permission-granted', listener)
     },
     /** Ask for Automation (AppleEvents) consent to the detected browser — raises the macOS prompt
      *  on first call; resolves AFTER the user answers, with live window/tab counts on grant. */

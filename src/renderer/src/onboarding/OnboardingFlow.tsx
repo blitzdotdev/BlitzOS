@@ -47,35 +47,72 @@ export function OnboardingFlow({ onComplete }: { onComplete: () => void }): JSX.
   )
 }
 
+type DragKind = 'fda' | 'accessibility' | 'screen'
+type StepKey = DragKind | 'browser'
+
 type PreboardState = {
   forced?: boolean
   steps: Record<string, 'granted' | 'denied' | 'skipped' | undefined>
   fda: boolean
+  accessibility: boolean
+  screen: boolean
   appName: string
   browser: { id: string; name: string } | null
   canDrag: boolean
   appIcon: string | null
 }
 
+// The three drag-list TCC permissions, in ask order: the personal layer first (the scan), then the
+// computer-use pair. Each is granted by the Codex Computer Use flow — Settings opens to the pane and
+// a floating drag-helper window (main) hosts the app-icon drag over the list. Copy is one warm breath.
+const DRAG_STEPS: Array<{ key: DragKind; kicker: string; title: string; body: (appName: string) => string }> = [
+  {
+    key: 'fda',
+    kicker: 'Before we begin',
+    title: 'Unlock the personal layer',
+    body: () =>
+      'Blitz reads your Mac to build a private case file of how you work, all scanned and distilled locally. Full Disk Access adds the personal layer: your Messages cadence, Safari clusters, and app rhythm.'
+  },
+  {
+    key: 'accessibility',
+    kicker: 'So Blitz can act',
+    title: 'Let Blitz use your apps',
+    body: () =>
+      'Accessibility lets Blitz read and drive app interfaces for you, the same access a screen reader uses, so it can do real work in the apps you already have.'
+  },
+  {
+    key: 'screen',
+    kicker: 'So Blitz can see',
+    title: 'Let Blitz see the screen',
+    body: () => 'Screen Recording lets Blitz see what is on screen so it knows where to click. Frames are used locally to act, never uploaded.'
+  }
+]
+
 /** The Dia-style pre-board: one permission per screen, the why up front, one primary action, a
- *  quiet skip. FDA gets the Codex move — the app icon is a NATIVE drag source you drop straight
- *  into the Settings list (startDrag of the bundle) next to the open-settings deep link. Browser
- *  import asks for Automation consent with live tab counts as the immediate reward. Outcomes
- *  persist machine-level, so settled steps never re-ask; the board's unlock card stays the
- *  re-offer path for a skipped FDA. */
+ *  quiet skip. The three drag-list grants (FDA, Accessibility, Screen Recording) use the Codex
+ *  Computer Use flow — the primary button opens Settings to the pane AND raises a floating
+ *  drag-helper window (main) that hosts the app-icon drag over the list; main polls and fires
+ *  permission-granted, which celebrates + advances. Browser import asks for Automation consent
+ *  (the osascript prompt) with live tab counts as the reward. Outcomes persist machine-level, so
+ *  settled steps never re-ask; the board's unlock card stays the re-offer path for a skipped FDA. */
 function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
   const api = window.agentOS?.onboarding
   const [st, setSt] = useState<PreboardState | null>(null)
-  const [step, setStep] = useState<'fda' | 'browser' | null>(null)
-  const [fdaGranted, setFdaGranted] = useState(false)
+  const [step, setStep] = useState<StepKey | null>(null)
+  const [granted, setGranted] = useState(false) // current drag-step just granted (celebrate)
+  const [opened, setOpened] = useState(false) // current drag-step's helper is up
   const [browserResult, setBrowserResult] = useState<{ status: string; windows?: number; tabs?: number } | null>(null)
   const [connecting, setConnecting] = useState(false)
   const doneRef = useRef(onDone)
   doneRef.current = onDone
+  const stepRef = useRef<StepKey | null>(null)
+  stepRef.current = step
 
-  const queue = (s: PreboardState): Array<'fda' | 'browser'> => {
-    const q: Array<'fda' | 'browser'> = []
-    if (!s.fda && !s.steps.fda) q.push('fda')
+  const granteds = (s: PreboardState): Record<DragKind, boolean> => ({ fda: s.fda, accessibility: s.accessibility, screen: s.screen })
+  const queue = (s: PreboardState): StepKey[] => {
+    const g = granteds(s)
+    const q: StepKey[] = []
+    for (const d of DRAG_STEPS) if (!g[d.key] && !s.steps[d.key]) q.push(d.key)
     if (s.browser && !s.steps.browser) q.push('browser')
     return q
   }
@@ -95,47 +132,56 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
     })
     return () => {
       alive = false
+      void api.closePermissionDrag?.()
     }
   }, [])
 
-  // FDA: poll while the step is up — the moment Settings grants us, celebrate and move on.
-  // Skipped when forced (dev visual testing): real FDA is already true via terminal inheritance,
-  // so polling would auto-advance instantly; the tester drives the step manually instead.
+  // Main's poll detected a drag-list grant (and closed the helper) — if it's the step we're on,
+  // celebrate and advance. (Forced dev mode never fires this; the tester advances via Not now.)
   useEffect(() => {
-    if (step !== 'fda' || !api || st?.forced) return
-    const t = window.setInterval(() => {
-      void api.fdaStatus().then(({ fda }) => {
-        if (!fda) return
-        window.clearInterval(t)
-        setFdaGranted(true)
-        void api.preboardMark?.('fda', 'granted')
-        window.setTimeout(() => advance('fda'), 1100)
-      })
-    }, 1200)
-    return () => window.clearInterval(t)
-  }, [step])
+    if (!api?.onPermissionGranted) return
+    return api.onPermissionGranted(({ kind }) => {
+      if (stepRef.current !== kind) return
+      setGranted(true)
+      void api.preboardMark?.(kind, 'granted')
+      window.setTimeout(() => advance(kind, true), 1100)
+    })
+  }, [])
 
-  const advance = (from: 'fda' | 'browser'): void => {
+  const goNext = (next: PreboardState): void => {
+    setGranted(false)
+    setOpened(false)
+    setBrowserResult(null)
+    const q = queue(next)
+    if (!q.length) doneRef.current()
+    else setStep(q[0])
+  }
+
+  const advance = (from: StepKey, didGrant: boolean): void => {
+    void api?.closePermissionDrag?.()
     setSt((cur) => {
       if (!cur) return cur
-      const next: PreboardState = { ...cur, steps: { ...cur.steps, [from]: cur.steps[from] ?? 'granted' }, fda: from === 'fda' ? true : cur.fda }
-      const q = queue(next)
-      if (!q.length) doneRef.current()
-      else setStep(q[0])
+      const g = didGrant && from !== 'browser' ? { [from]: true } : {}
+      const next: PreboardState = { ...cur, ...g, steps: { ...cur.steps, [from]: cur.steps[from] ?? (didGrant ? 'granted' : 'skipped') } }
+      goNext(next)
       return next
     })
   }
 
-  const skip = (which: 'fda' | 'browser'): void => {
+  const skip = (which: StepKey): void => {
     void api?.preboardMark?.(which, 'skipped')
+    void api?.closePermissionDrag?.()
     setSt((cur) => {
       if (!cur) return cur
       const next: PreboardState = { ...cur, steps: { ...cur.steps, [which]: 'skipped' } }
-      const q = queue(next)
-      if (!q.length) doneRef.current()
-      else setStep(q[0])
+      goNext(next)
       return next
     })
+  }
+
+  const openDrag = (kind: DragKind): void => {
+    setOpened(true)
+    void api?.openPermissionDrag?.(kind)
   }
 
   const connectBrowser = (): void => {
@@ -145,54 +191,41 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
       setConnecting(false)
       setBrowserResult(r)
       void api.preboardMark?.('browser', r.status === 'granted' ? 'granted' : r.status === 'denied' ? 'denied' : 'skipped')
-      window.setTimeout(() => advance('browser'), r.status === 'granted' ? 1400 : 900)
+      window.setTimeout(() => advance('browser', false), r.status === 'granted' ? 1400 : 900)
     })
   }
 
   if (!st || !step) return null
   const dots = queue({ ...st, steps: {} })
   const dotIndex = dots.indexOf(step)
+  const drag = DRAG_STEPS.find((d) => d.key === step)
 
   return (
     <div className="preboard">
-      {step === 'fda' && (
+      {drag && (
         <div className="pre-step">
-          <div className="pre-kicker">Before we begin</div>
-          <h1 className="pre-title">Unlock the personal layer</h1>
-          <p className="pre-body">
-            Blitz reads your Mac to build a private case file of how you actually work. Everything is scanned and distilled locally.
-            Full Disk Access adds the personal layer, your Messages cadence, Safari clusters, and app rhythm.
-          </p>
-          <div className={`pre-drop${fdaGranted ? ' granted' : ''}`}>
-            {st.canDrag && st.appIcon && (
-              <div
-                className="pre-app-tile"
-                draggable
-                onDragStart={(e) => {
-                  e.preventDefault()
-                  api?.preboardDrag?.()
-                }}
-                aria-label={`Drag ${st.appName} into the Full Disk Access list`}
-              >
-                <img src={st.appIcon} draggable={false} alt="" />
+          <div className="pre-kicker">{drag.kicker}</div>
+          <h1 className="pre-title">{drag.title}</h1>
+          <p className="pre-body">{drag.body(st.appName)}</p>
+          {(opened || granted) && (
+            <div className={`pre-drop${granted ? ' granted' : ''}`}>
+              <div className="pre-drop-copy">
+                {granted ? (
+                  <strong>Granted. Thank you.</strong>
+                ) : (
+                  <>
+                    Settings is open. Drag <strong>{st.appName}</strong> from the panel at the bottom into the list, then flip it on. I&apos;ll
+                    notice the moment it lands.
+                  </>
+                )}
               </div>
-            )}
-            <div className="pre-drop-copy">
-              {fdaGranted ? (
-                <strong>Unlocked. Reading the personal layer…</strong>
-              ) : (
-                <>
-                  Flip <strong>{st.appName}</strong> on in the list. If it isn&apos;t there, <strong>drag this icon</strong> straight into the
-                  Full Disk Access window.
-                </>
-              )}
             </div>
-          </div>
+          )}
           <div className="pre-actions">
-            <button className="pre-primary" onClick={() => void api?.openFdaSettings()}>
-              Open System Settings
+            <button className="pre-primary" onClick={() => openDrag(drag.key)} disabled={granted}>
+              {opened ? 'Reopen System Settings' : 'Open System Settings'}
             </button>
-            <button className="pre-skip" onClick={() => skip('fda')}>
+            <button className="pre-skip" onClick={() => skip(drag.key)}>
               Not now
             </button>
           </div>
@@ -203,8 +236,8 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
           <div className="pre-kicker">One more thing</div>
           <h1 className="pre-title">Bring your browser in</h1>
           <p className="pre-body">
-            Most of a day lives in the browser. One permission lets Blitz see your open {st.browser?.name} tabs, so it can pick up
-            what you are working on and bring it onto the desk.
+            Most of a day lives in the browser. One permission lets Blitz see your open {st.browser?.name} tabs, so it can pick up what you are
+            working on and bring it onto the desk.
           </p>
           {browserResult?.status === 'granted' && (
             <div className="pre-drop granted">
