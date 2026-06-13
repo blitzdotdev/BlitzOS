@@ -35,6 +35,7 @@ export interface ScanRequest {
 // dev → the build output. Resolution is robust: try several candidates and return the first that
 // exists (app.getAppPath() can vary under electron-vite, so we also derive the repo root from
 // __dirname = <repo>/out/main in dev). Overridable with BLITZ_COMPUTER_USE_APP.
+let helperPathLogged = false
 function bundledHelperApp(): string {
   const rel = ['native', 'computer-use-helper', 'build', 'BlitzComputerUse.app']
   const here = (() => {
@@ -48,9 +49,14 @@ function bundledHelperApp(): string {
     process.env.BLITZ_COMPUTER_USE_APP,
     app.isPackaged ? join(process.resourcesPath, 'BlitzComputerUse.app') : null,
     join(app.getAppPath(), ...rel),
-    here ? join(here, '..', '..', ...rel) : null // out/main → repo root in dev
+    here ? join(here, '..', '..', ...rel) : null, // out/main → repo root in dev
+    !app.isPackaged ? join(process.cwd(), ...rel) : null // electron-vite dev runs with cwd = repo root
   ].filter((p): p is string => !!p)
   for (const c of candidates) if (existsSync(c)) return c
+  if (!helperPathLogged) {
+    helperPathLogged = true
+    console.error('[computer-use] helper bundle NOT found. candidates:', JSON.stringify(candidates))
+  }
   return candidates[candidates.length - 1] ?? join(app.getAppPath(), ...rel)
 }
 

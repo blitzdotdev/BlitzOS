@@ -10,6 +10,8 @@
   <string>dev.blitz.os.computeruse</string>
   <key>CFBundleExecutable</key>
   <string>BlitzComputerUse</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleVersion</key>

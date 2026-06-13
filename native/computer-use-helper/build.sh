@@ -26,6 +26,22 @@ swiftc -O -target "${ARCH}-apple-macos13.0" -framework AppKit -framework CoreGra
 cp Info.plist "${BUNDLE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "${BUNDLE}/Contents/Info.plist" >/dev/null # validate
 
+# Brand the helper with the BlitzOS bubble mark (so the FDA/Accessibility list + the drag tile show
+# "BlitzOS Computer Use" with a recognizable icon, not the generic executable icon).
+ICON_SRC="../src/renderer/src/assets/aqua-bubble.png"
+if [[ -f "$ICON_SRC" ]]; then
+  ICONSET="build/AppIcon.iconset"
+  mkdir -p "$ICONSET"
+  for s in 16 32 128 256 512; do
+    sips -z "$s" "$s" "$ICON_SRC" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null 2>&1
+    d=$((s * 2)); sips -z "$d" "$d" "$ICON_SRC" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null 2>&1
+  done
+  iconutil -c icns "$ICONSET" -o "${BUNDLE}/Contents/Resources/AppIcon.icns" 2>/dev/null && echo "[helper] icon: AppIcon.icns" || echo "[helper] icon gen failed (generic icon)"
+  rm -rf "$ICONSET"
+else
+  echo "[helper] no icon source ($ICON_SRC) — generic icon"
+fi
+
 # Signing identity: explicit override → Developer ID in keychain → ad-hoc (-).
 IDENTITY="${BLITZ_HELPER_SIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]]; then
