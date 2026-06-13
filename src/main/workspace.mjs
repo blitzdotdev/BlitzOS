@@ -779,12 +779,14 @@ function autoKind(name) {
 const BLITZOS_MD = `# This folder is a BlitzOS workspace
 
 BlitzOS shows this folder as a spatial canvas. Every loose file here is a node you can see and
-arrange; edit the files and the canvas updates live. The board IS this folder.
+arrange; edit the files and the canvas updates live. The workspace IS this folder.
 
 ## File kinds
 - \`*.md\` — a note (the markdown text is the file).
-- \`*.weblink\` — a web window: \`{ "url": "https://…" }\`.
+- \`*.weblink\` — a web window: \`{ "url": "https://…" }\`. A tabbed browser window may use
+  \`{ "url": "https://…", "tabs": [{ "id": "t1", "title": "Tab", "url": "https://…" }], "activeTab": 0 }\`.
 - \`*.html\` — an agent-authored panel.
+- \`*.jsx\` / \`*.tsx\` — a React widget compiled inside the sandboxed surface.
 - a plain folder — a collapsed tile; its contents are NOT on the canvas (good for grouping +
   cloned repos, so a repo is one tile, not thousands of nodes).
 - images / other files — a tile.
@@ -798,6 +800,8 @@ arrange; edit the files and the canvas updates live. The board IS this folder.
 Operate this workspace with plain file tools — no API needed:
 - new note → write a \`.md\`; open a site → write a \`.weblink\`; move/resize → edit the node in
   \`.blitzos/workspace.json\`; delete → remove the file; group → move files into a subfolder.
+- multiple web pages in the same research lane -> MUST be ONE tabbed \`.weblink\` with \`tabs\`; create
+  separate \`.weblink\` files only for genuinely different lanes.
 - A node's content = its file. \`.blitzos/state/\` is BlitzOS runtime state — do not read or edit it.
 `
 

@@ -272,7 +272,7 @@ export function makeOsTools(ops) {
     {
       path: '/open_window',
       description:
-        'Open a third-party website as a live web surface. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame): drive it freely with surface_control/read_window — it is out of their home view, and visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary agents pass {agent:"<your id>"}.',
+        'Open a third-party website as a live web surface. This is the default for public/current web research: make the source visible in Blitz, then drive it with surface_control/read_window instead of hiding research in an internal search tool. Do not use internal web search unless Blitz cannot reach the source or the user explicitly asks for that. Tab rule: do not call open_window repeatedly for sources in the SAME research lane when you can write/update one tabbed .weblink in workspace_path; use open_window for a single source, the first page in a lane, or a genuinely separate lane. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame), visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary agents pass {agent:"<your id>"}.',
       input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, title: { type: 'string' }, agent: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -403,13 +403,13 @@ export function makeOsTools(ops) {
     {
       path: '/group',
       description:
-        'Group related surfaces into ONE REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' files into it. kind:"folder" (default) → one collapsed tile (drill in to browse), best for many items / a repo. kind:"board" → the items stay SPLAYED on the canvas as a sub-board (best for a small curated set you want visible). A real filesystem folder either way, so it persists. Pass 2+ ids + a name.',
-      input_schema: { type: 'object', required: ['ids', 'name'], properties: { ids: { type: 'array', items: { type: 'string' } }, name: { type: 'string' }, kind: { type: 'string', enum: ['folder', 'board'] }, x: { type: 'number' }, y: { type: 'number' } } },
+        'Group related surfaces into ONE REAL folder on disk for readability: makes a subdirectory and MOVES the given surfaces\' files into it. Use this when several similar windows/files belong together and should stop cluttering the workspace. The folder persists, appears as one collapsed tile, and can be opened to browse its contents. Pass 2+ ids + a name.',
+      input_schema: { type: 'object', required: ['ids', 'name'], properties: { ids: { type: 'array', items: { type: 'string' } }, name: { type: 'string' }, kind: { type: 'string', enum: ['folder'] }, x: { type: 'number' }, y: { type: 'number' } } },
       handler: ({ body }) => {
         const a = parse(body)
         const ids = Array.isArray(a.ids) ? a.ids.map(String) : []
         if (!ids.length) return { status: 400, body: { error: 'group needs surface ids' } }
-        return ops.groupIntoFolder(a.name != null ? String(a.name) : 'Folder', ids, a.x != null ? Number(a.x) : undefined, a.y != null ? Number(a.y) : undefined, a.kind === 'board' ? 'board' : 'folder')
+        return ops.groupIntoFolder(a.name != null ? String(a.name) : 'Folder', ids, a.x != null ? Number(a.x) : undefined, a.y != null ? Number(a.y) : undefined, 'folder')
       }
     },
     {
@@ -529,7 +529,7 @@ export function makeOsTools(ops) {
     {
       path: '/list_widgets',
       description:
-        'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML) backed by the user’s connected integrations. Returns each widget’s name, description, and which integrations it needs (needsMet=true if connected). Use get_widget_source to read one, spawn_widget to open it.',
+        'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML or React via lang:"jsx"/"tsx") backed by the user’s connected integrations. Returns each widget’s name, description, lang, and which integrations it needs (needsMet=true if connected). Use get_widget_source to read one, spawn_widget to open it.',
       handler: () => {
         const connected = ops.connectedProviders()
         return { widgets: listWidgets().map((w) => ({ ...w, needsMet: w.needs.every((n) => connected.includes(n)) })), connected }
@@ -537,7 +537,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/get_widget_source',
-      description: 'Read the exact, forkable HTML source of a library widget by name (to understand or fork it). Returns { name, html, needs, props, version, origin }.',
+      description: 'Read the exact, forkable source of a library widget by name: HTML, or JSX/TSX when lang says so. Use this to understand or fork it. Returns { name, html, lang?, needs, props, version, origin }.',
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
       handler: ({ body }) => {
         const name = String(parse(body).name || '')
@@ -549,7 +549,7 @@ export function makeOsTools(ops) {
     {
       path: '/spawn_widget',
       description:
-        'Open a library widget on the canvas as a live sandboxed surface — a thinking-widget is an INSTRUMENT you DRIVE, not a final render: update_surface{id,props} it after EACH step of progress, never once at the end. It fetches integration data through the OS bridge; the user approves access once. Returns { id, drive? } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
+        'Open a library widget on the canvas as a live sandboxed surface — a thinking-widget is an INSTRUMENT you DRIVE, not a final render: update_surface{id,props} it after EACH step of progress, never once at the end. Prefer widgets with useful interaction (filter/sort/expand/open source/chat action) unless the content is truly atomic. It fetches integration data through the OS bridge; the user approves access once. Returns { id, drive? } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, props: { type: 'object' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -574,7 +574,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/save_widget',
-      description: 'Save a NEW or forked widget (sandboxed HTML, or React via lang:"jsx"/"tsx", using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST to learn the bridge. Returns { name, version }.',
+      description: 'Save a NEW or forked widget (sandboxed HTML, or React via lang:"jsx"/"tsx", using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST to learn the bridge, JSX/TSX rules, and interactivity-by-default rules; most saved widgets should expose a useful action, not just static content. Returns { name, version }.',
       input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string', description: 'a-z 0-9 -, 2-49 chars' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, description: { type: 'string' }, needs: { type: 'array', items: { type: 'string' } }, props: { type: 'object' }, forkedFrom: { type: 'string' } } },
       handler: ({ body }) => {
         try {
@@ -591,7 +591,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/get_widget_authoring',
-      description: 'Get the widget-authoring guide: how to write a widget that reads integration data via the sandboxed window.blitz bridge. Read this BEFORE authoring a new widget with save_widget.',
+      description: 'Get the widget-authoring guide: how to write HTML or JSX/TSX widgets that read integration data and expose useful actions via the sandboxed window.blitz bridge. Read this BEFORE authoring a new widget with save_widget.',
       handler: () => ({ markdown: widgetAuthoringMd() })
     },
     {

@@ -65,6 +65,7 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   const guide = bootTask
     ? `Your full operating guide is at ${B}/agents.md, with the complete tool set. You do NOT need it for the first step of your standing duty below, so do that FIRST and fetch the guide (\`curl -s ${B}/agents.md\`) only afterward, when you need a tool the duty did not give you. Do not let reading the guide delay your first action.`
     : `Your full operating guide is at ${B}/agents.md. Please read it first (\`curl -s ${B}/agents.md\`) and follow it; if that request doesn't succeed, give it another try before continuing.`
+  const web = `Hard web rule: if a task needs current/public web info, use Blitz web surfaces so the user can see the work. Do NOT use your backend's internal web-search/browser tool unless Blitz cannot reach the source or the user explicitly asks for that. Tab rule: if you need 2+ pages for the same research lane and have workspace_path/file access, create or update ONE tabbed .weblink file with tabs; do not create separate browser surfaces for same-lane sources. Use separate browser surfaces only for genuinely different lanes of work.`
   const desktop = "Note for this session: the user has already arranged their desktop. Please leave it as-is on connect — don't rearrange, resize, recenter, move, or close anything on your own. Ignore the guide's 'assemble the desktop on connect' section here; this is the user's own live layout."
   const recover = `Get your bearings first: you may have been restarted, so recover the conversation before doing anything. Call \`list_state\` to get \`workspace_path\`, then read the recent chat: \`tail -n 60 "$workspace_path/${chatFile}"\`. That file is your saved conversation with the user and it carries over between restarts (the live event feed does not). Reading it helps you understand follow-ups like "continue the X thing" or "go". If the last line is a user message you haven't answered, answer it now.`
   // The OS can hand a session ONE standing duty (e.g. the onboarding interview); the duty text licenses
@@ -81,7 +82,7 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   const stage = primary
     ? null
     : `Your windows live in your own stage, separate from the user's primary desktop. On every surface-opening call — create_surface, open_window, and open_terminal — include "agent":"${sessionId}" so the window opens in your stage and doesn't disturb the user. Don't pass an explicit x/y unless you're repositioning a window within your own stage. Open your terminal and all work windows this way.`
-  return [identity, relay, guide, desktop, recover, duty, onConnect, waitLoop, keepChecking, say, stage].filter(Boolean).join('\n')
+  return [identity, relay, guide, web, desktop, recover, duty, onConnect, waitLoop, keepChecking, say, stage].filter(Boolean).join('\n')
 }
 
 /** POSIX single-quote a value for a shell command line (wrap in '…', escape embedded ' as '\''). */
