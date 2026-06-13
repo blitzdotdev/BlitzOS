@@ -208,6 +208,11 @@ async function openDragHelper(kind: DragPerm): Promise<void> {
     dragHelper = new BrowserWindow({
       width: DRAG_HELPER_W,
       height: DRAG_HELPER_H,
+      // type:'panel' (macOS NSPanel) + focusable:false = a NON-ACTIVATING panel: clicking or
+      // dragging it never activates BlitzOS, so System Settings stays frontmost and the drop target
+      // (the permission list) never gets backgrounded mid-drag. This pairing is load-bearing — the
+      // exact combination Codex Computer Use's overlay uses (codex-computer-use-tcc-reference.md).
+      type: process.platform === 'darwin' ? 'panel' : undefined,
       frame: false,
       transparent: true,
       resizable: false,
@@ -216,7 +221,7 @@ async function openDragHelper(kind: DragPerm): Promise<void> {
       maximizable: false,
       fullscreenable: false,
       skipTaskbar: true,
-      focusable: false, // never steals key focus from Settings (Codex: focusable:false)
+      focusable: false,
       hasShadow: false,
       show: false,
       webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true, nodeIntegration: false }
@@ -226,8 +231,8 @@ async function openDragHelper(kind: DragPerm): Promise<void> {
     })
   }
   const win = dragHelper
-  // Float over EVERYTHING incl. a fullscreen Settings, on every Space (Codex's overlay policy).
-  win.setAlwaysOnTop(true, 'screen-saver')
+  // Float over Settings on every Space (Codex's overlay policy: 'floating' + visibleOnFullScreen).
+  win.setAlwaysOnTop(true, 'floating')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
   win.setMenuBarVisibility(false)
   // bottom-center of the display under the cursor (where the user is heading — the Settings window)
