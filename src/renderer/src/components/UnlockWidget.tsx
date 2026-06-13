@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Surface } from '../types'
 
 /**
@@ -14,6 +14,18 @@ export function UnlockWidget({ surface }: { surface: Surface }): JSX.Element {
   const appName = (p.appName as string) || 'BlitzOS'
   const sources = Array.isArray(p.sources) ? (p.sources as string[]) : []
   const [opened, setOpened] = useState(false)
+  // The Codex drag, same as the pre-board step: the app icon is a native drag source the user can
+  // drop straight into the Settings FDA list (covers the "it isn't in the list" dead end).
+  const [appIcon, setAppIcon] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    void window.agentOS?.onboarding?.preboardState?.().then((s) => {
+      if (alive && s.canDrag) setAppIcon(s.appIcon)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   if (state === 'granted')
     return (
@@ -61,10 +73,26 @@ export function UnlockWidget({ surface }: { surface: Surface }): JSX.Element {
           Not now
         </button>
       </div>
-      <div className="unlock-hint">
-        {opened
-          ? `In Privacy & Security → Full Disk Access, enable “${appName}” (add it with + if it's not listed). I'll notice the moment it lands.`
-          : `Grants “${appName}” read access in Privacy & Security → Full Disk Access.`}
+      <div className="unlock-hint unlock-hint-row">
+        {appIcon && (
+          <span
+            className="unlock-drag-tile"
+            draggable
+            onDragStart={(e) => {
+              e.preventDefault()
+              window.agentOS?.onboarding?.preboardDrag?.()
+            }}
+            aria-label={`Drag ${appName} into the Full Disk Access list`}
+            title={`Drag into the Full Disk Access list`}
+          >
+            <img src={appIcon} draggable={false} alt="" />
+          </span>
+        )}
+        <span>
+          {opened
+            ? `In Privacy & Security → Full Disk Access, enable “${appName}”, or drag this icon straight into the list. I'll notice the moment it lands.`
+            : `Grants “${appName}” read access in Privacy & Security → Full Disk Access. Drag the icon into the list if it isn't there.`}
+        </span>
       </div>
     </div>
   )

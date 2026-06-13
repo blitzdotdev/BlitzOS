@@ -77,6 +77,40 @@ The same wake loop (`/events` moments) runs from first boot forever; what change
 - **P2 — the resident brain, v1 (its first behavior is the interview).** The GA loop (CLI backend first, gateway second) + disclosure card + questions-on-the-board + live revision loop. The brain does not exit after the interview — it stays resident on the wake loop.
 - **P3 — the gradient.** Wardrobe card, editable-card polish, annotation-pinned questions, opportunistic-elicitation etiquette, and the **originate** mode: spare-initiative proposals via action-items + speculative surfaces, with disposition-as-feedback into the case file.
 
+## Pre-board permission sequence — SHIPPED 2026-06-12 (the Codex drag)
+
+Built per the TODO below: a Dia-style step sequence INSIDE the opener, before the scan ever runs
+(`PreboardSteps` in `OnboardingFlow.tsx`; phase `'steps' → 'boot'`), so every grant lands before
+there is board state to lose and the FIRST scan already runs Branch A.
+
+- **The Codex move, reverse-engineered from Codex.app** (`system-permissions-service` in their
+  asar): System Settings permission lists accept a DROPPED .app bundle, so the app icon is a
+  NATIVE drag source — renderer `dragstart` → `preventDefault()` → IPC → main
+  `e.sender.startDrag({ file: appBundlePath(), icon: app.getFileIcon(...) })`. Dev drags
+  Electron.app (the binary TCC actually attributes to), packaged drags BlitzOS.app. Icon for the
+  tile: sips-converted bundle .icns (Codex's trick), `getFileIcon` fallback.
+- **Steps:** FDA (open-settings deep link + the drag tile + 1.2s grant polling → celebrate →
+  auto-advance; skippable — the board's unlock card stays the re-offer) and **browser import**
+  (detected chromium-family browser; "Connect" fires a one-line AppleScript via osascript, which
+  RAISES the Automation consent prompt attributed to the app and resolves after the user answers,
+  returning live window/tab counts as the visible reward). No browser installed → step hidden.
+- **Persistence:** outcomes in `userData/preboard.json` (machine-level, pre-workspace) — settled
+  steps never re-ask across launches even in `ONBOARDING_MODE 'always'`. To re-test: delete that
+  file; reset consents with `tccutil reset SystemPolicyAllFiles` / `tccutil reset AppleEvents`.
+- **The unlock card** gained the same drag tile (consistent gesture on the re-offer path).
+- **Open:** live-verify Automation prompt attribution in dev (Electron) vs packaged (spike 1's
+  twin); screen-recording/accessibility steps slot in trivially when a feature needs them (the
+  relaunch-class grants this TODO worried about — BlitzOS uses neither yet, so the sequence ships
+  without them rather than asking for unused power).
+
+**Color pass (2026-06-12, same session):** the accent is live Blitz red `#e31c30`, NOT the
+design-system's stale coral — and the primary is not fixed, so onboarding reads `--accent`
+everywhere (preboard primary/dots, boot bar, unlock CTA + drag tile), zero hardcoded accent hex
+(only `#fff` ink on the accent button, matching app convention). Board per-role accents stay as
+ratified; all accent/ink pairs verified WCAG AA-text ≥4.5 (dusty 6.06, sage 6.33, marker 9.34),
+slate nudged `#5B78AA`→`#5874A4` (was 4.46, a hair under; imperceptible darken → 4.72).
+Design-system doc corrected (accent table now reflects red + the not-fixed rule).
+
 ## TODO (user, 2026-06-11): frontload quit-and-relaunch permissions in a Dia-style pre-board screen
 
 Permission grants that force BlitzOS to QUIT AND RESTART (TCC grants that only apply on relaunch —

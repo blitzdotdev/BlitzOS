@@ -174,6 +174,153 @@
   opacity: 1;
 }
 
+/* ---- Pre-board permission sequence (Dia-style frontloading) ----
+   One permission per screen over the same aurora: the why in one breath, one warm primary action,
+   a quiet skip. The FDA step carries the Codex move — the app icon is a NATIVE drag source you
+   drop straight into the System Settings list. */
+.preboard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 36px;
+  animation: onbFade 700ms var(--ease-out) both;
+}
+.pre-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 18px;
+  max-width: 460px;
+}
+.pre-kicker {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.pre-title {
+  margin: 0;
+  font-size: 34px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--track-tight);
+  color: var(--text);
+}
+.pre-body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.pre-drop {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border-radius: var(--radius-window);
+  border: 1px dashed color-mix(in srgb, var(--text) 22%, transparent);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  max-width: 420px;
+  transition:
+    border-color var(--dur-slow) var(--ease-out),
+    background var(--dur-slow) var(--ease-out);
+}
+.pre-drop.granted {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface) 60%);
+}
+.pre-app-tile {
+  flex: 0 0 auto;
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+  border-radius: 18px;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.pre-app-tile:hover {
+  transform: scale(1.06);
+}
+.pre-app-tile:active {
+  cursor: grabbing;
+}
+.pre-app-tile img {
+  width: 64px;
+  height: 64px;
+  pointer-events: none;
+}
+.pre-drop-copy {
+  font-size: 13.5px;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--text-secondary);
+}
+.pre-drop-copy strong {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+.pre-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 6px;
+}
+.pre-primary {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  padding: 11px 22px;
+  border-radius: var(--radius-pill);
+  font-size: 14px;
+  font-weight: var(--fw-semibold);
+  color: #fff;
+  background: var(--accent);
+  box-shadow: var(--shadow-md);
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    filter var(--dur-fast) var(--ease-out);
+}
+.pre-primary:hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+}
+.pre-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
+}
+.pre-skip {
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13.5px;
+  color: var(--text-tertiary);
+  padding: 11px 6px;
+}
+.pre-skip:hover {
+  color: var(--text-secondary);
+}
+.pre-dots {
+  display: flex;
+  gap: 8px;
+}
+.pre-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text) 18%, transparent);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.pre-dots i.on {
+  background: var(--accent);
+}
+
 @keyframes onbFade {
   from {
     opacity: 0;
@@ -311,4 +458,32 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* The unlock card's drag tile (the same Codex move as the pre-board FDA step). */
+.unlock-hint-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.unlock-drag-tile {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+  border-radius: 9px;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.unlock-drag-tile:hover {
+  transform: scale(1.1);
+}
+.unlock-drag-tile:active {
+  cursor: grabbing;
+}
+.unlock-drag-tile img {
+  width: 30px;
+  height: 30px;
+  pointer-events: none;
 }

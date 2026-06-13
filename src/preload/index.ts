@@ -388,6 +388,33 @@ const api = {
     dismissUnlock(): Promise<{ ok: boolean }> {
       return ipcRenderer.invoke('onboarding:dismiss-unlock')
     },
+    /** Pre-board permission sequence (Dia-style frontloading): settled outcomes + live status. */
+    preboardState(): Promise<{
+      steps: Record<string, 'granted' | 'denied' | 'skipped' | undefined>
+      fda: boolean
+      appName: string
+      browser: { id: string; name: string } | null
+      canDrag: boolean
+      appIcon: string | null
+    }> {
+      return ipcRenderer.invoke('onboarding:preboard-state')
+    },
+    preboardMark(step: string, outcome: 'granted' | 'denied' | 'skipped'): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:preboard-mark', step, outcome)
+    },
+    /** Codex-style: start a NATIVE drag of the .app bundle so the user can drop it straight into
+     *  the System Settings permission list. Call from a dragstart handler (after preventDefault). */
+    preboardDrag(): void {
+      ipcRenderer.send('onboarding:preboard-drag')
+    },
+    /** Ask for Automation (AppleEvents) consent to the detected browser — raises the macOS prompt
+     *  on first call; resolves AFTER the user answers, with live window/tab counts on grant. */
+    requestAutomation(): Promise<{ status: 'granted' | 'denied' | 'unavailable'; windows?: number; tabs?: number; browser?: string }> {
+      return ipcRenderer.invoke('onboarding:request-automation')
+    },
+    openAutomationSettings(): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:open-automation-settings')
+    },
     onProgress(cb: (p: Record<string, unknown>) => void): () => void {
       const listener = (_e: unknown, p: Record<string, unknown>): void => cb(p)
       ipcRenderer.on('onboarding:progress', listener)

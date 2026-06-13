@@ -151,16 +151,19 @@ const WIDGET_OF = { profile: 'profile', projects: 'dossiers', workflows: 'workfl
 const TITLE_OF = { profile: 'Case File', projects: 'Projects', workflows: 'Web workflows', schedule: 'Coming up', rhythm: 'Working rhythm', voice: 'In their own words', sessions: 'Recent sessions', people: 'Known associates', gaps: 'Open questions', unlock: 'Unlock the personal layer' }
 
 // Card accents rotate through the four picked theme colors (2026-06-11: slate, dusty blue, sage,
-// marker), varied across the board, stable per role. The UI kit applies props.accent/accentInk
-// to --blitz-accent. Heat ramp is #7FA0C8 to #f4360b (see heatLo/heatHi above).
+// marker), varied across the board, stable per role. The UI kit paints props.accent/accentInk onto
+// --blitz-accent/--blitz-accent-ink, which color BUTTON TEXT (~14px/600 → WCAG AA-text needs
+// 4.5:1). All pairs verified ≥4.5 (2026-06-12): dusty 6.06, sage 6.33, marker 9.34, slate 4.72
+// (slate nudged #5B78AA→#5874A4 — was 4.46, a hair under; imperceptible darken clears AA-text).
+// Heat ramp is #7FA0C8 to #f4360b (see heatLo/heatHi above).
 const ACCENT_OF = {
-  profile: { accent: '#5B78AA', accentInk: '#FFFFFF' }, // slate
+  profile: { accent: '#5874A4', accentInk: '#FFFFFF' }, // slate
   projects: { accent: '#7FA0C8', accentInk: '#16202F' }, // dusty blue
   workflows: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
-  schedule: { accent: '#5B78AA', accentInk: '#FFFFFF' }, // slate
+  schedule: { accent: '#5874A4', accentInk: '#FFFFFF' }, // slate
   rhythm: { accent: '#7FA0C8', accentInk: '#16202F' }, // dusty blue (heat ramp supplies the rest)
   voice: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
-  sessions: { accent: '#5B78AA', accentInk: '#FFFFFF' }, // slate
+  sessions: { accent: '#5874A4', accentInk: '#FFFFFF' }, // slate
   people: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
   gaps: { accent: '#E8C71D', accentInk: '#2A2400' } // marker, highlighter over the unknowns
 }

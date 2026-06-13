@@ -42,10 +42,12 @@ A cool-charcoal ramp — not blue-black, not teal.
 ### 3.2 Accents — warm signature + **restrained** semantics
 Spatial is muted/editorial; semantics are desaturated, **not** neon.
 
+> **Accent is live as Blitz red `#e31c30`** (tokens.css, picked 2026-06-11; coral below was the original spec, since superseded). The primary is **not fixed** — treat `--accent`/`--accent-deep` as the source of truth and never hardcode a hex for it. All accent-bearing UI (onboarding preboard/boot/unlock cards, chrome, widget kit `--blitz-accent`) reads the token so a future primary swap is one place.
+
 | Token | Hex | Role |
 |---|---|---|
-| `--accent` | `#FF8D61` | signature coral (primary action, focus, applied paper) |
-| `--accent-deep` | `#924B2F` | terracotta (coral base / pressed) |
+| `--accent` | `#e31c30` | signature primary (Blitz red today; coral `#FF8D61` was the original spec) |
+| `--accent-deep` | `#ad1422` | pressed/hover (was terracotta `#924B2F`) |
 | `--marker` | `#FFE92E` | text-highlight yellow (ink stays dark) |
 | `--positive` | `#7FA98C` | muted sage (replaces GitHub `#3fb950`) |
 | `--danger` | `#E0786E` | muted coral-red (replaces `#f85149`) |

@@ -11,14 +11,14 @@
 // visibly deepen the board (real focus time, Messages/Mail cadence), then retire the card.
 //
 import { app, ipcMain, shell, type BrowserWindow } from 'electron'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, execFile, spawn } from 'node:child_process'
 
 // Repo root in dev; app.asar.UNPACKED in a packaged build — the scan runs as a PLAIN-NODE child
 // (no asar fs), so electron-builder.yml ships scripts/onboarding-scan.mjs + the prompt .md files
 // asarUnpack'd and we resolve them there.
 const appRoot = (): string => app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked')
 import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain, osRestartBrain } from './osActions'
 import { getWidgetSource } from './widget-catalog.mjs'
@@ -73,6 +73,111 @@ export function hasFDA(): boolean {
 function fdaAppName(): string {
   const m = process.execPath.match(/([^/]+)\.app\//)
   return m ? m[1] : app.getName()
+}
+
+// ---- pre-board permission sequence (Dia-style frontloading; plans/onboarding-case-file.md) ----
+// The Codex-style drag: System Settings' permission lists accept a DROPPED .app bundle, so the
+// pre-board screen offers the app icon as a native file drag (webContents.startDrag of the bundle)
+// next to the open-settings deep link — reverse-engineered from Codex.app's
+// system-permissions-service (startDrag({file: bundlePath, icon: app.getFileIcon(bundlePath)})).
+
+/** The running .app bundle (packaged = BlitzOS.app; dev = Electron.app — the binary TCC attributes
+ *  grants to, so dragging IT is exactly right in dev). Null off-macOS / non-bundle launches. */
+function appBundlePath(): string | null {
+  const i = process.execPath.indexOf('.app/Contents/MacOS/')
+  return i < 0 ? null : process.execPath.slice(0, i + 4)
+}
+
+/** The app icon as a data URL for the drag tile. Codex's trick: sips-convert the bundle's .icns
+ *  (crisp at tile size); fall back to app.getFileIcon (48px max) when anything is missing. */
+async function appIconDataUrl(): Promise<string | null> {
+  const bundle = appBundlePath()
+  if (!bundle) return null
+  try {
+    const plist = readFileSync(join(bundle, 'Contents', 'Info.plist'), 'utf8')
+    const m = plist.match(/<key>CFBundleIconFile<\/key>\s*<string>([^<]+)<\/string>/)
+    if (m) {
+      const icns = join(bundle, 'Contents', 'Resources', m[1].endsWith('.icns') ? m[1] : `${m[1]}.icns`)
+      if (existsSync(icns)) {
+        const out = join(tmpdir(), `blitz-preboard-icon-${process.pid}.png`)
+        await new Promise<void>((res, rej) => execFile('/usr/bin/sips', ['-s', 'format', 'png', '-Z', '256', icns, '--out', out], (e) => (e ? rej(e) : res())))
+        const png = readFileSync(out)
+        return `data:image/png;base64,${png.toString('base64')}`
+      }
+    }
+  } catch {
+    /* fall through to getFileIcon */
+  }
+  try {
+    const icon = await app.getFileIcon(bundle, { size: 'large' })
+    return icon.isEmpty() ? null : icon.toDataURL()
+  } catch {
+    return null
+  }
+}
+
+/** First chromium-family browser found (AppleScript-drivable for the open-tabs import). */
+const BROWSERS = [
+  { id: 'com.google.Chrome', name: 'Google Chrome', path: '/Applications/Google Chrome.app' },
+  { id: 'company.thebrowser.Browser', name: 'Arc', path: '/Applications/Arc.app' },
+  { id: 'com.brave.Browser', name: 'Brave', path: '/Applications/Brave Browser.app' },
+  { id: 'com.microsoft.edgemac', name: 'Microsoft Edge', path: '/Applications/Microsoft Edge.app' }
+] as const
+function detectBrowser(): { id: string; name: string } | null {
+  for (const b of BROWSERS) if (existsSync(b.path)) return { id: b.id, name: b.name }
+  return null
+}
+
+/** Machine-level pre-board outcomes (userData/preboard.json) — which steps are settled, so the
+ *  sequence never re-asks across launches; the board's unlock card stays the re-offer path. */
+type PreboardOutcome = 'granted' | 'denied' | 'skipped'
+interface PreboardFile {
+  v: 1
+  steps: Record<string, PreboardOutcome | undefined>
+}
+const preboardPath = (): string => join(app.getPath('userData'), 'preboard.json')
+function readPreboard(): PreboardFile {
+  try {
+    const f = JSON.parse(readFileSync(preboardPath(), 'utf8')) as PreboardFile
+    if (f && f.v === 1 && f.steps) return f
+  } catch {
+    /* fresh */
+  }
+  return { v: 1, steps: {} }
+}
+function markPreboard(step: string, outcome: PreboardOutcome): void {
+  const f = readPreboard()
+  f.steps[step] = outcome
+  try {
+    writeFileSync(preboardPath(), JSON.stringify(f, null, 2))
+  } catch {
+    /* best-effort — worst case the step is offered again */
+  }
+}
+
+/** Probe Automation (AppleEvents) consent by ASKING: a one-line AppleScript to the detected
+ *  browser. The FIRST call raises the macOS consent prompt (attributed to this app — the scan-child
+ *  pattern); the promise resolves AFTER the user answers. Returns live window/tab counts as the
+ *  immediate visible reward. Errors: -1743 = user denied; -600/-10810 = browser not running (the
+ *  tell launches it, so these are rare). */
+function requestAutomation(): Promise<{ status: 'granted' | 'denied' | 'unavailable'; windows?: number; tabs?: number; browser?: string }> {
+  const browser = detectBrowser()
+  if (process.platform !== 'darwin' || !browser) return Promise.resolve({ status: 'unavailable' })
+  return new Promise((resolve) => {
+    const script = `tell application id "${browser.id}" to count windows`
+    execFile('/usr/bin/osascript', ['-e', script], { timeout: 180_000 }, (err, stdout, stderr) => {
+      if (err) {
+        const denied = /-1743/.test(String(stderr)) || /not allowed/i.test(String(stderr))
+        resolve({ status: denied ? 'denied' : 'unavailable', browser: browser.name })
+        return
+      }
+      const windows = parseInt(String(stdout).trim(), 10) || 0
+      // tabs are a separate best-effort count (0 windows would make the expression error)
+      execFile('/usr/bin/osascript', ['-e', `tell application id "${browser.id}" to count every tab of every window`], { timeout: 20_000 }, (e2, out2) => {
+        resolve({ status: 'granted', windows, tabs: e2 ? 0 : parseInt(String(out2).trim(), 10) || 0, browser: browser.name })
+      })
+    })
+  })
 }
 
 // ---- the scan child --------------------------------------------------------------------------
@@ -471,6 +576,36 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
   ipcMain.handle('onboarding:open-fda-settings', () => {
     void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')
     return { ok: true, appName: fdaAppName() }
+  })
+  ipcMain.handle('onboarding:preboard-state', async () => ({
+    steps: readPreboard().steps,
+    fda: hasFDA(),
+    appName: fdaAppName(),
+    browser: detectBrowser(),
+    canDrag: !!appBundlePath(),
+    appIcon: await appIconDataUrl()
+  }))
+  ipcMain.handle('onboarding:preboard-mark', (_e, step: string, outcome: 'granted' | 'denied' | 'skipped') => {
+    if (typeof step === 'string' && step && ['granted', 'denied', 'skipped'].includes(outcome)) markPreboard(step, outcome)
+    return { ok: true }
+  })
+  // The Codex drag: a native file drag of the .app bundle that the Settings FDA list accepts as a
+  // drop. Must be ipcMain.on (startDrag rides the sender's drag gesture, not an invoke roundtrip).
+  ipcMain.on('onboarding:preboard-drag', (e) => {
+    const bundle = appBundlePath()
+    if (!bundle) return
+    void app.getFileIcon(bundle, { size: 'normal' }).then((icon) => {
+      try {
+        e.sender.startDrag({ file: bundle, icon })
+      } catch {
+        /* drag raced a navigation — harmless */
+      }
+    })
+  })
+  ipcMain.handle('onboarding:request-automation', () => requestAutomation())
+  ipcMain.handle('onboarding:open-automation-settings', () => {
+    void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Automation')
+    return { ok: true }
   })
   ipcMain.handle('onboarding:dismiss-unlock', () => {
     const wsPath = osWorkspaceContext().workspace_path
