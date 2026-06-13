@@ -276,6 +276,9 @@
         })
       }
       if (String(op) === 'rename') return postJSON('/os/agent-rename', { id: a.id, title: a.title }, { ok: false })
+      // 'clear' → start a fresh context for this agent (rotate session id + restart). Same seam as Electron's
+      // os:chat-control 'clear' → electronTerminalOps.clearAgentContext.
+      if (String(op) === 'clear') return postJSON('/os/agent-clear', { id: a.id }, { ok: false })
       return Promise.resolve({ ok: false, error: 'unknown chat op: ' + String(op) })
     },
     terminalList: function () {

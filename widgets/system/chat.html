@@ -30,7 +30,10 @@
 
   /* main pane */
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .head { flex: 0 0 auto; padding: 11px 14px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 13px; }
+  .head { flex: 0 0 auto; padding: 9px 10px 9px 14px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .head #title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctxbtn { flex: 0 0 auto; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--blitz-muted, #6b7280); padding: 4px 9px; font: 600 11px var(--blitz-font); cursor: pointer; opacity: 0.8; }
+  .ctxbtn:hover { opacity: 1; background: rgba(0,0,0,0.04); color: var(--blitz-ink, #1a1b1d); }
   .log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
   .row { display: flex; }
   .row.user { justify-content: flex-end; }
@@ -82,7 +85,7 @@
     <div class="side-list" id="sessions"></div>
   </div>
   <div class="main">
-    <div class="head" id="title">Chat</div>
+    <div class="head"><span id="title">Chat</span><button class="ctxbtn" id="clearctx" title="Start a fresh context for this agent — restarts it with an empty conversation. Your chat history here is kept.">↻ New context</button></div>
     <div class="log" id="log"></div>
     <div class="composer"><input id="msg" placeholder="Message the agent..." autocomplete="off" spellcheck="false"/><button id="send">Send</button></div>
   </div>
@@ -200,6 +203,15 @@
   $('send').onclick = function () { send($('msg').value); };
   $('msg').addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(this.value); } });
   $('new').onclick = function () { window.blitz.chat('new', {}).then(function (r) { if (r && r.id) { S.active = String(r.id); renderSide(); renderLog(); } }); };
+  // Clear context: rotate THIS agent's claude session + restart → empty conversation. The chat.md transcript
+  // (this thread) is kept; only the agent's in-context memory resets. Uniform for every agent incl the primary.
+  $('clearctx').onclick = function () {
+    var act = (S.sessions || []).filter(function (s) { return s.id === S.active; })[0];
+    var nm = act ? (act.title || ('Chat ' + act.id)) : 'this agent';
+    if (confirm('Start a fresh context for "' + nm + '"?\n\nThe agent restarts with an empty conversation. Your chat history here is kept — it re-reads it on boot.')) {
+      window.blitz.chat('clear', { id: S.active });
+    }
+  };
 
   window.blitz.onProps(function (p) {
     if (!p) return;

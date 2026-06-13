@@ -351,6 +351,8 @@ interface DesktopState {
   // existing terminal window, else open the first terminal window. The one shared seam for the live
   // terminal-spawn action, resume-on-load, and the Runtime tray's "Open" — so a terminal is in one tab.
   openTerminal: (terminalId: string, title: string, stage?: number | null) => void
+  // Prune any terminal window left with zero tabs (would render blank).
+  pruneEmptyTerminals: () => void
   // Close a non-primary agent (stop it + remove its widget/files/stage, via the host) and drop
   // its chat surface + terminal tab locally. Rename updates the title live. Both no-op on the primary '0'.
   closeAgent: (agentId: string) => void
@@ -1152,6 +1154,14 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     if (term) get().addTab(term.id, { id: terminalId, title, terminalId })
     else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, stage: want, tabs: [{ id: terminalId, title, terminalId }], activeTab: 0 })
   },
+
+  // Drop terminal windows left with zero tabs (a removed terminal's leftover shell) — a tab-less terminal
+  // window only ever renders as a blank pane, so it should never linger.
+  pruneEmptyTerminals: () =>
+    set((s) => {
+      const next = s.surfaces.filter((w) => !(w.kind === 'native' && w.component === 'terminal' && (w.tabs || []).length === 0))
+      return next.length === s.surfaces.length ? {} : { surfaces: next }
+    }),
 
   closeAgent: (agentId) => {
     const id = String(agentId)

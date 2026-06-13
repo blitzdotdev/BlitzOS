@@ -204,6 +204,21 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     const agentSessionId = rebuilt ? rebuilt.agentSessionId : meta.agentSessionId
     return spawnTerminal({ id, kind: meta.kind, command, cwd: meta.cwd, title: meta.title, autonomy: meta.autonomy, cols: meta.cols, rows: meta.rows, stage: meta.stage ?? meta.area, agentRuntime, agentSessionId, claudeSessionId, claudeEstablished })
   }
+  /** Clear an AGENT's claude context ON DEMAND (the user's "new context" button) — uniform for EVERY agent,
+   *  no primary special-case. Rotate to a FRESH claude session id + mark unestablished, then restart: the
+   *  re-exec's rebuildAgentCommand re-derives `--session-id <fresh>` create mode (empty conversation). The
+   *  chat.md transcript is UNTOUCHED (the bootstrap re-reads it on boot), so the user's visible history stays
+   *  — only claude's in-context memory resets. A plain shell (no claudeSessionId) has no context → no-op. */
+  async function clearAgentContext(id) {
+    const r = live.get(id)
+    const meta = r ? r.meta : readMeta(id)
+    if (!meta || meta.kind !== 'agent' || !meta.claudeSessionId) return false
+    meta.claudeSessionId = randomUUID()
+    meta.claudeEstablished = false
+    writeMeta(meta) // persist the rotated id BEFORE restart so rebuildAgentCommand reads it from disk → create mode
+    await restartTerminal(id)
+    return true
+  }
 
   /** Reattach-on-boot: adopt tmux windows that SURVIVED a restart, re-read their meta, re-wire streams. */
   async function restore() {
@@ -260,5 +275,5 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     }
   }
 
-  return { spawnTerminal, sendToTerminal, resizeTerminal, stopTerminal, removeTerminal, restartTerminal, restore, scrollback, getTerminal, isLive, listTerminals, stopAll, flushAll }
+  return { spawnTerminal, sendToTerminal, resizeTerminal, stopTerminal, removeTerminal, restartTerminal, clearAgentContext, restore, scrollback, getTerminal, isLive, listTerminals, stopAll, flushAll }
 }

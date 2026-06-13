@@ -32,3 +32,7 @@ export interface ActionItems {
 }
 
 export function makeActionItems(deps: ActionItemsDeps): ActionItems
+
+/** Make any inbox surface authoritative: overwrite its props.items with the current store items (listActions()).
+ *  Pure; returns the same array reference when no inbox surface is present. */
+export function reconcileInboxItems<S>(surfaces: S[], items: ActionItem[]): S[]

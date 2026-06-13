@@ -464,6 +464,7 @@ const wsHost = createWorkspaceHost({
     reconcilePending(osState) // confirm/expire optimistic agent creates against the authoritative push
   },
   broadcast,
+  getActionItems: () => serverActionItems.listActions(), // authoritative inbox items (reconciled into hydrate + onStatePush)
   onSurfaces: (surfaces) => (SERVER_MODE ? reconcileSurfaces(surfaces) : undefined),
   defaultMode: 'canvas',
   // An agent backend runs in a VISIBLE terminal in its stage (no headless brain). null ⇒ BLITZ_AGENT off.
@@ -694,6 +695,17 @@ const serverOps = {
     return wsHost.appendChat('agent', String(text), agentId) // append to that agent's chat.md + broadcast
   },
   customizeWidget: (name, html, agentId) => wsHost.customizeWidget(String(name), String(html), agentId),
+  // Live OS theme (the onboarding wardrobe card / an agent picking an accent). Mirrors Electron's
+  // osSetTheme: sanitize each role to a #rrggbb hex, then broadcast the SAME `set-theme` action the
+  // shared renderer applies (App.tsx) — so theming works identically in both transports, not Electron-only.
+  setTheme: (theme) => {
+    const hex = (v) => (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.trim()) ? v.trim().toLowerCase() : null)
+    const out = {}
+    for (const k of ['accent', 'accentDeep', 'marker', 'positive', 'danger', 'info']) { const h = hex((theme || {})[k]); if (h) out[k] = h }
+    if (!Object.keys(out).length) return { ok: false, error: 'pass at least one role as a #rrggbb hex (accent, marker, …)' }
+    broadcast({ type: 'set-theme', theme: out })
+    return { ok: true }
+  },
   closeAgent: (id) => wsHost.closeAgent(String(id)),
   renameAgent: (id, title) => wsHost.renameAgent(String(id), String(title ?? '')),
   // Open a new agent: register + surface it; addAgent launches its managed terminal (launchAgent).
@@ -932,7 +944,7 @@ const server = createServer(async (req, res) => {
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
     res.write(
-      `data: ${JSON.stringify({ type: 'hydrate', surfaces: osState.surfaces || [], camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', stageCount: osState.stageCount || 1, stageOrder: osState.stageOrder, workspace: wsHost.active() })}\n\n`
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: wsHost.hydrateSurfaces(), camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', stageCount: osState.stageCount || 1, stageOrder: osState.stageOrder, workspace: wsHost.active() })}\n\n`
     )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))
@@ -996,6 +1008,14 @@ const server = createServer(async (req, res) => {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
     req.on('end', () => { const b = toolBody(body); json(res, 200, serverOps.renameAgent(String(b.id || ''), String(b.title ?? ''))) })
+    return
+  }
+  // Clear an agent's context (the chat widget's "new context" button) — rotate its claude session id +
+  // restart → empty conversation. Mirrors the Electron os:chat-control 'clear' op (no divergence).
+  if (path === '/api/os/agent-clear' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverTerminalOps.clearAgentContext(String(b.id || '0'))).then((okv) => json(res, 200, { ok: !!okv })).catch(() => json(res, 200, { ok: false })) })
     return
   }
   if (path === '/api/os/terminal-list' && req.method === 'POST') {

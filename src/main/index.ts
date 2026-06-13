@@ -5,7 +5,7 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setRestartAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, osRadialPhase } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setRestartAgent, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, osRadialPhase } from './osActions'
 import { emitSystemMoment } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -323,6 +323,9 @@ app.whenReady().then(() => {
       const op = String(p?.op || ''); const a = p?.args || {}
       if (op === 'new') return osSpawnAgent(a.title != null ? String(a.title) : undefined, true)
       if (op === 'rename') return osRenameAgent(String(a.id ?? ''), String(a.title ?? ''))
+      // 'clear' → start a FRESH context for this agent (rotate its claude session id + restart). Uniform for
+      // every agent incl '0'; the server mirrors it via the shim → /api/os/agent-clear (no divergence).
+      if (op === 'clear') return Promise.resolve(electronTerminalOps.clearAgentContext(String(a.id ?? '0'))).then((okv) => ({ ok: !!okv }))
       return { ok: false, error: `unknown chat op: ${op}` }
     } catch (e) { return { ok: false, error: (e as Error)?.message } }
   })
@@ -434,6 +437,7 @@ app.whenReady().then(() => {
     setLaunchAgent(launchAgent)
     setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
     setRestartAgent((id) => { void electronTerminalOps.restartTerminal(id) }) // re-exec in place (onboarding: restore full effort once the interview is done)
+    setActionItemsProvider(() => electronActionItems.listActions()) // host reconciles the inbox surface against the authoritative store
     // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
     let resumed = false
     const resumeAll = async (): Promise<void> => {

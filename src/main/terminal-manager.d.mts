@@ -83,6 +83,8 @@ export interface TerminalManager {
   stopTerminal(id: string): boolean
   removeTerminal(id: string): boolean
   restartTerminal(id: string): Promise<TerminalMeta | null>
+  /** Clear an agent's claude context on demand (rotate its session id + restart → empty conversation). */
+  clearAgentContext(id: string): Promise<boolean>
   /** Reattach-on-boot: adopt tmux windows that survived a restart; returns adopted ids. */
   restore(): Promise<string[]>
   scrollback(id: string): string

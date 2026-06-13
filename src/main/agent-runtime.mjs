@@ -70,13 +70,18 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   // The OS can hand a session ONE standing duty (e.g. the onboarding interview); the duty text licenses
   // unprompted action for its own scope and is re-read per (re)launch, so a finished duty disappears.
   const duty = bootTask ? `The app has given you one standing task to handle first, right after you've caught up on the conversation (it applies only to its own scope): ${bootTask}` : null
-  const eventsLoop = `Your job is to help the user in their chat. To see new chat messages, check the app's message endpoint: call \`curl -sX POST ${B}/events -d '{"since":0,"wait":0${sess}}'\` once to read anything waiting, then use the returned \`latest\` as your next \`since\` and call it again with \`wait:25\`${sess ? ` (always including ${sess.slice(1)})` : ''}. This is a normal long-poll: the request simply waits up to 25 seconds for the next message and returns as soon as one arrives. When a \`trigger:'message'\` comes in, do what it asks.`
-  const keepChecking = `Keep checking for messages while you're working. The app doesn't push messages to you; you see them by making that \`/events\` call, so after each one just make the next one — handle anything that arrived, then check again. If you finish a reply and simply stop, you won't notice the user's next message until you check again, so keep the check going rather than waiting idle.`
+  // MERGE-RECONCILED (master wait.sh + branch const-fragment structure): the agent's event-wait is the
+  // shared blocking helper `.blitzos/wait.sh` — one LLM turn per REAL message instead of one per empty 25s
+  // poll. These three fragments describe wait.sh, NOT a raw /events poll loop (do not regress them to the
+  // pre-wait.sh long-poll text the branch carried forward). wait.sh re-reads relay-url, so it survives a restart.
+  const onConnect = `Your job is to help the user in their chat. ON CONNECT, read anything already waiting once: \`curl -sX POST ${B}/events -d '{"since":0,"wait":0${sess}}'\` — then use the returned \`latest\` as your cursor.`
+  const waitLoop = `To see new messages, run \`bash .blitzos/wait.sh <cursor> '${sess}'\` with a 10-minute timeout on your Bash tool (replace <cursor> with your latest number). It waits in the shell and returns as soon as a message arrives — printing \`{"events":[…],"latest":N}\` — so you don't have to keep polling yourself. (Under the hood it's a normal \`/events\` long-poll loop; the script just runs it for you, and re-reads the relay url each time so it keeps working across an app restart.)`
+  const keepChecking = `Keep checking for messages while you're working: when \`wait.sh\` returns, handle each \`trigger:'message'\` (do what it asks), set your cursor to the new \`latest\`, and run \`wait.sh\` again. The app doesn't push messages to you — you see them by running \`wait.sh\` — so after each one, start the next wait rather than stopping idle, or you won't notice the user's next message until you check again.`
   const say = `Keep the user in the loop: send your replies and progress with \`curl -sX POST ${B}/say -d '{"text":"…"${sess}}'\` (it appears in their chat). When a message comes in, a quick note of your plan first is nice, then a short line as you go. It's best not to act unless the user has asked for something, and to say what you're doing as you do it rather than working silently.`
   const stage = primary
     ? null
     : `Your windows live in your own stage, separate from the user's primary desktop. On every surface-opening call — create_surface, open_window, and open_terminal — include "agent":"${sessionId}" so the window opens in your stage and doesn't disturb the user. Don't pass an explicit x/y unless you're repositioning a window within your own stage. Open your terminal and all work windows this way.`
-  return [identity, relay, guide, desktop, recover, duty, eventsLoop, keepChecking, say, stage].filter(Boolean).join('\n')
+  return [identity, relay, guide, desktop, recover, duty, onConnect, waitLoop, keepChecking, say, stage].filter(Boolean).join('\n')
 }
 
 /** POSIX single-quote a value for a shell command line (wrap in '…', escape embedded ' as '\''). */
@@ -143,19 +148,13 @@ function claudeConversationExists(sessionsDir, claudeSessionId) {
  *  errors "already in use" → crash loop. We still never --resume an id claude never created (no jsonl, flag
  *  unset → create mode → 'No conversation found' avoided). */
 export function ensureClaudeSessionId(sessionsDir, id) {
+  // UNIFORM across ALL sessions (the user's call 2026-06-12): the primary (agent '0') is NOT special —
+  // it resumes its claude session like every other agent, so its conversation/context persists across a
+  // BlitzOS restart unless the USER chooses to clear it. (An earlier "always-fresh primary" auto-rotated
+  // the id every launch to dodge a cyber-classifier trip on a near-full transcript; that was the wrong
+  // tradeoff — clearing context must be a user action, not automatic. The cyber-classifier risk is now
+  // managed by the user-triggered "new context" control, which rotates the id ON DEMAND via clearContext.)
   const m = readMeta(sessionsDir, id)
-  // ALWAYS-FRESH PRIMARY (agent '0', the user's call 2026-06-12): the long-lived primary brain
-  // accumulated a huge `--resume` transcript that tripped Anthropic's cyber-safety classifier near
-  // full context (the saturated curl/bearer/$(cat) history reads as exfiltration) — and a near-full
-  // context is degraded anyway. The primary recovers continuity by RE-READING chat.md on every boot
-  // (the bootstrap mandates that `tail`), so a claude-level resume adds risk without value. Mint a
-  // FRESH session id each launch → `--session-id` create mode, empty context, never trips. A new uuid
-  // is REQUIRED (not just create mode): `claude --resume <missing-id>` exits 0 and `--session-id
-  // <existing-id>` would continue the old session — only a brand-new id guarantees a clean slate.
-  // Spawned agents ('1'+) keep resume (task-scoped, shorter-lived; extend here if they ever trip).
-  // TODO: each boot orphans the prior session jsonl in ~/.claude/projects/<ws>/ — harmless, but a
-  // periodic sweep of stale agent-0 sessions would be tidy.
-  if (String(id) === '0') return { claudeSessionId: randomUUID(), established: false }
   const claudeSessionId = m.claudeSessionId || randomUUID()
   const established = !!m.claudeEstablished || claudeConversationExists(sessionsDir, claudeSessionId)
   return { claudeSessionId, established }
@@ -180,6 +179,7 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
     mkdirSync(sessionDir(sessionsDir, id), { recursive: true })
     writeFileSync(file, buildBootstrap(url, id, bootTask, workspace))
     writeRelayUrl(dirname(sessionsDir), url) // <ws>/.blitzos/relay-url — the live base the agent re-reads per call
+    writeWaitScript(dirname(sessionsDir)) // <ws>/.blitzos/wait.sh — the blocking event-wait the bootstrap points at
     ensureWorkspaceTrusted(dirname(dirname(sessionsDir))) // unattended spawn must never stall on the trust dialog
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
   // The onboarding interview runs at reduced thinking effort so its dynamic follow-ups are snappy.
@@ -237,4 +237,31 @@ export function writeRelayUrl(blitzDir, url) {
   if (!blitzDir || !url) return
   const base = String(url).replace(/\/agents\.md$/, '')
   try { mkdirSync(blitzDir, { recursive: true }); writeFileSync(join(blitzDir, 'relay-url'), base) } catch { /* best-effort */ }
+}
+
+// The agent's BLOCKING event-wait, run as `bash .blitzos/wait.sh <since> '<scopeJson>'` (cwd = workspace).
+// It loops the 25s `/events` long-poll IN THE SHELL and returns ONLY on a real event — so the agent's LLM is
+// woken once per actual message instead of once per empty 25s poll (~24× fewer idle turns). It re-reads
+// `.blitzos/relay-url` each iteration, so a relay-url change after a BlitzOS restart self-heals mid-wait.
+// $1 = the `since` cursor (a number); $2 = the scope JSON fragment (e.g. `,"agent":"1","workspace":"Home"`).
+export const WAIT_SCRIPT = `#!/bin/sh
+# BlitzOS agent event-wait — blocks until the next event, prints {"events":[…],"latest":N}, exits. See agent-runtime.mjs.
+S="\${1:-0}"; SC="$2"
+while :; do
+  B=$(cat .blitzos/relay-url 2>/dev/null)
+  [ -z "$B" ] && { sleep 1; continue; }
+  R=$(curl -sS -X POST "$B/events" -H 'content-type: application/json' -d "{\\"since\\":$S,\\"wait\\":25$SC}" 2>/dev/null)
+  case "$R" in
+    '' ) sleep 1 ;;                     # transient failure / url change — retry (relay-url re-read next loop)
+    *'"events":[]'* ) : ;;             # 25s timeout, nothing new — keep blocking
+    * ) printf '%s\\n' "$R"; exit 0 ;; # got events — hand them back to the agent's turn
+  esac
+done
+`
+
+/** Write `<blitzDir>/wait.sh` (the agent's blocking event-wait). Static content; written at every launch so it
+ *  always exists next to relay-url. `blitzDir` is the workspace's `.blitzos` folder. */
+export function writeWaitScript(blitzDir) {
+  if (!blitzDir) return
+  try { mkdirSync(blitzDir, { recursive: true }); writeFileSync(join(blitzDir, 'wait.sh'), WAIT_SCRIPT) } catch { /* best-effort */ }
 }

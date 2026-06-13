@@ -17,6 +17,8 @@ export interface WorkspaceHostAdapter {
   /** Stop an agent's terminal (terminal-ops.stopTerminal — sets the stopping flag so it won't auto-restart).
    *  Wired by each transport; used when closing an agent. */
   stopAgent?: (agentId: string) => void
+  /** The authoritative action-items list (listActions()); the inbox surface's items are reconciled to it. */
+  getActionItems?: () => unknown[]
 }
 
 export interface WorkspaceHost {
@@ -25,6 +27,8 @@ export interface WorkspaceHost {
   isSwitching(): boolean
   hydrateOnBoot(): void
   onStatePush(s: unknown): void
+  /** The surfaces for a connecting renderer's hydrate (osState surfaces + inbox items reconciled to the store). */
+  hydrateSurfaces(): unknown[]
   performSwitch(name: unknown): Promise<{ status: number; body: Record<string, unknown> }>
   flush(): void
   startWatch(): void

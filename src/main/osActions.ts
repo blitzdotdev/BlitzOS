@@ -196,6 +196,7 @@ export function initOsActions(opts: {
       sendToRenderer('os:action', obj)
     },
     onSurfaces: () => {}, // Electron browser guests are hosted by webcontents-view-host.ts
+    getActionItems: () => (actionItemsProvider ? actionItemsProvider() : []), // authoritative inbox items (index.ts wires it)
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
     // An agent backend runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
     // agent-runtime core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
@@ -810,6 +811,12 @@ let restartAgentHook: ((agentId: string) => void) | null = null
 export function setRestartAgent(fn: (agentId: string) => void): void {
   restartAgentHook = fn
 }
+// The authoritative action-items list, wired by index.ts (osActions can't import electronActionItems — that
+// lives in electron-os-tools, which imports osActions). The host reconciles the inbox surface against it.
+let actionItemsProvider: (() => unknown[]) | null = null
+export function setActionItemsProvider(fn: () => unknown[]): void {
+  actionItemsProvider = fn
+}
 export function osRestartBrain(agentId = '0'): void {
   restartAgentHook?.(String(agentId))
 }
@@ -975,7 +982,7 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
 /** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
 export function osSendHydrate(): void {
   if (!wsHost) return
-  send('hydrate', { surfaces: cached.surfaces || [], camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, stageOrder: cached.stageOrder, workspace: wsHost.active() })
+  send('hydrate', { surfaces: wsHost.hydrateSurfaces(), camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, stageOrder: cached.stageOrder, workspace: wsHost.active() })
 }
 export function osRestoreChatHub(): { ok: boolean; id?: string; error?: string } {
   try {

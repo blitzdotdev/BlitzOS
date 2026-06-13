@@ -1363,7 +1363,10 @@ export function ensureSystemRenderer(dir, role, sessionId = '0') {
         // feature (here: item 5b annotation references) never reaches existing desktops. Refresh a SHIPPED
         // copy that lags the shipped feature set; a copy the human CUSTOMIZED (writeSystemRenderer) is left
         // alone — it carries the `blitz-chat-custom` opt-out marker. (Pre-hub copies still migrate as before.)
-        const featureLag = shipped.indexOf('focusAnnotation') !== -1 && cur.indexOf('focusAnnotation') === -1
+        // Sentinel = the NEWEST shipped feature marker (bump it when chat.html gains a feature existing
+        // desktops must receive). 'clearctx' = the "New context" button; it ships alongside focusAnnotation,
+        // so a copy missing clearctx lags the current set and refreshes (unless human-customized).
+        const featureLag = shipped.indexOf('clearctx') !== -1 && cur.indexOf('clearctx') === -1
         const customized = cur.indexOf('blitz-chat-custom') !== -1
         if ((!hubAware && preHub) || (hubAware && featureLag && !customized)) {
           atomicWrite(dest, shipped)

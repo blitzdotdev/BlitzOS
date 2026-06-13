@@ -37,9 +37,16 @@ export function resolveTmuxBin() {
     '/usr/local/bin/tmux',
     '/usr/bin/tmux'
   ].filter(Boolean)
-  resolvedTmux = cands.find((p) => { try { return existsSync(p) } catch { return false } }) || null
+  // Accept a candidate only if it actually RUNS on this platform — `existsSync` alone wrongly picks the
+  // vendored Mac-arm64 tmux on a Linux/dev box, whose control client then fails to spawn (the manager
+  // can't track live windows → terminals show a phantom "exited"). `-V` is a cheap arch/runnability probe.
+  const runnable = (p) => { try { execFileSync(p, ['-V'], { stdio: ['ignore', 'ignore', 'ignore'], timeout: 4000 }); return true } catch { return false } }
+  resolvedTmux = cands.find((p) => runnable(p)) || null
   if (!resolvedTmux) {
-    try { resolvedTmux = execFileSync('/bin/zsh', ['-lc', 'command -v tmux'], { encoding: 'utf8', timeout: 8000 }).trim() || null } catch { resolvedTmux = null }
+    try {
+      const fromShell = execFileSync('/bin/zsh', ['-lc', 'command -v tmux'], { encoding: 'utf8', timeout: 8000 }).trim()
+      resolvedTmux = fromShell && runnable(fromShell) ? fromShell : null
+    } catch { resolvedTmux = null }
   }
   return resolvedTmux
 }

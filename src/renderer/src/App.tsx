@@ -1243,11 +1243,16 @@ export default function App(): JSX.Element {
         pushTerminalExit(String(a.id), a.exitCode == null ? null : Number(a.exitCode))
       } else if (a.type === 'terminal-spawn') {
         // A terminal was created (by an agent or the user), or re-adopted on restore. Terminals live as
-        // TABS in a terminal window — add this one as a tab (idempotent). Covers both live spawns and
-        // the restore() replay that brings back tmux survivors after a restart. An AGENT's raw terminal is
-        // opt-in (its chat is primary), so ensureTerminalTab auto-tabs only a plain terminal (kind 'terminal').
+        // TABS in a terminal window — add this one as a tab (idempotent). Covers both live spawns and the
+        // restore() replay that brings back tmux survivors after a restart. Agents auto-show too (an agent
+        // IS a terminal you watch claude work in); plain terminals additionally animate from their launcher.
         const term = (a.terminal ?? {}) as { title?: string; stage?: number | null; area?: number | null; kind?: string }
-        if (term.kind !== 'agent') {
+        // MERGE-RECONCILED: an agent IS a terminal you watch claude work in, so auto-show its terminal tab
+        // (the user's explicit "still dont see anything in the term" fix — agents are NOT opt-in). A plain
+        // terminal launched from a toolbar control animates open from that control's rect (branch UX).
+        if (term.kind === 'agent') {
+          ensureTerminalTab(String(a.id), term.title || 'Agent', term.stage ?? term.area)
+        } else {
           const pending = pendingTerminalSource.current
           const source = pending && performance.now() - pending.at < 5000 ? pending.rect : null
           if (source) pendingTerminalSource.current = null
@@ -1303,12 +1308,12 @@ export default function App(): JSX.Element {
   }, [])
 
   // Resume terminals: terminal surfaces aren't serialized (they're runtime-only), so on load — and on
-  // every workspace switch — we reconstruct a terminal tab for each plain terminal still ALIVE in this
-  // workspace. tmux keeps the process across a BlitzOS/page restart; calling terminalList() also drives
-  // the backend's lazy restore() (re-adopting survivors). ensureTerminalTab is idempotent, so this
-  // converges with the restore() terminal-spawn replay rather than double-creating. An AGENT's raw
-  // terminal is opt-in (its chat is primary), so we skip kind==='agent' here. Keyed on the active
-  // workspace because terminals are per-workspace (a switch wholesale-replaces the canvas first).
+  // every workspace switch — we reconstruct a terminal tab for each terminal still ALIVE in this
+  // workspace, INCLUDING agents (an agent is a terminal you watch claude work in). tmux keeps the process
+  // across a BlitzOS/page restart; calling terminalList() also drives the backend's lazy restore()
+  // (re-adopting survivors). ensureTerminalTab is idempotent, so this converges with the restore()
+  // terminal-spawn replay rather than double-creating, and pruneEmptyTerminals drops any window a removed
+  // terminal left blank. Keyed on the active workspace (a switch wholesale-replaces the canvas first).
   useEffect(() => {
     if (!activeWs) return
     let cancelled = false
@@ -1316,9 +1321,15 @@ export default function App(): JSX.Element {
     Promise.resolve(api?.terminalList?.() ?? [])
       .then((list) => {
         if (cancelled || !Array.isArray(list)) return
+        const st = useDesktop.getState()
         for (const s of list as Array<{ id?: string; title?: string; status?: string; kind?: string; stage?: number | null; area?: number | null }>) {
-          if (s && s.id && s.status === 'running' && s.kind !== 'agent') ensureTerminalTab(String(s.id), s.title || 'Terminal', s.stage ?? s.area)
+          if (!s || !s.id || s.status !== 'running') continue
+          // Reconstruct a terminal tab for EVERY live terminal — plain shells AND agents. An agent IS a
+          // terminal you watch claude work in, so its terminal is shown in ITS stage (find-or-create);
+          // tabs are renderer-only (not serialized), so this is how they come back after a reload.
+          ensureTerminalTab(String(s.id), s.title || (s.kind === 'agent' ? 'Agent' : 'Terminal'), s.stage ?? s.area)
         }
+        st.pruneEmptyTerminals() // a terminal window left with no live tab only renders blank — drop it
       })
       .catch(() => {})
     // Reconstruct the Action-items inbox: if this workspace has any PENDING items (agent asked, human
