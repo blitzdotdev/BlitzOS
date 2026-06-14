@@ -13,7 +13,7 @@ import {
   initWebContentsViewHost,
   navigateWebContentsView,
   syncWebContentsViewTabs,
-  updateWebContentsViewBounds,
+  applyWebGeometry,
   webContentsForSurface,
   webContentsViewNavAction,
   type TabDecl
@@ -304,9 +304,10 @@ export function initOsActions(opts: {
     if (!m?.id || !Array.isArray(m.tabs)) return
     syncWebContentsViewTabs(String(m.id), m.tabs, typeof m.active === 'string' ? m.active : null, Number(m.zoom) || 1)
   })
-  ipcMain.on('os:webcontents-view:bounds', (_e, m: { id?: string; rect?: { x: number; y: number; width: number; height: number }; visible?: boolean; z?: number; zoom?: number }) => {
-    if (!m?.id || !m.rect) return
-    updateWebContentsViewBounds(String(m.id), m.rect, !!m.visible, Number(m.z) || 0, Number(m.zoom) || 1)
+  // Coalesced geometry pass (pillar 2): ONE message carries every browser's rect+z+visibility; the
+  // host sets them all and reorders the L0 child views once (replaces the per-surface bounds storm).
+  ipcMain.on('os:web-geometry', (_e, list: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; visible: boolean; z: number; zoom?: number }>) => {
+    if (Array.isArray(list)) applyWebGeometry(list)
   })
   ipcMain.on('os:webcontents-view:navigate', (_e, m: { id?: string; tabId?: string; url?: string }) => {
     if (m?.id && typeof m.url === 'string') navigateWebContentsView(String(m.id), typeof m.tabId === 'string' ? m.tabId : null, m.url)

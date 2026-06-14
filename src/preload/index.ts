@@ -192,8 +192,10 @@ const api = {
   webContentsViewSync(payload: { id: string; tabs: Array<{ id: string; url?: string }>; active: string | null; zoom?: number }): void {
     ipcRenderer.send('os:webcontents-view:sync', payload)
   },
-  webContentsViewBounds(payload: { id: string; rect: { x: number; y: number; width: number; height: number }; visible: boolean; z: number; zoom?: number }): void {
-    ipcRenderer.send('os:webcontents-view:bounds', payload)
+  /** Coalesced geometry pass (pillar 2): ONE message with every browser's rect+z+visibility, so main
+   *  applies bounds + reorders the page views once instead of a per-surface RAF storm. */
+  webGeometry(list: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; visible: boolean; z: number; zoom?: number }>): void {
+    ipcRenderer.send('os:web-geometry', list)
   },
   webContentsViewNavigate(id: string, tabId: string | null, url: string): void {
     ipcRenderer.send('os:webcontents-view:navigate', { id, tabId, url })

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FocusEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent } from 'react'
 import { createPortal, flushSync } from 'react-dom'
-import { useDesktop, viewTransform, orderedStageRect, addStageRect, stageForAgent, nextTerminalName, latticeFor, nearestFreeSlot, type CreateSurfaceInput } from './store'
+import { useDesktop, viewTransform, orderedStageRect, addStageRect, stageForAgent, nextTerminalName, latticeFor, nearestFreeSlot, effectiveZ, type CreateSurfaceInput } from './store'
 import { applyTheme, saveTheme, type Theme } from './theme'
 import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface, CanvasTransform } from './types'
@@ -460,6 +460,9 @@ export default function App(): JSX.Element {
   const [menu, setMenu] = useState<{ x: number; y: number; wx: number; wy: number } | null>(null)
   const annotationMenu = useDesktop((s) => s.annotationMenu) // item 5b: surface right-click annotation menu
   const [dockAnimations, setDockAnimations] = useState<Record<string, DockAnimationPhase>>({})
+  // Read in the geometry RAF below (a []-deps loop) without re-subscribing: mirror the latest into a ref.
+  const dockAnimRef = useRef(dockAnimations)
+  dockAnimRef.current = dockAnimations
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   const pan = useRef<{ x: number; y: number } | null>(null)
@@ -779,6 +782,60 @@ export default function App(): JSX.Element {
     }
     el.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => el.removeEventListener('wheel', onWheel, { capture: true })
+  }, [])
+
+  // Coalesced page-geometry pass (plans/blitzos-compositor-hardening.md, pillar 2). ONE RAF reads
+  // EVERY browser hole's rect + the full z-order together and pushes a single ordered message; main
+  // applies all bounds and reorders the L0 page views ONCE. This replaces the N independent
+  // per-surface RAFs (each forced a layout/style flush every frame and re-ran the global reorder with
+  // a mix of fresh/stale z) — the engine of the multi-browser bleed-order race and the multi-widget
+  // glitch. The RAF (not a render effect) is required because canvas pan/zoom moves the holes via a
+  // CSS transform on .world without re-rendering the memoized frames. z is store.effectiveZ (no
+  // getComputedStyle flush); the drag-lift is component-local but never changes browser-vs-browser
+  // order, so it is irrelevant to the L0 page stacking computed here.
+  useEffect(() => {
+    if (!window.agentOS || window.agentOS.serverMode) return
+    let raf = 0
+    let last = ''
+    const tick = (): void => {
+      const st = useDesktop.getState()
+      const anims = dockAnimRef.current
+      const winW = window.innerWidth || 0
+      const winH = window.innerHeight || 0
+      // One querySelectorAll, then W getBoundingClientRect reads back-to-back (one layout flush).
+      const holes = document.querySelectorAll<HTMLElement>('.webcontents-host[data-sid]')
+      const byId = new Map<string, HTMLElement>()
+      holes.forEach((h) => {
+        const id = h.getAttribute('data-sid')
+        if (id) byId.set(id, h)
+      })
+      const list: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; visible: boolean; z: number; zoom: number }> = []
+      for (const s of st.surfaces) {
+        if (s.kind !== 'web') continue
+        const el = byId.get(s.id)
+        if (!el) continue
+        const r = el.getBoundingClientRect()
+        const visible =
+          !s.minimized && anims[s.id] !== 'restoring' && r.width > 1 && r.height > 1 && r.right > 0 && r.bottom > 0 && r.left < winW && r.top < winH
+        list.push({
+          id: s.id,
+          rect: { x: r.left, y: r.top, width: r.width, height: r.height },
+          visible,
+          z: effectiveZ(s),
+          zoom: s.zoom ?? 1
+        })
+      }
+      const key = list
+        .map((g) => `${g.id}:${Math.round(g.rect.x)},${Math.round(g.rect.y)},${Math.round(g.rect.width)},${Math.round(g.rect.height)},${g.visible ? 1 : 0},${g.z},${g.zoom}`)
+        .join('|')
+      if (key !== last) {
+        last = key
+        window.agentOS?.webGeometry?.(list)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
   }, [])
 
   // ⌘T / ⇧⌘T — tile toggle + size cycle on the window the user means: the single selection if there

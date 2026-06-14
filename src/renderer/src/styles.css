@@ -81,6 +81,11 @@ button {
   z-index: 0;
   background-color: var(--canvas);
   cursor: default;
+  /* GPU-promote to its own compositor layer (pillar 3). The sandwich cuts per-page clip-path holes in
+     this full-viewport opaque base every camera frame (App.tsx bgClip); un-promoted, each change
+     forced a whole-viewport raster repaint on the main thread (a big part of the multi-widget glitch).
+     On its own layer the repaint is an isolated solid-color-with-clip raster, off the rest of the UI. */
+  transform: translateZ(0);
 }
 .stage-overview-mode .bg {
   cursor: grab;

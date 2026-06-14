@@ -317,7 +317,7 @@ function destroyTab(e: Entry, t: TabEntry): void {
 
 /** Position the active tab's view; PARK the rest offscreen. The single place visibility is decided
  *  — by POSITION, never setVisible (see PARKED above for the macOS wedge this avoids). */
-function applyEntry(e: Entry): void {
+function applyEntryBounds(e: Entry): void {
   const act = activeEntry(e)
   for (const t of e.tabs) {
     const show = t === act && e.visible && !!e.rect
@@ -328,6 +328,9 @@ function applyEntry(e: Entry): void {
       /* view torn down mid-apply */
     }
   }
+}
+function applyEntry(e: Entry): void {
+  applyEntryBounds(e)
   reorderViews()
 }
 
@@ -386,22 +389,33 @@ export function syncWebContentsViewTabs(surfaceId: string, tabs: TabDecl[], acti
 }
 
 
-export function updateWebContentsViewBounds(surfaceId: string, rect: Rectangle, visible: boolean, z: number, zoom = 1): void {
-  const e = entries.get(surfaceId)
-  if (!e || !callbacks?.getWindow()) return
-  // NO clamping: a frame partially panned off the window's top/left must keep its view glued to the
-  // anchor (negative coords are valid — Electron clips to the window). The old Math.max(0,…) clamp
-  // pinned views to the edge and visibly detached them from their frames.
-  e.rect = {
-    x: Math.round(rect.x),
-    y: Math.round(rect.y),
-    width: Math.max(1, Math.round(rect.width)),
-    height: Math.max(1, Math.round(rect.height))
+/** Coalesced geometry pass (plans/blitzos-compositor-hardening.md, pillar 2). The renderer pushes
+ *  EVERY browser's body rect + z + visibility in ONE message; we set them all and reorder the L0
+ *  child views ONCE. Replaces the N independent per-surface bounds RAFs, each of which forced a
+ *  layout/style flush every frame and re-ran the global reorder against a mix of fresh/stale z (the
+ *  cross-surface z race + the per-frame reorder churn). One reader, one message, one reorder. */
+export function applyWebGeometry(
+  list: Array<{ id: string; rect: Rectangle; visible: boolean; z: number; zoom?: number }>
+): void {
+  if (!callbacks?.getWindow() || !Array.isArray(list)) return
+  for (const item of list) {
+    const e = item?.id ? entries.get(item.id) : null
+    if (!e || !item.rect) continue
+    // NO clamping: a frame partially panned off the window's top/left keeps its view glued to the
+    // anchor (negative coords are valid — Electron clips to the window). A Math.max(0,…) clamp would
+    // pin views to the edge and visibly detach them from their frames.
+    e.rect = {
+      x: Math.round(item.rect.x),
+      y: Math.round(item.rect.y),
+      width: Math.max(1, Math.round(item.rect.width)),
+      height: Math.max(1, Math.round(item.rect.height))
+    }
+    e.z = Number.isFinite(item.z) ? item.z : 0
+    e.visible = !!item.visible && e.rect.width > 1 && e.rect.height > 1
+    if (Number.isFinite(item.zoom) && (item.zoom as number) > 0) e.zoom = item.zoom as number
+    applyEntryBounds(e)
   }
-  e.z = Number.isFinite(z) ? z : 0
-  e.visible = !!visible && e.rect.width > 1 && e.rect.height > 1
-  e.zoom = Number.isFinite(zoom) && zoom > 0 ? zoom : e.zoom
-  applyEntry(e)
+  reorderViews()
 }
 
 /** Navigate ONE tab (address bar submit, agent update_surface{url}, bookmark click). */

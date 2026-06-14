@@ -82,6 +82,7 @@ export function bgHolesClip(surfaces: Surface[], t: { x: number; y: number; scal
     if (x2 <= 0 || y2 <= 0 || x1 >= vw || y1 >= vh || y2 <= y1) continue
     holes.push({ x1, y1, x2, y2 })
   }
+  if (!holes.length) return undefined // no page on screen → no clip on the full-viewport .bg
   return holesPath(vw, vh, holes, WINDOW_RADIUS * t.scale)
 }
 
@@ -109,6 +110,10 @@ function pageHolesClip(me: Surface, all: Surface[]): HolesClip {
     if (x2 <= 0 || y2 <= 0 || x1 >= me.w || y1 >= me.h || y2 <= y1) continue
     holes.push({ x1, y1, x2, y2 })
   }
+  // No overlapping higher browser → no page hole → NO clip-path at all (the frame's own CSS
+  // border-radius still rounds it). Returning undefined keeps non-overlapping widgets off the clip
+  // layer entirely, so a browser over a field of widgets does not put every one on a repaint path.
+  if (!holes.length) return undefined
   return holesPath(me.w, me.h, holes, WINDOW_RADIUS)
 }
 
@@ -275,50 +280,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     return () => window.agentOS?.webContentsViewClose?.(surface.id)
   }, [surface.kind, surface.id, serverMode])
 
-  // Report the body rectangle in window CSS pixels while the main process hosts and clips the real
-  // browser view there. A RAF loop is intentional: canvas pan/zoom changes the DOM transform without
-  // re-rendering this memoized frame, and ResizeObserver cannot see transforms.
-  useEffect(() => {
-    if (surface.kind !== 'web' || serverMode) return
-    let raf = 0
-    let last = ''
-    const tick = (): void => {
-      const el = webHostRef.current
-      if (el) {
-        const r = el.getBoundingClientRect()
-        const winW = window.innerWidth || 0
-        const winH = window.innerHeight || 0
-        // NOT gated on isDragging: the view tracks its frame live during a drag (one RAF behind at
-        // worst) — blanking the page mid-drag read as "the content detached from the window".
-        // (No occlusion test here anymore: the sandwich compositor stacks DOM above pages for real,
-        // so nothing needs detecting or freezing.)
-        const visible =
-          !surface.minimized &&
-          !restoring &&
-          r.width > 1 &&
-          r.height > 1 &&
-          r.right > 0 &&
-          r.bottom > 0 &&
-          r.left < winW &&
-          r.top < winH
-        const z = Number(frameRef.current ? getComputedStyle(frameRef.current).zIndex : surface.z) || surface.z || 0
-        const key = `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)},${visible ? 1 : 0},${z},${zoom}`
-        if (key !== last) {
-          last = key
-          window.agentOS?.webContentsViewBounds?.({
-            id: surface.id,
-            rect: { x: r.left, y: r.top, width: r.width, height: r.height },
-            visible,
-            z,
-            zoom
-          })
-        }
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    tick()
-    return () => cancelAnimationFrame(raf)
-  }, [surface.kind, surface.id, zoom, serverMode, surface.minimized, restoring, surface.z])
+  // The body rectangle is reported to main by a SINGLE coalesced RAF in App.tsx (pillar 2), which
+  // reads every browser hole by its `data-sid` and pushes one ordered geometry message. The old
+  // per-surface RAF (one forced-layout loop per browser, each reordering against stale cross-surface
+  // z) lived here; it was the multi-browser/multi-widget glitch. See blitzos-compositor-hardening.md.
 
   // --- sandwich input forwarding: pointer/wheel events landing on the hole go to the page. The
   // view sits at exactly the hole's screen rect, so view-local = client - rect origin (no descale).
@@ -831,6 +796,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           <div
             ref={webHostRef}
             className="webcontents-host"
+            data-sid={surface.id} // the App-level coalesced geometry pass (pillar 2) reads every hole's rect by id
             // containment inside the focus ring comes from the frame's 1px padding (.window.browser)
             style={{ ...fill, cursor: pageCursor }}
             onPointerDown={onHoleDown}
