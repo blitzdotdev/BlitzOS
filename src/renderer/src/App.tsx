@@ -472,7 +472,7 @@ export default function App(): JSX.Element {
   // Item 3: a web guest asked for a sensitive browser permission (camera, location, …) — show the human a
   // real Allow/Block prompt (browser parity), remembered per-origin.
   const [permissionPrompts, setPermissionPrompts] = useState<Array<{ id: string; origin: string; permission: string; surfaceId: string | null }>>([])
-  // Right-click desktop menu (New Folder / New Board). wx/wy = the world position to place the new folder.
+  // Right-click desktop menu. wx/wy = the world position to place the new folder.
   const [menu, setMenu] = useState<{ x: number; y: number; wx: number; wy: number } | null>(null)
   const [folderMenu, setFolderMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [renamingDirPath, setRenamingDirPath] = useState<string | null>(null)
@@ -1657,14 +1657,15 @@ export default function App(): JSX.Element {
     })
   }
 
-  // Right-click empty canvas → New Folder / New Board menu (the discoverable counterpart of Cmd+G).
+  // Right-click empty canvas → New Folder menu (the discoverable counterpart of Cmd+G).
   function onBgContextMenu(e: React.MouseEvent): void {
     e.preventDefault()
     const t = useDesktop.getState().transform
     setFolderMenu(null)
     setMenu({ x: e.clientX, y: e.clientY, wx: Math.round((e.clientX - t.x) / t.scale), wy: Math.round((e.clientY - t.y) / t.scale) })
   }
-  // New EMPTY folder (files) or board (windows+widgets) at the click point.
+  // New EMPTY folder at the click point. Board support remains for existing/internal flows while the
+  // user-facing creation entry points are hidden.
   function makeFolder(kind: 'folder' | 'board', wx: number, wy: number, source?: AnimationSourceRect | null): void {
     if (source) pendingFolderSource.current = { rect: source, at: performance.now() }
     const req = window.agentOS?.newFolder?.(kind === 'board' ? 'Board' : 'Folder', kind, wx, wy)
@@ -1684,7 +1685,7 @@ export default function App(): JSX.Element {
 
   function onBgDown(e: React.PointerEvent): void {
     // Only the LEFT button pans / starts a marquee / clears the selection. A right-click is the context
-    // menu (onBgContextMenu) — it must NOT clear the selection, or "New Folder/Board with Selection (N)"
+    // menu (onBgContextMenu) — it must NOT clear the selection, or "New Folder with Selection (N)"
     // would never show (the right-click's pointerdown was wiping the very selection the menu groups).
     if (e.button !== 0) return
     const st = useDesktop.getState()
@@ -2426,7 +2427,9 @@ export default function App(): JSX.Element {
           onClose={() => setMenu(null)}
           items={[
             { label: 'New Folder', onClick: () => makeFolder('folder', menu.wx, menu.wy) },
-            { label: 'New Board', onClick: () => makeFolder('board', menu.wx, menu.wy) },
+            // Board creation is being slowly deprecated from primary UI. Keep makeFolder('board') for
+            // existing/internal flows, but hide the empty-stage menu entry for now.
+            // { label: 'New Board', onClick: () => makeFolder('board', menu.wx, menu.wy) },
             // A selection of LIVE surfaces (windows/widgets/notes) → the iPhone-style collapsing folder you
             // tap to open (groupSelection — in-memory, works for ANY kind). Only a selection of REAL file/dir
             // tiles offers the disk folder, since collapsing live surfaces into a file-manager would just turn

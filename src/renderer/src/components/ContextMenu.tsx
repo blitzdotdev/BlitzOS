@@ -1,4 +1,4 @@
-// A small right-click menu (New Folder / New Board / …). A full-screen transparent backdrop closes it
+// A small right-click menu (New Folder / selection actions / …). A full-screen transparent backdrop closes it
 // on any outside click or another right-click (the standard overlay backdrop pattern); the menu card stops the
 // pointer so clicks inside don't dismiss before the item fires. Positioned at the click point, nudged
 // back on-screen so it never overflows the viewport.
