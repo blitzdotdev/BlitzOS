@@ -786,8 +786,13 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   // dark over the transparent hole (the page shows through, darkened). So whenever this surface
   // overlaps a live browser, drop its shadow — no shadow, no fringe. (web surfaces don't shadow
   // each other this way; only DOM surfaces vs the page layer.)
+  // True when THIS surface overlaps any OTHER live browser, so it must drop its box-shadow (the
+  // --hairline inset border + the drop shadow) which would otherwise fringe/hairline against the page
+  // composite. Now includes browser-over-browser (the `kind === 'web'` exclusion is gone): a focused
+  // browser over another kept its drop shadow + border and cast the dark edge the user saw. The red
+  // focus ring is an OUTLINE (.window.is-active), NOT a box-shadow, so it survives this drop.
   const overlapsWeb = useDesktop((s) =>
-    serverMode || surface.kind === 'web'
+    serverMode
       ? false
       : s.surfaces.some(
           (w) =>
