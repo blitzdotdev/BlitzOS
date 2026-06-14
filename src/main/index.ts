@@ -340,6 +340,14 @@ app.whenReady().then(() => {
   ipcMain.on('os:action-resolve', (_e, p: { id: string; resolution?: string }) => { electronActionItems.resolveAction(String(p?.id), p?.resolution ? String(p.resolution) : 'done') })
   ipcMain.on('os:action-clear', (_e, id: string) => { electronActionItems.clearAction(String(id)) })
 
+  // Native-input passthrough (plans/blitzos-native-input.md, SPIKE behind BLITZ_NATIVE_INPUT=1): the
+  // renderer flips this as the cursor crosses a page hole so the human's mouse falls to the page as a
+  // real trusted event. Gated on the flag so a stray call can never make the UI click-through when off.
+  ipcMain.on('os:native-passthrough', (_e, on: boolean) => {
+    if (process.env.BLITZ_NATIVE_INPUT !== '1') return
+    sandwich?.setPassthrough(!!on)
+  })
+
   // Local agent path: a localhost HTTP control API.
   startControlServer()
 

@@ -215,6 +215,14 @@ const api = {
   uiFocus(): void {
     ipcRenderer.send('os:ui-focus')
   },
+  /** SPIKE (plans/blitzos-native-input.md), default OFF: when true the renderer routes the human's
+   *  mouse to a page NATIVELY (real, trusted OS events) instead of the synthetic os:page-input path. */
+  nativeInput: process.env.BLITZ_NATIVE_INPUT === '1',
+  /** Native-input toggle: make the UI window click-through (the mouse falls to the page below) while
+   *  the cursor is over a page hole, opaque again over chrome. No-op in main unless nativeInput is on. */
+  nativePassthrough(on: boolean): void {
+    ipcRenderer.send('os:native-passthrough', !!on)
+  },
   /** Titlebar drag: 'start' latches the window origin, 'move' applies screen deltas (main moves the
    *  parent window of the sandwich; CSS app-region cannot be used on the attached child). */
   shellDrag(op: 'start' | 'move', dx = 0, dy = 0): void {

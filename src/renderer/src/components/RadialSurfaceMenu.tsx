@@ -7,9 +7,14 @@ interface Props {
   center: { x: number; y: number } | null
   onCreateSurface: (kind: SurfaceLauncherKind, source?: AnimationSourceRect | null) => void
   onClose: () => void
+  // True when the menu's screen rect overlaps a live browser page. The donut is screen-space DOM
+  // with no page-hole clip, so over a transparent page hole its box-shadow / backdrop-filters /
+  // torus rim FRINGE (the GLASS RULE). It can't use a hole-clip (that would punch the live page
+  // through the donut center), so we suppress those fringe sources instead — see styles.css.
+  overWeb?: boolean
 }
 
-const MENU_SIZE = 286
+export const MENU_SIZE = 286
 const ITEM_RADIUS = 105 // icon anchor = the centroid radius of a 60° annular sector of the ring
 const MENU_MARGIN = 17
 const HOLE_RADIUS = 67 // must match the ::before clip-path ring in styles.css
@@ -77,14 +82,14 @@ function refractionMapUrl(): string {
   return displacementUrl
 }
 
-function menuOrigin(center: { x: number; y: number }): { left: number; top: number } {
+export function menuOrigin(center: { x: number; y: number }): { left: number; top: number } {
   return {
     left: Math.max(MENU_MARGIN, Math.min(window.innerWidth - MENU_SIZE - MENU_MARGIN, Math.round(center.x - MENU_SIZE / 2))),
     top: Math.max(MENU_MARGIN + 32, Math.min(window.innerHeight - MENU_SIZE - MENU_MARGIN, Math.round(center.y - MENU_SIZE / 2)))
   }
 }
 
-export function RadialSurfaceMenu({ center, onCreateSurface, onClose }: Props): JSX.Element | null {
+export function RadialSurfaceMenu({ center, onCreateSurface, onClose, overWeb }: Props): JSX.Element | null {
   const [hovered, setHovered] = useState<string | null>(null)
   if (!center) return null
 
@@ -112,7 +117,7 @@ export function RadialSurfaceMenu({ center, onCreateSurface, onClose }: Props): 
           <feDisplacementMap in="SourceGraphic" in2="map" scale="34" xChannelSelector="R" yChannelSelector="G" />
         </filter>
       </svg>
-      <div className="radial-launcher" style={{ left: origin.left, top: origin.top }}>
+      <div className={`radial-launcher${overWeb ? ' radial-launcher--over-page' : ''}`} style={{ left: origin.left, top: origin.top }}>
         <div className="radial-launcher-center">
           <span>{hovered ?? 'Create'}</span>
         </div>

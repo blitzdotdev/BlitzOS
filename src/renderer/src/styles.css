@@ -2293,6 +2293,9 @@ button {
   clip-path: path('M 0 143 A 143 143 0 1 1 286 143 A 143 143 0 1 1 0 143 Z M 76 143 A 67 67 0 1 0 210 143 A 67 67 0 1 0 76 143 Z');
   pointer-events: none;
 }
+/* The radial-over-a-page treatment (GLASS RULE) lives in ONE consolidated block AFTER every base +
+   [data-theme='dark'] radial rule below, so it wins by source order at equal specificity and via its
+   own [data-theme='dark'] variants. See ".radial-launcher--over-page" near the end of this section. */
 /* Dark mode: smoked glass — dark body tint, white speculars/rims kept (reflections stay white in
    the dark), a brighter rim border (--edge-highlight is near-zero alpha on dark), deeper shadows,
    and the refraction dims slightly instead of brightening. */
@@ -2382,6 +2385,55 @@ button {
 .radial-launcher-item svg {
   width: 29px;
   height: 29px;
+}
+
+/* --- Radial menu OVER a live browser page (GLASS RULE) ----------------------------------------
+   Across the L0-page / L1-UI window split a backdrop-filter has no real backdrop to sample (the donut
+   sits over a transparent HOLE that shows the page in the OTHER window), so the glass refraction reads
+   as a dark glossy sphere and the box-shadow + 1px border read as black "wires". There is no cross-
+   window blur to be had, so over a page the donut DROPS glass and paints as a SOLID frosted donut: no
+   backdrop-filter, no shadow, no border wire, torus clip KEPT (still a ring with a center), and an
+   opaque-enough fill for icon contrast. This block is placed AFTER every base + [data-theme='dark']
+   radial rule so it wins by source order (equal specificity) and via its own dark variants; over the
+   desktop the opaque .bg backs the donut so the .radial-launcher--over-page class is simply absent. */
+.radial-launcher--over-page,
+.radial-launcher--over-page::before,
+.radial-launcher--over-page .radial-launcher-item,
+[data-theme='dark'] .radial-launcher--over-page,
+[data-theme='dark'] .radial-launcher--over-page::before,
+[data-theme='dark'] .radial-launcher--over-page .radial-launcher-item {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.radial-launcher--over-page {
+  border-color: transparent;
+  box-shadow: none;
+  background: rgb(243 243 241 / 97%);
+}
+.radial-launcher--over-page::before {
+  background:
+    radial-gradient(circle at 37% 29%, rgb(255 255 255 / 60%), transparent 58%),
+    radial-gradient(ellipse 204px 156px at 72% 88%, rgb(0 0 0 / 7%), transparent 70%),
+    rgb(228 228 226 / 98%);
+}
+[data-theme='dark'] .radial-launcher--over-page {
+  border-color: transparent;
+  box-shadow: none;
+  background: rgb(24 26 31 / 97%);
+}
+[data-theme='dark'] .radial-launcher--over-page::before {
+  background:
+    radial-gradient(circle at 37% 29%, rgb(255 255 255 / 12%), transparent 58%),
+    radial-gradient(ellipse 204px 156px at 72% 88%, rgb(0 0 0 / 24%), transparent 70%),
+    rgb(32 35 42 / 98%);
+}
+.radial-launcher--over-page .radial-launcher-item:hover,
+.radial-launcher--over-page .radial-launcher-item:focus-visible {
+  background: rgb(0 0 0 / 10%);
+}
+[data-theme='dark'] .radial-launcher--over-page .radial-launcher-item:hover,
+[data-theme='dark'] .radial-launcher--over-page .radial-launcher-item:focus-visible {
+  background: rgb(255 255 255 / 16%);
 }
 
 @keyframes sidebar-dock-target {

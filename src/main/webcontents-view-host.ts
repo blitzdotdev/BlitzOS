@@ -173,9 +173,18 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      backgroundThrottling: false
+      backgroundThrottling: false,
+      // OPAQUE guest page, like every real browser tab. `transparent` DEFAULTS TO TRUE for a guest
+      // page (electron.d.ts: "the background will remain transparent"), so Blink composites the page
+      // WITH ALPHA and any region it leaves unpainted (a centered column's margins, a short page) is
+      // see-through. Over the desktop that just reveals the L0 backdrop (unnoticed); when one browser
+      // overlaps ANOTHER, the lower page shows THROUGH the upper one even though the upper view is
+      // correctly on top (the reported overlap bleed). This must be set at CONSTRUCTION — it is a
+      // webPreferences flag, not a runtime setter; setBackgroundColor alone does NOT defeat it.
+      transparent: false
     }
   })
+  view.setBackgroundColor('#ffffff') // the pre-paint flash color (white, browser default) under the now-opaque page
   view.setBounds(PARKED)
   cb.getWindow()?.contentView.addChildView(view)
 
@@ -366,7 +375,12 @@ export function syncWebContentsViewTabs(surfaceId: string, tabs: TabDecl[], acti
     cb.onActiveContent(surfaceId, webContentsViewIdForSurface(surfaceId))
     if (nowActive) {
       pushNavState(e, nowActive) // freshly shown tab: give the chrome its current url/title/nav state
-      if (!nowActive.view.webContents.isDestroyed()) nowActive.view.webContents.focus()
+      // Do NOT wc.focus() here. In the sandwich, focusing a page's webContents hands macOS KEY to the
+      // L0 pages window — but a tab switch is driven by a click on the L1 tab strip, which just took
+      // key to L1 (App.tsx pointerdown → uiFocus). Stealing it back to L0 leaves L1 non-key, so the
+      // user's NEXT UI click is swallowed by macOS just to re-key L1 (the "click a tab twice to switch"
+      // bug). The page receives keyboard focus when the user clicks INTO it (onHoleDown → pageFocus),
+      // the intended handoff; an agent/programmatic tab switch likewise must never grab the human's key.
     }
   }
 }

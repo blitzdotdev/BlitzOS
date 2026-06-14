@@ -10,11 +10,11 @@ import { IntegrationWidget } from './components/IntegrationWidget'
 import { ConnectPanel } from './components/ConnectPanel'
 import { Overview } from './components/Overview'
 import { capturePrimaryThumb } from './capture'
-import { SurfaceFrame, bgHolesClip } from './components/SurfaceFrame'
+import { SurfaceFrame, bgHolesClip, snapPreviewClip } from './components/SurfaceFrame'
 import { AnnotationLayer } from './components/AnnotationLayer'
 import { AreaChromeOverlay, PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
-import { RadialSurfaceMenu } from './components/RadialSurfaceMenu'
+import { RadialSurfaceMenu, menuOrigin, MENU_SIZE } from './components/RadialSurfaceMenu'
 import type { SurfaceLauncherKind } from './components/SurfaceLauncherButton'
 import { IconChat, IconSparkle, IconCheck, IconInbox, IconSessions, IconTerminal } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
@@ -730,6 +730,12 @@ export default function App(): JSX.Element {
     const el = rootRef.current
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
+      // A browser surface is a transparent HOLE: its own wheel listener (SurfaceFrame webHostRef,
+      // bubble phase, SurfaceFrame.tsx) forwards the scroll into the WebContentsView. This
+      // capture-phase listener must NOT stopPropagation here or that bubble listener never runs.
+      // No preventDefault either: the canvas root is overflow:hidden (no native scroll to suppress)
+      // and the hole listener already calls preventDefault. Let the event keep flowing to it.
+      if (e.target instanceof Element && e.target.closest('.webcontents-host')) return
       // Route gestures by what is under the cursor: surface content keeps its native scroll/pinch,
       // while empty canvas gestures pan/zoom the Blitz camera. This listener runs in capture phase
       // because xterm and other custom scrollers can otherwise consume wheel events before the canvas
@@ -1000,6 +1006,32 @@ export default function App(): JSX.Element {
     window.agentOS && !window.agentOS.serverMode ? bgHolesClip(s.surfaces, s.transform, s.viewport.w, s.viewport.h) : undefined
   )
 
+  // The snap/tiling preview is .world DOM with no z; in the sandwich it would paint OVER a browser
+  // page (z-index can't order DOM under a page). Cut a page-hole around any web surface so the live
+  // page shows through where it covers the preview — same world-coords trick as a SurfaceFrame.
+  const snapClip = useDesktop((s) =>
+    s.snapPreview && window.agentOS && !window.agentOS.serverMode ? snapPreviewClip(s.snapPreview, s.surfaces) : undefined
+  )
+
+  // The radial create-menu is screen-space DOM that fringes over a browser page (the GLASS RULE,
+  // see RadialSurfaceMenu). Detect whether the menu's screen rect overlaps any live browser by
+  // mapping each web surface's WORLD rect through the live camera (x*scale+tx, as bgHolesClip does)
+  // and intersecting the menu's clamped origin rect (286-box at the cursor). Only computed while
+  // the menu is open; in server mode there is no page layer so it stays false.
+  // True when the radial's center sits over a live browser page. elementsFromPoint is occlusion-
+  // correct and needs NO camera math (the earlier world→screen mapping silently missed in this mode,
+  // leaving the donut glassy + wired over the page). A page hole anywhere in the stack under the
+  // donut center ⇒ it is over a page, so it must drop glass and paint solid (styles.css over-page).
+  const radialOverWeb =
+    radialMenu && window.agentOS && !window.agentOS.serverMode
+      ? (() => {
+          const o = menuOrigin(radialMenu)
+          return document
+            .elementsFromPoint(o.left + MENU_SIZE / 2, o.top + MENU_SIZE / 2)
+            .some((el) => !!(el as Element).closest?.('.webcontents-host'))
+        })()
+      : false
+
 
   // Sandwich keyboard handoff, return path: a pointerdown anywhere on UI chrome (anything that is
   // not a page hole) takes the keyboard back from the pages window. The forward path lives on the
@@ -1010,6 +1042,29 @@ export default function App(): JSX.Element {
     }
     window.addEventListener('pointerdown', onDown, true)
     return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [])
+
+  // Native-input passthrough (SPIKE, plans/blitzos-native-input.md, default OFF). When on, make the UI
+  // window click-through while the cursor is over a page hole so the human's mouse reaches the page as
+  // a REAL trusted OS event (fixes the Turnstile checkbox + hover/drag/pinch), and opaque over chrome.
+  // elementFromPoint is occlusion-correct: a widget or menu above a page returns that element, not the
+  // hole, so the UI keeps the click. forward:true keeps mousemove flowing so we flip back off on exit.
+  useEffect(() => {
+    if (!window.agentOS?.nativeInput) return
+    let over = false
+    const onMove = (e: globalThis.MouseEvent): void => {
+      const el = document.elementFromPoint(e.clientX, e.clientY) as Element | null
+      const nowOver = !!el?.closest?.('.webcontents-host')
+      if (nowOver !== over) {
+        over = nowOver
+        window.agentOS?.nativePassthrough?.(nowOver)
+      }
+    }
+    window.addEventListener('mousemove', onMove, true)
+    return () => {
+      window.removeEventListener('mousemove', onMove, true)
+      window.agentOS?.nativePassthrough?.(false)
+    }
   }, [])
 
   // Control actions from main (local control server or agent-socket).
@@ -2033,7 +2088,14 @@ export default function App(): JSX.Element {
         {snapPreview && (
           <div
             className="snap-preview"
-            style={{ left: snapPreview.x, top: snapPreview.y, width: snapPreview.w, height: snapPreview.h }}
+            style={{
+              left: snapPreview.x,
+              top: snapPreview.y,
+              width: snapPreview.w,
+              height: snapPreview.h,
+              ...(snapClip && snapClip !== 'HIDE' ? { clipPath: snapClip } : {}),
+              ...(snapClip === 'HIDE' ? { display: 'none' } : {})
+            }}
           />
         )}
         {/* Always-on integration connect cards are hidden — integrations surface as agent-spawned widgets
@@ -2216,7 +2278,7 @@ export default function App(): JSX.Element {
         </div>
       )}
 
-      <RadialSurfaceMenu center={radialMenu} onCreateSurface={createFromLauncher} onClose={() => setRadialMenu(null)} />
+      <RadialSurfaceMenu center={radialMenu} onCreateSurface={createFromLauncher} onClose={() => setRadialMenu(null)} overWeb={radialOverWeb} />
 
       {hasWorkspaces && showOverview && <Overview onClose={closeOverview} onSwitch={switchWorkspace} theme={theme} onThemeChange={chooseTheme} />}
       {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}

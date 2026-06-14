@@ -112,6 +112,32 @@ function pageHolesClip(me: Surface, all: Surface[]): HolesClip {
   return holesPath(me.w, me.h, holes, WINDOW_RADIUS)
 }
 
+/** The tiling/snap PREVIEW is plain DOM in .world with no z (it is always desktop substrate below
+ *  every browser), but in the sandwich z-index can't order DOM under a page — only a page-hole can.
+ *  So mirror pageHolesClip for the preview rect `sp`, with NO z-test (it is unconditionally below all
+ *  browsers), in the SAME world coords (preview and surfaces are both children of .world, which
+ *  applies the camera via CSS transform) and the SAME un-scaled WINDOW_RADIUS. Returns 'HIDE' on full
+ *  cover, undefined when there is no web surface to clip around. */
+export function snapPreviewClip(sp: { x: number; y: number; w: number; h: number }, all: Surface[]): HolesClip {
+  const holes: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
+  for (const w of all) {
+    if (w.kind !== 'web' || w.minimized || (w.groupId && !w.peek)) continue
+    // A browser's FULL window rect (chrome + page) entirely covering the preview means it is never
+    // visible — hide it outright (a degenerate partial clip ghosts the preview's outline onto the
+    // page). The hole below uses the page rect (chrome inset), matching pageHolesClip's cover test.
+    if (w.x <= sp.x && w.y <= sp.y && w.x + w.w >= sp.x + sp.w && w.y + w.h >= sp.y + sp.h) return 'HIDE'
+    const inset = slotOf(w) ? WEB_CHROME_H_SLOTTED : WEB_CHROME_H
+    const x1 = w.x - sp.x
+    const y1 = w.y + inset - sp.y
+    const x2 = w.x + w.w - sp.x
+    const y2 = w.y + w.h - sp.y
+    if (x2 <= 0 || y2 <= 0 || x1 >= sp.w || y1 >= sp.h || y2 <= y1) continue
+    holes.push({ x1, y1, x2, y2 })
+  }
+  if (!holes.length) return undefined
+  return holesPath(sp.w, sp.h, holes, WINDOW_RADIUS)
+}
+
 function AppEmptyState(): JSX.Element {
   return (
     <div className="surface-empty">
@@ -191,6 +217,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const serverMode = !!window.agentOS?.serverMode
+  // SPIKE (plans/blitzos-native-input.md), default OFF: when on, the human's mouse reaches the page
+  // NATIVELY (App.tsx makes the UI click-through over a hole), so the synthetic hole-forwarding below
+  // is skipped — the real OS event goes straight to L0 (trusted), and keyboard focus is native too.
+  const nativeInput = !!window.agentOS?.nativeInput
   const [draft, setDraft] = useState(surface.url ?? '') // address-bar draft text (app / server-web)
   const zoom = surface.zoom ?? 1
   // Bookmarks dropdown — plain DOM. The sandwich compositor (plans/blitzos-sandwich-compositor.md)
@@ -309,12 +339,14 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   }
   const holeMoveRaf = useRef(0)
   function onHoleDown(e: React.PointerEvent): void {
+    if (nativeInput) return // native mode: the real OS click already fell through to the page
     const p = holePoint(e)
     if (!p) return
     window.agentOS?.pageInput?.(surface.id, { type: 'down', ...p, button: e.button, clicks: e.detail || 1, modifiers: holeMods(e) })
     // no stopPropagation: the bubble reaches focusHere on the frame and raises this window
   }
   function onHoleUp(e: React.PointerEvent): void {
+    if (nativeInput) return // native mode: native click handles input + key focus
     const p = holePoint(e)
     if (!p) return
     window.agentOS?.pageInput?.(surface.id, { type: 'up', ...p, button: e.button, clicks: e.detail || 1, modifiers: holeMods(e) })
@@ -323,6 +355,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     window.agentOS?.pageFocus?.(surface.id)
   }
   function onHoleMove(e: React.PointerEvent): void {
+    if (nativeInput) return // native mode: real moves reach the page; App.tsx tracks the cursor
     if (holeMoveRaf.current) return
     const { clientX, clientY } = e
     const m = holeMods(e)
@@ -333,8 +366,9 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     })
   }
   // Wheel needs preventDefault (the canvas pan/zoom handlers live above) → native non-passive listener.
+  // In native-input mode the real wheel passes through to L0 (ignore:true forwards it), so skip this.
   useEffect(() => {
-    if (surface.kind !== 'web' || serverMode) return
+    if (surface.kind !== 'web' || serverMode || nativeInput) return
     const el = webHostRef.current
     if (!el) return
     const onWheel = (e: WheelEvent): void => {

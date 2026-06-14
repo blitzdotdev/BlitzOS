@@ -33,6 +33,10 @@ export interface Sandwich {
   dragShell(op: 'start' | 'move', dx: number, dy: number): void
   /** Fullscreen rides the parent; the attached child joins its Space (bounds-synced on arrival). */
   setFullScreen(on: boolean): void
+  /** Native-input passthrough (plans/blitzos-native-input.md, SPIKE): make the UI window
+   *  click-through so the human's mouse falls to the page below as a REAL, trusted OS event;
+   *  `forward` keeps move events flowing so the renderer can flip it back off over chrome. Idempotent. */
+  setPassthrough(on: boolean): void
 }
 
 const UI_BG = '#e9e9e7' // what a hole shows before its page paints (and the desktop's canvas color)
@@ -64,6 +68,10 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
     // the pair level (setFullScreen below; resize is a follow-up).
     fullscreenable: false,
     resizable: false,
+    // A click on the UI while a page (L0) holds macOS key must ACT, not be swallowed just to re-key
+    // L1 (the other half of the "click twice" bug — e.g. after typing in a page, the first click on
+    // the tab strip / chrome would otherwise be eaten). Standard AppKit first-mouse opt-in.
+    acceptFirstMouse: true,
     webPreferences: {
       preload: opts.preload,
       sandbox: false,
@@ -86,6 +94,16 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
   }
   const focusUi = (): void => {
     if (!ui.isDestroyed() && !ui.isFocused()) ui.focus()
+  }
+
+  // Native-input passthrough (SPIKE, default OFF): the renderer flips this as the cursor crosses a
+  // page hole. ignore=true → L1 is click-through and the event falls to L0's page (trusted); forward
+  // keeps L1 receiving mousemove so it can detect leaving the hole and flip back to opaque.
+  let passthrough = false
+  const setPassthrough = (on: boolean): void => {
+    if (ui.isDestroyed() || on === passthrough) return
+    passthrough = on
+    ui.setIgnoreMouseEvents(on, { forward: true })
   }
 
   // Manual titlebar drag: move the PARENT by screen deltas; the child follows natively.
@@ -142,5 +160,5 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
     if (opts.fullscreen) setFullScreen(true)
   })
 
-  return { ui, pages, focusPages, focusUi, dragShell, setFullScreen }
+  return { ui, pages, focusPages, focusUi, dragShell, setFullScreen, setPassthrough }
 }
