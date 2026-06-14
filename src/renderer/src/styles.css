@@ -2228,7 +2228,8 @@ button {
   transform: translateX(-50%);
 }
 .sidebar-app.is-minimizing,
-.sidebar-app.is-restoring {
+.sidebar-app.is-restoring,
+.sidebar-app.is-appearing {
   opacity: 1;
   color: var(--text);
   background: var(--control-hover);
@@ -2648,7 +2649,8 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .sidebar-app.is-minimizing,
-  .sidebar-app.is-restoring {
+  .sidebar-app.is-restoring,
+  .sidebar-app.is-appearing {
     animation: none;
   }
   .surface-launcher-backdrop,

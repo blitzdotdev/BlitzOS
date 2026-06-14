@@ -36,7 +36,10 @@ export function Sidebar({ onRequestRestore, onCreateSurface, animating = {} }: P
   const focusAndZoom = useDesktop((s) => s.focusAndZoom)
   const closeSurface = useDesktop((s) => s.closeSurface)
   const tooltipCloseTimer = useRef<number | null>(null)
+  const appearTimers = useRef<Map<string, number>>(new Map())
+  const seenSurfaceIds = useRef<Set<string> | null>(null)
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
+  const [appearing, setAppearing] = useState<Record<string, true>>({})
   const surfaceIdsKey = useMemo(() => surfaces.map((s) => s.id).join('|'), [surfaces])
   const orderRef = useRef<Map<string, number>>(new Map())
   const nextOrder = useRef(0)
@@ -54,8 +57,43 @@ export function Sidebar({ onRequestRestore, onCreateSurface, animating = {} }: P
   useEffect(() => {
     return () => {
       if (tooltipCloseTimer.current != null) window.clearTimeout(tooltipCloseTimer.current)
+      for (const timer of appearTimers.current.values()) window.clearTimeout(timer)
+      appearTimers.current.clear()
     }
   }, [])
+
+  useEffect(() => {
+    const ids = new Set(surfaces.map((s) => s.id))
+    if (seenSurfaceIds.current == null) {
+      seenSurfaceIds.current = ids
+      return
+    }
+
+    const entered = [...ids].filter((id) => !seenSurfaceIds.current?.has(id))
+    seenSurfaceIds.current = ids
+    if (!entered.length) return
+
+    setAppearing((cur) => {
+      const next = { ...cur }
+      for (const id of entered) next[id] = true
+      return next
+    })
+
+    for (const id of entered) {
+      const old = appearTimers.current.get(id)
+      if (old != null) window.clearTimeout(old)
+      const timer = window.setTimeout(() => {
+        appearTimers.current.delete(id)
+        setAppearing((cur) => {
+          if (!cur[id]) return cur
+          const next = { ...cur }
+          delete next[id]
+          return next
+        })
+      }, 820)
+      appearTimers.current.set(id, timer)
+    }
+  }, [surfaces])
 
   useEffect(() => {
     if (tooltipCloseTimer.current != null) {
@@ -101,7 +139,7 @@ export function Sidebar({ onRequestRestore, onCreateSurface, animating = {} }: P
           <button
             key={s.id}
             data-sidebar-sid={s.id}
-            className={`sidebar-app${s.minimized ? ' minimized' : ''}${animating[s.id] ? ` is-${animating[s.id]}` : ''}`}
+            className={`sidebar-app${s.minimized ? ' minimized' : ''}${animating[s.id] ? ` is-${animating[s.id]}` : ''}${appearing[s.id] && !animating[s.id] ? ' is-appearing' : ''}`}
             aria-label={s.title}
             onPointerEnter={(e) => showTooltip(e.currentTarget, s.title)}
             onPointerLeave={hideTooltip}
