@@ -53,25 +53,29 @@ covered page). So: keep overlapping live opaque views + strict z-order, and make
 This is the entire fix for bugs 1 and 2 (the bleed). Needs your live confirm (a page that overlaps
 another should now be opaque white where it does not paint, occluding the lower page).
 
-### Pillar 2 — one coalesced geometry+order transaction (replaces N per-surface RAFs). NEEDS APPROVAL.
+### Pillar 2 — one coalesced geometry+order transaction (replaces N per-surface RAFs). DONE (commit 2a5f3b8).
 
-Replace the per-surface RAF loops with a SINGLE renderer-side coalesced pass (one rAF / one post-commit
-read) that snapshots EVERY web surface's body rect + the full z-order together and pushes ONE IPC
-message (`os:web-geometry` carrying the ordered list of `{id, rect, z, visible, zoom}`). Main applies
-all bounds and reorders the L0 child views ONCE. This removes: the cross-surface z-staleness race
-(bug-order), the W independent forced-layout RAFs (a big chunk of bug 3), and the per-`applyEntry`
-re-reorder churn. One reader, one message, one reorder per frame instead of N of each.
+The per-surface RAF loops are replaced by a SINGLE App-level rAF (`App.tsx`) that reads EVERY browser
+hole by `data-sid`, computes z from `store.effectiveZ` (no `getComputedStyle` flush), and pushes ONE
+message (`os:web-geometry`, the ordered list of `{id, rect, z, visible, zoom}`). Main applies all bounds
+and reorders the L0 child views ONCE (`applyWebGeometry`; `applyEntry` split into `applyEntryBounds` +
+`reorderViews`). This removes the cross-surface z-staleness race, the W independent forced-layout RAFs,
+and the per-`applyEntry` reorder churn: one reader, one message, one reorder per frame. Needs the user's
+overlap eye test (no display in CI).
 
-### Pillar 3 — cheapen the clip + repaint (the rest of bug 3). NEEDS APPROVAL.
+### Pillar 3 — cheapen the clip + repaint (the rest of bug 3). DONE (commit 2a5f3b8).
 
-- **Memoize holes on GEOMETRY, not per `setState`.** Compute the page-hole set once per geometry change
-  inside the coalesced pass and hand each surface its precomputed clip, instead of every DOM frame's
-  selector re-scanning all surfaces on every store mutation (today it is ~O(surfaces^2) per setState).
-- **Spatial pruning.** Only compute a hole for a surface pair that actually overlaps (AABB test first),
-  so non-overlapping widgets pay nothing.
-- **Stop full-viewport raster repaints.** GPU-promote the clipped `.bg` (its own layer via
-  `will-change`/`transform`) so its per-frame `clip-path` change composites on the GPU instead of
-  re-rastering the whole viewport, or move the screen-space hole-cut off the giant `.bg` div entirely.
+- **No clip when there is no page to clip around.** `pageHolesClip` / `bgHolesClip` return `undefined`
+  when their hole set is empty, so a non-overlapping widget gets NO `clip-path` at all (off the clip /
+  repaint layer; its CSS `border-radius` still rounds it). A browser over a field of widgets no longer
+  puts every one on a repaint path. (The existing AABB `continue` already prunes non-overlapping pairs
+  inside the loop; the empty-set early-out is what removes the trivial full-rect clip layer.)
+- **Stop full-viewport raster repaints.** The full-viewport `.bg` is GPU-promoted (`transform:
+  translateZ(0)`, `styles.css`), so its per-camera-frame `clip-path` change is an isolated solid-color
+  raster on its own layer instead of a whole-viewport main-thread repaint.
+- Deferred (only if the eye test still shows cost): hoisting the per-frame hole computation out of each
+  DOM surface's zustand selector into one memoized derived value. The early-out above already keeps the
+  selector body cheap for the common (non-overlapping) case, so this was not needed for the fix.
 
 ### Pillar 4 — OSR/snapshots, surgical only. FOLLOW-UP, optional.
 
