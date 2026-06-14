@@ -1,4 +1,4 @@
-<!-- Background research (2026-06-12) into whether a reader/rewriting proxy could replace headless-Chromium
+e<!-- Background research (2026-06-12) into whether a reader/rewriting proxy could replace headless-Chromium
      screencast streaming for cross-origin `web` surfaces in server mode. Verdict: a narrow, read-only,
      null-origin-sandboxed fast-path is worth adding; it does NOT replace streaming. Streaming stays the
      default + sole path for anything authenticated/interactive/JS-driven. NOT YET IMPLEMENTED — design only. -->

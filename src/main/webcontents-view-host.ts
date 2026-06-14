@@ -184,7 +184,7 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
       transparent: false
     }
   })
-  view.setBackgroundColor('#ffffff') // the pre-paint flash color (white, browser default) under the now-opaque page
+  view.setBackgroundColor('#ffffff') // opaque white backdrop (browser default) under the page; the page repaints over it
   view.setBounds(PARKED)
   cb.getWindow()?.contentView.addChildView(view)
 

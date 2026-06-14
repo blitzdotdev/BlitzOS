@@ -48,20 +48,61 @@ const WINDOW_RADIUS = typeof document !== 'undefined' ? parseFloat(getComputedSt
  *  fill-rule — the `evenodd` keyword inside path() isn't parsed by every Chromium. Hole BOTTOM
  *  corners are rounded by `radius` (the frame's rounded corners; the top edge sits under the
  *  square chrome rows), so what shows through always matches the window shape. */
-export function holesPath(w: number, h: number, holes: Array<{ x1: number; y1: number; x2: number; y2: number }>, radius = 0): HolesClip {
+type Hole = { x1: number; y1: number; x2: number; y2: number }
+const holesOverlap = (a: Hole, b: Hole): boolean => a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2
+/** Decompose (possibly overlapping) hole rects into NON-OVERLAPPING tiles covering the SAME union, by
+ *  a vertical-strip sweep: cut at every rect x-edge, and within each strip merge the covered
+ *  y-intervals. Load-bearing: under the nonzero fill-rule, two OVERLAPPING holes wind their overlap
+ *  TWICE (+1 outer, -1, -1 = -1 ≠ 0), which flips it back to OPAQUE — so the intersection of two
+ *  overlapping browsers paints the lower DOM/page through it (the "shows the widget / flat color
+ *  beneath both" bleed). Disjoint tiles wind every covered point exactly once → one clean hole. */
+function disjointHoles(holes: Hole[]): Hole[] {
+  const xs = Array.from(new Set(holes.flatMap((r) => [r.x1, r.x2]))).sort((a, b) => a - b)
+  const out: Hole[] = []
+  for (let i = 0; i < xs.length - 1; i++) {
+    const x1 = xs[i]
+    const x2 = xs[i + 1]
+    if (x2 - x1 < 0.01) continue
+    const mid = (x1 + x2) / 2
+    const ys = holes
+      .filter((r) => r.x1 <= mid && mid <= r.x2)
+      .map((r) => [r.y1, r.y2] as [number, number])
+      .sort((a, b) => a[0] - b[0])
+    if (!ys.length) continue
+    let cy1 = ys[0][0]
+    let cy2 = ys[0][1]
+    for (let k = 1; k < ys.length; k++) {
+      if (ys[k][0] <= cy2 + 0.01) cy2 = Math.max(cy2, ys[k][1])
+      else {
+        out.push({ x1, y1: cy1, x2, y2: cy2 })
+        cy1 = ys[k][0]
+        cy2 = ys[k][1]
+      }
+    }
+    out.push({ x1, y1: cy1, x2, y2: cy2 })
+  }
+  return out
+}
+export function holesPath(w: number, h: number, holes: Hole[], radius = 0): HolesClip {
   if (!holes.length) return undefined
   if (holes.some((r) => r.x1 <= 0 && r.y1 <= 0 && r.x2 >= w && r.y2 >= h)) return 'HIDE'
+  // Overlapping holes must become disjoint tiles first (see disjointHoles) or their intersection
+  // re-fills opaque. When we decompose, drop the per-tile bottom rounding (internal tile edges would
+  // notch); the common single / non-overlapping case keeps its rounded bottom corners unchanged.
+  const overlapping = holes.some((a, i) => holes.some((b, j) => j > i && holesOverlap(a, b)))
+  const cut = overlapping ? disjointHoles(holes) : holes
+  const rad = overlapping ? 0 : radius
   // PAD pushes the outer ring's antialiasing off the element's content edge. The box-shadow no
   // longer needs covering here: surfaces overlapping a browser drop their shadow entirely
   // (SurfaceFrame overlapsWeb), so there is no shadow to hard-cut into a hairline.
   const PAD = 8
-  const subs = holes
+  const subs = cut
     .map((r) => {
-      const rad = Math.max(0, Math.min(radius, (r.x2 - r.x1) / 2, (r.y2 - r.y1) / 2))
-      if (rad < 0.5) return `M${r.x1} ${r.y1} V${r.y2} H${r.x2} V${r.y1} Z`
+      const rr = Math.max(0, Math.min(rad, (r.x2 - r.x1) / 2, (r.y2 - r.y1) / 2))
+      if (rr < 0.5) return `M${r.x1} ${r.y1} V${r.y2} H${r.x2} V${r.y1} Z`
       // counter-clockwise: down the left, arc the bottom-left, along the bottom, arc the
       // bottom-right, up the right, close along the top (sweep 0 = CCW corner turns)
-      return `M${r.x1} ${r.y1} V${r.y2 - rad} A${rad} ${rad} 0 0 0 ${r.x1 + rad} ${r.y2} H${r.x2 - rad} A${rad} ${rad} 0 0 0 ${r.x2} ${r.y2 - rad} V${r.y1} Z`
+      return `M${r.x1} ${r.y1} V${r.y2 - rr} A${rr} ${rr} 0 0 0 ${r.x1 + rr} ${r.y2} H${r.x2 - rr} A${rr} ${rr} 0 0 0 ${r.x2} ${r.y2 - rr} V${r.y1} Z`
     })
     .join(' ')
   return `path("M${-PAD} ${-PAD} H${w + PAD} V${h + PAD} H${-PAD} Z ${subs}")`
