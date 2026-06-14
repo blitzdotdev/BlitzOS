@@ -903,7 +903,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           height: surface.h,
           zIndex: surface.z,
           ...(clipPath && clipPath !== 'HIDE' ? { clipPath } : {}),
-          ...(overlapsWeb ? { boxShadow: 'none' } : {}),
+          ...(overlapsWeb || (clipPath && clipPath !== 'HIDE') ? { boxShadow: 'none' } : {}),
           ...(clipPath === 'HIDE' ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {})
         }}
         onPointerDown={focusHere}
@@ -928,7 +928,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         // fully covered: hide outright (a degenerate clip ghosts the element's outline).
         ...(clipPath && clipPath !== 'HIDE' ? { clipPath } : {}),
         // Overlapping a browser: drop the box-shadow so it can't fringe against the page hole.
-        ...(overlapsWeb ? { boxShadow: 'none' } : {}),
+        ...(overlapsWeb || (clipPath && clipPath !== 'HIDE') ? { boxShadow: 'none' } : {}),
         ...(surface.minimized ? { display: 'none' } : {}),
         // Slotted tiles spring-snap into their span (the macOS settle); suspended while dragging so
         // the tile tracks the cursor 1:1, and resumed on drop for the snap animation. File tiles get
