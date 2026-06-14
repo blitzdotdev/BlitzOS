@@ -1602,6 +1602,27 @@ button {
   font-size: 12px;
 }
 
+/* A jsx/tsx widget's body while its source compiles (the iframe mounts only once, when ready). */
+.jsx-compiling {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: var(--surface);
+}
+.jsx-compiling::after {
+  content: '';
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--hairline);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: jsx-compiling-spin 0.8s linear infinite;
+}
+@keyframes jsx-compiling-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Consent prompt overlay (shown inside a srcdoc surface body). */
 .consent {
   position: absolute;

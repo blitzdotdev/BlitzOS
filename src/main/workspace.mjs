@@ -106,9 +106,9 @@ function nodeKind(s) {
 // Generated root basenames that must never be reused for a content file.
 const RESERVED_ROOT = new Set(['blitzos.md', '.gitignore'])
 
-// The extensions of BlitzOS-OWNED content files (note→.md, web→.weblink, srcdoc→.html). Only these are
-// deleted when their surface is closed — a real dropped file/dir/repo is never auto-removed.
-const CONTENT_EXTS = new Set(['.md', '.weblink', '.html'])
+// The extensions of BlitzOS-OWNED content files (note→.md, web→.weblink, srcdoc→.html/.jsx/.tsx).
+// Only these are deleted when their surface is closed — a real dropped file/dir/repo is never auto-removed.
+const CONTENT_EXTS = new Set(['.md', '.weblink', '.html', '.jsx', '.tsx'])
 
 // Raster image extensions — canvas file tiles render these inline; the file-manager flags them. One source.
 const IMAGE_EXT = /^(png|jpe?g|gif|webp|svg|bmp|avif)$/
@@ -161,7 +161,9 @@ function contentFor(kind, s) {
       return { ext: 'weblink', name: slug(hostOf(s.url) || s.title, 'link'), body: JSON.stringify(link, null, 2) + '\n' }
     }
     case 'srcdoc':
-      return { ext: 'html', name: slug(s.title, 'panel'), body: String(s.html ?? '') }
+      // The lang IS the extension (a jsx widget persists as a real .jsx file — greppable,
+      // forkable, survives copy/move); `html` stays the source field for every lang.
+      return { ext: s.lang === 'jsx' ? 'jsx' : s.lang === 'tsx' ? 'tsx' : 'html', name: slug(s.title, 'panel'), body: String(s.html ?? '') }
     default:
       return null
   }
@@ -719,7 +721,10 @@ function nodeToSurface(dir, n, z) {
     return { ...base, kind: n.kind, url, title, props: {}, ...(tabs ? { tabs, activeTab } : {}) }
   }
   if (n.kind === 'srcdoc') {
-    return { ...base, kind: 'srcdoc', html: content, title, props: view.props && typeof view.props === 'object' ? view.props : {} }
+    // lang rides the content file's extension (.jsx/.tsx compile at mount; .html renders verbatim).
+    const ext = extname(n.path).toLowerCase()
+    const lang = ext === '.jsx' ? 'jsx' : ext === '.tsx' ? 'tsx' : undefined
+    return { ...base, kind: 'srcdoc', html: content, title, ...(lang ? { lang } : {}), props: view.props && typeof view.props === 'object' ? view.props : {} }
   }
   return null // image/file/folder/widget not materialized yet
 }
@@ -767,6 +772,7 @@ function autoKind(name) {
   if (ext === '.weblink') return 'web'
   if (ext === '.md') return 'note'
   if (ext === '.html' || ext === '.htm') return 'srcdoc'
+  if (ext === '.jsx' || ext === '.tsx') return 'srcdoc' // a jsx/tsx widget (compiled at mount)
   return 'file' // images, pdfs, archives, code, anything else → a file tile on the canvas (#37)
 }
 

@@ -10,6 +10,7 @@ import { RuntimePanel } from './RuntimePanel'
 import { InboxPanel } from './InboxPanel'
 import { BRIDGE_SHIM } from '../widget-bridge'
 import { UI_KIT } from '../widget-ui-kit'
+import { useJsxWidget } from '../widget-jsx'
 import { IconEye } from './Icons'
 import { FolderWidget } from './FolderWidget'
 import { FileWidget, DirWidget } from './FileWidget'
@@ -269,6 +270,9 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const nativeInput = !!window.agentOS?.nativeInput
   const [draft, setDraft] = useState(surface.url ?? '') // address-bar draft text (app / server-web)
   const zoom = surface.zoom ?? 1
+  // jsx/tsx widgets compile at mount (inert {active:false} for everything else). The composed
+  // srcdoc (or error card) arrives async; the iframe mounts only once it's ready.
+  const jsxWidget = useJsxWidget(surface)
   // Bookmarks dropdown — plain DOM. The sandwich compositor (plans/blitzos-sandwich-compositor.md)
   // puts ALL UI in the transparent top window, physically above the live pages below, so a dropdown
   // simply paints over the page. No capture, no freeze, no placeholder.
@@ -536,6 +540,15 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         if (ref && ref.id && ref.surfaceId) {
           useDesktop.getState().recallAnnotation({ id: String(ref.id), surfaceId: String(ref.surfaceId), xPct: Number(ref.xPct) || 0, yPct: Number(ref.yPct) || 0, text: String(ref.text ?? ''), ts: 0 })
         }
+      } else if (m.type === 'blitz:jsxerr') {
+        // A jsx widget's bootstrap caught a runtime failure (bad import, mount throw, unhandled
+        // rejection). Fold it into props.lastError so the agent reads it from list_state; the
+        // bootstrap already painted the in-widget overlay for the human.
+        const msg = String((m as { error?: unknown }).error ?? 'widget runtime error').slice(0, 500)
+        if (surface.props?.lastError !== msg) useDesktop.getState().updateSurfaceProps(surface.id, { lastError: msg })
+      } else if (m.type === 'blitz:jsxok') {
+        // The widget mounted clean — clear a stale lastError from a previous broken generation.
+        if (surface.props?.lastError) useDesktop.getState().updateSurfaceProps(surface.id, { lastError: undefined })
       } else if (m.type === 'blitz:req' && typeof m.reqId === 'string') {
         if (m.op === 'data') void serveData(win, m.reqId, String(m.provider ?? ''), String(m.resource ?? ''))
         else if (m.op === 'tool') void serveTool(win, m.reqId, String(m.tool ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
@@ -860,22 +873,28 @@ export const SurfaceFrame = memo(function SurfaceFrame({
             style={iframeZoom}
           />
         )
-      case 'srcdoc':
+      case 'srcdoc': {
         // Prepend the OS<->widget bridge shim (window.blitz) + the Blitz UI kit (design tokens +
         // <blitz-*> web components) so every widget shares ONE component library; the stored html stays
         // clean (forkable). onLoad seeds props after the document (incl. the shim) has parsed.
+        // jsx/tsx widgets: the body is the compiled composition (import map + bootstrap) — same
+        // shim/kit prepend, same iframe, same bridge. Until the compile resolves, render a shell
+        // (NOT an iframe) so the widget document loads exactly once.
+        if (jsxWidget.active && jsxWidget.srcdoc === null) return <div className="jsx-compiling" style={fill} />
+        const srcdocBody = jsxWidget.active ? jsxWidget.srcdoc! : surface.html ?? ''
         return (
           <iframe
             ref={iframeRef}
             title={surface.title}
             sandbox="allow-scripts"
-            srcDoc={BRIDGE_SHIM + UI_KIT + (surface.html ?? '')}
+            srcDoc={BRIDGE_SHIM + UI_KIT + srcdocBody}
             style={iframeZoom}
             onLoad={() =>
               iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:init', props: widgetProps() }, '*')
             }
           />
         )
+      }
       case 'native':
         if (surface.component === 'note') return <NoteWidget surface={surface} />
         if (surface.component === 'chat') return <ChatPanel surface={surface} />

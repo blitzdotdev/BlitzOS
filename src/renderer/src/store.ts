@@ -206,6 +206,8 @@ export interface CreateSurfaceInput {
   title?: string
   url?: string
   html?: string
+  /** srcdoc source language — jsx/tsx compile at mount; absent/'html' renders verbatim. */
+  lang?: 'html' | 'jsx' | 'tsx'
   component?: string
   props?: Record<string, unknown>
   /** P0: agent may read this surface's content over the relay (auto-true for agent-opened web/app). */
@@ -898,6 +900,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       title: input.title ?? input.url ?? input.component ?? input.kind,
       url: input.url,
       html: input.html,
+      ...(input.lang && input.lang !== 'html' ? { lang: input.lang } : {}),
       component: input.component,
       props: input.props ?? {},
       shared: input.shared,

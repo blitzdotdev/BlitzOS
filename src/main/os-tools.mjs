@@ -9,7 +9,7 @@
 // `transport` ('relay' | 'localhost' | 'server') is threaded into each handler so the few security-relevant
 // branches (raw eval / reading a logged-in surface across an untrusted path) behave the same everywhere:
 // localhost is trusted; relay + server are untrusted (gate page content to surfaces the user shared).
-import { listWidgets, getWidgetSource, saveWidget, WIDGET_AUTHORING_MD } from './widget-catalog.mjs'
+import { listWidgets, getWidgetSource, saveWidget, widgetAuthoringMd } from './widget-catalog.mjs'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
 // Stage grid: agent N owns stage N (stageForAgent). When an agent-scoped call creates a surface, we tag it
 // with {stage} so the renderer cascades it into that agent's stage — isolated from the user's primary (stage 0).
@@ -125,7 +125,11 @@ export function serializeStateForAgent(state, integrations) {
         ...(x.slot ? { slot: x.slot, ...(x.slotStage ? { slotStage: x.slotStage } : {}) } : {}),
         ...(isOffstage(x, s.viewport, s.stageOrder, Number(s.stageCount) || 1) ? { offstage: true } : {}),
         ...(x.focus ? { focus: true } : {}),
-        ...(hint ? { account_hint: hint } : {})
+        ...(hint ? { account_hint: hint } : {}),
+        // jsx/tsx widgets advertise their lang; a compile/runtime failure surfaces as lastError
+        // (the confirm-a-drive read: fix the source, update_surface, re-check).
+        ...(x.lang && x.lang !== 'html' ? { lang: x.lang } : {}),
+        ...(x.props && x.props.lastError ? { lastError: x.props.lastError } : {})
       }
       // chat surfaces advertise which agent they host; a terminal surface advertises which
       // read_terminal(id) ids it holds (one entry per tab) so an agent can read each.
@@ -222,11 +226,11 @@ export function makeOsTools(ops) {
     {
       path: '/create_surface',
       description:
-        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html, native takes component+props. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary agent, pass {agent:"<your id>"} so it opens in YOUR stage (do NOT also pass x/y unless repositioning within your stage).',
+        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html (+ lang:"jsx"|"tsx" for a React widget — see get_widget_authoring), native takes component+props. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.jsx`=React widget, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary agent, pass {agent:"<your id>"} so it opens in YOUR stage (do NOT also pass x/y unless repositioning within your stage).',
       input_schema: {
         type: 'object',
         required: ['kind'],
-        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' }, agent: { type: 'string' } }
+        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' }, agent: { type: 'string' } }
       },
       handler: ({ body }) => {
         const a = parse(body)
@@ -359,8 +363,8 @@ export function makeOsTools(ops) {
     },
     {
       path: '/update_surface',
-      description: 'Patch a surface in place: set html (srcdoc), props (native, e.g. note text), url, title, or geometry.',
-      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, html: { type: 'string' }, url: { type: 'string' }, title: { type: 'string' }, props: { type: 'object' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } } },
+      description: 'Patch a surface in place: set html (srcdoc; pass lang too when switching a widget between html and jsx/tsx), props (native, e.g. note text), url, title, or geometry.',
+      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, url: { type: 'string' }, title: { type: 'string' }, props: { type: 'object' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } } },
       handler: ({ body }) => {
         const { id, ...patch } = parse(body)
         if (!id) return { status: 400, body: { error: 'id required' } }
@@ -551,7 +555,7 @@ export function makeOsTools(ops) {
         const a = parse(body)
         const w = getWidgetSource(String(a.name || ''))
         if (!w) return { status: 404, body: { error: `no widget named "${String(a.name)}"` } }
-        const desc = { kind: 'srcdoc', html: w.html, props: { ...w.props, ...(a.props || {}) }, title: typeof a.title === 'string' ? a.title : w.name }
+        const desc = { kind: 'srcdoc', html: w.html, ...(w.lang && w.lang !== 'html' ? { lang: w.lang } : {}), props: { ...w.props, ...(a.props || {}) }, title: typeof a.title === 'string' ? a.title : w.name }
         if (typeof a.x === 'number') desc.x = a.x
         if (typeof a.y === 'number') desc.y = a.y
         if (typeof a.w === 'number') desc.w = a.w
@@ -570,8 +574,8 @@ export function makeOsTools(ops) {
     },
     {
       path: '/save_widget',
-      description: 'Save a NEW or forked widget (sandboxed HTML using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST to learn the bridge. Returns { name, version }.',
-      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string', description: 'a-z 0-9 -, 2-49 chars' }, html: { type: 'string' }, description: { type: 'string' }, needs: { type: 'array', items: { type: 'string' } }, props: { type: 'object' }, forkedFrom: { type: 'string' } } },
+      description: 'Save a NEW or forked widget (sandboxed HTML, or React via lang:"jsx"/"tsx", using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST to learn the bridge. Returns { name, version }.',
+      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string', description: 'a-z 0-9 -, 2-49 chars' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, description: { type: 'string' }, needs: { type: 'array', items: { type: 'string' } }, props: { type: 'object' }, forkedFrom: { type: 'string' } } },
       handler: ({ body }) => {
         try {
           return saveWidget(parse(body))
@@ -588,7 +592,7 @@ export function makeOsTools(ops) {
     {
       path: '/get_widget_authoring',
       description: 'Get the widget-authoring guide: how to write a widget that reads integration data via the sandboxed window.blitz bridge. Read this BEFORE authoring a new widget with save_widget.',
-      handler: () => ({ markdown: WIDGET_AUTHORING_MD })
+      handler: () => ({ markdown: widgetAuthoringMd() })
     },
     {
       path: '/events',

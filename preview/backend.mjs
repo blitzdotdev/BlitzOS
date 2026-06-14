@@ -23,8 +23,8 @@ import { join, dirname, basename, resolve, sep } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
 // listWidgets/getWidgetSource/saveWidget moved INTO the shared os-tools.mjs registry (server no longer
-// references them directly); WIDGET_AUTHORING_MD + the data registry are still used by HTTP routes here.
-import { fetchProviderResource, PROVIDER_DATA, WIDGET_AUTHORING_MD } from '../src/main/widget-catalog.mjs'
+// references them directly); the authoring guide + the data registry are still used by HTTP routes here.
+import { fetchProviderResource, PROVIDER_DATA, widgetAuthoringMd } from '../src/main/widget-catalog.mjs'
 // #51 general provider-access substrate (the agent makes whatever request it needs; token stays here).
 import { callProvider, createApprovalLedger, createRateLimiter } from '../src/main/provider-call.mjs'
 // Widget tool bridge — the CLOSED allowlist a sandboxed widget may call via blitz.tool (shared with Electron).
@@ -900,7 +900,7 @@ const server = createServer(async (req, res) => {
   // GET /api/widget-authoring.md — the bridge-authoring guide (also a tool).
   if (path === '/api/widget-authoring.md' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' })
-    return res.end(WIDGET_AUTHORING_MD)
+    return res.end(widgetAuthoringMd())
   }
 
   // GET /api/oauth/callback?code&state -> exchange + store, return a close-me page

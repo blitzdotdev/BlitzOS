@@ -1,5 +1,7 @@
 // Types for the shared widget library + integration-data registry (widget-catalog.mjs).
 
+export type WidgetLang = 'html' | 'jsx' | 'tsx'
+
 export interface WidgetMeta {
   name: string
   description: string
@@ -7,17 +9,20 @@ export interface WidgetMeta {
   props: Record<string, unknown>
   version: number
   origin: 'builtin' | 'authored'
+  /** present (jsx/tsx) only for React widgets; absent = html */
+  lang?: WidgetLang
   forkedFrom?: string
 }
 
 export interface WidgetSource extends WidgetMeta {
-  /** Byte-exact, forkable HTML source. */
+  /** Byte-exact, forkable source (html, or jsx/tsx when lang says so). */
   html: string
 }
 
 export interface SaveWidgetInput {
   name: string
   html: string
+  lang?: WidgetLang
   description?: string
   needs?: string[]
   props?: Record<string, unknown>
@@ -49,4 +54,5 @@ export function fetchProviderResource(
   token: string | undefined
 ): Promise<{ items: NormalizedItem[] }>
 
-export const WIDGET_AUTHORING_MD: string
+export function widgetAuthoringMd(): string
+export function runtimeRegistry(): Record<string, string>

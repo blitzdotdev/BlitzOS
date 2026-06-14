@@ -1479,6 +1479,10 @@ export default function App(): JSX.Element {
         title: s.title,
         url: s.url,
         html: s.html,
+        // srcdoc lang must survive the round-trip: workspace.mjs contentFor picks the content
+        // file's EXTENSION from it (.jsx/.tsx) — dropping it here would persist jsx source into
+        // a .html file and rehydrate it as garbage markup on the next boot.
+        lang: s.lang,
         props: s.props,
         component: s.component,
         role: s.role,
