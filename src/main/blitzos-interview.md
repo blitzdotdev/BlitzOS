@@ -19,9 +19,9 @@ Everything below (the board updates, the curation, the finish) happens BETWEEN a
 
 ## Your inputs (skim for the gap, do not deep-read before asking)
 
-1. `.blitzos/onboarding/context.md` holds your interviewer rules (at most 4 questions, only genuine gaps; never re-ask what the scan answers) followed by the scanned context. **Skim it for the next gap, ask, then keep reading as needed.** EVERY question you ask is a multiple-choice `blitz-ui` choice card. Never ask an open, free-text, or "write/paste a sample" question; the voice card is filled from the scan's own quotes, not by asking.
+1. `.blitzos/onboarding/context.md` holds your interviewer rules (at most 4 questions, only genuine gaps; never re-ask what the scan answers) followed by the scanned context. **Skim it for the next gap, ask, then keep reading as needed.** EVERY question you ask is a multiple-choice `blitz-ui` choice card. Never ask an open, free-text, or "write/paste a sample" question.
 2. `.blitzos/onboarding/scan.json` is the same scan, structured. Reference a detail only when you need it.
-3. `.blitzos/onboarding/board.json` maps each board card (profile, projects, rhythm, voice, sessions, people, **worktabs** = "Open right now" / the live working set, workflows, gaps and so on) to its surface id under `ids`. You need this only once you START updating cards (after the first answer), not before asking.
+3. `.blitzos/onboarding/board.json` maps each board card (profile, projects, rhythm, sessions, **worktabs** = "Open right now" / the live working set, workflows, gaps and so on) to its surface id under `ids`. You need this only once you START updating cards (after the first answer), not before asking.
 
 ## How to ask (the board is the interview)
 
@@ -57,7 +57,7 @@ The board cards are TILES on the user's stage, a fixed slot grid. Tiles never ov
 
 Do these IN ORDER. Steps 1 and 2 must complete BEFORE step 3, because marking the interview done instantly hands the desk to the resident agent (within ~0.1s), so anything you try after step 3 is interrupted.
 
-1. `say` a tight **"What I learned"** summary (scope, act vs ask, priorities, people, voice, attention, privacy) and invite corrections.
+1. `say` a tight **"What I learned"** summary (scope, act vs ask, priorities, voice, attention, privacy) and invite corrections.
 2. Write `.blitzos/onboarding/profile.md`, the durable principal model the resident agent reads first: the summary above plus every correction, in plain markdown.
 3. Mark the duty done: write `.blitzos/onboarding/interview.json` as `{"state":"done","finishedAt":<epoch-ms>}`.
 4. **STOP. Your onboarding job ends at step 3.** Do NOT propose or start an initiative, open new work, write `initiative.md`, or resume a watch loop. The instant `interview.json` is marked done, BlitzOS hands off to a FRESH resident agent (clean context, higher reasoning) that reads your `profile.md`, the board, and the chat, then proposes and runs initiatives from there. Your last act is step 3; let the handoff take over.

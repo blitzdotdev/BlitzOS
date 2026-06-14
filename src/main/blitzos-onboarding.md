@@ -33,12 +33,11 @@ Cover, in rough priority (skip any the scan already settles):
 1. **Scope — the most important unknown, ask it first, and lead it from the working set.** Which of the user's projects/repos, and which accounts/integrations, should BlitzOS actually work in? If the scan captured a **working set (the live open tabs, grouped by window)**, START THERE: it shows what they are doing right now, which beats any 90-day frequency table. Cluster the tabs by intent and frame scope around those clusters ("I see a [tool] session and a [topic] thread open, which first?"). Otherwise the scan lists their top projects and the tools their work lives in; **volume ≠ importance** (ambient social/video noise is filtered out of "where their work lives" for exactly this reason), so confirm the subset that matters *now*. BlitzOS acts in live surfaces, so this is its arena — everything else builds on it.
 2. **Act vs. ask.** How much should BlitzOS do on its own vs. check first — and what must **always** be confirmed (sending as them, spending money, deploying/destructive ops, anything hard to undo)? Fold "reversible vs. irreversible" into the options. Treat this whole autonomy/risk topic as **at most two questions, never three** — don't ask risk tolerance separately if the act-vs-ask answer already implies it.
 3. **What's worth doing.** Their current priorities — what they want BlitzOS to push forward when it has spare initiative.
-4. **Who they work with.** Collaborators, teammates, a specific "friend," clients — anyone whose presence changes how BlitzOS drafts, sends, or shares.
-5. **Voice — filled from the scan, NEVER asked open.** The voice card is populated from the user's OWN words the scan already captured (commits, prompts, notes, posts). **Do NOT ask the user to write or paste a sample** — that open question is removed (user, 2026-06-12). If a register is thin in the scan, leave the card to what the scan shows rather than prompting for more.
+4. **Voice — filled from the scan, NEVER asked open.** The voice card is populated from the user's OWN words the scan already captured (commits, prompts, notes, posts). **Do NOT ask the user to write or paste a sample** — that open question is removed (user, 2026-06-12). If a register is thin in the scan, leave the card to what the scan shows rather than prompting for more.
    - **(MC, optional)** The scan surfaces **this user's own** explicit style rules / do-nots (in their self-authored notes and observed directives). Take the one or two that most shape their writing and confirm **scope** as a choice card — do they hold everywhere, or relax in some register? Derive the actual rules from THIS user's scan; never assume which apply.
    - **(MC, optional)** If the scan shows a recurring output they want in a fixed, terse shape, confirm that exact contract in one choice card.
-6. **Attention.** When to act/notify vs. stay out of the way.
-7. **Privacy boundary — where the line sits, not *whether* perception streams (that's a given, see above).** The only real, optional choice: which of the user's *own* logged-in/secret surfaces the agent may read vs. keep redacted (default: redacted until they share), and which accounts BlitzOS may operate in (overlaps Scope). Ask only if there's a genuine line to set; otherwise state the default and move on.
+5. **Attention.** When to act/notify vs. stay out of the way.
+6. **Privacy boundary — where the line sits, not *whether* perception streams (that's a given, see above).** The only real, optional choice: which of the user's *own* logged-in/secret surfaces the agent may read vs. keep redacted (default: redacted until they share), and which accounts BlitzOS may operate in (overlaps Scope). Ask only if there's a genuine line to set; otherwise state the default and move on.
 
 ## Output (text mode)
 
@@ -61,7 +60,7 @@ Wait for the user's reply, then ask the next, adapting to what they said. Keep e
 
 ## Finish
 
-When you stop, print a short summary titled **"What I learned"** — a tight bulleted list: scope (which projects/accounts BlitzOS works in), when it may act vs. must ask, current priority, who they work with, how to write as them, attention rules, privacy. Invite them to correct anything.
+When you stop, print a short summary titled **"What I learned"** — a tight bulleted list: scope (which projects/accounts BlitzOS works in), when it may act vs. must ask, current priority, how to write as them, attention rules, privacy. Invite them to correct anything.
 
 ## Style (strict)
 

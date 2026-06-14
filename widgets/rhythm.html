@@ -50,8 +50,8 @@
     let html=''
     for(let dd=0;dd<7;dd++){
       html+='<div class="wd">'+WD[dd]+'</div>'
-      for(let h=0;h<24;h++){const n=p[dd+':'+h]||0,t=Math.sqrt(n/max)
-        html+=n?'<div class="c" style="background:'+lerpHex(lo,hi,t)+';opacity:'+(.4+.6*t).toFixed(2)+'"></div>':'<div class="c c0"></div>'}
+      for(let h=0;h<24;h++){const n=p[dd+':'+h]||0,t=n?Math.pow(n/max,0.78):0,band=Math.ceil(t*5)/5
+        html+=n?'<div class="c" style="background:'+lerpHex(lo,hi,band)+';opacity:'+(.18+.82*band).toFixed(2)+'"></div>':'<div class="c c0"></div>'}
     }
     document.getElementById('grid').innerHTML=html
     const bits=[]

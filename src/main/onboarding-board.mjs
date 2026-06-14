@@ -30,9 +30,20 @@ const browserName = (b) => {
   const last = b.split('.').pop() || b
   return last.charAt(0).toUpperCase() + last.slice(1)
 }
-// How we know a person → the card's subtitle + stat label.
-const VIA_SUB = { commits: 'git collaborator', messages: 'texts with you', mail: 'emails you', meetings: 'meets with you', documents: 'co-author' }
-const VIA_STAT = { commits: 'Commits', messages: 'Messages', mail: 'Emails', meetings: 'Meetings', documents: 'Docs' }
+
+// Is this subject a developer? Content-agnostic, from scan signals the planner already has: a real
+// stack (≥2 languages), a heavily-prompted coding project, a multi-repo + tooling footprint, or a
+// strong dev-text web signal. devSignals is SUFFICIENT-not-necessary inside the OR (never the sole
+// gate — see scripts/onboarding-scan.mjs:1134-1136). Thresholds are tunable; the seed test pins the
+// boundary deterministically. A non-dev with a stray repo/session does NOT get the projects card.
+const isDeveloper = (s) => {
+  const stack = (s.stack || []).length
+  const repos = (s.repos || []).length
+  const tooling = (s.tooling || []).length
+  const promptedProjects = (s.projects || []).filter((p) => (p.prompts || 0) >= 5).length
+  const devText = (s.web && s.web.devSignals) || 0
+  return stack >= 2 || promptedProjects >= 1 || (repos >= 2 && tooling >= 1) || devText >= 150
+}
 
 // ---- card builders (role → props | null). Placement is resolved separately. ----
 const BUILDERS = {
@@ -53,6 +64,7 @@ const BUILDERS = {
       .slice(0, 4)
   }),
   projects: (s) => {
+    if (!isDeveloper(s)) return null // a non-dev with a stray repo/session never gets the projects card
     const max = Math.max(...s.projects.map((p) => p.prompts), 1)
     const items = s.projects
       .slice(0, 8)
@@ -111,28 +123,10 @@ const BUILDERS = {
       ...(s.meta.fda ? {} : { note: 'launch counts only' })
     }
   },
-  voice: (s) =>
-    s.voice.length
-      ? { title: 'In their own words', items: s.voice.slice(0, 4).map((v) => ({ text: v.text, source: v.source })) }
-      : null,
   sessions: (s) =>
     s.sessions.length
       ? { title: 'Recent sessions', items: s.sessions.slice(0, 7).map((x) => ({ time: rel(x.last), title: x.title, detail: x.project || x.agent })) }
       : null,
-  people: (s) => {
-    const named = s.people.filter((p) => p.kind === 'name').slice(0, 6)
-    if (named.length < 2) return null
-    const max = Math.max(...named.map((p) => p.n), 1)
-    return {
-      title: 'Known associates',
-      items: named.map((p) => ({
-        name: p.label,
-        sub: VIA_SUB[p.via] || 'in your orbit',
-        score: Math.round((100 * p.n) / max),
-        stats: [{ k: VIA_STAT[p.via] || 'Signals', n: String(p.n) }]
-      }))
-    }
-  },
   gaps: (s) => ({
     title: 'Open questions',
     items: [
@@ -153,15 +147,13 @@ export const BRANCH_A_LAYOUT = {
   profile: { col: 6, row: 0, size: 's' },
   rhythm: { col: 4, row: 1, size: 'm' },
   workflows: { col: 6, row: 1, size: 's' },
-  voice: { col: 4, row: 2, size: 'm' },
   gaps: { col: 6, row: 2, size: 's' },
-  people: { col: 4, row: 3, size: 's' },
   sessions: { col: 5, row: 3, size: 's' },
   notepad: { col: 6, row: 3, size: 's' }
 }
 
-const WIDGET_OF = { profile: 'profile', projects: 'dossiers', workflows: 'workflows', worktabs: 'worktabs', schedule: 'timeline', rhythm: 'rhythm', voice: 'quotes', sessions: 'timeline', people: 'dossiers', gaps: 'gaps' }
-const TITLE_OF = { profile: 'Case File', projects: 'Projects', workflows: 'Web workflows', worktabs: 'Open right now', schedule: 'Coming up', rhythm: 'Working rhythm', voice: 'In their own words', sessions: 'Recent sessions', people: 'Known associates', gaps: 'Open questions', unlock: 'Unlock the personal layer' }
+const WIDGET_OF = { profile: 'profile', projects: 'dossiers', workflows: 'workflows', worktabs: 'worktabs', schedule: 'timeline', rhythm: 'rhythm', sessions: 'timeline', gaps: 'gaps' }
+const TITLE_OF = { profile: 'Case File', projects: 'Projects', workflows: 'Web workflows', worktabs: 'Open right now', schedule: 'Coming up', rhythm: 'Working rhythm', sessions: 'Recent sessions', gaps: 'Open questions', unlock: 'Unlock the personal layer' }
 
 // Card accents rotate through the four picked theme colors (2026-06-11: slate, dusty blue, sage,
 // marker), varied across the board, stable per role. The UI kit paints props.accent/accentInk onto
@@ -176,9 +168,7 @@ const ACCENT_OF = {
   worktabs: { accent: '#5874A4', accentInk: '#FFFFFF' }, // slate (the live web cluster, near workflows)
   schedule: { accent: '#5874A4', accentInk: '#FFFFFF' }, // slate
   rhythm: { accent: '#7FA0C8', accentInk: '#16202F' }, // dusty blue (heat ramp supplies the rest)
-  voice: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
   sessions: { accent: '#5874A4', accentInk: '#FFFFFF' }, // slate
-  people: { accent: '#7FA98C', accentInk: '#11211A' }, // sage
   gaps: { accent: '#E8C71D', accentInk: '#2A2400' } // marker, highlighter over the unknowns
 }
 
@@ -199,8 +189,6 @@ const GROWS = [
   { role: 'workflows', to: 'l', want: (p) => count(p) >= 4 },
   { role: 'worktabs', to: 'tall', want: (p) => count(p) >= 8 },
   { role: 'worktabs', to: 'l', want: (p) => count(p) >= 4 },
-  { role: 'people', to: 'l', want: (p) => count(p) >= 4 },
-  { role: 'voice', to: 'l', want: (p) => count(p) >= 3 },
   { role: 'schedule', to: 'l', want: (p) => count(p) >= 5 },
   { role: 'gaps', to: 'l', want: (p) => count(p) >= 4 }
 ]
@@ -228,8 +216,6 @@ const NEAR_OF = {
   worktabs: 'top-right',
   schedule: 'center',
   rhythm: 'bottom-left',
-  people: 'center',
-  voice: 'bottom-left',
   sessions: 'bottom-right',
   gaps: 'top-right',
   unlock: 'top-right'
@@ -315,7 +301,7 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null, layout = 
   const hero = webFirst ? 'workflows' : ['projects', 'workflows', 'schedule'].find((r) => props[r])
   const fdaOff = !(scan.meta && scan.meta.fda)
   if (fdaOff) props.unlock = {} // placement reservation; the director supplies the real props
-  const ORDER = ['profile', hero, 'worktabs', 'rhythm', 'gaps', ...(fdaOff ? ['unlock'] : []), 'workflows', 'people', 'schedule', 'voice', 'sessions', 'projects']
+  const ORDER = ['profile', hero, 'worktabs', 'rhythm', 'gaps', ...(fdaOff ? ['unlock'] : []), 'workflows', 'schedule', 'sessions', 'projects']
 
   const vp = viewport || DEFAULT_VP
   const lat = latticeFor(vp, 0)

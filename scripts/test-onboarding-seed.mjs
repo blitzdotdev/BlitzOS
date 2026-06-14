@@ -76,7 +76,7 @@ console.log('1) engineer fixture, FDA off, chat hub on stage — FIT-FIRST: ever
 {
   const plan = buildBoardPlan(FIXTURE, { surfaces: [CHAT_HUB], viewport: VP })
   const roles = plan.map((c) => c.role)
-  ok(roles.join(',') === 'profile,projects,rhythm,gaps,unlock,workflows,people,voice,sessions', `priority order incl. the unlock reservation (got ${roles.join(',')})`)
+  ok(roles.join(',') === 'profile,projects,rhythm,gaps,unlock,workflows,sessions', `priority order incl. the unlock reservation (got ${roles.join(',')})`)
   ok(plan.every((c) => c.slot), 'fit-first: at the default viewport EVERY card is a slotted tile, zero parked')
   const staged = plan.filter((c) => c.slot)
   const { clash } = cellsOf([CHAT_HUB, ...staged])
@@ -86,7 +86,6 @@ console.log('1) engineer fixture, FDA off, chat hub on stage — FIT-FIRST: ever
   ok(at(plan, 'profile').slot.size === 'l', 'profile grew to l (priority upgrade into free cells)')
   ok(at(plan, 'projects').slot.size === 'xl', 'projects grew to the xl hero (free cells allowed it)')
   ok(at(plan, 'workflows').slot.size === 'm', 'workflows with 3 items stays a gist tile (m)')
-  ok(at(plan, 'people').slot.size === 'm', 'people with 2 names stays m')
   ok(at(plan, 'gaps').slot.size === 'm', 'gaps with 3 items stays m')
   ok(at(plan, 'unlock') && at(plan, 'unlock').native === 'unlock' && at(plan, 'unlock').slot, 'unlock card is part of the plan, slotted right after gaps')
   ok(at(plan, 'gaps').props.items.some((g) => g.q === 'The personal layer'), 'gaps includes the FDA unlock teaser when locked')
@@ -121,10 +120,9 @@ console.log('2) FDA on, meeting-heavy — schedule joins, unlock stays out of th
   }
   const plan = buildBoardPlan(fdaScan, { surfaces: [CHAT_HUB], viewport: VP })
   ok(!at(plan, 'unlock'), 'no unlock card when FDA is already granted')
-  ok(plan.every((c) => c.slot), 'all ten cards staged (fit-first)')
+  ok(plan.every((c) => c.slot), 'every present card staged (fit-first)')
   ok(at(plan, 'schedule') && at(plan, 'schedule').slot.size === 'm', 'schedule with 3 events is m')
   ok(/\w{3} \d{2}:\d{2}/.test(at(plan, 'schedule').props.items[0].time), 'schedule items carry weekday+time')
-  ok(at(plan, 'people').props.items[0].sub === 'texts with you', 'messages-joined person labeled by via')
   ok(at(plan, 'profile').props.facts.some((f) => f.k === 'Meetings'), 'profile gains a meetings fact')
   ok(at(plan, 'rhythm').props.topApps[0].secs === 7200, 'rhythm uses real focus time')
   ok(!at(plan, 'gaps').props.items.some((g) => g.q === 'The personal layer'), 'gaps drops the unlock teaser')
@@ -277,6 +275,31 @@ console.log('8) live working set — the open-tabs card is placed, populated, an
   ok(!at(buildBoardPlan(noTabs, { surfaces: [CHAT_HUB], viewport: VP }), 'worktabs'), 'no open-tabs snapshot → no worktabs card')
   // the widget source exists + is registered
   ok(!!getWidgetSource('worktabs'), 'worktabs widget is registered in the manifest + has source')
+}
+
+console.log('9) projects card is developer-only — a non-dev with a stray repo/session gets none')
+{
+  // A non-coder who happens to have one old repo on disk and a single low-prompt "project": every
+  // isDeveloper branch is false (stack 0, promptedProjects 0 (<5), repos 1 (<2), devSignals 0).
+  const nonDev = {
+    meta: { v: 2, generatedAt: 0, fda: true, spanDays: 30, nText: 50, nEvents: 40, fdaLocked: [] },
+    identity: { name: 'Grace', handle: null, computer: 'Grace’s Mac', locale: {}, defaultBrowser: 'com.apple.Safari' },
+    cadence: { peakHours: [9], activeWeekdays: ['Mon'], punch: { '1:9': 3 }, topApps: [], appLaunches: [{ app: 'Mail', n: 12 }] },
+    projects: [{ name: 'budget', prompts: 1 }],
+    repos: ['old-thing'], stack: [], tooling: [],
+    people: [],
+    calendar: { upcoming: [], meetingsPerWeek: 0 },
+    census: [],
+    web: { webFirst: false, visits: 200, devSignals: 0, workflow: [] },
+    voice: [], sessions: [{ title: 'tinker', agent: 'claude', last: 0, project: 'budget' }],
+    facts: { dock: [], installedApps: 30, accounts: [] },
+    gaps: ['What do you want help with?']
+  }
+  const plan = buildBoardPlan(nonDev, { surfaces: [CHAT_HUB], viewport: VP })
+  ok(!at(plan, 'projects'), 'no projects card for a non-dev with only a stray repo + low-prompt project')
+  // pin the OTHER side of the boundary: bump the stray project past the prompt floor → dev → card returns
+  const devVariant = { ...nonDev, projects: [{ name: 'budget', prompts: 8 }] }
+  ok(at(buildBoardPlan(devVariant, { surfaces: [CHAT_HUB], viewport: VP }), 'projects'), 'a heavily-prompted project alone makes them a developer (projects card returns)')
 }
 
 if (failed) {

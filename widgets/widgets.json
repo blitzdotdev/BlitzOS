@@ -56,13 +56,6 @@
     "version": 1
   },
   {
-    "name": "quotes",
-    "description": "Thinking-widget. Verbatim words displayed BIG (serif pull-quote card, shows the top 2-3) — for EXACTLY what someone said or wrote. Drive with update_surface{props:{items:[{text,source?}]}}.",
-    "needs": [],
-    "props": { "title": "Quotes" },
-    "version": 1
-  },
-  {
     "name": "workflows",
     "description": "Thinking-widget. The web tools someone lives in, as an ICON GRID (favicons, Shortcuts-widget look) — tap an icon to open the site as a live web surface via open_window. Drive with update_surface{props:{items:[{name,host,color?,integration?}]}}.",
     "needs": [],
