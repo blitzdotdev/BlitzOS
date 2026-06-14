@@ -1235,6 +1235,64 @@ const server = createServer(async (req, res) => {
     })
     return
   }
+  if (path === '/api/os/rename-folder' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let rbody = ''
+    req.on('data', (c) => {
+      rbody += c
+      if (rbody.length > 10_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(rbody)
+      const r = wsHost.renameFolder(String(b.path || ''), String(b.name || ''))
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
+  if (path === '/api/os/move-into-folder' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let mbody = ''
+    req.on('data', (c) => {
+      mbody += c
+      if (mbody.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(mbody)
+      const ids = Array.isArray(b.ids) ? b.ids.map(String) : []
+      const r = wsHost.moveIntoFolder(String(b.folderPath || ''), ids)
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
+  if (path === '/api/os/move-out-of-folder' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let mbody = ''
+    req.on('data', (c) => {
+      mbody += c
+      if (mbody.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(mbody)
+      const paths = Array.isArray(b.paths) ? b.paths.map(String) : []
+      const r = wsHost.moveOutOfFolder(paths, Number(b.x) || 0, Number(b.y) || 0)
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
+  if (path === '/api/os/open-folder-entry' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let obody = ''
+    req.on('data', (c) => {
+      obody += c
+      if (obody.length > 10_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(obody)
+      const r = wsHost.openFolderEntry(String(b.path || ''), Number(b.x) || 0, Number(b.y) || 0)
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
   // POST /api/os/surface-action — a sandboxed srcdoc widget fired an action back to the agent (server-mode
   // parity with the Electron os:surface-action IPC; mirrors /api/os/user-message → the moment stream).
   if (path === '/api/os/surface-action' && req.method === 'POST') {

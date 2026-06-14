@@ -37,7 +37,11 @@ import {
   readRootState,
   patchRootState,
   findSurfaceWorkspace,
-  relocateSurface
+  relocateSurface,
+  renameFolder,
+  moveIntoFolder,
+  moveOutOfFolder,
+  openFolderEntry
 } from './workspace.mjs'
 // Stage grid: an agent N owns stage N (stageForAgent), so its chat widget + the windows it
 // opens land in stage N — isolated from the user's primary (stage 0). Shared with the renderer (one grid).
@@ -161,7 +165,7 @@ export function createWorkspaceHost(a) {
       // drift is exactly the divergence the parity guard exists to prevent. terminal/runtime/inbox are
       // reconstructed from terminal/action-item events on load, so they're kept across a reconcile here too.
       // `unlock` is the runtime-only onboarding FDA card (must be in BOTH isRuntime predicates — see store.ts).
-      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'terminal' || s.component === 'runtime' || s.component === 'inbox' || s.component === 'unlock'))
+      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'files' || s.component === 'terminal' || s.component === 'runtime' || s.component === 'inbox' || s.component === 'unlock'))
       const reconciledIds = new Set(r.surfaces.map((s) => s.id))
       const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
       const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))
@@ -234,6 +238,117 @@ export function createWorkspaceHost(a) {
   /** List a normal folder's contents for the file-manager overlay (jailed to the active workspace). */
   function listDirInWorkspace(rel) {
     return listDir(activeWorkspace, rel)
+  }
+  function refreshDirSurfaceCounts(surfaces) {
+    return (surfaces || []).map((s) => {
+      if (!(s?.kind === 'native' && s.component === 'dir')) return s
+      const path = typeof s.props?.path === 'string' ? s.props.path : ''
+      if (!path) return s
+      const listing = listDir(activeWorkspace, path)
+      if (!listing) return s
+      const entries = Number(listing.total) || 0
+      if (Number(s.props?.entries) === entries) return s
+      return { ...s, props: { ...(s.props || {}), entries } }
+    })
+  }
+  function renameFolderInWorkspace(rel, name) {
+    if (switching) return { ok: false, error: 'switch in progress' }
+    flush()
+    const r = renameFolder(activeWorkspace, rel, name)
+    if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'could not rename folder' }
+    const st = a.getState()
+    const oldRel = String(rel || '').replace(/^[/\\]+|[/\\]+$/g, '')
+    const nextRel = r.path
+    const oldPrefix = `${oldRel}/`
+    const nextPrefix = `${nextRel}/`
+    const surfaces = refreshDirSurfaceCounts((st.surfaces || []).map((s) => {
+      const p = typeof s.props?.path === 'string' ? s.props.path : null
+      const rp = typeof s.props?.rootPath === 'string' ? s.props.rootPath : null
+      if (!p && !rp) return s
+      const path = p === oldRel ? nextRel : p?.startsWith(oldPrefix) ? nextPrefix + p.slice(oldPrefix.length) : p
+      const rootPath = rp === oldRel ? nextRel : rp?.startsWith(oldPrefix) ? nextPrefix + rp.slice(oldPrefix.length) : rp
+      if (path === p && rootPath === rp) return s
+      const displayPath = path || rootPath || ''
+      const title = s.kind === 'native' && (s.component === 'dir' || s.component === 'files') ? basename(displayPath) || s.title : s.title
+      return { ...s, title, props: { ...s.props, ...(path ? { path } : {}), ...(rootPath ? { rootPath } : {}), name: s.component === 'dir' && path ? basename(path) : s.props?.name } }
+    }))
+    a.setState({ ...st, surfaces })
+    Promise.resolve(onSurfaces(surfaces)).catch(() => {})
+    a.broadcast({ type: 'reconcile', surfaces, camera: st.camera, mode: st.mode, workspace: active() })
+    flush()
+    return { ok: true, path: nextRel }
+  }
+  function moveIntoFolderInWorkspace(folderPath, ids) {
+    if (switching) return { ok: false, error: 'switch in progress' }
+    flush()
+    const r = moveIntoFolder(activeWorkspace, folderPath, ids)
+    if (!r || !r.ok) return { ok: false, moved: r?.moved || 0, skipped: r?.skipped || 0, movedIds: r?.movedIds || [], skippedIds: r?.skippedIds || [], error: (r && r.error) || 'could not move into folder' }
+    doReconcile({})
+    return r
+  }
+  function moveOutOfFolderInWorkspace(paths, x, y) {
+    if (switching) return { ok: false, error: 'switch in progress' }
+    flush()
+    const r = moveOutOfFolder(activeWorkspace, paths, { x, y })
+    if (!r || !r.ok) return { ok: false, moved: r?.moved || 0, skipped: r?.skipped || 0, movedPaths: r?.movedPaths || [], skippedPaths: r?.skippedPaths || [], pathMoves: r?.pathMoves || [], surfaceIds: r?.surfaceIds || [], surfaces: r?.surfaces || [], updatedIds: r?.updatedIds || [], updatedSurfaces: r?.updatedSurfaces || [], error: (r && r.error) || 'could not move out of folder' }
+    const st = a.getState()
+    const returned = Array.isArray(r.surfaces) ? r.surfaces : []
+    const updated = Array.isArray(r.updatedSurfaces) ? r.updatedSurfaces : []
+    const moves = Array.isArray(r.pathMoves)
+      ? r.pathMoves.filter((m) => m && typeof m.from === 'string' && typeof m.to === 'string' && m.from && m.to)
+      : []
+    const rewriteMovedPath = (value) => {
+      if (typeof value !== 'string' || !value) return value
+      for (const m of moves) {
+        if (value === m.from) return m.to
+        const prefix = `${m.from}/`
+        if (value.startsWith(prefix)) return `${m.to}/${value.slice(prefix.length)}`
+      }
+      return value
+    }
+    const byId = new Map([...updated, ...returned].map((s) => [s.id, s]))
+    const seen = new Set()
+    let surfaces = (st.surfaces || []).map((s) => {
+      const next = byId.get(s.id)
+      const base = next || s
+      if (next) seen.add(s.id)
+      const p = typeof base.props?.path === 'string' ? base.props.path : null
+      const rp = typeof base.props?.rootPath === 'string' ? base.props.rootPath : null
+      if (!p && !rp) return base
+      let path = rewriteMovedPath(p)
+      const rootPath = rewriteMovedPath(rp)
+      // A file-manager rooted at the parent folder may have been browsing the moved child; clamp it
+      // back to its unchanged root instead of pointing outside its bounded navigation tree.
+      if (base.kind === 'native' && base.component === 'files' && path && rootPath && path !== rootPath && !path.startsWith(`${rootPath}/`)) path = rootPath
+      if (path === p && rootPath === rp) return base
+      const displayPath = path || rootPath || ''
+      const title = base.kind === 'native' && (base.component === 'dir' || base.component === 'files') ? basename(displayPath) || base.title : base.title
+      return { ...base, title, props: { ...(base.props || {}), ...(path ? { path } : {}), ...(rootPath ? { rootPath } : {}) } }
+    })
+    for (const s of returned) if (!seen.has(s.id)) surfaces.push(s)
+    surfaces = refreshDirSurfaceCounts(surfaces)
+    a.setState({ ...st, surfaces })
+    Promise.resolve(onSurfaces(surfaces)).catch(() => {})
+    a.broadcast({ type: 'reconcile', surfaces, camera: st.camera, mode: st.mode, workspace: active() })
+    flush()
+    return r
+  }
+  function openFolderEntryInWorkspace(rel, x, y) {
+    if (switching) return { ok: false, error: 'switch in progress' }
+    const path = String(rel || '')
+    const existing = (a.getState().surfaces || []).find((s) => s?.props?.path === path)
+    if (existing) return { ok: true, id: existing.id }
+    const r = openFolderEntry(activeWorkspace, path, { x, y })
+    if (!r || !r.ok || !r.surface) return { ok: false, error: (r && r.error) || 'could not open entry' }
+    const st = a.getState()
+    const existingById = (st.surfaces || []).find((s) => s.id === r.surface.id)
+    if (existingById) return { ok: true, id: existingById.id, surface: existingById }
+    const surfaces = [...(st.surfaces || []), r.surface]
+    a.setState({ ...st, surfaces })
+    Promise.resolve(onSurfaces(surfaces)).catch(() => {})
+    a.broadcast({ type: 'create', surface: r.surface })
+    flush()
+    return { ok: true, id: r.surface.id, surface: r.surface }
   }
   /** CLOSE a surface = delete its backing content file (explicit by id; never inferred). The renderer
    *  calls this when the user closes a window so it doesn't resurrect on the next reconcile. */
@@ -900,6 +1015,10 @@ export function createWorkspaceHost(a) {
     reconcileAt,
     newFolder,
     listDir: listDirInWorkspace,
+    renameFolder: renameFolderInWorkspace,
+    moveIntoFolder: moveIntoFolderInWorkspace,
+    moveOutOfFolder: moveOutOfFolderInWorkspace,
+    openFolderEntry: openFolderEntryInWorkspace,
     closeSurfaceFile,
     locateSurface,
     bringSurfaceHere,

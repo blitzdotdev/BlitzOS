@@ -186,6 +186,18 @@
     newFolder: function (name, kind, x, y) {
       return postJSON('/os/new-folder', { name: name, kind: kind, x: x, y: y })
     },
+    renameFolder: function (path, name) {
+      return postJSON('/os/rename-folder', { path: path, name: name })
+    },
+    moveIntoFolder: function (folderPath, ids) {
+      return postJSON('/os/move-into-folder', { folderPath: folderPath, ids: ids })
+    },
+    moveOutOfFolder: function (paths, x, y) {
+      return postJSON('/os/move-out-of-folder', { paths: paths, x: x, y: y })
+    },
+    openFolderEntry: function (path, x, y) {
+      return postJSON('/os/open-folder-entry', { path: path, x: x, y: y })
+    },
     // List a normal folder's contents for the file-manager overlay (Electron uses the os:dir IPC).
     listDir: function (p) {
       return getJSON('/os/dir?path=' + encodeURIComponent(p || '')).catch(function () { return null })

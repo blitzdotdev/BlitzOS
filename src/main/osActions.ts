@@ -901,6 +901,18 @@ export function osNewFolder(name: string, kind: 'board' | 'folder' | undefined, 
   const r = wsHost.newFolder(String(name || 'Folder'), kind === 'board' ? 'board' : 'folder', Number(x) || 0, Number(y) || 0)
   return 'ok' in r ? r : { ok: false, error: r.error }
 }
+export function osRenameFolder(path: string, name: string): { ok: boolean; path?: string; error?: string } {
+  return wsHost ? wsHost.renameFolder(String(path || ''), String(name || '')) : { ok: false, error: 'no workspace host' }
+}
+export function osMoveIntoFolder(folderPath: string, ids: string[]): { ok: boolean; moved?: number; skipped?: number; movedIds?: string[]; skippedIds?: string[]; error?: string } {
+  return wsHost ? wsHost.moveIntoFolder(String(folderPath || ''), Array.isArray(ids) ? ids.map(String) : []) : { ok: false, error: 'no workspace host' }
+}
+export function osMoveOutOfFolder(paths: string[], x?: number, y?: number): { ok: boolean; moved?: number; skipped?: number; movedPaths?: string[]; skippedPaths?: string[]; pathMoves?: Array<{ from: string; to: string }>; surfaceIds?: string[]; surfaces?: Record<string, unknown>[]; updatedIds?: string[]; updatedSurfaces?: Record<string, unknown>[]; error?: string } {
+  return wsHost ? wsHost.moveOutOfFolder(Array.isArray(paths) ? paths.map(String) : [], Number(x) || 0, Number(y) || 0) : { ok: false, error: 'no workspace host' }
+}
+export function osOpenFolderEntry(path: string, x?: number, y?: number): { ok: boolean; id?: string; surface?: Record<string, unknown>; error?: string } {
+  return wsHost ? wsHost.openFolderEntry(String(path || ''), Number(x) || 0, Number(y) || 0) : { ok: false, error: 'no workspace host' }
+}
 /** List a normal folder's contents for the file-manager overlay (the Electron counterpart of the server
  *  /api/os/dir route — same shared host.listDir, jailed to the active workspace). */
 export function osListDir(rel: string): { path: string; entries: unknown[]; total: number; truncated: boolean } | null {
