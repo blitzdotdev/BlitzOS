@@ -263,6 +263,7 @@ window.blitz.ready(props => { /* boot */ })
 // More capabilities (each is consent-gated the first time, like data()):
 await window.blitz.tool('open_window', { url: 'https://…' }) // call an OS tool: create_surface/open_window/
                                                              // move_surface/update_surface/close_surface/provider_call/list_state
+await window.blitz.tool('close_surface', {}) // close THIS widget; pass {id} only to close another surface
 window.blitz.sendMessage('hi')             // send a chat message to the agent (the chat widget uses this)
 const dir = await window.blitz.listDir('') // list a workspace folder (the file manager uses this)
 window.blitz.setProps({ text })            // persist THIS widget's own state, e.g. a note's text — no prompt
@@ -333,7 +334,7 @@ and you never reinvent buttons/rows/bubbles. Prefer these over hand-rolled marku
 - Elements: \`<blitz-titlebar>\` (full APP frames like the chat only — never on a plain widget, see the design language above), \`<blitz-list>\`, \`<blitz-message role="user|agent">\`, \`<blitz-row name meta kind ext>\` (fires \`open\`), \`<blitz-input placeholder>\` (fires \`send\` with \`detail.text\`), \`<blitz-button>\`. Or imperatively: \`window.blitz.ui.message(role,text)\` / \`.row({...})\` / \`.input({onSend})\` / \`.button(label,onClick)\`.
 - Layout/scroll: by default the body is a normal scrolling document — content taller than the surface scrolls, so don't put \`overflow:hidden\` or a fixed \`height\`/\`100vh\` on \`body\` (that clips it). For a fixed app frame — a pinned \`<blitz-titlebar>\`/\`<blitz-input>\` with ONE scrolling region — use a \`<blitz-list>\`; it fills the height and scrolls internally, and the body switches to the fixed frame automatically.
 
-The built-in chat (\`blitz-chat.html\`) and note (\`blitz-note.html\`) are themselves widgets built this way — read them with get_system_ui as templates; the user can have you rewrite them with customize_widget.
+The built-in chat (\`blitz-chat.tsx\` by default, with legacy/custom \`blitz-chat.html\` still supported) and note (\`blitz-note.html\`) are themselves widgets built this way — read them with get_system_ui as templates; the user can have you rewrite them with customize_widget.
 
 Available data resources (provider/resource): ${listProviderResources()
   .map((s) => `\`${s}\``)

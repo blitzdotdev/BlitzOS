@@ -1238,20 +1238,28 @@ export default function App(): JSX.Element {
         }
       }
       else if (a.type === 'chat') {
-        // The OS owns each agent's transcript and sends the FULL message list tagged with agentId
-        // ('0' = the primary chat). Route to THAT agent's chat surface (id 'chat' / 'chat-<id>') so a
-        // per-agent widget only shows its own conversation. If it isn't here yet, ignore (hydrate brings it).
+        // The OS owns every agent transcript and sends the hub props to the ONE primary Chat surface.
+        // Legacy messages-only payloads are still accepted for older transports.
         const sid = a.agentId != null ? String(a.agentId) : '0'
-        const chatId = sid === '0' ? 'chat' : `chat-${sid}`
-        const chat = st.surfaces.find((s) => s.id === chatId) || (sid === '0' ? st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat')) : undefined)
+        const chat = st.surfaces.find((s) => s.id === 'chat') || st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
         if (!chat) return
-        if (Array.isArray(a.messages)) {
-          st.updateSurfaceProps(chat.id, { messages: a.messages as Array<{ role: string; text: string }> })
+        if (a.sessions || a.threads || a.status) {
+          st.updateSurfaceProps(chat.id, {
+            sessions: a.sessions,
+            threads: a.threads,
+            status: a.status,
+            activeAgentId: a.activeAgentId != null ? String(a.activeAgentId) : sid,
+            messages: Array.isArray(a.messages) ? a.messages : undefined,
+            agentId: sid,
+            sessionId: sid
+          })
+        } else if (Array.isArray(a.messages)) {
+          st.updateSurfaceProps(chat.id, { messages: a.messages as Array<{ role: string; text: string }>, agentId: sid, sessionId: sid })
         } else {
           const text = String(a.text ?? '')
           if (text) {
             const prev = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
-            st.updateSurfaceProps(chat.id, { messages: [...prev, { role: 'agent', text }].slice(-200) })
+            st.updateSurfaceProps(chat.id, { messages: [...prev, { role: 'agent', text }].slice(-200), agentId: sid, sessionId: sid })
           }
         }
       } else if (a.type === 'agentStatus') {
@@ -1879,7 +1887,7 @@ export default function App(): JSX.Element {
 
   function openChat(source?: AnimationSourceRect | null): void {
     const st = useDesktop.getState()
-    // The chat is a host-hydrated role:'chat' srcdoc widget (blitz-chat.html). Just focus/center it; if a
+    // The chat is a host-hydrated role:'chat' srcdoc widget (blitz-chat.*). Just focus/center it; if a
     // very old board is still on the native chat, fall back to that.
     const existing = st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
     if (existing) restoreOrFocusFromSource(existing.id, source)

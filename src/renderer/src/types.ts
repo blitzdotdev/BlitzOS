@@ -48,10 +48,10 @@ export interface Surface {
   component?: string
   /** native: component props (e.g. { text, color }) */
   props?: Record<string, unknown>
-  /** A system surface the OS owns (e.g. 'chat' — a srcdoc widget backed by blitz-chat.html + chat.md).
+  /** A system surface the OS owns (e.g. 'chat' — a srcdoc widget backed by blitz-chat.* + chat.md).
    *  Pinned + never serialized as a node. */
   role?: string
-  /** the agent this surface belongs to (a per-agent chat widget); agent N lives in stage N. */
+  /** the agent/thread this surface belongs to; chat uses '0' for the shared hub. */
   agentId?: string
   /** Always-on-top (chat/activity) — kept above normal windows regardless of z. */
   pinned?: boolean

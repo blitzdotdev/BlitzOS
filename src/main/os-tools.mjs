@@ -39,6 +39,20 @@ function parse(body) {
   }
 }
 
+const NATIVE_COMPONENTS = new Set(['note', 'chat', 'activity', 'terminal', 'runtime', 'inbox', 'file', 'dir', 'files', 'unlock', 'folder'])
+
+function nativeCatalogWidgetError(component) {
+  const name = String(component || '').trim()
+  if (!name || NATIVE_COMPONENTS.has(name)) return null
+  if (!getWidgetSource(name)) return null
+  return {
+    status: 400,
+    body: {
+      error: `${name} is a library widget, not a native component. Use spawn_widget {"name":"${name}","props":{...}} instead of create_surface/place_widget with kind:"native".`
+    }
+  }
+}
+
 // Telemetry seam: ONE observer sees every tool call across every transport. A no-op until the host
 // (telemetry.ts) sets it; must never be able to break a tool call.
 let toolTap = null
@@ -186,8 +200,8 @@ async function provisionBlitzApp(slug) {
  * @param {object} ops — { createSurface(desc)->id, openWindow(a)->id, moveSurface(id,x,y), updateSurface(id,patch),
  *   closeSurface(id), goToPrimary(), getState()->state, workspaceContext()->{workspace,workspace_path,siblings},
  *   listWorkspaces()->{...}, createWorkspace(name)->{ok,name}, switchWorkspace(name)->{ok,active},
- *   readWindow(id,script?)->result, controlSurface(id,action)->{ok,result}, say(text), customizeWidget(name,html)->{ok,rel},
- *   systemUi(name)->html|null, groupIntoFolder(name,ids,x,y,kind)->{ok,...}, providerCall(descriptor,transport)->result,
+ *   readWindow(id,script?)->result, controlSurface(id,action)->{ok,result}, say(text),
+ *   customizeWidget(name,html,agentId?,lang?)->{ok,rel}, systemUi(name)->html|null, systemUiInfo(name)->{source,lang}|null, groupIntoFolder(name,ids,x,y,kind)->{ok,...}, providerCall(descriptor,transport)->result,
  *   integrationStatuses()->[...], connectedProviders()->[...] }
  */
 export function makeOsTools(ops) {
@@ -235,6 +249,10 @@ export function makeOsTools(ops) {
       handler: ({ body }) => {
         const a = parse(body)
         if (!a.kind) return { status: 400, body: { error: 'kind required' } }
+        if (a.kind === 'native') {
+          const widgetError = nativeCatalogWidgetError(a.component)
+          if (widgetError) return widgetError
+        }
         // An agent-scoped surface lands in ITS stage (the renderer cascades by `stage` when no
         // explicit x is given); the primary agent '0' → stage 0 = today's behavior.
         if (a.agent != null) a.stage = stageForAgent(a.agent)
@@ -313,6 +331,10 @@ export function makeOsTools(ops) {
           return r && r.ok === false ? { status: 404, body: { error: r.error } } : { id: String(a.id), slot: p.slot }
         }
         if (!a.kind) return { status: 400, body: { error: 'pass an existing id, or kind(+html/component/url) to create into the slot' } }
+        if (a.kind === 'native') {
+          const widgetError = nativeCatalogWidgetError(a.component)
+          if (widgetError) return widgetError
+        }
         const p = placeOnStage(a.size, a.near, a.agent, { w: a.w, h: a.h }, false)
         if (p.full) return { status: 409, body: p.full }
         const id = ops.createSurface({ kind: a.kind, html: a.html, url: a.url, component: a.component, props: a.props, title: a.title, slot: p.slot, slotStage: p.slotStage, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h, ...(a.agent != null ? { stage: stageForAgent(a.agent) } : {}) })
@@ -363,7 +385,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/update_surface',
-      description: 'Patch a surface in place: set html (srcdoc; pass lang too when switching a widget between html and jsx/tsx), props (native, e.g. note text), url, title, or geometry. Before replacing widget source, self-review against get_widget_authoring; after JSX/TSX updates, check list_state/get_surface for lastError and fix before calling it done.',
+      description: 'Patch a surface in place: set html (srcdoc; pass lang too when switching a widget between html and jsx/tsx), props (native, e.g. note text), url, title, or geometry. For task-progress widgets, call this as steps start/finish/block; do not wait until the final answer to update the visible plan. Before replacing widget source, self-review against get_widget_authoring; after JSX/TSX updates, check list_state/get_surface for lastError and fix before calling it done.',
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, url: { type: 'string' }, title: { type: 'string' }, props: { type: 'object' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } } },
       handler: ({ body }) => {
         const { id, ...patch } = parse(body)
@@ -374,7 +396,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/close_surface',
-      description: 'Close a surface by id.',
+      description: 'Close a surface by id. From inside a widget via window.blitz.tool, omitting id closes that calling widget itself; task-start progress widgets use this to disappear after completion.',
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
       handler: ({ body }) => {
         const r = ops.closeSurface(String(parse(body).id))
@@ -537,7 +559,7 @@ export function makeOsTools(ops) {
     {
       path: '/spawn_widget',
       description:
-        'Open a library widget on the canvas as a live sandboxed surface — a thinking-widget is an INSTRUMENT you DRIVE, not a final render: update_surface{id,props} it after EACH step of progress, never once at the end. Prefer widgets with useful interaction (filter/sort/expand/open source/chat action) unless the content is truly atomic. It fetches integration data through the OS bridge; the user approves access once. Returns { id, drive? } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
+        'Open a library widget on the canvas as a live sandboxed surface. For any non-trivial user task, `pipeline` is the default first visible progress surface: spawn it before hidden work with props.items exactly like {items:[{label,sub?,status:"active"|"queued"|"done"}]}; do not use props.steps. Then drive it with update_surface{id,props:{items}} as items move. The default task-start pipeline auto-closes after every item is done; keep final output in a separate note/widget/surface, or pass props.autoClose=false only when the pipeline itself is the durable artifact. A thinking-widget is an INSTRUMENT you DRIVE, not a final render: update it after EACH step of progress, never once at the end. Prefer widgets with useful interaction (filter/sort/expand/open source/chat action) unless the content is truly atomic. It fetches integration data through the OS bridge; the user approves access once. Returns { id, drive? } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, props: { type: 'object' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -556,7 +578,7 @@ export function makeOsTools(ops) {
         // it sits frozen through the whole task. Return the contract at spawn time, mid-flow.
         if (!w.needs.length)
           out.drive =
-            'This is a LIVE surface, not a final render. Call update_surface{id,props} after EACH step of progress (each item found, each phase advanced) so the user watches the work happen — leaving it on this initial state until you finish defeats its purpose.'
+            'This is a LIVE surface, not a final render. If this is your task-start pipeline, its progress rows must be in props.items, not props.steps: update_surface{id,props:{items:[{label,sub?,status:"active"|"queued"|"done"}]}}. Update it before and during the work, not after the fact. A completed task-start pipeline auto-closes, so put final results somewhere else before finishing.'
         return out
       }
     },
@@ -601,7 +623,7 @@ export function makeOsTools(ops) {
     {
       path: '/say',
       description:
-        "Send a chat message to the USER (their in-canvas Chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. To SHOW a visual, do BOTH: keep the real SOURCE open as a web surface (the live page it's from), AND screenshot it (surface_control {action:'screenshot'} returns base64 PNG) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary agents MUST pass {agent:'<your id>'} so it lands in YOUR chat.",
+        "Send a chat message to the USER (their in-canvas Chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. For non-trivial tasks, saying you are working is not enough: create/update a live progress widget (usually pipeline) before hidden work, then use say only for concise milestones or final synthesis. To SHOW a visual, do BOTH: keep the real SOURCE open as a web surface (the live page it's from), AND screenshot it (surface_control {action:'screenshot'} returns base64 PNG) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary agents MUST pass {agent:'<your id>'} so it lands in YOUR chat.",
       input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, agent: { type: 'string' }, workspace: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
@@ -631,27 +653,30 @@ export function makeOsTools(ops) {
     {
       path: '/customize_widget',
       description:
-        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Preserve required chat behavior, read the current source with get_system_ui first, self-review the replacement against get_widget_authoring, then customize. Agent messages may embed markdown images / inline <svg> / a ```blitz-ui {type,prompt,options} card. Args: {name, html, agent? (which agent's chat widget; default '0')}.",
-      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' }, agent: { type: 'string' } } },
+        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The default chat is a React/TSX hub, but html/jsx/tsx are supported; it live-reloads. Preserve required chat behavior: render sessions/threads/status, send with window.blitz.sendMessage(text, activeSessionId), create/rename/clear with window.blitz.chat(...), and keep markdown/images/blitz-ui card behavior if replacing it. Read the current source with get_system_ui first, self-review the replacement against get_widget_authoring, then customize. Args: {name, html, lang?:'html'|'jsx'|'tsx', agent?}. Chat customization is global to the hub.",
+      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, agent: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
-        const r = ops.customizeWidget(String(b.name || ''), String(b.html || ''), b.agent != null ? String(b.agent) : '0')
-        return r.ok ? { ok: true, file: r.rel } : { status: 400, body: { error: r.error || 'failed' } }
+        const r = ops.customizeWidget(String(b.name || ''), String(b.html || ''), b.agent != null ? String(b.agent) : '0', b.lang != null ? String(b.lang) : undefined)
+        return r.ok ? { ok: true, file: r.rel, lang: r.lang } : { status: 400, body: { error: r.error || 'failed' } }
       }
     },
     {
       path: '/get_system_ui',
-      description: "Read a built-in widget's current UI source before editing it (the fork pattern). Args: {name:'chat'}. Returns {html}.",
+      description: "Read a built-in widget's current UI source before editing it (the fork pattern). Args: {name:'chat'}. Returns {html, source, lang, file}; html is kept for backward compatibility.",
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
       handler: ({ body }) => {
-        const html = ops.systemUi(String(parse(body).name || ''))
-        return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html }
+        const name = String(parse(body).name || '')
+        const info = typeof ops.systemUiInfo === 'function' ? ops.systemUiInfo(name) : null
+        if (info) return { html: info.source, source: info.source, lang: info.lang, file: info.rel }
+        const html = ops.systemUi(name)
+        return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html, source: html, lang: 'html', file: null }
       }
     },
     {
       path: '/spawn_agent',
       description:
-        "Spawn a NEW agent — a fresh peer agent with its OWN chat widget (a `chat-<id>.md` transcript + window), reachable over this same relay. The new agent is independent: messages typed into ITS widget go only to it, and its `say`s land only in its widget (no cross-talk with you or other agents). Use this to spin up a parallel agent for a separate task/conversation. Args: {title?}. Returns { agent:{id,title} }.",
+        "Spawn a NEW agent — a fresh peer agent with its own chat thread in the shared Chat hub (`chat-<id>.md`) and its own visible terminal, reachable over this same relay. The new agent is independent: messages sent to its thread go only to it, and its `say`s land only in that thread (no cross-talk with you or other agents). Use this to spin up a parallel agent for a separate task/conversation. Args: {title?}. Returns { agent:{id,title} }.",
       input_schema: { type: 'object', properties: { title: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)

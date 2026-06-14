@@ -534,8 +534,26 @@ function send(type: string, payload: Record<string, unknown> = {}): void {
 
 /** Send an arbitrary os:action to the renderer — the Electron emit seam for shared cores (e.g. terminal events). */
 export function osBroadcast(action: Record<string, unknown>): void {
+  try {
+    if (action?.type === 'terminal-spawn') {
+      const terminal = action.terminal as { kind?: unknown } | undefined
+      if (terminal?.kind === 'agent' && action.id != null) wsHost?.setChatStatus(String(action.id), 'starting')
+    } else if (action?.type === 'terminal-data') {
+      if (action.id != null) wsHost?.noteAgentActivity(String(action.id), 'terminal')
+    } else if (action?.type === 'terminal-stop') {
+      if (action.id != null) wsHost?.setChatStatus(String(action.id), 'stopped')
+    } else if (action?.type === 'terminal-exit') {
+      if (action.id != null) wsHost?.setChatStatus(String(action.id), Number(action.exitCode) ? 'error' : 'stopped')
+    }
+  } catch {
+    /* status sync is best-effort; the terminal event itself must still publish */
+  }
   tel('act', action) // telemetry: session/action-item events emit here (the shared-core seam)
   sendToRenderer('os:action', action)
+}
+
+export function osNoteAgentActivity(agentId = '0', source = 'activity'): void {
+  try { wsHost?.noteAgentActivity(String(agentId ?? '0'), source) } catch { /* best-effort */ }
 }
 
 /** Bare-Option (Alt) hold → the renderer's radial create menu. Fed from main's before-input-event
@@ -789,13 +807,16 @@ let onUserMessage: ((agentId: string) => void) | null = null
 export function setOnUserMessage(fn: ((agentId: string) => void) | null): void {
   onUserMessage = fn
 }
-/** The agent customizes an agent's widget UI (blitz-[<id>-]<name>.html) — currently 'chat'. Live-reloads. */
-export function osCustomizeWidget(name: string, html: string, agentId = '0'): { ok: boolean; rel?: string; error?: string } {
-  return wsHost ? wsHost.customizeWidget(String(name), String(html), agentId) : { ok: false, error: 'no workspace host' }
+/** The agent customizes a system widget UI (chat can now be html/jsx/tsx). Live-reloads. */
+export function osCustomizeWidget(name: string, html: string, agentId = '0', lang: 'html' | 'jsx' | 'tsx' = 'html'): { ok: boolean; rel?: string; lang?: string; error?: string } {
+  return wsHost ? wsHost.customizeWidget(String(name), String(html), agentId, lang) : { ok: false, error: 'no workspace host' }
 }
 /** Read a built-in widget's current UI source (workspace file or shipped default) — read-before-edit. */
 export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
+}
+export function osSystemUiInfo(name: string): { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null {
+  return wsHost ? (wsHost.systemUiInfo(String(name)) as { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null) : null
 }
 let lastStateKeyframe = 0
 // index.ts owns the relay url + terminal-ops, so it registers HOW to launch an agent backend in a

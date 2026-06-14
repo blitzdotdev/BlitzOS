@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron'
 import { startRelay } from './relay.mjs'
 import { setRelay } from './sessionFile'
 import { OS_TOOLS } from './electron-os-tools'
+import { osNoteAgentActivity } from './osActions'
 // Shared "Agent activity" feed — the SAME module the server uses; only `emit` differs (webContents.send here).
 import { withActivity } from './activity.mjs'
 // The single source of truth for the BlitzOS operating doc. Vite inlines the .md at
@@ -45,7 +46,10 @@ export function startAgentSocket(getWindow: () => BrowserWindow | null, onUrlCha
           ...(t.input_schema ? { input_schema: t.input_schema } : {}),
           handler: (ctx: { body?: string }) => t.handler({ body: ctx?.body ?? '', transport: 'relay' })
         })),
-        (ev) => getWindow()?.webContents.send('os:action', ev)
+        (ev) => {
+          osNoteAgentActivity(ev.agentId || '0', ev.tool === '/say' ? 'say' : 'tool')
+          getWindow()?.webContents.send('os:action', ev)
+        }
       )
     },
     {

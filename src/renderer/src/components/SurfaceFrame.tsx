@@ -431,14 +431,14 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
       )
   }
-  // blitz.sendMessage — the widget sends a message to ITS agent. The agent id rides from the surface
-  // (props.agentId, set by the host per agent) so each chat widget routes to its own agent.
-  function serveMessage(win: Window, reqId: string, text: string): Promise<void> {
-    window.agentOS?.sendMessage?.(String(text), String(surface.props?.agentId ?? '0'))
+  // blitz.sendMessage — the widget sends a message to an agent thread. The chat hub passes a sessionId;
+  // older single-agent widgets fall back to props.agentId.
+  function serveMessage(win: Window, reqId: string, text: string, sessionId?: string): Promise<void> {
+    window.agentOS?.sendMessage?.(String(text), String(sessionId || surface.props?.agentId || '0'))
     return Promise.resolve(postRes(win, reqId, { ok: true }))
   }
-  // blitz.chat — a per-agent chat widget manages itself (op 'new' → a fresh agent's id; 'rename' → its title).
-  // Returns the result (e.g. the new agent id). This is the per-agent control API, NOT a session hub.
+  // blitz.chat — the shared chat hub manages threads (op 'new' -> a fresh agent id; 'rename' -> its title).
+  // Returns the result (e.g. the new agent id).
   function serveChat(win: Window, reqId: string, op: string, args: Record<string, unknown>): Promise<void> {
     const api = window.agentOS as { chatControl?: (op: string, args: Record<string, unknown>) => Promise<unknown> } | undefined
     if (!api?.chatControl) return Promise.resolve(postRes(win, reqId, { ok: false, error: 'chat control unavailable here' }))
@@ -464,7 +464,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     const onMessage = (e: MessageEvent): void => {
       const win = iframeRef.current?.contentWindow
       if (!win || e.source !== win) return // only OUR widget (origin is unusable "null")
-      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; path?: string; chatOp?: string }
+      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; sessionId?: string; path?: string; chatOp?: string }
       if (!m || typeof m !== 'object') return
       if (m.type === 'blitz:hello') {
         win.postMessage({ type: 'blitz:init', props: widgetProps() }, '*')
@@ -503,7 +503,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       } else if (m.type === 'blitz:req' && typeof m.reqId === 'string') {
         if (m.op === 'data') void serveData(win, m.reqId, String(m.provider ?? ''), String(m.resource ?? ''))
         else if (m.op === 'tool') void serveTool(win, m.reqId, String(m.tool ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
-        else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''))
+        else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''), m.sessionId != null ? String(m.sessionId) : undefined)
         else if (m.op === 'chat') void serveChat(win, m.reqId, String(m.chatOp ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
         else if (m.op === 'listdir') void serveListDir(win, m.reqId, String(m.path ?? ''))
         else if (m.op === 'setprops') {

@@ -218,7 +218,7 @@ export interface CreateSurfaceInput {
   /** system runtime surface (e.g. an agent chat widget: role:'chat', pinned). */
   role?: string
   pinned?: boolean
-  /** the agent this surface belongs to (a per-agent chat widget). */
+  /** the agent/thread this surface belongs to. */
   agentId?: string
   /** place this surface in a SPECIFIC workspace stage (an agent → its own stage N); when
    *  omitted, it cascades into the current stage. Derived from x afterward — never stored on the Surface. */

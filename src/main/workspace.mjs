@@ -93,7 +93,7 @@ function safeStageCount(n) {
 // Which surfaces become canvas NODES. The chat + agent-activity native panels are RUNTIME
 // (they belong in .blitzos/state/*.jsonl, Phase 4), never nodes. Unknown kinds are skipped.
 function nodeKind(s) {
-  if (s && s.role === 'chat') return null // the system chat is a srcdoc whose UI=blitz-chat.html + data=chat.md; never a node
+  if (s && s.role === 'chat') return null // the system chat is a srcdoc whose UI=blitz-chat.* + data=chat.md; never a node
   if (s && s.role === 'note') return 'note' // a note rendered via blitz-note.html still persists as its .md content file
   if (s.kind === 'web' || s.kind === 'app') return s.kind // both serialize to .weblink, but app needs its renderer kind preserved
   if (s.kind === 'srcdoc') return 'srcdoc'
@@ -861,7 +861,7 @@ export function readWorkspace(dir) {
 const META_FILES = new Set(['blitzos.md', '.gitignore'])
 function autoKind(name) {
   if (name.startsWith('.') || /\.tmp(-[0-9a-f]+)?$/.test(name) || META_FILES.has(name.toLowerCase())) return null
-  if (isSystemFile(name)) return null // blitz-chat.html (the chat UI) + chat.md (transcript) are OS-managed, not plain tiles
+  if (isSystemFile(name)) return null // blitz-chat.* (the chat UI) + chat.md (transcript) are OS-managed, not plain tiles
   const ext = extname(name).toLowerCase()
   if (ext === '.weblink') return 'web'
   if (ext === '.md') return 'note'
@@ -1391,7 +1391,7 @@ export function removeSurfaceFile(dir, id) {
 
 /**
  * Delete everything an AGENT owns when it's closed: its transcript (chat-<id>.md), its (possibly
- * agent-customized) widget UI (blitz-<id>-chat.html), and its agent dir (.blitzos/terminals/<id>/ —
+ * agent-customized) widget UI (blitz-<id>-chat.*), and its agent dir (.blitzos/terminals/<id>/ —
  * meta.json + transcript.jsonl + bootstrap.txt). removeSurfaceFile can't do this (a chat surface has no
  * idToPath entry). Every delete is markWrite-stamped so the folder watcher skips its own writes. Never
  * called for primary '0' (the caller guards) — but chatFileName/sysRendererName branch on '0' anyway.
@@ -1402,7 +1402,7 @@ export function removeAgentFiles(dir, agentId) {
   // resolve to a valid-but-wrong path INSIDE the workspace (safeJoin only blocks escapes OUT of it) and
   // rmSync the wrong tree (e.g. id '..' → the whole .blitzos dir). '0' is the primary — never deleted here.
   if (!/^[1-9][0-9]*$/.test(id)) return
-  for (const rel of [chatFileName(id), sysRendererName('chat', id)]) {
+  for (const rel of [chatFileName(id), ...sysRendererNames('chat', id)]) {
     const abs = safeJoin(dir, rel)
     if (abs && existsSync(abs)) { try { markWrite(resolve(abs)); unlinkSync(abs) } catch { /* best-effort */ } }
   }
@@ -1416,25 +1416,39 @@ export function removeAgentFiles(dir, agentId) {
 
 // ===========================================================================================
 // System widgets — the OS UI as workspace files. A built-in renderer (the chat UI) lives in a
-// VISIBLE workspace file `blitz-<role>.html` (a shipped default, copied in if missing — recreated
+// VISIBLE workspace file `blitz-<role>.<html|jsx|tsx>` (a shipped default, copied in if missing — recreated
 // after a delete — and freely editable to customize). The chat TRANSCRIPT is its own file `chat.md`
 // (structured + human-readable): the OS appends each message, the widget just renders what's there.
 // ===========================================================================================
 const SYS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'widgets', 'system')
-const SYSTEM_RENDERERS = ['chat', 'note'] // roles that ship a default renderer (blitz-<role>.html)
+const SYSTEM_RENDERERS = ['chat', 'note'] // roles that ship a default renderer (blitz-<role>.<html|jsx|tsx>)
+const SYSTEM_DEFAULT_LANG = { chat: 'tsx', note: 'html' }
+const SYSTEM_LANGS = ['tsx', 'jsx', 'html']
 const SYSTEM_PREFIX = 'blitz-'
 const CHAT_FILE = 'chat.md'
 
 // Per-session chat (one agent per session): session '0' (the primary chat) keeps the LEGACY names
-// (chat.md, blitz-chat.html) so it needs ZERO migration; any other session gets chat-<id>.md and
-// blitz-<id>-chat.html. Both naming families are recognized as system files (never surfaced as tiles).
+// (chat.md, blitz-chat.html/tsx) so it needs ZERO migration; any other session gets chat-<id>.md and
+// blitz-<id>-chat.*. Both naming families are recognized as system files (never surfaced as tiles).
 export function chatFileName(sessionId = '0') { return sessionId && String(sessionId) !== '0' ? `chat-${sessionId}.md` : CHAT_FILE }
-export function sysRendererName(role, sessionId = '0') { return sessionId && String(sessionId) !== '0' ? `${SYSTEM_PREFIX}${sessionId}-${role}.html` : `${SYSTEM_PREFIX}${role}.html` }
-/** The role a `blitz-[<sessionId>-]<role>.html` name encodes (the LAST dash-segment), or null. */
+function systemLang(lang, fallback = 'html') {
+  const v = String(lang || fallback).toLowerCase()
+  return SYSTEM_LANGS.includes(v) ? v : fallback
+}
+function sysRendererNameForLang(role, sessionId = '0', lang = 'html') {
+  const ext = systemLang(lang)
+  return sessionId && String(sessionId) !== '0' ? `${SYSTEM_PREFIX}${sessionId}-${role}.${ext}` : `${SYSTEM_PREFIX}${role}.${ext}`
+}
+export function sysRendererName(role, sessionId = '0') { return sysRendererNameForLang(role, sessionId, 'html') }
+function sysRendererNames(role, sessionId = '0') {
+  return SYSTEM_LANGS.map((lang) => sysRendererNameForLang(role, sessionId, lang))
+}
+/** The role a `blitz-[<sessionId>-]<role>.<html|jsx|tsx>` name encodes (the LAST dash-segment), or null. */
 function rendererRoleOf(name) {
   const n = String(name || '').toLowerCase()
-  if (!n.startsWith(SYSTEM_PREFIX) || !n.endsWith('.html')) return null
-  const mid = n.slice(SYSTEM_PREFIX.length, -5) // 'chat' or '<sessionId>-chat'
+  const m = n.match(/^blitz-(.+)\.(html|jsx|tsx)$/)
+  if (!m) return null
+  const mid = m[1] // 'chat' or '<sessionId>-chat'
   const role = mid.includes('-') ? mid.slice(mid.lastIndexOf('-') + 1) : mid
   return SYSTEM_RENDERERS.indexOf(role) !== -1 ? role : null
 }
@@ -1445,86 +1459,141 @@ export function isSystemFile(name) {
   if (n === CHAT_FILE || /^chat-[a-z0-9_-]+\.md$/.test(n)) return true
   return rendererRoleOf(n) !== null
 }
-/** If a workspace `.html` is a recognized system renderer, return its role (chat | …), else null. */
+/** If a workspace renderer file is recognized, return its role (chat | …), else null. */
 export function systemRoleOf(name) {
   return rendererRoleOf(name)
 }
 
-/** Ensure `blitz-<role>.html` exists in the workspace — copy the shipped default if MISSING (so a deleted
+function shippedSystemRenderer(role) {
+  const lang = systemLang(SYSTEM_DEFAULT_LANG[role], 'html')
+  const candidates = [join(SYS_DIR, `${role}.${lang}`), join(SYS_DIR, `${role}.html`)]
+  for (const abs of candidates) {
+    try {
+      if (existsSync(abs)) return { source: readFileSync(abs, 'utf8'), lang: abs.endsWith('.tsx') ? 'tsx' : abs.endsWith('.jsx') ? 'jsx' : 'html' }
+    } catch {
+      /* try next */
+    }
+  }
+  return null
+}
+
+function readSystemRendererFile(dir, role, sessionId = '0') {
+  const found = []
+  for (const rel of sysRendererNames(role, sessionId)) {
+    const abs = safeJoin(dir, rel)
+    if (abs && existsSync(abs)) {
+      try { found.push({ rel, abs, mtime: statSync(abs).mtimeMs, lang: rel.endsWith('.tsx') ? 'tsx' : rel.endsWith('.jsx') ? 'jsx' : 'html' }) } catch { /* try next */ }
+    }
+  }
+  found.sort((a, b) => b.mtime - a.mtime || SYSTEM_LANGS.indexOf(a.lang) - SYSTEM_LANGS.indexOf(b.lang))
+  for (const f of found) {
+    try {
+      return { rel: f.rel, source: readFileSync(f.abs, 'utf8'), lang: f.lang }
+    } catch {
+      /* try next */
+    }
+  }
+  return null
+}
+
+/** Ensure `blitz-<role>.<html|jsx|tsx>` exists in the workspace — copy the shipped default if MISSING (so a deleted
  *  renderer is recreated). Never overwrites a real customization. EXCEPTION: a chat renderer that predates
- *  the session HUB (renders the old `p.messages` and has no hub API) is incompatible with the new backend
- *  props and would render BLANK — refresh it to the shipped default. A renderer written against the hub
+ *  the session HUB and is clearly one of our old shipped defaults can be refreshed to the shipped default.
+ *  A renderer written against the hub
  *  (uses `blitz.chat` / `props.threads`) is a genuine customization and is left untouched. */
 export function ensureSystemRenderer(dir, role, sessionId = '0') {
   if (SYSTEM_RENDERERS.indexOf(role) === -1) return null
-  const rel = sysRendererName(role, sessionId)
-  const dest = safeJoin(dir, rel)
-  if (!dest) return null
-  if (existsSync(dest)) {
+  const existing = readSystemRendererFile(dir, role, sessionId)
+  if (existing) {
     if (role === 'chat') {
       try {
-        const cur = readFileSync(dest, 'utf8')
-        const shipped = readFileSync(join(SYS_DIR, 'chat.html'), 'utf8')
+        const cur = existing.source
+        const shipped = shippedSystemRenderer('chat')
         const hubAware = cur.indexOf('blitz.chat(') !== -1 || cur.indexOf('props.threads') !== -1 || cur.indexOf('p.threads') !== -1
         const preHub = /p\.messages|onProps\(render\)/.test(cur)
-        // System-widget UPDATE propagation: a workspace holds its OWN copy of blitz-chat.html, so a shipped
+        const defaultishCopy = cur.indexOf('The DEFAULT chat UI') !== -1 || cur.indexOf('DEFAULT chat UI') !== -1
+        const shippedTsxCopy = existing.lang === 'tsx' && cur.indexOf('export default function ChatHub') !== -1
+        const shippedLegacyCopy = existing.lang === 'html' && defaultishCopy
+        // System-widget UPDATE propagation: a workspace holds its OWN copy of blitz-chat.*, so a shipped
         // feature (here: item 5b annotation references) never reaches existing desktops. Refresh a SHIPPED
         // copy that lags the shipped feature set; a copy the human CUSTOMIZED (writeSystemRenderer) is left
         // alone — it carries the `blitz-chat-custom` opt-out marker. (Pre-hub copies still migrate as before.)
-        // Sentinel = the NEWEST shipped feature marker (bump it when chat.html gains a feature existing
-        // desktops must receive). 'clearctx' = the "New context" button; it ships alongside focusAnnotation,
-        // so a copy missing clearctx lags the current set and refreshes (unless human-customized).
-        const featureLag = shipped.indexOf('clearctx') !== -1 && cur.indexOf('clearctx') === -1
+        // Sentinel = the NEWEST shipped feature marker (bump it when chat.* gains a feature existing
+        // desktops must receive). Existing shipped copies refresh; customized copies carry blitz-chat-custom.
+        const marker = 'chat-watching-state-v4'
+        const featureLag = shipped?.source?.indexOf(marker) !== -1 && cur.indexOf(marker) === -1 && (shippedTsxCopy || shippedLegacyCopy)
         const customized = cur.indexOf('blitz-chat-custom') !== -1
-        if ((!hubAware && preHub) || (hubAware && featureLag && !customized)) {
-          atomicWrite(dest, shipped)
-          return { rel, created: false, refreshed: true }
+        if (shipped && ((!hubAware && preHub && !customized && defaultishCopy) || (!customized && shippedLegacyCopy) || (hubAware && featureLag && !customized))) {
+          const rel = sysRendererNameForLang(role, sessionId, shipped.lang)
+          const dest = safeJoin(dir, rel)
+          if (!dest) return null
+          atomicWrite(dest, shipped.source)
+          for (const other of sysRendererNames(role, sessionId)) {
+            if (other === rel) continue
+            const abs = safeJoin(dir, other)
+            if (abs && existsSync(abs)) { try { markWrite(resolve(abs)); unlinkSync(abs) } catch { /* best-effort */ } }
+          }
+          return { rel, created: false, refreshed: true, lang: shipped.lang }
         }
       } catch {
         /* leave it as-is */
       }
     }
-    return { rel, created: false }
+    return { rel: existing.rel, created: false, lang: existing.lang }
   }
   try {
-    atomicWrite(dest, readFileSync(join(SYS_DIR, `${role}.html`), 'utf8')) // per-session widgets default to the SAME shipped UI
-    return { rel, created: true }
+    const shipped = shippedSystemRenderer(role)
+    if (!shipped) return null
+    const rel = sysRendererNameForLang(role, sessionId, shipped.lang)
+    const dest = safeJoin(dir, rel)
+    if (!dest) return null
+    atomicWrite(dest, shipped.source) // per-session widgets default to the SAME shipped UI
+    return { rel, created: true, lang: shipped.lang }
   } catch {
     return null
   }
 }
-/** Write a system renderer's HTML (the agent customizing the chat UI) → blitz-<role>.html, jailed +
+/** Write a system renderer (the agent customizing the chat UI) → blitz-<role>.<html|jsx|tsx>, jailed +
  *  self-write-stamped. The role must be a known system widget. Returns { ok, rel } or { ok:false }. */
-export function writeSystemRenderer(dir, role, html, sessionId = '0') {
+export function writeSystemRenderer(dir, role, html, sessionId = '0', lang = 'html') {
   if (SYSTEM_RENDERERS.indexOf(role) === -1) return { ok: false, error: `unknown system widget: ${role}` }
-  const rel = sysRendererName(role, sessionId)
+  const outLang = systemLang(lang, 'html')
+  const rel = sysRendererNameForLang(role, sessionId, outLang)
   const dest = safeJoin(dir, rel)
   if (!dest) return { ok: false, error: 'bad path' }
   try {
     // Stamp customized copies so ensureSystemRenderer never auto-refreshes over a human/agent customization
     // (system-widget update propagation only refreshes UN-customized shipped copies).
     let out = String(html == null ? '' : html)
-    if (out.indexOf('blitz-chat-custom') === -1) out = `<!--blitz-chat-custom-->\n${out}`
+    if (out.indexOf('blitz-chat-custom') === -1) {
+      out = outLang === 'html' ? `<!--blitz-chat-custom-->\n${out}` : `/* blitz-chat-custom */\n${out}`
+    }
     atomicWrite(dest, out)
-    return { ok: true, rel }
+    for (const other of sysRendererNames(role, sessionId)) {
+      if (other === rel) continue
+      const abs = safeJoin(dir, other)
+      if (abs && existsSync(abs)) { try { markWrite(resolve(abs)); unlinkSync(abs) } catch { /* best-effort */ } }
+    }
+    return { ok: true, rel, lang: outLang }
   } catch {
     return { ok: false, error: 'write failed' }
   }
 }
-/** Resolve a system renderer's HTML: this session's file if present, else the workspace's shared
- *  blitz-<role>.html (so a new session inherits the workspace's customized look), else the shipped default. */
+/** Resolve a system renderer's source + language: this session's file if present, else the workspace's
+ *  shared blitz-<role>.* (so a new session inherits the workspace's customized look), else shipped default. */
+export function readSystemRendererInfo(dir, role, sessionId = '0') {
+  const own = readSystemRendererFile(dir, role, sessionId)
+  if (own) return own
+  if (String(sessionId) !== '0') {
+    const shared = readSystemRendererFile(dir, role, '0')
+    if (shared) return shared
+  }
+  const shipped = shippedSystemRenderer(role)
+  return shipped ? { rel: sysRendererNameForLang(role, '0', shipped.lang), source: shipped.source, lang: shipped.lang } : null
+}
+/** Resolve a system renderer's source (legacy helper for older callers/tests). */
 export function readSystemRenderer(dir, role, sessionId = '0') {
-  for (const rel of [sysRendererName(role, sessionId), sysRendererName(role, '0')]) {
-    const abs = safeJoin(dir, rel)
-    if (abs && existsSync(abs)) {
-      try { return readFileSync(abs, 'utf8') } catch { /* try next */ }
-    }
-  }
-  try {
-    return readFileSync(join(SYS_DIR, `${role}.html`), 'utf8')
-  } catch {
-    return null
-  }
+  return readSystemRendererInfo(dir, role, sessionId)?.source ?? null
 }
 
 // ---- chat transcript file (chat.md) — the OS owns the serialization; the widget just renders it.

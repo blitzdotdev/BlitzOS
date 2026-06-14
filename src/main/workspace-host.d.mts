@@ -51,8 +51,11 @@ export interface WorkspaceHost {
   /** Item 4: bring a surface from another workspace into the active one (id preserved). */
   bringSurfaceHere(id: string, x?: number, y?: number): { ok: boolean; from?: string; id?: string; notFound?: boolean; error?: string }
   appendChat(role: 'user' | 'agent', text: string, agentId?: string, meta?: Record<string, unknown>): Array<{ role: string; text: string; ts: number }>
-  customizeWidget(name: string, html: string, agentId?: string): { ok: boolean; rel?: string; error?: string }
+  customizeWidget(name: string, html: string, agentId?: string, lang?: 'html' | 'jsx' | 'tsx'): { ok: boolean; rel?: string; lang?: string; error?: string }
   systemUi(name: string): string | null
+  systemUiInfo(name: string): { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null
+  setChatStatus(agentId: string, status: 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error'): { ok: boolean }
+  noteAgentActivity(agentId: string, source?: string): { ok: boolean; throttled?: boolean; error?: string }
   agentIds(): string[]
   restoreChatHub(): { ok: boolean; id?: string; error?: string }
   newAgentId(): string

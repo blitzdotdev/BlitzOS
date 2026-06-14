@@ -6,6 +6,8 @@ import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync,
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+process.env.BLITZ_CHAT_STATUS_QUIET_MS = '20'
+
 let failures = 0
 const ok = (name, cond, extra) => {
   if (cond) console.log(`  ✓ ${name}`)
@@ -15,6 +17,7 @@ const ok = (name, cond, extra) => {
   }
 }
 const note = (id, text) => ({ id, kind: 'native', component: 'note', x: 0, y: 0, w: 300, h: 200, z: 1, title: id, props: { text } })
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const root = mkdtempSync(join(tmpdir(), 'aos-host-'))
 let osState = { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' }
@@ -86,12 +89,35 @@ ok('listDir jails ".." → null', host.listDir('..') === null)
 
 console.log('\nworkspace-host chat — file-backed widget (appendChat → chat.md + broadcast):')
 osState = { surfaces: [{ id: 'chat', kind: 'srcdoc', role: 'chat', x: 0, y: 0, w: 360, h: 460, z: 5, props: { messages: [] } }], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' }
+const chatProps = () => osState.surfaces.find((s) => s.role === 'chat')?.props || {}
 const m1 = host.appendChat('user', 'hello chat')
 ok('appendChat writes chat.md', existsSync(join(ws, 'chat.md')) && m1.length === 1 && m1[0].text === 'hello chat', m1)
 ok('appendChat broadcasts {type:chat, messages}', broadcasts.some((b) => b && b.type === 'chat' && Array.isArray(b.messages) && b.messages.length === 1))
 ok('appendChat syncs osState chat surface props (fresh hydrate shows it)', (osState.surfaces.find((s) => s.role === 'chat')?.props?.messages || []).length === 1)
+ok('appendChat exposes hub threads', Array.isArray(osState.surfaces.find((s) => s.role === 'chat')?.props?.threads?.['0']))
+ok('user chat marks the agent working', chatProps().status?.['0'] === 'working', chatProps().status)
 host.appendChat('agent', 'hi there')
+ok('agent /say does not force idle', chatProps().status?.['0'] === 'working', chatProps().status)
+host.noteAgentActivity('0', 'tool')
+ok('tool activity keeps the agent working', chatProps().status?.['0'] === 'working', chatProps().status)
+await sleep(45)
+ok('quiet running agent transitions to watching', chatProps().status?.['0'] === 'watching', chatProps().status)
 ok('both roles append in order', host.appendChat('user', 'x').slice(0, 2).map((m) => m.role).join() === 'user,agent')
+const added = host.addAgent('1', 'Agent 1')
+ok('new agent starts in warmup', added.id === '1' && chatProps().status?.['1'] === 'starting', chatProps().status)
+host.noteAgentActivity('1', 'terminal')
+ok('startup terminal output keeps warmup status', chatProps().status?.['1'] === 'starting', chatProps().status)
+host.noteAgentActivity('1', 'say')
+host.appendChat('agent', 'BlitzOS here, live on your desktop. What are we working on?', '1')
+ok('startup ready message settles to watching', chatProps().status?.['1'] === 'watching', chatProps().status)
+host.noteAgentActivity('1', 'terminal')
+ok('passive wait-loop terminal output stays watching', chatProps().status?.['1'] === 'watching', chatProps().status)
+await sleep(45)
+ok('quiet new agent becomes watching', chatProps().status?.['1'] === 'watching', chatProps().status)
+host.setChatStatus('1', 'stopped')
+ok('terminal stop marks stopped immediately', chatProps().status?.['1'] === 'stopped', chatProps().status)
+host.setChatStatus('1', 'error')
+ok('terminal failure marks error immediately', chatProps().status?.['1'] === 'error', chatProps().status)
 
 console.log('\nworkspace-host customizeWidget — the agent rewrites the chat UI (live-reload):')
 const cu = host.customizeWidget('chat', '<blitz-titlebar>Custom Chat</blitz-titlebar>')

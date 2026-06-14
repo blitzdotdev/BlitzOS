@@ -50,11 +50,19 @@ export function activityText(path, a) {
   }
 }
 
+function activityAgentId(a) {
+  if (!a || typeof a !== 'object') return '0'
+  if (a.agent != null) return String(a.agent)
+  if (a.agentId != null) return String(a.agentId)
+  if (a.sessionId != null) return String(a.sessionId)
+  return '0'
+}
+
 /**
  * Wrap action-tool handlers so each call publishes an activity event (before running)
  * for the on-screen Agent-activity panel. Non-action tools pass through untouched.
  * @param {Array<{path:string, description?:string, input_schema?:object, handler:(ctx:{body?:string})=>unknown}>} tools  SDK-shaped tool array
- * @param {(event:{type:'activity', at:number, text:string})=>void} emit  platform publish (server: SSE broadcast; Electron: webContents.send)
+ * @param {(event:{type:'activity', at:number, text:string, agentId?:string, tool?:string})=>void} emit  platform publish (server: SSE broadcast; Electron: webContents.send)
  * @returns the same array with action handlers wrapped
  */
 export function withActivity(tools, emit) {
@@ -66,7 +74,7 @@ export function withActivity(tools, emit) {
       handler: (ctx) => {
         let args = {}
         try { args = ctx && ctx.body ? JSON.parse(ctx.body) : {} } catch { args = {} }
-        try { emit({ type: 'activity', at: Date.now(), text: activityText(t.path, args) }) } catch { /* best-effort UI ping */ }
+        try { emit({ type: 'activity', at: Date.now(), text: activityText(t.path, args), agentId: activityAgentId(args), tool: t.path }) } catch { /* best-effort UI ping */ }
         return orig(ctx)
       }
     }

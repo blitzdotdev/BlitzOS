@@ -4,6 +4,8 @@ export interface ActivityEvent {
   type: 'activity'
   at: number
   text: string
+  agentId?: string
+  tool?: string
 }
 
 /** SDK-shaped relay tool (path/description/input_schema?/handler) — matches relay.d.mts RelayConfig.tools. */

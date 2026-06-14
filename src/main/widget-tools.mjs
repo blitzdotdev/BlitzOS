@@ -81,8 +81,9 @@ export function makeWidgetToolHandlers(ops) {
       ops.updateSurface(id, patch)
       return { ok: true }
     },
-    close_surface: (a) => {
-      const id = String(a.id || '')
+    close_surface: (a, ctx = {}) => {
+      const explicitId = a.id != null && String(a.id)
+      const id = String(explicitId || ctx.surfaceId || '')
       if (!id) throw new Error('id required')
       ops.closeSurface(id)
       return { ok: true }

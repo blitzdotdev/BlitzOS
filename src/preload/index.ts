@@ -294,7 +294,7 @@ const api = {
   annotate(p: { id: string; surfaceId: string; text: string; xPct: number; yPct: number }): void {
     ipcRenderer.send('os:annotate', p)
   },
-  /** A per-agent chat widget manages itself via blitz.chat: op 'new' → { id } of a fresh agent; 'rename' → set its title. */
+  /** The shared chat hub manages threads via blitz.chat: op 'new' -> { id } of a fresh agent; 'rename' -> set its title. */
   chatControl(op: string, args: Record<string, unknown>): Promise<unknown> {
     return ipcRenderer.invoke('os:chat-control', { op, args })
   },

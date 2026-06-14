@@ -315,13 +315,13 @@ app.whenReady().then(() => {
   ipcMain.on('os:agent-spawn', (_e, p?: { title?: string }) => { try { osSpawnAgent(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
   ipcMain.handle('os:close-agent', (_e, id: string) => { try { return osCloseAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   ipcMain.handle('os:rename-agent', (_e, p: { id: string; title: string }) => { try { return osRenameAgent(String(p?.id), String(p?.title ?? '')) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
-  // blitz.chat (a per-agent chat widget's own control): 'new' → spawn a fresh agent (returns its id);
+  // blitz.chat (the shared chat hub control): 'new' -> spawn a fresh agent thread (returns its id);
   // 'rename' → retitle an agent. Routes to the SAME osSpawnAgent/osRenameAgent the toolbar uses — the
   // server mirrors this via the shim's chatControl → /api/os/agent-spawn|agent-rename (no divergence).
-  ipcMain.handle('os:chat-control', (_e, p: { op?: string; args?: { id?: string; title?: string } }) => {
+  ipcMain.handle('os:chat-control', (_e, p: { op?: string; args?: { id?: string; title?: string; focus?: boolean } }) => {
     try {
       const op = String(p?.op || ''); const a = p?.args || {}
-      if (op === 'new') return osSpawnAgent(a.title != null ? String(a.title) : undefined, true)
+      if (op === 'new') return osSpawnAgent(a.title != null ? String(a.title) : undefined, !!a.focus)
       if (op === 'rename') return osRenameAgent(String(a.id ?? ''), String(a.title ?? ''))
       // 'clear' → start a FRESH context for this agent (rotate its claude session id + restart). Uniform for
       // every agent incl '0'; the server mirrors it via the shim → /api/os/agent-clear (no divergence).

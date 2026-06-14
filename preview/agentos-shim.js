@@ -266,12 +266,12 @@
     renameAgent: function (id, title) {
       return postJSON('/os/agent-rename', { id: id, title: title }, { ok: false })
     },
-    // blitz.chat (a per-agent chat widget's own control) — server side of the SAME seam as the Electron
-    // os:chat-control handler: 'new' → spawn a fresh agent and return its { id }; 'rename' → retitle.
+    // blitz.chat (the shared chat hub control) — server side of the SAME seam as the Electron
+    // os:chat-control handler: 'new' → spawn a fresh agent thread and return its { id }; 'rename' → retitle.
     chatControl: function (op, args) {
       var a = args || {}
       if (String(op) === 'new') {
-        return postJSON('/os/agent-spawn', { title: a.title }, { agent: null }).then(function (r) {
+        return postJSON('/os/agent-spawn', { title: a.title, focus: !!a.focus }, { agent: null }).then(function (r) {
           return r && r.agent ? { id: r.agent.id, title: r.agent.title } : { ok: false, error: 'spawn failed' }
         })
       }
