@@ -44,8 +44,12 @@ export interface WorkspaceHost {
   ingestUpload(relPath: string, buffer: Buffer, x: number, y: number, reconcile?: boolean): { ok: true; name: string } | { error: string }
   reconcileAt(x: number, y: number): { ok: true } | { error: string }
   newFolder(name: string, kind: 'board' | 'folder' | undefined, x: number, y: number): { ok: true; folder: string } | { error: string }
-  listDir(rel: string): { path: string; entries: Array<{ name: string; dir: boolean; ext: string; size: number; isImage: boolean; path: string }>; total: number; truncated: boolean } | null
-  closeSurfaceFile(id: string): { ok: boolean; removed?: string; error?: string; skipped?: string }
+  listDir(rel: string): { path: string; entries: Array<{ name: string; dir: boolean; ext: string; size: number; entries?: number; isImage: boolean; path: string }>; total: number; truncated: boolean } | null
+  renameFolder(rel: string, name: string): { ok: boolean; path?: string; error?: string }
+  moveIntoFolder(folderPath: string, ids: string[]): { ok: boolean; moved?: number; skipped?: number; movedIds?: string[]; skippedIds?: string[]; error?: string }
+  moveOutOfFolder(paths: string[], x?: number, y?: number): { ok: boolean; moved?: number; skipped?: number; movedPaths?: string[]; skippedPaths?: string[]; pathMoves?: Array<{ from: string; to: string }>; surfaceIds?: string[]; surfaces?: Record<string, unknown>[]; updatedIds?: string[]; updatedSurfaces?: Record<string, unknown>[]; error?: string }
+  openFolderEntry(rel: string, x?: number, y?: number): { ok: boolean; id?: string; surface?: Record<string, unknown>; error?: string }
+  closeSurfaceFile(id: string): { ok: boolean; removed?: string; error?: string; skipped?: string; keptFile?: boolean }
   /** Item 4: which OTHER workspace holds surface `id` (or null). */
   locateSurface(id: string): { name: string; dir: string; node: Record<string, unknown> } | null
   /** Item 4: bring a surface from another workspace into the active one (id preserved). */

@@ -1156,8 +1156,61 @@ button {
   color: var(--text-muted);
   text-transform: uppercase;
 }
+.desktop-folder {
+  position: absolute;
+  border-radius: 16px;
+  overflow: visible;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  user-select: none;
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    filter var(--dur-fast) var(--ease-out);
+}
+.desktop-folder.is-selected .dir-icon {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 62%, transparent),
+    0 8px 22px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.desktop-folder.is-selected .dir-name-button {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+.desktop-folder.drop-target {
+  transform: scale(1.08);
+  z-index: 999999;
+}
+.desktop-folder.drop-target .dir-icon {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 70%, transparent),
+    0 14px 30px color-mix(in srgb, var(--accent) 22%, transparent);
+}
 .dir-tile {
   cursor: pointer;
+  background: transparent;
+  padding: 10px 8px;
+  border-radius: 16px;
+}
+.dir-name-button,
+.dir-rename {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 2px 5px;
+  border-radius: 6px;
+  font: inherit;
+  color: inherit;
+}
+.dir-name-button {
+  cursor: text;
+}
+.dir-rename {
+  width: min(100%, 150px);
+  outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Folder-open overlay (#44): browse a real subfolder's contents. */
@@ -2228,7 +2281,8 @@ button {
   transform: translateX(-50%);
 }
 .sidebar-app.is-minimizing,
-.sidebar-app.is-restoring {
+.sidebar-app.is-restoring,
+.sidebar-app.is-appearing {
   opacity: 1;
   color: var(--text);
   background: var(--control-hover);
@@ -2648,7 +2702,8 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .sidebar-app.is-minimizing,
-  .sidebar-app.is-restoring {
+  .sidebar-app.is-restoring,
+  .sidebar-app.is-appearing {
     animation: none;
   }
   .surface-launcher-backdrop,
@@ -3229,7 +3284,8 @@ button {
     inset 0 1px 0 rgba(255, 255, 255, 0.22),
     var(--shadow-lg);
 }
-.window.absorbing {
+.window.absorbing,
+.desktop-folder.absorbing {
   transform: scale(0.2);
   opacity: 0;
   pointer-events: none;
@@ -3921,13 +3977,18 @@ button {
   appearance: none;
   -webkit-appearance: none;
   border: 1px solid var(--hairline);
-  background: transparent;
+  background: color-mix(in srgb, var(--control) 78%, transparent);
   color: var(--text-secondary);
-  border-radius: 6px;
-  width: 22px;
+  border-radius: 999px;
+  width: 24px;
   height: 22px;
   cursor: pointer;
   flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 1px 2px 0;
 }
 .fm-up:hover {
   background: color-mix(in srgb, var(--accent) 14%, transparent);

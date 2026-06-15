@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { IconBoard, IconChat, IconCode, IconFolder, IconGlobe, IconNote, IconPlus, IconSparkle } from './Icons'
+import { IconChat, IconCode, IconFolder, IconGlobe, IconNote, IconPlus, IconSparkle } from './Icons'
 
 export type SurfaceLauncherKind = 'browser' | 'note' | 'chat' | 'widget' | 'folder' | 'board'
 type AnimationSourceRect = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
@@ -25,8 +25,10 @@ export const SURFACE_LAUNCHER_ITEMS: SurfaceLauncherItem[] = [
   { kind: 'note', label: 'Note', icon: <IconNote /> },
   { kind: 'chat', label: 'Chat', icon: <IconChat /> },
   { kind: 'widget', label: 'Widget', icon: <IconCode /> },
-  { kind: 'folder', label: 'Folder', icon: <IconFolder /> },
-  { kind: 'board', label: 'Board', icon: <IconBoard /> }
+  { kind: 'folder', label: 'Folder', icon: <IconFolder /> }
+  // Board is being slowly deprecated from primary creation UI. Keep SurfaceLauncherKind/backend support
+  // for existing boards and non-primary flows, but do not expose it in the toolbar/sidebar or Option radial menu.
+  // { kind: 'board', label: 'Board', icon: <IconBoard /> }
 ]
 
 interface Props {

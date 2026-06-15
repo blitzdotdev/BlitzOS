@@ -373,6 +373,18 @@ const api = {
   newFolder(name: string, kind: 'board' | 'folder', x: number, y: number): Promise<{ ok: boolean; folder?: string; error?: string }> {
     return ipcRenderer.invoke('os:new-folder', name, kind, x, y)
   },
+  renameFolder(path: string, name: string): Promise<{ ok: boolean; path?: string; error?: string }> {
+    return ipcRenderer.invoke('os:rename-folder', path, name)
+  },
+  moveIntoFolder(folderPath: string, ids: string[]): Promise<{ ok: boolean; moved?: number; skipped?: number; movedIds?: string[]; skippedIds?: string[]; error?: string }> {
+    return ipcRenderer.invoke('os:move-into-folder', folderPath, ids)
+  },
+  moveOutOfFolder(paths: string[], x?: number, y?: number): Promise<{ ok: boolean; moved?: number; skipped?: number; movedPaths?: string[]; skippedPaths?: string[]; pathMoves?: Array<{ from: string; to: string }>; surfaceIds?: string[]; surfaces?: unknown[]; updatedIds?: string[]; updatedSurfaces?: unknown[]; error?: string }> {
+    return ipcRenderer.invoke('os:move-out-of-folder', paths, x, y)
+  },
+  openFolderEntry(path: string, x?: number, y?: number): Promise<{ ok: boolean; id?: string; surface?: unknown; error?: string }> {
+    return ipcRenderer.invoke('os:open-folder-entry', path, x, y)
+  },
   // List a normal folder's contents for the file-manager overlay (server shim fetches /api/os/dir instead).
   listDir(path: string): Promise<{ path: string; entries: unknown[]; total: number; truncated: boolean } | null> {
     return ipcRenderer.invoke('os:dir', path)

@@ -151,7 +151,7 @@ function contentFor(kind, s) {
     case 'app': {
       // A browser surface with materialized tabs persists them ({id,title,url} only — favicon/loading/
       // nav state are runtime). Single-tab windows keep the legacy {url} shape.
-      const link = { url: s.url || '' }
+      const link = { url: s.url || '', kind }
       if (kind === 'web' && Array.isArray(s.tabs) && s.tabs.length) {
         link.tabs = s.tabs
           .filter((t) => t && t.id)
@@ -501,7 +501,7 @@ export function writeWorkspace(dir, osState) {
       const rel = idToPath.get(s.id)
       if (!rel || !safeJoin(dir, rel)) continue // can't locate the real file/dir → skip
       seen.add(s.id)
-      const fview = typeof s.title === 'string' && s.title ? { title: s.title } : {}
+      const fview = kind === 'file' && typeof s.title === 'string' && s.title ? { title: s.title } : {}
       nodes.push({
         id: s.id,
         path: rel,
@@ -745,8 +745,6 @@ function nodeToSurface(dir, n, z) {
       return null // vanished
     }
     const name = basename(n.path)
-    const view = n.view && typeof n.view === 'object' ? n.view : {}
-    const title = typeof view.title === 'string' && view.title ? view.title : name
     const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || 200, h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z, ...stageFields(n) }
     if (n.kind === 'dir') {
       let entries = 0
@@ -755,8 +753,10 @@ function nodeToSurface(dir, n, z) {
       } catch {
         /* unreadable dir */
       }
-      return { ...base, kind: 'native', component: 'dir', title, props: { dir: true, name, path: n.path, entries } }
+      return { ...base, kind: 'native', component: 'dir', title: name, props: { dir: true, name, path: n.path, entries } }
     }
+    const view = n.view && typeof n.view === 'object' ? n.view : {}
+    const title = typeof view.title === 'string' && view.title ? view.title : name
     const ext = extname(name).toLowerCase().replace(/^\./, '')
     const isImage = IMAGE_EXT.test(ext)
     return { ...base, kind: 'native', component: 'file', title, props: { name, path: n.path, ext, bytes: st.size, isImage } }
@@ -1364,6 +1364,385 @@ export function createFolder(dir, name, kind) {
   }
 }
 
+function cleanFolderName(name) {
+  const n = String(name || '').normalize('NFC').trim().slice(0, 80)
+  if (!n || n.startsWith('.') || /[/\\]/.test(n)) return null
+  if (!/^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(n)) return null
+  if (RESERVED_ROOT.has(n.toLowerCase())) return null
+  return n
+}
+
+function uniqueDirName(dir, desired, oldRel = '') {
+  const clean = cleanFolderName(desired)
+  if (!clean) return null
+  const oldLower = String(oldRel || '').split(/[\\/]/).pop()?.toLowerCase()
+  let existing = new Set()
+  try {
+    existing = new Set(readdirSync(dir, { withFileTypes: true }).map((e) => e.name.toLowerCase()))
+  } catch {
+    /* unreadable */
+  }
+  let name = clean
+  let i = 2
+  while ((existing.has(name.toLowerCase()) && name.toLowerCase() !== oldLower) || RESERVED_ROOT.has(name.toLowerCase())) {
+    name = `${clean}-${i++}`
+  }
+  return name
+}
+
+function readMetaFile(metaFile) {
+  try {
+    const ws = JSON.parse(readFileSync(metaFile, 'utf8'))
+    return ws && Array.isArray(ws.nodes) ? ws : null
+  } catch {
+    return null
+  }
+}
+
+function nodeWithPath(n, path) {
+  const next = { ...n, path }
+  if (n.kind === 'dir') {
+    const view = n.view && typeof n.view === 'object' ? { ...n.view } : {}
+    delete view.title
+    if (Object.keys(view).length) next.view = view
+    else delete next.view
+  }
+  return next
+}
+
+function cleanNestedEntryPath(path) {
+  const rel = String(path || '').replace(/^[/\\]+/g, '').split('\\').join('/')
+  const parts = rel.split('/').filter(Boolean)
+  if (parts.length < 2) return null
+  if (parts.some((p) => p === '.' || p === '..' || p.startsWith('.'))) return null
+  if (/(^|[/\\])\.blitzos([/\\]|$)/i.test(rel)) return null
+  return parts.join('/')
+}
+
+function uniqueRootEntryPath(dir, baseName, taken) {
+  const clean = String(baseName || '').trim()
+  if (!clean || clean.startsWith('.')) return null
+  const dot = clean.lastIndexOf('.')
+  const stem = dot > 0 ? clean.slice(0, dot) : clean
+  const ext = dot > 0 ? clean.slice(dot) : ''
+  let name = clean
+  let i = 2
+  while (taken.has(name.toLowerCase()) || RESERVED_ROOT.has(name.toLowerCase()) || existsSync(safeJoin(dir, name) || dir)) {
+    name = `${stem}-${i++}${ext}`
+  }
+  taken.add(name.toLowerCase())
+  return name
+}
+
+function rewriteNodePathPrefix(ws, oldRel, nextRel) {
+  const oldPrefix = `${oldRel}/`
+  const nextPrefix = `${nextRel}/`
+  let changed = false
+  ws.nodes = (ws.nodes || []).map((n) => {
+    if (!n || typeof n.path !== 'string') return n
+    if (n.path === oldRel) {
+      changed = true
+      return nodeWithPath(n, nextRel)
+    }
+    if (n.path.startsWith(oldPrefix)) {
+      changed = true
+      return nodeWithPath(n, nextPrefix + n.path.slice(oldPrefix.length))
+    }
+    return n
+  })
+  return changed
+}
+
+/**
+ * Rename a REAL folder in the active workspace. This renames the directory itself and rewrites any
+ * workspace nodes whose backing path is that folder or a descendant. Returns the final unique path.
+ */
+export function renameFolder(dir, rel, name) {
+  const oldRel = String(rel || '').replace(/^[/\\]+|[/\\]+$/g, '')
+  if (!oldRel || oldRel.startsWith('.') || oldRel.includes('..')) return { ok: false, error: 'bad folder path' }
+  const oldAbs = safeJoin(dir, oldRel)
+  if (!oldAbs) return { ok: false, error: 'bad folder path' }
+  try {
+    if (!statSync(oldAbs).isDirectory()) return { ok: false, error: 'not a folder' }
+  } catch {
+    return { ok: false, error: 'folder not found' }
+  }
+  const parentRel = oldRel.split('/').slice(0, -1).join('/')
+  const parentAbs = safeJoin(dir, parentRel || '.')
+  if (!parentAbs) return { ok: false, error: 'bad folder path' }
+  const nextName = uniqueDirName(parentAbs, name, oldRel)
+  if (!nextName) return { ok: false, error: 'bad folder name' }
+  const nextRel = parentRel ? `${parentRel}/${nextName}` : nextName
+  if (nextRel === oldRel) return { ok: true, path: oldRel }
+  const nextAbs = safeJoin(dir, nextRel)
+  if (!nextAbs) return { ok: false, error: 'bad folder name' }
+  try {
+    renameSync(oldAbs, nextAbs)
+    markWrite(resolve(oldAbs))
+    markWrite(resolve(nextAbs))
+  } catch {
+    return { ok: false, error: 'could not rename folder' }
+  }
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const ws = readMetaFile(metaFile)
+  if (ws && rewriteNodePathPrefix(ws, oldRel, nextRel)) writeMeta(metaFile, ws)
+  return { ok: true, path: nextRel }
+}
+
+/**
+ * Move existing workspace-backed surfaces into an EXISTING real folder. The surfaces disappear from
+ * the root canvas after reconcile; their files remain browseable/openable from the folder.
+ */
+export function moveIntoFolder(dir, folderRel, memberIds) {
+  const targetRel = String(folderRel || '').replace(/^[/\\]+|[/\\]+$/g, '')
+  if (!targetRel || targetRel.startsWith('.') || targetRel.includes('..')) return { ok: false, error: 'bad folder path' }
+  const targetAbs = safeJoin(dir, targetRel)
+  if (!targetAbs) return { ok: false, error: 'bad folder path' }
+  try {
+    if (!statSync(targetAbs).isDirectory()) return { ok: false, error: 'not a folder' }
+  } catch {
+    return { ok: false, error: 'folder not found' }
+  }
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const ws = readMetaFile(metaFile)
+  const idToNode = new Map()
+  for (const n of ws?.nodes || []) {
+    if (n && typeof n.id === 'string' && typeof n.path === 'string') idToNode.set(n.id, n)
+  }
+  const movableKinds = new Set(['note', 'app', 'srcdoc', 'file', 'dir'])
+  const ids = Array.isArray(memberIds) ? memberIds.map(String) : []
+  let moved = 0
+  let skipped = 0
+  const movedIds = []
+  const skippedIds = []
+  const skip = (id) => {
+    skipped++
+    if (id) skippedIds.push(id)
+  }
+  for (const id of ids) {
+    const node = idToNode.get(id)
+    const rel = node?.path
+    if (!node || !rel) {
+      skip(id)
+      continue
+    }
+    if (!movableKinds.has(node.kind)) {
+      skip(id)
+      continue
+    }
+    if (rel === targetRel || targetRel.startsWith(`${rel}/`) || rel.startsWith(`${targetRel}/`)) {
+      skip(id)
+      continue
+    }
+    const srcAbs = safeJoin(dir, rel)
+    if (!srcAbs || !existsSync(srcAbs)) {
+      skip(id)
+      continue
+    }
+    const baseName = basename(rel)
+    let destRel = `${targetRel}/${baseName}`
+    let dn = 2
+    while (existsSync(safeJoin(dir, destRel) || dir)) {
+      const dot = baseName.lastIndexOf('.')
+      destRel = dot > 0 ? `${targetRel}/${baseName.slice(0, dot)}-${dn++}${baseName.slice(dot)}` : `${targetRel}/${baseName}-${dn++}`
+    }
+    const destAbs = safeJoin(dir, destRel)
+    if (!destAbs) {
+      skip(id)
+      continue
+    }
+    try {
+      renameSync(srcAbs, destAbs)
+      markWrite(resolve(srcAbs))
+      markWrite(resolve(destAbs))
+      moved++
+      movedIds.push(id)
+    } catch {
+      skip(id)
+    }
+  }
+  return { ok: moved > 0, moved, skipped, movedIds, skippedIds, ...(moved > 0 ? {} : { error: 'nothing movable' }) }
+}
+
+/**
+ * Move entries OUT of a real folder and into the workspace root. Unlike moveIntoFolder, this is path-
+ * based because a folder-browser entry may not already be an open surface id.
+ */
+export function moveOutOfFolder(dir, paths, placeAt = {}) {
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const ws = readMetaFile(metaFile)
+  if (!ws) return { ok: false, moved: 0, skipped: 0, movedPaths: [], skippedPaths: [], pathMoves: [], surfaceIds: [], surfaces: [], updatedIds: [], updatedSurfaces: [], error: 'workspace not ready' }
+  let existing = new Set()
+  try {
+    existing = new Set(readdirSync(dir, { withFileTypes: true }).map((e) => e.name.toLowerCase()))
+  } catch {
+    /* unreadable root */
+  }
+  const requested = Array.isArray(paths) ? paths.map(String) : []
+  const movedPaths = []
+  const skippedPaths = []
+  const pathMoves = []
+  const surfaces = []
+  const surfaceIds = []
+  const updatedSurfaces = []
+  const updatedIds = []
+  let moved = 0
+  let skipped = 0
+  const skip = (p) => {
+    skipped++
+    skippedPaths.push(String(p || ''))
+  }
+  const stack = Array.isArray(ws.stack) ? ws.stack : []
+  const cx = Number(placeAt.x)
+  const cy = Number(placeAt.y)
+
+  for (const raw of requested) {
+    const srcRel = cleanNestedEntryPath(raw)
+    if (!srcRel) {
+      skip(raw)
+      continue
+    }
+    const srcAbs = safeJoin(dir, srcRel)
+    if (!srcAbs || !existsSync(srcAbs)) {
+      skip(raw)
+      continue
+    }
+    const kind = entryKindForPath(srcAbs, srcRel)
+    if (!kind) {
+      skip(raw)
+      continue
+    }
+    const destRel = uniqueRootEntryPath(dir, basename(srcRel), existing)
+    const destAbs = destRel ? safeJoin(dir, destRel) : null
+    if (!destRel || !destAbs) {
+      skip(raw)
+      continue
+    }
+    try {
+      renameSync(srcAbs, destAbs)
+      markWrite(resolve(srcAbs))
+      markWrite(resolve(destAbs))
+    } catch {
+      skip(raw)
+      continue
+    }
+
+    const prefix = `${srcRel}/`
+    const nextPrefix = `${destRel}/`
+    const sz = defaultSizeFor(kind)
+    const offset = moved % 6
+    let node = (ws.nodes || []).find((n) => n && n.path === srcRel)
+    if (node) {
+      node.path = destRel
+      node.kind = kind
+      node.w = Math.round(Number(node.w) || sz.w)
+      node.h = Math.round(Number(node.h) || sz.h)
+      node.x = Math.round(Number.isFinite(cx) ? cx - node.w / 2 + offset * 24 : Number(node.x) || 0)
+      node.y = Math.round(Number.isFinite(cy) ? cy - node.h / 2 + offset * 20 : Number(node.y) || 0)
+      if (node.kind === 'dir') {
+        const next = nodeWithPath(node, destRel)
+        Object.assign(node, next)
+        if (!('view' in next)) delete node.view
+      }
+    } else {
+      node = {
+        id: randomUUID(),
+        path: destRel,
+        kind,
+        x: Math.round(Number.isFinite(cx) ? cx - sz.w / 2 + offset * 24 : 0),
+        y: Math.round(Number.isFinite(cy) ? cy - sz.h / 2 + offset * 20 : 0),
+        w: sz.w,
+        h: sz.h
+      }
+      ws.nodes.push(node)
+    }
+    for (const n of ws.nodes || []) {
+      if (n && typeof n.path === 'string' && n.path.startsWith(prefix)) {
+        const next = nodeWithPath(n, nextPrefix + n.path.slice(prefix.length))
+        Object.assign(n, next)
+        if (!('view' in next)) delete n.view
+        const updated = nodeToSurface(dir, n, Array.isArray(ws.stack) ? ws.stack.indexOf(n.id) + 1 || ws.stack.length + 1 : ws.stack.length)
+        if (updated) {
+          updatedSurfaces.push(updated)
+          updatedIds.push(updated.id)
+        }
+      }
+    }
+    ws.stack = [...stack.filter((id) => id !== node.id), node.id]
+    stack.splice(0, stack.length, ...ws.stack)
+    const surface = nodeToSurface(dir, node, ws.stack.length)
+    if (surface) {
+      surfaces.push(surface)
+      surfaceIds.push(surface.id)
+    }
+    moved++
+    movedPaths.push(destRel)
+    pathMoves.push({ from: srcRel, to: destRel })
+  }
+
+  if (moved > 0) writeMeta(metaFile, ws)
+  return { ok: moved > 0, moved, skipped, movedPaths, skippedPaths, pathMoves, surfaceIds, surfaces, updatedIds, updatedSurfaces, ...(moved > 0 ? {} : { error: 'nothing movable' }) }
+}
+
+function entryKindForPath(abs, rel) {
+  let st
+  try {
+    st = statSync(abs)
+  } catch {
+    return null
+  }
+  if (st.isDirectory()) return 'dir'
+  const ext = extname(rel).toLowerCase()
+  if (ext === '.md') return 'note'
+  if (ext === '.html' || ext === '.jsx' || ext === '.tsx') return 'srcdoc'
+  if (ext === '.weblink') {
+    try {
+      const link = JSON.parse(readFileSync(abs, 'utf8'))
+      return link && link.kind === 'app' ? 'app' : 'web'
+    } catch {
+      return 'web'
+    }
+  }
+  return 'file'
+}
+
+/**
+ * Register/open a folder entry as its real Blitz surface type. Nested entries become explicit
+ * workspace nodes, so their id/path is stable while open; closing a nested node removes the node
+ * but keeps the underlying file.
+ */
+export function openFolderEntry(dir, rel, placeAt = {}) {
+  const path = String(rel || '').replace(/^[/\\]+/g, '')
+  if (!path || path.startsWith('.') || /(^|[/\\])\.blitzos([/\\]|$)/i.test(path)) return { ok: false, error: 'bad path' }
+  const abs = safeJoin(dir, path)
+  if (!abs || !existsSync(abs)) return { ok: false, error: 'not found' }
+  const kind = entryKindForPath(abs, path)
+  if (!kind) return { ok: false, error: 'could not open entry' }
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const ws = readMetaFile(metaFile)
+  if (!ws) return { ok: false, error: 'workspace not ready' }
+  let node = ws.nodes.find((n) => n && n.path === path)
+  if (!node) {
+    const sz = defaultSizeFor(kind)
+    const cx = Number(placeAt.x)
+    const cy = Number(placeAt.y)
+    node = {
+      id: randomUUID(),
+      path,
+      kind,
+      x: Math.round(Number.isFinite(cx) ? cx - sz.w / 2 : 0),
+      y: Math.round(Number.isFinite(cy) ? cy - sz.h / 2 : 0),
+      w: sz.w,
+      h: sz.h
+    }
+    ws.nodes.push(node)
+    ws.stack = Array.isArray(ws.stack) ? [...ws.stack.filter((id) => id !== node.id), node.id] : [node.id]
+    writeMeta(metaFile, ws)
+  }
+  const surface = nodeToSurface(dir, node, Array.isArray(ws.stack) ? ws.stack.indexOf(node.id) + 1 || ws.stack.length + 1 : 1)
+  return surface ? { ok: true, id: surface.id, surface } : { ok: false, error: 'could not open entry' }
+}
+
 /**
  * CLOSE a surface = delete its backing content file, EXPLICITLY by id (never inferred from a push — so a
  * partial or empty state push can NEVER mass-delete the folder). Without this a closed note/web/srcdoc
@@ -1377,6 +1756,20 @@ export function removeSurfaceFile(dir, id) {
   const { idToPath } = readPrior(metaFile)
   const rel = idToPath.get(String(id))
   if (!rel) return { ok: false } // no backing file (a runtime panel, or already gone)
+  if (rel.includes('/') || rel.includes(sep)) {
+    const rootSegment = rel.split(/[\\/]/)[0]
+    // Folder-browser entries are opened as temporary canvas nodes; closing that node should not
+    // delete the actual file. `.board` children predate this flow and keep their existing close=delete behavior.
+    if (!isBoard(rootSegment)) {
+      const ws = readMetaFile(metaFile)
+      if (ws) {
+        ws.nodes = (ws.nodes || []).filter((n) => n && n.id !== String(id))
+        if (Array.isArray(ws.stack)) ws.stack = ws.stack.filter((x) => x !== String(id))
+        writeMeta(metaFile, ws)
+      }
+      return { ok: true, removed: rel, keptFile: true }
+    }
+  }
   if (!CONTENT_EXTS.has(extname(rel).toLowerCase())) return { ok: false, skipped: 'not-content' } // never a real file/dir
   const abs = safeJoin(dir, rel)
   if (!abs || !existsSync(abs)) return { ok: false }
@@ -1698,13 +2091,16 @@ export function listDir(dir, rel) {
     .slice(0, LISTDIR_CAP)
     .map((e) => {
       let size = 0
+      let entries = 0
       try {
-        if (e.isFile()) size = statSync(join(real, e.name)).size
+        const abs = join(real, e.name)
+        if (e.isFile()) size = statSync(abs).size
+        else if (e.isDirectory()) entries = readdirSync(abs).filter((name) => !name.startsWith('.')).length
       } catch {
         /* unreadable entry */
       }
       const ext = e.isFile() ? (e.name.split('.').pop() || '').toLowerCase() : ''
-      return { name: e.name, dir: e.isDirectory(), ext, size, isImage: IMAGE_EXT.test(ext), path: relBase ? `${relBase}/${e.name}` : e.name }
+      return { name: e.name, dir: e.isDirectory(), ext, size, entries, isImage: IMAGE_EXT.test(ext), path: relBase ? `${relBase}/${e.name}` : e.name }
     })
     .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
   return { path: String(rel || ''), entries, total, truncated: total > entries.length }
