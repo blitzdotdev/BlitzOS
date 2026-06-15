@@ -53,11 +53,13 @@ function nativeCatalogWidgetError(component) {
   }
 }
 
-// Telemetry seam: ONE observer sees every tool call across every transport. A no-op until the host
-// (telemetry.ts) sets it; must never be able to break a tool call.
-let toolTap = null
+// Telemetry/tape seam: observers see every tool call across every transport. MULTI-subscriber (telemetry
+// AND the session tape both bind it); each is a no-op until a host registers; must never break a tool call.
+// The payload now carries the full args + result (the parsed ctx.body and the handler's out) so a recording
+// tap can reconstruct the action AND its effect, not just timing.
+const toolTaps = []
 export function setToolTap(fn) {
-  toolTap = fn
+  if (typeof fn === 'function') toolTaps.push(fn)
 }
 function instrument(t) {
   return {
@@ -65,19 +67,25 @@ function instrument(t) {
     handler: async (ctx) => {
       const start = Date.now()
       let status = 200
+      let out
+      let ok = true
       try {
-        const out = await t.handler(ctx)
+        out = await t.handler(ctx)
         if (out && typeof out === 'object' && typeof out.status === 'number' && 'body' in out) status = out.status
+        ok = status < 400
         return out
       } catch (e) {
         status = 500
+        ok = false
+        out = { error: String((e && e.message) || e) }
         throw e
       } finally {
-        if (toolTap) {
-          try {
-            toolTap({ path: t.path, transport: ctx?.transport, ms: Date.now() - start, status })
-          } catch {
-            /* the tap must never break the tool */
+        if (toolTaps.length) {
+          let args
+          try { args = ctx && ctx.body ? JSON.parse(ctx.body) : undefined } catch { args = undefined }
+          const info = { path: t.path, transport: ctx && ctx.transport, ms: Date.now() - start, status, ok, args, result: out }
+          for (const tap of toolTaps) {
+            try { tap(info) } catch { /* the tap must never break the tool */ }
           }
         }
       }

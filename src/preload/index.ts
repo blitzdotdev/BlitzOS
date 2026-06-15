@@ -289,6 +289,10 @@ const api = {
   sendMessage(text: string, agentId = '0'): void {
     ipcRenderer.send('os:user-message', { text, agentId })
   },
+  /** Forward an uncaught renderer error to main (the session tape's diagnostics stream). */
+  reportError(payload: { via?: string; message?: string; stack?: string; surface?: string }): void {
+    ipcRenderer.send('os:client-error', payload)
+  },
   /** Item 5b: the human placed a spatial annotation on a surface + asked about that point. Lands in chat
    *  + wakes the agent with a surface-anchored moment carrying the point. */
   annotate(p: { id: string; surfaceId: string; text: string; xPct: number; yPct: number }): void {
