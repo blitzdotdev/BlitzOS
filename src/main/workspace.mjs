@@ -1,7 +1,7 @@
 // Workspace serializer — the workspaces design (agent-os-workspaces.md), Phases 1–3.
 //
 // Maps the canvas <-> a workspace FOLDER, both ways:
-//   <dir>/.blitzos/workspace.json   ← the one layout file: { version, id, kind, camera, mode, stack, nodes[] }
+//   <dir>/.blitzos/workspace.json   ← the one layout file: { version, id, kind, camera, mode, stack, nodes[], groups[] }
 //   <dir>/<content files>           ← everything-is-a-file: note→.md, web→.weblink, srcdoc→.html
 //
 //   writeWorkspace()      project the live desktop (osState) onto the folder.
@@ -93,7 +93,7 @@ function safeStageCount(n) {
 // Which surfaces become canvas NODES. The chat + agent-activity native panels are RUNTIME
 // (they belong in .blitzos/state/*.jsonl, Phase 4), never nodes. Unknown kinds are skipped.
 function nodeKind(s) {
-  if (s && s.role === 'chat') return null // the system chat is a srcdoc whose UI=blitz-chat.html + data=chat.md; never a node
+  if (s && s.role === 'chat') return null // the system chat is a srcdoc whose UI=blitz-chat.* + data=chat.md; never a node
   if (s && s.role === 'note') return 'note' // a note rendered via blitz-note.html still persists as its .md content file
   if (s.kind === 'web' || s.kind === 'app') return s.kind // both serialize to .weblink, but app needs its renderer kind preserved
   if (s.kind === 'srcdoc') return 'srcdoc'
@@ -151,7 +151,7 @@ function contentFor(kind, s) {
     case 'app': {
       // A browser surface with materialized tabs persists them ({id,title,url} only — favicon/loading/
       // nav state are runtime). Single-tab windows keep the legacy {url} shape.
-      const link = { url: s.url || '' }
+      const link = { url: s.url || '', kind }
       if (kind === 'web' && Array.isArray(s.tabs) && s.tabs.length) {
         link.tabs = s.tabs
           .filter((t) => t && t.id)
@@ -188,6 +188,96 @@ function viewFor(kind, s) {
     }
   }
   return v
+}
+
+function visualGroupsFromSurfaces(surfaces, nodeIds) {
+  const groups = []
+  const usedMembers = new Set()
+  for (const s of surfaces) {
+    if (!s || s.kind !== 'native' || s.component !== 'folder' || typeof s.id !== 'string' || !s.id) continue
+    const raw = Array.isArray(s.props?.members) ? s.props.members : []
+    const members = []
+    for (const id of raw) {
+      const sid = String(id || '')
+      if (!sid || !nodeIds.has(sid) || usedMembers.has(sid)) continue
+      members.push(sid)
+    }
+    if (members.length < 2) continue
+    for (const id of members) usedMembers.add(id)
+    groups.push({
+      id: s.id,
+      title: typeof s.title === 'string' && s.title ? s.title : 'Folder',
+      x: Math.round(Number(s.x) || 0),
+      y: Math.round(Number(s.y) || 0),
+      w: Math.round(Number(s.w) || 232),
+      h: Math.round(Number(s.h) || 248),
+      z: Math.round(Number(s.z) || 0),
+      members
+    })
+  }
+  return groups
+}
+
+function visualGroupsFromMeta(groups, nodeIds) {
+  const out = []
+  const usedMembers = new Set()
+  for (const g of Array.isArray(groups) ? groups : []) {
+    if (!g || typeof g.id !== 'string' || !g.id) continue
+    const members = []
+    for (const id of Array.isArray(g.members) ? g.members : []) {
+      const sid = String(id || '')
+      if (!sid || !nodeIds.has(sid) || usedMembers.has(sid)) continue
+      members.push(sid)
+    }
+    if (members.length < 2) continue
+    for (const id of members) usedMembers.add(id)
+    out.push({
+      id: g.id,
+      title: typeof g.title === 'string' && g.title ? g.title : 'Folder',
+      x: Math.round(Number(g.x) || 0),
+      y: Math.round(Number(g.y) || 0),
+      w: Math.max(40, Math.round(Number(g.w) || 232)),
+      h: Math.max(40, Math.round(Number(g.h) || 248)),
+      z: Math.round(Number(g.z) || 0),
+      members
+    })
+  }
+  return out
+}
+
+function applyVisualGroups(surfaces, groups) {
+  if (!Array.isArray(groups) || !groups.length || !Array.isArray(surfaces) || !surfaces.length) return surfaces
+  const surfaceIds = new Set(surfaces.map((s) => s && s.id).filter(Boolean))
+  const memberToGroup = new Map()
+  const folders = []
+  for (const g of groups) {
+    if (!g || typeof g.id !== 'string' || !g.id || surfaceIds.has(g.id)) continue
+    const members = []
+    for (const id of Array.isArray(g.members) ? g.members : []) {
+      const sid = String(id || '')
+      if (!sid || !surfaceIds.has(sid) || memberToGroup.has(sid)) continue
+      members.push(sid)
+    }
+    if (members.length < 2) continue
+    for (const id of members) memberToGroup.set(id, g.id)
+    folders.push({
+      id: g.id,
+      kind: 'native',
+      component: 'folder',
+      x: Math.round(Number(g.x) || 0),
+      y: Math.round(Number(g.y) || 0),
+      w: Math.max(40, Math.round(Number(g.w) || 232)),
+      h: Math.max(40, Math.round(Number(g.h) || 248)),
+      z: Math.round(Number(g.z) || 0),
+      title: typeof g.title === 'string' && g.title ? g.title : 'Folder',
+      props: { members, open: false }
+    })
+  }
+  if (!folders.length) return surfaces
+  return [
+    ...surfaces.map((s) => (memberToGroup.has(s.id) ? { ...s, groupId: memberToGroup.get(s.id), peek: false } : s)),
+    ...folders
+  ]
 }
 
 function atomicWrite(file, data) {
@@ -411,7 +501,7 @@ export function writeWorkspace(dir, osState) {
       const rel = idToPath.get(s.id)
       if (!rel || !safeJoin(dir, rel)) continue // can't locate the real file/dir → skip
       seen.add(s.id)
-      const fview = typeof s.title === 'string' && s.title ? { title: s.title } : {}
+      const fview = kind === 'file' && typeof s.title === 'string' && s.title ? { title: s.title } : {}
       nodes.push({
         id: s.id,
         path: rel,
@@ -452,6 +542,8 @@ export function writeWorkspace(dir, osState) {
     })
     order.push({ id: s.id, z: s.z || 0 })
   }
+  const nodeIds = new Set(nodes.map((n) => n.id))
+  const groups = visualGroupsFromSurfaces(surfaces, nodeIds)
 
   // Runtime panels (chat / agent-activity) aren't folder nodes, but their content (the chat
   // transcript, the activity feed) must survive a backend RESTART — persist them to
@@ -490,6 +582,7 @@ export function writeWorkspace(dir, osState) {
     stageCount,
     stageOrder: safeStageOrder(osState?.stageOrder, stageCount),
     stack,
+    groups,
     nodes
   }
   writeMeta(metaFile, ws) // atomic + keeps workspace.json.bak
@@ -652,8 +745,6 @@ function nodeToSurface(dir, n, z) {
       return null // vanished
     }
     const name = basename(n.path)
-    const view = n.view && typeof n.view === 'object' ? n.view : {}
-    const title = typeof view.title === 'string' && view.title ? view.title : name
     const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || 200, h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z, ...stageFields(n) }
     if (n.kind === 'dir') {
       let entries = 0
@@ -662,8 +753,10 @@ function nodeToSurface(dir, n, z) {
       } catch {
         /* unreadable dir */
       }
-      return { ...base, kind: 'native', component: 'dir', title, props: { dir: true, name, path: n.path, entries } }
+      return { ...base, kind: 'native', component: 'dir', title: name, props: { dir: true, name, path: n.path, entries } }
     }
+    const view = n.view && typeof n.view === 'object' ? n.view : {}
+    const title = typeof view.title === 'string' && view.title ? view.title : name
     const ext = extname(name).toLowerCase().replace(/^\./, '')
     const isImage = IMAGE_EXT.test(ext)
     return { ...base, kind: 'native', component: 'file', title, props: { name, path: n.path, ext, bytes: st.size, isImage } }
@@ -755,8 +848,9 @@ export function readWorkspace(dir) {
     seq++
     if (s) surfaces.push(s)
   }
+  const groupedSurfaces = applyVisualGroups(surfaces, ws.groups)
   const rsc = safeStageCount(ws.stageCount ?? ws.areaCount) // ?? areaCount: pre-rename folders
-  return { surfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', stageCount: rsc, stageOrder: safeStageOrder(ws.stageOrder, rsc) }
+  return { surfaces: groupedSurfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', stageCount: rsc, stageOrder: safeStageOrder(ws.stageOrder, rsc) }
 }
 
 // Which loose root files auto-surface as new nodes on reconcile, and as what kind. Conservative
@@ -767,7 +861,7 @@ export function readWorkspace(dir) {
 const META_FILES = new Set(['blitzos.md', '.gitignore'])
 function autoKind(name) {
   if (name.startsWith('.') || /\.tmp(-[0-9a-f]+)?$/.test(name) || META_FILES.has(name.toLowerCase())) return null
-  if (isSystemFile(name)) return null // blitz-chat.html (the chat UI) + chat.md (transcript) are OS-managed, not plain tiles
+  if (isSystemFile(name)) return null // blitz-chat.* (the chat UI) + chat.md (transcript) are OS-managed, not plain tiles
   const ext = extname(name).toLowerCase()
   if (ext === '.weblink') return 'web'
   if (ext === '.md') return 'note'
@@ -779,14 +873,14 @@ function autoKind(name) {
 const BLITZOS_MD = `# This folder is a BlitzOS workspace
 
 BlitzOS shows this folder as a spatial canvas. Every loose file here is a node you can see and
-arrange; edit the files and the canvas updates live. The board IS this folder.
+arrange; edit the files and the canvas updates live. The workspace IS this folder.
 
 ## File kinds
 - \`*.md\` — a note (the markdown text is the file).
-- \`*.weblink\` — a web window: \`{ "url": "https://…" }\`.
+- \`*.weblink\` — a web window: \`{ "url": "https://…" }\`. A tabbed browser window may use
+  \`{ "url": "https://…", "tabs": [{ "id": "t1", "title": "Tab", "url": "https://…" }], "activeTab": 0 }\`.
 - \`*.html\` — an agent-authored panel.
-- a plain folder — a collapsed tile; its contents are NOT on the canvas (good for grouping +
-  cloned repos, so a repo is one tile, not thousands of nodes).
+- \`*.jsx\` / \`*.tsx\` — a React widget compiled inside the sandboxed surface.
 - images / other files — a tile.
 
 ## Layout
@@ -797,7 +891,14 @@ arrange; edit the files and the canvas updates live. The board IS this folder.
 ## For an agent
 Operate this workspace with plain file tools — no API needed:
 - new note → write a \`.md\`; open a site → write a \`.weblink\`; move/resize → edit the node in
-  \`.blitzos/workspace.json\`; delete → remove the file; group → move files into a subfolder.
+  \`.blitzos/workspace.json\`; delete → remove the file.
+- before writing or replacing \`.html\`, \`.jsx\`, or \`.tsx\` widget source, self-review it against
+  the BlitzOS widget rules: sandbox/bridge use, interaction, tokens, scroll safety, copy, imports,
+  and \`needs\`. Fix basics before creating it on the user's canvas.
+- after creating or updating widget source, verify with \`list_state\`/\`get_surface\`; for JSX/TSX,
+  \`lastError\` must be absent before you treat the widget as done.
+- multiple web pages in the same research lane -> MUST be ONE tabbed \`.weblink\` with \`tabs\`; create
+  separate \`.weblink\` files only for genuinely different lanes.
 - A node's content = its file. \`.blitzos/state/\` is BlitzOS runtime state — do not read or edit it.
 `
 
@@ -1068,7 +1169,8 @@ export function reconcileWorkspace(dir, placeAt = {}) {
   const stageOrder = safeStageOrder(ws.stageOrder, stageCount)
 
   if (changed) {
-    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stageCount, stageOrder, stack: surfaces.map((s) => s.id), nodes: alive }
+    const groups = visualGroupsFromMeta(ws.groups, new Set(alive.map((n) => n.id)))
+    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stageCount, stageOrder, stack: surfaces.map((s) => s.id), groups, nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
   return { surfaces, camera, mode, stageCount, stageOrder, changed, knownIds }
@@ -1262,6 +1364,385 @@ export function createFolder(dir, name, kind) {
   }
 }
 
+function cleanFolderName(name) {
+  const n = String(name || '').normalize('NFC').trim().slice(0, 80)
+  if (!n || n.startsWith('.') || /[/\\]/.test(n)) return null
+  if (!/^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(n)) return null
+  if (RESERVED_ROOT.has(n.toLowerCase())) return null
+  return n
+}
+
+function uniqueDirName(dir, desired, oldRel = '') {
+  const clean = cleanFolderName(desired)
+  if (!clean) return null
+  const oldLower = String(oldRel || '').split(/[\\/]/).pop()?.toLowerCase()
+  let existing = new Set()
+  try {
+    existing = new Set(readdirSync(dir, { withFileTypes: true }).map((e) => e.name.toLowerCase()))
+  } catch {
+    /* unreadable */
+  }
+  let name = clean
+  let i = 2
+  while ((existing.has(name.toLowerCase()) && name.toLowerCase() !== oldLower) || RESERVED_ROOT.has(name.toLowerCase())) {
+    name = `${clean}-${i++}`
+  }
+  return name
+}
+
+function readMetaFile(metaFile) {
+  try {
+    const ws = JSON.parse(readFileSync(metaFile, 'utf8'))
+    return ws && Array.isArray(ws.nodes) ? ws : null
+  } catch {
+    return null
+  }
+}
+
+function nodeWithPath(n, path) {
+  const next = { ...n, path }
+  if (n.kind === 'dir') {
+    const view = n.view && typeof n.view === 'object' ? { ...n.view } : {}
+    delete view.title
+    if (Object.keys(view).length) next.view = view
+    else delete next.view
+  }
+  return next
+}
+
+function cleanNestedEntryPath(path) {
+  const rel = String(path || '').replace(/^[/\\]+/g, '').split('\\').join('/')
+  const parts = rel.split('/').filter(Boolean)
+  if (parts.length < 2) return null
+  if (parts.some((p) => p === '.' || p === '..' || p.startsWith('.'))) return null
+  if (/(^|[/\\])\.blitzos([/\\]|$)/i.test(rel)) return null
+  return parts.join('/')
+}
+
+function uniqueRootEntryPath(dir, baseName, taken) {
+  const clean = String(baseName || '').trim()
+  if (!clean || clean.startsWith('.')) return null
+  const dot = clean.lastIndexOf('.')
+  const stem = dot > 0 ? clean.slice(0, dot) : clean
+  const ext = dot > 0 ? clean.slice(dot) : ''
+  let name = clean
+  let i = 2
+  while (taken.has(name.toLowerCase()) || RESERVED_ROOT.has(name.toLowerCase()) || existsSync(safeJoin(dir, name) || dir)) {
+    name = `${stem}-${i++}${ext}`
+  }
+  taken.add(name.toLowerCase())
+  return name
+}
+
+function rewriteNodePathPrefix(ws, oldRel, nextRel) {
+  const oldPrefix = `${oldRel}/`
+  const nextPrefix = `${nextRel}/`
+  let changed = false
+  ws.nodes = (ws.nodes || []).map((n) => {
+    if (!n || typeof n.path !== 'string') return n
+    if (n.path === oldRel) {
+      changed = true
+      return nodeWithPath(n, nextRel)
+    }
+    if (n.path.startsWith(oldPrefix)) {
+      changed = true
+      return nodeWithPath(n, nextPrefix + n.path.slice(oldPrefix.length))
+    }
+    return n
+  })
+  return changed
+}
+
+/**
+ * Rename a REAL folder in the active workspace. This renames the directory itself and rewrites any
+ * workspace nodes whose backing path is that folder or a descendant. Returns the final unique path.
+ */
+export function renameFolder(dir, rel, name) {
+  const oldRel = String(rel || '').replace(/^[/\\]+|[/\\]+$/g, '')
+  if (!oldRel || oldRel.startsWith('.') || oldRel.includes('..')) return { ok: false, error: 'bad folder path' }
+  const oldAbs = safeJoin(dir, oldRel)
+  if (!oldAbs) return { ok: false, error: 'bad folder path' }
+  try {
+    if (!statSync(oldAbs).isDirectory()) return { ok: false, error: 'not a folder' }
+  } catch {
+    return { ok: false, error: 'folder not found' }
+  }
+  const parentRel = oldRel.split('/').slice(0, -1).join('/')
+  const parentAbs = safeJoin(dir, parentRel || '.')
+  if (!parentAbs) return { ok: false, error: 'bad folder path' }
+  const nextName = uniqueDirName(parentAbs, name, oldRel)
+  if (!nextName) return { ok: false, error: 'bad folder name' }
+  const nextRel = parentRel ? `${parentRel}/${nextName}` : nextName
+  if (nextRel === oldRel) return { ok: true, path: oldRel }
+  const nextAbs = safeJoin(dir, nextRel)
+  if (!nextAbs) return { ok: false, error: 'bad folder name' }
+  try {
+    renameSync(oldAbs, nextAbs)
+    markWrite(resolve(oldAbs))
+    markWrite(resolve(nextAbs))
+  } catch {
+    return { ok: false, error: 'could not rename folder' }
+  }
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const ws = readMetaFile(metaFile)
+  if (ws && rewriteNodePathPrefix(ws, oldRel, nextRel)) writeMeta(metaFile, ws)
+  return { ok: true, path: nextRel }
+}
+
+/**
+ * Move existing workspace-backed surfaces into an EXISTING real folder. The surfaces disappear from
+ * the root canvas after reconcile; their files remain browseable/openable from the folder.
+ */
+export function moveIntoFolder(dir, folderRel, memberIds) {
+  const targetRel = String(folderRel || '').replace(/^[/\\]+|[/\\]+$/g, '')
+  if (!targetRel || targetRel.startsWith('.') || targetRel.includes('..')) return { ok: false, error: 'bad folder path' }
+  const targetAbs = safeJoin(dir, targetRel)
+  if (!targetAbs) return { ok: false, error: 'bad folder path' }
+  try {
+    if (!statSync(targetAbs).isDirectory()) return { ok: false, error: 'not a folder' }
+  } catch {
+    return { ok: false, error: 'folder not found' }
+  }
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const ws = readMetaFile(metaFile)
+  const idToNode = new Map()
+  for (const n of ws?.nodes || []) {
+    if (n && typeof n.id === 'string' && typeof n.path === 'string') idToNode.set(n.id, n)
+  }
+  const movableKinds = new Set(['note', 'app', 'srcdoc', 'file', 'dir'])
+  const ids = Array.isArray(memberIds) ? memberIds.map(String) : []
+  let moved = 0
+  let skipped = 0
+  const movedIds = []
+  const skippedIds = []
+  const skip = (id) => {
+    skipped++
+    if (id) skippedIds.push(id)
+  }
+  for (const id of ids) {
+    const node = idToNode.get(id)
+    const rel = node?.path
+    if (!node || !rel) {
+      skip(id)
+      continue
+    }
+    if (!movableKinds.has(node.kind)) {
+      skip(id)
+      continue
+    }
+    if (rel === targetRel || targetRel.startsWith(`${rel}/`) || rel.startsWith(`${targetRel}/`)) {
+      skip(id)
+      continue
+    }
+    const srcAbs = safeJoin(dir, rel)
+    if (!srcAbs || !existsSync(srcAbs)) {
+      skip(id)
+      continue
+    }
+    const baseName = basename(rel)
+    let destRel = `${targetRel}/${baseName}`
+    let dn = 2
+    while (existsSync(safeJoin(dir, destRel) || dir)) {
+      const dot = baseName.lastIndexOf('.')
+      destRel = dot > 0 ? `${targetRel}/${baseName.slice(0, dot)}-${dn++}${baseName.slice(dot)}` : `${targetRel}/${baseName}-${dn++}`
+    }
+    const destAbs = safeJoin(dir, destRel)
+    if (!destAbs) {
+      skip(id)
+      continue
+    }
+    try {
+      renameSync(srcAbs, destAbs)
+      markWrite(resolve(srcAbs))
+      markWrite(resolve(destAbs))
+      moved++
+      movedIds.push(id)
+    } catch {
+      skip(id)
+    }
+  }
+  return { ok: moved > 0, moved, skipped, movedIds, skippedIds, ...(moved > 0 ? {} : { error: 'nothing movable' }) }
+}
+
+/**
+ * Move entries OUT of a real folder and into the workspace root. Unlike moveIntoFolder, this is path-
+ * based because a folder-browser entry may not already be an open surface id.
+ */
+export function moveOutOfFolder(dir, paths, placeAt = {}) {
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const ws = readMetaFile(metaFile)
+  if (!ws) return { ok: false, moved: 0, skipped: 0, movedPaths: [], skippedPaths: [], pathMoves: [], surfaceIds: [], surfaces: [], updatedIds: [], updatedSurfaces: [], error: 'workspace not ready' }
+  let existing = new Set()
+  try {
+    existing = new Set(readdirSync(dir, { withFileTypes: true }).map((e) => e.name.toLowerCase()))
+  } catch {
+    /* unreadable root */
+  }
+  const requested = Array.isArray(paths) ? paths.map(String) : []
+  const movedPaths = []
+  const skippedPaths = []
+  const pathMoves = []
+  const surfaces = []
+  const surfaceIds = []
+  const updatedSurfaces = []
+  const updatedIds = []
+  let moved = 0
+  let skipped = 0
+  const skip = (p) => {
+    skipped++
+    skippedPaths.push(String(p || ''))
+  }
+  const stack = Array.isArray(ws.stack) ? ws.stack : []
+  const cx = Number(placeAt.x)
+  const cy = Number(placeAt.y)
+
+  for (const raw of requested) {
+    const srcRel = cleanNestedEntryPath(raw)
+    if (!srcRel) {
+      skip(raw)
+      continue
+    }
+    const srcAbs = safeJoin(dir, srcRel)
+    if (!srcAbs || !existsSync(srcAbs)) {
+      skip(raw)
+      continue
+    }
+    const kind = entryKindForPath(srcAbs, srcRel)
+    if (!kind) {
+      skip(raw)
+      continue
+    }
+    const destRel = uniqueRootEntryPath(dir, basename(srcRel), existing)
+    const destAbs = destRel ? safeJoin(dir, destRel) : null
+    if (!destRel || !destAbs) {
+      skip(raw)
+      continue
+    }
+    try {
+      renameSync(srcAbs, destAbs)
+      markWrite(resolve(srcAbs))
+      markWrite(resolve(destAbs))
+    } catch {
+      skip(raw)
+      continue
+    }
+
+    const prefix = `${srcRel}/`
+    const nextPrefix = `${destRel}/`
+    const sz = defaultSizeFor(kind)
+    const offset = moved % 6
+    let node = (ws.nodes || []).find((n) => n && n.path === srcRel)
+    if (node) {
+      node.path = destRel
+      node.kind = kind
+      node.w = Math.round(Number(node.w) || sz.w)
+      node.h = Math.round(Number(node.h) || sz.h)
+      node.x = Math.round(Number.isFinite(cx) ? cx - node.w / 2 + offset * 24 : Number(node.x) || 0)
+      node.y = Math.round(Number.isFinite(cy) ? cy - node.h / 2 + offset * 20 : Number(node.y) || 0)
+      if (node.kind === 'dir') {
+        const next = nodeWithPath(node, destRel)
+        Object.assign(node, next)
+        if (!('view' in next)) delete node.view
+      }
+    } else {
+      node = {
+        id: randomUUID(),
+        path: destRel,
+        kind,
+        x: Math.round(Number.isFinite(cx) ? cx - sz.w / 2 + offset * 24 : 0),
+        y: Math.round(Number.isFinite(cy) ? cy - sz.h / 2 + offset * 20 : 0),
+        w: sz.w,
+        h: sz.h
+      }
+      ws.nodes.push(node)
+    }
+    for (const n of ws.nodes || []) {
+      if (n && typeof n.path === 'string' && n.path.startsWith(prefix)) {
+        const next = nodeWithPath(n, nextPrefix + n.path.slice(prefix.length))
+        Object.assign(n, next)
+        if (!('view' in next)) delete n.view
+        const updated = nodeToSurface(dir, n, Array.isArray(ws.stack) ? ws.stack.indexOf(n.id) + 1 || ws.stack.length + 1 : ws.stack.length)
+        if (updated) {
+          updatedSurfaces.push(updated)
+          updatedIds.push(updated.id)
+        }
+      }
+    }
+    ws.stack = [...stack.filter((id) => id !== node.id), node.id]
+    stack.splice(0, stack.length, ...ws.stack)
+    const surface = nodeToSurface(dir, node, ws.stack.length)
+    if (surface) {
+      surfaces.push(surface)
+      surfaceIds.push(surface.id)
+    }
+    moved++
+    movedPaths.push(destRel)
+    pathMoves.push({ from: srcRel, to: destRel })
+  }
+
+  if (moved > 0) writeMeta(metaFile, ws)
+  return { ok: moved > 0, moved, skipped, movedPaths, skippedPaths, pathMoves, surfaceIds, surfaces, updatedIds, updatedSurfaces, ...(moved > 0 ? {} : { error: 'nothing movable' }) }
+}
+
+function entryKindForPath(abs, rel) {
+  let st
+  try {
+    st = statSync(abs)
+  } catch {
+    return null
+  }
+  if (st.isDirectory()) return 'dir'
+  const ext = extname(rel).toLowerCase()
+  if (ext === '.md') return 'note'
+  if (ext === '.html' || ext === '.jsx' || ext === '.tsx') return 'srcdoc'
+  if (ext === '.weblink') {
+    try {
+      const link = JSON.parse(readFileSync(abs, 'utf8'))
+      return link && link.kind === 'app' ? 'app' : 'web'
+    } catch {
+      return 'web'
+    }
+  }
+  return 'file'
+}
+
+/**
+ * Register/open a folder entry as its real Blitz surface type. Nested entries become explicit
+ * workspace nodes, so their id/path is stable while open; closing a nested node removes the node
+ * but keeps the underlying file.
+ */
+export function openFolderEntry(dir, rel, placeAt = {}) {
+  const path = String(rel || '').replace(/^[/\\]+/g, '')
+  if (!path || path.startsWith('.') || /(^|[/\\])\.blitzos([/\\]|$)/i.test(path)) return { ok: false, error: 'bad path' }
+  const abs = safeJoin(dir, path)
+  if (!abs || !existsSync(abs)) return { ok: false, error: 'not found' }
+  const kind = entryKindForPath(abs, path)
+  if (!kind) return { ok: false, error: 'could not open entry' }
+  const metaFile = join(dir, '.blitzos', 'workspace.json')
+  const ws = readMetaFile(metaFile)
+  if (!ws) return { ok: false, error: 'workspace not ready' }
+  let node = ws.nodes.find((n) => n && n.path === path)
+  if (!node) {
+    const sz = defaultSizeFor(kind)
+    const cx = Number(placeAt.x)
+    const cy = Number(placeAt.y)
+    node = {
+      id: randomUUID(),
+      path,
+      kind,
+      x: Math.round(Number.isFinite(cx) ? cx - sz.w / 2 : 0),
+      y: Math.round(Number.isFinite(cy) ? cy - sz.h / 2 : 0),
+      w: sz.w,
+      h: sz.h
+    }
+    ws.nodes.push(node)
+    ws.stack = Array.isArray(ws.stack) ? [...ws.stack.filter((id) => id !== node.id), node.id] : [node.id]
+    writeMeta(metaFile, ws)
+  }
+  const surface = nodeToSurface(dir, node, Array.isArray(ws.stack) ? ws.stack.indexOf(node.id) + 1 || ws.stack.length + 1 : 1)
+  return surface ? { ok: true, id: surface.id, surface } : { ok: false, error: 'could not open entry' }
+}
+
 /**
  * CLOSE a surface = delete its backing content file, EXPLICITLY by id (never inferred from a push — so a
  * partial or empty state push can NEVER mass-delete the folder). Without this a closed note/web/srcdoc
@@ -1275,6 +1756,20 @@ export function removeSurfaceFile(dir, id) {
   const { idToPath } = readPrior(metaFile)
   const rel = idToPath.get(String(id))
   if (!rel) return { ok: false } // no backing file (a runtime panel, or already gone)
+  if (rel.includes('/') || rel.includes(sep)) {
+    const rootSegment = rel.split(/[\\/]/)[0]
+    // Folder-browser entries are opened as temporary canvas nodes; closing that node should not
+    // delete the actual file. `.board` children predate this flow and keep their existing close=delete behavior.
+    if (!isBoard(rootSegment)) {
+      const ws = readMetaFile(metaFile)
+      if (ws) {
+        ws.nodes = (ws.nodes || []).filter((n) => n && n.id !== String(id))
+        if (Array.isArray(ws.stack)) ws.stack = ws.stack.filter((x) => x !== String(id))
+        writeMeta(metaFile, ws)
+      }
+      return { ok: true, removed: rel, keptFile: true }
+    }
+  }
   if (!CONTENT_EXTS.has(extname(rel).toLowerCase())) return { ok: false, skipped: 'not-content' } // never a real file/dir
   const abs = safeJoin(dir, rel)
   if (!abs || !existsSync(abs)) return { ok: false }
@@ -1289,7 +1784,7 @@ export function removeSurfaceFile(dir, id) {
 
 /**
  * Delete everything an AGENT owns when it's closed: its transcript (chat-<id>.md), its (possibly
- * agent-customized) widget UI (blitz-<id>-chat.html), and its agent dir (.blitzos/terminals/<id>/ —
+ * agent-customized) widget UI (blitz-<id>-chat.*), and its agent dir (.blitzos/terminals/<id>/ —
  * meta.json + transcript.jsonl + bootstrap.txt). removeSurfaceFile can't do this (a chat surface has no
  * idToPath entry). Every delete is markWrite-stamped so the folder watcher skips its own writes. Never
  * called for primary '0' (the caller guards) — but chatFileName/sysRendererName branch on '0' anyway.
@@ -1300,7 +1795,7 @@ export function removeAgentFiles(dir, agentId) {
   // resolve to a valid-but-wrong path INSIDE the workspace (safeJoin only blocks escapes OUT of it) and
   // rmSync the wrong tree (e.g. id '..' → the whole .blitzos dir). '0' is the primary — never deleted here.
   if (!/^[1-9][0-9]*$/.test(id)) return
-  for (const rel of [chatFileName(id), sysRendererName('chat', id)]) {
+  for (const rel of [chatFileName(id), ...sysRendererNames('chat', id)]) {
     const abs = safeJoin(dir, rel)
     if (abs && existsSync(abs)) { try { markWrite(resolve(abs)); unlinkSync(abs) } catch { /* best-effort */ } }
   }
@@ -1314,25 +1809,39 @@ export function removeAgentFiles(dir, agentId) {
 
 // ===========================================================================================
 // System widgets — the OS UI as workspace files. A built-in renderer (the chat UI) lives in a
-// VISIBLE workspace file `blitz-<role>.html` (a shipped default, copied in if missing — recreated
+// VISIBLE workspace file `blitz-<role>.<html|jsx|tsx>` (a shipped default, copied in if missing — recreated
 // after a delete — and freely editable to customize). The chat TRANSCRIPT is its own file `chat.md`
 // (structured + human-readable): the OS appends each message, the widget just renders what's there.
 // ===========================================================================================
 const SYS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'widgets', 'system')
-const SYSTEM_RENDERERS = ['chat', 'note'] // roles that ship a default renderer (blitz-<role>.html)
+const SYSTEM_RENDERERS = ['chat', 'note'] // roles that ship a default renderer (blitz-<role>.<html|jsx|tsx>)
+const SYSTEM_DEFAULT_LANG = { chat: 'tsx', note: 'html' }
+const SYSTEM_LANGS = ['tsx', 'jsx', 'html']
 const SYSTEM_PREFIX = 'blitz-'
 const CHAT_FILE = 'chat.md'
 
 // Per-session chat (one agent per session): session '0' (the primary chat) keeps the LEGACY names
-// (chat.md, blitz-chat.html) so it needs ZERO migration; any other session gets chat-<id>.md and
-// blitz-<id>-chat.html. Both naming families are recognized as system files (never surfaced as tiles).
+// (chat.md, blitz-chat.html/tsx) so it needs ZERO migration; any other session gets chat-<id>.md and
+// blitz-<id>-chat.*. Both naming families are recognized as system files (never surfaced as tiles).
 export function chatFileName(sessionId = '0') { return sessionId && String(sessionId) !== '0' ? `chat-${sessionId}.md` : CHAT_FILE }
-export function sysRendererName(role, sessionId = '0') { return sessionId && String(sessionId) !== '0' ? `${SYSTEM_PREFIX}${sessionId}-${role}.html` : `${SYSTEM_PREFIX}${role}.html` }
-/** The role a `blitz-[<sessionId>-]<role>.html` name encodes (the LAST dash-segment), or null. */
+function systemLang(lang, fallback = 'html') {
+  const v = String(lang || fallback).toLowerCase()
+  return SYSTEM_LANGS.includes(v) ? v : fallback
+}
+function sysRendererNameForLang(role, sessionId = '0', lang = 'html') {
+  const ext = systemLang(lang)
+  return sessionId && String(sessionId) !== '0' ? `${SYSTEM_PREFIX}${sessionId}-${role}.${ext}` : `${SYSTEM_PREFIX}${role}.${ext}`
+}
+export function sysRendererName(role, sessionId = '0') { return sysRendererNameForLang(role, sessionId, 'html') }
+function sysRendererNames(role, sessionId = '0') {
+  return SYSTEM_LANGS.map((lang) => sysRendererNameForLang(role, sessionId, lang))
+}
+/** The role a `blitz-[<sessionId>-]<role>.<html|jsx|tsx>` name encodes (the LAST dash-segment), or null. */
 function rendererRoleOf(name) {
   const n = String(name || '').toLowerCase()
-  if (!n.startsWith(SYSTEM_PREFIX) || !n.endsWith('.html')) return null
-  const mid = n.slice(SYSTEM_PREFIX.length, -5) // 'chat' or '<sessionId>-chat'
+  const m = n.match(/^blitz-(.+)\.(html|jsx|tsx)$/)
+  if (!m) return null
+  const mid = m[1] // 'chat' or '<sessionId>-chat'
   const role = mid.includes('-') ? mid.slice(mid.lastIndexOf('-') + 1) : mid
   return SYSTEM_RENDERERS.indexOf(role) !== -1 ? role : null
 }
@@ -1343,86 +1852,141 @@ export function isSystemFile(name) {
   if (n === CHAT_FILE || /^chat-[a-z0-9_-]+\.md$/.test(n)) return true
   return rendererRoleOf(n) !== null
 }
-/** If a workspace `.html` is a recognized system renderer, return its role (chat | …), else null. */
+/** If a workspace renderer file is recognized, return its role (chat | …), else null. */
 export function systemRoleOf(name) {
   return rendererRoleOf(name)
 }
 
-/** Ensure `blitz-<role>.html` exists in the workspace — copy the shipped default if MISSING (so a deleted
+function shippedSystemRenderer(role) {
+  const lang = systemLang(SYSTEM_DEFAULT_LANG[role], 'html')
+  const candidates = [join(SYS_DIR, `${role}.${lang}`), join(SYS_DIR, `${role}.html`)]
+  for (const abs of candidates) {
+    try {
+      if (existsSync(abs)) return { source: readFileSync(abs, 'utf8'), lang: abs.endsWith('.tsx') ? 'tsx' : abs.endsWith('.jsx') ? 'jsx' : 'html' }
+    } catch {
+      /* try next */
+    }
+  }
+  return null
+}
+
+function readSystemRendererFile(dir, role, sessionId = '0') {
+  const found = []
+  for (const rel of sysRendererNames(role, sessionId)) {
+    const abs = safeJoin(dir, rel)
+    if (abs && existsSync(abs)) {
+      try { found.push({ rel, abs, mtime: statSync(abs).mtimeMs, lang: rel.endsWith('.tsx') ? 'tsx' : rel.endsWith('.jsx') ? 'jsx' : 'html' }) } catch { /* try next */ }
+    }
+  }
+  found.sort((a, b) => b.mtime - a.mtime || SYSTEM_LANGS.indexOf(a.lang) - SYSTEM_LANGS.indexOf(b.lang))
+  for (const f of found) {
+    try {
+      return { rel: f.rel, source: readFileSync(f.abs, 'utf8'), lang: f.lang }
+    } catch {
+      /* try next */
+    }
+  }
+  return null
+}
+
+/** Ensure `blitz-<role>.<html|jsx|tsx>` exists in the workspace — copy the shipped default if MISSING (so a deleted
  *  renderer is recreated). Never overwrites a real customization. EXCEPTION: a chat renderer that predates
- *  the session HUB (renders the old `p.messages` and has no hub API) is incompatible with the new backend
- *  props and would render BLANK — refresh it to the shipped default. A renderer written against the hub
+ *  the session HUB and is clearly one of our old shipped defaults can be refreshed to the shipped default.
+ *  A renderer written against the hub
  *  (uses `blitz.chat` / `props.threads`) is a genuine customization and is left untouched. */
 export function ensureSystemRenderer(dir, role, sessionId = '0') {
   if (SYSTEM_RENDERERS.indexOf(role) === -1) return null
-  const rel = sysRendererName(role, sessionId)
-  const dest = safeJoin(dir, rel)
-  if (!dest) return null
-  if (existsSync(dest)) {
+  const existing = readSystemRendererFile(dir, role, sessionId)
+  if (existing) {
     if (role === 'chat') {
       try {
-        const cur = readFileSync(dest, 'utf8')
-        const shipped = readFileSync(join(SYS_DIR, 'chat.html'), 'utf8')
+        const cur = existing.source
+        const shipped = shippedSystemRenderer('chat')
         const hubAware = cur.indexOf('blitz.chat(') !== -1 || cur.indexOf('props.threads') !== -1 || cur.indexOf('p.threads') !== -1
         const preHub = /p\.messages|onProps\(render\)/.test(cur)
-        // System-widget UPDATE propagation: a workspace holds its OWN copy of blitz-chat.html, so a shipped
+        const defaultishCopy = cur.indexOf('The DEFAULT chat UI') !== -1 || cur.indexOf('DEFAULT chat UI') !== -1
+        const shippedTsxCopy = existing.lang === 'tsx' && cur.indexOf('export default function ChatHub') !== -1
+        const shippedLegacyCopy = existing.lang === 'html' && defaultishCopy
+        // System-widget UPDATE propagation: a workspace holds its OWN copy of blitz-chat.*, so a shipped
         // feature (here: item 5b annotation references) never reaches existing desktops. Refresh a SHIPPED
         // copy that lags the shipped feature set; a copy the human CUSTOMIZED (writeSystemRenderer) is left
         // alone — it carries the `blitz-chat-custom` opt-out marker. (Pre-hub copies still migrate as before.)
-        // Sentinel = the NEWEST shipped feature marker (bump it when chat.html gains a feature existing
-        // desktops must receive). 'clearctx' = the "New context" button; it ships alongside focusAnnotation,
-        // so a copy missing clearctx lags the current set and refreshes (unless human-customized).
-        const featureLag = shipped.indexOf('clearctx') !== -1 && cur.indexOf('clearctx') === -1
+        // Sentinel = the NEWEST shipped feature marker (bump it when chat.* gains a feature existing
+        // desktops must receive). Existing shipped copies refresh; customized copies carry blitz-chat-custom.
+        const marker = 'chat-watching-state-v4'
+        const featureLag = shipped?.source?.indexOf(marker) !== -1 && cur.indexOf(marker) === -1 && (shippedTsxCopy || shippedLegacyCopy)
         const customized = cur.indexOf('blitz-chat-custom') !== -1
-        if ((!hubAware && preHub) || (hubAware && featureLag && !customized)) {
-          atomicWrite(dest, shipped)
-          return { rel, created: false, refreshed: true }
+        if (shipped && ((!hubAware && preHub && !customized && defaultishCopy) || (!customized && shippedLegacyCopy) || (hubAware && featureLag && !customized))) {
+          const rel = sysRendererNameForLang(role, sessionId, shipped.lang)
+          const dest = safeJoin(dir, rel)
+          if (!dest) return null
+          atomicWrite(dest, shipped.source)
+          for (const other of sysRendererNames(role, sessionId)) {
+            if (other === rel) continue
+            const abs = safeJoin(dir, other)
+            if (abs && existsSync(abs)) { try { markWrite(resolve(abs)); unlinkSync(abs) } catch { /* best-effort */ } }
+          }
+          return { rel, created: false, refreshed: true, lang: shipped.lang }
         }
       } catch {
         /* leave it as-is */
       }
     }
-    return { rel, created: false }
+    return { rel: existing.rel, created: false, lang: existing.lang }
   }
   try {
-    atomicWrite(dest, readFileSync(join(SYS_DIR, `${role}.html`), 'utf8')) // per-session widgets default to the SAME shipped UI
-    return { rel, created: true }
+    const shipped = shippedSystemRenderer(role)
+    if (!shipped) return null
+    const rel = sysRendererNameForLang(role, sessionId, shipped.lang)
+    const dest = safeJoin(dir, rel)
+    if (!dest) return null
+    atomicWrite(dest, shipped.source) // per-session widgets default to the SAME shipped UI
+    return { rel, created: true, lang: shipped.lang }
   } catch {
     return null
   }
 }
-/** Write a system renderer's HTML (the agent customizing the chat UI) → blitz-<role>.html, jailed +
+/** Write a system renderer (the agent customizing the chat UI) → blitz-<role>.<html|jsx|tsx>, jailed +
  *  self-write-stamped. The role must be a known system widget. Returns { ok, rel } or { ok:false }. */
-export function writeSystemRenderer(dir, role, html, sessionId = '0') {
+export function writeSystemRenderer(dir, role, html, sessionId = '0', lang = 'html') {
   if (SYSTEM_RENDERERS.indexOf(role) === -1) return { ok: false, error: `unknown system widget: ${role}` }
-  const rel = sysRendererName(role, sessionId)
+  const outLang = systemLang(lang, 'html')
+  const rel = sysRendererNameForLang(role, sessionId, outLang)
   const dest = safeJoin(dir, rel)
   if (!dest) return { ok: false, error: 'bad path' }
   try {
     // Stamp customized copies so ensureSystemRenderer never auto-refreshes over a human/agent customization
     // (system-widget update propagation only refreshes UN-customized shipped copies).
     let out = String(html == null ? '' : html)
-    if (out.indexOf('blitz-chat-custom') === -1) out = `<!--blitz-chat-custom-->\n${out}`
+    if (out.indexOf('blitz-chat-custom') === -1) {
+      out = outLang === 'html' ? `<!--blitz-chat-custom-->\n${out}` : `/* blitz-chat-custom */\n${out}`
+    }
     atomicWrite(dest, out)
-    return { ok: true, rel }
+    for (const other of sysRendererNames(role, sessionId)) {
+      if (other === rel) continue
+      const abs = safeJoin(dir, other)
+      if (abs && existsSync(abs)) { try { markWrite(resolve(abs)); unlinkSync(abs) } catch { /* best-effort */ } }
+    }
+    return { ok: true, rel, lang: outLang }
   } catch {
     return { ok: false, error: 'write failed' }
   }
 }
-/** Resolve a system renderer's HTML: this session's file if present, else the workspace's shared
- *  blitz-<role>.html (so a new session inherits the workspace's customized look), else the shipped default. */
+/** Resolve a system renderer's source + language: this session's file if present, else the workspace's
+ *  shared blitz-<role>.* (so a new session inherits the workspace's customized look), else shipped default. */
+export function readSystemRendererInfo(dir, role, sessionId = '0') {
+  const own = readSystemRendererFile(dir, role, sessionId)
+  if (own) return own
+  if (String(sessionId) !== '0') {
+    const shared = readSystemRendererFile(dir, role, '0')
+    if (shared) return shared
+  }
+  const shipped = shippedSystemRenderer(role)
+  return shipped ? { rel: sysRendererNameForLang(role, '0', shipped.lang), source: shipped.source, lang: shipped.lang } : null
+}
+/** Resolve a system renderer's source (legacy helper for older callers/tests). */
 export function readSystemRenderer(dir, role, sessionId = '0') {
-  for (const rel of [sysRendererName(role, sessionId), sysRendererName(role, '0')]) {
-    const abs = safeJoin(dir, rel)
-    if (abs && existsSync(abs)) {
-      try { return readFileSync(abs, 'utf8') } catch { /* try next */ }
-    }
-  }
-  try {
-    return readFileSync(join(SYS_DIR, `${role}.html`), 'utf8')
-  } catch {
-    return null
-  }
+  return readSystemRendererInfo(dir, role, sessionId)?.source ?? null
 }
 
 // ---- chat transcript file (chat.md) — the OS owns the serialization; the widget just renders it.
@@ -1527,13 +2091,16 @@ export function listDir(dir, rel) {
     .slice(0, LISTDIR_CAP)
     .map((e) => {
       let size = 0
+      let entries = 0
       try {
-        if (e.isFile()) size = statSync(join(real, e.name)).size
+        const abs = join(real, e.name)
+        if (e.isFile()) size = statSync(abs).size
+        else if (e.isDirectory()) entries = readdirSync(abs).filter((name) => !name.startsWith('.')).length
       } catch {
         /* unreadable entry */
       }
       const ext = e.isFile() ? (e.name.split('.').pop() || '').toLowerCase() : ''
-      return { name: e.name, dir: e.isDirectory(), ext, size, isImage: IMAGE_EXT.test(ext), path: relBase ? `${relBase}/${e.name}` : e.name }
+      return { name: e.name, dir: e.isDirectory(), ext, size, entries, isImage: IMAGE_EXT.test(ext), path: relBase ? `${relBase}/${e.name}` : e.name }
     })
     .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
   return { path: String(rel || ''), entries, total, truncated: total > entries.length }

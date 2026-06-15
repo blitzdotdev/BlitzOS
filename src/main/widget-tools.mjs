@@ -10,7 +10,6 @@ export const WIDGET_TOOLS = [
   'move_surface',
   'update_surface',
   'close_surface',
-  'group',
   'go_to_primary',
   'list_state',
   'provider_call',
@@ -46,11 +45,11 @@ export function makeWidgetToolRunner(handlers) {
 /**
  * Build the widget-tool HANDLER MAP from the SAME runtime `ops` the agent registry (os-tools.mjs) binds.
  * ONE definition for both transports — Electron passes electronOps, the server passes serverOps — so the
- * widget `blitz.tool` contract (id-as-{id}, validation, list_state shape, group-error shape) can NOT drift
+ * widget `blitz.tool` contract (id-as-{id}, validation, list_state shape) can NOT drift
  * between desktop and server the way the two hand-written maps did. The closed allowlist is still enforced
  * by makeWidgetToolRunner; this only supplies the (subset of) handlers a widget is allowed to reach.
  * @param {object} ops — same shape os-tools.mjs documents (createSurface->id, openWindow->id, moveSurface,
- *   updateSurface, closeSurface, goToPrimary, getState, groupIntoFolder->{ok,...}, providerCall(desc,transport)).
+ *   updateSurface, closeSurface, goToPrimary, getState, providerCall(desc,transport)).
  */
 export function makeWidgetToolHandlers(ops) {
   return {
@@ -82,16 +81,12 @@ export function makeWidgetToolHandlers(ops) {
       ops.updateSurface(id, patch)
       return { ok: true }
     },
-    close_surface: (a) => {
-      const id = String(a.id || '')
+    close_surface: (a, ctx = {}) => {
+      const explicitId = a.id != null && String(a.id)
+      const id = String(explicitId || ctx.surfaceId || '')
       if (!id) throw new Error('id required')
       ops.closeSurface(id)
       return { ok: true }
-    },
-    group: (a) => {
-      const ids = Array.isArray(a.ids) ? a.ids.map(String) : []
-      if (!ids.length) throw new Error('no members to group')
-      return ops.groupIntoFolder(String(a.name || 'Folder'), ids, Number(a.x) || 0, Number(a.y) || 0, a.kind === 'board' ? 'board' : 'folder')
     },
     go_to_primary: () => {
       ops.goToPrimary()

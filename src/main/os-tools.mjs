@@ -39,11 +39,27 @@ function parse(body) {
   }
 }
 
-// Telemetry seam: ONE observer sees every tool call across every transport. A no-op until the host
-// (telemetry.ts) sets it; must never be able to break a tool call.
-let toolTap = null
+const NATIVE_COMPONENTS = new Set(['note', 'chat', 'activity', 'terminal', 'runtime', 'inbox', 'file', 'dir', 'files', 'unlock', 'folder'])
+
+function nativeCatalogWidgetError(component) {
+  const name = String(component || '').trim()
+  if (!name || NATIVE_COMPONENTS.has(name)) return null
+  if (!getWidgetSource(name)) return null
+  return {
+    status: 400,
+    body: {
+      error: `${name} is a library widget, not a native component. Use spawn_widget {"name":"${name}","props":{...}} instead of create_surface/place_widget with kind:"native".`
+    }
+  }
+}
+
+// Telemetry/tape seam: observers see every tool call across every transport. MULTI-subscriber (telemetry
+// AND the session tape both bind it); each is a no-op until a host registers; must never break a tool call.
+// The payload now carries the full args + result (the parsed ctx.body and the handler's out) so a recording
+// tap can reconstruct the action AND its effect, not just timing.
+const toolTaps = []
 export function setToolTap(fn) {
-  toolTap = fn
+  if (typeof fn === 'function') toolTaps.push(fn)
 }
 function instrument(t) {
   return {
@@ -51,19 +67,25 @@ function instrument(t) {
     handler: async (ctx) => {
       const start = Date.now()
       let status = 200
+      let out
+      let ok = true
       try {
-        const out = await t.handler(ctx)
+        out = await t.handler(ctx)
         if (out && typeof out === 'object' && typeof out.status === 'number' && 'body' in out) status = out.status
+        ok = status < 400
         return out
       } catch (e) {
         status = 500
+        ok = false
+        out = { error: String((e && e.message) || e) }
         throw e
       } finally {
-        if (toolTap) {
-          try {
-            toolTap({ path: t.path, transport: ctx?.transport, ms: Date.now() - start, status })
-          } catch {
-            /* the tap must never break the tool */
+        if (toolTaps.length) {
+          let args
+          try { args = ctx && ctx.body ? JSON.parse(ctx.body) : undefined } catch { args = undefined }
+          const info = { path: t.path, transport: ctx && ctx.transport, ms: Date.now() - start, status, ok, args, result: out }
+          for (const tap of toolTaps) {
+            try { tap(info) } catch { /* the tap must never break the tool */ }
           }
         }
       }
@@ -186,8 +208,8 @@ async function provisionBlitzApp(slug) {
  * @param {object} ops — { createSurface(desc)->id, openWindow(a)->id, moveSurface(id,x,y), updateSurface(id,patch),
  *   closeSurface(id), goToPrimary(), getState()->state, workspaceContext()->{workspace,workspace_path,siblings},
  *   listWorkspaces()->{...}, createWorkspace(name)->{ok,name}, switchWorkspace(name)->{ok,active},
- *   readWindow(id,script?)->result, controlSurface(id,action)->{ok,result}, say(text), customizeWidget(name,html)->{ok,rel},
- *   systemUi(name)->html|null, groupIntoFolder(name,ids,x,y,kind)->{ok,...}, providerCall(descriptor,transport)->result,
+ *   readWindow(id,script?)->result, controlSurface(id,action)->{ok,result}, say(text),
+ *   customizeWidget(name,html,agentId?,lang?)->{ok,rel}, systemUi(name)->html|null, systemUiInfo(name)->{source,lang}|null, groupIntoFolder(name,ids,x,y,kind)->{ok,...}, providerCall(descriptor,transport)->result,
  *   integrationStatuses()->[...], connectedProviders()->[...] }
  */
 export function makeOsTools(ops) {
@@ -226,7 +248,7 @@ export function makeOsTools(ops) {
     {
       path: '/create_surface',
       description:
-        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html (+ lang:"jsx"|"tsx" for a React widget — see get_widget_authoring), native takes component+props. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.jsx`=React widget, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary agent, pass {agent:"<your id>"} so it opens in YOUR stage (do NOT also pass x/y unless repositioning within your stage).',
+        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html (+ lang:"jsx"|"tsx" for a React widget — see get_widget_authoring), native takes component+props. Before passing authored srcdoc/JSX/TSX source, self-review it against get_widget_authoring, fix obvious issues, then verify after mount. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.jsx`=React widget, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary agent, pass {agent:"<your id>"} so it opens in YOUR stage (do NOT also pass x/y unless repositioning within your stage).',
       input_schema: {
         type: 'object',
         required: ['kind'],
@@ -235,6 +257,10 @@ export function makeOsTools(ops) {
       handler: ({ body }) => {
         const a = parse(body)
         if (!a.kind) return { status: 400, body: { error: 'kind required' } }
+        if (a.kind === 'native') {
+          const widgetError = nativeCatalogWidgetError(a.component)
+          if (widgetError) return widgetError
+        }
         // An agent-scoped surface lands in ITS stage (the renderer cascades by `stage` when no
         // explicit x is given); the primary agent '0' → stage 0 = today's behavior.
         if (a.agent != null) a.stage = stageForAgent(a.agent)
@@ -272,7 +298,7 @@ export function makeOsTools(ops) {
     {
       path: '/open_window',
       description:
-        'Open a third-party website as a live web surface. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame): drive it freely with surface_control/read_window — it is out of their home view, and visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary agents pass {agent:"<your id>"}.',
+        'Open a third-party website as a live web surface. This is the default way to make public/current web evidence visible in Blitz, then drive it with surface_control/read_window. Internal web search is allowed only as a discovery index for candidate URLs/query angles; every source you rely on must be opened in Blitz before you present findings. For open-ended research, use multiple query angles when useful rather than doing one visible search. Tab rule: do not call open_window repeatedly for sources in the SAME research lane when you can write/update one tabbed .weblink in workspace_path; use open_window for a single source, the first page in a lane, or a genuinely separate lane. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame), visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary agents pass {agent:"<your id>"}.',
       input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, title: { type: 'string' }, agent: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -285,7 +311,7 @@ export function makeOsTools(ops) {
     {
       path: '/place_widget',
       description:
-        "Put a widget on the user's desktop (the STAGE — a slot grid that never overlaps and never reflows). You pick a SIZE + optional position HINT; the OS picks the exact free slot — there is NO x/y. size: s (1x1 square) | m (2x1 wide) | l (2x2 big) | xl (4x2 hero) | tall (2x3, chat-shaped) | xxl (4x4 full-focus — alone it IS the stage). near: 'top-left'|'top-right'|'bottom-left'|'bottom-right'|'center' or another surface's id (lands adjacent). Pass an EXISTING surface id to stage it, OR kind+html/component/props to create directly into the slot. Returns { id, slot } or { error:'stage_full', tiles, budget } — then evict (send_backstage) or queue. The stage is the user's ATTENTION: one widget that lets them act beats N raw windows.",
+        "Put a widget on the user's desktop (the STAGE — a slot grid that never overlaps and never reflows). You pick a SIZE + optional position HINT; the OS picks the exact free slot — there is NO x/y. size: s (1x1 square) | m (2x1 wide) | l (2x2 big) | xl (4x2 hero) | tall (2x3, chat-shaped) | xxl (4x4 full-focus — alone it IS the stage). near: 'top-left'|'top-right'|'bottom-left'|'bottom-right'|'center' or another surface's id (lands adjacent). Pass an EXISTING surface id to stage it, OR kind+html/component/props to create directly into the slot. Before creating from authored srcdoc/JSX/TSX source, self-review it against get_widget_authoring and fix obvious issues. Returns { id, slot } or { error:'stage_full', tiles, budget } — then evict (send_backstage) or queue. The stage is the user's ATTENTION: one widget that lets them act beats N raw windows.",
       input_schema: {
         type: 'object',
         properties: {
@@ -313,6 +339,10 @@ export function makeOsTools(ops) {
           return r && r.ok === false ? { status: 404, body: { error: r.error } } : { id: String(a.id), slot: p.slot }
         }
         if (!a.kind) return { status: 400, body: { error: 'pass an existing id, or kind(+html/component/url) to create into the slot' } }
+        if (a.kind === 'native') {
+          const widgetError = nativeCatalogWidgetError(a.component)
+          if (widgetError) return widgetError
+        }
         const p = placeOnStage(a.size, a.near, a.agent, { w: a.w, h: a.h }, false)
         if (p.full) return { status: 409, body: p.full }
         const id = ops.createSurface({ kind: a.kind, html: a.html, url: a.url, component: a.component, props: a.props, title: a.title, slot: p.slot, slotStage: p.slotStage, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h, ...(a.agent != null ? { stage: stageForAgent(a.agent) } : {}) })
@@ -363,7 +393,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/update_surface',
-      description: 'Patch a surface in place: set html (srcdoc; pass lang too when switching a widget between html and jsx/tsx), props (native, e.g. note text), url, title, or geometry.',
+      description: 'Patch a surface in place: set html (srcdoc; pass lang too when switching a widget between html and jsx/tsx), props (native, e.g. note text), url, title, or geometry. For task-progress widgets, call this as steps start/finish/block; do not wait until the final answer to update the visible plan. Before replacing widget source, self-review against get_widget_authoring; after JSX/TSX updates, check list_state/get_surface for lastError and fix before calling it done.',
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, url: { type: 'string' }, title: { type: 'string' }, props: { type: 'object' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } } },
       handler: ({ body }) => {
         const { id, ...patch } = parse(body)
@@ -374,7 +404,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/close_surface',
-      description: 'Close a surface by id.',
+      description: 'Close a surface by id. From inside a widget via window.blitz.tool, omitting id closes that calling widget itself; task-start progress widgets use this to disappear after completion.',
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
       handler: ({ body }) => {
         const r = ops.closeSurface(String(parse(body).id))
@@ -398,18 +428,6 @@ export function makeOsTools(ops) {
         if (!ops.setTheme) return { status: 400, body: { error: 'set_theme not available in this transport' } }
         const r = ops.setTheme({ accent: a.accent, accentDeep: a.accentDeep })
         return r.ok ? { ok: true } : { status: 400, body: { error: r.error } }
-      }
-    },
-    {
-      path: '/group',
-      description:
-        'Group related surfaces into ONE REAL folder on disk: makes a subdirectory and MOVES the given surfaces\' files into it. kind:"folder" (default) → one collapsed tile (drill in to browse), best for many items / a repo. kind:"board" → the items stay SPLAYED on the canvas as a sub-board (best for a small curated set you want visible). A real filesystem folder either way, so it persists. Pass 2+ ids + a name.',
-      input_schema: { type: 'object', required: ['ids', 'name'], properties: { ids: { type: 'array', items: { type: 'string' } }, name: { type: 'string' }, kind: { type: 'string', enum: ['folder', 'board'] }, x: { type: 'number' }, y: { type: 'number' } } },
-      handler: ({ body }) => {
-        const a = parse(body)
-        const ids = Array.isArray(a.ids) ? a.ids.map(String) : []
-        if (!ids.length) return { status: 400, body: { error: 'group needs surface ids' } }
-        return ops.groupIntoFolder(a.name != null ? String(a.name) : 'Folder', ids, a.x != null ? Number(a.x) : undefined, a.y != null ? Number(a.y) : undefined, a.kind === 'board' ? 'board' : 'folder')
       }
     },
     {
@@ -529,7 +547,7 @@ export function makeOsTools(ops) {
     {
       path: '/list_widgets',
       description:
-        'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML) backed by the user’s connected integrations. Returns each widget’s name, description, and which integrations it needs (needsMet=true if connected). Use get_widget_source to read one, spawn_widget to open it.',
+        'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML or React via lang:"jsx"/"tsx") backed by the user’s connected integrations. Returns each widget’s name, description, lang, and which integrations it needs (needsMet=true if connected). Use get_widget_source to read one, spawn_widget to open it.',
       handler: () => {
         const connected = ops.connectedProviders()
         return { widgets: listWidgets().map((w) => ({ ...w, needsMet: w.needs.every((n) => connected.includes(n)) })), connected }
@@ -537,7 +555,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/get_widget_source',
-      description: 'Read the exact, forkable HTML source of a library widget by name (to understand or fork it). Returns { name, html, needs, props, version, origin }.',
+      description: 'Read the exact, forkable source of a library widget by name: HTML, or JSX/TSX when lang says so. Use this to understand or fork it. Returns { name, html, lang?, needs, props, version, origin }.',
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
       handler: ({ body }) => {
         const name = String(parse(body).name || '')
@@ -549,7 +567,7 @@ export function makeOsTools(ops) {
     {
       path: '/spawn_widget',
       description:
-        'Open a library widget on the canvas as a live sandboxed surface — a thinking-widget is an INSTRUMENT you DRIVE, not a final render: update_surface{id,props} it after EACH step of progress, never once at the end. It fetches integration data through the OS bridge; the user approves access once. Returns { id, drive? } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
+        'Open a library widget on the canvas as a live sandboxed surface. For any non-trivial user task, `pipeline` is the default first visible progress surface: spawn it before hidden work with props.items exactly like {items:[{label,sub?,status:"active"|"queued"|"done"}]}; do not use props.steps. Then drive it with update_surface{id,props:{items}} as items move. The default task-start pipeline auto-closes after every item is done; keep final output in a separate note/widget/surface, or pass props.autoClose=false only when the pipeline itself is the durable artifact. A thinking-widget is an INSTRUMENT you DRIVE, not a final render: update it after EACH step of progress, never once at the end. Prefer widgets with useful interaction (filter/sort/expand/open source/chat action) unless the content is truly atomic. It fetches integration data through the OS bridge; the user approves access once. Returns { id, drive? } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, props: { type: 'object' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -568,13 +586,13 @@ export function makeOsTools(ops) {
         // it sits frozen through the whole task. Return the contract at spawn time, mid-flow.
         if (!w.needs.length)
           out.drive =
-            'This is a LIVE surface, not a final render. Call update_surface{id,props} after EACH step of progress (each item found, each phase advanced) so the user watches the work happen — leaving it on this initial state until you finish defeats its purpose.'
+            'This is a LIVE surface, not a final render. If this is your task-start pipeline, its progress rows must be in props.items, not props.steps: update_surface{id,props:{items:[{label,sub?,status:"active"|"queued"|"done"}]}}. Update it before and during the work, not after the fact. A completed task-start pipeline auto-closes, so put final results somewhere else before finishing.'
         return out
       }
     },
     {
       path: '/save_widget',
-      description: 'Save a NEW or forked widget (sandboxed HTML, or React via lang:"jsx"/"tsx", using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST to learn the bridge. Returns { name, version }.',
+      description: 'Save a NEW or forked widget (sandboxed HTML, or React via lang:"jsx"/"tsx", using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST, then self-review the source with its checklist and fix obvious issues before saving; most saved widgets should expose a useful action, not just static content. Returns { name, version }.',
       input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string', description: 'a-z 0-9 -, 2-49 chars' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, description: { type: 'string' }, needs: { type: 'array', items: { type: 'string' } }, props: { type: 'object' }, forkedFrom: { type: 'string' } } },
       handler: ({ body }) => {
         try {
@@ -591,7 +609,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/get_widget_authoring',
-      description: 'Get the widget-authoring guide: how to write a widget that reads integration data via the sandboxed window.blitz bridge. Read this BEFORE authoring a new widget with save_widget.',
+      description: 'Get the widget-authoring guide: how to write HTML or JSX/TSX widgets that read integration data and expose useful actions via the sandboxed window.blitz bridge, including the required pre-create review checklist. Read this BEFORE authoring a new widget with save_widget.',
       handler: () => ({ markdown: widgetAuthoringMd() })
     },
     {
@@ -613,7 +631,7 @@ export function makeOsTools(ops) {
     {
       path: '/say',
       description:
-        "Send a chat message to the USER (their in-canvas Chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. To SHOW a visual, do BOTH: keep the real SOURCE open as a web surface (the live page it's from), AND screenshot it (surface_control {action:'screenshot'} returns base64 PNG) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary agents MUST pass {agent:'<your id>'} so it lands in YOUR chat.",
+        "Send a chat message to the USER (their in-canvas Chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. For non-trivial tasks, saying you are working is not enough: create/update a live progress widget (usually pipeline) before hidden work, then use say only for concise milestones or final synthesis. To SHOW a visual, do BOTH: keep the real SOURCE open as a web surface (the live page it's from), AND screenshot it (surface_control {action:'screenshot'} returns base64 PNG) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary agents MUST pass {agent:'<your id>'} so it lands in YOUR chat.",
       input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, agent: { type: 'string' }, workspace: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
@@ -643,27 +661,30 @@ export function makeOsTools(ops) {
     {
       path: '/customize_widget',
       description:
-        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The UI is a workspace file (blitz-chat.html) you fully replace; it live-reloads. Use the injected Blitz UI kit: <blitz-titlebar>/<blitz-list>/<blitz-message role=user|agent>/<blitz-input> + --blitz-* tokens + window.blitz (onProps(p=>render(p.messages)), sendMessage(text)). Agent messages may embed markdown images / inline <svg> / a ```blitz-ui {type,prompt,options} card. Read the current source with get_system_ui first. Args: {name, html, agent? (which agent's chat widget; default '0')}.",
-      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' }, agent: { type: 'string' } } },
+        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The default chat is a React/TSX hub, but html/jsx/tsx are supported; it live-reloads. Preserve required chat behavior: render sessions/threads/status, send with window.blitz.sendMessage(text, activeSessionId), create/rename/clear with window.blitz.chat(...), and keep markdown/images/blitz-ui card behavior if replacing it. Read the current source with get_system_ui first, self-review the replacement against get_widget_authoring, then customize. Args: {name, html, lang?:'html'|'jsx'|'tsx', agent?}. Chat customization is global to the hub.",
+      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, agent: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
-        const r = ops.customizeWidget(String(b.name || ''), String(b.html || ''), b.agent != null ? String(b.agent) : '0')
-        return r.ok ? { ok: true, file: r.rel } : { status: 400, body: { error: r.error || 'failed' } }
+        const r = ops.customizeWidget(String(b.name || ''), String(b.html || ''), b.agent != null ? String(b.agent) : '0', b.lang != null ? String(b.lang) : undefined)
+        return r.ok ? { ok: true, file: r.rel, lang: r.lang } : { status: 400, body: { error: r.error || 'failed' } }
       }
     },
     {
       path: '/get_system_ui',
-      description: "Read a built-in widget's current UI source before editing it (the fork pattern). Args: {name:'chat'}. Returns {html}.",
+      description: "Read a built-in widget's current UI source before editing it (the fork pattern). Args: {name:'chat'}. Returns {html, source, lang, file}; html is kept for backward compatibility.",
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
       handler: ({ body }) => {
-        const html = ops.systemUi(String(parse(body).name || ''))
-        return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html }
+        const name = String(parse(body).name || '')
+        const info = typeof ops.systemUiInfo === 'function' ? ops.systemUiInfo(name) : null
+        if (info) return { html: info.source, source: info.source, lang: info.lang, file: info.rel }
+        const html = ops.systemUi(name)
+        return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html, source: html, lang: 'html', file: null }
       }
     },
     {
       path: '/spawn_agent',
       description:
-        "Spawn a NEW agent — a fresh peer agent with its OWN chat widget (a `chat-<id>.md` transcript + window), reachable over this same relay. The new agent is independent: messages typed into ITS widget go only to it, and its `say`s land only in its widget (no cross-talk with you or other agents). Use this to spin up a parallel agent for a separate task/conversation. Args: {title?}. Returns { agent:{id,title} }.",
+        "Spawn a NEW agent — a fresh peer agent with its own chat thread in the shared Chat hub (`chat-<id>.md`) and its own visible terminal, reachable over this same relay. The new agent is independent: messages sent to its thread go only to it, and its `say`s land only in that thread (no cross-talk with you or other agents). Use this to spin up a parallel agent for a separate task/conversation. Args: {title?}. Returns { agent:{id,title} }.",
       input_schema: { type: 'object', properties: { title: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)

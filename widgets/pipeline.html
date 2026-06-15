@@ -34,16 +34,20 @@
   <div class="done" id="done"></div>
 </div>
 <script>
-  // props: { title?, items:[{label, sub?, status:'done'|'active'|'queued'}] }.
+  // props: { title?, items:[{label, sub?, status:'done'|'active'|'queued'}], autoClose? }.
+  // `props.items` is canonical; `props.steps` is accepted as a compatibility alias because agents often say steps.
   // Advance it with update_surface{props:{items}}; the widget animates the transitions.
+  // Task-start pipelines auto-close after all real items are done; pass autoClose:false to keep one.
+  // Demo rows are only for an untouched widget; real task props without items render idle, not fake progress.
   const SAMPLE={title:'Pipeline',items:[
     {label:'Item one',sub:'context',status:'done'},
     {label:'Item two',sub:'context',status:'active'},
     {label:'Item three',sub:'context',status:'queued'},
     {label:'Item four',sub:'context',status:'queued'},
     {label:'Item five',sub:'context',status:'queued'}]}
-  let data={title:SAMPLE.title,items:SAMPLE.items.map(i=>({...i}))}, demo=true
+  let data={title:SAMPLE.title,items:SAMPLE.items.map(i=>({...i})),autoClose:true}, demo=true, closeTimer=null
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  const propItems=p=>Array.isArray(p.items)?p.items:Array.isArray(p.steps)?p.steps:null
   function render(d){
     document.getElementById('title').textContent=d.title||'Pipeline'
     const items=d.items||[], done=items.filter(i=>i.status==='done'), active=items.find(i=>i.status==='active'), queue=items.filter(i=>i.status==='queued')
@@ -53,9 +57,12 @@
     else{now.className='now empty';now.textContent=items.length&&!queue.length?'all done':'idle'}
     document.getElementById('queue').innerHTML=queue.map((q,i)=>'<div class="qi"><span class="dot"></span><span class="l">'+esc(q.label)+(q.sub?' <span style="color:var(--blitz-text-dim)">· '+esc(q.sub)+'</span>':'')+'</span><span class="n">'+(i+1)+'</span></div>').join('')||'<div style="color:var(--blitz-text-dim);font-size:12px;padding:4px 10px">empty</div>'
     document.getElementById('done').innerHTML=done.map(x=>'<div class="di"><span class="ck">✓</span><span class="l">'+esc(x.label)+'</span></div>').join('')
+    const complete=!demo&&d.autoClose!==false&&items.length>0&&!active&&!queue.length&&done.length===items.length
+    if(complete&&!closeTimer)closeTimer=setTimeout(()=>{if(window.blitz&&window.blitz.tool)window.blitz.tool('close_surface',{}).catch(()=>{})},1400)
+    else if(!complete&&closeTimer){clearTimeout(closeTimer);closeTimer=null}
   }
   render(data)
-  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(!p)return; if(p.title)data.title=p.title; if(p.items){data.items=p.items;demo=false} render(data)})
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(!p)return;const nextItems=propItems(p),hasItems=Array.isArray(nextItems),customTitle=p.title&&p.title!==SAMPLE.title,hasTaskProps=hasItems||customTitle||p.autoClose!==undefined;if(hasTaskProps&&!hasItems&&demo)data.items=[];if(hasTaskProps)demo=false;if(p.title)data.title=p.title;if(p.autoClose!==undefined)data.autoClose=p.autoClose!==false;if(hasItems)data.items=nextItems;render(data)})
   setInterval(()=>{if(!demo)return;const it=data.items;const ai=it.findIndex(i=>i.status==='active');if(ai<0){it.forEach((i,k)=>i.status=k===0?'active':'queued');render(data);return}
     it[ai].status='done';const nx=it.findIndex(i=>i.status==='queued')
     if(nx>=0)it[nx].status='active';else it.forEach((i,k)=>i.status=k<1?'done':k===1?'active':'queued')

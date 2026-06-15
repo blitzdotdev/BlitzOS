@@ -1,6 +1,6 @@
 // #52 — prove "group into folder" is a REAL filesystem op: mkdir a subdir + mv the members' files in;
 // the result is ONE folder tile (reconcile is non-recursive, so a many-file folder/repo stays one tile).
-import { writeWorkspace, readWorkspace, reconcileWorkspace, groupIntoFolder } from '../src/main/workspace.mjs'
+import { writeWorkspace, readWorkspace, reconcileWorkspace, groupIntoFolder, removeSurfaceFile } from '../src/main/workspace.mjs'
 import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -91,6 +91,9 @@ console.log('\n#54: a .board folder SPLAYS its children onto the canvas (normal 
   // child note was SPLAYED onto the canvas instead (a separate note surface carrying the child's content).
   ok('the normal folder is ONE collapsed dir tile (board did NOT add a tile)', dirTiles.length === 1 && !String(dirTiles[0].props?.path || '').endsWith('.board'), dirTiles.map((t) => t.props?.path))
   ok("the board's child note is splayed as a canvas tile (not collapsed)", noteTiles.length === 1 && String(noteTiles[0].props?.text || '').includes('C'), noteTiles.map((s) => s.props?.text))
+  const boardFiles = readdirSync(join(d, board.folder)).filter((n) => n.endsWith('.md'))
+  const closedBoardChild = noteTiles[0] ? removeSurfaceFile(d, noteTiles[0].id) : null
+  ok("closing a board child still deletes that board file", !!closedBoardChild?.ok && !!boardFiles[0] && !existsSync(join(d, board.folder, boardFiles[0])), closedBoardChild)
   rmSync(d, { recursive: true, force: true })
 }
 

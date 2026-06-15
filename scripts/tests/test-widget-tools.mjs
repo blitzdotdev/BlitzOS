@@ -7,11 +7,11 @@ let fail = 0
 const ok = (n, c) => (c ? (pass++, console.log('  ✓ ' + n)) : (fail++, console.log('  ✗ ' + n)))
 
 console.log('# the allowlist allows the intended OS tools')
-for (const t of ['create_surface', 'open_window', 'move_surface', 'update_surface', 'close_surface', 'group', 'go_to_primary', 'list_state', 'provider_call', 'set_theme']) ok('allows ' + t, isWidgetTool(t))
+for (const t of ['create_surface', 'open_window', 'move_surface', 'update_surface', 'close_surface', 'go_to_primary', 'list_state', 'provider_call', 'set_theme']) ok('allows ' + t, isWidgetTool(t))
 
 console.log('\n# …and DENIES everything dangerous / off-list (no relay pass-through)')
-for (const t of ['eval', 'surface_control', 'read_window', 'save_widget', 'customize_widget', '__proto__', 'constructor', '', 'createSurface']) ok('denies ' + JSON.stringify(t), !isWidgetTool(t))
-ok('the allowlist is exactly the 10 intended tools', WIDGET_TOOLS.length === 10)
+for (const t of ['eval', 'surface_control', 'read_window', 'save_widget', 'customize_widget', 'group', '__proto__', 'constructor', '', 'createSurface']) ok('denies ' + JSON.stringify(t), !isWidgetTool(t))
+ok('the allowlist is exactly the 9 intended tools', WIDGET_TOOLS.length === 9)
 
 console.log('\n# the runner enforces the allowlist + never throws')
 const calls = []
@@ -20,7 +20,7 @@ const run = makeWidgetToolRunner({
     calls.push(['create', a, ctx])
     return { id: 's1' }
   },
-  group: () => {
+  set_theme: () => {
     throw new Error('boom')
   }
 })
@@ -31,7 +31,7 @@ const r2 = await run('eval', {})
 ok('denied tool → ok:false, "not allowed"', r2.ok === false && /not allowed for widgets/.test(r2.error))
 const r3 = await run('open_window', {})
 ok('allowlisted-but-unwired tool → ok:false, "not available"', r3.ok === false && /not available/.test(r3.error))
-const r4 = await run('group', {})
+const r4 = await run('set_theme', {})
 ok('a throwing handler → ok:false with the message (never throws)', r4.ok === false && /boom/.test(r4.error))
 ok('non-object args are coerced safely', (await run('create_surface', 'nope')).ok === true)
 
@@ -48,7 +48,6 @@ const mockOps = {
   goToPrimary: () => opsCalls.push(['goToPrimary']),
   // raw full state, incl. html + props (the transcript) the handler must strip:
   getState: () => ({ workspace: 'W', workspace_path: '/w', camera: { x: 1 }, surfaces: [{ id: 'a', kind: 'srcdoc', x: 0, y: 0, w: 2, h: 3, z: 4, zoom: 1, title: 'T', url: 'u', component: 'c', pinned: true, html: '<b>SECRET</b>', props: { messages: ['PRIVATE'] } }] }),
-  groupIntoFolder: (name, ids, x, y, kind) => ({ ok: true, folder: 'f1', moved: ids.length, _args: [name, ids, x, y, kind] }),
   providerCall: (desc, transport) => ({ _desc: desc, _transport: transport })
 }
 const H = makeWidgetToolHandlers(mockOps)
@@ -63,7 +62,11 @@ ok('open_window throws on missing url', threw(() => H.open_window({})))
 ok('update_surface throws on missing id', threw(() => H.update_surface({ url: 'u' })))
 ok('move_surface throws on missing id', threw(() => H.move_surface({ x: 1, y: 2 })))
 ok('close_surface throws on missing id', threw(() => H.close_surface({})))
-ok('group throws on empty ids', threw(() => H.group({ name: 'N', ids: [] })))
+const explicitClose = H.close_surface({ id: 'explicit-widget' }, { surfaceId: 'self-widget' })
+ok('close_surface with explicit id closes that surface', explicitClose.ok === true && opsCalls.some((c) => c[0] === 'closeSurface' && c[1] === 'explicit-widget'))
+const selfClose = H.close_surface({}, { surfaceId: 'self-widget' })
+ok('close_surface defaults to the calling widget id when ctx has surfaceId', selfClose.ok === true && opsCalls.some((c) => c[0] === 'closeSurface' && c[1] === 'self-widget'))
+ok('self-close does not change chat status', !opsCalls.some((c) => c[0] === 'setChatStatus'))
 // update_surface strips id from a flat patch, returns { ok:true }
 const u = H.update_surface({ id: 's', url: 'newurl' })
 const upd = opsCalls.find((c) => c[0] === 'updateSurface')
@@ -73,9 +76,6 @@ const ls = H.list_state()
 const s0 = ls.surfaces[0]
 ok('list_state keeps layout fields + workspace', s0.id === 'a' && s0.w === 2 && s0.pinned === true && ls.workspace === 'W' && ls.workspace_path === '/w')
 ok('list_state DROPS html + props (no transcript leak)', !('html' in s0) && !('props' in s0))
-// group passes the normalized { ok, … } through unchanged
-const g = H.group({ name: 'N', ids: ['a', 'b'], kind: 'board' })
-ok('group → ops result passes through ({ ok, folder, moved })', g.ok === true && g.folder === 'f1' && g.moved === 2 && g._args[4] === 'board')
 // provider_call routes through ops.providerCall with the gated 'relay' transport + the descriptor
 const pc = H.provider_call({ provider: 'gh', path: '/user/repos', method: 'GET' })
 ok('provider_call → ops.providerCall(descriptor, "relay")', pc._transport === 'relay' && pc._desc.provider === 'gh' && pc._desc.path === '/user/repos')

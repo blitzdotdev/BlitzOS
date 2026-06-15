@@ -4,6 +4,8 @@ import { Surface } from '../types'
 interface ActivityEvent {
   at: number
   text: string
+  agentId?: string
+  tool?: string
 }
 
 /**

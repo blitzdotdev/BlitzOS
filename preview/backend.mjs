@@ -437,6 +437,14 @@ function reconcileSurfaces(list) {
   return Promise.all(ps)
 }
 function broadcast(obj) {
+  try {
+    if (obj?.type === 'terminal-spawn' && obj?.terminal?.kind === 'agent' && obj.id != null) wsHost?.setChatStatus(String(obj.id), 'starting')
+    else if (obj?.type === 'terminal-data' && obj.id != null) wsHost?.noteAgentActivity(String(obj.id), 'terminal')
+    else if (obj?.type === 'terminal-stop' && obj.id != null) wsHost?.setChatStatus(String(obj.id), 'stopped')
+    else if (obj?.type === 'terminal-exit' && obj.id != null) wsHost?.setChatStatus(String(obj.id), Number(obj.exitCode) ? 'error' : 'stopped')
+  } catch {
+    /* status sync is best-effort */
+  }
   const data = `data: ${JSON.stringify(obj)}\n\n`
   for (const r of sseClients) {
     try {
@@ -694,7 +702,7 @@ const serverOps = {
     }
     return wsHost.appendChat('agent', String(text), agentId) // append to that agent's chat.md + broadcast
   },
-  customizeWidget: (name, html, agentId) => wsHost.customizeWidget(String(name), String(html), agentId),
+  customizeWidget: (name, html, agentId, lang) => wsHost.customizeWidget(String(name), String(html), agentId, lang),
   // Live OS theme (the onboarding wardrobe card / an agent picking an accent). Mirrors Electron's
   // osSetTheme: sanitize each role to a #rrggbb hex, then broadcast the SAME `set-theme` action the
   // shared renderer applies (App.tsx) — so theming works identically in both transports, not Electron-only.
@@ -716,6 +724,7 @@ const serverOps = {
     return { id, title: title || `Agent ${id}` }
   },
   systemUi: (name) => wsHost.systemUi(String(name)),
+  systemUiInfo: (name) => wsHost.systemUiInfo(String(name)),
   groupIntoFolder: (name, ids, x, y, kind) => {
     // Normalize to { ok, ... } like Electron's osGroupIntoFolder — wsHost.group returns a bare { error } (no ok)
     // on failure, so without this the agent saw { error } on server vs { ok:false, error } on Electron (parity bug).
@@ -766,7 +775,10 @@ function startServerRelay() {
           ...(t.input_schema ? { input_schema: t.input_schema } : {}),
           handler: ({ body }) => t.handler({ body: body || '', transport: 'relay' })
         })),
-        broadcast // emit each activity event over SSE (Electron emits via webContents.send)
+        (ev) => {
+          try { wsHost?.noteAgentActivity(ev.agentId || '0', ev.tool === '/say' ? 'say' : 'tool') } catch { /* best-effort */ }
+          broadcast(ev) // emit each activity event over SSE (Electron emits via webContents.send)
+        }
       )
     },
     {
@@ -993,7 +1005,7 @@ const server = createServer(async (req, res) => {
   if (path === '/api/os/agent-spawn' && req.method === 'POST') {
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
-    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverOps.spawnAgent(b.title != null ? String(b.title) : undefined, true)).then((s) => json(res, 200, { agent: s })).catch(() => json(res, 200, { agent: null })) })
+    req.on('end', () => { const b = toolBody(body); Promise.resolve(serverOps.spawnAgent(b.title != null ? String(b.title) : undefined, b.focus != null ? !!b.focus : true)).then((s) => json(res, 200, { agent: s })).catch(() => json(res, 200, { agent: null })) })
     return
   }
   // Close an agent (stop its terminal + remove its widget/files/stage) — the UI Close button / agent tool.
@@ -1219,6 +1231,64 @@ const server = createServer(async (req, res) => {
     req.on('end', () => {
       const b = toolBody(nbody)
       const r = wsHost.newFolder(String(b.name || 'Folder'), b.kind === 'board' ? 'board' : 'folder', Number(b.x) || 0, Number(b.y) || 0)
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
+  if (path === '/api/os/rename-folder' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let rbody = ''
+    req.on('data', (c) => {
+      rbody += c
+      if (rbody.length > 10_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(rbody)
+      const r = wsHost.renameFolder(String(b.path || ''), String(b.name || ''))
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
+  if (path === '/api/os/move-into-folder' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let mbody = ''
+    req.on('data', (c) => {
+      mbody += c
+      if (mbody.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(mbody)
+      const ids = Array.isArray(b.ids) ? b.ids.map(String) : []
+      const r = wsHost.moveIntoFolder(String(b.folderPath || ''), ids)
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
+  if (path === '/api/os/move-out-of-folder' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let mbody = ''
+    req.on('data', (c) => {
+      mbody += c
+      if (mbody.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(mbody)
+      const paths = Array.isArray(b.paths) ? b.paths.map(String) : []
+      const r = wsHost.moveOutOfFolder(paths, Number(b.x) || 0, Number(b.y) || 0)
+      return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
+    })
+    return
+  }
+  if (path === '/api/os/open-folder-entry' && req.method === 'POST') {
+    if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
+    let obody = ''
+    req.on('data', (c) => {
+      obody += c
+      if (obody.length > 10_000) req.destroy()
+    })
+    req.on('end', () => {
+      const b = toolBody(obody)
+      const r = wsHost.openFolderEntry(String(b.path || ''), Number(b.x) || 0, Number(b.y) || 0)
       return json(res, r && r.ok ? 200 : 400, r || { error: 'failed' })
     })
     return

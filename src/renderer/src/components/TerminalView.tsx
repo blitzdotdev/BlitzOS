@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -15,13 +15,47 @@ type TerminalApi = {
   terminalRead?: (id: string) => Promise<string> | string
   terminalInput?: (id: string, data: string) => void
   terminalResize?: (id: string, cols: number, rows: number) => void
+  terminalList?: () => Promise<unknown[]>
+  terminalStop?: (id: string) => void
+  terminalRestart?: (id: string) => void
+  onAction?: (cb: (a: { type?: string; id?: string }) => void) => (() => void) | undefined
 }
 const tapi = (): TerminalApi => (window.agentOS as unknown as TerminalApi) || {}
+
+type TerminalMeta = {
+  id: string
+  kind: string
+  title?: string
+  status?: string
+}
 
 export function TerminalView({ surface }: { surface: Surface }): JSX.Element {
   const id = String(surface.props?.terminalId || '')
   const hostRef = useRef<HTMLDivElement | null>(null)
   const focusSurface = useDesktop((s) => s.focusSurface)
+  const [meta, setMeta] = useState<TerminalMeta | null>(null)
+
+  const refreshMeta = useCallback(() => {
+    if (!id) {
+      setMeta(null)
+      return
+    }
+    Promise.resolve(tapi().terminalList?.() ?? [])
+      .then((list) => {
+        if (!Array.isArray(list)) return
+        const match = (list as TerminalMeta[]).find((t) => String(t.id) === id) || null
+        setMeta(match)
+      })
+      .catch(() => {})
+  }, [id])
+
+  useEffect(() => {
+    refreshMeta()
+    const off = tapi().onAction?.((a) => {
+      if (a?.type && a.type.indexOf('terminal-') === 0 && (!a.id || String(a.id) === id)) refreshMeta()
+    })
+    return () => off?.()
+  }, [id, refreshMeta])
 
   useEffect(() => {
     const el = hostRef.current
@@ -71,18 +105,48 @@ export function TerminalView({ surface }: { surface: Surface }): JSX.Element {
     }
   }, [id])
 
+  const isAgent = meta?.kind === 'agent'
+  const isRunning = meta?.status === 'running'
+
   // stopPropagation so typing/clicking in the terminal doesn't pan the canvas or trigger surface drag.
   return (
     <div
-      ref={hostRef}
-      className="terminal-view session-terminal"
+      className="terminal-view-wrap"
       data-surface-scroll="true"
-      style={{ width: '100%', height: '100%', background: '#0b0c0e' }}
       onPointerDown={(e) => {
         e.stopPropagation()
         focusSurface(surface.id)
       }}
       onWheel={(e) => e.stopPropagation()}
-    />
+    >
+      {/* ! DEBUG: temporary maintainer control for manually stopping/resuming agent terminals. */}
+      {isAgent && (
+        <div className="terminal-agent-controls" onPointerDown={(e) => e.stopPropagation()}>
+          <span className="terminal-agent-debug-tag">DEBUG</span>
+          <span className={`terminal-agent-status ${isRunning ? 'running' : 'stopped'}`}>
+            Agent {meta?.status || 'unknown'}
+          </span>
+          <button
+            className={`terminal-agent-btn ${isRunning ? 'danger' : ''}`}
+            onClick={() => {
+              if (isRunning) {
+                tapi().terminalStop?.(id)
+                setMeta((cur) => (cur ? { ...cur, status: 'stopped' } : cur))
+              } else {
+                tapi().terminalRestart?.(id)
+                setMeta((cur) => (cur ? { ...cur, status: 'running' } : cur))
+              }
+              window.setTimeout(refreshMeta, 350)
+            }}
+          >
+            {isRunning ? 'Stop agent' : 'Resume agent'}
+          </button>
+        </div>
+      )}
+      <div
+        ref={hostRef}
+        className="terminal-view session-terminal"
+      />
+    </div>
   )
 }

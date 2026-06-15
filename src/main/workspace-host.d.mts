@@ -44,15 +44,22 @@ export interface WorkspaceHost {
   ingestUpload(relPath: string, buffer: Buffer, x: number, y: number, reconcile?: boolean): { ok: true; name: string } | { error: string }
   reconcileAt(x: number, y: number): { ok: true } | { error: string }
   newFolder(name: string, kind: 'board' | 'folder' | undefined, x: number, y: number): { ok: true; folder: string } | { error: string }
-  listDir(rel: string): { path: string; entries: Array<{ name: string; dir: boolean; ext: string; size: number; isImage: boolean; path: string }>; total: number; truncated: boolean } | null
-  closeSurfaceFile(id: string): { ok: boolean; removed?: string; error?: string; skipped?: string }
+  listDir(rel: string): { path: string; entries: Array<{ name: string; dir: boolean; ext: string; size: number; entries?: number; isImage: boolean; path: string }>; total: number; truncated: boolean } | null
+  renameFolder(rel: string, name: string): { ok: boolean; path?: string; error?: string }
+  moveIntoFolder(folderPath: string, ids: string[]): { ok: boolean; moved?: number; skipped?: number; movedIds?: string[]; skippedIds?: string[]; error?: string }
+  moveOutOfFolder(paths: string[], x?: number, y?: number): { ok: boolean; moved?: number; skipped?: number; movedPaths?: string[]; skippedPaths?: string[]; pathMoves?: Array<{ from: string; to: string }>; surfaceIds?: string[]; surfaces?: Record<string, unknown>[]; updatedIds?: string[]; updatedSurfaces?: Record<string, unknown>[]; error?: string }
+  openFolderEntry(rel: string, x?: number, y?: number): { ok: boolean; id?: string; surface?: Record<string, unknown>; error?: string }
+  closeSurfaceFile(id: string): { ok: boolean; removed?: string; error?: string; skipped?: string; keptFile?: boolean }
   /** Item 4: which OTHER workspace holds surface `id` (or null). */
   locateSurface(id: string): { name: string; dir: string; node: Record<string, unknown> } | null
   /** Item 4: bring a surface from another workspace into the active one (id preserved). */
   bringSurfaceHere(id: string, x?: number, y?: number): { ok: boolean; from?: string; id?: string; notFound?: boolean; error?: string }
   appendChat(role: 'user' | 'agent', text: string, agentId?: string, meta?: Record<string, unknown>): Array<{ role: string; text: string; ts: number }>
-  customizeWidget(name: string, html: string, agentId?: string): { ok: boolean; rel?: string; error?: string }
+  customizeWidget(name: string, html: string, agentId?: string, lang?: 'html' | 'jsx' | 'tsx'): { ok: boolean; rel?: string; lang?: string; error?: string }
   systemUi(name: string): string | null
+  systemUiInfo(name: string): { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null
+  setChatStatus(agentId: string, status: 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error'): { ok: boolean }
+  noteAgentActivity(agentId: string, source?: string): { ok: boolean; throttled?: boolean; error?: string }
   agentIds(): string[]
   restoreChatHub(): { ok: boolean; id?: string; error?: string }
   newAgentId(): string

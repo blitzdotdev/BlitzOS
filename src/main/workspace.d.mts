@@ -34,10 +34,15 @@ export function writeDroppedFileAt(dir: string, relPath: string, buffer: Buffer 
 /** Make an EMPTY real folder ('New Folder') or '.board' on-canvas folder ('New Board') in the workspace root. */
 export function createFolder(dir: string, name: string, kind?: 'board' | 'folder'): { ok: boolean; folder?: string; error?: string }
 
-/** CLOSE a surface = explicitly delete its backing content file by id (jailed; never a real dropped file). */
-export function removeSurfaceFile(dir: string, id: string): { ok: boolean; removed?: string; skipped?: string }
+export function renameFolder(dir: string, rel: string, name: string): { ok: boolean; path?: string; error?: string }
+export function moveIntoFolder(dir: string, folderRel: string, memberIds: string[]): { ok: boolean; moved?: number; skipped?: number; movedIds?: string[]; skippedIds?: string[]; error?: string }
+export function moveOutOfFolder(dir: string, paths: string[], placeAt?: { x?: number; y?: number }): { ok: boolean; moved?: number; skipped?: number; movedPaths?: string[]; skippedPaths?: string[]; pathMoves?: Array<{ from: string; to: string }>; surfaceIds?: string[]; surfaces?: Record<string, unknown>[]; updatedIds?: string[]; updatedSurfaces?: Record<string, unknown>[]; error?: string }
+export function openFolderEntry(dir: string, rel: string, placeAt?: { x?: number; y?: number }): { ok: boolean; id?: string; surface?: Record<string, unknown>; error?: string }
 
-export interface DirEntry { name: string; dir: boolean; ext: string; size: number; isImage: boolean; path: string }
+/** CLOSE a surface = explicitly delete its backing content file by id (jailed; never a real dropped file). */
+export function removeSurfaceFile(dir: string, id: string): { ok: boolean; removed?: string; skipped?: string; keptFile?: boolean }
+
+export interface DirEntry { name: string; dir: boolean; ext: string; size: number; entries?: number; isImage: boolean; path: string }
 /** List a normal folder's contents for the file-manager overlay — jailed, dotfiles hidden, capped at 1000. */
 export function listDir(dir: string, rel: string): { path: string; entries: DirEntry[]; total: number; truncated: boolean } | null
 

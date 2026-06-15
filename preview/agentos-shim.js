@@ -186,6 +186,18 @@
     newFolder: function (name, kind, x, y) {
       return postJSON('/os/new-folder', { name: name, kind: kind, x: x, y: y })
     },
+    renameFolder: function (path, name) {
+      return postJSON('/os/rename-folder', { path: path, name: name })
+    },
+    moveIntoFolder: function (folderPath, ids) {
+      return postJSON('/os/move-into-folder', { folderPath: folderPath, ids: ids })
+    },
+    moveOutOfFolder: function (paths, x, y) {
+      return postJSON('/os/move-out-of-folder', { paths: paths, x: x, y: y })
+    },
+    openFolderEntry: function (path, x, y) {
+      return postJSON('/os/open-folder-entry', { path: path, x: x, y: y })
+    },
     // List a normal folder's contents for the file-manager overlay (Electron uses the os:dir IPC).
     listDir: function (p) {
       return getJSON('/os/dir?path=' + encodeURIComponent(p || '')).catch(function () { return null })
@@ -266,12 +278,12 @@
     renameAgent: function (id, title) {
       return postJSON('/os/agent-rename', { id: id, title: title }, { ok: false })
     },
-    // blitz.chat (a per-agent chat widget's own control) — server side of the SAME seam as the Electron
-    // os:chat-control handler: 'new' → spawn a fresh agent and return its { id }; 'rename' → retitle.
+    // blitz.chat (the shared chat hub control) — server side of the SAME seam as the Electron
+    // os:chat-control handler: 'new' → spawn a fresh agent thread and return its { id }; 'rename' → retitle.
     chatControl: function (op, args) {
       var a = args || {}
       if (String(op) === 'new') {
-        return postJSON('/os/agent-spawn', { title: a.title }, { agent: null }).then(function (r) {
+        return postJSON('/os/agent-spawn', { title: a.title, focus: !!a.focus }, { agent: null }).then(function (r) {
           return r && r.agent ? { id: r.agent.id, title: r.agent.title } : { ok: false, error: 'spawn failed' }
         })
       }

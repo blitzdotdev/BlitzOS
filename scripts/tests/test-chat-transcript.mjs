@@ -3,7 +3,7 @@
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { appendChatMessage, readChatMessages, ensureSystemRenderer, readSystemRenderer, isSystemFile, systemRoleOf, writeWorkspace, readWorkspace } from '../src/main/workspace.mjs'
+import { appendChatMessage, readChatMessages, ensureSystemRenderer, readSystemRenderer, readSystemRendererInfo, isSystemFile, systemRoleOf, writeWorkspace, readWorkspace } from '../src/main/workspace.mjs'
 
 let pass = 0
 let fail = 0
@@ -27,25 +27,29 @@ unlinkSync(join(dir, 'chat.md'))
 appendChatMessage(dir, 'user', 'again')
 ok('append recreates chat.md', existsSync(join(dir, 'chat.md')) && readChatMessages(dir).length === 1)
 
-console.log('\n# system renderer (blitz-chat.html) — default / recreate-on-missing / customize')
+console.log('\n# system renderer (blitz-chat.tsx) — default / recreate-on-missing / customize')
 const r1 = ensureSystemRenderer(dir, 'chat')
-ok('blitz-chat.html written from the shipped default', !!r1 && r1.created && existsSync(join(dir, 'blitz-chat.html')))
-ok('default ships the hub renderer (blitz-ui cards)', readFileSync(join(dir, 'blitz-chat.html'), 'utf8').includes('blitz-ui'))
+ok('blitz-chat.tsx written from the shipped default', !!r1 && r1.created && r1.lang === 'tsx' && existsSync(join(dir, 'blitz-chat.tsx')))
+ok('default ships the React hub renderer', readFileSync(join(dir, 'blitz-chat.tsx'), 'utf8').includes('ChatHub'))
 const r2 = ensureSystemRenderer(dir, 'chat')
 ok('second ensure does NOT overwrite (created:false)', !!r2 && r2.created === false)
 writeFileSync(join(dir, 'blitz-chat.html'), '<blitz-titlebar>My Chat</blitz-titlebar>')
+unlinkSync(join(dir, 'blitz-chat.tsx'))
 ensureSystemRenderer(dir, 'chat')
 ok('ensure never clobbers a customization', readSystemRenderer(dir, 'chat').includes('My Chat'))
 unlinkSync(join(dir, 'blitz-chat.html'))
-ok('a deleted renderer falls back to the shipped default', (readSystemRenderer(dir, 'chat') || '').includes('blitz-ui'))
+ok('a deleted renderer falls back to the shipped default', (readSystemRenderer(dir, 'chat') || '').includes('ChatHub'))
 ensureSystemRenderer(dir, 'chat')
-ok('…and is recreated on the next ensure (user requirement)', existsSync(join(dir, 'blitz-chat.html')))
+ok('...and is recreated on the next ensure (user requirement)', existsSync(join(dir, 'blitz-chat.tsx')))
+ok('readSystemRendererInfo reports source language', readSystemRendererInfo(dir, 'chat')?.lang === 'tsx')
 
 console.log('\n# recognition (so system files do not double-surface as plain tiles)')
 ok('isSystemFile(chat.md)', isSystemFile('chat.md'))
 ok('isSystemFile(blitz-chat.html)', isSystemFile('blitz-chat.html'))
+ok('isSystemFile(blitz-chat.tsx)', isSystemFile('blitz-chat.tsx'))
 ok('a user note is NOT a system file', !isSystemFile('my-notes.md') && !isSystemFile('readme.html'))
 ok('systemRoleOf(blitz-chat.html) = chat', systemRoleOf('blitz-chat.html') === 'chat')
+ok('systemRoleOf(blitz-chat.tsx) = chat', systemRoleOf('blitz-chat.tsx') === 'chat')
 ok('systemRoleOf(blitz-foo.html) = null (unknown role)', systemRoleOf('blitz-foo.html') === null)
 
 console.log('\n# note → opt-in custom widget (default native; blitz-note.html → srcdoc; still persists as .md)')

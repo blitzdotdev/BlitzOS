@@ -262,11 +262,49 @@ window.blitz.ready(props => { /* boot */ })
 
 // More capabilities (each is consent-gated the first time, like data()):
 await window.blitz.tool('open_window', { url: 'https://…' }) // call an OS tool: create_surface/open_window/
-                                                             // move_surface/update_surface/close_surface/group/provider_call/list_state
+                                                             // move_surface/update_surface/close_surface/provider_call/list_state
+await window.blitz.tool('close_surface', {}) // close THIS widget; pass {id} only to close another surface
 window.blitz.sendMessage('hi')             // send a chat message to the agent (the chat widget uses this)
 const dir = await window.blitz.listDir('') // list a workspace folder (the file manager uses this)
 window.blitz.setProps({ text })            // persist THIS widget's own state, e.g. a note's text — no prompt
 \`\`\`
+
+## Interactivity by default
+
+A widget is a small app, not a poster. Static is OK only when the content is atomic
+(one clock, one KPI, one quote, one status). Lists, comparisons, timelines, maps,
+candidate sets, and research outputs should expose at least one meaningful action:
+filter, sort, expand details, toggle a view, open the source, or send a follow-up to
+the agent. Prefer \`window.blitz.tool('open_window', { url })\` for source rows,
+\`window.blitz.sendMessage(text)\` for chat actions, and \`window.blitz.setProps(next)\`
+for state the widget itself should remember.
+
+## Review before creating
+
+Before you call \`create_surface\`, \`place_widget\`, \`update_surface\`, or \`save_widget\`
+with new or changed widget source, read your own code once like a reviewer and fix the
+obvious mistakes. This is mandatory for authored, forked, and replacement widgets;
+trusted library widgets can be spawned as-is unless you edit them.
+
+- No secrets, tokens, localStorage/sessionStorage, parent/window-top access, external
+  scripts, external stylesheets, or network fetches outside the allowed bridge/registry.
+- Use \`window.blitz\` for OS actions, source-opening rows, chat actions, integration
+  data, and durable widget props. Declare the right \`needs\` when saving.
+- Keep interaction meaningful unless the widget is truly atomic. If a row has a source,
+  make it clickable with \`window.blitz.tool('open_window', { url })\`.
+- Use Blitz tokens and kit components. Do not paste a separate palette, default-blue
+  link styling, or a generic web-card layout. Do not add \`<blitz-titlebar>\` to a plain
+  widget.
+- Keep scroll safe: no \`overflow:hidden\`, fixed body \`height\`, or \`100vh\` body trap
+  unless you intentionally build one internal scroller with \`<blitz-list>\`.
+- Keep copy short and polished. No em dashes in human-readable widget text.
+- For JSX/TSX, confirm \`export default\`, registry-only imports, valid hook/state
+  usage, concrete chart heights, and concrete SVG/chart colors where CSS vars would not
+  resolve in attributes.
+
+After mounting or updating a JSX/TSX widget, check \`list_state\` or \`get_surface\` for
+\`lastError\`. If it appears, fix the source and update again before calling the widget
+done.
 
 ## Look like a WIDGET, not a web page (the design language)
 
@@ -282,7 +320,7 @@ window chrome; the tile's content must read at a glance:
   widget that needs a paragraph to explain itself is the wrong widget.
 - **Icons and color over text.** A grid of favicon tiles beats a list of name+button rows; a heat
   ramp beats a table of numbers. Generous padding (14px+), soft corners, no borders-inside-borders.
-- The board templates (\`profile\`, \`rhythm\`, \`workflows\`, \`quotes\`, \`gaps\`) are the reference set —
+- The built-in templates (\`profile\`, \`rhythm\`, \`workflows\`, \`quotes\`, \`gaps\`) are the reference set —
   \`get_widget_source\` one before authoring your own.
 
 ## Use the shared UI kit (don't restyle from scratch)
@@ -291,12 +329,12 @@ Every widget gets a component library + design tokens injected (no import needed
 and you never reinvent buttons/rows/bubbles. Prefer these over hand-rolled markup:
 
 - Tokens: \`--blitz-accent\`, \`--blitz-bg\`, \`--blitz-surface\`, \`--blitz-text\`, \`--blitz-text-dim\`, \`--blitz-hairline\`, \`--blitz-radius\`.
-- **Color:** spawn any widget with \`props.accent\` (+ optional \`props.accentInk\`) and its \`--blitz-accent\` recolors automatically — no widget code needed. Sample accents from the Blitz paper palette tokens: \`--blitz-coral #FF8D61\` (signature), \`--blitz-terracotta\`, \`--blitz-sage\`, \`--blitz-slate\`, \`--blitz-dust\`, \`--blitz-mauve\`, \`--blitz-tan\`, \`--blitz-marker\`. Vary accents across a board of widgets (a distribution, not one color).
+- **Color:** spawn any widget with \`props.accent\` (+ optional \`props.accentInk\`) and its \`--blitz-accent\` recolors automatically — no widget code needed. Sample accents from the Blitz paper palette tokens: \`--blitz-coral #FF8D61\` (signature), \`--blitz-terracotta\`, \`--blitz-sage\`, \`--blitz-slate\`, \`--blitz-dust\`, \`--blitz-mauve\`, \`--blitz-tan\`, \`--blitz-marker\`. Vary accents across a set of widgets (a distribution, not one color).
 - **Copy:** any text the human reads inside a widget follows the OS prose rules (manual, "Talking with the user"): absolutely NO em dashes (—); plain, tight sentences; bold sparingly; say what is missing instead of guessing.
 - Elements: \`<blitz-titlebar>\` (full APP frames like the chat only — never on a plain widget, see the design language above), \`<blitz-list>\`, \`<blitz-message role="user|agent">\`, \`<blitz-row name meta kind ext>\` (fires \`open\`), \`<blitz-input placeholder>\` (fires \`send\` with \`detail.text\`), \`<blitz-button>\`. Or imperatively: \`window.blitz.ui.message(role,text)\` / \`.row({...})\` / \`.input({onSend})\` / \`.button(label,onClick)\`.
 - Layout/scroll: by default the body is a normal scrolling document — content taller than the surface scrolls, so don't put \`overflow:hidden\` or a fixed \`height\`/\`100vh\` on \`body\` (that clips it). For a fixed app frame — a pinned \`<blitz-titlebar>\`/\`<blitz-input>\` with ONE scrolling region — use a \`<blitz-list>\`; it fills the height and scrolls internally, and the body switches to the fixed frame automatically.
 
-The built-in chat (\`blitz-chat.html\`) and note (\`blitz-note.html\`) are themselves widgets built this way — read them with get_system_ui as templates; the user can have you rewrite them with customize_widget.
+The built-in chat (\`blitz-chat.tsx\` by default, with legacy/custom \`blitz-chat.html\` still supported) and note (\`blitz-note.html\`) are themselves widgets built this way — read them with get_system_ui as templates; the user can have you rewrite them with customize_widget.
 
 Available data resources (provider/resource): ${listProviderResources()
   .map((s) => `\`${s}\``)
@@ -318,6 +356,7 @@ resource, that pair must be added to the OS's PROVIDER_DATA registry first.
 \`\`\`html
 <!doctype html><meta charset="utf-8">
 <style>body{font:13px/1.4 -apple-system,system-ui;margin:0;padding:10px;color:#e6edf3;background:#0e1116}
+button.row{width:100%;border:0;color:inherit;background:transparent;font:inherit;text-align:left;cursor:pointer}
 .row{display:flex;gap:8px;align-items:center;padding:6px;border-radius:8px}.row:hover{background:#1b2230}
 img{width:22px;height:22px;border-radius:6px}</style>
 <div id="list">Loading…</div>
@@ -325,9 +364,17 @@ img{width:22px;height:22px;border-radius:6px}</style>
   window.blitz.ready(async () => {
     try {
       const { items } = await window.blitz.data('discord', 'guilds')
-      document.getElementById('list').innerHTML = items.map(it =>
-        '<div class=row>' + (it.icon ? '<img src="'+it.icon+'">' : '') +
-        '<span>'+ it.label + '</span></div>').join('') || 'Nothing here.'
+      const list = document.getElementById('list')
+      list.textContent = ''
+      for (const it of items) {
+        const row = document.createElement(it.url ? 'button' : 'div')
+        row.className = 'row'
+        if (it.url) row.onclick = () => window.blitz.tool('open_window', { url: it.url })
+        if (it.icon) { const img = document.createElement('img'); img.src = it.icon; row.appendChild(img) }
+        const label = document.createElement('span'); label.textContent = it.label; row.appendChild(label)
+        list.appendChild(row)
+      }
+      if (!items.length) list.textContent = 'Nothing here.'
     } catch (e) { document.getElementById('list').textContent = String(e.message || e) }
   })
 </script>

@@ -19,6 +19,10 @@ type TooltipState = {
   closing?: boolean
 }
 
+function cleanFolderPath(path: unknown): string {
+  return String(path ?? '').replace(/^[/\\]+|[/\\]+$/g, '').split('\\').join('/')
+}
+
 /** Left dock: an icon per surface ATTACHED TO THE CURRENT STAGE (the per-stage dock,
  *  plans/blitzos-stage-splay-lattice.md) — switching stages refreshes it to that stage's set.
  *  Membership is the SAME shared rule the splay drag moves by: slotStage, else the owning agent's
@@ -29,14 +33,28 @@ export function Sidebar({ onRequestRestore, onCreateSurface, animating = {} }: P
   const stageOrder = useDesktop((s) => s.stageOrder)
   const stageCount = useDesktop((s) => s.stageCount)
   const viewport = useDesktop((s) => s.viewport)
-  const surfaces = useMemo(
-    () => allSurfaces.filter((s) => surfaceStage(s, viewport, stageOrder, stageCount) === currentStage),
-    [allSurfaces, viewport, stageOrder, stageCount, currentStage]
-  )
+  const surfaces = useMemo(() => {
+    const stageSurfaces = allSurfaces.filter((s) => surfaceStage(s, viewport, stageOrder, stageCount) === currentStage)
+    const folderPaths = new Set(
+      stageSurfaces
+        .filter((s) => s.kind === 'native' && s.component === 'dir')
+        .map((s) => cleanFolderPath(s.props?.path))
+        .filter(Boolean)
+    )
+    return stageSurfaces.filter((s) => {
+      if (!(s.kind === 'native' && s.component === 'files')) return true
+      const rootPath = cleanFolderPath(s.props?.rootPath || s.props?.path)
+      return !rootPath || !folderPaths.has(rootPath)
+    })
+  }, [allSurfaces, viewport, stageOrder, stageCount, currentStage])
   const focusAndZoom = useDesktop((s) => s.focusAndZoom)
+  const setSelection = useDesktop((s) => s.setSelection)
   const closeSurface = useDesktop((s) => s.closeSurface)
   const tooltipCloseTimer = useRef<number | null>(null)
+  const appearTimers = useRef<Map<string, number>>(new Map())
+  const seenSurfaceIds = useRef<Set<string> | null>(null)
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
+  const [appearing, setAppearing] = useState<Record<string, true>>({})
   const surfaceIdsKey = useMemo(() => surfaces.map((s) => s.id).join('|'), [surfaces])
   const orderRef = useRef<Map<string, number>>(new Map())
   const nextOrder = useRef(0)
@@ -54,8 +72,43 @@ export function Sidebar({ onRequestRestore, onCreateSurface, animating = {} }: P
   useEffect(() => {
     return () => {
       if (tooltipCloseTimer.current != null) window.clearTimeout(tooltipCloseTimer.current)
+      for (const timer of appearTimers.current.values()) window.clearTimeout(timer)
+      appearTimers.current.clear()
     }
   }, [])
+
+  useEffect(() => {
+    const ids = new Set(surfaces.map((s) => s.id))
+    if (seenSurfaceIds.current == null) {
+      seenSurfaceIds.current = ids
+      return
+    }
+
+    const entered = [...ids].filter((id) => !seenSurfaceIds.current?.has(id))
+    seenSurfaceIds.current = ids
+    if (!entered.length) return
+
+    setAppearing((cur) => {
+      const next = { ...cur }
+      for (const id of entered) next[id] = true
+      return next
+    })
+
+    for (const id of entered) {
+      const old = appearTimers.current.get(id)
+      if (old != null) window.clearTimeout(old)
+      const timer = window.setTimeout(() => {
+        appearTimers.current.delete(id)
+        setAppearing((cur) => {
+          if (!cur[id]) return cur
+          const next = { ...cur }
+          delete next[id]
+          return next
+        })
+      }, 820)
+      appearTimers.current.set(id, timer)
+    }
+  }, [surfaces])
 
   useEffect(() => {
     if (tooltipCloseTimer.current != null) {
@@ -101,7 +154,7 @@ export function Sidebar({ onRequestRestore, onCreateSurface, animating = {} }: P
           <button
             key={s.id}
             data-sidebar-sid={s.id}
-            className={`sidebar-app${s.minimized ? ' minimized' : ''}${animating[s.id] ? ` is-${animating[s.id]}` : ''}`}
+            className={`sidebar-app${s.minimized ? ' minimized' : ''}${animating[s.id] ? ` is-${animating[s.id]}` : ''}${appearing[s.id] && !animating[s.id] ? ' is-appearing' : ''}`}
             aria-label={s.title}
             onPointerEnter={(e) => showTooltip(e.currentTarget, s.title)}
             onPointerLeave={hideTooltip}
@@ -109,6 +162,7 @@ export function Sidebar({ onRequestRestore, onCreateSurface, animating = {} }: P
             onBlur={hideTooltip}
             onClick={() => {
               if (animating[s.id]) return
+              if (s.kind === 'native' && s.component === 'dir') setSelection([s.id])
               if (s.minimized) {
                 onRequestRestore(s.id)
                 return

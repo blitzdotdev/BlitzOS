@@ -218,7 +218,7 @@ export interface CreateSurfaceInput {
   /** system runtime surface (e.g. an agent chat widget: role:'chat', pinned). */
   role?: string
   pinned?: boolean
-  /** the agent this surface belongs to (a per-agent chat widget). */
+  /** the agent/thread this surface belongs to. */
   agentId?: string
   /** place this surface in a SPECIFIC workspace stage (an agent → its own stage N); when
    *  omitted, it cascades into the current stage. Derived from x afterward — never stored on the Surface. */
@@ -274,6 +274,7 @@ interface DesktopState {
   /** Stage tiles (slot lattice): commit a tile to a cell / pop it off / flow the file layer. */
   placeSurfaceSlot: (id: string, col: number, row: number, size?: string, stage?: number) => void
   clearSurfaceSlot: (id: string) => void
+  parkFolderOffstage: (id: string) => void
   /** ⊞/⤢ + ⌃⌥Return: snap the window into the nearest free span / pop the tile out (preSnap restore). */
   toggleSurfaceSlot: (id: string) => void
   /** ⌃⌥=/−: cycle a tile through SIZE_ORDER, anchored at its cell when the new span fits, else nearest free. */
@@ -329,6 +330,7 @@ interface DesktopState {
   hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas', stageCount?: number, stageOrder?: number[]) => void
   applyReconcile: (surfaces: Surface[]) => void
   moveSurface: (id: string, x: number, y: number) => void
+  removeSurfacesFromCanvas: (ids: string[]) => void
   closeSurface: (id: string) => void
   focusSurface: (id: string) => void
   clearActiveSurface: () => void
@@ -468,6 +470,32 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, slot: undefined, preSnap: undefined, x: p.x, y: p.y, w: free.w, h: free.h } : x))
       }
     }),
+
+  parkFolderOffstage: (id) => {
+    get().snapshotLayout()
+    set((s) => {
+      const cur = s.surfaces.find((x) => x.id === id && x.kind === 'native' && x.component === 'dir')
+      if (!cur) return {}
+      const stage = cur.slotStage ?? s.currentStage ?? 0
+      const stageRect = orderedStageRect(stage, s.viewport, s.stageOrder, s.stageCount)
+      const free = cur.preSnap ?? { w: cur.w, h: cur.h }
+      const parked = s.surfaces.filter((x) => x.id !== id && x.kind === 'native' && x.component === 'dir' && !x.slot && x.y >= stageRect.y + stageRect.h)
+      const idx = parked.length
+      const x = Math.round(stageRect.x + 40 + (idx % 6) * Math.min(free.w + 24, 220))
+      const y = Math.round(stageRect.y + stageRect.h + 48 + Math.floor(idx / 6) * (free.h + 28))
+      // Folder context-menu "Move off stage" is visual stage removal only: keep the real directory and its
+      // workspace node, clear any slot, and park the icon off-stage so reconcile cannot resurrect a duplicate.
+      return {
+        surfaces: s.surfaces.map((item) =>
+          item.id === id
+            ? { ...item, x, y, w: free.w, h: free.h, slot: undefined, ...(stage > 0 ? { slotStage: stage } : { slotStage: undefined }), preSnap: undefined, restore: undefined }
+            : item
+        ),
+        selection: s.selection.filter((xid) => xid !== id),
+        activeSurfaceId: s.activeSurfaceId === id ? null : s.activeSurfaceId
+      }
+    })
+  },
 
   toggleSurfaceSlot: (id) => {
     const st = get()
@@ -996,7 +1024,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const isRuntime = (w: Surface): boolean =>
         w.role === 'chat' ||
         w.role === 'activity' ||
-        (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder' || w.component === 'terminal' || w.component === 'runtime' || w.component === 'inbox' || w.component === 'unlock'))
+        (w.kind === 'native' && (w.component === 'chat' || w.component === 'activity' || w.component === 'folder' || w.component === 'files' || w.component === 'terminal' || w.component === 'runtime' || w.component === 'inbox' || w.component === 'unlock'))
       const keepRuntime = s.surfaces.filter(isRuntime)
       const localById = new Map(s.surfaces.map((w) => [w.id, w]))
       // A reconcile's `incoming` can echo back runtime-only surfaces (the host keeps un-persisted state
@@ -1284,6 +1312,16 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         st.reflowFiles()
       }
     }
+  },
+
+  removeSurfacesFromCanvas: (ids) => {
+    const gone = new Set(ids.map(String).filter(Boolean))
+    if (!gone.size) return
+    set((s) => ({
+      surfaces: s.surfaces.filter((w) => !gone.has(w.id)),
+      selection: s.selection.filter((id) => !gone.has(id)),
+      activeSurfaceId: s.activeSurfaceId && gone.has(s.activeSurfaceId) ? null : s.activeSurfaceId
+    }))
   },
 
   closeSurface: (id) => {

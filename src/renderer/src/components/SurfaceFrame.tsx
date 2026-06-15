@@ -32,6 +32,23 @@ const CURSOR_CSS: Record<string, string> = { pointer: 'default', hand: 'pointer'
 const WEB_CHROME_H = 34 + 28 + 36
 const WEB_CHROME_H_SLOTTED = 28 + 36
 
+function isRealFolderSurface(s: Surface): boolean {
+  return s.kind === 'native' && s.component === 'dir'
+}
+
+function isFileBackedFolderMoveCandidate(s: Surface, targetPath: string): boolean {
+  if (s.minimized || s.groupId || s.role) return false
+  if (s.kind === 'app' || s.kind === 'srcdoc') return true
+  if (s.kind !== 'native') return false
+  if (s.component === 'note') return true
+  if (s.component === 'file') return true
+  if (s.component === 'dir') {
+    const p = typeof s.props?.path === 'string' ? s.props.path : ''
+    return !!p && p !== targetPath && !targetPath.startsWith(`${p}/`)
+  }
+  return false
+}
+
 /** 'HIDE' = the holes fully cover the element: skip clipping and hide it outright (a degenerate
  *  clip leaves an antialiased ghost outline of the element — the "widget outline" artifact). */
 export type HolesClip = string | 'HIDE' | undefined
@@ -204,12 +221,18 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   surface,
   onRequestMinimize,
   onRequestToggleMaximize,
-  restoring = false
+  restoring = false,
+  renamingDirPath = null,
+  onDirRenameDone,
+  onDirContextMenu
 }: {
   surface: Surface
   onRequestMinimize?: (id: string) => void
   onRequestToggleMaximize?: (id: string) => void
   restoring?: boolean
+  renamingDirPath?: string | null
+  onDirRenameDone?: () => void
+  onDirContextMenu?: (id: string, x: number, y: number) => void
 }): JSX.Element {
   const moveSurface = useDesktop((s) => s.moveSurface)
   const focusSurface = useDesktop((s) => s.focusSurface)
@@ -480,14 +503,14 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
       )
   }
-  // blitz.sendMessage — the widget sends a message to ITS agent. The agent id rides from the surface
-  // (props.agentId, set by the host per agent) so each chat widget routes to its own agent.
-  function serveMessage(win: Window, reqId: string, text: string): Promise<void> {
-    window.agentOS?.sendMessage?.(String(text), String(surface.props?.agentId ?? '0'))
+  // blitz.sendMessage — the widget sends a message to an agent thread. The chat hub passes a sessionId;
+  // older single-agent widgets fall back to props.agentId.
+  function serveMessage(win: Window, reqId: string, text: string, sessionId?: string): Promise<void> {
+    window.agentOS?.sendMessage?.(String(text), String(sessionId || surface.props?.agentId || '0'))
     return Promise.resolve(postRes(win, reqId, { ok: true }))
   }
-  // blitz.chat — a per-agent chat widget manages itself (op 'new' → a fresh agent's id; 'rename' → its title).
-  // Returns the result (e.g. the new agent id). This is the per-agent control API, NOT a session hub.
+  // blitz.chat — the shared chat hub manages threads (op 'new' -> a fresh agent id; 'rename' -> its title).
+  // Returns the result (e.g. the new agent id).
   function serveChat(win: Window, reqId: string, op: string, args: Record<string, unknown>): Promise<void> {
     const api = window.agentOS as { chatControl?: (op: string, args: Record<string, unknown>) => Promise<unknown> } | undefined
     if (!api?.chatControl) return Promise.resolve(postRes(win, reqId, { ok: false, error: 'chat control unavailable here' }))
@@ -513,7 +536,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     const onMessage = (e: MessageEvent): void => {
       const win = iframeRef.current?.contentWindow
       if (!win || e.source !== win) return // only OUR widget (origin is unusable "null")
-      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; path?: string; chatOp?: string }
+      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; sessionId?: string; path?: string; chatOp?: string }
       if (!m || typeof m !== 'object') return
       if (m.type === 'blitz:hello') {
         win.postMessage({ type: 'blitz:init', props: widgetProps() }, '*')
@@ -552,7 +575,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       } else if (m.type === 'blitz:req' && typeof m.reqId === 'string') {
         if (m.op === 'data') void serveData(win, m.reqId, String(m.provider ?? ''), String(m.resource ?? ''))
         else if (m.op === 'tool') void serveTool(win, m.reqId, String(m.tool ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
-        else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''))
+        else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''), m.sessionId != null ? String(m.sessionId) : undefined)
         else if (m.op === 'chat') void serveChat(win, m.reqId, String(m.chatOp ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
         else if (m.op === 'listdir') void serveListDir(win, m.reqId, String(m.path ?? ''))
         else if (m.op === 'setprops') {
@@ -632,12 +655,34 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       d.poppedOut = true
       // Drop any snap preview captured BEFORE the pop-out (the cursor may still sit in the edge zone) so
       // releasing right after popping out doesn't instantly re-tile the window. A later move re-evaluates.
+      st.setDragTarget(null)
       st.setSnapPreview(null)
       return
     }
     const dx = (e.clientX - d.startX) / t.scale
     const dy = (e.clientY - d.startY) / t.scale
     for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
+    // Highlight a visual Group folder OR a real filesystem folder under the cursor.
+    // Real folders accept only file-backed items; visual Groups keep their old "any live surface" behavior.
+    const dragged = new Set(d.items.map((it) => it.id))
+    const folder = st.surfaces.find(
+      (w) => {
+        if (dragged.has(w.id) || wx < w.x || wx > w.x + w.w || wy < w.y || wy > w.y + w.h) return false
+        if (w.component === 'folder') return true
+        if (!isRealFolderSurface(w)) return false
+        const targetPath = typeof w.props?.path === 'string' ? w.props.path : ''
+        return !!targetPath && d.items.every((it) => {
+          const draggedSurface = st.surfaces.find((s) => s.id === it.id)
+          return !!draggedSurface && isFileBackedFolderMoveCandidate(draggedSurface, targetPath)
+        })
+      }
+    )
+    if (folder) {
+      slotGhost.current = null
+      st.setDragTarget(folder.id)
+      st.setSnapPreview(null)
+      return
+    }
     // Slotted tile drag (stage desktop, macOS widget feel): the tile floats under the cursor while an
     // OUTLINE previews the nearest free span of the lattice — other tiles NEVER move; only the file
     // layer parts fluidly around the outline. ⌘-drag skips snapping entirely (Apple's escape hatch:
@@ -658,15 +703,11 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     if (d.single && isSlotted) {
       // ⌘ held: free drag, no ghost — the escape hatch out of the lattice.
       slotGhost.current = null
+      st.setDragTarget(null)
       st.setSnapPreview(null)
       return
     }
-    // highlight a folder under the cursor as an add-to-folder drop target
-    const dragged = new Set(d.items.map((it) => it.id))
-    const folder = st.surfaces.find(
-      (w) => w.component === 'folder' && !dragged.has(w.id) && wx >= w.x && wx <= w.x + w.w && wy >= w.y && wy <= w.y + w.h
-    )
-    st.setDragTarget(folder ? folder.id : null)
+    st.setDragTarget(null)
     // Snap preview (BOTH modes, #42): dragging a single window so the cursor reaches a primary-stage
     // side/corner shows where it will tile on release (left|right half / quarter — never full-screen).
     // Suppressed over a folder target and for file/dir tiles (they aren't windows).
@@ -686,6 +727,26 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     const snap = st.snapPreview
     st.setDragTarget(null)
     st.setSnapPreview(null)
+    if (d && target) {
+      const targetSurface = st.surfaces.find((s) => s.id === target)
+      if (targetSurface && isRealFolderSurface(targetSurface)) {
+        const folderPath = typeof targetSurface.props?.path === 'string' ? targetSurface.props.path : ''
+        if (folderPath) {
+          const move = window.agentOS?.moveIntoFolder?.(folderPath, d.items.map((it) => it.id))
+          void move?.then((r) => {
+            if (!r?.ok) return
+            const stNow = useDesktop.getState()
+            const movedIds = Array.isArray(r.movedIds) ? r.movedIds : []
+            if (movedIds.length) stNow.removeSurfacesFromCanvas(movedIds)
+            stNow.clearSelection()
+          }).catch(() => {})
+        }
+      } else {
+        st.dropIntoFolder(target, d.items.map((it) => it.id))
+      }
+      slotGhost.current = null
+      return
+    }
     // Slotted tile drop: ⌘-release pops it OFF the lattice (free-form, Apple's escape hatch); a normal
     // release spring-snaps into the outlined span (or back to its own cells — self is excluded from
     // occupancy, so "didn't really move" is always a valid drop). Files reflow to the settled layout.
@@ -702,7 +763,6 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       st.reflowFiles()
       return
     }
-    if (d && target) st.dropIntoFolder(target, d.items.map((it) => it.id))
     // Apply the tile; remember the floating size in `preSnap` so a later drag pops it back out
     // (macOS). `restore` is cleared so a previously-maximized window's green-zoom isn't stale.
     else if (d && snap && d.single && !isFileTile) {
@@ -789,6 +849,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const stop = (e: React.PointerEvent): void => e.stopPropagation()
   const isNote = surface.kind === 'native' && surface.component === 'note'
   const isFolder = surface.kind === 'native' && surface.component === 'folder'
+  const isDirTile = isRealFolderSurface(surface)
   const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
   const isSlotted = !!slotOf(surface) // a stage tile: lattice-snapped, fixed-size, never edge-tiles
   // Cut a higher browser's page hole out of this frame (string-equality selector: recomputes per
@@ -937,6 +998,38 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     )
   }
 
+  if (isDirTile) {
+    const path = typeof surface.props?.path === 'string' ? surface.props.path : ''
+    return (
+      <div
+        ref={frameRef}
+        data-sid={surface.id}
+        className={`desktop-folder${isActive ? ' is-active' : ''}${isSelected ? ' is-selected' : ''}${isDropTarget ? ' drop-target' : ''}${isAbsorbing ? ' absorbing' : ''}`}
+        style={{
+          left: surface.x,
+          top: surface.y,
+          width: surface.w,
+          height: surface.h,
+          zIndex: effectiveZ(surface),
+          ...(surface.minimized ? { display: 'none' } : {}),
+          ...(clipPath && clipPath !== 'HIDE' ? { clipPath } : {}),
+          ...(clipPath === 'HIDE' ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {})
+        }}
+        onPointerDown={focusHere}
+      >
+        <DirWidget
+          surface={surface}
+          renaming={!!path && renamingDirPath === path}
+          onRenameDone={onDirRenameDone}
+          onDragDown={onBarDown}
+          onDragMove={onBarMove}
+          onDragUp={onBarUp}
+          onOpenMenu={(x, y) => onDirContextMenu?.(surface.id, x, y)}
+        />
+      </div>
+    )
+  }
+
   return (
     <div
       ref={frameRef}
@@ -987,7 +1080,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
               along the top keeps the full drag gesture set (move, ⌘-drag, drag-to-pop-out all ride
               the same bar handlers), and the pop-in/out toggle floats in the far right corner. */}
           <div className="tile-grip" onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerCancel={onBarUp} />
-          <button className="tile-toggle" title="Pop out of the grid — free-form, restores its size (⌘T; ⇧⌘T cycles size)" onClick={toggleSlot} onPointerDown={stop}>
+          <button className="tile-toggle" aria-label="Pop out of the grid" title="Pop out of the grid — free-form, restores its size (⌘T; ⇧⌘T cycles size)" onClick={toggleSlot} onPointerDown={stop}>
             ⤢
           </button>
         </>

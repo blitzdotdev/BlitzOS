@@ -76,6 +76,16 @@ const call = async (path, body) => {
   return r && r.status ? { __status: r.status, ...(r.body || {}) } : r
 }
 
+// ---- 0. catalog widgets must be spawned as widgets, not native components ----
+{
+  const before = osState.surfaces.length
+  const badCreate = await call('/create_surface', { kind: 'native', component: 'pipeline' })
+  ok(badCreate.__status === 400 && /library widget/.test(badCreate.error || '') && /spawn_widget/.test(badCreate.error || ''), 'create_surface rejects catalog widget as native')
+  const badPlace = await call('/place_widget', { kind: 'native', component: 'pipeline' })
+  ok(badPlace.__status === 400 && /library widget/.test(badPlace.error || '') && /spawn_widget/.test(badPlace.error || ''), 'place_widget rejects catalog widget as native')
+  ok(osState.surfaces.length === before, 'bad native widget attempts do not create broken surfaces')
+}
+
 // ---- 1. web/app are born OFF-STAGE: parked on the canvas outside the stage rect ----
 const outsideArea = (s) => {
   const r = stageRect(0, VP)

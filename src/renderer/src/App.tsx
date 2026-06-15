@@ -26,10 +26,20 @@ import { ContextMenu } from './components/ContextMenu'
 // desktop). Off by default — integrations now surface as agent-spawned widgets. Flip to re-enable.
 const SHOW_INTEGRATION_CARDS = false
 const SHOW_ADVANCED_TOOLBAR = false
+const FOLDER_ENTRY_MIME = 'application/x-blitz-folder-entry'
 type DockAnimationPhase = 'minimizing' | 'restoring'
 type ToolbarTooltip = { text: string; left: number; top: number }
 type AdvancedPopoverPosition = { left: number; top: number }
 type ThemeMode = 'light' | 'dark'
+// ! DEBUG: temporary bottom-right agent backend selector.
+type AgentRuntimeChoice = 'codex-serverless' | 'claude'
+type AgentRuntimeDebugStatus = {
+  ok: boolean
+  runtime: string | null
+  label: string | null
+  available: { codex: boolean; claude: boolean }
+  error?: string
+}
 const THEME_STORAGE_KEY = 'blitzos.theme'
 const AREA_FRAME_SCALE_THRESHOLD = 0.92
 const AREA_ADD_SCALE_THRESHOLD = 0.8
@@ -74,6 +84,12 @@ function isCanvasGestureBlockedTarget(target: EventTarget | null): boolean {
 
 function isActiveWindowTarget(target: EventTarget | null): boolean {
   return target instanceof Element && !!target.closest('.window.is-active')
+}
+
+function canMoveToRealFolder(s: Surface): boolean {
+  if (s.minimized || s.groupId || s.role) return false
+  if (s.kind === 'app' || s.kind === 'srcdoc') return true
+  return s.kind === 'native' && (s.component === 'note' || s.component === 'file' || s.component === 'dir')
 }
 
 function isScrollableSurfaceTarget(target: EventTarget | null, deltaX: number, deltaY: number): boolean {
@@ -456,8 +472,10 @@ export default function App(): JSX.Element {
   // Item 3: a web guest asked for a sensitive browser permission (camera, location, …) — show the human a
   // real Allow/Block prompt (browser parity), remembered per-origin.
   const [permissionPrompts, setPermissionPrompts] = useState<Array<{ id: string; origin: string; permission: string; surfaceId: string | null }>>([])
-  // Right-click desktop menu (New Folder / New Board). wx/wy = the world position to place the new folder.
+  // Right-click desktop menu. wx/wy = the world position to place the new folder.
   const [menu, setMenu] = useState<{ x: number; y: number; wx: number; wy: number } | null>(null)
+  const [folderMenu, setFolderMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [renamingDirPath, setRenamingDirPath] = useState<string | null>(null)
   const annotationMenu = useDesktop((s) => s.annotationMenu) // item 5b: surface right-click annotation menu
   const [dockAnimations, setDockAnimations] = useState<Record<string, DockAnimationPhase>>({})
   // Read in the geometry RAF below (a []-deps loop) without re-subscribing: mirror the latest into a ref.
@@ -465,6 +483,9 @@ export default function App(): JSX.Element {
   dockAnimRef.current = dockAnimations
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
+  // ! DEBUG: runtime switch state is intentionally UI-only; the selected value is persisted in main.
+  const [agentRuntimeDebug, setAgentRuntimeDebug] = useState<AgentRuntimeDebugStatus | null>(null)
+  const [agentRuntimePending, setAgentRuntimePending] = useState<AgentRuntimeChoice | null>(null)
   const pan = useRef<{ x: number; y: number } | null>(null)
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
   const dockAnimationIds = useRef<Set<string>>(new Set())
@@ -481,6 +502,28 @@ export default function App(): JSX.Element {
   const advancedButtonRef = useRef<HTMLButtonElement>(null)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [toolbarTooltip, setToolbarTooltip] = useState<ToolbarTooltip | null>(null)
+
+  useEffect(() => {
+    if (isServer) return
+    let alive = true
+    window.agentOS?.agentRuntimeGet?.().then((status) => {
+      if (alive) setAgentRuntimeDebug(status)
+    }).catch(() => {
+      if (alive) setAgentRuntimeDebug(null)
+    })
+    return () => { alive = false }
+  }, [isServer])
+
+  const chooseAgentRuntime = async (runtime: AgentRuntimeChoice): Promise<void> => {
+    if (agentRuntimePending || agentRuntimeDebug?.runtime === runtime) return
+    setAgentRuntimePending(runtime)
+    try {
+      const status = await window.agentOS?.agentRuntimeSet?.(runtime)
+      if (status) setAgentRuntimeDebug(status)
+    } finally {
+      setAgentRuntimePending(null)
+    }
+  }
   const [aiCopied, setAiCopied] = useState(false)
   // Phase 2: true once the backend has sent (or declined) a hydrate. The state-push is
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
@@ -877,6 +920,19 @@ export default function App(): JSX.Element {
         // the agent's `group` tool, so this keybind is purely the quick visual grouping.
         e.preventDefault()
         useDesktop.getState().groupSelection()
+      } else if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        const ae = document.activeElement as HTMLElement | null
+        const editable = !!ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)
+        if (!editable) {
+          const st = useDesktop.getState()
+          const id = st.selection.length === 1 ? st.selection[0] : st.activeSurfaceId
+          const dir = id ? st.surfaces.find((s) => s.id === id && s.kind === 'native' && s.component === 'dir') : null
+          const path = dir?.props?.path
+          if (typeof path === 'string' && path) {
+            e.preventDefault()
+            setRenamingDirPath(path)
+          }
+        }
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
         // layout undo (Cmd+Z) when nothing editable is focused; else let the browser text-undo win
         const ae = document.activeElement as HTMLElement | null
@@ -904,15 +960,22 @@ export default function App(): JSX.Element {
           addStageAndGo()
         }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        // Delete / ⌫ closes the selected surfaces (when not typing in a field).
+        // Delete / ⌫ closes selected surfaces, except real folders: keyboard delete is a no-op for
+        // filesystem folders. Their context-menu Move off stage is the explicit non-destructive removal.
         const ae = document.activeElement as HTMLElement | null
         const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
         const st = useDesktop.getState()
         if (!editable && st.selection.length) {
           e.preventDefault()
           const ids = [...st.selection]
-          ids.forEach((id) => st.closeSurface(id))
-          st.clearSelection()
+          const byId = new Map(st.surfaces.map((s) => [s.id, s]))
+          const keepSelected: string[] = []
+          ids.forEach((id) => {
+            const surface = byId.get(id)
+            if (surface?.kind === 'native' && surface.component === 'dir') keepSelected.push(id)
+            else st.closeSurface(id)
+          })
+          useDesktop.getState().setSelection(keepSelected)
         }
       } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.code === 'KeyT' && !window.agentOS?.onKeybind) {
         // ⌘T/⇧⌘T DOM fallback for SERVER mode only — in Electron the bind arrives from main's
@@ -1280,20 +1343,28 @@ export default function App(): JSX.Element {
         }
       }
       else if (a.type === 'chat') {
-        // The OS owns each agent's transcript and sends the FULL message list tagged with agentId
-        // ('0' = the primary chat). Route to THAT agent's chat surface (id 'chat' / 'chat-<id>') so a
-        // per-agent widget only shows its own conversation. If it isn't here yet, ignore (hydrate brings it).
+        // The OS owns every agent transcript and sends the hub props to the ONE primary Chat surface.
+        // Legacy messages-only payloads are still accepted for older transports.
         const sid = a.agentId != null ? String(a.agentId) : '0'
-        const chatId = sid === '0' ? 'chat' : `chat-${sid}`
-        const chat = st.surfaces.find((s) => s.id === chatId) || (sid === '0' ? st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat')) : undefined)
+        const chat = st.surfaces.find((s) => s.id === 'chat') || st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
         if (!chat) return
-        if (Array.isArray(a.messages)) {
-          st.updateSurfaceProps(chat.id, { messages: a.messages as Array<{ role: string; text: string }> })
+        if (a.sessions || a.threads || a.status) {
+          st.updateSurfaceProps(chat.id, {
+            sessions: a.sessions,
+            threads: a.threads,
+            status: a.status,
+            activeAgentId: a.activeAgentId != null ? String(a.activeAgentId) : sid,
+            messages: Array.isArray(a.messages) ? a.messages : undefined,
+            agentId: sid,
+            sessionId: sid
+          })
+        } else if (Array.isArray(a.messages)) {
+          st.updateSurfaceProps(chat.id, { messages: a.messages as Array<{ role: string; text: string }>, agentId: sid, sessionId: sid })
         } else {
           const text = String(a.text ?? '')
           if (text) {
             const prev = (chat.props?.messages as Array<{ role: string; text: string }>) ?? []
-            st.updateSurfaceProps(chat.id, { messages: [...prev, { role: 'agent', text }].slice(-200) })
+            st.updateSurfaceProps(chat.id, { messages: [...prev, { role: 'agent', text }].slice(-200), agentId: sid, sessionId: sid })
           }
         }
       } else if (a.type === 'agentStatus') {
@@ -1587,20 +1658,52 @@ export default function App(): JSX.Element {
   // world-position (server mode; Electron drag-drop uses file paths — a separate path). The tile
   // then appears via reconcile.
   function onDragOver(e: React.DragEvent): void {
+    if (Array.from(e.dataTransfer?.types ?? []).includes(FOLDER_ENTRY_MIME)) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      return
+    }
     if (Array.from(e.dataTransfer?.types ?? []).includes('Files')) {
       e.preventDefault()
       e.dataTransfer.dropEffect = 'copy'
     }
   }
   function onDrop(e: React.DragEvent): void {
+    const hasFolderEntry = Array.from(e.dataTransfer?.types ?? []).includes(FOLDER_ENTRY_MIME)
     const files = Array.from(e.dataTransfer?.files ?? [])
     const items = Array.from(e.dataTransfer?.items ?? [])
-    if (!files.length && !items.length) return
+    if (!hasFolderEntry && !files.length && !items.length) return
     e.preventDefault()
     const t = useDesktop.getState().transform
     const wx = Math.round((e.clientX - t.x) / t.scale)
     const wy = Math.round((e.clientY - t.y) / t.scale)
     const api = window.agentOS
+    if (hasFolderEntry) {
+      e.preventDefault()
+      let paths: string[] = []
+      try {
+        const payload = JSON.parse(e.dataTransfer.getData(FOLDER_ENTRY_MIME) || '{}')
+        paths = Array.isArray(payload.paths) ? payload.paths.map(String) : []
+      } catch {
+        paths = []
+      }
+      if (paths.length) {
+        void api?.moveOutOfFolder?.(paths, wx, wy).then((r) => {
+          if (!r?.ok) return
+          const returned = Array.isArray(r.surfaces) ? (r.surfaces as Surface[]) : []
+          const existing = new Set(useDesktop.getState().surfaces.map((s) => s.id))
+          for (const surface of returned) {
+            if (!surface?.id) continue
+            if (existing.has(surface.id)) updateSurface(surface.id, surface)
+            else createSurface(surface as CreateSurfaceInput)
+          }
+          const focusId = Array.isArray(r.surfaceIds) ? r.surfaceIds[0] : returned[0]?.id
+          if (focusId) window.setTimeout(() => focusAndZoom(String(focusId)), 0)
+          window.dispatchEvent(new CustomEvent('blitz-folder-entry-moved', { detail: { paths: r.movedPaths || paths } }))
+        }).catch(() => {})
+      }
+      return
+    }
     // Electron: dropped files AND folders carry real OS paths → copy them into the workspace (a folder
     // copies recursively → ONE collapsed tile). This is the desktop-app path the old code skipped (bug).
     if (api && !api.serverMode && api.dropPaths && api.ingestPaths) {
@@ -1628,19 +1731,22 @@ export default function App(): JSX.Element {
     })
   }
 
-  // Right-click empty canvas → New Folder / New Board menu (the discoverable counterpart of Cmd+G).
+  // Right-click empty canvas → New Folder menu (the discoverable counterpart of Cmd+G).
   function onBgContextMenu(e: React.MouseEvent): void {
     e.preventDefault()
     const t = useDesktop.getState().transform
+    setFolderMenu(null)
     setMenu({ x: e.clientX, y: e.clientY, wx: Math.round((e.clientX - t.x) / t.scale), wy: Math.round((e.clientY - t.y) / t.scale) })
   }
-  // New EMPTY folder (files) or board (windows+widgets) at the click point.
+  // New EMPTY folder at the click point. Board support remains for existing/internal flows while the
+  // user-facing creation entry points are hidden.
   function makeFolder(kind: 'folder' | 'board', wx: number, wy: number, source?: AnimationSourceRect | null): void {
     if (source) pendingFolderSource.current = { rect: source, at: performance.now() }
     const req = window.agentOS?.newFolder?.(kind === 'board' ? 'Board' : 'Folder', kind, wx, wy)
     if (!req) pendingFolderSource.current = null
     void Promise.resolve(req).then((r) => {
       if (!r?.ok) pendingFolderSource.current = null
+      else if (kind === 'folder' && r.folder) setRenamingDirPath(r.folder)
     })
   }
   // Group the current selection into a real folder (files) or board (windows/widgets stay live + splay).
@@ -1653,7 +1759,7 @@ export default function App(): JSX.Element {
 
   function onBgDown(e: React.PointerEvent): void {
     // Only the LEFT button pans / starts a marquee / clears the selection. A right-click is the context
-    // menu (onBgContextMenu) — it must NOT clear the selection, or "New Folder/Board with Selection (N)"
+    // menu (onBgContextMenu) — it must NOT clear the selection, or "New Folder with Selection (N)"
     // would never show (the right-click's pointerdown was wiping the very selection the menu groups).
     if (e.button !== 0) return
     const st = useDesktop.getState()
@@ -1907,7 +2013,7 @@ export default function App(): JSX.Element {
 
   function openChat(source?: AnimationSourceRect | null): void {
     const st = useDesktop.getState()
-    // The chat is a host-hydrated role:'chat' srcdoc widget (blitz-chat.html). Just focus/center it; if a
+    // The chat is a host-hydrated role:'chat' srcdoc widget (blitz-chat.*). Just focus/center it; if a
     // very old board is still on the native chat, fall back to that.
     const existing = st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
     if (existing) restoreOrFocusFromSource(existing.id, source)
@@ -2173,6 +2279,12 @@ export default function App(): JSX.Element {
               onRequestMinimize={requestMinimize}
               onRequestToggleMaximize={requestToggleMaximize}
               restoring={dockAnimations[s.id] === 'restoring'}
+              renamingDirPath={renamingDirPath}
+              onDirRenameDone={() => setRenamingDirPath(null)}
+              onDirContextMenu={(id, x, y) => {
+                setMenu(null)
+                setFolderMenu({ id, x, y })
+              }}
             />
           )
         )}
@@ -2226,6 +2338,28 @@ export default function App(): JSX.Element {
           </div>,
           document.body
         )}
+
+      {/* ! DEBUG: temporary maintainer control for swapping future agent launches between Codex and Claude. */}
+      {!isServer && agentRuntimeDebug && (
+        <div className="agent-runtime-switch" aria-label="Agent backend">
+          <span className="agent-runtime-debug-tag">DEBUG</span>
+          <span className="agent-runtime-switch-label">AI</span>
+          <button
+            className={agentRuntimeDebug.runtime === 'codex-serverless' ? 'active' : ''}
+            disabled={!agentRuntimeDebug.available.codex || !!agentRuntimePending}
+            onClick={() => { void chooseAgentRuntime('codex-serverless') }}
+          >
+            Codex
+          </button>
+          <button
+            className={agentRuntimeDebug.runtime === 'claude' ? 'active' : ''}
+            disabled={!agentRuntimeDebug.available.claude || !!agentRuntimePending}
+            onClick={() => { void chooseAgentRuntime('claude') }}
+          >
+            Claude
+          </button>
+        </div>
+      )}
 
       {SHOW_ADVANCED_TOOLBAR && showAdvanced && (
         <div className="advanced-backdrop" onPointerDown={() => setShowAdvanced(false)}>
@@ -2362,7 +2496,9 @@ export default function App(): JSX.Element {
           onClose={() => setMenu(null)}
           items={[
             { label: 'New Folder', onClick: () => makeFolder('folder', menu.wx, menu.wy) },
-            { label: 'New Board', onClick: () => makeFolder('board', menu.wx, menu.wy) },
+            // Board creation is being slowly deprecated from primary UI. Keep makeFolder('board') for
+            // existing/internal flows, but hide the empty-stage menu entry for now.
+            // { label: 'New Board', onClick: () => makeFolder('board', menu.wx, menu.wy) },
             // A selection of LIVE surfaces (windows/widgets/notes) → the iPhone-style collapsing folder you
             // tap to open (groupSelection — in-memory, works for ANY kind). Only a selection of REAL file/dir
             // tiles offers the disk folder, since collapsing live surfaces into a file-manager would just turn
@@ -2370,12 +2506,34 @@ export default function App(): JSX.Element {
             ...(selection.length
               ? (() => {
                   const sel = surfaces.filter((s) => selection.includes(s.id))
-                  const allFiles = sel.length > 0 && sel.every((s) => s.kind === 'native' && (s.component === 'file' || s.component === 'dir'))
-                  return allFiles
+                  const allFileBacked = sel.length > 0 && sel.every(canMoveToRealFolder)
+                  return allFileBacked
                     ? [{ label: `New Folder with Selection (${selection.length})`, onClick: () => groupSelectionInto('folder') }]
                     : [{ label: `Group into Folder (${selection.length})`, onClick: () => useDesktop.getState().groupSelection() }]
                 })()
               : [])
+          ]}
+        />
+      )}
+
+      {folderMenu && (
+        <ContextMenu
+          x={folderMenu.x}
+          y={folderMenu.y}
+          onClose={() => setFolderMenu(null)}
+          items={[
+            {
+              label: 'Rename',
+              onClick: () => {
+                const dir = useDesktop.getState().surfaces.find((s) => s.id === folderMenu.id && s.kind === 'native' && s.component === 'dir')
+                const path = dir?.props?.path
+                if (typeof path === 'string' && path) setRenamingDirPath(path)
+              }
+            },
+            {
+              label: 'Move off stage',
+              onClick: () => useDesktop.getState().parkFolderOffstage(folderMenu.id)
+            }
           ]}
         />
       )}

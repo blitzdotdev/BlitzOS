@@ -1,12 +1,12 @@
 import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
-import { readdirSync, readFileSync, statSync } from 'fs'
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { startControlServer } from './control-server'
 import { registerIntegrations } from './integrations'
 import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, osRadialPhase } from './osActions'
-import { emitSystemMoment } from './events'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, osRadialPhase } from './osActions'
+import { emitSystemMoment, setMomentTap } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
 import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
@@ -19,11 +19,13 @@ import { registerWidgets } from './widgets'
 // Keep web surfaces logged in across quit/relaunch (cookie/localStorage flush + unload).
 import { startSessionPersistence } from './persistence'
 import { initTelemetry } from './telemetry'
+import { makeSessionTape } from './session-tape.mjs'
+import { setToolTap } from './os-tools.mjs'
 import { registerWallpaperIpc } from './wallpaper'
 import { registerOnboarding, interviewBootTask, claudeCliPath, codexCliPath, setInterviewAgentAvailable } from './onboarding'
 import { initUpdater, openBuildPicker, isDevMachine } from './update'
 import { resolveTmuxBin } from './tmux-host.mjs'
-import { setWebContentsViewInputForwarder } from './webcontents-view-host'
+import { setWebContentsViewInputForwarder, setWebContentsViewDiagTap } from './webcontents-view-host'
 import { createSandwich, type Sandwich } from './sandwich'
 import { computerUseHelper } from './computer-use-helper'
 
@@ -61,6 +63,36 @@ let sandwich: Sandwich | null = null
 // The boot journal (crash dirty-bit + root lease) — opened once the workspace host exists, marked
 // clean as the LAST step of a graceful quit ("clean" = state was flushed first).
 let bootJournal: BootJournal | null = null
+// The session-tape spool (plans/blitzos-logging.md), hoisted so launchAgent (agent.spawn) and the
+// client-error IPC can reach it. Null until the BLITZ_TAPE init block runs.
+let sessionTape: ReturnType<typeof makeSessionTape> | null = null
+
+// Gather the user's small durable app state for a state.snapshot: workspace.json + content/memory files +
+// onboarding + the root journal's permissions/bookmarks. All small text; the tape content-addresses each so
+// unchanged files dedupe. Never the heavy stuff, never tokens (the tape scrubs on write).
+function gatherDurableState(): { files: Record<string, string>; permissions?: unknown; bookmarks?: unknown } | null {
+  try {
+    const ws = osWorkspaceContext().workspace_path
+    if (!ws) return null
+    const files: Record<string, string> = {}
+    const add = (rel: string, abs: string): void => {
+      try { const st = statSync(abs); if (st.isFile() && st.size < 512 * 1024) files[rel] = readFileSync(abs, 'utf8') } catch { /* skip */ }
+    }
+    add('.blitzos/workspace.json', join(ws, '.blitzos', 'workspace.json'))
+    try { for (const f of readdirSync(ws)) if (/\.(md|html|weblink|jsx|tsx)$/.test(f)) add(f, join(ws, f)) } catch { /* skip */ }
+    for (const f of ['profile.md', 'initiative.md', 'board.json', 'interview.json']) add(`.blitzos/onboarding/${f}`, join(ws, '.blitzos', 'onboarding', f))
+    let permissions: unknown
+    let bookmarks: unknown
+    try {
+      const rs = JSON.parse(readFileSync(join(osWorkspacesRoot(), '.blitzos', 'state.json'), 'utf8')) as { permissions?: unknown; bookmarks?: unknown }
+      permissions = rs.permissions
+      bookmarks = rs.bookmarks
+    } catch { /* skip */ }
+    return { files, permissions, bookmarks }
+  } catch {
+    return null
+  }
+}
 
 // Fullscreen "video-game" mode: NATIVE macOS fullscreen (its own Space), opt-in via `BLITZ_FULLSCREEN=1`
 // (default windowed so a relaunch never traps you). Stays fully escapable — Ctrl+← / Ctrl+→ swap to your
@@ -182,6 +214,16 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  // Self-test for the renderer-error path: throw in the renderer once loaded so the tape records a
+  // diag 'error'. Dev-only, gated by BLITZ_TAPE_SELFTEST=1.
+  if (process.env.BLITZ_TAPE_SELFTEST === '1') {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        mainWindow?.webContents.executeJavaScript("setTimeout(() => { throw new Error('tape-selftest: renderer error') }, 0)").catch(() => {})
+        console.error('[tape-selftest] main-process error marker')
+      }, 1500)
+    })
+  }
 }
 
 app.whenReady().then(() => {
@@ -207,6 +249,86 @@ app.whenReady().then(() => {
   // ~/.blitzos/telemetry.json exists; BLITZ_TELEMETRY=0 kills it. After initOsActions so the taps see
   // a wired control plane; before everything else so boot-time errors are captured.
   initTelemetry(() => mainWindow)
+  // Session tape (plans/blitzos-logging.md): the local model-loop spool. Multi-subscriber taps, so it
+  // coexists with telemetry. Local-only, never uploads. Gate off with BLITZ_TAPE=0.
+  if (process.env.BLITZ_TAPE !== '0') {
+    try {
+      sessionTape = makeSessionTape({
+        getRoot: () => osWorkspacesRoot(),
+        getWorkspace: () => osWorkspaceContext().workspace,
+        appVersion: app.getVersion(),
+        boot: `boot-${Date.now().toString(36)}`
+      })
+      setToolTap((info) => sessionTape?.toolCall(info))
+      setMomentTap((m) => sessionTape?.moment(m))
+      console.log('[session-tape] on →', `${osWorkspacesRoot()}/.blitzos/tape`, 'code', sessionTape.codeVersion)
+      // World state: snapshot the small durable files once the workspace has settled.
+      setTimeout(() => { try { const s = gatherDurableState(); if (s) sessionTape?.snapshot('session-start', s) } catch { /* ignore */ } }, 3000)
+      // Main-process errors → the tape's diagnostics stream (renderer errors come via os:client-error).
+      const origErr = console.error.bind(console)
+      console.error = (...a: unknown[]): void => {
+        try { sessionTape?.diagError({ source: 'main', via: 'console', message: a.map((x) => String((x as Error)?.stack || x)).join(' ') }) } catch { /* ignore */ }
+        origErr(...a)
+      }
+      process.on('uncaughtException', (e) => { try { sessionTape?.diagError({ source: 'main', via: 'uncaught', message: String((e as Error)?.stack || e) }) } catch { /* ignore */ } })
+      process.on('unhandledRejection', (e) => { try { sessionTape?.diagError({ source: 'main', via: 'rejection', message: String((e as Error)?.stack || e) }) } catch { /* ignore */ } })
+      // Stream C diagnostics from the browser host: a web surface load failure, and a guest popup decision.
+      setWebContentsViewDiagTap((d) => { try { if (d.type === 'web.fail') sessionTape?.webFail(d); else sessionTape?.guestDecision(d) } catch { /* ignore */ } })
+      // model.io: discover every agent's TUI transcript and collect new bytes (resumed agents never hit
+      // agent.spawn, so we scan the active workspace's terminals each tick; registerTranscript no-ops on dupes).
+      const registerWorkspaceTranscripts = (): void => {
+        try {
+          const ws = osWorkspaceContext().workspace_path
+          if (!ws) return
+          const tdir = join(ws, '.blitzos', 'terminals')
+          for (const id of readdirSync(tdir)) sessionTape?.registerTranscript(id, join(tdir, id, 'transcript.jsonl'))
+        } catch { /* ignore */ }
+      }
+      const tapeTimers: ReturnType<typeof setInterval>[] = []
+      // 5s: collect model.io, pick up newly-spawned agents, and snapshot on a workspace switch.
+      let tapeWs = osWorkspaceContext().workspace
+      tapeTimers.push(setInterval(() => {
+        try {
+          registerWorkspaceTranscripts()
+          sessionTape?.flushTranscripts()
+          const ws = osWorkspaceContext().workspace
+          if (ws && ws !== tapeWs) { tapeWs = ws; const s = gatherDurableState(); if (s) sessionTape?.snapshot('workspace-switch', s) }
+        } catch { /* ignore */ }
+      }, 5000))
+      // ~4s: the visual frame track. capturePage of the UI window (sandwich L1) shows the desktop chrome,
+      // notes and widgets; live web pages are transparent HOLES composited in L0, so page pixels are NOT in
+      // the frame (a known sandwich limitation — plans/blitzos-sandwich-compositor.md). Heavy, so deduped via
+      // the blob store (idle frames collapse) and gateable with BLITZ_TAPE_FRAMES=0.
+      if (process.env.BLITZ_TAPE_FRAMES !== '0') {
+        tapeTimers.push(setInterval(() => {
+          try {
+            const wc = mainWindow?.webContents
+            if (!wc || wc.isDestroyed()) return
+            void wc.capturePage().then((img) => {
+              try {
+                // Downscale to ~1280px before JPEG (telemetry does the same): a live desktop frame is never
+                // byte-identical to the last, so the blob store can't dedupe it — the per-frame SIZE is the
+                // only real lever. Full retina (2880px) is ~257KB/frame; 1280px q40 is ~30-40KB (~7x less).
+                const sz = img.getSize()
+                const scaled = sz.width > 1280 ? img.resize({ width: 1280 }) : img
+                const out = scaled.getSize()
+                sessionTape?.frame(scaled.toJPEG(40), { format: 'jpeg', w: out.width, h: out.height })
+              } catch { /* ignore */ }
+            }).catch(() => {})
+          } catch { /* ignore */ }
+        }, 4000))
+      }
+      // 60s heartbeat: re-snapshot the world state (content-addressed, so unchanged files cost nothing).
+      tapeTimers.push(setInterval(() => { try { const s = gatherDurableState(); if (s) sessionTape?.snapshot('periodic', s) } catch { /* ignore */ } }, 60000))
+      app.on('before-quit', () => { for (const t of tapeTimers) clearInterval(t) })
+    } catch (e) {
+      console.error('[session-tape] init failed', e)
+    }
+  }
+  // Renderer (and main) client errors → the session tape's diagnostics stream (the failure markers).
+  ipcMain.on('os:client-error', (_e, p: { via?: string; message?: string; stack?: string; surface?: string }) => {
+    try { sessionTape?.diagError({ ...p, source: 'renderer' }) } catch { /* ignore */ }
+  })
 
   // Claim the root + read the previous run's dirty bit (announced below once the control plane is up,
   // so a watching agent's /events long-poll can actually deliver the moment).
@@ -222,6 +344,7 @@ app.whenReady().then(() => {
     getDownloadDir: () => osActiveWorkspaceDir(),
     broadcastPermission: (p) => {
       console.log(`[guest] permission prompt: ${p.permission} <- ${p.origin}`)
+      try { sessionTape?.guestDecision({ subtype: 'permission', origin: p.origin, permission: p.permission, surfaceId: p.surfaceId || undefined }) } catch { /* ignore */ }
       mainWindow?.webContents.send('os:action', { type: 'permission-request', ...p })
     },
     surfaceIdFor: (wc) => osSurfaceIdForWebContents(wc)
@@ -303,6 +426,14 @@ app.whenReady().then(() => {
   ipcMain.handle('os:new-folder', (_e, name: string, kind: string, x: number, y: number) =>
     osNewFolder(String(name), kind === 'board' ? 'board' : 'folder', Number(x) || 0, Number(y) || 0)
   )
+  ipcMain.handle('os:rename-folder', (_e, path: string, name: string) => osRenameFolder(String(path || ''), String(name || '')))
+  ipcMain.handle('os:move-into-folder', (_e, folderPath: string, ids: string[]) =>
+    osMoveIntoFolder(String(folderPath || ''), Array.isArray(ids) ? ids : [])
+  )
+  ipcMain.handle('os:move-out-of-folder', (_e, paths: string[], x: number, y: number) =>
+    osMoveOutOfFolder(Array.isArray(paths) ? paths : [], Number(x) || 0, Number(y) || 0)
+  )
+  ipcMain.handle('os:open-folder-entry', (_e, path: string, x: number, y: number) => osOpenFolderEntry(String(path || ''), Number(x) || 0, Number(y) || 0))
   // File-manager listing for a normal folder tile (the Electron counterpart of server /api/os/dir).
   ipcMain.handle('os:dir', (_e, rel: string) => osListDir(String(rel || '')))
   // Close = delete the closed window's backing content file (so it doesn't pop back up on reconcile).
@@ -316,13 +447,13 @@ app.whenReady().then(() => {
   ipcMain.on('os:agent-spawn', (_e, p?: { title?: string }) => { try { osSpawnAgent(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
   ipcMain.handle('os:close-agent', (_e, id: string) => { try { return osCloseAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   ipcMain.handle('os:rename-agent', (_e, p: { id: string; title: string }) => { try { return osRenameAgent(String(p?.id), String(p?.title ?? '')) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
-  // blitz.chat (a per-agent chat widget's own control): 'new' → spawn a fresh agent (returns its id);
+  // blitz.chat (the shared chat hub control): 'new' -> spawn a fresh agent thread (returns its id);
   // 'rename' → retitle an agent. Routes to the SAME osSpawnAgent/osRenameAgent the toolbar uses — the
   // server mirrors this via the shim's chatControl → /api/os/agent-spawn|agent-rename (no divergence).
-  ipcMain.handle('os:chat-control', (_e, p: { op?: string; args?: { id?: string; title?: string } }) => {
+  ipcMain.handle('os:chat-control', (_e, p: { op?: string; args?: { id?: string; title?: string; focus?: boolean } }) => {
     try {
       const op = String(p?.op || ''); const a = p?.args || {}
-      if (op === 'new') return osSpawnAgent(a.title != null ? String(a.title) : undefined, true)
+      if (op === 'new') return osSpawnAgent(a.title != null ? String(a.title) : undefined, !!a.focus)
       if (op === 'rename') return osRenameAgent(String(a.id ?? ''), String(a.title ?? ''))
       // 'clear' → start a FRESH context for this agent (rotate its claude session id + restart). Uniform for
       // every agent incl '0'; the server mirrors it via the shim → /api/os/agent-clear (no divergence).
@@ -363,14 +494,48 @@ app.whenReady().then(() => {
   // BLITZ_AGENT_BACKEND/BLITZ_AGENT_RUNTIME can force `codex`, `codex-serverless`, or `claude`.
   // BLITZ_AGENT remains the command override; `BLITZ_AGENT=1` preserves the old "force claude" meaning
   // unless a backend env var is also set.
-  const resolveAgentRuntime = (): { runtime: string; cmd: string; label: string } | null => {
+  type AgentRuntimeSpec = { runtime: string; cmd: string; label: string }
+  // ! DEBUG: temporary app-level runtime picker support. Keep this visually marked in the UI so
+  // ! DEBUG: maintainers know it is not production product surface yet.
+  const selectableAgentRuntime = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null
+    const runtime = normalizeAgentRuntime(value)
+    return runtime === AGENT_RUNTIME_CODEX_SERVERLESS || runtime === AGENT_RUNTIME_CLAUDE ? runtime : null
+  }
+  const agentRuntimePrefsFile = (): string => join(app.getPath('userData'), 'agent-runtime.json')
+  const readPreferredAgentRuntime = (): string | null => {
+    try {
+      const parsed = JSON.parse(readFileSync(agentRuntimePrefsFile(), 'utf8')) as { runtime?: unknown }
+      return selectableAgentRuntime(parsed?.runtime)
+    } catch {
+      return null
+    }
+  }
+  const writePreferredAgentRuntime = (runtime: string): void => {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(agentRuntimePrefsFile(), JSON.stringify({ runtime }, null, 2))
+  }
+  const resolveSelectedAgentRuntime = (runtime: string): AgentRuntimeSpec | null => {
+    const selected = selectableAgentRuntime(runtime)
+    if (selected === AGENT_RUNTIME_CODEX_SERVERLESS) {
+      const cmd = codexCliPath()
+      return cmd ? { runtime: AGENT_RUNTIME_CODEX_SERVERLESS, cmd, label: 'Codex CLI (`codex`)' } : null
+    }
+    if (selected === AGENT_RUNTIME_CLAUDE) {
+      const cmd = claudeCliPath()
+      return cmd ? { runtime: AGENT_RUNTIME_CLAUDE, cmd, label: 'Claude Code CLI (`claude`)' } : null
+    }
+    return null
+  }
+  const resolveAgentRuntime = (preferredRuntime?: string | null): AgentRuntimeSpec | null => {
     const rawBackend = process.env.BLITZ_AGENT_BACKEND || process.env.BLITZ_AGENT_RUNTIME || ''
     const rawAgent = process.env.BLITZ_AGENT || ''
     const rawAgentRuntime = rawAgent && rawAgent !== '1' ? normalizeAgentRuntime(rawAgent) : ''
     const rawAgentIsRuntime = rawAgentRuntime === AGENT_RUNTIME_CODEX_SERVERLESS || rawAgentRuntime === AGENT_RUNTIME_CLAUDE
     const customAgentCmd = rawAgent && rawAgent !== '1' && !rawAgentIsRuntime ? rawAgent : ''
     const explicitRuntime = rawBackend ? normalizeAgentRuntime(rawBackend) : rawAgentIsRuntime ? rawAgentRuntime : ''
-    const wanted = explicitRuntime || (customAgentCmd || rawAgent === '1' ? AGENT_RUNTIME_CLAUDE : DEFAULT_AGENT_RUNTIME)
+    const preferred = selectableAgentRuntime(preferredRuntime)
+    const wanted = explicitRuntime || preferred || (customAgentCmd || rawAgent === '1' ? AGENT_RUNTIME_CLAUDE : DEFAULT_AGENT_RUNTIME)
     if (wanted === AGENT_RUNTIME_CODEX_SERVERLESS) {
       const cmd = customAgentCmd || codexCliPath()
       if (cmd) return { runtime: AGENT_RUNTIME_CODEX_SERVERLESS, cmd, label: 'Codex CLI (`codex`)' }
@@ -387,15 +552,47 @@ app.whenReady().then(() => {
     if (claude) return { runtime: AGENT_RUNTIME_CLAUDE, cmd: claude, label: 'Claude Code CLI (`claude`)' }
     return null
   }
-  const agentRuntime = resolveAgentRuntime()
-  setInterviewAgentAvailable(!!agentRuntime)
-  if (agentRuntime) setTerminalAgentRuntime({ runtime: agentRuntime.runtime, cmd: agentRuntime.cmd })
+  // ! DEBUG: mutable runtime override used by the bottom-right debug switch. Existing agents are
+  // ! DEBUG: not hot-swapped; new launches/restarts read this current value.
+  let currentAgentRuntime: AgentRuntimeSpec | null = null
+  const applyAgentRuntime = (runtime: AgentRuntimeSpec | null): void => {
+    currentAgentRuntime = runtime
+    setInterviewAgentAvailable(!!runtime)
+    setTerminalAgentRuntime(runtime ? { runtime: runtime.runtime, cmd: runtime.cmd } : null)
+  }
+  const agentRuntimeStatus = (): {
+    ok: boolean
+    runtime: string | null
+    label: string | null
+    available: { codex: boolean; claude: boolean }
+    error?: string
+  } => ({
+    ok: true,
+    runtime: currentAgentRuntime?.runtime || null,
+    label: currentAgentRuntime?.label || null,
+    available: { codex: !!codexCliPath(), claude: !!claudeCliPath() }
+  })
+  applyAgentRuntime(resolveAgentRuntime(readPreferredAgentRuntime()))
+  // ! DEBUG: IPC backing for the temporary runtime selector.
+  ipcMain.handle('os:agent-runtime:get', () => agentRuntimeStatus())
+  ipcMain.handle('os:agent-runtime:set', (_e, value: string) => {
+    const selected = selectableAgentRuntime(value)
+    if (!selected) return { ...agentRuntimeStatus(), ok: false, error: 'Unknown agent backend' }
+    const next = resolveSelectedAgentRuntime(selected)
+    if (!next) {
+      const label = selected === AGENT_RUNTIME_CODEX_SERVERLESS ? 'Codex CLI (`codex`)' : 'Claude Code CLI (`claude`)'
+      return { ...agentRuntimeStatus(), ok: false, error: `${label} is not available on this Mac` }
+    }
+    writePreferredAgentRuntime(selected)
+    applyAgentRuntime(next)
+    return agentRuntimeStatus()
+  })
   // PRE-FLIGHT: the brain = a managed agent backend inside a tmux terminal. If either is missing on this
   // Mac (fresh VM; packaged GUI apps also don't get homebrew's PATH — both resolvers use the login shell),
   // the worst failure mode is SILENCE. Say what's missing in chat at boot and on messages while broken.
   const missingRuntime = (): string[] => {
     const m: string[] = []
-    if (!agentRuntime) m.push('an agent backend (`codex` or `claude`) — install/fix Codex or Claude Code, and make sure the command works in your terminal')
+    if (!currentAgentRuntime) m.push('an agent backend (`codex` or `claude`) — install/fix Codex or Claude Code, and make sure the command works in your terminal')
     if (!resolveTmuxBin()) m.push('tmux — run `brew install tmux` (my agent terminals run inside it)')
     return m
   }
@@ -416,7 +613,7 @@ app.whenReady().then(() => {
       })
     }
   }
-  if (agentRuntime) {
+  {
     // Agent '0' carries the onboarding standing duty. The provider is re-read on EVERY (re)launch
     // (prepareAgentLaunch rewrites bootstrap.txt): pending interview becomes the interview duty,
     // then a finished interview becomes the resident initiative duty.
@@ -427,6 +624,10 @@ app.whenReady().then(() => {
       const terminalsDir = terminalsDirOf()
       const url = getAgentSocketUrl()
       if (!ws || !terminalsDir || !url) return // not ready (no workspace / relay url yet) — boot resume retries
+      const agentRuntime = currentAgentRuntime
+      if (!agentRuntime) return
+      const existing = electronTerminalOps.getTerminal(String(id))
+      if (existing?.kind === 'agent' && existing.status === 'stopped') return // user intentionally stopped it; Resume restarts it
       // `sessionsDir` is the agent-runtime contract for persisted backend metadata; we point it at
       // our .blitzos/terminals migration.
       const launch = prepareAgentLaunch({ sessionsDir: terminalsDir, id, url, cmd: agentRuntime.cmd, runtime: agentRuntime.runtime })
@@ -442,6 +643,22 @@ app.whenReady().then(() => {
         claudeSessionId: launch.claudeSessionId,
         claudeEstablished: launch.established
       })
+      // agent.spawn: the launch context (bootstrap text + backend/command + session ids + conversation refs).
+      try {
+        const bootstrap = (() => { try { return readFileSync(join(terminalsDir, String(id), 'bootstrap.txt'), 'utf8') } catch { return null } })()
+        sessionTape?.agentSpawn({
+          agent: id,
+          backend: launch.agentRuntime,
+          command: launch.command,
+          cwd: ws,
+          claudeSessionId: launch.claudeSessionId,
+          agentSessionId: launch.agentSessionId,
+          bootstrap,
+          transcriptPath: join(terminalsDir, String(id), 'transcript.jsonl')
+        })
+      } catch {
+        /* tape best-effort */
+      }
     }
     setLaunchAgent(launchAgent)
     setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
@@ -471,6 +688,7 @@ app.whenReady().then(() => {
     console.error(
       `[boot] another BlitzOS (pid ${bootJournal.prev?.pid}, mode ${bootJournal.prev?.mode}) appears to be running on this workspaces root — two hosts on one root WILL fight over files. Close one of them.`
     )
+    try { sessionTape?.crash({ concurrent: true, pid: bootJournal.prev?.pid, mode: bootJournal.prev?.mode }) } catch { /* ignore */ }
   } else if (bootJournal?.dirty) {
     const upTo = bootJournal.lastAliveAt || Date.now()
     const report = scanCrashReports(upTo, Date.now(), bootJournal.prev?.pid)
@@ -478,6 +696,7 @@ app.whenReady().then(() => {
     const why = report ? ` (${report.detail})` : ''
     const line = `Recovered from a crash: the previous BlitzOS process died around ${when}${why} without a clean shutdown. Workspaces were restored from disk; edits made in the last moments before the crash may have been lost.`
     console.error('[boot] ' + line)
+    try { sessionTape?.crash({ dirty: true, at: report?.at || upTo, detail: report?.detail, pid: bootJournal.prev?.pid, mode: bootJournal.prev?.mode }) } catch { /* ignore */ }
     emitSystemMoment('crash', line, { at: report?.at || upTo, ...(report ? { detail: report.detail } : {}) })
     osSay(line)
   }

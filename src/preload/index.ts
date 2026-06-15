@@ -18,6 +18,15 @@ export interface ConnectResult {
   needsConfig?: boolean
 }
 
+// ! DEBUG: temporary bridge for the bottom-right runtime selector.
+export interface AgentRuntimeStatus {
+  ok: boolean
+  runtime: string | null
+  label: string | null
+  available: { codex: boolean; claude: boolean }
+  error?: string
+}
+
 export interface OsAction {
   type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme'
   [k: string]: unknown
@@ -131,6 +140,13 @@ const api = {
   /** Re-spawn a dead terminal from its persisted meta (one-click resume) — emits terminal-spawn. */
   terminalRestart(id: string): void {
     ipcRenderer.send('os:terminal-restart', id)
+  },
+  // ! DEBUG: temporary app-level Codex/Claude switch.
+  agentRuntimeGet(): Promise<AgentRuntimeStatus> {
+    return ipcRenderer.invoke('os:agent-runtime:get') as Promise<AgentRuntimeStatus>
+  },
+  agentRuntimeSet(runtime: 'codex-serverless' | 'claude'): Promise<AgentRuntimeStatus> {
+    return ipcRenderer.invoke('os:agent-runtime:set', runtime) as Promise<AgentRuntimeStatus>
   },
   /** Action-items inbox (human side): list / resolve (tick) / clear a resolved item. */
   actionList(status?: string): Promise<unknown[]> {
@@ -284,12 +300,16 @@ const api = {
   sendMessage(text: string, agentId = '0'): void {
     ipcRenderer.send('os:user-message', { text, agentId })
   },
+  /** Forward an uncaught renderer error to main (the session tape's diagnostics stream). */
+  reportError(payload: { via?: string; message?: string; stack?: string; surface?: string }): void {
+    ipcRenderer.send('os:client-error', payload)
+  },
   /** Item 5b: the human placed a spatial annotation on a surface + asked about that point. Lands in chat
    *  + wakes the agent with a surface-anchored moment carrying the point. */
   annotate(p: { id: string; surfaceId: string; text: string; xPct: number; yPct: number }): void {
     ipcRenderer.send('os:annotate', p)
   },
-  /** A per-agent chat widget manages itself via blitz.chat: op 'new' → { id } of a fresh agent; 'rename' → set its title. */
+  /** The shared chat hub manages threads via blitz.chat: op 'new' -> { id } of a fresh agent; 'rename' -> set its title. */
   chatControl(op: string, args: Record<string, unknown>): Promise<unknown> {
     return ipcRenderer.invoke('os:chat-control', { op, args })
   },
@@ -363,6 +383,18 @@ const api = {
   // "New Folder" (files) / "New Board" (windows+widgets) — the right-click desktop action.
   newFolder(name: string, kind: 'board' | 'folder', x: number, y: number): Promise<{ ok: boolean; folder?: string; error?: string }> {
     return ipcRenderer.invoke('os:new-folder', name, kind, x, y)
+  },
+  renameFolder(path: string, name: string): Promise<{ ok: boolean; path?: string; error?: string }> {
+    return ipcRenderer.invoke('os:rename-folder', path, name)
+  },
+  moveIntoFolder(folderPath: string, ids: string[]): Promise<{ ok: boolean; moved?: number; skipped?: number; movedIds?: string[]; skippedIds?: string[]; error?: string }> {
+    return ipcRenderer.invoke('os:move-into-folder', folderPath, ids)
+  },
+  moveOutOfFolder(paths: string[], x?: number, y?: number): Promise<{ ok: boolean; moved?: number; skipped?: number; movedPaths?: string[]; skippedPaths?: string[]; pathMoves?: Array<{ from: string; to: string }>; surfaceIds?: string[]; surfaces?: unknown[]; updatedIds?: string[]; updatedSurfaces?: unknown[]; error?: string }> {
+    return ipcRenderer.invoke('os:move-out-of-folder', paths, x, y)
+  },
+  openFolderEntry(path: string, x?: number, y?: number): Promise<{ ok: boolean; id?: string; surface?: unknown; error?: string }> {
+    return ipcRenderer.invoke('os:open-folder-entry', path, x, y)
   },
   // List a normal folder's contents for the file-manager overlay (server shim fetches /api/os/dir instead).
   listDir(path: string): Promise<{ path: string; entries: unknown[]; total: number; truncated: boolean } | null> {

@@ -91,8 +91,8 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
   const agents = terminals.filter((s) => s.kind === 'agent')
   const shells = terminals.filter((s) => s.kind !== 'agent')
 
-  // One row, shared by both groups. An agent gets a Delete (full teardown) action; the primary '0' is
-  // pinned (never stoppable, never deletable).
+  // One row, shared by both groups. Agents can be stopped/resumed; spawned agents also get
+  // Delete (full teardown). The primary '0' is never deletable, but it can be stopped.
   function row(s: TerminalMeta): JSX.Element {
     const isAgent = s.kind === 'agent'
     const isPrimary = isAgent && s.id === '0'
@@ -139,18 +139,16 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
               <button className="run-btn" title={isAgent ? "Show this agent's terminal" : "Show this terminal"} onClick={() => openTerminal(s.id, s.title, s.stage)}>
                 Open
               </button>
-              {!isPrimary && (
-                <button
-                  className="run-btn danger"
-                  title={isAgent ? 'Stop this agent (kill its program; resumable)' : 'Stop (kill) this terminal'}
-                  onClick={() => {
-                    tapi().terminalStop?.(s.id)
-                    setTimeout(refresh, 250)
-                  }}
-                >
-                  Stop
-                </button>
-              )}
+              <button
+                className="run-btn danger"
+                title={isPrimary ? 'Stop the resident agent (resumable)' : isAgent ? 'Stop this agent (kill its program; resumable)' : 'Stop (kill) this terminal'}
+                onClick={() => {
+                  tapi().terminalStop?.(s.id)
+                  setTimeout(refresh, 250)
+                }}
+              >
+                Stop
+              </button>
             </>
           ) : (
             <>

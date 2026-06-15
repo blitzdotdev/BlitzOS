@@ -41,7 +41,7 @@ Cover, in rough priority (skip any the scan already settles):
 
 ## Output (text mode)
 
-**Running INSIDE BlitzOS?** Your duty doc (`.blitzos/onboarding/interview.md`) replaces this section: questions go out as chat choice-cards, and the Case File board — a slot-lattice desktop of widget tiles you keep truthful, resize to fit their content, and curate as answers land — is your canvas. The rest of this document (what to ask, what never to ask) applies unchanged.
+**Running INSIDE BlitzOS?** Your duty doc (`.blitzos/onboarding/interview.md`) replaces this section: questions go out as chat choice-cards, and the Case File workspace — a slot-lattice desktop of widget tiles you keep truthful, resize to fit their content, and curate as answers land — is your canvas. The rest of this document (what to ask, what never to ask) applies unchanged.
 
 In a plain terminal (no BlitzOS), print text, one question at a time:
 

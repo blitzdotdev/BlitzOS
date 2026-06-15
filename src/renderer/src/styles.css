@@ -1163,8 +1163,61 @@ button {
   color: var(--text-muted);
   text-transform: uppercase;
 }
+.desktop-folder {
+  position: absolute;
+  border-radius: 16px;
+  overflow: visible;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  user-select: none;
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    filter var(--dur-fast) var(--ease-out);
+}
+.desktop-folder.is-selected .dir-icon {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 62%, transparent),
+    0 8px 22px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.desktop-folder.is-selected .dir-name-button {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+.desktop-folder.drop-target {
+  transform: scale(1.08);
+  z-index: 999999;
+}
+.desktop-folder.drop-target .dir-icon {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 70%, transparent),
+    0 14px 30px color-mix(in srgb, var(--accent) 22%, transparent);
+}
 .dir-tile {
   cursor: pointer;
+  background: transparent;
+  padding: 10px 8px;
+  border-radius: 16px;
+}
+.dir-name-button,
+.dir-rename {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 2px 5px;
+  border-radius: 6px;
+  font: inherit;
+  color: inherit;
+}
+.dir-name-button {
+  cursor: text;
+}
+.dir-rename {
+  width: min(100%, 150px);
+  outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Folder-open overlay (#44): browse a real subfolder's contents. */
@@ -1601,6 +1654,81 @@ button {
   color: var(--text-muted);
   font-size: 12px;
 }
+.terminal-view-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0c0e;
+}
+.terminal-view {
+  width: 100%;
+  height: 100%;
+}
+.terminal-agent-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, white 14%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, #0b0c0e 78%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #f5c84b 58%, transparent),
+    var(--shadow-sm);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+.terminal-agent-debug-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: #ffd84d;
+  color: #1c1500;
+  font: 900 10px/1 var(--font-ui);
+  letter-spacing: 0;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 55%, transparent);
+}
+.terminal-agent-status {
+  padding: 0 6px;
+  color: var(--text-muted);
+  font: 10px/1.8 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.terminal-agent-status.running {
+  color: var(--positive);
+}
+.terminal-agent-status.stopped {
+  color: var(--text-tertiary);
+}
+.terminal-agent-btn {
+  border: 1px solid color-mix(in srgb, white 16%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, white 10%, transparent);
+  color: var(--text);
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.terminal-agent-btn:hover {
+  background: color-mix(in srgb, white 16%, transparent);
+}
+.terminal-agent-btn.danger {
+  color: var(--danger);
+}
+.terminal-agent-btn.danger:hover {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
 
 /* A jsx/tsx widget's body while its source compiles (the iframe mounts only once, when ready). */
 .jsx-compiling {
@@ -1856,6 +1984,81 @@ button {
 .toolbar button.active {
   background: var(--control-hover);
 }
+.agent-runtime-switch {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 7400;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  color: var(--text);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #f5c84b 52%, transparent),
+    inset 0 1px 0 var(--edge-highlight),
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-md);
+  backdrop-filter: blur(18px) saturate(1.12);
+  -webkit-backdrop-filter: blur(18px) saturate(1.12);
+}
+.agent-runtime-debug-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: var(--radius-button);
+  background: #ffd84d;
+  color: #1c1500;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 55%, transparent);
+}
+.agent-runtime-switch-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  min-width: 28px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+.agent-runtime-switch button {
+  height: 30px;
+  min-width: 58px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+.agent-runtime-switch button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--control);
+}
+.agent-runtime-switch button.active {
+  color: var(--text);
+  background: var(--control-hover);
+  box-shadow: inset 0 1px 0 var(--edge-highlight);
+}
+.agent-runtime-switch button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
 .connect-ai-icon {
   display: inline-flex;
   align-items: center;
@@ -2085,7 +2288,8 @@ button {
   transform: translateX(-50%);
 }
 .sidebar-app.is-minimizing,
-.sidebar-app.is-restoring {
+.sidebar-app.is-restoring,
+.sidebar-app.is-appearing {
   opacity: 1;
   color: var(--text);
   background: var(--control-hover);
@@ -2557,7 +2761,8 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .sidebar-app.is-minimizing,
-  .sidebar-app.is-restoring {
+  .sidebar-app.is-restoring,
+  .sidebar-app.is-appearing {
     animation: none;
   }
   .surface-launcher-backdrop,
@@ -3138,7 +3343,8 @@ button {
     inset 0 1px 0 rgba(255, 255, 255, 0.22),
     var(--shadow-lg);
 }
-.window.absorbing {
+.window.absorbing,
+.desktop-folder.absorbing {
   transform: scale(0.2);
   opacity: 0;
   pointer-events: none;
@@ -3830,13 +4036,18 @@ button {
   appearance: none;
   -webkit-appearance: none;
   border: 1px solid var(--hairline);
-  background: transparent;
+  background: color-mix(in srgb, var(--control) 78%, transparent);
   color: var(--text-secondary);
-  border-radius: 6px;
-  width: 22px;
+  border-radius: 999px;
+  width: 24px;
   height: 22px;
   cursor: pointer;
   flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 1px 2px 0;
 }
 .fm-up:hover {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
@@ -4016,26 +4227,37 @@ button {
 }
 .tile-toggle {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 22px;
-  height: 18px;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-dim, var(--text));
-  font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--hairline) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+  color: var(--text-secondary);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(10px);
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
-  opacity: 0.3;
-  z-index: 6;
-  transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  opacity: 0.86;
+  z-index: 7;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
-.window:hover .tile-toggle { opacity: 0.8; }
-.tile-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--text) 10%, transparent); }
+.window:hover .tile-toggle { opacity: 0.95; }
+.tile-toggle:hover {
+  opacity: 1;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  transform: translateY(-1px);
+}
 
 /* ---- Universal window-state rings (LAST in the cascade so no variant — notes' paper shadow,
    folders, file tiles — can swallow them). is-active = the front-most window (one per desktop);

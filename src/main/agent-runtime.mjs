@@ -73,6 +73,8 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   const guide = bootTask
     ? `Your full operating guide is at ${B}/agents.md, with the complete tool set. You do NOT need it for the first step of your standing duty below, so do that FIRST and fetch the guide (\`curl -s ${B}/agents.md\`) only afterward, when you need a tool the duty did not give you. Do not let reading the guide delay your first action.`
     : `Your full operating guide is at ${B}/agents.md. Please read it first (\`curl -s ${B}/agents.md\`) and follow it; if that request doesn't succeed, give it another try before continuing.`
+  const web = `Hard web rule: if a task needs current/public web info, make the evidence visible in Blitz. You may use your backend's internal web-search/browser tool only as a discovery index to find candidate URLs or query angles; do not treat invisible snippets as final evidence. Before presenting findings, open every source you rely on in Blitz with web surfaces. For open-ended research, use multiple query angles when useful; do not collapse the work to one visible search just because Blitz is the browser. Tab rule: if you need 2+ pages for the same research lane and have workspace_path/file access, create or update ONE tabbed .weblink file with tabs; do not create separate browser surfaces for same-lane sources. Use separate browser surfaces only for genuinely different lanes of work.`
+  const progress = `Hard visible-work rule: for any non-trivial user task (multi-step, research/current info, build/customize, compare, troubleshoot, browse, organize, or longer than a quick direct answer), create or update a live progress widget before doing hidden work. Usually use spawn_widget{name:"pipeline",props:{items:[{label,sub?,status:"active"|"queued"|"done"}]}} and then update_surface its props.items as work moves; do not use props.steps. The task-start pipeline is temporary and auto-closes after all items are done, so put final results in a separate note/widget/surface. Chat status or saying "I'm working" is not a substitute for the visible progress surface. Tiny one-shot answers/actions can stay direct.`
   const desktop = "Note for this session: the user has already arranged their desktop. Please leave it as-is on connect — don't rearrange, resize, recenter, move, or close anything on your own. Ignore the guide's 'assemble the desktop on connect' section here; this is the user's own live layout."
   const recover = `Get your bearings first: you may have been restarted, so recover the conversation before doing anything. Call \`list_state\` to get \`workspace_path\`, then read the recent chat: \`tail -n 60 "$workspace_path/${chatFile}"\`. That file is your saved conversation with the user and it carries over between restarts (the live event feed does not). Reading it helps you understand follow-ups like "continue the X thing" or "go". If the last line is a user message you haven't answered, answer it now.`
   // The OS can hand a session ONE standing duty (e.g. the onboarding interview); the duty text licenses
@@ -89,7 +91,7 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   const stage = primary
     ? null
     : `Your windows live in your own stage, separate from the user's primary desktop. On every surface-opening call — create_surface, open_window, and open_terminal — include "agent":"${sessionId}" so the window opens in your stage and doesn't disturb the user. Don't pass an explicit x/y unless you're repositioning a window within your own stage. Open your terminal and all work windows this way.`
-  return [identity, relay, guide, desktop, recover, duty, onConnect, waitLoop, keepChecking, say, stage].filter(Boolean).join('\n')
+  return [identity, relay, guide, web, progress, desktop, recover, duty, onConnect, waitLoop, keepChecking, say, stage].filter(Boolean).join('\n')
 }
 
 /** POSIX single-quote a value for a shell command line (wrap in '…', escape embedded ' as '\''). */
@@ -127,7 +129,7 @@ export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create',
  * Auth still uses CODEX_HOME. The terminal supervisor restarts it when it exits, so it behaves like a
  * resident agent without requiring a long-lived TUI or Anthropic account quota. */
 export function buildCodexServerlessCommand({ cmd = 'codex', bootstrapFile, lowThinking = false }) {
-  const effort = lowThinking ? `-c ${shellQuote('model_reasoning_effort="low"')} ` : ''
+  const effort = `-c ${shellQuote(`model_reasoning_effort="${lowThinking ? 'low' : 'medium'}"`)} `
   return `${cmd} exec ${effort}--disable plugins --ignore-user-config --ignore-rules --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --color never "$(cat ${shellQuote(bootstrapFile)})"`
 }
 

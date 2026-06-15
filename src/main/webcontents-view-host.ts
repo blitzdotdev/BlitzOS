@@ -92,6 +92,17 @@ export function setWebContentsViewInputForwarder(fn: ((input: Input) => boolean)
   inputForwarder = fn
 }
 
+// Session-tape diagnostics tap (plans/blitzos-logging.md): the host reports a web load failure or a guest
+// popup decision so the tape's Stream C can record it. Single-subscriber, best-effort, never throws into the
+// page event path. Mirrors the inputForwarder pattern above.
+type HostDiagEvent =
+  | { type: 'web.fail'; surfaceId: string; tabId: string; url: string; code: number; desc: string }
+  | { type: 'guest.decision'; subtype: 'popup'; surfaceId: string; kind: string; url: string; disposition?: string; features?: string }
+let diagTap: ((e: HostDiagEvent) => void) | null = null
+export function setWebContentsViewDiagTap(fn: ((e: HostDiagEvent) => void) | null): void {
+  diagTap = fn
+}
+
 /** Every live hosted page webContents (all tabs of all surfaces). */
 export function hostedWebContents(): WebContents[] {
   const out: WebContents[] = []
@@ -195,10 +206,12 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
 
   attachGuestWindowPolicy(wc, {
     openSurface: (url) => cb.onOpenTab(e.id, url),
-    logPlan: (plan, d) =>
+    logPlan: (plan, d) => {
       console.log(
         `[guest] popup ${plan.kind} <- ${JSON.stringify({ url: String(d.url).slice(0, 80), disposition: d.disposition, features: d.features })}`
       )
+      try { diagTap?.({ type: 'guest.decision', subtype: 'popup', surfaceId: e.id, kind: plan.kind, url: String(d.url), disposition: d.disposition, features: d.features }) } catch { /* ignore */ }
+    }
   })
 
   // This block intentionally attaches 11 listeners (focus/context/dom-ready/load/fail + 6 nav-state
@@ -220,7 +233,10 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
   })
   wc.on('did-finish-load', () => console.log('[guest] loaded:', redactUrl(wc.getURL())))
   wc.on('did-fail-load', (_ev, code, desc, failedUrl) => {
-    if (code !== -3) console.log(`[guest] fail-load ${code} ${desc} ${failedUrl}`)
+    if (code !== -3) {
+      console.log(`[guest] fail-load ${code} ${desc} ${failedUrl}`)
+      try { diagTap?.({ type: 'web.fail', surfaceId: e.id, tabId: t.tabId, url: String(failedUrl), code, desc: String(desc) }) } catch { /* ignore */ }
+    }
   })
   // Push-model page state (wexond updateNavigationState): the chrome re-renders off these, never polls.
   wc.on('did-start-loading', () => pushNavState(e, t, { loading: true, favicon: '' })) // clear a stale favicon on nav (wexond view.ts:153)

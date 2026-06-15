@@ -128,6 +128,7 @@ function durableFlush(): void {
 // server backend uses, so workspaces are ONE feature across both modes. Electron adapter: broadcast =
 // os:action IPC; web surfaces are main-owned WebContentsViews (onSurfaces no-op); mode 'desktop'.
 let wsHost: ReturnType<typeof createWorkspaceHost> | null = null
+const newWorkspaceAgentStarts = new Set<string>()
 // surfaceId -> the browser guest's WebContents id (so we can read/control its DOM)
 const browserContentIds = new Map<string, number>()
 
@@ -248,14 +249,19 @@ export function initOsActions(opts: {
   }))
   ipcMain.handle('workspace:create', (_e, name: string) => {
     try {
-      return { ok: true, name: wsHost!.create(name).name }
+      const created = wsHost!.create(name)
+      newWorkspaceAgentStarts.add(created.name)
+      return { ok: true, name: created.name }
     } catch (e) {
       return { ok: false, error: (e as Error)?.message || 'create failed' }
     }
   })
   ipcMain.handle('workspace:switch', async (_e, name: string) => {
     const r = await wsHost!.performSwitch(name)
-    return r.status === 200 ? { ok: true, active: r.body.active } : { ok: false, error: r.body.error }
+    if (r.status !== 200) return { ok: false, error: r.body.error }
+    const active = String(r.body.active || '')
+    if (newWorkspaceAgentStarts.delete(active)) osKickBrain('0')
+    return { ok: true, active }
   })
   ipcMain.handle('workspace:capture', (_e, name: string) => osCaptureThumb(name))
   // Delete a workspace + its folder (human-only, from Mission Control; never an agent tool — destructive).
@@ -535,8 +541,26 @@ function send(type: string, payload: Record<string, unknown> = {}): void {
 
 /** Send an arbitrary os:action to the renderer — the Electron emit seam for shared cores (e.g. terminal events). */
 export function osBroadcast(action: Record<string, unknown>): void {
+  try {
+    if (action?.type === 'terminal-spawn') {
+      const terminal = action.terminal as { kind?: unknown } | undefined
+      if (terminal?.kind === 'agent' && action.id != null) wsHost?.setChatStatus(String(action.id), 'starting')
+    } else if (action?.type === 'terminal-data') {
+      if (action.id != null) wsHost?.noteAgentActivity(String(action.id), 'terminal')
+    } else if (action?.type === 'terminal-stop') {
+      if (action.id != null) wsHost?.setChatStatus(String(action.id), 'stopped')
+    } else if (action?.type === 'terminal-exit') {
+      if (action.id != null) wsHost?.setChatStatus(String(action.id), Number(action.exitCode) ? 'error' : 'stopped')
+    }
+  } catch {
+    /* status sync is best-effort; the terminal event itself must still publish */
+  }
   tel('act', action) // telemetry: session/action-item events emit here (the shared-core seam)
   sendToRenderer('os:action', action)
+}
+
+export function osNoteAgentActivity(agentId = '0', source = 'activity'): void {
+  try { wsHost?.noteAgentActivity(String(agentId ?? '0'), source) } catch { /* best-effort */ }
 }
 
 /** Bare-Option (Alt) hold → the renderer's radial create menu. Fed from main's before-input-event
@@ -790,13 +814,16 @@ let onUserMessage: ((agentId: string) => void) | null = null
 export function setOnUserMessage(fn: ((agentId: string) => void) | null): void {
   onUserMessage = fn
 }
-/** The agent customizes an agent's widget UI (blitz-[<id>-]<name>.html) — currently 'chat'. Live-reloads. */
-export function osCustomizeWidget(name: string, html: string, agentId = '0'): { ok: boolean; rel?: string; error?: string } {
-  return wsHost ? wsHost.customizeWidget(String(name), String(html), agentId) : { ok: false, error: 'no workspace host' }
+/** The agent customizes a system widget UI (chat can now be html/jsx/tsx). Live-reloads. */
+export function osCustomizeWidget(name: string, html: string, agentId = '0', lang: 'html' | 'jsx' | 'tsx' = 'html'): { ok: boolean; rel?: string; lang?: string; error?: string } {
+  return wsHost ? wsHost.customizeWidget(String(name), String(html), agentId, lang) : { ok: false, error: 'no workspace host' }
 }
 /** Read a built-in widget's current UI source (workspace file or shipped default) — read-before-edit. */
 export function osSystemUi(name: string): string | null {
   return wsHost ? wsHost.systemUi(String(name)) : null
+}
+export function osSystemUiInfo(name: string): { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null {
+  return wsHost ? (wsHost.systemUiInfo(String(name)) as { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null) : null
 }
 let lastStateKeyframe = 0
 // index.ts owns the relay url + terminal-ops, so it registers HOW to launch an agent backend in a
@@ -882,6 +909,18 @@ export function osNewFolder(name: string, kind: 'board' | 'folder' | undefined, 
   const r = wsHost.newFolder(String(name || 'Folder'), kind === 'board' ? 'board' : 'folder', Number(x) || 0, Number(y) || 0)
   return 'ok' in r ? r : { ok: false, error: r.error }
 }
+export function osRenameFolder(path: string, name: string): { ok: boolean; path?: string; error?: string } {
+  return wsHost ? wsHost.renameFolder(String(path || ''), String(name || '')) : { ok: false, error: 'no workspace host' }
+}
+export function osMoveIntoFolder(folderPath: string, ids: string[]): { ok: boolean; moved?: number; skipped?: number; movedIds?: string[]; skippedIds?: string[]; error?: string } {
+  return wsHost ? wsHost.moveIntoFolder(String(folderPath || ''), Array.isArray(ids) ? ids.map(String) : []) : { ok: false, error: 'no workspace host' }
+}
+export function osMoveOutOfFolder(paths: string[], x?: number, y?: number): { ok: boolean; moved?: number; skipped?: number; movedPaths?: string[]; skippedPaths?: string[]; pathMoves?: Array<{ from: string; to: string }>; surfaceIds?: string[]; surfaces?: Record<string, unknown>[]; updatedIds?: string[]; updatedSurfaces?: Record<string, unknown>[]; error?: string } {
+  return wsHost ? wsHost.moveOutOfFolder(Array.isArray(paths) ? paths.map(String) : [], Number(x) || 0, Number(y) || 0) : { ok: false, error: 'no workspace host' }
+}
+export function osOpenFolderEntry(path: string, x?: number, y?: number): { ok: boolean; id?: string; surface?: Record<string, unknown>; error?: string } {
+  return wsHost ? wsHost.openFolderEntry(String(path || ''), Number(x) || 0, Number(y) || 0) : { ok: false, error: 'no workspace host' }
+}
 /** List a normal folder's contents for the file-manager overlay (the Electron counterpart of the server
  *  /api/os/dir route — same shared host.listDir, jailed to the active workspace). */
 export function osListDir(rel: string): { path: string; entries: unknown[]; total: number; truncated: boolean } | null {
@@ -928,7 +967,9 @@ export function osWorkspaceContext(): { workspace: string; workspace_path: strin
 export function osCreateWorkspace(name: string): { ok: boolean; name?: string; error?: string } {
   if (!wsHost) return { ok: false, error: 'no workspace host' }
   try {
-    return { ok: true, name: wsHost.create(String(name || '')).name }
+    const created = wsHost.create(String(name || ''))
+    newWorkspaceAgentStarts.add(created.name)
+    return { ok: true, name: created.name }
   } catch (e) {
     return { ok: false, error: (e as Error)?.message || 'create failed' }
   }
@@ -936,9 +977,10 @@ export function osCreateWorkspace(name: string): { ok: boolean; name?: string; e
 export async function osSwitchWorkspace(name: string): Promise<{ ok: boolean; active?: string; error?: string }> {
   if (!wsHost) return { ok: false, error: 'no workspace host' }
   const r = await wsHost.performSwitch(String(name || ''))
-  return r.status === 200
-    ? { ok: true, active: r.body.active as string | undefined }
-    : { ok: false, error: r.body.error as string | undefined }
+  if (r.status !== 200) return { ok: false, error: r.body.error as string | undefined }
+  const active = String(r.body.active || '')
+  if (newWorkspaceAgentStarts.delete(active)) osKickBrain('0')
+  return { ok: true, active }
 }
 /** #53: per-workspace consent persistence for the Electron transports (widget grants + sensitive-read
  *  providers), via the shared host. Load on boot, persist (merge) on each grant. */
