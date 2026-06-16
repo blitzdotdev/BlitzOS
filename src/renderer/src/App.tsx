@@ -1147,6 +1147,15 @@ export default function App(): JSX.Element {
     if (!window.agentOS?.nativeInput) return
     let over = false
     const onMove = (e: globalThis.MouseEvent): void => {
+      // A titlebar shell-drag (manual window move) must own the pointer for its whole duration. The
+      // window trails the cursor by the IPC-delta latency, so mid-drag the cursor can sit over a page
+      // hole — but flipping the UI click-through here would route the HELD-button stream to the page
+      // below (setIgnoreMouseEvents), killing the captured pointermove and making the window stutter/
+      // jump (the "drag sync" bug). Keep L1 opaque for the whole drag; re-evaluate on the next move.
+      if (shellDragFrom.current) {
+        if (over) { over = false; window.agentOS?.nativePassthrough?.(false) }
+        return
+      }
       const el = document.elementFromPoint(e.clientX, e.clientY) as Element | null
       const nowOver = !!el?.closest?.('.webcontents-host')
       if (nowOver !== over) {
