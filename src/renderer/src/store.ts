@@ -87,6 +87,34 @@ function desktopClamp(x: number, y: number, w: number, h: number, vp: { w: numbe
   const r = orderedStageRect(stage, vp, order ?? null, count ?? stage + 1)
   return { x: clamp(x, r.x, Math.max(r.x, r.x + r.w - w)), y: clamp(y, r.y, Math.max(r.y, r.y + r.h - h)) }
 }
+
+/** Desktop CAMERA clamp (the dual of desktopClamp, which clamps WINDOWS): lock the view to the CURRENT
+ *  stage. At the home scale (1) the stage EXACTLY fills its framed on-screen area, so the camera pins to
+ *  home — no scroll on either axis. Zoomed in (up to 3x) you can pan, but never far enough to reveal past
+ *  the stage. The framed area is the stage's on-screen rect AT HOME (viewTransform), so the clamp honours
+ *  the real SIDEBAR/RIGHTPAD/TITLEBAR/TOOLBAR insets exactly — a cover-fit that ignored RIGHTPAD/TOOLBAR is
+ *  what let the stage overflow the screen width (horizontal scroll on full zoom-out). Math.min/max keeps it
+ *  valid so it never wedges. Min zoom-out is 1 (the stage just fills home); other stages: Control mode. */
+function clampStagePan(t: CanvasTransform, vp: { w: number; h: number }, stage: number, order?: number[] | null, count?: number): CanvasTransform {
+  const c = count ?? stage + 1
+  const sr = orderedStageRect(stage, vp, order ?? null, c)
+  const home = viewTransform('desktop', vp, stage, c, order ?? null) // scale 1, stage framed by its insets
+  // the stage's on-screen rect at home = the viewport the camera must keep filled
+  const vx0 = home.x + sr.x
+  const vx1 = home.x + sr.x + sr.w
+  const vy0 = home.y + sr.y
+  const vy1 = home.y + sr.y + sr.h
+  // keep that screen rect inside the stage's world rect at the current scale (at scale 1: xa===xb===home → locked)
+  const xa = vx1 - (sr.x + sr.w) * t.scale
+  const xb = vx0 - sr.x * t.scale
+  const ya = vy1 - (sr.y + sr.h) * t.scale
+  const yb = vy0 - sr.y * t.scale
+  return {
+    scale: t.scale,
+    x: clamp(t.x, Math.min(xa, xb), Math.max(xa, xb)),
+    y: clamp(t.y, Math.min(ya, yb), Math.max(ya, yb))
+  }
+}
 /** Home camera per mode. Normal's home = scale 1 on the CURRENT stage (its center maps to a fixed
  *  screen point, so every stage lands in the same on-screen desktop region). The user can temporarily
  *  pinch/scroll away from that home frame in desktop mode. Control = a gentle zoom-out: a single stage
@@ -257,6 +285,11 @@ interface DesktopState {
   /** Legacy compatibility flag for older lock UI/state. Gesture routing is cursor-aware now: surface
    *  content keeps its own gestures and empty canvas gestures move the camera. */
   locked: boolean
+  /** A web surface whose active page is in HTML5 fullscreen (video requestFullscreen / YouTube button /
+   *  agent `f`), or null. The geometry pass raises that view to fill the window and culls the rest; the
+   *  renderer hides all chrome + forces mouse passthrough so the video's controls and Esc work. */
+  pageFullscreenId: string | null
+  setPageFullscreen: (id: string | null) => void
 
   setViewport: (w: number, h: number) => void
   /** Stage tiles (slot lattice): commit a tile to a cell / pop it off / flow the file layer. */
@@ -393,6 +426,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   // background), the camera frozen at the stage frame. Single-tap ⇧ unlocks for pan/zoom/arrange.
   // (Canvas-first made 'canvas' the permanent mode, so the lock — not the mode — is the interact gate.)
   locked: true,
+  pageFullscreenId: null,
 
   setViewport: (w, h) =>
     set((s) => {
@@ -769,19 +803,29 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   // position" hold even across a resize, a Center, or a fast toggle (no mid-animation capture needed).
   panBy: (dx, dy) =>
     set((s) => {
-      const transform = { ...s.transform, x: s.transform.x + dx, y: s.transform.y + dy }
-      return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
+      const moved = { ...s.transform, x: s.transform.x + dx, y: s.transform.y + dy }
+      // Control mode pans freely across the splay; desktop pan is clamped to the current stage (a pan
+      // never changes scale — clampStagePan leaves it untouched). At home scale the clamp is a no-op.
+      if (s.mode === 'canvas') return { transform: moved, controlTransform: moved }
+      return { transform: clampStagePan(moved, s.viewport, s.currentStage, s.stageOrder, s.stageCount) }
     }),
 
   zoomAt: (cursorX, cursorY, deltaY) =>
     set((s) => {
       const { x: tx, y: ty, scale } = s.transform
       const factor = Math.exp(-deltaY * 0.006)
-      const newScale = clamp(scale * factor, 0.2, 3)
       const wx = (cursorX - tx) / scale
       const wy = (cursorY - ty) / scale
-      const transform = { scale: newScale, x: cursorX - wx * newScale, y: cursorY - wy * newScale }
-      return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
+      if (s.mode === 'canvas') {
+        // Control mode keeps the wide free range so the bird's-eye splay can frame every stage.
+        const newScale = clamp(scale * factor, 0.2, 3)
+        const transform = { scale: newScale, x: cursorX - wx * newScale, y: cursorY - wy * newScale }
+        return { transform, controlTransform: transform }
+      }
+      // Desktop: zoom INTO the cursor (any point), then clamp to the current stage — never out past it.
+      const newScale = clamp(scale * factor, 1, 3) // min 1 = the home scale: the stage exactly fills, no zoom-out past it
+      const anchored = { scale: newScale, x: cursorX - wx * newScale, y: cursorY - wy * newScale }
+      return { transform: clampStagePan(anchored, s.viewport, s.currentStage, s.stageOrder, s.stageCount) }
     }),
 
   goToPrimary: () =>
@@ -1036,9 +1080,14 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       zCounter = Math.max(zCounter, maxZ + 1)
       return {
         surfaces: restored,
-        activeSurfaceId: restored.some((w) => w.id === s.activeSurfaceId && !w.minimized) ? s.activeSurfaceId : null
+        activeSurfaceId: restored.some((w) => w.id === s.activeSurfaceId && !w.minimized) ? s.activeSurfaceId : null,
+        // A fullscreen surface that vanished (closed/reconciled away) must release fullscreen, or the
+        // chrome stays hidden with no page behind it (the main-side host fires leave too, this is the net).
+        pageFullscreenId: s.pageFullscreenId && restored.some((w) => w.id === s.pageFullscreenId) ? s.pageFullscreenId : null
       }
     }),
+
+  setPageFullscreen: (id) => set({ pageFullscreenId: id }),
 
   moveSurface: (id, x, y) => {
     get().snapshotLayout()

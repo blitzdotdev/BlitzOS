@@ -229,11 +229,31 @@ const api = {
   shellDrag(op: 'start' | 'move', dx = 0, dy = 0): void {
     ipcRenderer.send('os:shell-drag', { op, dx, dy })
   },
+  /** Custom window controls (the renderer owns its traffic lights — the native green light can't drive
+   *  the pair's fullscreen). Green → toggle app fullscreen (the parent; the child rides along). */
+  shellFullScreen(): void {
+    ipcRenderer.send('os:shell-fullscreen')
+  },
+  /** Yellow → minimize the pair to the Dock. */
+  shellMinimize(): void {
+    ipcRenderer.send('os:shell-minimize')
+  },
+  /** Red → close (cascades to the whole sandwich). */
+  shellClose(): void {
+    ipcRenderer.send('os:shell-close')
+  },
   /** The page's cursor changed (text beam over inputs, hand over links) — mirror it onto the hole. */
   onPageCursor(cb: (m: { surfaceId: string; cursor: string }) => void): () => void {
     const listener = (_e: unknown, m: { surfaceId: string; cursor: string }): void => cb(m)
     ipcRenderer.on('os:page-cursor', listener)
     return () => ipcRenderer.removeListener('os:page-cursor', listener)
+  },
+  /** A web surface's active page entered/left HTML5 fullscreen — the renderer raises the view to fill the
+   *  window, hides all chrome, and forces mouse passthrough so the video's controls + Esc work. */
+  onWebFullscreen(cb: (m: { id: string; on: boolean }) => void): () => void {
+    const listener = (_e: unknown, m: { id: string; on: boolean }): void => cb(m)
+    ipcRenderer.on('os:web-fullscreen', listener)
+    return () => ipcRenderer.removeListener('os:web-fullscreen', listener)
   },
   webContentsViewFocus(id: string): void {
     ipcRenderer.send('os:webcontents-view:focus', id)

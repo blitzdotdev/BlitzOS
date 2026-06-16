@@ -33,6 +33,8 @@ export interface Sandwich {
   dragShell(op: 'start' | 'move', dx: number, dy: number): void
   /** Fullscreen rides the parent; the attached child joins its Space (bounds-synced on arrival). */
   setFullScreen(on: boolean): void
+  /** Minimize the pair to the Dock (the parent miniaturizes; the attached child follows via AppKit). */
+  minimize(): void
   /** Native-input passthrough (plans/blitzos-native-input.md, SPIKE): make the UI window
    *  click-through so the human's mouse falls to the page below as a REAL, trusted OS event;
    *  `forward` keeps move events flowing so the renderer can flip it back off over chrome. Idempotent. */
@@ -84,6 +86,13 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
   // The load-bearing attachment (see header). Set before show so the group exists from first paint.
   ui.setParentWindow(pages)
 
+  // The native traffic lights are REPLACED by custom DOM ones in the renderer titlebar (App.tsx). The
+  // green/fullscreen light cannot be native: a macOS child window can't enter native fullscreen without
+  // detaching from its parent (which blanks L0), so we own all three and wire green → setFullScreen (the
+  // parent rides into fullscreen, the child follows), yellow → minimize, red → close. Hide the native
+  // buttons so only the custom set shows (re-asserted on did-finish-load for dev reloads).
+  ui.setWindowButtonVisibility(false)
+
   // Closing the UI closes the pair (pages alone is meaningless).
   ui.on('closed', () => {
     if (!pages.isDestroyed()) pages.destroy()
@@ -125,13 +134,13 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
     const b: Rectangle = pages.getBounds()
     ui.setBounds(b)
   }
-  // The child never enters NATIVE fullscreen (it can't — attached), so its chrome won't auto-hide
-  // like a normal fullscreen window's: hide the traffic lights + tell the renderer to drop its
-  // titlebar strip while the pair is fullscreen. Resent on every renderer load (boot fullscreen
-  // via BLITZ_FULLSCREEN, dev reloads) so the state never goes stale.
+  // The child never enters NATIVE fullscreen (it can't — attached), so its chrome won't auto-hide like
+  // a normal fullscreen window's: tell the renderer to drop its titlebar strip (which carries the custom
+  // traffic lights) while the pair is fullscreen. The native lights are already hidden — custom ones
+  // replace them — so there's nothing to toggle here. Resent on every renderer load (boot fullscreen via
+  // BLITZ_FULLSCREEN, dev reloads) so the state never goes stale.
   const setChromeFs = (on: boolean): void => {
     if (ui.isDestroyed()) return
-    ui.setWindowButtonVisibility(!on)
     try {
       ui.webContents.send('os:fullscreen', { on })
     } catch {
@@ -147,10 +156,16 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
     setChromeFs(false)
   })
   ui.webContents.on('did-finish-load', () => {
+    ui.setWindowButtonVisibility(false) // re-assert across dev reloads — custom DOM lights replace native
     if (!pages.isDestroyed() && pages.isFullScreen()) setChromeFs(true)
   })
   const setFullScreen = (on: boolean): void => {
     if (!pages.isDestroyed()) pages.setFullScreen(on)
+  }
+  // Minimize the pair: the parent miniaturizes to the Dock and its attached child follows (AppKit
+  // removes ordered child windows from screen with their parent and restores them together).
+  const minimize = (): void => {
+    if (!pages.isDestroyed()) pages.minimize()
   }
 
   // Show order: the parent first, then the attached child above it.
@@ -160,5 +175,5 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
     if (opts.fullscreen) setFullScreen(true)
   })
 
-  return { ui, pages, focusPages, focusUi, dragShell, setFullScreen, setPassthrough }
+  return { ui, pages, focusPages, focusUi, dragShell, setFullScreen, minimize, setPassthrough }
 }

@@ -377,6 +377,7 @@ function findChatHub(surfaces: Surface[]): Surface | undefined {
 
 export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
+  const worldRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
   const mode = useDesktop((s) => s.mode)
   const surfaces = useDesktop((s) => s.surfaces)
@@ -401,6 +402,21 @@ export default function App(): JSX.Element {
   // window never enters native fullscreen, so its chrome would not auto-hide by itself.
   const [shellFullscreen, setShellFullscreen] = useState(false)
   useEffect(() => window.agentOS?.onShellFullScreen?.(setShellFullscreen), [])
+  // HTML5 page fullscreen (a web surface's <video> went fullscreen — YouTube's button or the agent's `f`).
+  // Main raises that view to fill the window + routes the keyboard to the page; here we bare ALL chrome
+  // (page-fullscreen class), drive full-window geometry (the RAF below), and force mouse passthrough so
+  // the video's own controls + Esc work. Without this the user is trapped: no controls, Esc can't exit.
+  const pageFullscreenId = useDesktop((s) => s.pageFullscreenId)
+  const pageFsRef = useRef<string | null>(null)
+  useEffect(() => window.agentOS?.onWebFullscreen?.((m) => useDesktop.getState().setPageFullscreen(m.on ? m.id : null)), [])
+  useEffect(() => {
+    pageFsRef.current = pageFullscreenId
+    // Native-input path (default): make the WHOLE UI window click-through while fullscreen so the mouse
+    // falls to the L0 video (its controls). On exit, drop it — the cursor-over-hole logic takes over.
+    // TODO: the synthetic os:page-input path (BLITZ_NATIVE_INPUT=0) forwards from holes, which are hidden
+    // in fullscreen, so controls would need a whole-window forwarder there. Native input is on by default.
+    if (window.agentOS?.nativeInput) window.agentOS.nativePassthrough(!!pageFullscreenId)
+  }, [pageFullscreenId])
   // The home orb is hidden until the pointer nears the bottom-center screen edge. Hysteresis:
   // a thin edge strip reveals it, a taller zone around the revealed button keeps it shown.
   const [homeRevealed, setHomeRevealed] = useState(false)
@@ -755,7 +771,9 @@ export default function App(): JSX.Element {
       // capture-phase listener must NOT stopPropagation here or that bubble listener never runs.
       // No preventDefault either: the canvas root is overflow:hidden (no native scroll to suppress)
       // and the hole listener already calls preventDefault. Let the event keep flowing to it.
-      if (e.target instanceof Element && e.target.closest('.webcontents-host')) return
+      // EXCEPTION: a zoom gesture (ctrl/pinch) over a hole drives the CAMERA, not the page's own pinch —
+      // don't hand it off; fall through to zoomAt below (the page magnifies via the folded zoomFactor).
+      if (!e.ctrlKey && e.target instanceof Element && e.target.closest('.webcontents-host')) return
       // Route gestures by what is under the cursor: surface content keeps its native scroll/pinch,
       // while empty canvas gestures pan/zoom the Blitz camera. This listener runs in capture phase
       // because xterm and other custom scrollers can otherwise consume wheel events before the canvas
@@ -779,8 +797,11 @@ export default function App(): JSX.Element {
         w.panBy(-e.deltaX, -e.deltaY)
         return
       }
+      // Focus-aware zoom: a pinch over a NON-focused surface (or empty canvas) drives the Blitz CAMERA, so
+      // you can zoom into any point on the stage. Over the FOCUSED window the gesture stays INSIDE it — a
+      // focused browser zooms its own page, a focused widget zooms itself, nothing else moves.
       if (activeWindowTarget && e.ctrlKey) return
-      if (activeWindowTarget && isScrollableSurfaceTarget(e.target, e.deltaX, e.deltaY)) return
+      if (activeWindowTarget && !e.ctrlKey && isScrollableSurfaceTarget(e.target, e.deltaX, e.deltaY)) return
       if (!activeWindowTarget && !isCanvasGestureTarget(e.target)) return
       const w = useDesktop.getState()
       if (activeWindowTarget || isPanGesture) w.clearActiveSurface()
@@ -794,12 +815,33 @@ export default function App(): JSX.Element {
         else w.panBy(-e.deltaX, -e.deltaY)
         return
       }
+      // Desktop mode: cursor-anchored pinch-zoom into ANY point, and pan when zoomed in. Both clamp to
+      // the current stage in the store (zoomAt/panBy) — zoom in freely, never out past the stage (other
+      // stages live in Control mode). At home scale the pan clamp makes a stray two-finger scroll a no-op.
       e.preventDefault()
       e.stopPropagation()
+      if (e.ctrlKey) w.zoomAt(e.clientX, e.clientY, e.deltaY)
+      else w.panBy(-e.deltaX, -e.deltaY)
     }
     el.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => el.removeEventListener('wheel', onWheel, { capture: true })
   }, [])
+
+  // Sharp zoom ("auto scaling", like a PDF viewer or Chrome's pinch). will-change:transform keeps .world
+  // on the GPU so a pan/zoom composites off the main thread — but it also PINS the layer's raster scale,
+  // so a settled scale(2) just stretches the 1x bitmap and text/widgets blur (the resolution loss). So we
+  // hold it only WHILE the camera moves and drop it ~200ms after it settles: Chromium then re-rasterizes
+  // .world at the new scale and resolution snaps back. (Web surfaces re-render natively via the folded
+  // zoomFactor, so they were already sharp — this brings the DOM/widgets up to the same fidelity.)
+  useEffect(() => {
+    const el = worldRef.current
+    if (!el) return
+    el.style.willChange = 'transform'
+    const t = window.setTimeout(() => {
+      if (worldRef.current) worldRef.current.style.willChange = 'auto'
+    }, 200)
+    return () => window.clearTimeout(t)
+  }, [transform])
 
   // Coalesced page-geometry pass (plans/blitzos-compositor-hardening.md, pillar 2). ONE RAF reads
   // EVERY browser hole's rect + the full z-order together and pushes a single ordered message; main
@@ -819,6 +861,27 @@ export default function App(): JSX.Element {
       const anims = dockAnimRef.current
       const winW = window.innerWidth || 0
       const winH = window.innerHeight || 0
+      // Page fullscreen: synthesize geometry — this view fills the whole window on top (z above every
+      // other), every other page view is culled (visible:false) so nothing peeks, zoom 1 (screen-space,
+      // camera-independent). We do NOT read the DOM holes here: the page-fullscreen class display:none's
+      // the world, so the holes have no rect — the synthesized full-window bounds are the truth.
+      const fsId = st.pageFullscreenId
+      if (fsId && st.surfaces.some((s) => s.id === fsId && s.kind === 'web')) {
+        const fsList = st.surfaces
+          .filter((s) => s.kind === 'web')
+          .map((s) =>
+            s.id === fsId
+              ? { id: s.id, rect: { x: 0, y: 0, width: winW, height: winH }, visible: true, z: 9_999_999, zoom: 1 }
+              : { id: s.id, rect: { x: 0, y: 0, width: 0, height: 0 }, visible: false, z: 0, zoom: 1 }
+          )
+        const fsKey = `FS:${fsId}:${winW}x${winH}:${fsList.length}`
+        if (fsKey !== last) {
+          last = fsKey
+          window.agentOS?.webGeometry?.(fsList)
+        }
+        raf = requestAnimationFrame(tick)
+        return
+      }
       // One querySelectorAll, then W getBoundingClientRect reads back-to-back (one layout flush).
       const holes = document.querySelectorAll<HTMLElement>('.webcontents-host[data-sid]')
       const byId = new Map<string, HTMLElement>()
@@ -839,7 +902,12 @@ export default function App(): JSX.Element {
           rect: { x: r.left, y: r.top, width: r.width, height: r.height },
           visible,
           z: effectiveZ(s),
-          zoom: s.zoom ?? 1
+          // Fold the CAMERA scale into the page zoom. The host applies this as the WebContentsView's
+          // zoomFactor, and because the view BOUNDS already grow with the camera (rect is the post-
+          // transform screen rect), a matching zoomFactor magnifies the LIVE page with NO reflow — a
+          // playing video keeps playing, just scaled, like the DOM widgets beside it. (Electron exposes
+          // no native view-transform; folding zoomFactor into the camera-scaled bounds IS the mechanism.)
+          zoom: (s.zoom ?? 1) * st.transform.scale
         })
       }
       const key = list
@@ -1147,6 +1215,9 @@ export default function App(): JSX.Element {
     if (!window.agentOS?.nativeInput) return
     let over = false
     const onMove = (e: globalThis.MouseEvent): void => {
+      // Page fullscreen forces passthrough ON for the whole window (the video owns the mouse); don't let
+      // the cursor-over-hole logic fight it back off while a page is fullscreen.
+      if (pageFsRef.current) return
       // A titlebar shell-drag (manual window move) must own the pointer for its whole duration. The
       // window trails the cursor by the IPC-delta latency, so mid-drag the cursor can sit over a page
       // hole — but flipping the UI click-through here would route the HELD-button stream to the page
@@ -2167,7 +2238,7 @@ export default function App(): JSX.Element {
     <div
       id="root-canvas"
       ref={rootRef}
-      className={[grabMode ? 'grab-mode' : null, mode === 'canvas' ? 'stage-overview-mode' : 'stage-fixed-mode'].filter(Boolean).join(' ')}
+      className={[grabMode ? 'grab-mode' : null, pageFullscreenId ? 'page-fullscreen' : null, mode === 'canvas' ? 'stage-overview-mode' : 'stage-fixed-mode'].filter(Boolean).join(' ')}
       onDragOver={onDragOver}
       onDrop={onDrop}
       onPointerDownCapture={() => {
@@ -2206,6 +2277,15 @@ export default function App(): JSX.Element {
           shellDragFrom.current = null
         }}
       >
+        {/* Custom macOS traffic lights. The native ones are hidden (sandwich.ts) because the green light
+            must drive the PAIR fullscreen — a child window can't enter native fullscreen without
+            detaching from its parent and blanking the live pages. stopPropagation keeps a button click
+            from also starting a titlebar window-drag. */}
+        <div className="traffic titlebar-traffic is-active" onPointerDown={(e) => e.stopPropagation()}>
+          <button className="tl tl-close" title="Close" onClick={() => window.agentOS?.shellClose?.()} />
+          <button className="tl tl-min" title="Minimize" onClick={() => window.agentOS?.shellMinimize?.()} />
+          <button className="tl tl-max" title="Toggle Full Screen" onClick={() => window.agentOS?.shellFullScreen?.()} />
+        </div>
         <span className="titlebar-label">BlitzOS</span>
       </div>
       )}
@@ -2222,6 +2302,7 @@ export default function App(): JSX.Element {
       <Sidebar onRequestRestore={requestRestore} onCreateSurface={createFromLauncher} animating={dockAnimations} />
 
       <div
+        ref={worldRef}
         className="world"
         style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
       >

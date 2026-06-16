@@ -97,6 +97,17 @@ function electronSession(wc: WebContents): CdpSession {
   }
 }
 
+/** No-reflow PINCH zoom of a focused browser at (x,y) in page px (cursor-focal): Chromium re-renders the
+ *  page at the new scale (SHARP), the layout never reflows, and it clamps at the page's minimum scale
+ *  (1 for a desktop page) so you can't zoom out below 100%. scaleFactor>1 = zoom in. Used by the sandwich
+ *  page-input router for ctrl+wheel over the FOCUSED web hole — sending the ctrl+wheel to the page instead
+ *  would trigger Chromium's page-zoom, which REFLOWS the layout (not what "zoom" means). */
+export async function pinchSurface(surfaceId: string, x: number, y: number, scaleFactor: number): Promise<void> {
+  const wc = guestFor(surfaceId)
+  ensureAttached(wc)
+  await wc.debugger.sendCommand('Input.synthesizePinchGesture', { x, y, scaleFactor })
+}
+
 export async function controlWindow(surfaceId: string, action: ControlAction): Promise<ControlResult> {
   let wc: WebContents
   try {

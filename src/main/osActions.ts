@@ -1,7 +1,7 @@
 import { BrowserWindow, ipcMain, webContents, app, screen } from 'electron'
 import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
-import { controlWindow, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
+import { controlWindow, pinchSurface, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
 import { ingestSignals, ingestCanvasOps, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
@@ -238,7 +238,15 @@ export function initOsActions(opts: {
     onFocus: (id) => send('focus', { id }),
     onContextMenu: (surfaceId, x, y) => sendToRenderer('os:action', { type: 'surface-contextmenu', surfaceId, x, y }),
     onShiftTap: () => sendToRenderer('os:shifttap', undefined),
-    onAltHold: (phase) => osRadialPhase(phase)
+    onAltHold: (phase) => osRadialPhase(phase),
+    // A page entered/left HTML5 fullscreen (video requestFullscreen / YouTube button / agent `f`). Route
+    // the keyboard to the L0 pages window so Esc/space/f reach the video (Chromium exits fullscreen on
+    // Esc), and tell the renderer to raise this view to fill the window + drop the chrome. Leave reverses.
+    onPageFullscreen: (surfaceId, on) => {
+      if (on) sandwichFocus.focusPages()
+      else sandwichFocus.focusUi()
+      sendToRenderer('os:web-fullscreen', { id: surfaceId, on })
+    }
   })
 
   // Workspace launcher / Mission-Control IPC — mirrors the server's /api/os/workspace* routes.
@@ -335,7 +343,14 @@ export function initOsActions(opts: {
     const mods = (Array.isArray(ev.modifiers) ? ev.modifiers : []) as Array<'shift' | 'control' | 'alt' | 'meta'>
     try {
       if (ev.type === 'wheel') {
-        wc.sendInputEvent({ type: 'mouseWheel', x, y, deltaX: -Math.round(Number(ev.dx) || 0), deltaY: -Math.round(Number(ev.dy) || 0), modifiers: mods })
+        if (mods.includes('control')) {
+          // Focused-browser PINCH zoom: a no-reflow pinch AT THE CURSOR (Chromium re-renders sharp), NOT the
+          // ctrl+wheel page zoom (which reflows). scaleFactor>1 = zoom in; the page clamps at its minimum
+          // scale (1 for a desktop page), so you can't zoom out below 100%.
+          void pinchSurface(String(m.id), x, y, Math.exp(-(Number(ev.dy) || 0) * 0.006)).catch(() => {})
+        } else {
+          wc.sendInputEvent({ type: 'mouseWheel', x, y, deltaX: -Math.round(Number(ev.dx) || 0), deltaY: -Math.round(Number(ev.dy) || 0), modifiers: mods })
+        }
       } else if (ev.type === 'move') {
         wc.sendInputEvent({ type: 'mouseMove', x, y, modifiers: mods })
       } else if (ev.type === 'down' || ev.type === 'up') {

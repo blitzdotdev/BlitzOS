@@ -117,8 +117,9 @@ const FULLSCREEN = process.env.BLITZ_FULLSCREEN === '1'
 // attached UI child rides into its Space. The default menu's "Toggle Full Screen" role targets the
 // FOCUSED window — the UI child, which is deliberately fullscreenable:false (native fullscreen on a
 // macOS child window detaches it from the parent) — so the role item sits permanently disabled.
-// This menu keeps every standard role but wires that one item to the pair toggle. (The green
-// traffic light stays inert on the child for the same macOS constraint as its yellow sibling.)
+// This menu keeps every standard role but wires that one item to the pair toggle. The NATIVE traffic
+// lights are hidden (sandwich.ts) and the renderer draws its own (App.tsx); their green light drives
+// this same pair fullscreen via os:shell-fullscreen (handled below), so the button is live now.
 function installAppMenu(): void {
   const isMac = process.platform === 'darwin'
   const template: MenuItemConstructorOptions[] = [
@@ -492,6 +493,24 @@ app.whenReady().then(() => {
   ipcMain.on('os:native-passthrough', (_e, on: boolean) => {
     if (process.env.BLITZ_NATIVE_INPUT === '0') return
     sandwich?.setPassthrough(!!on)
+  })
+
+  // Custom window controls (App.tsx renders its own macOS traffic lights — the native green light can't
+  // drive the pair's fullscreen, since a child window can't go native-fullscreen without detaching from
+  // its parent and blanking L0). Green toggles fullscreen on the PARENT (the child rides into its Space),
+  // yellow minimizes the pair, red closes (cascades to pages via ui's 'closed' handler in sandwich.ts).
+  ipcMain.on('os:shell-fullscreen', () => {
+    const s = sandwich
+    if (!s || s.pages.isDestroyed()) return
+    s.setFullScreen(!s.pages.isFullScreen())
+  })
+  ipcMain.on('os:shell-minimize', () => sandwich?.minimize())
+  ipcMain.on('os:shell-close', () => {
+    try {
+      sandwich?.ui.close()
+    } catch {
+      /* already gone */
+    }
   })
 
   // Local agent path: a localhost HTTP control API.
