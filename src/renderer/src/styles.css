@@ -108,6 +108,18 @@ button {
   display: none !important;
 }
 
+/* App (shell) fullscreen: the title bar slides OFF the top and returns on a top-edge hover, exactly like
+   a native macOS fullscreen window — so the traffic lights (incl. the green EXIT light) stay reachable.
+   Revealed, it sits just BELOW the macOS menu bar that overlays the top on hover, so the lights clear it.
+   (The drag is disabled in fullscreen; only the lights are interactive.) */
+.titlebar.fs {
+  transform: translateY(-100%);
+  transition: transform 0.16s var(--ease-out, ease);
+}
+.titlebar.fs.fs-revealed {
+  transform: translateY(28px);
+}
+
 /* Background captures pan gestures (canvas mode). A clean void — no grid. */
 .bg {
   position: absolute;

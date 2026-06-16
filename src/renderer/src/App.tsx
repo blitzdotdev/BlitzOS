@@ -417,6 +417,42 @@ export default function App(): JSX.Element {
     // in fullscreen, so controls would need a whole-window forwarder there. Native input is on by default.
     if (window.agentOS?.nativeInput) window.agentOS.nativePassthrough(!!pageFullscreenId)
   }, [pageFullscreenId])
+  // Native-fullscreen chrome reveal: in APP (shell) fullscreen the title bar slides off the top and
+  // returns when the pointer hits the very top edge — exactly like a native macOS fullscreen window, so
+  // the traffic lights (and the green EXIT light) are always one gesture away. The revealed bar sits just
+  // below the macOS menu bar that overlays the top on hover. Esc exits too (a convenience on top of it).
+  const [titlebarRevealed, setTitlebarRevealed] = useState(false)
+  const titlebarRevealedRef = useRef(false)
+  useEffect(() => {
+    if (!shellFullscreen) {
+      if (titlebarRevealedRef.current) {
+        titlebarRevealedRef.current = false
+        setTitlebarRevealed(false)
+      }
+      return
+    }
+    const onMove = (e: globalThis.PointerEvent): void => {
+      // reveal at the very top edge; keep it shown while the pointer stays within the revealed bar (hysteresis)
+      const next = titlebarRevealedRef.current ? e.clientY <= 70 : e.clientY <= 2
+      if (next !== titlebarRevealedRef.current) {
+        titlebarRevealedRef.current = next
+        setTitlebarRevealed(next)
+      }
+    }
+    window.addEventListener('pointermove', onMove, true)
+    return () => window.removeEventListener('pointermove', onMove, true)
+  }, [shellFullscreen])
+  useEffect(() => {
+    if (!shellFullscreen) return
+    const onKey = (e: globalThis.KeyboardEvent): void => {
+      if (e.key !== 'Escape' || useDesktop.getState().pageFullscreenId) return
+      const ae = document.activeElement as HTMLElement | null
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return // Esc cancels the field, not fullscreen
+      window.agentOS?.shellFullScreen?.()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [shellFullscreen])
   // The home orb is hidden until the pointer nears the bottom-center screen edge. Hysteresis:
   // a thin edge strip reveals it, a taller zone around the revealed button keeps it shown.
   const [homeRevealed, setHomeRevealed] = useState(false)
@@ -2249,14 +2285,15 @@ export default function App(): JSX.Element {
         if (ae && ae.tagName === 'IFRAME') ae.blur()
       }}
     >
-      {/* draggable shell title bar — MANUAL drag (pointer deltas → main moves the sandwich's parent
-          window; CSS app-region would drag only the attached child and detach the layers).
-          Hidden while the pair is fullscreen (a fullscreen shell can't be dragged anyway). */}
-      {!shellFullscreen && (
+      {/* Shell title bar — MANUAL drag (pointer deltas → main moves the sandwich's parent window; CSS
+          app-region would drag only the attached child and detach the layers). In APP fullscreen it stays
+          mounted but slides OFF the top, returning on a top-edge hover like a native macOS fullscreen
+          window so the traffic lights stay reachable; drag is disabled there (a fullscreen window can't
+          move). In VIDEO fullscreen the page-fullscreen class hides it with the rest of the chrome. */}
       <div
-        className="titlebar"
+        className={`titlebar${shellFullscreen ? ' fs' : ''}${shellFullscreen && titlebarRevealed ? ' fs-revealed' : ''}`}
         onPointerDown={(e) => {
-          if (e.button !== 0) return
+          if (shellFullscreen || e.button !== 0) return
           ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
           shellDragFrom.current = { x: e.screenX, y: e.screenY }
           window.agentOS?.shellDrag?.('start')
@@ -2288,7 +2325,6 @@ export default function App(): JSX.Element {
         </div>
         <span className="titlebar-label">BlitzOS</span>
       </div>
-      )}
 
       <div
         className="bg"

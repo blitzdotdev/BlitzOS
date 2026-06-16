@@ -55,12 +55,20 @@ interface HostCallbacks {
   /** Bare-Option hold state from a focused guest (radial create menu); 'cancel' = another key
    *  joined the hold (the user is typing an Option-modified shortcut, not asking for the menu). */
   onAltHold: (phase: 'down' | 'up' | 'cancel') => void
+  /** The surface's active page entered/left HTML5 fullscreen (a <video> requestFullscreen, YouTube's
+   *  fullscreen button, the agent's `f`). The sandwich gives a page none of a top-level window's
+   *  fullscreen handling, so BlitzOS must raise the view to fill the window, drop the chrome, and route
+   *  input to the page — otherwise the user is trapped (no controls, Esc can't reach the page to exit). */
+  onPageFullscreen: (surfaceId: string, on: boolean) => void
 }
 
 interface TabEntry {
   tabId: string
   view: WebContentsView
   wcId: number
+  // Whether the view is currently in the window's contentView tree (= being composited by WindowServer).
+  // Off-screen views are DETACHED (removeChildView) to free compositing — see applyEntryBounds / setAttached.
+  attached: boolean
 }
 
 interface Entry {
@@ -80,6 +88,10 @@ const entries = new Map<string, Entry>()
 const pendingCloses = new Map<string, ReturnType<typeof setTimeout>>()
 let callbacks: HostCallbacks | null = null
 let inputForwarder: ((input: Input) => boolean) | null = null
+// The surface whose active page is in HTML5 fullscreen (at most one). Tracked so a teardown/navigation
+// that kills the page WITHOUT firing leave-html-full-screen still releases the renderer's fullscreen mode
+// (otherwise the chrome stays hidden with no page behind it — a blank, unrecoverable screen).
+let fullscreenSurfaceId: string | null = null
 
 // Console-safe url: origin + a short path slice, NO query or fragment. Auth tokens ride in the query
 // (e.g. a Cloudflare ?token=<JWT>, a session redirect) — never log them. Used only for dev logs; the
@@ -169,12 +181,32 @@ function pushNavState(e: Entry, t: TabEntry, extra: TabStatePatch = {}): void {
   )
 }
 
-// Hide-by-position, NEVER setVisible: macOS WebContentsView has a wedge where a view that starts
-// (or cycles through) setVisible(false) can stay blank after setVisible(true) — the renderer
-// reports document.visibilityState 'visible' and paints internally, but the window never composites
-// it (exactly the live symptom: blank holes over the backdrop). Views are always "visible"; hidden
-// tabs are simply PARKED far offscreen, and showing one is a plain setBounds.
+// Off-screen CULLING (the WindowServer/GPU fix): a web view that is not the visible active tab is
+// DETACHED from the window's contentView tree (removeChildView) so the macOS compositor stops
+// compositing it entirely. Under several live web pages WindowServer was pinning ~80% (Chrome likewise
+// drops background tabs from compositing); a parked-but-attached view kept being composited. The
+// WebContents stays ALIVE (still backgroundThrottling:false), so its JS keeps running and an agent can
+// still drive a parked page — only compositing is culled. We use add/removeChildView (tree attach),
+// NEVER setVisible(false): that has a macOS wedge where a view stays blank after setVisible(true). PARKED
+// is the bounds a freshly-created view gets before it is first positioned; the hide mechanism is detach.
 const PARKED: Rectangle = { x: -32000, y: -32000, width: 800, height: 600 }
+
+/** Attach/detach a tab's view from the compositor tree, tracking state so we only call the
+ *  (repaint-triggering) add/removeChildView on a TRANSITION, never every geometry frame. Detaching
+ *  is what frees WindowServer; re-attaching repaints the view (verified on screen — distinct from the
+ *  setVisible(false) blank-wedge above, which we never use). */
+function setAttached(t: TabEntry, want: boolean): void {
+  if (t.attached === want) return
+  const win = callbacks?.getWindow()
+  if (!win || win.isDestroyed()) return
+  try {
+    if (want) win.contentView.addChildView(t.view)
+    else win.contentView.removeChildView(t.view)
+    t.attached = want
+  } catch {
+    /* view/window gone */
+  }
+}
 
 function createTab(e: Entry, decl: TabDecl): TabEntry {
   const cb = callbacks!
@@ -201,7 +233,7 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
 
   const wc = view.webContents
   wc.zoomFactor = e.zoom
-  const t: TabEntry = { tabId: decl.id, view, wcId: wc.id }
+  const t: TabEntry = { tabId: decl.id, view, wcId: wc.id, attached: true }
   e.tabs.push(t)
 
   attachGuestWindowPolicy(wc, {
@@ -302,6 +334,25 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
     }
   })
 
+  // HTML5 page fullscreen (a <video> requestFullscreen / YouTube's button / the agent's `f`). The
+  // sandwich gives a page none of a top-level window's fullscreen handling, so WE drive it: focus the
+  // page so the keyboard reaches it (Esc/space/f work; Chromium exits fullscreen on Esc), and hand the
+  // surfaceId to the renderer, which raises this view to fill the window, drops the chrome, and routes
+  // the mouse in. leave restores. Both edges are idempotent on the renderer side.
+  wc.on('enter-html-full-screen', () => {
+    fullscreenSurfaceId = e.id
+    try {
+      wc.focus()
+    } catch {
+      /* gone */
+    }
+    cb.onPageFullscreen(e.id, true)
+  })
+  wc.on('leave-html-full-screen', () => {
+    if (fullscreenSurfaceId === e.id) fullscreenSurfaceId = null
+    cb.onPageFullscreen(e.id, false)
+  })
+
   // An url-less tab still loads about:blank: a webContents with NO committed document queues every
   // executeJavaScript on an internal did-stop-loading forever (observed: a hung CDP eval + a
   // listener pile-up from the perception drain, both pointed at an empty "+" tab).
@@ -312,6 +363,13 @@ function createTab(e: Entry, decl: TabDecl): TabEntry {
 function destroyTab(e: Entry, t: TabEntry): void {
   const i = e.tabs.indexOf(t)
   if (i >= 0) e.tabs.splice(i, 1)
+  // A page torn down (closed/crashed/navigated) while its surface is fullscreen may never fire
+  // leave-html-full-screen — release the renderer's fullscreen mode so the chrome isn't left hidden with
+  // no page behind it. (During fullscreen the chrome is gone, so only an agent/teardown reaches here.)
+  if (fullscreenSurfaceId === e.id) {
+    fullscreenSurfaceId = null
+    callbacks?.onPageFullscreen(e.id, false)
+  }
   try {
     callbacks?.getWindow()?.contentView.removeChildView(t.view)
   } catch {
@@ -331,17 +389,24 @@ function destroyTab(e: Entry, t: TabEntry): void {
   }
 }
 
-/** Position the active tab's view; PARK the rest offscreen. The single place visibility is decided
- *  — by POSITION, never setVisible (see PARKED above for the macOS wedge this avoids). */
+/** Position the visible active tab's view; DETACH (cull) every other view from the compositor. The
+ *  single place visibility is decided — attach + setBounds for the one on-screen tab, removeChildView
+ *  for inactive tabs and all tabs of an off-screen surface (see setAttached / the CULLING note above). */
 function applyEntryBounds(e: Entry): void {
   const act = activeEntry(e)
+  const r = e.rect
   for (const t of e.tabs) {
-    const show = t === act && e.visible && !!e.rect
-    try {
-      t.view.setBounds(show && e.rect ? e.rect : PARKED)
-      if (!t.view.webContents.isDestroyed()) t.view.webContents.zoomFactor = e.zoom
-    } catch {
-      /* view torn down mid-apply */
+    const show = t === act && e.visible && !!r
+    if (show && r) {
+      setAttached(t, true) // re-attach a view returning to view (repaints on add)
+      try {
+        t.view.setBounds(r)
+        if (!t.view.webContents.isDestroyed()) t.view.webContents.zoomFactor = e.zoom
+      } catch {
+        /* view torn down mid-apply */
+      }
+    } else {
+      setAttached(t, false) // CULL: stop WindowServer compositing it; WebContents stays alive
     }
   }
 }

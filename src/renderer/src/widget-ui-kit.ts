@@ -25,6 +25,14 @@ export const UI_KIT = `<style>
   --blitz-bg:#ececea; --blitz-surface:#ffffff; --blitz-surface-2:#f1f1ee;
   --blitz-text:#1a1b1d; --blitz-text-dim:#797c7f;
   --blitz-hairline:rgba(0,0,0,.10); --blitz-radius:10px; --blitz-radius-sm:7px;
+  /* Forgiveness aliases: agents routinely guess conventional token names (fg/foreground/border/muted)
+     that are NOT the real tokens above. Without these, a var(--blitz-fg, #F5F5F5)-style usage falls back
+     to a dark-theme hardcode and renders WHITE-ON-WHITE in this light theme (the unreadable-widget bug).
+     Alias them to the real tokens so a wrong guess still renders readable + on-theme. */
+  --blitz-fg:var(--blitz-text); --blitz-foreground:var(--blitz-text);
+  --blitz-fg-muted:var(--blitz-text-dim); --blitz-text-muted:var(--blitz-text-dim);
+  --blitz-text-secondary:var(--blitz-text-dim); --blitz-muted:var(--blitz-text-dim);
+  --blitz-border:var(--blitz-hairline); --blitz-background:var(--blitz-bg); --blitz-card:var(--blitz-surface);
   --blitz-font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
 }
 html{height:100%}
