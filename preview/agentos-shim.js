@@ -6,7 +6,6 @@
  *   sendState(state)    - renderer pushes its surface list (so list_state works)
  *   onAgentSocketUrl(cb)- the agent-socket paste URL ("Connect AI")
  *   registerWebview/unregisterWebview - no-op (no CDP/<webview> in a browser)
- *   integrations.*      - real OAuth via the /api backend
  *
  * Backed by preview/backend.mjs through the Vite `/api` proxy. Injected only by
  * vite.renderer.preview.mjs; guards on an existing window.agentOS (inert in Electron).
@@ -18,7 +17,6 @@
   if (window.agentOS) return // real Electron preload present — never override it
 
   var API = '/api'
-  var integ = [] // onUpdated listeners
   var actionL = [] // onAction listeners
   var urlL = [] // onAgentSocketUrl listeners
   var es = null
@@ -27,7 +25,7 @@
     return fetch(API + path, opts).then(function (r) { return r.json() })
   }
   // POST a JSON body and parse the JSON reply, resolving to `fallback` (default { ok: false }) on network error.
-  // One helper for the consent/group/folder/close/widget-tool/content-share calls that all shared this boilerplate.
+  // One helper for the group/folder/close/widget-tool/content-share calls that all shared this boilerplate.
   function postJSON(path, body, fallback) {
     return fetch(API + path, {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -52,22 +50,6 @@
       if (msg && msg.__agentUrl) { fire(urlL, msg.__agentUrl); return }
       if (msg && msg.type) fire(actionL, msg)
     }
-  }
-
-  // OAuth: open popup synchronously (preserve gesture), then poll until connected.
-  function pollConnected(id, popup) {
-    return new Promise(function (resolve) {
-      var tries = 0
-      var iv = setInterval(function () {
-        tries++
-        getJSON('/integrations').then(function (list) {
-          var it = (list || []).find(function (x) { return x.id === id })
-          if (it && it.connected) { clearInterval(iv); fire(integ); resolve({ ok: true, label: it.label }) }
-          else if (tries > 120) { clearInterval(iv); resolve({ ok: false, error: 'timed out waiting for sign-in' }) }
-          else if (popup && popup.closed && tries > 3) { clearInterval(iv); resolve({ ok: false, error: 'sign-in window closed' }) }
-        }).catch(function () {})
-      }, 1500)
-    })
   }
 
   // ---- server mode: stream WS for live web surfaces (headless browser → <canvas>) ----
@@ -159,25 +141,6 @@
       thumbUrl: function (name, ts) { return API + '/os/workspace/thumb?name=' + encodeURIComponent(name) + (ts ? '&t=' + ts : '') }
     },
 
-    // srcdoc widget bridge: relay a widget's data request to the backend data route
-    // (consent-gated). Token stays server-side; the widget only ever sees {items}.
-    widgetRequest: function (reqObj) {
-      var p = '/integrations/' + encodeURIComponent(reqObj.provider) + '/' + encodeURIComponent(reqObj.resource) +
-        '?surface=' + encodeURIComponent(reqObj.surfaceId)
-      return fetch(API + p).then(function (r) {
-        return r.json().then(function (b) {
-          if (r.ok) return { ok: true, data: b }
-          return { ok: false, error: (b && b.error) || 'request failed', code: b && b.code }
-        })
-      }).catch(function (e) { return { ok: false, error: String((e && e.message) || e) } })
-    },
-    grantConsent: function (surfaceId, provider) {
-      return postJSON('/os/consent', { surfaceId: surfaceId, provider: provider })
-    },
-    // Drop all consent for a surface (its widget code changed → re-approval required).
-    revokeConsent: function (surfaceId) {
-      return postJSON('/os/consent/revoke', { surfaceId: surfaceId })
-    },
     // #52: group surfaces into a REAL folder on disk (mkdir + mv their files into a subdir).
     groupIntoFolder: function (name, ids, kind) {
       return postJSON('/os/group', { name: name, ids: ids, kind: kind })
@@ -315,40 +278,8 @@
     },
     actionClear: function (id) {
       fetch(API + '/os/action-clear', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
-    },
-
-    integrations: {
-      list: function () { return getJSON('/integrations') },
-      connect: function (id) {
-        var popup = window.open('about:blank', 'agentos_oauth', 'width=540,height=720')
-        return getJSON('/integrations/' + id + '/start', { method: 'POST' }).then(function (res) {
-          if (!res || !res.authorizeUrl) {
-            if (popup) popup.close()
-            return { ok: false, error: (res && res.error) || 'cannot start sign-in', needsConfig: !!(res && res.needsConfig) }
-          }
-          if (popup) popup.location.href = res.authorizeUrl
-          else window.open(res.authorizeUrl, '_blank', 'noopener')
-          return pollConnected(id, popup)
-        }).catch(function (e) {
-          if (popup) popup.close()
-          return { ok: false, error: String((e && e.message) || e) }
-        })
-      },
-      disconnect: function (id) {
-        return getJSON('/integrations/' + id + '/disconnect', { method: 'POST' }).then(function (r) { fire(integ); return r })
-      },
-      openExternal: function (url) { window.open(url, '_blank', 'noopener'); return Promise.resolve() },
-      onUpdated: function (cb) {
-        integ.push(cb)
-        return function () { integ = integ.filter(function (x) { return x !== cb }) }
-      }
     }
   }
-
-  // OAuth callback tab posts this when done — refresh integration widgets promptly.
-  window.addEventListener('message', function (e) {
-    if (e && e.data && e.data.type === 'agentos:oauth') fire(integ)
-  })
 
   console.info('[agent-os preview] fetch+SSE client active (surface model) — agent actions arrive over /api/os/events.')
 })()

@@ -1,9 +1,9 @@
 import { serializeStateForAgent } from './os-tools.mjs'
 
-// The CLOSED set of OS tools a sandboxed widget may call via `blitz.tool` (consent-gated under the
-// `tools` capability). This is deliberately NOT the full relay tool set: raw `eval` / `surface_control`
-// scripts are excluded, and `provider_call` WRITES still hit the human approval card. ONE source, imported
-// by BOTH transports (Electron widgets.ts + server backend.mjs) so the allowlist can never drift apart.
+// The CLOSED set of OS tools a sandboxed widget may call via `blitz.tool` (gated under the `tools`
+// capability). This is deliberately NOT the full relay tool set: raw `eval` / `surface_control` scripts
+// are excluded. ONE source, imported by BOTH transports (Electron widgets.ts + server backend.mjs) so the
+// allowlist can never drift apart.
 export const WIDGET_TOOLS = [
   'create_surface',
   'open_window',
@@ -12,7 +12,6 @@ export const WIDGET_TOOLS = [
   'close_surface',
   'go_to_primary',
   'list_state',
-  'provider_call',
   'set_theme'
 ]
 
@@ -49,7 +48,7 @@ export function makeWidgetToolRunner(handlers) {
  * between desktop and server the way the two hand-written maps did. The closed allowlist is still enforced
  * by makeWidgetToolRunner; this only supplies the (subset of) handlers a widget is allowed to reach.
  * @param {object} ops — same shape os-tools.mjs documents (createSurface->id, openWindow->id, moveSurface,
- *   updateSurface, closeSurface, goToPrimary, getState, providerCall(desc,transport)).
+ *   updateSurface, closeSurface, goToPrimary, getState).
  */
 export function makeWidgetToolHandlers(ops) {
   return {
@@ -96,14 +95,6 @@ export function makeWidgetToolHandlers(ops) {
       if (!ops.setTheme) return { ok: false, error: 'set_theme not available in this transport' }
       return ops.setTheme({ accent: a.accent, accentDeep: a.accentDeep })
     },
-    list_state: () => serializeStateForAgent(ops.getState()),
-    // provider_call rides the SAME provider engine the agent tools use on each transport (Electron: gated
-    // relay path with the human approval card; server: callProvider, writes hard-refused). 'relay' selects
-    // the untrusted/gated path on Electron; the server ignores it (its caller is always transport:'server').
-    provider_call: (a) =>
-      ops.providerCall(
-        { provider: String(a.provider || ''), method: a.method ? String(a.method) : undefined, path: String(a.path || ''), query: a.query, body: a.body, approvalToken: a.approvalToken },
-        'relay'
-      )
+    list_state: () => serializeStateForAgent(ops.getState())
   }
 }

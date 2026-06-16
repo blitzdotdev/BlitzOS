@@ -1,23 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
-export interface IntegrationStatus {
-  id: string
-  name: string
-  color: string
-  helpUrl: string
-  helpText: string
-  connected: boolean
-  label: string | null
-  configured: boolean
-}
-
-export interface ConnectResult {
-  ok: boolean
-  label?: string
-  error?: string
-  needsConfig?: boolean
-}
-
 // ! DEBUG: temporary bridge for the bottom-right runtime selector.
 export interface AgentRuntimeStatus {
   ok: boolean
@@ -28,7 +10,7 @@ export interface AgentRuntimeStatus {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'provider-approval' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme'
+  type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme'
   [k: string]: unknown
 }
 
@@ -323,37 +305,9 @@ const api = {
     return ipcRenderer.invoke('os:restore-chat-hub')
   },
 
-  /** Relay a sandboxed srcdoc widget's data request to main (consent-gated; token stays in main). */
-  widgetRequest(req: {
-    surfaceId: string
-    op: 'data'
-    provider: string
-    resource: string
-  }): Promise<{ ok: boolean; data?: unknown; error?: string; code?: string }> {
-    return ipcRenderer.invoke('widget:req', req)
-  },
   /** A sandboxed widget calls an OS tool via blitz.tool (gated by the `tools` capability; CLOSED allowlist). */
   widgetTool(surfaceId: string, name: string, args: unknown): Promise<{ ok: boolean; result?: unknown; error?: string }> {
     return ipcRenderer.invoke('widget:tool', { surfaceId, name, args })
-  },
-  /** Record the human's one-time consent for (surface, provider). */
-  grantConsent(surfaceId: string, provider: string): Promise<{ ok: boolean }> {
-    return ipcRenderer.invoke('widget:consent', surfaceId, provider)
-  },
-  /** Drop all consent for a surface (its widget code changed → re-approval required). */
-  revokeConsent(surfaceId: string): Promise<{ ok: boolean }> {
-    return ipcRenderer.invoke('widget:consent:revoke', surfaceId)
-  },
-
-  // #51 provider-access: the renderer answers a write-approval card + grants sensitive-read consent.
-  approveProviderCall(id: string): Promise<{ ok: boolean }> {
-    return ipcRenderer.invoke('os:provider-approve', id)
-  },
-  denyProviderCall(id: string): Promise<{ ok: boolean }> {
-    return ipcRenderer.invoke('os:provider-deny', id)
-  },
-  grantProviderConsent(provider: string, allow: boolean): Promise<{ ok: boolean }> {
-    return ipcRenderer.invoke('os:provider-consent', provider, allow)
   },
   // Item 3: the human answered a web guest's Allow/Block permission prompt (geolocation, camera, …).
   decidePermission(id: string, allow: boolean, remember: boolean): Promise<{ ok: boolean }> {
@@ -488,26 +442,6 @@ const api = {
       const listener = (_e: unknown, p: Record<string, unknown>): void => cb(p)
       ipcRenderer.on('onboarding:progress', listener)
       return () => ipcRenderer.removeListener('onboarding:progress', listener)
-    }
-  },
-
-  integrations: {
-    list(): Promise<IntegrationStatus[]> {
-      return ipcRenderer.invoke('integrations:list')
-    },
-    connect(id: string): Promise<ConnectResult> {
-      return ipcRenderer.invoke('integrations:connect', id)
-    },
-    disconnect(id: string): Promise<{ ok: boolean }> {
-      return ipcRenderer.invoke('integrations:disconnect', id)
-    },
-    openExternal(url: string): Promise<void> {
-      return ipcRenderer.invoke('integrations:openExternal', url)
-    },
-    onUpdated(cb: () => void): () => void {
-      const listener = (): void => cb()
-      ipcRenderer.on('integrations:updated', listener)
-      return () => ipcRenderer.removeListener('integrations:updated', listener)
     }
   }
 }

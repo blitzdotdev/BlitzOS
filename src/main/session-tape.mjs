@@ -258,7 +258,7 @@ export function makeSessionTape({ getRoot, getWorkspace, appVersion = '0', boot 
     },
     // Stream B: the user's app state. The small durable files (workspace.json, content, memory) are
     // content-addressed to the blob store (unchanged files dedupe); permissions/bookmarks ride inline.
-    // payload = { files: {path: content}, permissions, bookmarks, integrations }.
+    // payload = { files: {path: content}, permissions, bookmarks }.
     snapshot(reason, payload) {
       const files = {}
       const src = payload && payload.files
@@ -273,8 +273,7 @@ export function makeSessionTape({ getRoot, getWorkspace, appVersion = '0', boot 
         reason: reason || 'periodic',
         files,
         permissions: payload && payload.permissions,
-        bookmarks: payload && payload.bookmarks,
-        integrations: payload && payload.integrations
+        bookmarks: payload && payload.bookmarks
       })
     },
     // Stream B (visual): a window frame (a JPEG/PNG Buffer). Content-addressed, so identical idle frames

@@ -35,7 +35,7 @@ BACKEND_PORT=8801 bash preview/start-all.sh                        # if 8799 is 
 | Process | Port | Role |
 |---|---|---|
 | Vite (`vite.renderer.preview.mjs`) | 5174 | serves the renderer + proxies `/api` (incl. the `/api/os/stream` WS) to the backend; injects the server-mode flag |
-| `preview/backend.mjs` (`BLITZ_SERVER_MODE=1`) | 8799 | spawns headless Chromium, renders each `web` surface as a top-level target, streams JPEG frames; runs the agent-socket session + OAuth integrations. (Port 8799, not 8787 — wrangler's default 8787 collides.) |
+| `preview/backend.mjs` (`BLITZ_SERVER_MODE=1`) | 8799 | spawns headless Chromium, renders each `web` surface as a top-level target, streams JPEG frames; runs the agent-socket session. (Port 8799, not 8787 — wrangler's default 8787 collides.) |
 | `cloudflared` (named tunnel) | — | connects the saved tunnel; CF maps the public hostname → `localhost:5174` |
 
 ## One-time setup (already done for agentos.blitzmen.com)
@@ -43,7 +43,6 @@ BACKEND_PORT=8801 bash preview/start-all.sh                        # if 8799 is 
 1. **Chromium** on the box — `command -v chromium` (or pass `CHROMIUM=/path`). Alpine: `apk add chromium`.
 2. **cloudflared named tunnel** — token saved at `preview/.cf-tunnel-token` (gitignored), run by `preview/start-tunnel.sh` (auto-downloads `cloudflared` if missing). In the Cloudflare **Zero Trust → Networks → Tunnels → <tunnel> → Public Hostname**: `agentos.blitzmen.com` → Service **HTTP** → `localhost:5174` (must be **HTTP**, not HTTPS — HTTPS gives a TLS-handshake 502). The connector must run on the **same box** as the renderer (it proxies to `localhost:5174`).
    - *New domain / new tunnel:* create a tunnel in the dashboard, copy its token into `preview/.cf-tunnel-token`, add the public hostname → HTTP localhost:5174.
-3. **OAuth** (optional) — `integrations.config.json` (gitignored) with per-provider `clientId`/`clientSecret`; register the callback `https://agentos.blitzmen.com/api/oauth/callback` in each provider's app.
 
 ## Using it
 

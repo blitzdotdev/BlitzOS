@@ -1,4 +1,4 @@
-// Shared, transport-agnostic widget library + integration-data registry.
+// Shared, transport-agnostic widget library.
 //
 // ONE source of truth imported by BOTH agent transports (the Electron desktop
 // `agentSocket.ts` and the server-mode `preview/backend.mjs`) so the widget tools
@@ -7,21 +7,14 @@
 // plain `.mjs` impl + a `.d.mts` for the TS side.
 //
 // A "widget" is agent-readable, forkable HTML rendered as a sandboxed `srcdoc`
-// surface. It reaches the OS (and, through it, the user's connected integrations)
-// ONLY via the postMessage bridge exposed as `window.blitz` (the renderer injects
-// the shim). The library is browsable (list/get source), forkable (read -> edit ->
-// save), and extensible (save authored widgets back so the next agent sees them).
-//
-// SECURITY: the data registry is a CLOSED map of (provider,resource) -> a hardcoded
-// absolute URL. No caller-supplied string ever influences the request URL, host, or
-// headers — that's the SSRF/confused-deputy guard. Tokens are supplied by the caller
-// (each transport reads its own store); this module never touches a token store.
+// surface. It reaches the OS ONLY via the postMessage bridge exposed as `window.blitz`
+// (the renderer injects the shim). The library is browsable (list/get source),
+// forkable (read -> edit -> save), and extensible (save authored widgets back so the
+// next agent sees them).
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { callProvider } from './provider-call.mjs'
-import { resourceRoute } from './provider-specs.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -154,78 +147,6 @@ export function saveWidget({ name, html, lang = 'html', description = '', needs 
 }
 
 // ---------------------------------------------------------------------------
-// Integration-data registry — the CLOSED allowlist a widget's bridge can fetch.
-// Each entry: an exact upstream URL + a normalize(json) -> [{label,sub?,icon?,
-// badge?,url?}] so every provider returns the same shape for generic widgets.
-// ---------------------------------------------------------------------------
-
-export const PROVIDER_DATA = {
-  discord: {
-    guilds: {
-      url: 'https://discord.com/api/v10/users/@me/guilds',
-      normalize: (json) =>
-        Array.isArray(json)
-          ? json.map((g) => ({
-              label: g.name,
-              sub: g.owner ? 'owner' : undefined,
-              icon: g.icon ? `https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png` : undefined,
-              url: `https://discord.com/channels/${g.id}`
-            }))
-          : null
-    }
-  },
-  github: {
-    repos: {
-      url: 'https://api.github.com/user/repos?per_page=50&sort=updated',
-      normalize: (json) =>
-        Array.isArray(json)
-          ? json.map((r) => ({
-              label: r.full_name || r.name,
-              sub: r.description || undefined,
-              badge: r.private ? 'private' : r.stargazers_count ? `★ ${r.stargazers_count}` : undefined,
-              url: r.html_url
-            }))
-          : null
-    }
-  }
-}
-
-/** "provider/resource" strings the bridge can serve (for docs + validation). */
-export function listProviderResources() {
-  const out = []
-  for (const [p, rs] of Object.entries(PROVIDER_DATA)) for (const r of Object.keys(rs)) out.push(`${p}/${r}`)
-  return out
-}
-
-/**
- * Fetch one (provider,resource) with a caller-supplied bearer token and normalize
- * it to { items:[...] }. The (provider,resource) pair MUST be in PROVIDER_DATA —
- * unknown pairs throw 404 (never a constructed URL). Token comes from the caller's
- * own store; this module never reads tokens. Errors carry a numeric `.code`.
- */
-export async function fetchProviderResource(provider, resource, token) {
-  // Back-compat shim: the simple (provider,resource) data bridge now rides the general engine
-  // (server-side token injection, SSRF gate, default-deny redaction). Same { items } output, so the
-  // widget data path (widgets.ts / backend.mjs) is unchanged. The 2 seed resources use access_token.
-  const route = resourceRoute(provider, resource)
-  if (!route) throw Object.assign(new Error(`unknown data resource "${provider}/${resource}"`), { code: 404 })
-  if (!token) throw Object.assign(new Error(`${provider} is not connected`), { code: 401 })
-  const r = await callProvider(
-    { provider, method: 'GET', path: route.path, query: route.query, caller: { kind: 'widget' } },
-    { record: { secrets: { access_token: token } } }
-  )
-  if (!r.ok) {
-    const code = r.status === 401 || r.status === 403 ? 401 : 502
-    throw Object.assign(new Error(r.error || `${provider}/${resource} request failed`), { code })
-  }
-  const items = route.normalize ? route.normalize(r.data) : r.data
-  if (!Array.isArray(items)) {
-    throw Object.assign(new Error(`${provider}/${resource} returned an unexpected shape (token expired?)`), { code: 502 })
-  }
-  return { items }
-}
-
-// ---------------------------------------------------------------------------
 // The authoring contract the AGENT fetches before writing a widget. This is the
 // authoritative description of the `window.blitz` bridge (the renderer-injected
 // shim implements it). Keep it in sync with src/renderer/src/widget-bridge.ts.
@@ -238,8 +159,9 @@ surface (\`sandbox="allow-scripts"\` — no same-origin: no storage, no cookies,
 access). Two languages: plain **HTML** (default, renders verbatim) and **React JSX/TSX**
 (\`lang:"jsx"|"tsx"\` — compiled at mount; see "React widgets" below). The real rules:
 
-- **Integration data comes ONLY through the OS bridge** (\`window.blitz\`, injected for
-  you — you never add it). Tokens stay in the OS and never enter a widget.
+- **You feed a widget through props** (\`window.blitz\`, injected for you — you never add
+  it). The agent fetches data itself (open a web surface, read it) and pushes it in via
+  \`spawn_widget\`/\`update_surface\` props; a widget never fetches on its own.
 - **Libraries come ONLY from the curated import registry** (React widgets). No other
   external \`<script src>\`/\`<link>\` — an HTML widget inlines everything in the one string.
 - A widget cannot reach the OS, the workspace, or other surfaces except via \`window.blitz\`.
@@ -247,26 +169,20 @@ access). Two languages: plain **HTML** (default, renders verbatim) and **React J
 ## The \`window.blitz\` bridge
 
 \`\`\`js
-// Read normalized data from a CONNECTED integration. Resolves to { items:[...] },
-// each item: { label, sub?, icon?, badge?, url? }. The FIRST call per provider
-// shows the user a one-time consent prompt; if they allow, it resolves, else rejects.
-const { items } = await window.blitz.data('discord', 'guilds')
-
 // Per-widget config passed in at spawn time (spawn_widget props / save_widget props):
 const p = window.blitz.props()             // current props object (sync)
 window.blitz.onProps(p => { /* re-render when props change */ })
 
-// Run code once the bridge is live (props seeded). Safe to call data() before this;
-// requests queue until the channel is ready.
+// Run code once the bridge is live (props seeded).
 window.blitz.ready(props => { /* boot */ })
 
-// More capabilities (each is consent-gated the first time, like data()):
+// Capabilities (gated by the CLOSED allowlist):
 await window.blitz.tool('open_window', { url: 'https://…' }) // call an OS tool: create_surface/open_window/
-                                                             // move_surface/update_surface/close_surface/provider_call/list_state
+                                                             // move_surface/update_surface/close_surface/list_state
 await window.blitz.tool('close_surface', {}) // close THIS widget; pass {id} only to close another surface
 window.blitz.sendMessage('hi')             // send a chat message to the agent (the chat widget uses this)
 const dir = await window.blitz.listDir('') // list a workspace folder (the file manager uses this)
-window.blitz.setProps({ text })            // persist THIS widget's own state, e.g. a note's text — no prompt
+window.blitz.setProps({ text })            // persist THIS widget's own state, e.g. a note's text
 \`\`\`
 
 ## Interactivity by default
@@ -292,8 +208,8 @@ trusted library widgets can be spawned as-is unless you edit them.
   \`parent\`, \`self\`, \`length\`, \`status\`, \`closed\`, \`origin\`, \`event\`, \`location\`). \`const top = ...\`
   throws "Identifier already declared" and aborts the ENTIRE inline script, so the widget renders
   blank with no error on the tile. Name your data \`lead\`, \`first\`, \`rows\`, \`items\` instead.
-- Use \`window.blitz\` for OS actions, source-opening rows, chat actions, integration
-  data, and durable widget props. Declare the right \`needs\` when saving.
+- Use \`window.blitz\` for OS actions, source-opening rows, chat actions, and durable
+  widget props.
 - Keep interaction meaningful unless the widget is truly atomic. If a row has a source,
   make it clickable with \`window.blitz.tool('open_window', { url })\`.
 - Use Blitz tokens and kit components. Do not paste a separate palette, default-blue
@@ -344,51 +260,45 @@ and you never reinvent buttons/rows/bubbles. Prefer these over hand-rolled marku
 
 The built-in chat (\`blitz-chat.tsx\` by default, with legacy/custom \`blitz-chat.html\` still supported) and note (\`blitz-note.html\`) are themselves widgets built this way — read them with get_system_ui as templates; the user can have you rewrite them with customize_widget.
 
-Available data resources (provider/resource): ${listProviderResources()
-  .map((s) => `\`${s}\``)
-  .join(', ')}. Requesting any other pair rejects — to back a widget with a new
-resource, that pair must be added to the OS's PROVIDER_DATA registry first.
-
 ## Rules
 
-- **Never store secrets in the widget.** Tokens stay in the OS; \`blitz.data\` returns
-  only normalized data, never the token.
+- **Never store secrets in the widget.** A widget never fetches; the agent gathers data
+  (open a web surface, read it) and pushes it into props.
 - **Replacing a widget's html reloads it from scratch** (all in-widget JS state is
-  lost). Push live data over \`blitz.data\` / re-render from \`onProps\` — do NOT update a
-  widget by rewriting its html.
-- Declare what you use: when you \`save_widget\`, set \`needs:['discord']\` so the OS can
-  tell the user to connect it.
+  lost). Push live data over props / re-render from \`onProps\` — do NOT update a widget
+  by rewriting its html.
 
 ## Minimal template
+
+The agent gathers the rows and passes them in via props (\`spawn_widget {name, props:{items}}\`);
+the widget renders them and re-renders on \`onProps\` as the agent drives it.
 
 \`\`\`html
 <!doctype html><meta charset="utf-8">
 <style>body{font:13px/1.4 -apple-system,system-ui;margin:0;padding:10px;color:#e6edf3;background:#0e1116}
 button.row{width:100%;border:0;color:inherit;background:transparent;font:inherit;text-align:left;cursor:pointer}
-.row{display:flex;gap:8px;align-items:center;padding:6px;border-radius:8px}.row:hover{background:#1b2230}
-img{width:22px;height:22px;border-radius:6px}</style>
-<div id="list">Loading…</div>
+.row{display:flex;gap:8px;align-items:center;padding:6px;border-radius:8px}.row:hover{background:#1b2230}</style>
+<div id="list">Nothing yet.</div>
 <script>
-  window.blitz.ready(async () => {
-    try {
-      const { items } = await window.blitz.data('discord', 'guilds')
-      const list = document.getElementById('list')
-      list.textContent = ''
-      for (const it of items) {
-        const row = document.createElement(it.url ? 'button' : 'div')
-        row.className = 'row'
-        if (it.url) row.onclick = () => window.blitz.tool('open_window', { url: it.url })
-        if (it.icon) { const img = document.createElement('img'); img.src = it.icon; row.appendChild(img) }
-        const label = document.createElement('span'); label.textContent = it.label; row.appendChild(label)
-        list.appendChild(row)
-      }
-      if (!items.length) list.textContent = 'Nothing here.'
-    } catch (e) { document.getElementById('list').textContent = String(e.message || e) }
-  })
+  function render(p) {
+    const items = (p && p.items) || []
+    const list = document.getElementById('list')
+    list.textContent = ''
+    for (const it of items) {
+      const row = document.createElement(it.url ? 'button' : 'div')
+      row.className = 'row'
+      if (it.url) row.onclick = () => window.blitz.tool('open_window', { url: it.url })
+      const label = document.createElement('span'); label.textContent = it.label; row.appendChild(label)
+      list.appendChild(row)
+    }
+    if (!items.length) list.textContent = 'Nothing yet.'
+  }
+  window.blitz.ready(render)
+  window.blitz.onProps(render)
 </script>
 \`\`\`
 
-Author with \`save_widget { name, html, lang?, description, needs, props }\`; it then appears
+Author with \`save_widget { name, html, lang?, description, props }\`; it then appears
 in \`list_widgets\` for everyone. Fork by \`get_widget_source\` -> edit -> \`save_widget\`
 (set \`forkedFrom\` to the original name).`
 

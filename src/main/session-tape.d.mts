@@ -13,7 +13,7 @@ export function makeSessionTape(opts: {
   moment(m: unknown): void
   agentSpawn(info: unknown): void
   diagError(e: unknown): void
-  snapshot(reason: string, payload: { files?: Record<string, string>; permissions?: unknown; bookmarks?: unknown; integrations?: unknown } | null): void
+  snapshot(reason: string, payload: { files?: Record<string, string>; permissions?: unknown; bookmarks?: unknown } | null): void
   frame(image: Buffer | Uint8Array | null, meta?: { format?: string; w?: number; h?: number }): void
   registerTranscript(agent: string | number, path: string, startAtEof?: boolean): void
   flushTranscripts(): void

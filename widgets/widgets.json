@@ -77,20 +77,6 @@
     "version": 1
   },
   {
-    "name": "discord-servers",
-    "description": "Your Discord servers (guilds) as a live grid — icons, names, owner badge; click to open in Discord.",
-    "needs": ["discord"],
-    "props": { "title": "Discord servers" },
-    "version": 1
-  },
-  {
-    "name": "github-repos",
-    "description": "Your most recently updated GitHub repositories — name, description, private/star badge; click to open.",
-    "needs": ["github"],
-    "props": { "title": "GitHub repos" },
-    "version": 1
-  },
-  {
     "name": "remix",
     "description": "Remix the web — a control surface that lets the user redesign any website. The user opens a site and says what to change; YOU (the agent) do the work and render it back. The widget emits the user's intents as chat messages you receive via /events: `remix open <url>`, `remix instant <directive>` (fast ephemeral re-skin of the current page), `remix smart <directive>` (a DURABLE rule you build in the background — surgical or re-skin — that persists every visit), `remix act <ref>` (a click on a data-act element in the current view → open that link's page), `remix back`, `remix toggle|remove <id>`. To fulfill: fetch/extract the REAL page (open_window+read_window, or a public API), then push results into THIS widget with update_surface{props:{ view:'<styled HTML fragment using the .rmx design classes — .item/.av/.nm/.body/.acts/.article/.prose/.card, data-act on every clickable thing>', url, status, busy, remixes:[{id,name,enabled}] }}. NEVER invent data — render only what's really on the page. Spawn with spawn_widget{name:'remix'}.",
     "needs": [],

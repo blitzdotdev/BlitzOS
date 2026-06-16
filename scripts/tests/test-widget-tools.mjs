@@ -7,11 +7,11 @@ let fail = 0
 const ok = (n, c) => (c ? (pass++, console.log('  ✓ ' + n)) : (fail++, console.log('  ✗ ' + n)))
 
 console.log('# the allowlist allows the intended OS tools')
-for (const t of ['create_surface', 'open_window', 'move_surface', 'update_surface', 'close_surface', 'go_to_primary', 'list_state', 'provider_call', 'set_theme']) ok('allows ' + t, isWidgetTool(t))
+for (const t of ['create_surface', 'open_window', 'move_surface', 'update_surface', 'close_surface', 'go_to_primary', 'list_state', 'set_theme']) ok('allows ' + t, isWidgetTool(t))
 
 console.log('\n# …and DENIES everything dangerous / off-list (no relay pass-through)')
-for (const t of ['eval', 'surface_control', 'read_window', 'save_widget', 'customize_widget', 'group', '__proto__', 'constructor', '', 'createSurface']) ok('denies ' + JSON.stringify(t), !isWidgetTool(t))
-ok('the allowlist is exactly the 9 intended tools', WIDGET_TOOLS.length === 9)
+for (const t of ['eval', 'surface_control', 'read_window', 'save_widget', 'customize_widget', 'group', 'provider_call', '__proto__', 'constructor', '', 'createSurface']) ok('denies ' + JSON.stringify(t), !isWidgetTool(t))
+ok('the allowlist is exactly the 8 intended tools', WIDGET_TOOLS.length === 8)
 
 console.log('\n# the runner enforces the allowlist + never throws')
 const calls = []
@@ -47,8 +47,7 @@ const mockOps = {
   closeSurface: (id) => opsCalls.push(['closeSurface', id]),
   goToPrimary: () => opsCalls.push(['goToPrimary']),
   // raw full state, incl. html + props (the transcript) the handler must strip:
-  getState: () => ({ workspace: 'W', workspace_path: '/w', camera: { x: 1 }, surfaces: [{ id: 'a', kind: 'srcdoc', x: 0, y: 0, w: 2, h: 3, z: 4, zoom: 1, title: 'T', url: 'u', component: 'c', pinned: true, html: '<b>SECRET</b>', props: { messages: ['PRIVATE'] } }] }),
-  providerCall: (desc, transport) => ({ _desc: desc, _transport: transport })
+  getState: () => ({ workspace: 'W', workspace_path: '/w', camera: { x: 1 }, surfaces: [{ id: 'a', kind: 'srcdoc', x: 0, y: 0, w: 2, h: 3, z: 4, zoom: 1, title: 'T', url: 'u', component: 'c', pinned: true, html: '<b>SECRET</b>', props: { messages: ['PRIVATE'] } }] })
 }
 const H = makeWidgetToolHandlers(mockOps)
 
@@ -76,9 +75,6 @@ const ls = H.list_state()
 const s0 = ls.surfaces[0]
 ok('list_state keeps layout fields + workspace', s0.id === 'a' && s0.w === 2 && s0.pinned === true && ls.workspace === 'W' && ls.workspace_path === '/w')
 ok('list_state DROPS html + props (no transcript leak)', !('html' in s0) && !('props' in s0))
-// provider_call routes through ops.providerCall with the gated 'relay' transport + the descriptor
-const pc = H.provider_call({ provider: 'gh', path: '/user/repos', method: 'GET' })
-ok('provider_call → ops.providerCall(descriptor, "relay")', pc._transport === 'relay' && pc._desc.provider === 'gh' && pc._desc.path === '/user/repos')
 // the handler map is exactly the allowlist (no extra / missing tools)
 ok('handler keys === the allowlist', JSON.stringify(Object.keys(H).sort()) === JSON.stringify([...WIDGET_TOOLS].sort()))
 

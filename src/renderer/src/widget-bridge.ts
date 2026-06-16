@@ -2,16 +2,16 @@
 // injected into every `srcdoc` widget (the `window.blitz` shim below).
 //
 // A widget is a sandboxed iframe (`sandbox="allow-scripts"`, no same-origin, no
-// network). Its ONLY channel to the OS — and through the OS to the user's connected
-// integrations — is postMessage. The renderer prepends BRIDGE_SHIM to every widget's
-// srcDoc so `window.blitz` is always present; the widget's own (forkable) html never
-// contains the shim. Keep this in sync with widget-catalog.mjs's WIDGET_AUTHORING_MD.
+// network). Its ONLY channel to the OS is postMessage. The renderer prepends
+// BRIDGE_SHIM to every widget's srcDoc so `window.blitz` is always present; the
+// widget's own (forkable) html never contains the shim. Keep this in sync with
+// widget-catalog.mjs's WIDGET_AUTHORING_MD.
 //
 // Wire protocol (widget <-> parent):
 //   widget -> parent  { type:'blitz:hello' }                                  (I'm alive)
 //   parent -> widget  { type:'blitz:init',  props }                           (seed/rehydrate)
 //   parent -> widget  { type:'blitz:props', props }                           (live prop change, no reload)
-//   widget -> parent  { type:'blitz:req',   reqId, op:'data', provider, resource }
+//   widget -> parent  { type:'blitz:req',   reqId, op:'tool', tool, args }
 //   parent -> widget  { type:'blitz:res',   reqId, ok, data? , error? }
 //
 // The parent authenticates the sender by object identity (event.source ===
@@ -69,7 +69,6 @@ export const BRIDGE_SHIM = `<script>
     });
   }
   window.blitz = {
-    data: function (provider, resource) { return request('data', { provider: provider, resource: resource }); },
     tool: function (tool, args) { return request('tool', { tool: tool, args: args || {} }); },
     sendMessage: function (text, sessionId) { return request('msg', { text: String(text == null ? '' : text), sessionId: sessionId == null ? undefined : String(sessionId) }); },
     chat: function (op, args) { return request('chat', { chatOp: String(op || ''), args: args || {} }); },

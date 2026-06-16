@@ -33,10 +33,10 @@ export function startControlServer(): void {
       return
     }
 
-    // NOTE: /provider_call and /group are dispatched below by the GENERIC shared-registry handler
-    // (OS_TOOLS_BY_PATH) with transport:'localhost' — no per-path alias here. The old hand-written aliases
-    // had drifted (the /group alias dropped x/y that the shared handler forwards); deleting them keeps the
-    // localhost path from rotting behind the relay, which is the whole point of the shared os-tools.mjs.
+    // NOTE: /group is dispatched below by the GENERIC shared-registry handler (OS_TOOLS_BY_PATH) with
+    // transport:'localhost' — no per-path alias here. The old hand-written aliases had drifted (the /group
+    // alias dropped x/y that the shared handler forwards); deleting them keeps the localhost path from
+    // rotting behind the relay, which is the whole point of the shared os-tools.mjs.
 
     // POST /surfaces/:id/control (also /windows/:id/control) — act inside a web surface.
     const ctl = req.method === 'POST' && req.url ? /^\/(?:surfaces?|windows)\/([^/]+)\/control$/.exec(req.url) : null
@@ -129,7 +129,7 @@ export function startControlServer(): void {
     // localhost path serve the FULL agent tool surface (list_state, create_surface, read_window, say,
     // list/create/switch_workspace, new_app, …) instead of the old stale subset that 404'd. Trusted
     // transport: eval allowed, DOM reads + moments unredacted. The legacy aliases above (/state, /windows,
-    // /surface, /provider_call, /group, /events, /surfaces/:id/control) are kept for back-compat (caught first).
+    // /surface, /group, /events, /surfaces/:id/control) are kept for back-compat (caught first).
     const toolPath = req.url ? req.url.split('?')[0] : ''
     const tool = req.method === 'POST' ? OS_TOOLS_BY_PATH[toolPath] : undefined
     if (tool) {

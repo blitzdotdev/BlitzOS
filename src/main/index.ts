@@ -3,9 +3,7 @@ import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { startControlServer } from './control-server'
-import { registerIntegrations } from './integrations'
-import { setProviderBroadcast, resolveProviderApproval, denyProviderApproval, grantProviderConsent, setProviderConsentPersist, loadProviderConsent } from './provider-bridge'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osLoadConsent, osPersistConsent, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, osRadialPhase } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, osRadialPhase } from './osActions'
 import { emitSystemMoment, setMomentTap } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -381,10 +379,7 @@ app.whenReady().then(() => {
   // Register the IPC for web-surface CDP control (renderer reports guest ids).
   initCdp()
 
-  // Real integration auth (loopback OAuth SSO), tokens in Keychain.
-  registerIntegrations(() => mainWindow)
-
-  // Widget data bridge: relays sandboxed widgets' integration-data requests (consented).
+  // Widget bridge: a sandboxed widget calls an OS tool (blitz.tool, CLOSED allowlist).
   registerWidgets()
 
   // Onboarding/boot frosted backdrop: serve the user's macOS wallpaper to the renderer.
@@ -394,25 +389,6 @@ app.whenReady().then(() => {
   registerOnboarding(() => mainWindow)
   initUpdater() // OTA poll (packaged builds only — no-op in dev)
 
-  // #51 general provider-access substrate: route write-approval cards to the renderer, and accept the
-  // human's approve/deny/consent back. Reads need none of this; only WRITES surface a card.
-  setProviderBroadcast((a) => mainWindow?.webContents.send('os:action', a))
-  ipcMain.handle('os:provider-approve', (_e, id: string) => {
-    resolveProviderApproval(String(id))
-    return { ok: true }
-  })
-  ipcMain.handle('os:provider-deny', (_e, id: string) => {
-    denyProviderApproval(String(id))
-    return { ok: true }
-  })
-  ipcMain.handle('os:provider-consent', (_e, provider: string, allow: boolean) => {
-    grantProviderConsent(String(provider), allow !== false)
-    return { ok: true }
-  })
-  // #53: restore the active workspace's sensitive-read provider grants + persist future ones (the host
-  // exists now). The widget-grant slice is restored inside registerWidgets() above.
-  loadProviderConsent(osLoadConsent().providers)
-  setProviderConsentPersist((providers) => osPersistConsent({ providers }))
   // #52: group surfaces into a REAL folder (mkdir + mv) — the renderer's Cmd+G in the desktop app.
   // kind:'board' makes a '.board' on-canvas folder (windows/widgets splay live); else a normal file folder.
   ipcMain.handle('os:group', (_e, name: string, ids: string[], kind?: string) =>

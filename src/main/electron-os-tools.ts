@@ -1,6 +1,5 @@
 // Electron's binding of the SHARED tool registry (os-tools.mjs). Maps the runtime-agnostic tool handlers
-// to Electron's primitive operations (osActions = IPC to the renderer + CDP via webContents; provider-bridge
-// for the approval-gated provider engine; integrations for the Keychain-backed connection status). Both
+// to Electron's primitive operations (osActions = IPC to the renderer + CDP via webContents). Both
 // Electron transports import OS_TOOLS / OS_TOOLS_BY_PATH from HERE: agentSocket.ts (relay) maps the array,
 // control-server.ts (localhost) dispatches the by-path map. The server (preview/backend.mjs) builds the SAME
 // registry from its own ops — so there is one tool definition, zero Electron/server difference.
@@ -33,8 +32,6 @@ import {
   osSetTheme,
   type SurfaceDescriptor
 } from './osActions'
-import { runProviderCall } from './provider-bridge'
-import { integrationStatuses, connectedProviders } from './integrations'
 import { makeTerminalOps } from './terminal-ops.mjs'
 import { makeActionItems } from './action-items.mjs'
 import { emitSurfaceAction } from './events'
@@ -76,9 +73,6 @@ export const electronOps = {
   systemUi: (name: string) => osSystemUi(name),
   systemUiInfo: (name: string) => osSystemUiInfo(name),
   groupIntoFolder: (name: string, ids: string[], x: number | undefined, y: number | undefined, kind: 'board' | 'folder') => osGroupIntoFolder(name, ids, x, y, kind),
-  providerCall: (descriptor: Parameters<typeof runProviderCall>[0], transport: 'relay' | 'localhost') => runProviderCall(descriptor, transport === 'localhost' ? 'localhost' : 'relay'),
-  integrationStatuses: () => integrationStatuses(),
-  connectedProviders: () => connectedProviders(),
   setTheme: (theme: { accent?: unknown; accentDeep?: unknown }) => osSetTheme(theme)
 } as Record<string, (...args: never[]) => unknown>
 
