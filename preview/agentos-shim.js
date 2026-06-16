@@ -278,7 +278,41 @@
     },
     actionClear: function (id) {
       fetch(API + '/os/action-clear', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) }).catch(function () {})
-    }
+    },
+
+    // ---- Electron-preload methods that need SERVER-MODE PARITY. In the browser preview these concepts
+    // don't exist (sandwich input forwarding, native per-tab WebContentsView, TCC/onboarding, the radial /
+    // keybind / shift-tap IPC), so they are inert here — but they MUST be PRESENT: the renderer calls
+    // several of them unconditionally at mount (e.g. `window.agentOS?.onShiftTap(cb)` — the `?.` guards
+    // agentOS, NOT the method), and one missing method throws in a mount effect and blanks the whole app.
+    // (The parity gate checks shared .mjs cores, not this preload surface — it did not catch this gap.)
+    // Subscribers return a no-op unsubscribe; voids no-op; the rest resolve a sensible default.
+    onShiftTap: function () { return function () {} },
+    onKeybind: function () { return function () {} },
+    onRadialKey: function () { return function () {} },
+    onShellFullScreen: function () { return function () {} },
+    onWebTab: function () { return function () {} },
+    onPageCursor: function () { return function () {} },
+    nativeInput: false, // server mode never uses native click-through input forwarding
+    nativePassthrough: function () {},
+    pageInput: function () {},
+    pageFocus: function () {},
+    uiFocus: function () {},
+    shellDrag: function () {},
+    webGeometry: function () {},
+    webContentsViewSync: function () {},
+    webContentsViewNavigate: function () {},
+    webContentsViewNavAction: function () {},
+    webContentsViewClose: function () {},
+    decidePermission: function () {},
+    annotate: function () {},
+    reportError: function () {},
+    requestHydrate: function () {}, // server hydration arrives via the SSE 'hydrate' action (onAction), not a pull
+    agentRuntimeGet: function () { return Promise.resolve({}) },
+    agentRuntimeSet: function () { return Promise.resolve({}) },
+    bookmarksList: function () { return Promise.resolve([]) },
+    bookmarksToggle: function () { return Promise.resolve({ ok: false }) },
+    onboarding: { dismissUnlock: function () { return Promise.resolve({ ok: true }) } }
   }
 
   console.info('[agent-os preview] fetch+SSE client active (surface model) — agent actions arrive over /api/os/events.')
