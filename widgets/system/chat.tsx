@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Bot, Circle, Loader2, MessageSquarePlus, Send, Sparkles, Square, TriangleAlert } from 'lucide-react'
+import { Bot, Circle, Loader2, MessageSquarePlus, Pencil, RotateCcw, Send, Sparkles, Square, TriangleAlert } from 'lucide-react'
 
-const CHAT_RENDERER_VERSION = 'chat-watching-state-v5'
+const CHAT_RENDERER_VERSION = 'chat-actions-v6'
 
 type ChatMessage = { role: 'user' | 'agent' | string; text: string; ts?: number; ref?: Record<string, unknown> }
 type ChatSession = { id: string; title?: string; status?: ChatStatus; updatedAt?: number; lastMessagePreview?: string; unread?: boolean }
@@ -262,6 +262,8 @@ export default function ChatHub(): JSX.Element {
   const [draft, setDraft] = useState('')
   const [isSpawning, setIsSpawning] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
   const logRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -292,6 +294,15 @@ export default function ChatHub(): JSX.Element {
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 42), 104)}px`
   }, [draft])
 
+  // Switching threads abandons any in-flight rename / pending clear confirmation.
+  useEffect(() => { setEditingTitle(false); setConfirmClear(false) }, [active])
+  // A pending "Clear context?" confirmation lapses on its own (sandbox blocks window.confirm).
+  useEffect(() => {
+    if (!confirmClear) return
+    const t = setTimeout(() => setConfirmClear(false), 3200)
+    return () => clearTimeout(t)
+  }, [confirmClear])
+
   function send(text: string): void {
     const clean = text.trim()
     if (!clean) return
@@ -307,6 +318,22 @@ export default function ChatHub(): JSX.Element {
         if (r?.id != null) setActive(String(r.id))
       })
       .finally(() => setIsSpawning(false))
+  }
+
+  // Retitle this thread (host: chat('rename') → osRenameAgent). No-op on empty/unchanged.
+  function renameTo(title: string): void {
+    setEditingTitle(false)
+    const clean = title.trim()
+    if (!clean || clean === (activeSession.title || '')) return
+    window.blitz?.chat?.('rename', { id: activeSession.id, title: clean }).catch(() => {})
+  }
+
+  // "New context" — rotate this agent's session id + restart for a FRESH context (host: chat('clear') →
+  // clearAgentContext). Destructive, so two-step: the first click arms it, the second confirms.
+  function clearContext(): void {
+    if (!confirmClear) { setConfirmClear(true); return }
+    setConfirmClear(false)
+    window.blitz?.chat?.('clear', { id: activeSession.id }).catch(() => {})
   }
 
   function onScroll(): void {
@@ -345,12 +372,35 @@ export default function ChatHub(): JSX.Element {
           <div className="title-wrap">
             <Bot size={17} />
             <div>
-              <h1>{activeSession.title || 'Chat'}</h1>
+              {editingTitle ? (
+                <input
+                  className="title-edit"
+                  autoFocus
+                  defaultValue={activeSession.title || ''}
+                  onBlur={(event) => renameTo(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') { event.preventDefault(); renameTo(event.currentTarget.value) }
+                    else if (event.key === 'Escape') { event.preventDefault(); setEditingTitle(false) }
+                  }}
+                />
+              ) : (
+                <h1 onDoubleClick={() => setEditingTitle(true)} title="Double-click to rename">{activeSession.title || 'Chat'}</h1>
+              )}
               <div className={`status-pill ${status}`}>
                 {statusIcon(status)}
                 <span>{statusLabel(status, hasMessages)}</span>
               </div>
             </div>
+          </div>
+          <div className="header-actions">
+            <button type="button" className="ghost-action" onClick={() => setEditingTitle(true)} title="Rename this chat">
+              <Pencil size={14} />
+              <span>Rename</span>
+            </button>
+            <button type="button" className={`ghost-action ${confirmClear ? 'confirming' : ''}`} onClick={clearContext} title="Start a fresh context for this agent (clears its working memory)">
+              <RotateCcw size={14} />
+              <span>{confirmClear ? 'Clear context?' : 'New context'}</span>
+            </button>
           </div>
         </header>
 
@@ -588,6 +638,25 @@ body {
   font-weight: 700;
 }
 .ghost-action:hover { color: var(--blitz-text, #1f2328); background: rgba(0,0,0,.035); }
+.header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; }
+.ghost-action.confirming {
+  color: var(--blitz-danger, #eb1d36);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blitz-danger, #eb1d36) 50%, transparent);
+}
+.title-edit {
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+  max-width: 230px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--blitz-accent, #eb1d36) 50%, transparent);
+  border-radius: 8px;
+  outline: none;
+  color: var(--blitz-text, #1f2328);
+  background: var(--blitz-surface, #fff);
+}
+.title-edit:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blitz-accent, #eb1d36) 12%, transparent); }
 .message-log {
   flex: 1 1 0;
   min-height: 0;
