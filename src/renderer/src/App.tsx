@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FocusEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useDesktop, viewTransform, orderedStageRect, addStageRect, stageForAgent, nextTerminalName, latticeFor, nearestFreeSlot, effectiveZ, type CreateSurfaceInput } from './store'
@@ -2178,6 +2178,22 @@ export default function App(): JSX.Element {
   const showAreaFrames = mode === 'canvas' || (mode === 'desktop' && transform.scale < AREA_FRAME_SCALE_THRESHOLD)
   const showAddAreaFrame = showAreaFrames && transform.scale < AREA_ADD_SCALE_THRESHOLD
 
+  // Stable handler identities for the memo'd SurfaceFrame. Without these, every App render (each
+  // camera pan / drag-move / unrelated setState) hands all N frames fresh callback props and defeats
+  // their React.memo — so all N reconcile every frame. requestMinimize/requestToggleMaximize are
+  // re-declared each render (long bodies, awkward deps), so a latest-ref delegate gives them a stable
+  // wrapper that always calls the current version; the two inline handlers only need stable setters.
+  const sfHandlersRef = useRef({ requestMinimize, requestToggleMaximize })
+  sfHandlersRef.current.requestMinimize = requestMinimize
+  sfHandlersRef.current.requestToggleMaximize = requestToggleMaximize
+  const onSfMinimize = useCallback((id: string) => { void sfHandlersRef.current.requestMinimize(id) }, [])
+  const onSfToggleMaximize = useCallback((id: string) => { void sfHandlersRef.current.requestToggleMaximize(id) }, [])
+  const onSfDirRenameDone = useCallback(() => setRenamingDirPath(null), [])
+  const onSfDirContextMenu = useCallback((id: string, x: number, y: number) => {
+    setMenu(null)
+    setFolderMenu({ id, x, y })
+  }, [])
+
   return (
     <div
       id="root-canvas"
@@ -2260,15 +2276,12 @@ export default function App(): JSX.Element {
             <SurfaceFrame
               key={s.id}
               surface={s}
-              onRequestMinimize={requestMinimize}
-              onRequestToggleMaximize={requestToggleMaximize}
+              onRequestMinimize={onSfMinimize}
+              onRequestToggleMaximize={onSfToggleMaximize}
               restoring={dockAnimations[s.id] === 'restoring'}
               renamingDirPath={renamingDirPath}
-              onDirRenameDone={() => setRenamingDirPath(null)}
-              onDirContextMenu={(id, x, y) => {
-                setMenu(null)
-                setFolderMenu({ id, x, y })
-              }}
+              onDirRenameDone={onSfDirRenameDone}
+              onDirContextMenu={onSfDirContextMenu}
             />
           )
         )}
