@@ -1,6 +1,6 @@
 // Stage placer invariants (plans/blitzos-stage-slot-desktop.md P1) — pure, no display.
 // Run: node scripts/test-stage-core.mjs
-import { latticeFor, slotRect, findSlot, nearestFreeSlot, occupancy, budgetUsed, stageSummary, flowFiles, spanOf, sizeForDims, sizePx, STAGE_BUDGET, TILE, SIZE_ORDER } from '../src/renderer/src/stage-core.mjs'
+import { latticeFor, slotRect, findSlot, nearestFreeSlot, occupancy, budgetUsed, stageSummary, flowFiles, spanOf, sizeForDims, sizePx, STAGE_BUDGET, TILE, SIZE_ORDER } from '../../src/renderer/src/stage-core.mjs'
 
 let pass = 0
 let fail = 0

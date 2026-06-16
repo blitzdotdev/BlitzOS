@@ -4,10 +4,10 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { makeOsToolsByPath } from '../src/main/os-tools.mjs'
-import { writeWorkspace, readWorkspace } from '../src/main/workspace.mjs'
-import { latticeFor, cardRect, slotOf, spanOf, occupancy, STAGE_BUDGET } from '../src/renderer/src/stage-core.mjs'
-import { stageRect } from '../src/renderer/src/stages-core.mjs'
+import { makeOsToolsByPath } from '../../src/main/os-tools.mjs'
+import { writeWorkspace, readWorkspace } from '../../src/main/workspace.mjs'
+import { latticeFor, cardRect, slotOf, spanOf, occupancy, STAGE_BUDGET } from '../../src/renderer/src/stage-core.mjs'
+import { stageRect } from '../../src/renderer/src/stages-core.mjs'
 
 let pass = 0
 let fail = 0

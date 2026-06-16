@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // v2 cross-workspace bleed fix: moments are stamped with the workspace active at emission, and a
 // workspace-pinned waiter only sees its own workspace's moments. Run: node scripts/test-perception-scope.mjs
-import { setWorkspaceProvider, emitUserMessage, waitForEvents, latestSeq } from '../src/main/perception-core.mjs'
-import { buildBootstrap } from '../src/main/agent-runtime.mjs'
+import { setWorkspaceProvider, emitUserMessage, waitForEvents, latestSeq } from '../../src/main/perception-core.mjs'
+import { buildBootstrap } from '../../src/main/agent-runtime.mjs'
 
 let failed = 0
 const ok = (cond, msg) => {

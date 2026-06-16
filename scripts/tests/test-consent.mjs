@@ -1,7 +1,7 @@
 // #53 — prove per-workspace consent persists to .blitzos/state/consent.json and is restored on boot
 // (a fresh host on the same folder reads the prior grants), and is swapped per workspace.
-import { writeConsent, readConsent } from '../src/main/workspace.mjs'
-import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
+import { writeConsent, readConsent } from '../../src/main/workspace.mjs'
+import { createWorkspaceHost } from '../../src/main/workspace-host.mjs'
 import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

@@ -1,6 +1,6 @@
 // Phase 1 — the blitz.tool security seam: a sandboxed widget may call ONLY the closed allowlist, and the
 // runner enforces it before dispatch. ONE shared allowlist (widget-tools.mjs) imported by both transports.
-import { WIDGET_TOOLS, isWidgetTool, makeWidgetToolRunner, makeWidgetToolHandlers } from '../src/main/widget-tools.mjs'
+import { WIDGET_TOOLS, isWidgetTool, makeWidgetToolRunner, makeWidgetToolHandlers } from '../../src/main/widget-tools.mjs'
 
 let pass = 0
 let fail = 0

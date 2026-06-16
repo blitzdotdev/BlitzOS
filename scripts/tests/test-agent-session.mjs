@@ -5,7 +5,7 @@
 // Also covers the agent-runtime-moments backends: the onboarding-interview FAST settings (low effort + a
 // standard-context model, beating the user's global config) and the codex-serverless peer backend. The
 // effort knob is an onboarding-SPEED concern, not a context-clearing difference. Pure: a temp sessionsDir.
-import { ensureClaudeSessionId, prepareAgentLaunch, buildClaudeCommand, buildCodexServerlessCommand, setBootTaskProvider } from '../src/main/agent-runtime.mjs'
+import { ensureClaudeSessionId, prepareAgentLaunch, buildClaudeCommand, buildCodexServerlessCommand, setBootTaskProvider, RESIDENT_EFFORT, INTERVIEW_FAST_MODEL } from '../../src/main/agent-runtime.mjs'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,7 +39,9 @@ ok('primary command uses --resume (continues its session)', cmd0.includes('--res
 const prep = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md' })
 ok('prepareAgentLaunch returns established=true for an established primary', prep.established === true)
 ok('prepareAgentLaunch command resumes the persisted id', prep.command.includes('--resume PRIMARY-UUID'))
-ok('primary with NO duty runs at default effort (no override)', !prep.command.includes('--settings') && !prep.command.includes('--effort'))
+// A non-interview Claude agent (primary or spawned) runs at RESIDENT_EFFORT (xhigh) so it decides well within
+// the act/ask boundary; only EFFORT is raised — the user's own MODEL is kept (no fast-model pin; that's interview-only).
+ok(`primary with NO duty runs at RESIDENT effort (--effort ${RESIDENT_EFFORT}), user model kept`, prep.command.includes(`--effort ${RESIDENT_EFFORT}`) && !prep.command.includes(`--model ${INTERVIEW_FAST_MODEL}`))
 
 // 2b) the ONBOARDING INTERVIEW duty (onboarding-speed knob, NOT a context difference) forces FAST settings:
 // a standard-context model + low effort, written via --settings so it BEATS the user's global config/env.
@@ -50,10 +52,10 @@ ok('interview forces low effort (--effort low)', prepDuty.command.includes('--ef
 ok('interview writes --settings beating global effortLevel', prepDuty.command.includes('--settings') && prepDuty.command.includes('"effortLevel":"low"'))
 ok('interview overrides global CLAUDE_CODE_EFFORT_LEVEL', prepDuty.command.includes('"CLAUDE_CODE_EFFORT_LEVEL":"low"'))
 
-// 2c) a NON-interview resident duty stays at the user's normal effort (no fast override)
+// 2c) a NON-interview resident duty runs at RESIDENT_EFFORT (xhigh), NOT the interview's low/fast-model knob
 setBootTaskProvider((id) => (String(id) === '0' ? 'THE RESIDENT INITIATIVE DUTY. propose initiatives' : null))
 const prepResident = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md' })
-ok('resident (non-interview) duty stays at normal effort', !prepResident.command.includes('--settings') && !prepResident.command.includes('--effort low'))
+ok(`resident (non-interview) duty runs at RESIDENT effort (--effort ${RESIDENT_EFFORT}), not interview low/model`, prepResident.command.includes(`--effort ${RESIDENT_EFFORT}`) && !prepResident.command.includes('--effort low') && !prepResident.command.includes(`--model ${INTERVIEW_FAST_MODEL}`))
 setBootTaskProvider(null)
 
 // 3) spawned agent '1' behaves IDENTICALLY to the primary — resumes when established

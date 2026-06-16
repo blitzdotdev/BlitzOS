@@ -35,8 +35,7 @@ const SHARED_CORES = [
   'agent-runtime',   // an agent = a claude in a tmux terminal (bootstrap + claude command + --resume id)
   'workspace-host',  // folder-backed workspace host
   'control-core',    // CDP control vocabulary
-  'provider-call',   // integration/provider calls
-  'widget-tools',    // sandboxed-widget data bridge
+  'widget-tools',    // sandboxed-widget tool/props bridge
   'terminal-ops',    // multi-terminal lifecycle (tmux-backed, workspace-keyed)
   'action-items'     // the human Action-items inbox (request_action / resolve, workspace-keyed)
 ]

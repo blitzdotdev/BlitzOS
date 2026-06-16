@@ -285,8 +285,9 @@ app.whenReady().then(() => {
   // a wired control plane; before everything else so boot-time errors are captured.
   initTelemetry(() => mainWindow)
   // Session tape (plans/blitzos-logging.md): the local model-loop spool. Multi-subscriber taps, so it
-  // coexists with telemetry. Local-only, never uploads. Gate off with BLITZ_TAPE=0.
-  if (process.env.BLITZ_TAPE !== '0') {
+  // coexists with telemetry. Local-only, never uploads. DEFAULT-OFF (the plan's M0 posture: no config =
+  // no capture) because moments can carry typed input + token-bearing URLs — opt in with BLITZ_TAPE=1.
+  if (process.env.BLITZ_TAPE === '1') {
     try {
       sessionTape = makeSessionTape({
         getRoot: () => osWorkspacesRoot(),

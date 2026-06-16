@@ -1,7 +1,7 @@
 // Unit tests for the content-agnostic popup classifier (popup-policy.mjs) — the de-hostnamed core of
 // item 3. Asserts every branch by web-platform signal, NOT by site. Plain node; no electron/browser.
 import assert from 'node:assert/strict'
-import { classifyPopup, parseFeatures } from '../src/main/popup-policy.mjs'
+import { classifyPopup, parseFeatures } from '../../src/main/popup-policy.mjs'
 
 let passed = 0
 function t(name, fn) {

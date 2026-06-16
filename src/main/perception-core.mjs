@@ -445,7 +445,7 @@ export const INJECT = `(() => {
   const act = () => { lastAct = Date.now(); idleSent = false; };
   addEventListener('keydown', (e) => { act(); push({ type: 'key', key: e.key, meta: (e.metaKey || e.ctrlKey) || undefined }); }, true);
   addEventListener('click', (e) => { act(); const t = e.target; push({ type: 'click', tag: t && t.tagName, txt: ((t && t.innerText) || '').trim().slice(0, 40) }); }, true);
-  addEventListener('input', (e) => { act(); const t = e.target; push({ type: 'input', tag: t && t.tagName, val: ((t && t.value) || '').slice(0, 80) }); }, true);
+  addEventListener('input', (e) => { act(); const t = e.target; const secret = t && (t.type === 'password' || t.autocomplete === 'one-time-code' || t.autocomplete === 'current-password' || t.autocomplete === 'new-password'); push({ type: 'input', tag: t && t.tagName, val: secret ? '' : ((t && t.value) || '').slice(0, 80) }); }, true);
   addEventListener('pointerdown', (e) => { act(); push({ type: 'pointer', tag: e.target && e.target.tagName, x: Math.round(e.clientX || 0), y: Math.round(e.clientY || 0) }); }, true);
   // text selection: the human highlighting a passage is a deliberate "look at this" gesture
   addEventListener('mouseup', () => { try { const s = String((window.getSelection && getSelection()) || '').replace(/\\s+/g, ' ').trim(); if (s.length > 2) { act(); push({ type: 'select', text: s.slice(0, 500) }); } } catch (e) {} }, true);

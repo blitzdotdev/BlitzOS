@@ -1,6 +1,6 @@
 // #52 — prove "group into folder" is a REAL filesystem op: mkdir a subdir + mv the members' files in;
 // the result is ONE folder tile (reconcile is non-recursive, so a many-file folder/repo stays one tile).
-import { writeWorkspace, readWorkspace, reconcileWorkspace, groupIntoFolder, removeSurfaceFile } from '../src/main/workspace.mjs'
+import { writeWorkspace, readWorkspace, reconcileWorkspace, groupIntoFolder, removeSurfaceFile } from '../../src/main/workspace.mjs'
 import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

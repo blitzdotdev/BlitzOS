@@ -6,7 +6,7 @@
 //   (B) REJECTS a stale re-push of a surface we just authoritatively closed, so a still-connected renderer
 //       can't resurrect it.
 //   node scripts/test-runtime-surface-guard.mjs
-import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
+import { createWorkspaceHost } from '../../src/main/workspace-host.mjs'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

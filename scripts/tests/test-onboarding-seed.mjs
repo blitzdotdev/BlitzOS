@@ -3,14 +3,14 @@
 // fixtures → buildBoardPlan → assert STAGE-LATTICE placement (content-driven slot sizes, live
 // occupancy incl. the chat hub, shrink-then-park overflow), props shape, and invariants.
 // No Electron, no model. Run: node scripts/test-onboarding-seed.mjs
-import { buildBoardPlan, unlockCardProps, findUnlockSlot, UNLOCK_SIZE } from '../src/main/onboarding-board.mjs'
-import { latticeFor, spanOf } from '../src/renderer/src/stage-core.mjs'
-import { stageRect } from '../src/renderer/src/stages-core.mjs'
+import { buildBoardPlan, unlockCardProps, findUnlockSlot, UNLOCK_SIZE } from '../../src/main/onboarding-board.mjs'
+import { latticeFor, spanOf } from '../../src/renderer/src/stage-core.mjs'
+import { stageRect } from '../../src/renderer/src/stages-core.mjs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(dirname(fileURLToPath(import.meta.url)), '..', 'widgets')
-const { getWidgetSource } = await import('../src/main/widget-catalog.mjs')
+process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'widgets')
+const { getWidgetSource } = await import('../../src/main/widget-catalog.mjs')
 
 let failed = 0
 const ok = (cond, msg) => {

@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, rmSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { copyDroppedEntry, writeDroppedFileAt, createFolder, renameFolder, moveIntoFolder, moveOutOfFolder, openFolderEntry, listDir, removeSurfaceFile, writeWorkspace, readWorkspace, reconcileWorkspace } from '../src/main/workspace.mjs'
+import { copyDroppedEntry, writeDroppedFileAt, createFolder, renameFolder, moveIntoFolder, moveOutOfFolder, openFolderEntry, listDir, removeSurfaceFile, writeWorkspace, readWorkspace, reconcileWorkspace } from '../../src/main/workspace.mjs'
 
 let pass = 0
 let fail = 0

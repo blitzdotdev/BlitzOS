@@ -15,7 +15,7 @@ import {
   surfaceStage,
   insertAt,
   identityOrder
-} from '../src/renderer/src/stages-core.mjs'
+} from '../../src/renderer/src/stages-core.mjs'
 
 let failures = 0
 function check(name, ok, detail = '') {
