@@ -1,7 +1,7 @@
 // #51 — prove the write-approval queue: concurrent pending writes are tracked independently (no
 // single-slot overwrite — the review's MAJOR), each resolves exactly once, expiry denies, and the
 // expiry timer is cleared on settle (the nit). Pure Node with injected timers + clock.
-import { createApprovalQueue } from '../src/main/approval-queue.mjs'
+import { createApprovalQueue } from '../../src/main/approval-queue.mjs'
 
 let failures = 0
 const ok = (name, cond, extra) => {

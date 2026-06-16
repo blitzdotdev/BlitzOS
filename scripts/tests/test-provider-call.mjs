@@ -1,5 +1,5 @@
 // #51 — unit test for the callProvider ENGINE (mock fetch + injected clock). Pure Node.
-import { callProvider, callProviderGated, createApprovalLedger, createRateLimiter } from '../src/main/provider-call.mjs'
+import { callProvider, callProviderGated, createApprovalLedger, createRateLimiter } from '../../src/main/provider-call.mjs'
 
 let failures = 0
 const ok = (name, cond, extra) => {

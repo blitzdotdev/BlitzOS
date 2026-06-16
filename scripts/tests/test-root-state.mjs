@@ -5,8 +5,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { readRootState, patchRootState, openBootJournal } from '../src/main/workspace.mjs'
-import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
+import { readRootState, patchRootState, openBootJournal } from '../../src/main/workspace.mjs'
+import { createWorkspaceHost } from '../../src/main/workspace-host.mjs'
 
 let passed = 0
 function t(name, fn) {

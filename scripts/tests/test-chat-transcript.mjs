@@ -3,7 +3,7 @@
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { appendChatMessage, readChatMessages, ensureSystemRenderer, readSystemRenderer, readSystemRendererInfo, isSystemFile, systemRoleOf, writeWorkspace, readWorkspace } from '../src/main/workspace.mjs'
+import { appendChatMessage, readChatMessages, ensureSystemRenderer, readSystemRenderer, readSystemRendererInfo, isSystemFile, systemRoleOf, writeWorkspace, readWorkspace } from '../../src/main/workspace.mjs'
 
 let pass = 0
 let fail = 0

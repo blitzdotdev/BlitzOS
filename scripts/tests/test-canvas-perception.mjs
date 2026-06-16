@@ -2,7 +2,7 @@
 // Canvas-ops perception (the brain sees window movement): coalescing, settle/batch cadence,
 // origin tagging, and primary-only visibility. Pure core — no Electron.
 //   node scripts/test-canvas-perception.mjs   (~12s: real timers, the sweep runs every 2s)
-import { ingestCanvasOps, waitForEvents, latestSeq } from '../src/main/perception-core.mjs'
+import { ingestCanvasOps, waitForEvents, latestSeq } from '../../src/main/perception-core.mjs'
 
 let failed = 0
 const ok = (name, cond, detail = '') => {

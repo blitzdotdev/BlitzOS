@@ -9,7 +9,7 @@ import {
   resourceRoute,
   listResourceNames,
   capturedScopes
-} from '../src/main/provider-specs.mjs'
+} from '../../src/main/provider-specs.mjs'
 
 let failures = 0
 const ok = (name, cond, extra) => {

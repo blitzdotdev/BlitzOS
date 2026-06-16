@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { decryptCookieValue, decryptCookieRows, listProfiles, IMPORT_SOURCES } from '../src/main/browser-import-core.mjs'
+import { decryptCookieValue, decryptCookieRows, listProfiles, IMPORT_SOURCES } from '../../src/main/browser-import-core.mjs'
 
 let failed = 0
 const ok = (cond, msg) => { if (cond) console.log(`  ✓ ${msg}`); else { failed++; console.error(`  ✗ ${msg}`) } }

@@ -1,6 +1,6 @@
 // #51 — prove the fetchProviderResource back-compat shim (now riding callProvider) is unchanged for the
 // widget data path: same { items } normalized output, same 404/401 error codes. Pure Node (stubs fetch).
-import { fetchProviderResource } from '../src/main/widget-catalog.mjs'
+import { fetchProviderResource } from '../../src/main/widget-catalog.mjs'
 
 let failures = 0
 const ok = (name, cond, extra) => {

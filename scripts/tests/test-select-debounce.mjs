@@ -1,7 +1,7 @@
 // Item 5a: `select` moments DEBOUNCE (a highlighting burst → one moment), while nav/idle stay immediate.
 // perception-core is transport-agnostic + electron-free, so we drive it directly.
 import assert from 'node:assert/strict'
-import { ingestSignals, waitForEvents, latestSeq } from '../src/main/perception-core.mjs'
+import { ingestSignals, waitForEvents, latestSeq } from '../../src/main/perception-core.mjs'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let passed = 0

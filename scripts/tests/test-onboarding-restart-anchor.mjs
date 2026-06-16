@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import vm from 'node:vm'
 import ts from 'typescript'
 
-const root = new URL('..', import.meta.url).pathname
+const root = new URL('../..', import.meta.url).pathname
 const source = readFileSync(join(root, 'src/main/onboarding.ts'), 'utf8')
 const compiled = ts.transpileModule(source, {
   compilerOptions: {
@@ -32,9 +32,12 @@ const require = (id) => {
       osSay() {},
       osGetState: () => ({ surfaces: [] }),
       osKickBrain() {},
-      osRestartBrain() {}
+      osRestartBrain() {},
+      osClearBrainContext() {}
     }
   }
+  if (id === './computer-use-helper') return { computerUseHelper: () => ({}) }
+  if (id === './browser-import') return { importGoogleSignin: () => {}, importSources: () => {} }
   if (id === './widget-catalog.mjs') return { getWidgetSource: () => ({ html: '<div></div>' }) }
   if (id === './onboarding-board.mjs') {
     return {

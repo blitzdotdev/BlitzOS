@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createWorkspace, writeWorkspace, readWorkspace, findSurfaceWorkspace, relocateSurface } from '../src/main/workspace.mjs'
+import { createWorkspace, writeWorkspace, readWorkspace, findSurfaceWorkspace, relocateSurface } from '../../src/main/workspace.mjs'
 
 let passed = 0
 function t(name, fn) {

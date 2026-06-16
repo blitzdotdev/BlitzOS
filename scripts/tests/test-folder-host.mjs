@@ -1,7 +1,7 @@
 // #52 — end-to-end proof of the WIRING: the shared workspace host's group() does flush → mkdir+mv →
 // reconcile, with the new folder broadcast to renderers. Drives the real host with a fake adapter +
 // a real temp dir (the host is transport-agnostic; this is exactly what backend.mjs / osActions call).
-import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
+import { createWorkspaceHost } from '../../src/main/workspace-host.mjs'
 import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
