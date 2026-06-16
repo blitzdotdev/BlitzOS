@@ -106,7 +106,13 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
     ui.setIgnoreMouseEvents(on, { forward: true })
   }
 
-  // Manual titlebar drag: move the PARENT by screen deltas; the child follows natively.
+  // Manual titlebar drag: move the PAIR by screen deltas. Move BOTH windows in the SAME tick — the
+  // attached child (ui) does NOT track a programmatically-repositioned parent in lockstep (it follows a
+  // frame late — the same staleness syncFs fixes on fullscreen "arrival"), so relying on the native
+  // follow makes the desktop content (ui) TRAIL the frame (pages) during a drag. They start congruent,
+  // so setting both to the same absolute position each move keeps offset 0 → the native follow is a
+  // no-op (no overshoot) and the layers stay locked together. (One-way glue: moving the child never
+  // moves the parent, so this can't feedback-loop — that risk is native app-region drag, which we don't use.)
   let dragOrigin: { x: number; y: number } | null = null
   const dragShell = (op: 'start' | 'move', dx: number, dy: number): void => {
     if (pages.isDestroyed()) return
@@ -116,7 +122,10 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
       return
     }
     if (!dragOrigin) return
-    pages.setPosition(Math.round(dragOrigin.x + dx), Math.round(dragOrigin.y + dy))
+    const x = Math.round(dragOrigin.x + dx)
+    const y = Math.round(dragOrigin.y + dy)
+    pages.setPosition(x, y)
+    if (!ui.isDestroyed()) ui.setPosition(x, y)
   }
 
   // Fullscreen rides the parent; the child joins the Space but keeps stale bounds — sync on arrival.
