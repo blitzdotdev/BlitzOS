@@ -215,7 +215,7 @@ export function makeSessionTape({ getRoot, getWorkspace, appVersion = '0', boot 
       append('model', 'moment.delivered', {
         agent: m && m.agentId != null ? String(m.agentId) : undefined,
         cursor: lastMomentSeq,
-        moment: clip({
+        moment: clip(scrub({
           seq: m && m.seq,
           ts: m && m.ts,
           surfaceId: m && m.surfaceId,
@@ -227,7 +227,7 @@ export function makeSessionTape({ getRoot, getWorkspace, appVersion = '0', boot 
           snapshot: m && m.snapshot,
           message: m && m.message,
           windowMs: m && m.windowMs
-        })
+        }))
       })
     },
     // Stream A: the launch context (bootstrap text, backend/command, session ids, conversation file refs).
