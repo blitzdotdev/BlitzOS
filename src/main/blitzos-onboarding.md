@@ -39,6 +39,15 @@ Cover, in rough priority (skip any the scan already settles):
 5. **Attention.** When to act/notify vs. stay out of the way.
 6. **Privacy boundary — where the line sits, not *whether* perception streams (that's a given, see above).** The only real, optional choice: which of the user's *own* logged-in/secret surfaces the agent may read vs. keep redacted (default: redacted until they share), and which accounts BlitzOS may operate in (overlaps Scope). Ask only if there's a genuine line to set; otherwise state the default and move on.
 
+## Get them into their tools (an action, not one of your questions; inside BlitzOS)
+
+Getting the user SIGNED INTO their tools is an ACTION, not a capped question, so it does NOT count toward the 4-question cap. When their work touches web or app tools, it is REQUIRED:
+
+- **Offer the full list, let them pick.** Post ONE multi-select card (`type:"multi"`, which the chat renders as a checklist) of every tool the scan saw, and let them check all they use. Build it from the WHOLE scan, not the open tabs: `web.workflow` PLUS the comm and native apps in `cadence.topApps`/`appLaunches` (Discord, WhatsApp, Messages, Slack, and so on). Friendly names (Discord, not `com.hnc.Discord`). A leftover open tab is not a workflow, so never decide for them from open tabs; the checklist is the truth.
+- **One browser, a tab per tool.** Open a SINGLE web surface with a tab for each checked tool (`create_surface {kind:"web", tabs:[...]}`), never a separate window per tool, and ask them to sign in to each: signing in lets BlitzOS read AND write and act, not just look. `read_window` to confirm each is really signed in (a login or account-chooser means ask; an open tab is not signed in). Do NOT ask what their workflow is; the resident DISCOVERS it by exploring each live tool.
+
+This is what lets the resident do real work the instant onboarding finishes, instead of hitting a signed-out wall. (Full BlitzOS-mode details: your duty doc, `interview.md`.)
+
 ## Output (text mode)
 
 **Running INSIDE BlitzOS?** Your duty doc (`.blitzos/onboarding/interview.md`) replaces this section: questions go out as chat choice-cards, and the Case File workspace — a slot-lattice desktop of widget tiles you keep truthful, resize to fit their content, and curate as answers land — is your canvas. The rest of this document (what to ask, what never to ask) applies unchanged.

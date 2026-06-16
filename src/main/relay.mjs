@@ -43,6 +43,12 @@ export function startRelay(cfg, adapter = {}) {
         baseUrl: cfg.baseUrl,
         appDescription: cfg.appDescription,
         agentsMd: cfg.agentsMd,
+        // Keepalive tuned for hostile NAT (UTM shared-network, proxies): ping well under common ~30s idle
+        // reapers and tolerate one missed pong before declaring the socket dead. The SDK defaults (25s/50s)
+        // were borderline, so idle flows got reaped and every reconnect minted a fresh paste URL (the
+        // reconnect storm). See issues/open/relay-reconnect-storm-mints-new-urls.md.
+        heartbeatIntervalMs: 15_000,
+        heartbeatTimeoutMs: 40_000,
         // NEVER give up reconnecting (exponential 1s→30s); flip the UI to "offline" the instant the WS drops.
         onDisconnect: ({ attempt, reconnect }) => {
           status(false)
@@ -82,6 +88,16 @@ export function startRelay(cfg, adapter = {}) {
   const watchdog = setInterval(() => {
     const online = !!(session && session.connected)
     status(online)
+    // Belt-and-suspenders keepalive: exercise the WS path ourselves so a NAT idle-reaper can't win the
+    // race even if the SDK's heartbeat timer was suspended (backgrounded app). no-op if a ping is already
+    // in flight or the socket is closed.
+    if (online) {
+      try {
+        session.ping && session.ping()
+      } catch {
+        /* socket gone */
+      }
+    }
     if (!online && Date.now() - lastOkAt > 90_000) {
       lastOkAt = Date.now()
       try {

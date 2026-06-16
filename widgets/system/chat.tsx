@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Bot, Circle, Loader2, MessageSquarePlus, Send, Sparkles, Square, TriangleAlert } from 'lucide-react'
 
-const CHAT_RENDERER_VERSION = 'chat-watching-state-v4'
+const CHAT_RENDERER_VERSION = 'chat-watching-state-v5'
 
 type ChatMessage = { role: 'user' | 'agent' | string; text: string; ts?: number; ref?: Record<string, unknown> }
 type ChatSession = { id: string; title?: string; status?: ChatStatus; updatedAt?: number; lastMessagePreview?: string; unread?: boolean }
@@ -147,6 +147,8 @@ function MessageMarkdown({ text }: { text: string }): JSX.Element {
 
 function UiCard({ spec, onAnswer }: { spec: Record<string, unknown>; onAnswer: (text: string) => void }): JSX.Element {
   const [chosen, setChosen] = useState<string | null>(null)
+  const [picked, setPicked] = useState<string[]>([]) // multi-select: labels checked so far
+  const [submitted, setSubmitted] = useState(false)
   const options = Array.isArray(spec.options) ? spec.options : []
   const type = String(spec.type || 'choice')
   if (type === 'status') {
@@ -154,6 +156,47 @@ function UiCard({ spec, onAnswer }: { spec: Record<string, unknown>; onAnswer: (
       <div className="inline-status">
         <Loader2 size={14} className="spin" />
         <span>{String(spec.text || spec.prompt || 'Working...')}</span>
+      </div>
+    )
+  }
+  if (type === 'multi') {
+    const toggle = (label: string): void => setPicked((s) => (s.includes(label) ? s.filter((x) => x !== label) : [...s, label]))
+    return (
+      <div className={`choice-card multi ${submitted ? 'answered' : ''}`}>
+        <div className="choice-question">{String(spec.prompt || spec.question || '')}</div>
+        <div className="choice-options multi">
+          {options.map((raw, index) => {
+            const option = typeof raw === 'string' ? { label: raw } : ((raw || {}) as Record<string, unknown>)
+            const label = String(option.label || `Option ${index + 1}`)
+            const on = picked.includes(label)
+            return (
+              <button
+                key={`${label}-${index}`}
+                type="button"
+                className={`choice-option check ${on ? 'on' : ''}`}
+                disabled={submitted}
+                onClick={() => toggle(label)}
+              >
+                <span className="check-tick">{on ? '✓' : ''}</span>
+                <span className="check-label">
+                  {label}
+                  {typeof option.sub === 'string' && <small>{option.sub}</small>}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+        <button
+          type="button"
+          className="multi-continue"
+          disabled={submitted || !picked.length}
+          onClick={() => {
+            setSubmitted(true)
+            onAnswer(picked.join(', '))
+          }}
+        >
+          {submitted ? 'Sent' : picked.length ? `Continue (${picked.length})` : 'Select what you use'}
+        </button>
       </div>
     )
   }
@@ -692,6 +735,23 @@ body {
 .choice-option.chosen { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--blitz-accent, #eb1d36) 55%, transparent); }
 .choice-option small { color: var(--blitz-text-dim, #767a82); font-weight: 500; }
 .choice-option img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 8px; }
+/* multi-select: a vertical checklist + one Continue button (select all that apply) */
+.choice-options.multi { flex-direction: column; gap: 6px; }
+.choice-option.check { flex-direction: row; align-items: center; gap: 9px; width: 100%; }
+.choice-option.check .check-tick {
+  flex: 0 0 auto; width: 18px; height: 18px; display: grid; place-items: center;
+  border: 1.5px solid var(--blitz-hairline, rgba(0,0,0,.25)); border-radius: 6px;
+  font-size: 12px; line-height: 1; color: var(--blitz-accent-ink, #fff);
+}
+.choice-option.check.on .check-tick { background: var(--blitz-accent, #eb1d36); border-color: var(--blitz-accent, #eb1d36); }
+.choice-option.check.on { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--blitz-accent, #eb1d36) 55%, transparent); }
+.choice-option.check .check-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.multi-continue {
+  margin: 0 12px 12px; padding: 9px 14px; width: calc(100% - 24px);
+  border: none; border-radius: 10px; font: inherit; font-weight: 720; cursor: pointer;
+  color: var(--blitz-accent-ink, #fff); background: var(--blitz-accent, #eb1d36);
+}
+.multi-continue:disabled { opacity: .5; cursor: default; }
 .jump-latest {
   position: absolute;
   right: 18px;

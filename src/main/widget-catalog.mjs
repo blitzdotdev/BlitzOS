@@ -288,6 +288,10 @@ trusted library widgets can be spawned as-is unless you edit them.
 
 - No secrets, tokens, localStorage/sessionStorage, parent/window-top access, external
   scripts, external stylesheets, or network fetches outside the allowed bridge/registry.
+- Never declare a top-level \`const\`/\`let\`/\`var\` named after a window global (\`top\`, \`name\`,
+  \`parent\`, \`self\`, \`length\`, \`status\`, \`closed\`, \`origin\`, \`event\`, \`location\`). \`const top = ...\`
+  throws "Identifier already declared" and aborts the ENTIRE inline script, so the widget renders
+  blank with no error on the tile. Name your data \`lead\`, \`first\`, \`rows\`, \`items\` instead.
 - Use \`window.blitz\` for OS actions, source-opening rows, chat actions, integration
   data, and durable widget props. Declare the right \`needs\` when saving.
 - Keep interaction meaningful unless the widget is truly atomic. If a row has a source,
@@ -322,6 +326,10 @@ window chrome; the tile's content must read at a glance:
   ramp beats a table of numbers. Generous padding (14px+), soft corners, no borders-inside-borders.
 - The built-in templates (\`profile\`, \`rhythm\`, \`workflows\`, \`quotes\`, \`gaps\`) are the reference set —
   \`get_widget_source\` one before authoring your own.
+- **For a data-rich widget, study real references first** (\`open_window\` a couple of dashboard /
+  data-viz examples, or web-search the idiom) so the SHAPE fits the data. But hold the one-hero,
+  almost-no-words discipline above: a clean headline plus one clear chart beats a busy "designed"
+  tile. Richer is not the goal; legible-at-a-glance is, and a thin dataset wants the simpler layout.
 
 ## Use the shared UI kit (don't restyle from scratch)
 

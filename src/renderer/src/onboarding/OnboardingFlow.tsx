@@ -48,7 +48,10 @@ export function OnboardingFlow({ onComplete }: { onComplete: () => void }): JSX.
 }
 
 type DragKind = 'fda' | 'accessibility' | 'screen'
-type StepKey = DragKind | 'signin' | 'browser'
+// The three TCC grants share ONE checklist screen ('tcc'). 'import' = the merged "bring your browser in"
+// (Chrome sign-in + open tabs in one pick); 'browser' = the tabs-only fallback when import is skipped or
+// there are no Chrome profiles to import.
+type StepKey = 'tcc' | 'import' | 'browser'
 type ImportProfile = { id: string; name: string; email: string | null }
 type ImportSource = { id: string; name: string; profiles: ImportProfile[] }
 
@@ -65,45 +68,30 @@ type PreboardState = {
   importSources?: ImportSource[]
 }
 
-// The three drag-list TCC permissions, in ask order: the personal layer first (the scan), then the
-// computer-use pair. Each is granted by the Codex Computer Use flow — Settings opens to the pane and
-// a floating drag-helper window (main) hosts the app-icon drag over the list. Copy is one warm breath.
-const DRAG_STEPS: Array<{ key: DragKind; kicker: string; title: string; body: (appName: string) => string }> = [
-  {
-    key: 'fda',
-    kicker: 'Before we begin',
-    title: 'Unlock the personal layer',
-    body: () =>
-      'Blitz reads your Mac to build a private case file of how you work, all scanned and distilled locally. Full Disk Access adds the personal layer: your Messages cadence, Safari clusters, and app rhythm.'
-  },
-  {
-    key: 'accessibility',
-    kicker: 'So Blitz can act',
-    title: 'Let Blitz use your apps',
-    body: () =>
-      'Accessibility lets Blitz read and drive app interfaces for you, the same access a screen reader uses, so it can do real work in the apps you already have.'
-  },
-  {
-    key: 'screen',
-    kicker: 'So Blitz can see',
-    title: 'Let Blitz see the screen',
-    body: () => 'Screen Recording lets Blitz see what is on screen so it knows where to click. Frames are used locally to act, never uploaded.'
-  }
+// The three drag-list TCC permissions, in ask order, now shown TOGETHER on one checklist screen
+// (each row: name, one-line why, live status). Each is granted by the Codex Computer Use flow — a
+// row's action opens Settings to the pane AND raises the floating drag-helper window (main) that
+// hosts the app-icon drag over the list. Main polls and fires permission-granted, which flips the row.
+const DRAG_STEPS: Array<{ key: DragKind; name: string; why: string }> = [
+  { key: 'fda', name: 'Full Disk Access', why: 'Builds your private case file from Messages cadence, Safari clusters, and app rhythm — all local.' },
+  { key: 'accessibility', name: 'Accessibility', why: 'Lets Blitz read and drive your apps to do real work, the same access a screen reader uses.' },
+  { key: 'screen', name: 'Screen Recording', why: 'Lets Blitz see the screen so it knows where to click. Frames are used locally, never uploaded.' }
 ]
+const PERM_NAME: Record<DragKind, string> = { fda: 'Full Disk Access', accessibility: 'Accessibility', screen: 'Screen Recording' }
 
-/** The Dia-style pre-board: one permission per screen, the why up front, one primary action, a
- *  quiet skip. The three drag-list grants (FDA, Accessibility, Screen Recording) use the Codex
- *  Computer Use flow — the primary button opens Settings to the pane AND raises a floating
- *  drag-helper window (main) that hosts the app-icon drag over the list; main polls and fires
- *  permission-granted, which celebrates + advances. Browser import asks for Automation consent
- *  (the osascript prompt) with live tab counts as the reward. Outcomes persist machine-level, so
- *  settled steps never re-ask; the board's unlock card stays the re-offer path for a skipped FDA. */
+/** The pre-board: ONE TCC checklist screen (FDA, Accessibility, Screen Recording shown together with
+ *  live per-row status), then sign-in and browser as their own steps. Each TCC row's action uses the
+ *  Codex Computer Use flow — it opens Settings to the pane AND raises a floating drag-helper window
+ *  (main) that hosts the app-icon drag over the list; main polls and fires permission-granted, which
+ *  flips JUST that row to a check that stays (no auto-advance). Continue carries on whenever you are
+ *  ready; an ungranted row stays pending and re-offers next launch. Browser import asks for Automation
+ *  consent with live tab counts. Outcomes persist machine-level; the board's unlock card is the FDA
+ *  re-offer path too. */
 function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
   const api = window.agentOS?.onboarding
   const [st, setSt] = useState<PreboardState | null>(null)
   const [step, setStep] = useState<StepKey | null>(null)
-  const [granted, setGranted] = useState(false) // current drag-step just granted (celebrate)
-  const [opened, setOpened] = useState(false) // current drag-step's helper is up
+  const [activeKind, setActiveKind] = useState<DragKind | null>(null) // which TCC row's drag helper is up
   const [browserResult, setBrowserResult] = useState<{ status: string; windows?: number; tabs?: number } | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [picked, setPicked] = useState<{ src: string; id: string; email: string | null } | null>(null) // signin account picker
@@ -111,16 +99,22 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
   const [signinResult, setSigninResult] = useState<{ ok: boolean; account?: string | null; imported?: number; reason?: string } | null>(null)
   const doneRef = useRef(onDone)
   doneRef.current = onDone
-  const stepRef = useRef<StepKey | null>(null)
-  stepRef.current = step
+  // Session-only: once Continue is pressed on the TCC checklist, do not re-offer it THIS run even if a
+  // row is still ungranted. Per-row grants persist; this governs only within-session screen order
+  // (the re-offer default — an ungranted row returns on the NEXT launch).
+  const tccDoneRef = useRef(false)
 
   const granteds = (s: PreboardState): Record<DragKind, boolean> => ({ fda: s.fda, accessibility: s.accessibility, screen: s.screen })
+  // A TCC row is settled only when granted; there is no per-row skip, so un-granted rows re-offer.
+  const tccPending = (s: PreboardState): boolean => DRAG_STEPS.some((d) => !granteds(s)[d.key] && s.steps[d.key] !== 'granted')
+  const hasProfiles = (s: PreboardState): boolean => !!s.importSources?.some((x) => x.profiles.length)
   const queue = (s: PreboardState): StepKey[] => {
-    const g = granteds(s)
     const q: StepKey[] = []
-    for (const d of DRAG_STEPS) if (!g[d.key] && !s.steps[d.key]) q.push(d.key)
-    if (s.importSources?.some((x) => x.profiles.length) && !s.steps.signin) q.push('signin') // sign-in import leads the browser pair
-    if (s.browser && !s.steps.browser) q.push('browser')
+    if (!tccDoneRef.current && tccPending(s)) q.push('tcc') // the three grants share ONE checklist screen
+    // ONE merged "bring your browser in": picking a Chrome profile imports its sign-in AND auto-pulls the
+    // open tabs. Only when it is skipped (or there are no profiles) do we ask for the tabs on their own.
+    if (hasProfiles(s) && !s.steps.import) q.push('import')
+    if (s.browser && !s.steps.browser && (s.steps.import === 'skipped' || !hasProfiles(s))) q.push('browser')
     return q
   }
 
@@ -143,21 +137,19 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
     }
   }, [])
 
-  // Main's poll detected a drag-list grant (and closed the helper) — if it's the step we're on,
-  // celebrate and advance. (Forced dev mode never fires this; the tester advances via Not now.)
+  // Main's poll detected a TCC grant (and closed the helper). Flip ONLY that row and let the counter
+  // tick — no auto-advance, so the human watches the check land and stays in control of Continue.
   useEffect(() => {
     if (!api?.onPermissionGranted) return
     return api.onPermissionGranted(({ kind }) => {
-      if (stepRef.current !== kind) return
-      setGranted(true)
       void api.preboardMark?.(kind, 'granted')
-      window.setTimeout(() => advance(kind, true), 1100)
+      setActiveKind((cur) => (cur === kind ? null : cur))
+      setSt((cur) => (cur ? { ...cur, [kind]: true, steps: { ...cur.steps, [kind]: 'granted' } } : cur))
     })
   }, [])
 
   const goNext = (next: PreboardState): void => {
-    setGranted(false)
-    setOpened(false)
+    setActiveKind(null)
     setBrowserResult(null)
     setPicked(null)
     setImporting(false)
@@ -167,13 +159,12 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
     else setStep(q[0])
   }
 
-  const advance = (from: StepKey, didGrant: boolean): void => {
+  // import/browser only — the TCC rows live on the checklist and never advance the screen individually.
+  const advance = (from: 'import' | 'browser', didGrant: boolean): void => {
     void api?.closePermissionDrag?.()
     setSt((cur) => {
       if (!cur) return cur
-      // only the three TCC drag grants carry a live boolean; signin/browser ride their persisted marker
-      const g = didGrant && (from === 'fda' || from === 'accessibility' || from === 'screen') ? { [from]: true } : {}
-      const next: PreboardState = { ...cur, ...g, steps: { ...cur.steps, [from]: cur.steps[from] ?? (didGrant ? 'granted' : 'skipped') } }
+      const next: PreboardState = { ...cur, steps: { ...cur.steps, [from]: cur.steps[from] ?? (didGrant ? 'granted' : 'skipped') } }
       goNext(next)
       return next
     })
@@ -191,8 +182,15 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
   }
 
   const openDrag = (kind: DragKind): void => {
-    setOpened(true)
+    setActiveKind(kind)
     void api?.openPermissionDrag?.(kind)
+  }
+
+  // Leave un-granted rows PENDING (they re-offer next launch); just move past the checklist this run.
+  const continueTcc = (): void => {
+    tccDoneRef.current = true
+    void api?.closePermissionDrag?.()
+    if (st) goNext(st)
   }
 
   const connectBrowser = (): void => {
@@ -206,62 +204,110 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
     })
   }
 
-  // Import the picked Google account's sign-in (raises the one Keychain prompt; main marks the step).
-  const runImportSignin = (): void => {
+  // The merged "bring your browser in": import the picked Chrome profile's Google sign-in (Keychain
+  // prompt) AND, since the user chose to bring Chrome in, auto-request Automation to pull the open tabs.
+  // Both outcomes are marked so the standalone tabs step is skipped; advance after a beat to show feedback.
+  const runImport = (): void => {
     if (!api?.importSignin || !picked || importing) return
     setImporting(true)
-    void api.importSignin(picked.src, picked.id).then((r) => {
-      setImporting(false)
+    void api.importSignin(picked.src, picked.id).then(async (r) => {
       setSigninResult(r)
-      window.setTimeout(() => advance('signin', !!r.ok), r.ok ? 1700 : 1000)
+      let auto: { status: string; windows?: number; tabs?: number } | undefined
+      try {
+        auto = api.requestAutomation ? await api.requestAutomation() : undefined
+      } catch {
+        auto = undefined
+      }
+      if (auto) setBrowserResult(auto)
+      setImporting(false)
+      const browserOutcome = auto?.status === 'granted' ? 'granted' : auto?.status === 'denied' ? 'denied' : 'skipped'
+      void api.preboardMark?.('import', r.ok ? 'granted' : 'skipped')
+      void api.preboardMark?.('browser', browserOutcome)
+      window.setTimeout(() => {
+        setSt((cur) => {
+          if (!cur) return cur
+          const next: PreboardState = { ...cur, steps: { ...cur.steps, import: r.ok ? 'granted' : 'skipped', browser: browserOutcome } }
+          goNext(next)
+          return next
+        })
+      }, r.ok ? 1700 : 1000)
     })
   }
 
   if (!st || !step) return null
-  const dots = queue({ ...st, steps: {} })
+  // Screen dots — the checklist (while any TCC is ungranted) + the merged import + the tabs fallback.
+  const dots: StepKey[] = []
+  if (DRAG_STEPS.some((d) => !granteds(st)[d.key])) dots.push('tcc')
+  if (hasProfiles(st)) dots.push('import')
+  if (st.browser && (!hasProfiles(st) || st.steps.import === 'skipped')) dots.push('browser')
   const dotIndex = dots.indexOf(step)
-  const drag = DRAG_STEPS.find((d) => d.key === step)
+  const g = granteds(st)
+  const grantedCount = DRAG_STEPS.filter((d) => g[d.key] || st.steps[d.key] === 'granted').length
 
   return (
     <div className="preboard">
-      {drag && (
-        <div className="pre-step">
-          <div className="pre-kicker">{drag.kicker}</div>
-          <h1 className="pre-title">{drag.title}</h1>
-          <p className="pre-body">{drag.body(st.appName)}</p>
-          {(opened || granted) && (
-            <div className={`pre-drop${granted ? ' granted' : ''}`}>
+      {step === 'tcc' && (
+        <div className="pre-step pre-tcc">
+          <div className="pre-kicker">Before we begin</div>
+          <h1 className="pre-title">Set up Blitz</h1>
+          <p className="pre-body">Three permissions, all local. Grant any, skip any — you can change these later from the board.</p>
+          <div className="pre-checklist">
+            {DRAG_STEPS.map((d) => {
+              const isGranted = g[d.key] || st.steps[d.key] === 'granted'
+              const isActive = activeKind === d.key && !isGranted
+              return (
+                <div key={d.key} className={`pre-row${isGranted ? ' granted' : ''}${isActive ? ' active' : ''}`}>
+                  <span className="pre-row-icon" aria-hidden>
+                    {isGranted ? (
+                      <svg viewBox="0 0 16 16" width="15" height="15">
+                        <path d="M3.5 8.4l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    ) : null}
+                  </span>
+                  <span className="pre-row-text">
+                    <span className="pre-row-name">{d.name}</span>
+                    <span className="pre-row-why">{d.why}</span>
+                  </span>
+                  <span className="pre-row-action">
+                    {isGranted ? (
+                      <span className="pre-row-status">Granted</span>
+                    ) : (
+                      <button className="pre-row-btn" onClick={() => openDrag(d.key)}>
+                        {isActive ? 'Reopen' : 'Enable'}
+                      </button>
+                    )}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          {activeKind && !g[activeKind] && (
+            <div className="pre-drop">
               <div className="pre-drop-copy">
-                {granted ? (
-                  <strong>Granted. Thank you.</strong>
-                ) : (
-                  <>
-                    Settings is open. Drag <strong>{st.appName}</strong> from the panel at the bottom into the list, then flip it on. I&apos;ll
-                    notice the moment it lands.
-                  </>
-                )}
+                Settings is open. Drag <strong>{st.appName}</strong> into the {PERM_NAME[activeKind]} list, then flip it on. I&apos;ll notice the
+                moment it lands.
               </div>
             </div>
           )}
           <div className="pre-actions">
-            <button className="pre-primary" onClick={() => openDrag(drag.key)} disabled={granted}>
-              {opened ? 'Reopen System Settings' : 'Open System Settings'}
+            <button className="pre-primary" onClick={continueTcc}>
+              Continue
             </button>
-            <button className="pre-skip" onClick={() => skip(drag.key)}>
-              Not now
-            </button>
+          </div>
+          <div className="pre-count">
+            {grantedCount} of {DRAG_STEPS.length} granted
           </div>
         </div>
       )}
-      {step === 'signin' && (() => {
+      {step === 'import' && (() => {
         const accounts = (st.importSources || []).flatMap((s) => s.profiles.map((p) => ({ src: s.id, id: p.id, name: p.name, email: p.email })))
         return (
           <div className="pre-step">
-            <div className="pre-kicker">Sign in once</div>
-            <h1 className="pre-title">Bring your Google sign-in</h1>
+            <div className="pre-kicker">Bring it in</div>
+            <h1 className="pre-title">Bring your browser in</h1>
             <p className="pre-body">
-              Pick an account. Blitz carries its Google sign-in from Chrome into your browser here, so Gmail and Docs are already open and every
-              &quot;Sign in with Google&quot; site is one tap. Your password never leaves Chrome.
+              Pick a Chrome profile. Blitz brings its Google sign-in here, so Gmail and Docs are open and every &quot;Sign in with Google&quot; is
+              one tap, and it carries in your open tabs so it can pick up what you are working on. Your password never leaves Chrome.
             </p>
             {!signinResult && (
               <div className="pre-accounts">
@@ -280,7 +326,12 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
             {signinResult?.ok && (
               <div className="pre-drop granted">
                 <div className="pre-drop-copy">
-                  <strong>Signed in as {signinResult.account || 'your Google account'}. Gmail, Docs, and Google sign-in are ready.</strong>
+                  <strong>
+                    Signed in as {signinResult.account || 'your Google account'}.
+                    {browserResult?.status === 'granted'
+                      ? ` ${browserResult.tabs ?? 0} tab${(browserResult.tabs ?? 0) === 1 ? '' : 's'} brought in.`
+                      : ' Gmail, Docs, and Google sign-in are ready.'}
+                  </strong>
                 </div>
               </div>
             )}
@@ -294,10 +345,10 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
               </div>
             )}
             <div className="pre-actions">
-              <button className="pre-primary" onClick={runImportSignin} disabled={!picked || importing || !!signinResult?.ok}>
-                {importing ? 'Approve the Keychain prompt…' : 'Bring in sign-in'}
+              <button className="pre-primary" onClick={runImport} disabled={!picked || importing || !!signinResult?.ok}>
+                {importing ? 'Bringing it in…' : 'Bring it in'}
               </button>
-              <button className="pre-skip" onClick={() => skip('signin')}>
+              <button className="pre-skip" onClick={() => skip('import')}>
                 Not now
               </button>
             </div>
@@ -307,7 +358,7 @@ function PreboardSteps({ onDone }: { onDone: () => void }): JSX.Element | null {
       {step === 'browser' && (
         <div className="pre-step">
           <div className="pre-kicker">One more thing</div>
-          <h1 className="pre-title">Bring your browser in</h1>
+          <h1 className="pre-title">Bring your open tabs in</h1>
           <p className="pre-body">
             Most of a day lives in the browser. One permission lets Blitz see your open {st.browser?.name} tabs, so it can pick up what you are
             working on and bring it onto the desk.

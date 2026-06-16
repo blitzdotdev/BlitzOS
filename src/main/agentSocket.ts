@@ -27,6 +27,20 @@ export function getAgentSocketUrl(): string | null {
  * and report each URL change so the agents' .blitzos/relay-url file is refreshed (they re-read it per call).
  */
 export function startAgentSocket(getWindow: () => BrowserWindow | null, onUrlChange: (url: string) => void = () => {}): void {
+  // Destruction-guarded renderer send. A bare getWindow()?.webContents.send THROWS "Render frame was
+  // disposed before WebFrameMain could be accessed" once the renderer has crashed/gone (getWindow still
+  // returns the window object, but its frame is dead). The relay status timer keeps firing onStatus after
+  // a render-process-gone, so without this guard EVERY cycle threw during a GPU/renderer crash and spammed
+  // the log on top of the crash. Drop the send when the frame is gone instead.
+  const send = (channel: string, payload: unknown): void => {
+    const w = getWindow()
+    if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return
+    try {
+      w.webContents.send(channel, payload)
+    } catch {
+      /* frame disposed between the check and the send (mid-crash) */
+    }
+  }
   startRelay(
     {
       appId: APP_ID,
@@ -48,7 +62,7 @@ export function startAgentSocket(getWindow: () => BrowserWindow | null, onUrlCha
         })),
         (ev) => {
           osNoteAgentActivity(ev.agentId || '0', ev.tool === '/say' ? 'say' : 'tool')
-          getWindow()?.webContents.send('os:action', ev)
+          send('os:action', ev)
         }
       )
     },
@@ -58,11 +72,11 @@ export function startAgentSocket(getWindow: () => BrowserWindow | null, onUrlCha
         setRelay(url)
         onUrlChange(url) // refresh .blitzos/relay-url so reattached agents pick up the fresh base
         console.log('[agent-socket] paste this into an AI chat to drive BlitzOS:\n  ' + url)
-        getWindow()?.webContents.send('agentsocket:url', url)
+        send('agentsocket:url', url)
       },
       // Tell the renderer whether the agent's relay link is up (drives the toolbar pill).
       onStatus: (online) =>
-        getWindow()?.webContents.send('os:action', { type: 'agentStatus', online, agentUrl: currentUrl, agent: !!process.env.BLITZ_AGENT })
+        send('os:action', { type: 'agentStatus', online, agentUrl: currentUrl, agent: !!process.env.BLITZ_AGENT })
     }
   )
 }

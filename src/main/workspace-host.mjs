@@ -18,6 +18,7 @@ import {
   createFolder,
   listDir,
   removeSurfaceFile,
+  surfaceFileExists,
   removeAgentFiles,
   ensureSystemRenderer,
   readSystemRenderer,
@@ -115,6 +116,15 @@ export function createWorkspaceHost(a) {
   // caught up can re-push the closed surface in its os:state; onStatePush rejects ids in here so the close
   // sticks instead of resurrecting (the junk-resurrection half of the runtime-surface-loss fragility).
   const recentlyClosed = new Map()
+  // Runtime-only surfaces — NEVER serialized as workspace.json nodes (rebuilt on hydrate/switch from
+  // terminals/action-items/runtime panels). MUST match store.ts applyReconcile's isRuntime predicate (the
+  // two run the same reconcile contract; drift is exactly the divergence the parity guard exists to prevent).
+  // Used by BOTH doReconcile (keep them across a disk reconcile) and onStatePush (skip them when re-asserting
+  // glitch-dropped file-backed surfaces — they have no content file and are re-asserted separately above).
+  const isRuntimeLike = (s) =>
+    s.role === 'chat' ||
+    s.role === 'activity' ||
+    (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'files' || s.component === 'terminal' || s.component === 'runtime' || s.component === 'inbox' || s.component === 'unlock'))
 
   const active = () => basename(activeWorkspace)
   /** Stage growth keeps the splay reading order: existing order survives, new ids append. */
@@ -160,12 +170,8 @@ export function createWorkspaceHost(a) {
       //    in-flight). `r.knownIds` ARE the persisted node ids: an osState id NOT in knownIds and
       //    NOT in the reconciled set is genuinely un-persisted → keep it (a DELETED file's id IS a
       //    known node → it correctly drops). Re-apply group memberships to the disk surfaces too.
-      // Runtime-only surfaces (never serialized as workspace.json nodes). This MUST match the renderer's
-      // isRuntime predicate in store.ts applyReconcile — the two run the same reconcile contract and any
-      // drift is exactly the divergence the parity guard exists to prevent. terminal/runtime/inbox are
-      // reconstructed from terminal/action-item events on load, so they're kept across a reconcile here too.
-      // `unlock` is the runtime-only onboarding FDA card (must be in BOTH isRuntime predicates — see store.ts).
-      const isRuntimeLike = (s) => s.role === 'chat' || s.role === 'activity' || (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'files' || s.component === 'terminal' || s.component === 'runtime' || s.component === 'inbox' || s.component === 'unlock'))
+      // Runtime-only surfaces (isRuntimeLike, hoisted to host scope) are kept across a reconcile: terminal/
+      // runtime/inbox/chat/activity are reconstructed from events on load, never workspace.json nodes.
       const reconciledIds = new Set(r.surfaces.map((s) => s.id))
       const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
       const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))
@@ -876,6 +882,22 @@ export function createWorkspaceHost(a) {
     const missing = []
     if (!have.has(chatSurfaceId('0'))) missing.push(buildAgentSurface('0'))
     for (const p of readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')) if (!have.has(p.id)) missing.push(p)
+    // (2b) RE-ASSERT a FILE-BACKED surface a GLITCHY push DROPPED — the same fragility as (2), for the
+    // surfaces that ARE workspace.json nodes (srcdoc widgets, notes, web/app, file/dir tiles). onStatePush
+    // does a wholesale setState, so a push that lost a live tile (a render-process-gone reload, a hydrate
+    // race, an HMR remount) would persist the shrink to workspace.json on the next flush. writeWorkspace
+    // never DELETES content files — only an explicit close does — so the dropped node's file ORPHANS, and the
+    // next reconcile RESURRECTS it as a brand-new slotless, staggered tile with a fresh UUID: the "every
+    // widget popped out and stacked after relaunch" bug (root cause + proof: scripts/repro-slot-orphan.mjs).
+    // A genuine close is in recentlyClosed (its file already deleted); an external file delete leaves no file.
+    // So: was in the PRIOR osState + absent from this push + NOT a close + its content file STILL on disk ⇒ a
+    // glitch-drop, not a removal — keep it. Cheap: zero disk I/O on the common no-drop push; one workspace.json
+    // parse + stat only per actually-dropped, non-runtime id.
+    const priorState = a.getState()
+    for (const p of (priorState && priorState.surfaces) || []) {
+      if (!p || have.has(p.id) || recentlyClosed.has(p.id) || isRuntimeLike(p)) continue
+      if (surfaceFileExists(activeWorkspace, p.id)) missing.push(p)
+    }
     let surfaces = missing.length ? [...pushed, ...missing] : pushed
     // (3) RECONCILE the inbox: its items are runtime-only and a renderer can push a STALE copy (carried in
     // osState across page loads). Overwrite them with the authoritative store so osState — and every hydrate

@@ -233,9 +233,10 @@ const api = {
   uiFocus(): void {
     ipcRenderer.send('os:ui-focus')
   },
-  /** SPIKE (plans/blitzos-native-input.md), default OFF: when true the renderer routes the human's
-   *  mouse to a page NATIVELY (real, trusted OS events) instead of the synthetic os:page-input path. */
-  nativeInput: process.env.BLITZ_NATIVE_INPUT === '1',
+  /** Native input (plans/features/blitzos-native-input.md), ON by default (BLITZ_NATIVE_INPUT=0 opts out):
+   *  the renderer routes the human's mouse to a page NATIVELY (real, trusted OS events) over page holes
+   *  instead of the synthetic os:page-input path, so the Cloudflare Turnstile checkbox and native drag work. */
+  nativeInput: process.env.BLITZ_NATIVE_INPUT !== '0',
   /** Native-input toggle: make the UI window click-through (the mouse falls to the page below) while
    *  the cursor is over a page hole, opaque again over chrome. No-op in main unless nativeInput is on. */
   nativePassthrough(on: boolean): void {

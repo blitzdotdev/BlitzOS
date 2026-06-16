@@ -112,3 +112,21 @@ NumberedDisplays[ {Number, Resolutions[ {Size:{1512,949}, Groups[
 - `test-slot-placer.mjs`: pure placer — non-overlap invariant under fuzz, `stage_full` behavior, size fitting, deterministic assignment, resize remap.
 - Parity: Electron + server bind the same placer; identical assignments for identical inputs.
 - Doctrine: drive via control API; assert web `create_surface` lands Backstage and `place_widget` refuses occupied cells.
+
+## RESOLVED bug (2026-06-15): "every widget popped out and stacked after relaunch"
+
+**Symptom.** After a relaunch (the user had hit a renderer/GPU crash), the whole case-file board came back slotless and cascade-stacked at the top-left. Forensics on the live workspace: every onboarding card had a FRESH random UUID (zero of the 8 `board.json` seed ids survived) and `slot:null`, sitting at a regular `+28/+24` stagger.
+
+**Root cause (proven, not guessed).** A chain across three modules:
+1. `workspace-host.onStatePush` does a wholesale `setState(push.surfaces)`. It re-asserts host-owned RUNTIME surfaces (chat/activity) a push dropped, but did NOT protect FILE-BACKED surfaces (srcdoc/note/web/file nodes).
+2. So a push that dropped a live file-backed surface (a render-process-gone reload, a hydrate race, an HMR remount, any store glitch) was accepted, and the debounced `flush()` persisted `workspace.json` WITHOUT that node.
+3. `writeWorkspace` never deletes content files (only an explicit close does, via `removeSurfaceFile`). So the dropped node's content file ORPHANED (file present, node gone).
+4. The next `reconcileWorkspace` saw the orphan as a brand-new loose file and resurrected it: `alive.push({ id: randomUUID(), path, x: cx + (i%6)*28, y: cy + (i%6)*24 })` with NO slot. That is the `+28/+24` stagger and the fresh UUID exactly.
+
+**Can a normal user hit it?** Yes. A truly clean quit/reopen with no divergence is safe (hydrate preserves slots), but the divergence is reachable by any normal user: a renderer crash + reload, a hydrate race, an HMR remount, or the resident agent churning surfaces. The crash the user hit is one instance.
+
+**Fix.** `onStatePush` now re-asserts a file-backed surface that (a) was in the prior osState, (b) is absent from this push, (c) is NOT in `recentlyClosed` (a real close already deleted its file + recorded it), and (d) whose content file is STILL on disk (`workspace.surfaceFileExists`, the ground-truth gate so a genuine close/relocate/external-delete still drops). This is the exact analog of the existing runtime-surface re-assertion, extended to nodes, so a glitch-drop can never orphan a file again.
+
+**Proof / tests.**
+- `scripts/repro-slot-orphan.mjs` — the bare destructive mechanism at the `workspace.mjs` layer (seed slotted, a shrunk write orphans the file, reconcile resurrects it slotless with a fresh UUID at a stagger).
+- `scripts/test-slot-glitch-drop.mjs` — drives the REAL host: a glitch-drop push no longer orphans (node + slot survive, reconcile keeps the original id), while a genuine `closeSurfaceFile` still drops correctly.

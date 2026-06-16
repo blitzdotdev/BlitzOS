@@ -853,6 +853,28 @@ export function readWorkspace(dir) {
   return { surfaces: groupedSurfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', stageCount: rsc, stageOrder: safeStageOrder(ws.stageOrder, rsc) }
 }
 
+/** Ground truth: is surface `id` STILL a real on-disk node of `dir` — i.e. its persisted workspace.json
+ *  node's content file exists? onStatePush uses this to tell a GLITCH-dropped file-backed surface (file
+ *  present ⇒ a render-process-gone reload / hydrate race / HMR remount lost it from the live set ⇒
+ *  RE-ASSERT it, never persist the shrink) from a genuine removal (close/relocate/external delete ⇒ file
+ *  gone ⇒ let it drop). Without this, a shrunk push persists workspace.json without the node while
+ *  writeWorkspace leaves its content file (only an explicit close deletes files); the orphan is then
+ *  RESURRECTED by reconcile as a fresh slotless, staggered tile with a new UUID — the "every widget popped
+ *  out and stacked after relaunch" bug (scripts/repro-slot-orphan.mjs). Cheap: one workspace.json parse +
+ *  one stat, and onStatePush calls it only for the (rare) ids a push actually dropped. */
+export function surfaceFileExists(dir, id) {
+  if (!id) return false
+  try {
+    const ws = parseMeta(join(dir, '.blitzos', 'workspace.json'))
+    const node = ws && Array.isArray(ws.nodes) ? ws.nodes.find((n) => n && n.id === id && typeof n.path === 'string') : null
+    if (!node) return false
+    const abs = safeJoin(dir, node.path)
+    return !!abs && existsSync(abs)
+  } catch {
+    return false
+  }
+}
+
 // Which loose root files auto-surface as new nodes on reconcile, and as what kind. Conservative
 // in Phase 3: only the unambiguous text/invented kinds — a dropped binary, .html, image, or
 // folder is left alone (the spec's passive-file/bundle handling isn't built yet). Dotfiles,
@@ -1913,7 +1935,7 @@ export function ensureSystemRenderer(dir, role, sessionId = '0') {
         // alone — it carries the `blitz-chat-custom` opt-out marker. (Pre-hub copies still migrate as before.)
         // Sentinel = the NEWEST shipped feature marker (bump it when chat.* gains a feature existing
         // desktops must receive). Existing shipped copies refresh; customized copies carry blitz-chat-custom.
-        const marker = 'chat-watching-state-v4'
+        const marker = 'chat-watching-state-v5'
         const featureLag = shipped?.source?.indexOf(marker) !== -1 && cur.indexOf(marker) === -1 && (shippedTsxCopy || shippedLegacyCopy)
         const customized = cur.indexOf('blitz-chat-custom') !== -1
         if (shipped && ((!hubAware && preHub && !customized && defaultishCopy) || (!customized && shippedLegacyCopy) || (hubAware && featureLag && !customized))) {
