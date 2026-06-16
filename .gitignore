@@ -6,7 +6,10 @@ dist/
 *.log
 .DS_Store
 
-# real OAuth client ids / secrets (keep only the .example version in git)
+# real OAuth client ids / secrets — still gitignored even though the OAuth subsystem was removed
+# (629b40d): the file lingers on dev machines with real discord/gmail/github/jira creds, so it must
+# never be committable. Safe to delete the local file; it is unused now.
+integrations.config.json
 
 # preview backend: stored OAuth tokens (real account creds) — never commit
 preview/.tokens.json
