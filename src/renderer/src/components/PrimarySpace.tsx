@@ -14,25 +14,10 @@ type AreaChromeOverlayProps = {
   onAddArea?: () => void
 }
 
-// Sandwich compositor: the stage frame's translucent tint sits BELOW every window, so a browser's
-// page hole must be cut out of it (a translucent DOM layer over a hole would wash the live page).
-// Scenery is below ALL windows, so every visible web surface punches it. World coords, camera-free.
-function sceneryClip(r: { x: number; y: number; w: number; h: number }, surfaces: Surface[]): HolesClip {
-  const holes: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
-  for (const w of surfaces) {
-    if (w.kind !== 'web' || w.minimized || (w.groupId && !w.peek)) continue
-    const x1 = w.x - r.x
-    const y1 = w.y - r.y
-    const x2 = x1 + w.w
-    const y2 = y1 + w.h
-    if (x2 <= 0 || y2 <= 0 || x1 >= r.w || y1 >= r.h) continue
-    holes.push({ x1, y1, x2, y2 })
-  }
-  return holesPath(r.w, r.h, holes, 14)
-}
-
-const clipStyle = (clip: HolesClip): CSSProperties =>
-  clip === 'HIDE' ? { visibility: 'hidden' } : clip ? { clipPath: clip } : {}
+// Sandwich compositor: the stage frame's translucent tint sits BELOW every window, so a browser's page
+// hole must be cut out of it (a translucent layer over a hole would wash the live page). That clip is now
+// applied IMPERATIVELY by the geometry RAF (App.tsx) off live measured rects — so it tracks an imperative
+// window drag + camera pan — instead of a store-driven selector here (which froze mid-drag).
 
 /** The workspace stages, framed in control mode or normal zoom-out. */
 export function PrimarySpace({ showAddArea = false }: PrimarySpaceProps): JSX.Element {
@@ -40,16 +25,16 @@ export function PrimarySpace({ showAddArea = false }: PrimarySpaceProps): JSX.El
   const stageCount = useDesktop((s) => s.stageCount)
   const currentStage = useDesktop((s) => s.currentStage)
   const stageOrder = useDesktop((s) => s.stageOrder)
-  const surfaces = useDesktop((s) => s.surfaces)
 
   const renderStage = (i: number): JSX.Element => {
     const r = orderedStageRect(i, vp, stageOrder, stageCount)
-    const clip = sceneryClip(r, surfaces)
+    // The page-holes clip is applied IMPERATIVELY by the geometry RAF (App.tsx) off live measured rects,
+    // so the tint's hole tracks an imperative window drag + camera pan without a store-driven re-render.
     return (
       <div
         key={i}
         className={`primary-space${i === currentStage ? ' is-current' : ''}`}
-        style={{ left: r.x, top: r.y, width: r.w, height: r.h, ...clipStyle(clip) }}
+        style={{ left: r.x, top: r.y, width: r.w, height: r.h }}
       />
     )
   }

@@ -852,18 +852,32 @@ export default function App(): JSX.Element {
       if (key !== last) {
         last = key
         window.agentOS?.webGeometry?.(list)
-        // The opaque .bg gets its page-holes from these SAME live rects (not the store), so the hole
-        // tracks an imperative drag + camera pan. holesPath returns 'HIDE' when a page covers the whole
-        // viewport (a maximized browser → hide the base outright); undefined when no page is on screen.
+        // Every opaque/tinted L1 layer the live pages must show through gets its page-holes from these
+        // SAME live measured rects (NOT the store), so a hole tracks an imperative window drag + camera
+        // pan. holesPath returns 'HIDE' when a page fully covers the element; undefined when no page hits it.
+        const scale = st.transform.scale || 1
+        // viewport-space page holes (the page area = the .webcontents-host rect, already chrome-inset).
+        const vHoles = list.filter((g) => g.visible).map((g) => ({ x1: g.rect.x, y1: g.rect.y, x2: g.rect.x + g.rect.width, y2: g.rect.y + g.rect.height }))
+        // .bg — full-viewport opaque desktop base; holes are viewport-space.
         const bg = bgRef.current
         if (bg) {
-          const holes = list
-            .filter((g) => g.visible)
-            .map((g) => ({ x1: g.rect.x, y1: g.rect.y, x2: g.rect.x + g.rect.width, y2: g.rect.y + g.rect.height }))
-          const clip = holes.length ? holesPath(winW, winH, holes, WINDOW_RADIUS * (st.transform.scale || 1)) : undefined
+          const clip = vHoles.length ? holesPath(winW, winH, vHoles, WINDOW_RADIUS * scale) : undefined
           bg.style.visibility = clip === 'HIDE' ? 'hidden' : ''
           bg.style.clipPath = clip && clip !== 'HIDE' ? clip : ''
         }
+        // Stage scenery — the translucent tint lives INSIDE .world (camera-scaled), so its clip-path is in
+        // the element's own (unscaled) px: convert each viewport hole to local via (hole - elRect)/scale.
+        document.querySelectorAll<HTMLElement>('.primary-space:not(.primary-space-add)').forEach((el) => {
+          const S = el.getBoundingClientRect()
+          const w = el.offsetWidth
+          const h = el.offsetHeight
+          const local = vHoles
+            .map((r) => ({ x1: (r.x1 - S.left) / scale, y1: (r.y1 - S.top) / scale, x2: (r.x2 - S.left) / scale, y2: (r.y2 - S.top) / scale }))
+            .filter((r) => r.x2 > 0 && r.y2 > 0 && r.x1 < w && r.y1 < h)
+          const clip = local.length ? holesPath(w, h, local, 14) : undefined
+          el.style.visibility = clip === 'HIDE' ? 'hidden' : ''
+          el.style.clipPath = clip && clip !== 'HIDE' ? clip : ''
+        })
       }
       raf = requestAnimationFrame(tick)
     }
