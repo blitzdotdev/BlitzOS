@@ -8,7 +8,7 @@ import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
 import { Overview } from './components/Overview'
 import { capturePrimaryThumb } from './capture'
-import { SurfaceFrame, bgHolesClip, snapPreviewClip } from './components/SurfaceFrame'
+import { SurfaceFrame, snapPreviewClip, holesPath, WINDOW_RADIUS } from './components/SurfaceFrame'
 import { AnnotationLayer } from './components/AnnotationLayer'
 import { AreaChromeOverlay, PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
@@ -519,6 +519,10 @@ export default function App(): JSX.Element {
   // Shell titlebar drag origin (screen coords at pointerdown) — deltas stream to main, which moves
   // the sandwich's parent window (the UI child follows natively).
   const shellDragFrom = useRef<{ x: number; y: number } | null>(null)
+  // The opaque desktop base — its page-holes are punched imperatively from the geometry RAF (below),
+  // off the live measured hole rects, so the holes track an imperative window drag + camera pan with
+  // no store read (the React bgClip went stale when a drag stopped writing surface.x/y to the store).
+  const bgRef = useRef<HTMLDivElement>(null)
   // The active workspace name, mirrored into a ref so the state-push closure (an effect with []
   // deps) reads the CURRENT value — each push is tagged with it so the backend can drop a stale
   // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
@@ -848,6 +852,18 @@ export default function App(): JSX.Element {
       if (key !== last) {
         last = key
         window.agentOS?.webGeometry?.(list)
+        // The opaque .bg gets its page-holes from these SAME live rects (not the store), so the hole
+        // tracks an imperative drag + camera pan. holesPath returns 'HIDE' when a page covers the whole
+        // viewport (a maximized browser → hide the base outright); undefined when no page is on screen.
+        const bg = bgRef.current
+        if (bg) {
+          const holes = list
+            .filter((g) => g.visible)
+            .map((g) => ({ x1: g.rect.x, y1: g.rect.y, x2: g.rect.x + g.rect.width, y2: g.rect.y + g.rect.height }))
+          const clip = holes.length ? holesPath(winW, winH, holes, WINDOW_RADIUS * (st.transform.scale || 1)) : undefined
+          bg.style.visibility = clip === 'HIDE' ? 'hidden' : ''
+          bg.style.clipPath = clip && clip !== 'HIDE' ? clip : ''
+        }
       }
       raf = requestAnimationFrame(tick)
     }
@@ -1093,12 +1109,11 @@ export default function App(): JSX.Element {
     return window.agentOS?.onWebTab?.((m) => useDesktop.getState().applyWebTab(m))
   }, [])
 
-  // Sandwich compositor: the opaque desktop base (.bg) gets screen-space clip holes where pages
-  // are, so the live views below show through while window shadows keep compositing against solid
-  // color (a fully transparent base made shadows render as dark pooling fringes).
-  const bgClip = useDesktop((s) =>
-    window.agentOS && !window.agentOS.serverMode ? bgHolesClip(s.surfaces, s.transform, s.viewport.w, s.viewport.h) : undefined
-  )
+  // Sandwich compositor: the opaque desktop base (.bg) gets screen-space clip holes where pages are
+  // (so the live views below show through while window shadows keep compositing against solid color —
+  // a fully transparent base made shadows render as dark pooling fringes). The holes are applied
+  // IMPERATIVELY from the geometry RAF off the live measured rects (see bgRef), not from a store
+  // selector, so they track an imperative window drag and camera pan without a React re-render.
 
   // The snap/tiling preview is .world DOM with no z; in the sandwich it would paint OVER a browser
   // page (z-index can't order DOM under a page). Cut a page-hole around any web surface so the live
@@ -2211,8 +2226,8 @@ export default function App(): JSX.Element {
       )}
 
       <div
+        ref={bgRef}
         className="bg"
-        style={bgClip === 'HIDE' ? { visibility: 'hidden' } : bgClip ? { clipPath: bgClip } : undefined}
         onPointerDown={onBgDown}
         onPointerMove={onBgMove}
         onPointerUp={onBgUp}

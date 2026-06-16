@@ -55,7 +55,7 @@ export type HolesClip = string | 'HIDE' | undefined
 
 // The window corner radius (tokens.css --radius-window), read once — hole masks must follow the
 // frame's rounded BOTTOM corners or the square native view pokes out past the curve.
-const WINDOW_RADIUS = typeof document !== 'undefined' ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--radius-window')) || 14 : 14
+export const WINDOW_RADIUS = typeof document !== 'undefined' ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--radius-window')) || 14 : 14
 
 /** Build a holes clip as `path(…)` with SEPARATE SUBPATHS — never `polygon()`: a single even-odd
  *  polygon needs connector edges between rings, and their retraced pixels (plus outer-ring pixels
@@ -340,11 +340,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         // An imperative drag never reached onBarUp: fold each item's live transform into the store and
         // drop it, so the moved windows don't snap back to their pre-drag positions.
         if (d.imperative) {
-          for (const it of d.items) {
-            const el = frameEls.get(it.id)
-            if (el) el.style.transform = ''
-            st.moveSurface(it.id, it.ox + (d.dx ?? 0), it.oy + (d.dy ?? 0))
-          }
+          for (const it of d.items) st.moveSurface(it.id, it.ox + (d.dx ?? 0), it.oy + (d.dy ?? 0))
         }
       }
     }
@@ -691,11 +687,12 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       d.imperative = true
       for (const it of d.items) {
         const el = frameEls.get(it.id)
-        // Write left/top (world units — the frame lives in the camera-scaled .world), NOT a transform.
-        // A transform is composited-thread-only; the page's WebContentsView (a separate L0 view) only
-        // commits its setBounds visually on the renderer's MAIN-THREAD paint, so a transform leaves the
-        // page frozen mid-drag while the frame tracks. A left/top write forces that paint. Still no React
-        // reconcile / store write / O(N²) clip recompute — the costs that made the React path lag.
+        // Write left/top (world units — the frame lives in the camera-scaled .world), NOT a composited
+        // transform. A transform updates on the compositor thread only, so it never forces a main-thread
+        // paint — and the page hole (the .bg clip-path the RAF recomputes) + the L0 WebContentsView only
+        // commit their new geometry visually ON a main-thread paint, leaving the hole frozen mid-drag
+        // (it snapped on drop, when moveSurface finally re-rendered). A left/top write forces that paint.
+        // Still no React reconcile / store write / O(N²) clip recompute — the costs that made it lag.
         if (el) {
           el.style.left = `${it.ox + dx}px`
           el.style.top = `${it.oy + dy}px`
@@ -768,11 +765,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     if (d?.imperative) {
       const dx = d.dx ?? 0
       const dy = d.dy ?? 0
-      for (const it of d.items) {
-        const el = frameEls.get(it.id)
-        if (el) el.style.transform = ''
-        moveSurface(it.id, it.ox + dx, it.oy + dy)
-      }
+      for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy) // React reclaims left/top
     }
     const st = useDesktop.getState()
     const target = st.dragTarget
