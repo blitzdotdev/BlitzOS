@@ -45,7 +45,22 @@ app.on('second-instance', () => {
 })
 
 // Retain local minidumps for renderer/GPU/browser-process crashes (forensics only, never uploaded).
-crashReporter.start({ uploadToServer: false })
+// PACKAGED ONLY: in `electron-vite dev` the Crashpad handler wedges in a FATAL loop on a renderer/GPU
+// crash ("Check failed: kr == KERN_SUCCESS. mach_port_request_notification: invalid capability"), which
+// turns a RECOVERABLE renderer crash (Electron would just respawn it) into a dead, frozen UI window. So
+// only start it in a packaged build, where the minidumps are actually useful and the wedge does not occur.
+if (app.isPackaged) crashReporter.start({ uploadToServer: false })
+
+// GPU memory headroom: a dogfooding desktop accumulates many LIVE web surfaces (the onboarding Chrome
+// import alone opens ~30 tabs, plus tool browsers + the agent's research tabs), and the view host keeps
+// them all composited (parked offscreen, backgroundThrottling:false). That exhausts the GPU tile-memory
+// budget and crashes the GPU + renderer. Raise the reported GPU memory so the tile manager has headroom
+// (M-series share unified memory, so this is real). NOT disableHardwareAcceleration — that fails GL
+// context creation here (kFatalFailure) and leaves the renderer dead. The real fix — culling offscreen
+// tab views so they don't composite — is a view-host TODO; the render-process-gone reload above is the
+// safety net until then.
+app.commandLine.appendSwitch('force-gpu-mem-available-mb', '6144')
+app.commandLine.appendSwitch('disable-gpu-process-crash-limit') // let the GPU recover instead of being permanently disabled after N crashes
 
 // Serve workspace thumbnails (rendered board snapshots, written by capturePage) to the renderer's
 // <img> over a custom protocol — main owns the bytes; the renderer just references blitz-thumb://…
@@ -198,8 +213,30 @@ function createWindow(): void {
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
     console.error(`[renderer] did-fail-load ${code} ${desc} ${url}`)
   })
+  // SELF-HEAL: Electron does NOT auto-reload a crashed renderer. In the sandwich compositor the
+  // renderer IS the UI window that owns all mouse input, so a crash with no reload = a permanently
+  // FROZEN, unclickable window (observed: GPU tile-memory exhaustion under a heavy live-web load took
+  // the renderer down and it never came back). Reload it, with a loop-guard so a renderer that crashes
+  // on every load doesn't thrash forever.
+  let lastRendererCrash = 0
+  let rendererCrashes = 0
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
     console.error(`[renderer] render-process-gone ${JSON.stringify(details)}`)
+    if (details?.reason === 'clean-exit') return
+    const now = Date.now()
+    if (now - lastRendererCrash > 60_000) rendererCrashes = 0
+    lastRendererCrash = now
+    if (++rendererCrashes > 4) {
+      console.error('[renderer] too many crashes in 60s — not auto-reloading (likely a load-time fault)')
+      return
+    }
+    setTimeout(() => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload()
+      } catch {
+        /* window gone mid-recover */
+      }
+    }, 500)
   })
 
   // (The renderer pulls its hydrate via window.agentOS.requestHydrate() once its onAction listener is
