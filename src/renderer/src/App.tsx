@@ -6,8 +6,6 @@ import { applyTheme, saveTheme, type Theme } from './theme'
 import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
-import { IntegrationWidget } from './components/IntegrationWidget'
-import { ConnectPanel } from './components/ConnectPanel'
 import { Overview } from './components/Overview'
 import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame, bgHolesClip, snapPreviewClip } from './components/SurfaceFrame'
@@ -22,9 +20,6 @@ import { OnboardingFlow } from './onboarding/OnboardingFlow'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
 import { ContextMenu } from './components/ContextMenu'
 
-// Legacy always-on integration cards on the canvas (they stacked at origin and clutter the agent-driven
-// desktop). Off by default — integrations now surface as agent-spawned widgets. Flip to re-enable.
-const SHOW_INTEGRATION_CARDS = false
 const SHOW_ADVANCED_TOOLBAR = false
 const FOLDER_ENTRY_MIME = 'application/x-blitz-folder-entry'
 type DockAnimationPhase = 'minimizing' | 'restoring'
@@ -57,7 +52,6 @@ const CANVAS_GESTURE_BLOCK_SELECTOR = [
   '.folder-overlay',
   '.context-menu',
   '.consent',
-  '.connect-panel',
   '.onboarding'
 ].join(', ')
 
@@ -385,19 +379,16 @@ export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
   const mode = useDesktop((s) => s.mode)
-  const integrations = useDesktop((s) => s.integrations)
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
   const snapPreview = useDesktop((s) => s.snapPreview)
   const selection = useDesktop((s) => s.selection)
   const createSurface = useDesktop((s) => s.createSurface)
-  const setIntegrations = useDesktop((s) => s.setIntegrations)
   const minimizeSurface = useDesktop((s) => s.minimizeSurface)
   const updateSurface = useDesktop((s) => s.updateSurface)
   const focusAndZoom = useDesktop((s) => s.focusAndZoom)
   const toggleMaximize = useDesktop((s) => s.toggleMaximize)
 
-  const [connecting, setConnecting] = useState<string | null>(null)
   const [aiUrl, setAiUrl] = useState<string | null>(null)
   const [showAi, setShowAi] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -465,10 +456,6 @@ export default function App(): JSX.Element {
   }, [showOverview])
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
-  // #51: pending write-approvals the agent requested (provider.call writes) — the human OKs or denies each.
-  // A QUEUE (not a single slot) so concurrent writes don't overwrite each other's card (review fix); we
-  // show the oldest and pop it on answer. Keyed by id, matching provider-bridge's pending Map.
-  const [providerApprovals, setProviderApprovals] = useState<Array<{ id: string; summary: string; risk: string }>>([])
   // Item 3: a web guest asked for a sensitive browser permission (camera, location, …) — show the human a
   // real Allow/Block prompt (browser parity), remembered per-origin.
   const [permissionPrompts, setPermissionPrompts] = useState<Array<{ id: string; origin: string; permission: string; surfaceId: string | null }>>([])
@@ -732,19 +719,6 @@ export default function App(): JSX.Element {
     const now = useDesktop.getState()
     animateTransform(viewTransform(now.mode, now.viewport, now.currentStage, now.stageCount, now.stageOrder))
   }
-
-  useEffect(() => {
-    const refresh = (): void => {
-      window.agentOS?.integrations.list().then(setIntegrations)
-    }
-    refresh()
-    const off = window.agentOS?.integrations.onUpdated(refresh)
-    window.addEventListener('focus', refresh)
-    return () => {
-      off?.()
-      window.removeEventListener('focus', refresh)
-    }
-  }, [setIntegrations])
 
   // The default Notepad is ensured after each hydrate (see the 'hydrate'/'switch' handlers below),
   // so it persists as a file in the active workspace instead of being recreated on each boot.
@@ -1293,14 +1267,6 @@ export default function App(): JSX.Element {
           }
         } else if (a.focus && createdId) {
           useDesktop.getState().focusAndZoom(createdId)
-        }
-      }
-      else if (a.type === 'provider-approval') {
-        // The agent asked to perform a WRITE on a connected provider (#51) — show the human a card.
-        const req = a.request as { id?: string; summary?: string; risk?: string } | undefined
-        if (req && req.id) {
-          const card = { id: String(req.id), summary: String(req.summary || 'a provider write'), risk: String(req.risk || 'write') }
-          setProviderApprovals((q) => (q.some((c) => c.id === card.id) ? q : [...q, card])) // enqueue (dedupe by id)
         }
       }
       else if (a.type === 'surface-contextmenu') {
@@ -2179,7 +2145,6 @@ export default function App(): JSX.Element {
     }
   }
 
-  const active = integrations.find((i) => i.id === connecting) ?? null
   const openFolder = surfaces.find((s) => s.kind === 'native' && s.component === 'folder' && s.props?.open)
   // Pending action-items count → the toolbar Inbox badge (so the human notices tasks even when the inbox is buried).
   const inboxPending = (() => {
@@ -2265,11 +2230,6 @@ export default function App(): JSX.Element {
             }}
           />
         )}
-        {/* Always-on integration connect cards are hidden — integrations surface as agent-spawned widgets
-            (e.g. `spawn_widget discord-list`, which reads live data through the OS), not fixed canvas cards.
-            Connection status + the OAuth flow still live in ConnectPanel (reachable from the dock). */}
-        {SHOW_INTEGRATION_CARDS &&
-          integrations.map((it) => <IntegrationWidget key={it.id} integration={it} onConnect={setConnecting} />)}
         {surfaces.map((s) =>
           // folder members live only inside the folder — unless "peeked" open onto the desktop
           s.groupId && !s.peek ? null : (
@@ -2476,7 +2436,6 @@ export default function App(): JSX.Element {
       <RadialSurfaceMenu center={radialMenu} onCreateSurface={createFromLauncher} onClose={() => setRadialMenu(null)} overWeb={radialOverWeb} />
 
       {hasWorkspaces && showOverview && <Overview onClose={closeOverview} onSwitch={switchWorkspace} theme={theme} onThemeChange={chooseTheme} />}
-      {active && <ConnectPanel integration={active} onClose={() => setConnecting(null)} />}
 
       {openFolder && <FolderOverlay folder={openFolder} />}
 
@@ -2552,27 +2511,6 @@ export default function App(): JSX.Element {
           ]}
         />
       )}
-
-      {/* #51: the agent asked to perform a WRITE on a connected account — the human must approve it
-          (per-call, request-bound). Reads never reach here. The OLDEST pending card shows; answering it
-          pops it and reveals the next, so concurrent writes each get their own decision (review fix). */}
-      {providerApprovals.length > 0 && (() => {
-        const card = providerApprovals[0]
-        const pop = (): void => setProviderApprovals((q) => q.filter((c) => c.id !== card.id))
-        return (
-          <div className="consent" onPointerDown={(e) => e.stopPropagation()}>
-            <div className="consent-card">
-              <h4>Allow the agent to {card.risk === 'destructive' ? <span style={{ color: 'var(--negative, #e5484d)' }}>make a destructive change</span> : 'make a change'} to your account?</h4>
-              <p><code>{card.summary}</code></p>
-              <p>This acts on your real connected account. It runs only if you allow it.{providerApprovals.length > 1 ? ` (${providerApprovals.length - 1} more pending)` : ''}</p>
-              <div className="consent-actions">
-                <button className="btn ghost" onClick={() => { window.agentOS?.denyProviderCall?.(card.id); pop() }}>Deny</button>
-                <button className="btn primary" onClick={() => { window.agentOS?.approveProviderCall?.(card.id); pop() }}>Allow</button>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
 
       {/* Item 3: a web guest asked for a sensitive permission — browser-parity Allow/Block, remembered
           per-origin. Oldest first; answering pops it and reveals the next. */}

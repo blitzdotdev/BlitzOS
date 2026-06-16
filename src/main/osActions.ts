@@ -2,7 +2,6 @@ import { BrowserWindow, ipcMain, webContents, app, screen } from 'electron'
 import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
-import { dropConsent } from './widgets'
 import { ingestSignals, ingestCanvasOps, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
@@ -752,7 +751,6 @@ export function osUpdateSurface(id: string, patch: Record<string, unknown>): Mut
 }
 export function osCloseSurface(id: string): MutationResult {
   if (!surfaceExists(id)) return noSuch(id)
-  dropConsent(id)
   dropContentShare(id)
   closeWebContentsView(id)
   pendingCreates.delete(id)

@@ -7,10 +7,6 @@ import {
   Vec2,
   Annotation,
   Bookmark,
-  IntegrationStatus,
-  GRID,
-  WIDGET_W,
-  WIDGET_H,
   isRuntimePanel
 } from './types'
 // The stage-grid geometry (insets, primaryRect, stageStride, stageRect, stageCenterX, stageForAgent) lives
@@ -59,12 +55,6 @@ export { latticeFor, slotRect, cardRect, slotOf, nearestFreeSlot, sizeForDims }
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
-}
-function snap(v: number): number {
-  return Math.round(v / GRID) * GRID
-}
-function overlaps(a: Vec2, b: Vec2): boolean {
-  return a.x < b.x + WIDGET_W && a.x + WIDGET_W > b.x && a.y < b.y + WIDGET_H && a.y + WIDGET_H > b.y
 }
 function sameCamera(a: CanvasTransform, b: CanvasTransform): boolean {
   return Math.abs(a.x - b.x) < 0.75 && Math.abs(a.y - b.y) < 0.75 && Math.abs(a.scale - b.scale) < 0.006
@@ -243,8 +233,6 @@ interface DesktopState {
   // is byte-identical to the single-stage model.
   stageCount: number
   currentStage: number
-  integrations: IntegrationStatus[]
-  positions: Record<string, Vec2>
   surfaces: Surface[]
   activeSurfaceId: string | null
   layoutHistory: Surface[][]
@@ -321,10 +309,6 @@ interface DesktopState {
   setGrabMode: (on: boolean) => void
   toggleLock: () => void
 
-  setIntegrations: (list: IntegrationStatus[]) => void
-  setPos: (id: string, x: number, y: number) => void
-  commitPos: (id: string, prevX: number, prevY: number) => void
-
   createSurface: (input: CreateSurfaceInput) => string
   // Phase 2: adopt a persisted workspace (restore surfaces + camera + mode + stage count from disk).
   hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas', stageCount?: number, stageOrder?: number[]) => void
@@ -391,8 +375,6 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   currentStage: 0,
   stageOrder: [0],
   lastBulkAt: 0,
-  integrations: [],
-  positions: {},
   surfaces: [],
   activeSurfaceId: null,
   layoutHistory: [],
@@ -867,29 +849,6 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const cy = minY + bh / 2
       const transform = { scale, x: s.viewport.w / 2 - cx * scale, y: s.viewport.h / 2 - cy * scale }
       return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
-    }),
-
-  setIntegrations: (list) =>
-    set((s) => {
-      const gap = 28
-      const total = list.length * WIDGET_W + (list.length - 1) * gap
-      const startX = -total / 2
-      const positions = { ...s.positions }
-      list.forEach((it, i) => {
-        if (!positions[it.id]) positions[it.id] = { x: startX + i * (WIDGET_W + gap), y: -120 }
-      })
-      return { integrations: list, positions }
-    }),
-
-  setPos: (id, x, y) => set((s) => ({ positions: { ...s.positions, [id]: { x, y } } })),
-
-  commitPos: (id, prevX, prevY) =>
-    set((s) => {
-      const cur = s.positions[id]
-      if (!cur) return {}
-      const candidate = { x: snap(cur.x), y: snap(cur.y) }
-      const collides = Object.entries(s.positions).some(([oid, p]) => oid !== id && overlaps(candidate, p))
-      return { positions: { ...s.positions, [id]: collides ? { x: prevX, y: prevY } : candidate } }
     }),
 
   createSurface: (input) => {

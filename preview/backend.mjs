@@ -1,38 +1,28 @@
 /*
- * Standalone (non-Electron) integrations backend for the browser preview.
+ * Standalone (non-Electron) OS backend for the browser preview.
  *
- * Mirrors the Electron main-process integration layer (src/main/oauth.ts +
- * integrations.ts + tokenStore.ts) as a plain Node HTTP server so the renderer
- * can do REAL OAuth over `fetch` instead of IPC. The renderer reaches it via the
- * Vite dev-server proxy (`/api` -> here), so everything is same-origin and there
- * is no CORS to fight.
- *
- * Differences from the Electron version (by necessity, off-machine):
- *  - The OAuth redirect comes back to the PUBLIC tunnel callback, not 127.0.0.1.
- *  - The renderer opens the provider authorize URL (no shell.openExternal here).
- *  - Tokens are stored in preview/.tokens.json (gitignored) — NOT the Keychain.
- *
- * Reads the same integrations.config.json (clientId/secret per provider) as the
- * Electron app. A provider with no creds reports configured:false.
+ * A plain Node HTTP server that mirrors the Electron main-process surface model
+ * (osActions / agentSocket) so the renderer can run over `fetch` + SSE instead of
+ * IPC. The renderer reaches it via the Vite dev-server proxy (`/api` -> here), so
+ * everything is same-origin and there is no CORS to fight. The agent works the
+ * user's tools through the web surfaces it opens (open_window / read_window /
+ * surface_control), not through any token API.
  */
 import { createServer } from 'node:http'
-import { randomBytes, createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync, readdirSync, appendFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync, readdirSync } from 'node:fs'
 import { join, dirname, basename, resolve, sep } from 'node:path'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
 // listWidgets/getWidgetSource/saveWidget moved INTO the shared os-tools.mjs registry (server no longer
-// references them directly); the authoring guide + the data registry are still used by HTTP routes here.
-import { fetchProviderResource, PROVIDER_DATA, widgetAuthoringMd } from '../src/main/widget-catalog.mjs'
-// #51 general provider-access substrate (the agent makes whatever request it needs; token stays here).
-import { callProvider, createApprovalLedger, createRateLimiter } from '../src/main/provider-call.mjs'
+// references them directly); the authoring guide is still served by an HTTP route here.
+import { widgetAuthoringMd } from '../src/main/widget-catalog.mjs'
 // Widget tool bridge — the CLOSED allowlist a sandboxed widget may call via blitz.tool (shared with Electron).
 import { makeWidgetToolRunner, makeWidgetToolHandlers } from '../src/main/widget-tools.mjs'
 // The ONE shared agent tool registry — the SAME module Electron's relay + localhost transports bind. The server
 // supplies its own primitive ops (broadcast + headless-Chromium) so there is no server/Electron tool difference.
 import { makeOsTools } from '../src/main/os-tools.mjs'
-import { capturedScopes } from '../src/main/provider-specs.mjs'
 // Shared perception kernel — the SAME modules the Electron main runs,
 // so server mode gets the autonomy loop with no duplicated code.
 // waitForEvents/latestSeq/redactMoment/EVENTS_REMINDER/isContentShared are consumed INSIDE the shared
@@ -66,8 +56,6 @@ const ROOT = join(__dirname, '..') // BlitzOS package root
 
 const PORT = Number(process.env.BACKEND_PORT || 8787)
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${PORT}`).replace(/\/$/, '')
-const REDIRECT_URI = `${PUBLIC_BASE_URL}/api/oauth/callback`
-const UA = 'agent-os-preview/0.1'
 
 // Workspaces: a ROOT folder holds many workspace folders. Default root is a gitignored sandbox dir.
 // Back-compat: BLITZ_WORKSPACE (a single folder) sets root = its parent + initial = its basename;
@@ -82,152 +70,11 @@ const WORKSPACES_ROOT = process.env.BLITZ_WORKSPACES_ROOT
     : join(ROOT, 'preview', '.workspace')
 const INITIAL_WS = process.env.BLITZ_WORKSPACE ? basename(resolve(process.env.BLITZ_WORKSPACE)) : 'Home'
 
-// ---------- provider registry (ported from src/main/integrations.ts) ----------
-
-const REGISTRY = [
-  {
-    id: 'gmail', name: 'Gmail', color: '#EA4335',
-    helpUrl: 'https://console.cloud.google.com/apis/credentials',
-    authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
-    scope: 'openid email profile https://www.googleapis.com/auth/gmail.readonly',
-    usePkce: true, extra: { access_type: 'offline', prompt: 'consent' }
-  },
-  {
-    id: 'github', name: 'GitHub', color: '#6e7681',
-    helpUrl: 'https://github.com/settings/developers',
-    authorizeUrl: 'https://github.com/login/oauth/authorize',
-    scope: 'read:user repo', usePkce: true
-  },
-  {
-    id: 'slack', name: 'Slack', color: '#4A154B',
-    helpUrl: 'https://api.slack.com/apps',
-    authorizeUrl: 'https://slack.com/oauth/v2/authorize',
-    scope: 'channels:history,groups:history,users:read', scopeParam: 'user_scope'
-  },
-  {
-    id: 'jira', name: 'Jira', color: '#0052CC',
-    helpUrl: 'https://developer.atlassian.com/console/myapps/',
-    authorizeUrl: 'https://auth.atlassian.com/authorize',
-    scope: 'read:jira-work read:jira-user offline_access',
-    extra: { audience: 'api.atlassian.com', prompt: 'consent' }
-  },
-  {
-    id: 'discord', name: 'Discord', color: '#5865F2',
-    helpUrl: 'https://discord.com/developers/applications',
-    authorizeUrl: 'https://discord.com/oauth2/authorize',
-    scope: 'identify guilds'
-  }
-]
-const defFor = (id) => REGISTRY.find((d) => d.id === id)
-function helpText(d) {
-  return `One-time: register an OAuth app at ${d.name}, set its redirect/callback URL to ${REDIRECT_URI}, then put ${d.id}.clientId + ${d.id}.clientSecret in integrations.config.json.`
-}
-
-// ---------- config + token store ----------
-
-function loadConfig() {
-  for (const p of [join(ROOT, 'integrations.config.json'), join(process.cwd(), 'integrations.config.json')]) {
-    try { if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8')) } catch { /* ignore malformed */ }
-  }
-  return {}
-}
-const credsFor = (id) => loadConfig()[id] ?? {}
-
-const TOKENS_FILE = join(__dirname, '.tokens.json')
-function readTokens() { try { return JSON.parse(readFileSync(TOKENS_FILE, 'utf8')) } catch { return {} } }
-function writeTokens(t) { writeFileSync(TOKENS_FILE, JSON.stringify(t, null, 2)) }
-
-function statuses() {
-  const toks = readTokens()
-  return REGISTRY.map((d) => {
-    const c = credsFor(d.id)
-    const rec = toks[d.id]
-    return {
-      id: d.id, name: d.name, color: d.color, helpUrl: d.helpUrl, helpText: helpText(d),
-      connected: !!rec, label: rec?.label ?? null, configured: !!(c.clientId && c.clientSecret)
-    }
-  })
-}
-
-// ---------- oauth helpers (ported from src/main/oauth.ts) ----------
-
-const base64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-const pending = new Map() // state -> { id, codeVerifier }
-
-function buildAuthorizeUrl(d, clientId, state, codeVerifier) {
-  const u = new URL(d.authorizeUrl)
-  u.searchParams.set('client_id', clientId)
-  u.searchParams.set('redirect_uri', REDIRECT_URI)
-  u.searchParams.set('response_type', 'code')
-  u.searchParams.set(d.scopeParam ?? 'scope', d.scope)
-  u.searchParams.set('state', state)
-  if (d.usePkce && codeVerifier) {
-    u.searchParams.set('code_challenge', base64url(createHash('sha256').update(codeVerifier).digest()))
-    u.searchParams.set('code_challenge_method', 'S256')
-  }
-  for (const [k, v] of Object.entries(d.extra ?? {})) u.searchParams.set(k, v)
-  return u.toString()
-}
-
-async function postForm(url, body) {
-  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': UA }, body: new URLSearchParams(body) })
-  return r.json()
-}
-async function postJson(url, body) {
-  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': UA }, body: JSON.stringify(body) })
-  return r.json()
-}
-async function getJson(url, token) {
-  const r = await fetch(url, { headers: { authorization: `Bearer ${token}`, accept: 'application/json', 'user-agent': UA } })
-  return r.json()
-}
-
-// Exchange the authorization code for a token + fetch an identity label.
-// One branch per provider, ported verbatim from integrations.ts::connectProvider.
-async function exchangeProvider(id, clientId, clientSecret, code, codeVerifier) {
-  if (id === 'gmail') {
-    const tok = await postForm('https://oauth2.googleapis.com/token', { code, client_id: clientId, client_secret: clientSecret, redirect_uri: REDIRECT_URI, grant_type: 'authorization_code', code_verifier: codeVerifier })
-    if (!tok.access_token) throw new Error(String(tok.error_description || tok.error || 'token exchange failed'))
-    const me = await getJson('https://openidconnect.googleapis.com/v1/userinfo', tok.access_token)
-    return { label: me.email || 'google account', secrets: tok }
-  }
-  if (id === 'github') {
-    const tok = await postForm('https://github.com/login/oauth/access_token', { client_id: clientId, client_secret: clientSecret, code, redirect_uri: REDIRECT_URI, grant_type: 'authorization_code', code_verifier: codeVerifier })
-    if (!tok.access_token) throw new Error(String(tok.error_description || tok.error || 'token exchange failed'))
-    const me = await getJson('https://api.github.com/user', tok.access_token)
-    return { label: me.login || 'github user', secrets: tok }
-  }
-  if (id === 'slack') {
-    const tok = await postForm('https://slack.com/api/oauth.v2.access', { client_id: clientId, client_secret: clientSecret, code, redirect_uri: REDIRECT_URI })
-    if (!tok.ok) throw new Error(`Slack: ${String(tok.error || 'oauth failed')}`)
-    const authed = tok.authed_user || {}
-    if (!authed.access_token) throw new Error('Slack returned no user token')
-    const team = tok.team || {}
-    return { label: `${String(authed.id || 'user')} @ ${String(team.name || 'workspace')}`, secrets: tok }
-  }
-  if (id === 'jira') {
-    const tok = await postJson('https://auth.atlassian.com/oauth/token', { grant_type: 'authorization_code', client_id: clientId, client_secret: clientSecret, code, redirect_uri: REDIRECT_URI })
-    if (!tok.access_token) throw new Error(String(tok.error_description || tok.error || 'token exchange failed'))
-    const resources = await getJson('https://api.atlassian.com/oauth/token/accessible-resources', tok.access_token)
-    const site = Array.isArray(resources) ? resources[0] : undefined
-    return { label: site?.name || 'jira site', secrets: { ...tok, cloudId: site?.id, siteUrl: site?.url } }
-  }
-  if (id === 'discord') {
-    const tok = await postForm('https://discord.com/api/oauth2/token', { client_id: clientId, client_secret: clientSecret, grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI })
-    if (!tok.access_token) throw new Error(String(tok.error_description || tok.error || 'token exchange failed'))
-    const me = await getJson('https://discord.com/api/v10/users/@me', tok.access_token)
-    return { label: me.username || 'discord user', secrets: tok }
-  }
-  throw new Error(`no flow for ${id}`)
-}
-
 // ---------- HTTP server ----------
 
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)) }
 const FILE_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', pdf: 'application/pdf', txt: 'text/plain; charset=utf-8', md: 'text/markdown; charset=utf-8', json: 'application/json', csv: 'text/csv', html: 'text/html; charset=utf-8', mp4: 'video/mp4', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav' }
 const fileContentType = (p) => FILE_MIME[(p.split('.').pop() || '').toLowerCase()] || 'application/octet-stream'
-const callbackPage = (title, sub) =>
-  `<!doctype html><meta charset="utf-8"><body style="font-family:-apple-system,system-ui;background:#0e1116;color:#e6edf3;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center"><div><h2 style="margin:0 0 8px">${title}</h2><p style="color:#8b949e;margin:0">${sub}</p></div><script>try{window.opener&&window.opener.postMessage({type:'agentos:oauth'},'*')}catch(e){}setTimeout(function(){window.close()},1400)</script></body>`
 
 // ---------- OS bridge: surface model over SSE (browser preview) ----------
 // Mirrors src/main/{osActions,agentSocket}.ts, but pushes agent actions to the
@@ -267,27 +114,6 @@ const launchAgent = process.env.BLITZ_AGENT
     }
   : null
 const sseClients = new Set()
-// Widget data consent: `${surfaceId}:${provider}` the human approved (via the
-// renderer prompt). The data route 403s until the pair is here — a widget can't
-// read an integration the user hasn't allowed for that surface.
-const consentGranted = new Set()
-// Coarse per-(surface,provider,resource) min-interval, so a runaway widget can't
-// hammer a provider API (burning the user's rate limit). Best-effort, in-memory.
-const lastFetch = new Map()
-// #51: shared state for the general /provider_call substrate. providerConsent gates SENSITIVE agent
-// reads (message bodies, repo contents) per provider — the human grants once via /api/os/provider-consent.
-const providerConsent = new Set()
-const providerApprovals = createApprovalLedger() // writes are refused in server mode, but the ledger is shared for parity
-const providerRate = createRateLimiter()
-const PROVIDER_AUDIT_LOG = join(__dirname, 'provider-audit.log')
-const providerAudit = (e) => {
-  try {
-    appendFileSync(PROVIDER_AUDIT_LOG, JSON.stringify(e) + '\n')
-  } catch {
-    /* best-effort audit */
-  }
-}
-const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
 
 // ---------- SERVER MODE: live web surfaces via a headless browser ----------
 // When BLITZ_SERVER_MODE=1, a server-side headless Chromium renders each `web`
@@ -528,20 +354,6 @@ if (bootJournal.concurrent) {
   }
 }
 
-// #53: restore the human's persisted consent for the active workspace (so grants survive a restart).
-// Re-run after a switch (loadConsent) to swap to the new workspace's grants.
-function loadConsent() {
-  consentGranted.clear()
-  providerConsent.clear()
-  const c = wsHost.consent()
-  for (const s of c.surfaces) consentGranted.add(s)
-  for (const p of c.providers) providerConsent.add(p)
-}
-function saveConsent() {
-  wsHost.persistConsent({ surfaces: [...consentGranted], providers: [...providerConsent] })
-}
-loadConsent()
-
 // Lazily-built widget-tool dispatcher (server transport). Mirrors the relay tool handlers — server-minted
 // ids, broadcast to renderers, host target ops — but only for the CLOSED widget allowlist (widget-tools.mjs).
 // Closures bind the live module vars at call time (requests arrive after init), so ordering is moot.
@@ -565,17 +377,6 @@ function toolBody(body) {
 
 // One source of truth (the SAME .md the Electron relay serves): src/main/blitzos-agents.md.
 const OS_AGENTS_MD = readFileSync(new URL('../src/main/blitzos-agents.md', import.meta.url), 'utf8')
-// Fill the doc's {{CONNECTORS}} placeholder with the live wired/unwired line (mirror of integrations.ts).
-function injectConnectors(md) {
-  const nameOf = (s) => String(s.name || s.id || '?')
-  const all = statuses()
-  const conn = all.filter((s) => s.connected).map(nameOf)
-  const off = all.filter((s) => !s.connected).map(nameOf)
-  const parts = []
-  if (conn.length) parts.push(`Connected: ${conn.join(', ')}`)
-  if (off.length) parts.push(`Not connected: ${off.join(', ')}`)
-  return md.replace('{{CONNECTORS}}', parts.join(' · ') || 'No connectors registered.')
-}
 
 // The "Agent activity" feed (ACTIVITY_TOOLS / activityText / withActivity) is the SHARED
 // core in src/main/activity.mjs — the SAME module the Electron relay (agentSocket.ts) uses,
@@ -643,7 +444,6 @@ const serverOps = {
     serverPending.delete(i)
     osState = { ...osState, surfaces: (osState.surfaces || []).filter((s) => s.id !== i) }
     broadcast({ type: 'close', id: i })
-    for (const k of consentGranted) if (k.startsWith(`${i}:`)) consentGranted.delete(k)
     if (SERVER_MODE && host) host.closeSurface(i).catch(() => {})
     wsHost.closeSurfaceFile(i) // delete the backing content file so it doesn't resurrect (no-renderer agent close)
     durableFlush()
@@ -730,18 +530,7 @@ const serverOps = {
     // on failure, so without this the agent saw { error } on server vs { ok:false, error } on Electron (parity bug).
     const r = wsHost.group(String(name || 'Folder'), ids, Number(x) || 0, Number(y) || 0, kind === 'board' ? 'board' : 'folder')
     return r && 'ok' in r ? r : { ok: false, error: (r && r.error) || 'could not group' }
-  },
-  providerCall: (descriptor) => {
-    const toks = readTokens()
-    const t = toks[descriptor.provider]
-    const record = t ? { secrets: t.secrets, grantedScopes: t.grantedScopes } : null
-    return callProvider(
-      { ...descriptor, caller: { kind: 'agent', transport: 'server' } },
-      { record, approvals: providerApprovals, rate: providerRate, consented: (p) => providerConsent.has(p), audit: providerAudit }
-    )
-  },
-  integrationStatuses: () => statuses(),
-  connectedProviders: () => Object.keys(readTokens())
+  }
 }
 
 // Terminal ops — the SHARED workspace-keyed lifecycle (terminal-ops.mjs). Server seam: the active
@@ -763,7 +552,7 @@ function startServerRelay() {
       appId: process.env.AGENT_SOCKET_APP_ID || 'as_app_anon',
       baseUrl: process.env.AGENT_SOCKET_RELAY || 'https://agentsocket.dev',
       appDescription: 'BlitzOS (browser preview): an agent OS desktop — open and arrange surfaces on an infinite canvas.',
-      agentsMd: injectConnectors(OS_AGENTS_MD),
+      agentsMd: OS_AGENTS_MD,
       label: 'blitzos-preview',
       // The ONE shared registry, server-bound (serverOps). Same paths/descriptions/schemas/handlers as Electron;
       // mapped to the agent-socket tool shape. transport:relay — the server is untrusted like the relay (no
@@ -800,144 +589,17 @@ const server = createServer(async (req, res) => {
   if (path === '/api/health')
     return json(res, 200, {
       ok: true,
-      redirectUri: REDIRECT_URI,
       // relay + agent health, so `curl /api/health` (or start-all's doctor) can tell if the agent path is live
       relayOnline: !!(relay && relay.isOnline()),
       agentUrl,
       agent: !!process.env.BLITZ_AGENT,
       workspace: wsHost.active()
     })
-  if (path === '/api/integrations' && req.method === 'GET') return json(res, 200, statuses())
-
-  // POST /api/integrations/:id/start  -> { authorizeUrl } | { error, needsConfig }
-  let m = path.match(/^\/api\/integrations\/([a-z]+)\/start$/)
-  if (m && req.method === 'POST') {
-    const d = defFor(m[1])
-    if (!d) return json(res, 404, { error: 'unknown provider' })
-    const c = credsFor(d.id)
-    if (!c.clientId || !c.clientSecret) {
-      return json(res, 200, { error: `Add ${d.id}.clientId and ${d.id}.clientSecret to integrations.config.json`, needsConfig: true })
-    }
-    const state = base64url(randomBytes(16))
-    const codeVerifier = d.usePkce ? base64url(randomBytes(32)) : undefined
-    pending.set(state, { id: d.id, codeVerifier })
-    return json(res, 200, { authorizeUrl: buildAuthorizeUrl(d, c.clientId, state, codeVerifier), redirectUri: REDIRECT_URI })
-  }
-
-  // POST /api/integrations/:id/disconnect
-  m = path.match(/^\/api\/integrations\/([a-z]+)\/disconnect$/)
-  if (m && req.method === 'POST') {
-    const toks = readTokens(); delete toks[m[1]]; writeTokens(toks)
-    return json(res, 200, { ok: true })
-  }
-
-  // GET /api/integrations/:provider/:resource?surface=ID -> normalized {items:[...]}
-  // The data backend for the widget bridge. CLOSED registry: (provider,resource) must
-  // be in PROVIDER_DATA (no caller string builds a URL — SSRF guard). Consent-gated
-  // per (surface, provider): 403 until the human approved it in the renderer.
-  let dm = path.match(/^\/api\/integrations\/([a-z]+)\/([a-z0-9_-]+)$/)
-  if (dm && req.method === 'GET') {
-    const [, provider, resource] = dm
-    // Own-property check so a resource like "__proto__"/"constructor" can't reach
-    // Object.prototype (the registry is closed; only literal entries are valid).
-    if (!hasOwn(PROVIDER_DATA, provider) || !hasOwn(PROVIDER_DATA[provider], resource)) {
-      return json(res, 404, { error: `unknown data resource ${provider}/${resource}` })
-    }
-    // No consent gate (removed) — a widget reads its integration data directly. Closed registry + rate-limit remain.
-    const surface = url.searchParams.get('surface') || provider
-    const rk = `${surface}:${provider}:${resource}`
-    const now = Date.now()
-    if (now - (lastFetch.get(rk) || 0) < 500) return json(res, 429, { error: 'slow down', code: 'rate_limited' })
-    lastFetch.set(rk, now)
-    const token = readTokens()[provider]?.secrets?.access_token
-    try {
-      return json(res, 200, await fetchProviderResource(provider, resource, token))
-    } catch (e) {
-      return json(res, e?.code || 502, { error: e?.message || 'data fetch failed' })
-    }
-  }
-
-  // POST /api/os/consent { surfaceId, provider } — the renderer records a human grant.
-  if (path === '/api/os/consent' && req.method === 'POST') {
-    let cbody = ''
-    req.on('data', (c) => { cbody += c; if (cbody.length > 10_000) req.destroy() })
-    req.on('end', () => {
-      const b = toolBody(cbody)
-      if (b && b.surfaceId && b.provider) {
-        consentGranted.add(`${String(b.surfaceId)}:${String(b.provider)}`)
-        saveConsent() // #53: persist so the grant survives a restart
-      }
-      json(res, 200, { ok: true })
-    })
-    return
-  }
-
-  // POST /api/os/provider-consent { provider, allow } — the human grants/revokes the agent's SENSITIVE
-  // reads (message bodies, file contents) for a provider (#51). Non-sensitive reads never need this.
-  if (path === '/api/os/provider-consent' && req.method === 'POST') {
-    let cbody = ''
-    req.on('data', (c) => {
-      cbody += c
-      if (cbody.length > 10_000) req.destroy()
-    })
-    req.on('end', () => {
-      const b = toolBody(cbody)
-      const provider = String(b.provider || '')
-      if (provider) {
-        if (b.allow === false) providerConsent.delete(provider)
-        else providerConsent.add(provider)
-        saveConsent() // #53: persist
-      }
-      json(res, 200, { ok: true, provider, allowed: providerConsent.has(provider) })
-    })
-    return
-  }
-
-  // POST /api/os/consent/revoke { surfaceId } — drop every grant for a surface
-  // (its widget code changed, or it closed). Forces re-approval of the new code.
-  if (path === '/api/os/consent/revoke' && req.method === 'POST') {
-    let cbody = ''
-    req.on('data', (c) => { cbody += c; if (cbody.length > 10_000) req.destroy() })
-    req.on('end', () => {
-      const sid = String(toolBody(cbody).surfaceId || '')
-      if (sid) {
-        for (const k of consentGranted) if (k.startsWith(`${sid}:`)) consentGranted.delete(k)
-        saveConsent() // #53: persist the revoke
-      }
-      json(res, 200, { ok: true })
-    })
-    return
-  }
 
   // GET /api/widget-authoring.md — the bridge-authoring guide (also a tool).
   if (path === '/api/widget-authoring.md' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' })
     return res.end(widgetAuthoringMd())
-  }
-
-  // GET /api/oauth/callback?code&state -> exchange + store, return a close-me page
-  if (path === '/api/oauth/callback' && req.method === 'GET') {
-    res.writeHead(200, { 'content-type': 'text/html' })
-    const err = url.searchParams.get('error')
-    const code = url.searchParams.get('code')
-    const state = url.searchParams.get('state')
-    if (err) return res.end(callbackPage('Sign-in failed', String(err)))
-    const pend = state && pending.get(state)
-    if (!pend || !code) return res.end(callbackPage('Sign-in failed', 'state mismatch or expired — try again'))
-    pending.delete(state)
-    try {
-      const c = credsFor(pend.id)
-      const { label, secrets } = await exchangeProvider(pend.id, c.clientId, c.clientSecret, code, pend.codeVerifier)
-      const toks = readTokens()
-      // Record the granted scopes authoritatively at connect (#51) — the write scope-preflight checks these.
-      toks[pend.id] = { provider: pend.id, label, secrets, grantedScopes: capturedScopes(secrets), connectedAt: Date.now() }
-      writeTokens(toks)
-      console.log(`[agent-os backend] connected ${pend.id} as ${label}`)
-      return res.end(callbackPage('Connected ✓', 'You can close this tab and return to Agent OS.'))
-    } catch (e) {
-      console.error(`[agent-os backend] ${pend.id} exchange failed:`, e?.message || e)
-      return res.end(callbackPage('Sign-in failed', String(e?.message || e)))
-    }
   }
 
   // ---- OS bridge routes (surface model) ----
@@ -1204,8 +866,7 @@ const server = createServer(async (req, res) => {
   }
   // POST /api/os/widget-tool { surfaceId, name, args } — a sandboxed widget calls an OS tool via
   // blitz.tool (gated by the `tools` capability in the renderer). Same CLOSED allowlist as Electron
-  // (widget-tools.mjs); dispatches through the same primitives the relay tools use. provider_call
-  // writes are still hard-refused in server mode (callProvider transport:'server').
+  // (widget-tools.mjs); dispatches through the same primitives the relay tools use.
   if (path === '/api/os/widget-tool' && req.method === 'POST') {
     if (!sameSiteOnly(req)) return json(res, 403, { error: 'forbidden' })
     let wbody = ''
@@ -1375,7 +1036,6 @@ const server = createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const r = await wsHost.performSwitch(toolBody(cbody).name)
-        if (r.status === 200) loadConsent() // #53: swap to the new workspace's persisted consent
         json(res, r.status, r.body)
       } catch (e) {
         console.error('[workspace] switch failed:', e?.message || e)
@@ -1393,7 +1053,6 @@ const server = createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const r = await wsHost.removeWorkspace(toolBody(cbody).name)
-        if (r.ok) loadConsent() // deleting the current one switched away → load the new active's consent
         json(res, r.ok ? 200 : 400, r)
       } catch (e) {
         console.error('[workspace] delete failed:', e?.message || e)
@@ -1509,8 +1168,6 @@ server.on('upgrade', (req, socket, head) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`[agent-os backend] listening on http://127.0.0.1:${PORT}`)
-  console.log(`[agent-os backend] OAuth redirect URI to register: ${REDIRECT_URI}`)
-  console.log(`[agent-os backend] providers configured: ${statuses().filter((s) => s.configured).map((s) => s.id).join(', ') || '(none — add integrations.config.json)'}`)
   // Connect to the agent-socket relay (shared self-healing lifecycle in relay.mjs) so a pasted URL can drive it.
   startServerRelay()
   // Server mode: bring up the headless browser host for live web surfaces.

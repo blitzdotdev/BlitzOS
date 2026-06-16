@@ -467,32 +467,17 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     return mount(c, surface.id, { w: surface.w, h: surface.h })
   }, [surface.kind, surface.id, surface.w, surface.h, serverMode])
 
-  // srcdoc widget bridge: relay the widget's blitz:req (data from a connected
-  // integration) to the OS, gated by a one-time consent prompt; reply over
-  // postMessage. The sender is authenticated by object identity (event.source ===
-  // our iframe.contentWindow) — origin is the unusable "null" for a sandboxed frame.
-  // Deliver a reply ONLY to the generation that asked: an html reload swaps the
-  // iframe's contentWindow, so a stale held reply for the old document must never
-  // land on the new one (would cross-deliver consented data to different code).
+  // srcdoc widget bridge: relay the widget's blitz:req to the OS and reply over postMessage. The sender
+  // is authenticated by object identity (event.source === our iframe.contentWindow) — origin is the
+  // unusable "null" for a sandboxed frame. Deliver a reply ONLY to the generation that asked: an html
+  // reload swaps the iframe's contentWindow, so a stale held reply for the old document must never land on
+  // the new one. Each serve* does the work and replies to the SAME generation that asked (postRes is
+  // contentWindow-checked, so a reply for the old document can't land on a reloaded iframe).
   function postRes(win: Window, reqId: string, r: BridgeReply): void {
     if (iframeRef.current?.contentWindow === win) win.postMessage({ type: 'blitz:res', reqId, ...r }, '*')
   }
-  // The widget bridge runs every op IMMEDIATELY — no consent gate, no card, no held queue (removed: the OS
-  // draws no distinction here and a connected agent already has full power; widgets are first-class). Each
-  // serve* does the work and replies to the SAME generation that asked (postRes is contentWindow-checked, so
-  // a reply for the old document can't land on a reloaded iframe).
-  function serveData(win: Window, reqId: string, provider: string, resource: string): Promise<void> {
-    const api = window.agentOS
-    if (!api?.widgetRequest) return Promise.resolve(postRes(win, reqId, { ok: false, error: 'widget data bridge unavailable here' }))
-    return api
-      .widgetRequest({ surfaceId: surface.id, op: 'data', provider, resource })
-      .then(
-        (res) => postRes(win, reqId, res?.ok ? { ok: true, data: res.data } : { ok: false, error: res?.error || 'request failed' }),
-        (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) })
-      )
-  }
-  // blitz.tool — the widget calls an OS tool (create_surface/open_window/group/provider_call/…). CLOSED
-  // allowlist enforced main/server-side (widget-tools.mjs).
+  // blitz.tool — the widget calls an OS tool (create_surface/open_window/group/…). CLOSED allowlist
+  // enforced main/server-side (widget-tools.mjs).
   function serveTool(win: Window, reqId: string, name: string, args: Record<string, unknown>): Promise<void> {
     const api = window.agentOS
     if (!api?.widgetTool) return Promise.resolve(postRes(win, reqId, { ok: false, error: 'widget tool bridge unavailable here' }))
@@ -536,7 +521,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     const onMessage = (e: MessageEvent): void => {
       const win = iframeRef.current?.contentWindow
       if (!win || e.source !== win) return // only OUR widget (origin is unusable "null")
-      const m = e.data as { type?: string; reqId?: string; op?: string; provider?: string; resource?: string; tool?: string; args?: unknown; text?: string; sessionId?: string; path?: string; chatOp?: string }
+      const m = e.data as { type?: string; reqId?: string; op?: string; tool?: string; args?: unknown; text?: string; sessionId?: string; path?: string; chatOp?: string }
       if (!m || typeof m !== 'object') return
       if (m.type === 'blitz:hello') {
         win.postMessage({ type: 'blitz:init', props: widgetProps() }, '*')
@@ -573,13 +558,12 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         // The widget mounted clean — clear a stale lastError from a previous broken generation.
         if (surface.props?.lastError) useDesktop.getState().updateSurfaceProps(surface.id, { lastError: undefined })
       } else if (m.type === 'blitz:req' && typeof m.reqId === 'string') {
-        if (m.op === 'data') void serveData(win, m.reqId, String(m.provider ?? ''), String(m.resource ?? ''))
-        else if (m.op === 'tool') void serveTool(win, m.reqId, String(m.tool ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
+        if (m.op === 'tool') void serveTool(win, m.reqId, String(m.tool ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
         else if (m.op === 'msg') void serveMessage(win, m.reqId, String(m.text ?? ''), m.sessionId != null ? String(m.sessionId) : undefined)
         else if (m.op === 'chat') void serveChat(win, m.reqId, String(m.chatOp ?? ''), (m.args && typeof m.args === 'object' ? m.args : {}) as Record<string, unknown>)
         else if (m.op === 'listdir') void serveListDir(win, m.reqId, String(m.path ?? ''))
         else if (m.op === 'setprops') {
-          // A widget persists its OWN state (e.g. a note's text) — own-surface only, so no consent gate.
+          // A widget persists its OWN state (e.g. a note's text) — own-surface only.
           const patch = (m as { patch?: unknown }).patch
           useDesktop.getState().updateSurfaceProps(surface.id, (patch && typeof patch === 'object' ? patch : {}) as Record<string, unknown>)
           postRes(win, m.reqId, { ok: true })

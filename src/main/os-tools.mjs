@@ -93,51 +93,16 @@ function instrument(t) {
   }
 }
 
-// Item 7: a CONTENT-AGNOSTIC web-host → integration map, so a web surface's host can be correlated to a
-// CONNECTED account. This is a hint ("an account is connected for this site"), NOT a claim about the
-// surface's actual logged-in account (a browser guest can be signed into a DIFFERENT account than the OAuth
-// integration) — the agent verifies with read_window before acting AS the account. Suffix-matched, so a
-// subdomain (app.slack.com) or a tenant (acme.atlassian.net) still resolves. No per-site DOM logic.
-const PROVIDER_WEB_HOSTS = {
-  gmail: ['mail.google.com', 'accounts.google.com', 'google.com'],
-  github: ['github.com'],
-  slack: ['slack.com'],
-  jira: ['atlassian.net'],
-  discord: ['discord.com']
-}
-function hostOf(url) {
-  try {
-    return new URL(String(url || '')).host.toLowerCase()
-  } catch {
-    return ''
-  }
-}
-/** A connected integration whose web hosts match this surface's URL → { provider, label, verify:true }. */
-function accountHintFor(url, integrations) {
-  const host = hostOf(url)
-  if (!host || !Array.isArray(integrations)) return null
-  for (const it of integrations) {
-    if (!it || !it.connected) continue
-    const hosts = PROVIDER_WEB_HOSTS[it.id] || []
-    if (hosts.some((h) => host === h || host.endsWith('.' + h))) {
-      return { provider: it.id, label: it.label || null, verify: true }
-    }
-  }
-  return null
-}
-
 // The agent-facing view of desktop state — layout fields ONLY (master's contract): an INDEX, not the
 // content. srcdoc `html` and `props` are omitted (bloat; chat/activity props hold the full transcript).
 // To VERIFY a specific widget's data landed (a srcdoc iframe can't be read_window'd), use the targeted
 // `get_surface {id}` tool — pull one surface's props on demand instead of pushing everyone's every call.
 // ONE definition so every transport (and the widget list_state tool) returns the IDENTICAL shape.
-// `integrations` (optional) drives the item-7 per-web-surface account_hint (who-am-I correlation).
-export function serializeStateForAgent(state, integrations) {
+export function serializeStateForAgent(state) {
   const s = state || {}
   return {
     ...s,
     surfaces: (s.surfaces || []).map((x) => {
-      const hint = x.kind === 'web' && x.url ? accountHintFor(x.url, integrations) : null
       const out = {
         id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
         // A web surface is a BROWSER WINDOW: url/title above are its ACTIVE tab's; `tabs` lists all
@@ -147,7 +112,6 @@ export function serializeStateForAgent(state, integrations) {
         ...(x.slot ? { slot: x.slot, ...(x.slotStage ? { slotStage: x.slotStage } : {}) } : {}),
         ...(isOffstage(x, s.viewport, s.stageOrder, Number(s.stageCount) || 1) ? { offstage: true } : {}),
         ...(x.focus ? { focus: true } : {}),
-        ...(hint ? { account_hint: hint } : {}),
         // jsx/tsx widgets advertise their lang; a compile/runtime failure surfaces as lastError
         // (the confirm-a-drive read: fix the source, update_surface, re-check).
         ...(x.lang && x.lang !== 'html' ? { lang: x.lang } : {}),
@@ -209,8 +173,7 @@ async function provisionBlitzApp(slug) {
  *   closeSurface(id), goToPrimary(), getState()->state, workspaceContext()->{workspace,workspace_path,siblings},
  *   listWorkspaces()->{...}, createWorkspace(name)->{ok,name}, switchWorkspace(name)->{ok,active},
  *   readWindow(id,script?)->result, controlSurface(id,action)->{ok,result}, say(text),
- *   customizeWidget(name,html,agentId?,lang?)->{ok,rel}, systemUi(name)->html|null, systemUiInfo(name)->{source,lang}|null, groupIntoFolder(name,ids,x,y,kind)->{ok,...}, providerCall(descriptor,transport)->result,
- *   integrationStatuses()->[...], connectedProviders()->[...] }
+ *   customizeWidget(name,html,agentId?,lang?)->{ok,rel}, systemUi(name)->html|null, systemUiInfo(name)->{source,lang}|null, groupIntoFolder(name,ids,x,y,kind)->{ok,...} }
  */
 export function makeOsTools(ops) {
   // Stage placement (shared by place_widget / bring_to_stage / auto-placed creates): budget-check,
@@ -433,8 +396,8 @@ export function makeOsTools(ops) {
     {
       path: '/list_state',
       description:
-        'List the canvas: active workspace, its folder path (workspace_path), and the open surfaces (layout fields only — an INDEX; use get_surface for one surface\'s props). Local agents author by writing files into workspace_path; check surfaces to judge THIS desktop vs a fresh workspace. A web surface MAY carry account_hint {provider,label,verify} when a connected integration matches its host — a hint that an account exists, NOT proof of the surface\'s logged-in account; read_window to confirm before acting AS it.',
-      handler: () => serializeStateForAgent(ops.getState(), ops.integrationStatuses ? ops.integrationStatuses() : undefined)
+        'List the canvas: active workspace, its folder path (workspace_path), and the open surfaces (layout fields only — an INDEX; use get_surface for one surface\'s props). Local agents author by writing files into workspace_path; check surfaces to judge THIS desktop vs a fresh workspace.',
+      handler: () => serializeStateForAgent(ops.getState())
     },
     {
       path: '/get_surface',
@@ -491,16 +454,6 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/provider_call',
-      description:
-        'Make an authenticated request to a CONNECTED integration (provider) and get the JSON back — use it to build whatever the user needs (their unread mail, repos, issues, messages, …). The OS injects the credential server-side; you NEVER see the token. Reads (GET) are broad — pass any path under the provider\'s API. Writes (POST/PUT/PATCH/DELETE) pop a human approval card. A sensitive read (message bodies, file contents) returns code:"consent_required" until the human approves once. Args: {provider, method?, path, query?, body?}. Connected providers are in list_integrations.',
-      input_schema: { type: 'object', required: ['provider', 'path'], properties: { provider: { type: 'string' }, method: { type: 'string' }, path: { type: 'string', description: 'provider-relative, e.g. /user/repos' }, query: { type: 'object' }, body: {} } },
-      handler: ({ body, transport }) => {
-        const a = parse(body)
-        return ops.providerCall({ provider: String(a.provider || ''), method: a.method ? String(a.method) : undefined, path: String(a.path || ''), query: a.query, body: a.body, approvalToken: a.approvalToken }, transport)
-      }
-    },
-    {
       path: '/read_window',
       description: 'Read what is INSIDE a web surface (its live DOM): url, title, the focused element (where the user is typing), and visible text. On the trusted localhost path you may pass a JS expression as `script` to extract anything.',
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, script: { type: 'string' } } },
@@ -547,11 +500,8 @@ export function makeOsTools(ops) {
     {
       path: '/list_widgets',
       description:
-        'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML or React via lang:"jsx"/"tsx") backed by the user’s connected integrations. Returns each widget’s name, description, lang, and which integrations it needs (needsMet=true if connected). Use get_widget_source to read one, spawn_widget to open it.',
-      handler: () => {
-        const connected = ops.connectedProviders()
-        return { widgets: listWidgets().map((w) => ({ ...w, needsMet: w.needs.every((n) => connected.includes(n)) })), connected }
-      }
+        'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML or React via lang:"jsx"/"tsx"). Returns each widget’s name, description, and lang. Use get_widget_source to read one, spawn_widget to open it.',
+      handler: () => ({ widgets: listWidgets() })
     },
     {
       path: '/get_widget_source',
@@ -567,7 +517,7 @@ export function makeOsTools(ops) {
     {
       path: '/spawn_widget',
       description:
-        'Open a library widget on the canvas as a live sandboxed surface. For any non-trivial user task, `pipeline` is the default first visible progress surface: spawn it before hidden work with props.items exactly like {items:[{label,sub?,status:"active"|"queued"|"done"}]}; do not use props.steps. Then drive it with update_surface{id,props:{items}} as items move. The default task-start pipeline auto-closes after every item is done; keep final output in a separate note/widget/surface, or pass props.autoClose=false only when the pipeline itself is the durable artifact. A thinking-widget is an INSTRUMENT you DRIVE, not a final render: update it after EACH step of progress, never once at the end. Prefer widgets with useful interaction (filter/sort/expand/open source/chat action) unless the content is truly atomic. It fetches integration data through the OS bridge; the user approves access once. Returns { id, drive? } (and needsConnect:[...] if a required integration is not connected). Use list_widgets for names.',
+        'Open a library widget on the canvas as a live sandboxed surface. For any non-trivial user task, `pipeline` is the default first visible progress surface: spawn it before hidden work with props.items exactly like {items:[{label,sub?,status:"active"|"queued"|"done"}]}; do not use props.steps. Then drive it with update_surface{id,props:{items}} as items move. The default task-start pipeline auto-closes after every item is done; keep final output in a separate note/widget/surface, or pass props.autoClose=false only when the pipeline itself is the durable artifact. A thinking-widget is an INSTRUMENT you DRIVE, not a final render: update it after EACH step of progress, never once at the end. Prefer widgets with useful interaction (filter/sort/expand/open source/chat action) unless the content is truly atomic. Returns { id, drive? }. Use list_widgets for names.',
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, props: { type: 'object' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -579,15 +529,14 @@ export function makeOsTools(ops) {
         if (typeof a.w === 'number') desc.w = a.w
         if (typeof a.h === 'number') desc.h = a.h
         const id = ops.createSurface(desc)
-        const needsConnect = w.needs.filter((n) => !ops.connectedProviders().includes(n))
-        const out = needsConnect.length ? { id, needsConnect } : { id }
-        // A (live-driving contract): a thinking-widget (no integration) is an INSTRUMENT, not a final
-        // render. The #1 failure is spawning one with a skeleton then populating it once at the end, so
-        // it sits frozen through the whole task. Return the contract at spawn time, mid-flow.
-        if (!w.needs.length)
-          out.drive =
+        // A (live-driving contract): a thinking-widget is an INSTRUMENT, not a final render. The #1
+        // failure is spawning one with a skeleton then populating it once at the end, so it sits frozen
+        // through the whole task. Return the contract at spawn time, mid-flow.
+        return {
+          id,
+          drive:
             'This is a LIVE surface, not a final render. If this is your task-start pipeline, its progress rows must be in props.items, not props.steps: update_surface{id,props:{items:[{label,sub?,status:"active"|"queued"|"done"}]}}. Update it before and during the work, not after the fact. A completed task-start pipeline auto-closes, so put final results somewhere else before finishing.'
-        return out
+        }
       }
     },
     {
@@ -603,13 +552,8 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/list_integrations',
-      description: 'List the integrations (Discord, GitHub, Gmail, Jira, Slack) and whether each is connected — so you know which widgets can show real data and what to ask the user to connect.',
-      handler: () => ({ integrations: ops.integrationStatuses() })
-    },
-    {
       path: '/get_widget_authoring',
-      description: 'Get the widget-authoring guide: how to write HTML or JSX/TSX widgets that read integration data and expose useful actions via the sandboxed window.blitz bridge, including the required pre-create review checklist. Read this BEFORE authoring a new widget with save_widget.',
+      description: 'Get the widget-authoring guide: how to write HTML or JSX/TSX widgets that expose useful actions via the sandboxed window.blitz bridge, including the required pre-create review checklist. Read this BEFORE authoring a new widget with save_widget.',
       handler: () => ({ markdown: widgetAuthoringMd() })
     },
     {
