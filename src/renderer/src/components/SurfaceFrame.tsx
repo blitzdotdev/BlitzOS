@@ -278,11 +278,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     grabFracY: number
     startPreSnap?: { w: number; h: number } // floating size if this window started the drag already tiled
     poppedOut: boolean // a tiled window has been dragged back out to floating this gesture
+    dx?: number // last applied drag delta (world units), folded into the store on drop
+    dy?: number
+    imperative?: boolean // moving the frame via a composited transform, committed to the store on drop
   } | null>(null)
-  // The live page captured to a bitmap while dragging a web window (see captureSurface): a
-  // WebContentsView can't visually track rapid setBounds during motion, so we paint this static
-  // snapshot over the hole and move the frame as pure DOM, then restore the live view on drop.
-  const [dragSnap, setDragSnap] = useState<string | null>(null)
   const resize = useRef<{ startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; dir: string } | null>(null)
   // Slotted-tile drag: the candidate lattice span under the outline ghost (committed on drop).
   const slotGhost = useRef<{ col: number; row: number } | null>(null)
@@ -317,10 +316,16 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   // absorbs it), onBarUp never fires — so clear any ghost snap-preview / drop-target it left behind.
   useEffect(() => {
     return () => {
-      if (drag.current) {
+      const d = drag.current
+      if (d) {
         const st = useDesktop.getState()
         st.setSnapPreview(null)
         st.setDragTarget(null)
+        // An imperative drag never reached onBarUp — drop the transform + commit so the window stays put.
+        if (d.imperative) {
+          if (frameRef.current) frameRef.current.style.transform = ''
+          for (const it of d.items) st.moveSurface(it.id, it.ox + (d.dx ?? 0), it.oy + (d.dy ?? 0))
+        }
       }
     }
   }, [])
@@ -598,12 +603,6 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       /* ignore (synthetic events) */
     }
     setIsDragging(true)
-    // Web window: snapshot the live page NOW so the freeze is ready by the time motion starts (a
-    // WebContentsView can't track rapid setBounds during a drag). Cheap waste on a click — cleared in
-    // onBarUp. Skip in server mode (no native capture) and for slotted/file tiles (they stay store-driven).
-    if (surface.kind === 'web' && !serverMode && !isSlotted && !isFileTile) {
-      window.agentOS?.captureSurface?.(surface.id).then((url) => { if (url && drag.current) setDragSnap(url) }).catch(() => {})
-    }
     const st = useDesktop.getState()
     // drag the whole selection if this surface is part of a multi-selection; else just this one.
     // A Space "grab" of a single surface also selects it.
@@ -655,12 +654,19 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     }
     const dx = (e.clientX - d.startX) / t.scale
     const dy = (e.clientY - d.startY) / t.scale
-    // Store-driven move: the frame, the page hole's clips, and the L0 view all derive from surface.x/y.
-    // The page CONTENT no longer freezes mid-drag because a web window paints the dragSnap bitmap over
-    // its hole (see onBarDown) — the snapshot is DOM inside the frame, so it rides the frame perfectly
-    // while the live WebContentsView (which can't visually track rapid setBounds during motion) is
-    // hidden behind it and restored on drop. The residual frame-follow latency is React's commit time.
-    for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
+    d.dx = dx
+    d.dy = dy
+    // A single free window moves IMPERATIVELY — a composited transform offset on the frame, NO store
+    // write per move (that React round-trip is the lag). React still owns left/top (= the un-updated
+    // store position) and never touches transform, so this persists across renders. The L0 page view
+    // AND every occlusion clip (.bg, scenery, per-frame page-holes) track this move in the geometry RAF,
+    // which reads each frame's LIVE rect (it reflects the transform) — not the store. Committed on drop.
+    if (d.items.length === 1 && !isSlotted && !isFileTile && frameRef.current) {
+      d.imperative = true
+      frameRef.current.style.transform = `translate(${dx}px, ${dy}px)`
+    } else {
+      for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
+    }
     // Highlight a visual Group folder OR a real filesystem folder under the cursor.
     // Real folders accept only file-backed items; visual Groups keep their old "any live surface" behavior.
     const dragged = new Set(d.items.map((it) => it.id))
@@ -721,9 +727,13 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     setIsDragging(false)
     const d = drag.current
     drag.current = null
-    // Restore the live page: keep the frozen snapshot up for a few frames so the WebContentsView (now
-    // re-bounded to its final rect by the geometry RAF) catches up before the bitmap is removed — no flash.
-    if (dragSnap) setTimeout(() => setDragSnap(null), 120)
+    // Fold an imperative drag's final position into the store ONCE, dropping the transform so React's
+    // left/top takes over at the same value (one synchronous pointerup render → no flash). Folder/snap
+    // branches below may override the position.
+    if (d?.imperative) {
+      if (frameRef.current) frameRef.current.style.transform = ''
+      for (const it of d.items) moveSurface(it.id, it.ox + (d.dx ?? 0), it.oy + (d.dy ?? 0))
+    }
     const st = useDesktop.getState()
     const target = st.dragTarget
     const snap = st.snapPreview
@@ -924,18 +934,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
             onPointerDown={onHoleDown}
             onPointerMove={onHoleMove}
             onPointerUp={onHoleUp}
-          >
-            {/* Drag freeze: an opaque bitmap of the page covering the hole while the window moves, so the
-                content rides the frame as DOM (the live WebContentsView can't track motion). */}
-            {dragSnap && (
-              <img
-                src={dragSnap}
-                alt=""
-                draggable={false}
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none', zIndex: 2 }}
-              />
-            )}
-          </div>
+          />
         )
       case 'app':
         if (!surface.url) return <AppEmptyState />
