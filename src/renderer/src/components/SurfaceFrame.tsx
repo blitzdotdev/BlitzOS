@@ -212,6 +212,11 @@ function AppEmptyState(): JSX.Element {
   )
 }
 
+// Live frame DOM nodes by surface id. A window drag translates its frame(s) imperatively (a
+// composited `transform` written straight here) instead of pushing surface.x/y through React state
+// on every pointermove — see the drag handlers below for why. Populated from each frame's ref.
+const frameEls = new Map<string, HTMLElement>()
+
 // memo: the camera tween (⌘⌘ zoom-out, pan/zoom) re-renders App ~60×/sec, which re-creates every
 // SurfaceFrame element. Their `surface` prop keeps a stable reference when only the transform changes,
 // so memo lets React skip re-running each browser-bearing frame per animation tick. A surface's own
@@ -278,6 +283,9 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     grabFracY: number
     startPreSnap?: { w: number; h: number } // floating size if this window started the drag already tiled
     poppedOut: boolean // a tiled window has been dragged back out to floating this gesture
+    dx?: number // last applied drag delta (world units) — folded into the store once, on drop
+    dy?: number
+    imperative?: boolean // this drag moved the frame(s) via a composited transform, not React state
   } | null>(null)
   const resize = useRef<{ startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; dir: string } | null>(null)
   // Slotted-tile drag: the candidate lattice span under the outline ghost (committed on drop).
@@ -309,14 +317,35 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     })
   }, [surface.kind, surface.id, serverMode])
 
+  // Register this frame's DOM node so a drag can translate it imperatively (frameEls, above). The
+  // ref is set after commit; folders render no frameRef and simply fall back to the state path.
+  useEffect(() => {
+    const el = frameRef.current
+    if (!el) return
+    frameEls.set(surface.id, el)
+    return () => {
+      if (frameEls.get(surface.id) === el) frameEls.delete(surface.id)
+    }
+  }, [surface.id])
+
   // If this surface unmounts mid-drag (the agent closes it, a reconcile removes its file, a folder
   // absorbs it), onBarUp never fires — so clear any ghost snap-preview / drop-target it left behind.
   useEffect(() => {
     return () => {
-      if (drag.current) {
+      const d = drag.current
+      if (d) {
         const st = useDesktop.getState()
         st.setSnapPreview(null)
         st.setDragTarget(null)
+        // An imperative drag never reached onBarUp: fold each item's live transform into the store and
+        // drop it, so the moved windows don't snap back to their pre-drag positions.
+        if (d.imperative) {
+          for (const it of d.items) {
+            const el = frameEls.get(it.id)
+            if (el) el.style.transform = ''
+            st.moveSurface(it.id, it.ox + (d.dx ?? 0), it.oy + (d.dy ?? 0))
+          }
+        }
       }
     }
   }, [])
@@ -645,7 +674,34 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     }
     const dx = (e.clientX - d.startX) / t.scale
     const dy = (e.clientY - d.startY) / t.scale
-    for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
+    d.dx = dx
+    d.dy = dy
+    // Window position moves IMPERATIVELY during a drag — a composited `transform` written straight to
+    // the frame DOM, NOT surface.x/y through React state. Committing the store on every pointermove
+    // cost, per frame: a surfaces.map(), an O(N²) pageHolesClip recompute across every mounted frame
+    // (each subscribes pageHolesClip(self, surfaces)), and a left/top relayout — so the React-rendered
+    // frame visibly trailed the cursor while the page's WebContentsView (a cheap native setBounds that
+    // the geometry RAF still issues off this same transform) kept up. We translate here and fold the
+    // delta into the store exactly once, on drop (onBarUp). Slotted tiles stay on the state path: their
+    // release spring-snap (transition on left/top) animates from the live committed position; file
+    // tiles likewise glide (the fluid layer), so both keep tracking left/top through the drag.
+    if ((d.single && isSlotted) || isFileTile) {
+      for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
+    } else {
+      d.imperative = true
+      for (const it of d.items) {
+        const el = frameEls.get(it.id)
+        // Write left/top (world units — the frame lives in the camera-scaled .world), NOT a transform.
+        // A transform is composited-thread-only; the page's WebContentsView (a separate L0 view) only
+        // commits its setBounds visually on the renderer's MAIN-THREAD paint, so a transform leaves the
+        // page frozen mid-drag while the frame tracks. A left/top write forces that paint. Still no React
+        // reconcile / store write / O(N²) clip recompute — the costs that made the React path lag.
+        if (el) {
+          el.style.left = `${it.ox + dx}px`
+          el.style.top = `${it.oy + dy}px`
+        } else moveSurface(it.id, it.ox + dx, it.oy + dy) // no registered frame (e.g. a folder) → state path
+      }
+    }
     // Highlight a visual Group folder OR a real filesystem folder under the cursor.
     // Real folders accept only file-backed items; visual Groups keep their old "any live surface" behavior.
     const dragged = new Set(d.items.map((it) => it.id))
@@ -706,6 +762,18 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     setIsDragging(false)
     const d = drag.current
     drag.current = null
+    // Fold an imperative drag's live transform into the store exactly once, then drop the transform.
+    // This is the baseline drop position; the folder/snap/slot branches below may override it. The
+    // store write + any override are batched into one render (discrete pointerup), so no flash.
+    if (d?.imperative) {
+      const dx = d.dx ?? 0
+      const dy = d.dy ?? 0
+      for (const it of d.items) {
+        const el = frameEls.get(it.id)
+        if (el) el.style.transform = ''
+        moveSurface(it.id, it.ox + dx, it.oy + dy)
+      }
+    }
     const st = useDesktop.getState()
     const target = st.dragTarget
     const snap = st.snapPreview
