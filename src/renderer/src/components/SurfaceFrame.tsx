@@ -670,7 +670,6 @@ export const SurfaceFrame = memo(function SurfaceFrame({
             partition="persist:agentos"
             // @ts-expect-error allowpopups is a valid <webview> attribute, not in React's DOM types
             allowpopups="true"
-            style={{ ...fill, background: '#fff' }}
           />
         )
       case 'app':

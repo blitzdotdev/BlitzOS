@@ -393,24 +393,21 @@ button {
   position: relative;
   background: var(--surface);
 }
-/* THE HOLE (sandwich compositor): a browser body is fully transparent — the live page, a
-   WebContentsView in the pages window BELOW this transparent UI window, shows through. The frame's
-   chrome rows around it keep their own opaque backgrounds. */
-.webcontents-host {
-  background: transparent;
-}
-.window.browser {
-  background: transparent;
-  /* the focus ring is an INSET shadow on the frame, which paints UNDER children — a 1px padding
-     keeps the ring's line in a zone no opaque chrome row can cover, so it stays a continuous
-     crisp outline around chrome and page alike */
-  padding: 1px;
-}
+/* A web surface is an in-DOM <webview> guest filling the window body. The body clips it to the frame's
+   rounded bottom (the guest composites in its own layer, so the body must overflow:hidden it). */
 .window.browser .window-body {
-  background: transparent;
+  background: #fff;
+  overflow: hidden;
 }
 .window.browser .window-tabs {
   background: var(--surface);
+}
+.window.browser webview {
+  display: flex;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 .surface-empty {
   width: 100%;
