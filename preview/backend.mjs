@@ -23,6 +23,8 @@ import { makeWidgetToolRunner, makeWidgetToolHandlers } from '../src/main/widget
 // The ONE shared agent tool registry — the SAME module Electron's relay + localhost transports bind. The server
 // supplies its own primitive ops (broadcast + headless-Chromium) so there is no server/Electron tool difference.
 import { makeOsTools } from '../src/main/os-tools.mjs'
+// The JOB model (job-model.mjs) — the SAME shared module Electron binds, so server mode gets jobs with no fork.
+import { wireJobModel, makeJob, setJobStatus as jobSetStatus, readJob, dutyForJobStatus } from '../src/main/job-model.mjs'
 // Shared perception kernel — the SAME modules the Electron main runs,
 // so server mode gets the autonomy loop with no duplicated code.
 // waitForEvents/latestSeq/redactMoment/EVENTS_REMINDER/isContentShared are consumed INSIDE the shared
@@ -37,7 +39,7 @@ import {
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
-import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, normalizeAgentRuntime, prepareAgentLaunch } from '../src/main/agent-runtime.mjs'
+import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider } from '../src/main/agent-runtime.mjs'
 // Boot journal (crash dirty-bit + root lease) — the SAME root-state store the Electron main uses.
 import { openBootJournal, resolveWorkspace, appendChatMessage } from '../src/main/workspace.mjs'
 // The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
@@ -113,6 +115,12 @@ const launchAgent = process.env.BLITZ_AGENT
       })).catch(() => {})
     }
   : null
+// JOB model wiring (server). Tell job-model where the active workspace's terminals dir is (it reads/writes the
+// `job` on each agent's meta.json). Server mode has NO onboarding interview, so the boot-task mapper is purely
+// job-driven: a job agent gets the duty for its job status; any other agent gets null. (prepareAgentLaunch re-reads
+// this provider on every (re)launch, so the approved->running re-exec injects JOB_EXECUTE_DUTY into the bootstrap.)
+wireJobModel({ getTerminalsDir: () => { const ws = wsHost.activePath(); return ws ? join(ws, '.blitzos', 'terminals') : null } })
+setBootTaskProvider((id) => { const job = readJob(id); return job ? dutyForJobStatus(job.status) : null })
 const sseClients = new Set()
 
 // ---------- SERVER MODE: live web surfaces via a headless browser ----------
@@ -522,6 +530,32 @@ const serverOps = {
     const id = wsHost.newAgentId()
     wsHost.addAgent(id, title, { focus })
     return { id, title: title || `Agent ${id}` }
+  },
+  // Jobs (job-model.mjs) — SAME shape as Electron's electronOps. startJob spawns a fresh agent then stamps its
+  // Job (status 'proposed'); the boot-task mapper feeds it the planning duty. setJobStatus validates + writes,
+  // and on approved->running re-execs the job agent into the execution duty via clearAgentContext (serverTerminalOps,
+  // defined below — referenced lazily at request time, so source order is fine).
+  startJob: async (spec) => {
+    // Stamp the job onto the meta BEFORE the terminal launches (opts.job -> addAgent), so the agent's first
+    // bootstrap already carries the planning duty — no post-spawn re-exec (parity with Electron's startJob).
+    const job = makeJob({ goal: spec?.goal, title: spec?.title, contextRefs: spec?.contextRefs })
+    const id = wsHost.newAgentId()
+    wsHost.addAgent(id, spec?.title, { focus: true, job })
+    const agent = { id, title: spec?.title || `Agent ${id}` }
+    return { ok: true, agent, job }
+  },
+  setJobStatus: (agent, status) => {
+    const before = readJob(agent)
+    const r = jobSetStatus(agent, status)
+    // Re-exec into the new duty when the status crosses a DUTY boundary (PLAN -> EXECUTE), e.g. approved/proposed
+    // -> running. The agent is alive with a session id by now, so the re-exec actually fires (parity with Electron).
+    if (r.ok && before) {
+      const afterDuty = dutyForJobStatus(status)
+      if (afterDuty && afterDuty !== dutyForJobStatus(before.status)) {
+        try { Promise.resolve(serverTerminalOps.clearAgentContext(String(agent))).catch(() => {}) } catch { /* best-effort */ }
+      }
+    }
+    return r
   },
   systemUi: (name) => wsHost.systemUi(String(name)),
   systemUiInfo: (name) => wsHost.systemUiInfo(String(name)),

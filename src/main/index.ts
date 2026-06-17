@@ -11,6 +11,7 @@ import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capa
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
+import { wireJobModel, readJob, dutyForJobStatus } from './job-model.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -648,11 +649,22 @@ app.whenReady().then(() => {
     }
   }
   {
-    // Agent '0' carries the onboarding standing duty. The provider is re-read on EVERY (re)launch
-    // (prepareAgentLaunch rewrites bootstrap.txt): pending interview becomes the interview duty,
-    // then a finished interview becomes the resident initiative duty.
-    setBootTaskProvider((id: string) => (String(id) === '0' ? interviewBootTask() : null))
     const terminalsDirOf = (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'terminals') : null }
+    // job-model reads/writes the `job` on each agent's meta.json — tell it where the active workspace's
+    // terminals dir is (it must not import the IPC-bound osActions; same DI seam as setLaunchAgent).
+    wireJobModel({ getTerminalsDir: terminalsDirOf })
+    // The per-(re)launch standing-duty mapper (prepareAgentLaunch re-reads it + rewrites bootstrap.txt, so a
+    // duty changes as workspace state changes). Generalized to the JOB model: an agent with a JOB gets the duty
+    // for its job status (proposed/approved -> author + present a plan; running -> execute the approved plan;
+    // done/blocked -> no duty). An agent with NO job FALLS THROUGH UNCHANGED — agent '0' carries the onboarding
+    // standing duty (pending interview -> interview duty, finished -> resident initiative duty), every other
+    // bare peer gets null. (Single-Job model: start_job spawns a NEW agent, never '0', so '0' has no job and the
+    // onboarding interview path is byte-for-byte preserved.)
+    setBootTaskProvider((id: string) => {
+      const job = readJob(id)
+      if (job) return dutyForJobStatus(job.status)
+      return String(id) === '0' ? interviewBootTask() : null
+    })
     const launchAgent = (id: string, stage: number, title?: string): void => {
       const ws = osWorkspaceContext().workspace_path
       const terminalsDir = terminalsDirOf()

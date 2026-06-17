@@ -877,10 +877,12 @@ export function osKickBrain(agentId = '0'): void {
 }
 /** Open a new agent: mint its id, register + live-surface its chat widget; addAgent launches
  *  its managed terminal (via the launchAgent seam). focus:true (a USER '+ Agent') follows the camera to it. */
-export function osSpawnAgent(title?: string, focus = false): { id: string; title: string } {
+export function osSpawnAgent(title?: string, focus = false, job?: import('./job-model.mjs').Job): { id: string; title: string } {
   if (!wsHost) throw new Error('no workspace host')
   const id = wsHost.newAgentId()
-  wsHost.addAgent(id, title, { focus })
+  // A job (from start_job) is stamped onto the agent's meta by addAgent BEFORE its terminal launches, so the
+  // first bootstrap already carries the planning duty (bootTaskProvider reads it) — no post-spawn re-exec.
+  wsHost.addAgent(id, title, job && typeof job === 'object' ? { focus, job } : { focus })
   return { id, title: title || `Chat ${id}` }
 }
 /** Close a non-primary agent (stop its backend + remove its widget/files/stage). */

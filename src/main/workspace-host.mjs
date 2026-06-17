@@ -651,7 +651,10 @@ export function createWorkspaceHost(a) {
       const mp = join(dir, 'meta.json')
       let m = {}
       try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
-      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, stage, createdAt: m.createdAt || Date.now() }, null, 2))
+      // A job (start_job -> osSpawnAgent -> opts.job) is stamped HERE, BEFORE launchAgent (below) builds the first
+      // bootstrap — so bootTaskProvider reads it and the agent's first launch carries the planning duty (no re-exec).
+      // `...m` already carries any on-disk job (idempotent re-add); opts.job overrides it when starting a new job.
+      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, stage, createdAt: m.createdAt || Date.now(), ...(opts.job && typeof opts.job === 'object' ? { job: opts.job } : {}) }, null, 2))
     } catch { /* best-effort: the surface still works in-memory this run */ }
     setChatStatusLocal(id, 'starting')
     try {

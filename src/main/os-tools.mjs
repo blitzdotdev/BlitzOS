@@ -638,6 +638,37 @@ export function makeOsTools(ops) {
       }
     },
     {
+      path: '/start_job',
+      description:
+        "Start a JOB — the formalized unit of work in BlitzOS (it PLANS first, gets the user's approval, then EXECUTES the approved plan to completion). Use this (instead of spawn_agent) when the work is substantial enough to warrant a plan the user reviews: a multi-step task, something with an irreversible outward step, anything the user should approve before it runs. A normal one-off request you should just handle in chat — do NOT start a job for it. This spawns a fresh agent dedicated to the job, gives it the planning duty, and records the job (status 'proposed') on that agent. The job agent will author an editable plan and ask the user to approve; on approval, advance it with set_job_status status:'running'. Args: {title, goal, contextRefs?}. Returns { agent:{id,title}, job }.",
+      input_schema: { type: 'object', required: ['goal'], properties: { title: { type: 'string' }, goal: { type: 'string' }, contextRefs: { type: 'array', items: { type: 'string' } } } },
+      handler: async ({ body }) => {
+        const a = parse(body)
+        if (typeof ops.startJob !== 'function') return { status: 501, body: { error: 'jobs not supported on this transport' } }
+        const goal = String(a.goal || '')
+        if (!goal.trim()) return { status: 400, body: { error: 'goal required' } }
+        const contextRefs = Array.isArray(a.contextRefs) ? a.contextRefs.map(String) : undefined
+        const r = await ops.startJob({ title: a.title != null ? String(a.title) : undefined, goal, contextRefs })
+        if (!r || r.ok === false) return { status: 400, body: { error: (r && r.error) || 'could not start job' } }
+        return { agent: r.agent, job: r.job }
+      }
+    },
+    {
+      path: '/set_job_status',
+      description:
+        "Advance a JOB's lifecycle: proposed -> approved -> running -> done | blocked. The agent owns its own job's status. The load-bearing edge is approved -> running: set status:'running' once the user APPROVES the plan, and BlitzOS re-launches the job agent into its EXECUTION phase (run the approved plan to completion under /goal). Mark 'done' when the whole plan is complete, or 'blocked' when you are stuck waiting on the user. Args: {agent, status}. Returns { ok, job } or { ok:false, error }.",
+      input_schema: { type: 'object', required: ['agent', 'status'], properties: { agent: { type: 'string' }, status: { type: 'string', enum: ['proposed', 'approved', 'running', 'done', 'blocked'] } } },
+      handler: ({ body }) => {
+        const b = parse(body)
+        if (typeof ops.setJobStatus !== 'function') return { status: 501, body: { error: 'jobs not supported on this transport' } }
+        const agent = String(b.agent || '')
+        const status = String(b.status || '')
+        if (!agent) return { status: 400, body: { error: 'agent required' } }
+        if (!status) return { status: 400, body: { error: 'status required' } }
+        return ops.setJobStatus(agent, status)
+      }
+    },
+    {
       path: '/close_agent',
       description:
         "Close an agent you previously spawned — stops it, removes its chat widget + terminal, deletes its files, and frees its workspace stage. Args: {id}. The PRIMARY agent '0' (the user's main chat) cannot be closed. Returns { ok } or { ok:false, error }.",

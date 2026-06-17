@@ -63,7 +63,7 @@ export interface WorkspaceHost {
   agentIds(): string[]
   restoreChatHub(): { ok: boolean; id?: string; error?: string }
   newAgentId(): string
-  addAgent(agentId: string, title?: string, opts?: { focus?: boolean }): Record<string, unknown>
+  addAgent(agentId: string, title?: string, opts?: { focus?: boolean; job?: import('./job-model.mjs').Job }): Record<string, unknown>
   closeAgent(agentId: string): { ok: boolean; error?: string }
   renameAgent(agentId: string, newTitle: string): { ok: boolean; error?: string; title?: string }
   resumeAgentsOnBoot(): void

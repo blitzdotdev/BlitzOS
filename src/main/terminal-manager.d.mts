@@ -1,5 +1,6 @@
 // Types for the file-backed terminal manager (terminal-manager.mjs), backed by the tmux host.
 import type { TmuxHost } from './tmux-host.d.mts'
+import type { Job } from './job-model.d.mts'
 
 export type TerminalKind = 'terminal' | 'agent'
 export type TerminalStatus = 'running' | 'exited' | 'stopped'
@@ -29,6 +30,8 @@ export interface TerminalMeta {
   agentSessionId?: string | null
   claudeSessionId?: string
   claudeEstablished?: boolean
+  /** the agent's JOB record (job-model.mjs) when this is a job agent; null/absent = a normal-request peer. */
+  job?: Job | null
 }
 
 export interface SpawnTerminalOpts {
@@ -49,6 +52,8 @@ export interface SpawnTerminalOpts {
   agentSessionId?: string | null
   claudeSessionId?: string
   claudeEstablished?: boolean
+  /** an explicit JOB to carry onto the spawned meta; absent ⇒ inherit any on-disk job (re-spawn preserves it). */
+  job?: Job | null
 }
 
 export interface TerminalEvent {
@@ -96,3 +101,11 @@ export interface TerminalManager {
 }
 
 export function createTerminalManager(deps: TerminalManagerDeps): TerminalManager
+
+// ---- the single module-level meta.json serializer (shared with job-model.mjs) ----
+export function terminalMetaDir(terminalsDir: string, id: string): string
+export function terminalMetaPath(terminalsDir: string, id: string): string
+/** Read + parse a terminal's meta.json (kind-normalized), or null when absent/corrupt. */
+export function readTerminalMeta(terminalsDir: string, id: string): TerminalMeta | null
+/** Write a terminal's meta.json (mkdir -p the dir). No markWrite — that seam is the manager's concern. */
+export function writeTerminalMeta(terminalsDir: string, id: string, meta: TerminalMeta): void
