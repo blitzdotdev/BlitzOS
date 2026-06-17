@@ -9,7 +9,8 @@ import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
 import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
-import { electronTerminalOps, electronActionItems, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
+import { electronTerminalOps, electronActionItems, electronOps, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
+import { wireLauncher, registerLauncher } from './launcher'
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
 import { wireJobModel, readJob, dutyForJobStatus } from './job-model.mjs'
 import { wirePlanDoc } from './plan-doc.mjs'
@@ -514,6 +515,27 @@ app.whenReady().then(() => {
       /* already gone */
     }
   })
+
+  // The standalone Job Launcher (Shell A, plans/blitzos-job-entrypoints.md): a global hotkey (default
+  // ⌥Space; BLITZ_LAUNCHER_HOTKEY overrides) toggles a small always-on-top NSPanel where the user types a
+  // prompt; Send → electronOps.startJob, which mints a Job whose planning agent authors the plan widget.
+  // ISOLATED — its own window + self-contained inline UI; nothing here touches the renderer (App.tsx/store).
+  // startJob is workspace-host-gated: a Send before a workspace host exists is caught (osSpawnAgent throws
+  // 'no workspace host'), the handler's try/catch surfaces { ok:false } and leaves the bar open.
+  wireLauncher({
+    // electronOps is typed as a Record<string, (...args:never[])=>unknown> (so the shared registry can hold
+    // every tool uniformly); cast startJob to its real signature at this one call site (no runtime change).
+    startJob: (spec) =>
+      (electronOps.startJob as unknown as (s: { goal: string }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string })({ goal: spec.goal }),
+    focusMain: () => {
+      const w = mainWindow
+      if (!w || w.isDestroyed()) return
+      if (w.isMinimized()) w.restore()
+      w.show()
+      w.focus()
+    }
+  })
+  registerLauncher()
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()
