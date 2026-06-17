@@ -598,12 +598,13 @@ const serverOps = {
     const agent = { id, title: spec?.title || `Agent ${id}` }
     return { ok: true, agent, job }
   },
-  setJobStatus: (agent, status) => {
+  setJobStatus: (agent, status, fields) => {
     const before = readJob(agent)
-    const r = jobSetStatus(agent, status)
+    const r = jobSetStatus(agent, status, fields)
     // Re-exec into the new duty when the status crosses a DUTY boundary (PLAN -> EXECUTE), e.g. approved/proposed
     // -> running. The agent is alive with a session id by now, so the re-exec actually fires (parity with Electron).
-    if (r.ok && before) {
+    // A planSurfaceId-only bind (empty status) must NOT re-exec — guarded by `status` (dutyForJobStatus('') is null).
+    if (r.ok && before && status) {
       const afterDuty = dutyForJobStatus(status)
       if (afterDuty && afterDuty !== dutyForJobStatus(before.status)) {
         try { Promise.resolve(serverTerminalOps.clearAgentContext(String(agent))).catch(() => {}) } catch { /* best-effort */ }

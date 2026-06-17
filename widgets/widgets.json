@@ -114,5 +114,13 @@
     "lang": "jsx",
     "props": { "title": "Notes" },
     "version": 1
+  },
+  {
+    "name": "plan",
+    "description": "The W1 editable JOB plan widget (lang:jsx). A user-editable plan the agent presents BEFORE a job runs: inline-editable stages, reorder/remove, per-decision toggles, a comments box, Approve/Send-back. On submit it setProps the full edited plan and sends the JOB agent a tiny 'plan approve'/'plan reject' message (props.agentId routes it); the agent reads the full plan via get_surface and reconciles it into plan.md. Spawn with spawn_widget{name:'plan', props:{mode:'edit', agentId:'<your id>', stages:[{id,title,detail,status:'todo'}], decisions:{}, comments:''}}; flip props.mode to 'status' on approval to drive live execution. Its VISUAL is a lean template you may restyle; keep the data contract + return channel (see get_widget_authoring 'Editable / interactive widgets').",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Plan" },
+    "version": 1
   }
 ]

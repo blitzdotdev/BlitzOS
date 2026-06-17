@@ -123,6 +123,25 @@ console.log('JOB model (src/main/job-model.mjs):')
     noJob.ok === false && noJob.error === 'agent has no job', noJob)
 }
 
+// ---- (2b) W1: setJobStatus binds planSurfaceId (status-less and alongside a status) -------------------------
+{
+  const id = 'A2b'
+  seedAgent(id)
+  createJob(id, { goal: 'bind the plan widget' })
+  // Status-LESS bind: the planning agent records the editable plan widget id without changing status.
+  const bind = setJobStatus(id, '', { planSurfaceId: 'srf-99' })
+  ok('setJobStatus({planSurfaceId} only) → ok:true, persists planSurfaceId, leaves status proposed',
+    bind.ok === true && bind.job.planSurfaceId === 'srf-99' && readJob(id).planSurfaceId === 'srf-99' && readJob(id).status === 'proposed', bind)
+  // Bind + status together (and a non-whitelisted field is ignored, never clobbering goal/timestamps).
+  const both = setJobStatus(id, 'approved', { planSurfaceId: 'srf-100', goal: 'HACKED' })
+  ok('setJobStatus(status + planSurfaceId) → applies both; an out-of-band field (goal) is ignored',
+    both.ok === true && both.job.status === 'approved' && both.job.planSurfaceId === 'srf-100' && both.job.goal === 'bind the plan widget', both)
+  // An empty call (no status, no fields) is a clear error, not a silent no-op write.
+  const empty = setJobStatus(id, '', {})
+  ok('setJobStatus with neither status nor planSurfaceId → { ok:false }',
+    empty.ok === false && typeof empty.error === 'string', empty)
+}
+
 // ---- (3a) dutyForJobStatus: the pure status→duty mapper -----------------------------------------------------
 {
   ok('dutyForJobStatus(proposed) === JOB_PLAN_DUTY', dutyForJobStatus('proposed') === JOB_PLAN_DUTY)

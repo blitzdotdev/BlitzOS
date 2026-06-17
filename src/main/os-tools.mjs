@@ -672,16 +672,17 @@ export function makeOsTools(ops) {
     {
       path: '/set_job_status',
       description:
-        "Advance a JOB's lifecycle: proposed -> approved -> running -> done | blocked. The agent owns its own job's status. The load-bearing edge is approved -> running: set status:'running' once the user APPROVES the plan, and BlitzOS re-launches the job agent into its EXECUTION phase (run the approved plan to completion under /goal). Mark 'done' when the whole plan is complete, or 'blocked' when you are stuck waiting on the user. Args: {agent, status}. Returns { ok, job } or { ok:false, error }.",
-      input_schema: { type: 'object', required: ['agent', 'status'], properties: { agent: { type: 'string' }, status: { type: 'string', enum: ['proposed', 'approved', 'running', 'done', 'blocked'] } } },
+        "Advance a JOB's lifecycle and/or bind its plan surface. STATUS: proposed -> approved -> running -> done | blocked. The agent owns its own job's status. The load-bearing edge is approved -> running: set status:'running' once the user APPROVES the plan, and BlitzOS re-launches the job agent into its EXECUTION phase (run the approved plan to completion under /goal). Mark 'done' when the whole plan is complete, or 'blocked' when stuck waiting on the user. BIND THE PLAN WIDGET: during planning, pass planSurfaceId:'<the editable plan widget's surface id>' to record it on the job (so the supervisor can find the plan); you may pass planSurfaceId WITHOUT a status (just binding), or together with a status. Args: {agent, status?, planSurfaceId?} — at least one of status/planSurfaceId. Returns { ok, job } or { ok:false, error }.",
+      input_schema: { type: 'object', required: ['agent'], properties: { agent: { type: 'string' }, status: { type: 'string', enum: ['proposed', 'approved', 'running', 'done', 'blocked'] }, planSurfaceId: { type: 'string', description: "the editable plan widget's surface id (binds the plan surface to the job)" } } },
       handler: ({ body }) => {
         const b = parse(body)
         if (typeof ops.setJobStatus !== 'function') return { status: 501, body: { error: 'jobs not supported on this transport' } }
         const agent = String(b.agent || '')
-        const status = String(b.status || '')
+        const status = b.status != null ? String(b.status) : ''
+        const fields = b.planSurfaceId != null ? { planSurfaceId: String(b.planSurfaceId) } : {}
         if (!agent) return { status: 400, body: { error: 'agent required' } }
-        if (!status) return { status: 400, body: { error: 'status required' } }
-        return ops.setJobStatus(agent, status)
+        if (!status && !fields.planSurfaceId) return { status: 400, body: { error: 'pass status and/or planSurfaceId' } }
+        return ops.setJobStatus(agent, status, fields)
       }
     },
     {

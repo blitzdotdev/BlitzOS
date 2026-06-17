@@ -28,11 +28,19 @@ const PLAN_STATUSES = new Set(['proposed', 'approved'])
 /** Statuses for which the agent should EXECUTE the approved plan. */
 const EXECUTE_STATUSES = new Set(['running'])
 
-// THE PLANNING DUTY (status proposed/approved). References the W1 plan widget CONCEPTUALLY — that widget does not
-// exist yet (plans/blitzos-plan-widget.md), so the duty asks the agent to author the best plan surface it can today
-// (an editable note/srcdoc) PLUS a staged plan.md, and to wait for approval. It must NOT start executing.
+// THE PLANNING DUTY (status proposed/approved). The W1 editable plan widget now EXISTS as an authoring IDIOM (see
+// get_widget_authoring "Editable / interactive widgets" + the optional `plan` library template) plus a two-way
+// RETURN CHANNEL: the user edits the widget, the widget setProps the full edited plan + a tiny sendMessage wakes
+// this agent, and the agent reads it via get_surface and reconciles it into plan.md. The duty drives that round-trip
+// and never marks the job running itself (the user approves; BlitzOS re-launches into execution).
 export const JOB_PLAN_DUTY =
-  'THIS IS A JOB IN ITS PLANNING PHASE. The user started a job; your goal is under "/goal" below. Do NOT execute the work yet — first PLAN it and get approval. Concretely: (1) author an EDITABLE plan widget on a surface the user can see and edit (use the plan plan-widget if one exists; otherwise create an editable note/srcdoc surface titled like the job that lays out the staged steps), and (2) write the same staged plan to `.blitzos/jobs/<your-agent-id>/plan.md` (create the folder; this is the job-scoped plan the execution phase reads). Present the plan in your chat and ASK the user to approve, edit, or reject it. If they edit the plan widget or ask for changes, update both the widget and plan.md and re-present. Do NOT begin the actual work, do NOT take any irreversible action, and do NOT mark the job running yourself — the user approves first, and BlitzOS then re-launches you into the execution phase. While planning you may do reversible research to make the plan concrete, but stage everything; nothing is sent, deployed, or committed during planning.'
+  'THIS IS A JOB IN ITS PLANNING PHASE. The user started a job; your goal is under "/goal" below. Do NOT execute the work yet — first PLAN it, present it, and get approval. Steps: ' +
+  '(1) AUTHOR AN EDITABLE PLAN WIDGET the user can change. Read get_widget_authoring first (the "Editable / interactive widgets" section is the exact idiom + data contract); the fastest path is spawn_widget {name:"plan"} (the library plan template) and drive it with update_surface{props}, or author your own srcdoc/jsx widget with the same shape if the job wants a custom layout. Seed it with props:{mode:"edit", agentId:"<your-agent-id>", stages:[{id,title,detail,status:"todo"}], decisions:{}, comments:""}. The widget must let the user edit each stage (inline), reorder/remove stages, toggle any key decisions, leave comments, and tap Submit/Reject — it writes those edits into its own props (setProps) and, on Submit/Reject, sends you a tiny "plan approve"/"plan reject" message carrying its props.agentId. ' +
+  '(2) BIND THE WIDGET TO THE JOB: call set_job_status {agent:"<your-agent-id>", planSurfaceId:"<the spawned widget id>"} to record the widget surface id on the job (this also lets the supervisor find the plan surface). You may pass planSurfaceId without changing status. ' +
+  '(3) WRITE THE SAME STAGED PLAN to `.blitzos/jobs/<your-agent-id>/plan.md` (create the folder). Use the EXACT machine-readable grammar the execution phase parses: a top-level `status: proposed` line (front-matter between `---` fences, or a bare header line), then one GitHub task-list checkbox per stage — `- [ ] Stage title` for a todo stage, `- [x] …` for done, `- [b] …` for blocked. Keep the widget stages and the plan.md checkboxes in lock-step (same order, same titles). ' +
+  '(4) PRESENT the plan in your chat and ASK the user to approve, edit, or reject (use the `ask` tool for the approve/edit/reject choice — it renders real buttons). ' +
+  '(5) ON A USER EDIT (you get a trigger:"message" wake like "plan approve"/"plan reject"/"plan edit", or a trigger:"action" moment, or a plain chat request for changes): read the FULL edited plan with get_surface {id:"<planSurfaceId>"} (its props carry the user\'s stages/decisions/comments/decision — do NOT rely on the tiny message text for the payload), then RECONCILE BOTH SIDES — rewrite plan.md to match the edited stages in the grammar above, and push any normalization back to the widget with update_surface {id, props} (then re-check get_surface for props.lastError) — and re-present. If the decision is "reject", revise the plan per their comments and present again. ' +
+  'Do NOT begin the actual work, do NOT take any irreversible action, and do NOT mark the job running yourself — only the user approves, and only THEN do you set status:"running" (set_job_status), which re-launches you into the execution phase. While planning you may do reversible research to make the plan concrete, but stage everything; nothing is sent, deployed, or committed during planning.'
 
 // THE EXECUTION DUTY (status running). The Job was approved; run the written plan to completion under /goal (the E1
 // continuation engine — not built yet; plans/blitzos-agent-autonomy-guardrails.md). Until the continuation engine
@@ -95,14 +103,26 @@ export function writeJob(agentId, patch = {}) {
   return job
 }
 
-/** Advance a Job's status (validated against JOB_STATUSES). Returns { ok, job } or { ok:false, error }. The caller
- *  (the set_job_status tool) handles the approved->running re-exec into the execution duty separately. */
-export function setJobStatus(agentId, status) {
+/** Advance a Job's status (validated against JOB_STATUSES) and/or set bind-fields on it. Returns { ok, job } or
+ *  { ok:false, error }. The caller (the set_job_status tool) handles the approved->running re-exec into the execution
+ *  duty separately. `status` is OPTIONAL: pass it to advance the lifecycle, or omit it (empty/null) to set only
+ *  `fields` — e.g. the W1 planning agent binding the plan widget with { planSurfaceId } before any status change.
+ *  `fields` is the whitelisted set of non-status Job props the agent may set (planSurfaceId / planPath); anything
+ *  else is ignored so a tool call can never clobber status/goal/timestamps out of band. */
+export function setJobStatus(agentId, status, fields = {}) {
   const s = String(status || '')
-  if (!JOB_STATUSES.includes(s)) return { ok: false, error: `status must be one of ${JOB_STATUSES.join(', ')}` }
+  const hasStatus = s !== ''
+  if (hasStatus && !JOB_STATUSES.includes(s)) return { ok: false, error: `status must be one of ${JOB_STATUSES.join(', ')}` }
+  const patch = {}
+  if (hasStatus) patch.status = s
+  if (fields && typeof fields === 'object') {
+    if (fields.planSurfaceId != null) patch.planSurfaceId = String(fields.planSurfaceId)
+    if (fields.planPath != null) patch.planPath = String(fields.planPath)
+  }
+  if (Object.keys(patch).length === 0) return { ok: false, error: 'nothing to set: pass status and/or planSurfaceId' }
   const existing = readJob(agentId)
   if (!existing) return { ok: false, error: 'agent has no job' }
-  const job = writeJob(agentId, { status: s })
+  const job = writeJob(agentId, patch)
   return job ? { ok: true, job } : { ok: false, error: 'could not write job' }
 }
 

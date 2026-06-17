@@ -255,10 +255,72 @@ and you never reinvent buttons/rows/bubbles. Prefer these over hand-rolled marku
 - Tokens: \`--blitz-accent\`, \`--blitz-bg\`, \`--blitz-surface\`, \`--blitz-text\`, \`--blitz-text-dim\`, \`--blitz-hairline\`, \`--blitz-radius\`.
 - **Color:** spawn any widget with \`props.accent\` (+ optional \`props.accentInk\`) and its \`--blitz-accent\` recolors automatically — no widget code needed. Sample accents from the Blitz paper palette tokens: \`--blitz-coral #FF8D61\` (signature), \`--blitz-terracotta\`, \`--blitz-sage\`, \`--blitz-slate\`, \`--blitz-dust\`, \`--blitz-mauve\`, \`--blitz-tan\`, \`--blitz-marker\`. Vary accents across a set of widgets (a distribution, not one color).
 - **Copy:** any text the human reads inside a widget follows the OS prose rules (manual, "Talking with the user"): absolutely NO em dashes (—); plain, tight sentences; bold sparingly; say what is missing instead of guessing.
-- Elements: \`<blitz-titlebar>\` (full APP frames like the chat only — never on a plain widget, see the design language above), \`<blitz-list>\`, \`<blitz-message role="user|agent">\`, \`<blitz-row name meta kind ext>\` (fires \`open\`), \`<blitz-input placeholder>\` (fires \`send\` with \`detail.text\`), \`<blitz-button>\`. Or imperatively: \`window.blitz.ui.message(role,text)\` / \`.row({...})\` / \`.input({onSend})\` / \`.button(label,onClick)\`.
+- Elements: \`<blitz-titlebar>\` (full APP frames like the chat only — never on a plain widget, see the design language above), \`<blitz-list>\`, \`<blitz-message role="user|agent">\`, \`<blitz-row name meta kind ext>\` (fires \`open\`), \`<blitz-input placeholder>\` (fires \`send\` with \`detail.text\`), \`<blitz-button>\`, \`<blitz-edit value placeholder [multiline]>\` (an inline editable field — fires \`change\`/\`input\` with \`detail.value\`; for an editable plan-stage title/detail), \`<blitz-toggle on label>\` (a pill switch — fires \`change\` with \`detail.on\`; for a per-decision yes/no). Or imperatively: \`window.blitz.ui.message(role,text)\` / \`.row({...})\` / \`.input({onSend})\` / \`.button(label,onClick)\` / \`.edit({value,placeholder,multiline?,onChange,onInput?})\` / \`.toggle({label,on,onChange})\`.
 - Layout/scroll: by default the body is a normal scrolling document — content taller than the surface scrolls, so don't put \`overflow:hidden\` or a fixed \`height\`/\`100vh\` on \`body\` (that clips it). For a fixed app frame — a pinned \`<blitz-titlebar>\`/\`<blitz-input>\` with ONE scrolling region — use a \`<blitz-list>\`; it fills the height and scrolls internally, and the body switches to the fixed frame automatically.
 
 The built-in chat (\`blitz-chat.tsx\` by default, with legacy/custom \`blitz-chat.html\` still supported) and note (\`blitz-note.html\`) are themselves widgets built this way — read them with get_system_ui as templates; the user can have you rewrite them with customize_widget.
+
+## Editable / interactive widgets (forms, plans, anything the USER changes)
+
+Most widgets are read-only dashboards the agent drives. Some are TWO-WAY: the user edits the
+widget (reorders steps, toggles a choice, types a note, taps Submit) and those edits must reach
+YOU so you can act on them. The classic case is a **plan widget** the user approves/edits before a
+job runs, but the same idiom covers any form, checklist, or approval card.
+
+**The data contract — keep ALL editable state in one props object, mirror every edit into it.**
+A widget reloads from scratch when its html is replaced and loses in-widget JS state on any reload, so
+the source of truth for what the user has changed is \`props\`, not React state. On every edit, write the
+change back with \`window.blitz.setProps(next)\` (durable, own-surface) AND keep it in local state for the
+live render. Then a reload or an agent \`update_surface\` re-seeds from the same shape via \`onProps\`.
+
+Example shape for a plan (adapt the field names to your task):
+
+\`\`\`js
+// props = the single source of truth — seed from blitz.props(), re-render from onProps, write every edit back.
+{
+  mode: 'edit',                                   // 'edit' while planning; the agent flips it to 'status' on approval
+  stages: [ { id:'s1', title:'…', detail:'…', status:'todo' }, … ],  // editable, reorderable, removable rows
+  decisions: { useStaging: true, notify: false }, // per-decision toggles (a map of named yes/no choices)
+  comments: '',                                   // a free-text box the user can leave for you
+  decision: null                                  // set to 'approve' | 'reject' | 'edit' when the user acts
+}
+\`\`\`
+
+Render it with the kit: \`<blitz-edit>\` for each stage title/detail (fires \`change\`/\`input\` with \`detail.value\`),
+\`<blitz-toggle>\` for each decision (fires \`change\` with \`detail.on\`), small \`<blitz-button>\`s for reorder (▲/▼) and
+remove (✕) per row, a multiline \`<blitz-edit>\` or a \`<textarea>\` for comments, and \`<blitz-button>\`s for Submit /
+Reject. On EVERY change handler: update local state, then \`blitz.setProps({ stages, decisions, comments })\` so the
+edit survives a reload. (Give each row a STABLE \`id\` so reorder/remove never mixes rows up.)
+
+**The RETURN CHANNEL — how the user's edits get back to the agent (the recommended two-step).**
+The widget can talk to the agent two ways. The robust one for a large edited payload is:
+
+1. On Submit/Reject, write the FULL final state into your own props and set the decision:
+   \`await window.blitz.setProps({ stages, decisions, comments, decision: 'approve' })\` (or \`'reject'\`).
+2. Then wake the agent with a TINY message — the payload rides in props, not in the message:
+   \`window.blitz.sendMessage('plan approve', window.blitz.props().agentId)\`.
+   Passing \`props.agentId\` routes the wake to the JOB's agent (omitting it wakes the primary agent '0' instead —
+   always pass it for a job widget; the agent that spawned the widget seeds it in props).
+
+The agent then reads the full edited plan with \`get_surface {id}\` (which returns the widget's complete props,
+sidestepping the size cap below), reconciles it, and updates the widget back via \`update_surface {props}\`.
+
+**The direct channel (\`__blitz:'action'\`) — small payloads only, it has a hard cap.** A sandboxed widget can also
+postMessage \`{ __blitz:'action', surfaceId, … }\` straight to the OS, which delivers it to the agent as a
+\`trigger:'action'\` moment carrying the whole object on the moment's \`action\` field — no \`sendMessage\`/\`get_surface\`
+round-trip. BUT the serialized message is **capped at 4000 BYTES and SILENTLY DROPPED if it exceeds that** (a
+renderer security limit). So use \`__blitz:'action'\` only for a SMALL signal (a button id, a single choice, a short
+note); for anything that could grow — an edited multi-stage plan, a comments box, a list — use the two-step above
+(\`setProps\` + a tiny \`sendMessage\`), because the plan lives in props and is read with \`get_surface\`, never squeezed
+through the 4000-byte action channel where a big edit would vanish with no error.
+
+\`\`\`js
+// direct channel — ONLY for a small, bounded signal (NOT a full plan):
+window.parent.postMessage({ __blitz: 'action', surfaceId: window.blitz.props().surfaceId, kind: 'stage-toggle', id: 's1', on: true }, '*');
+\`\`\`
+
+After the agent calls \`update_surface\` on a two-way widget, it should re-check \`get_surface\`/\`list_state\` for
+\`props.lastError\` — an agent-pushed prop change lands silently, so a failed update is only visible on the next read.
 
 ## Rules
 

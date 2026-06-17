@@ -40,8 +40,13 @@ export function readJob(agentId: string): Job | null
  *  Returns the merged job, or null when there is no resolver / no agent meta yet. */
 export function writeJob(agentId: string, patch?: Partial<Job>): Job | null
 
-/** Advance a Job's status (validated). Returns { ok, job } or { ok:false, error }. */
-export function setJobStatus(agentId: string, status: string): { ok: true; job: Job } | { ok: false; error: string }
+/** Advance a Job's status (validated) and/or set whitelisted bind-fields (planSurfaceId / planPath). `status` is
+ *  optional — omit it to set only `fields` (e.g. the W1 agent binding the plan widget). Returns { ok, job } or error. */
+export function setJobStatus(
+  agentId: string,
+  status?: string | null,
+  fields?: { planSurfaceId?: string; planPath?: string }
+): { ok: true; job: Job } | { ok: false; error: string }
 
 /** Build a fresh PROPOSED job object WITHOUT writing it (status 'proposed', with timestamps). The start_job path
  *  hands this to spawnAgent so addAgent stamps it onto the meta BEFORE the terminal launches (first bootstrap

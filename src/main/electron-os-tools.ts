@@ -90,10 +90,12 @@ export const electronOps = {
   // proposed -> running = PLAN -> EXECUTE) it re-execs the job agent into the new duty by clearing its brain context
   // (the interview->resident handoff path), so the boot-task mapper re-reads the job and injects the new duty. Safe
   // here (the agent is alive with a session id by now, unlike the just-born start_job case).
-  setJobStatus: (agent: string, status: string) => {
+  setJobStatus: (agent: string, status: string, fields?: { planSurfaceId?: string; planPath?: string }) => {
     const before = readJob(agent)
-    const r = jobSetStatus(agent, status)
-    if (r.ok && before) {
+    const r = jobSetStatus(agent, status, fields)
+    // Only a real STATUS change across a DUTY boundary re-execs; a planSurfaceId-only bind (empty status) must not
+    // (dutyForJobStatus('') is null, so afterDuty is null and this is skipped — the W1 widget-bind never re-execs).
+    if (r.ok && before && status) {
       const afterDuty = dutyForJobStatus(status)
       if (afterDuty && afterDuty !== dutyForJobStatus(before.status)) osClearBrainContext(agent)
     }

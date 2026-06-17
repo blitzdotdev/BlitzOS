@@ -109,6 +109,46 @@ body.blitz-app{height:100%;display:flex;flex-direction:column;overflow:hidden}
       (ghost?'background:transparent;color:var(--blitz-text-dim);border:1px solid var(--blitz-hairline)':'background:var(--blitz-accent);color:var(--blitz-accent-ink)')+'}',
       '<button><slot></slot></button>'); }});
 
+  // <blitz-edit value placeholder multiline> — an inline editable field that reads like text until focused
+  // (an editable plan-stage title/detail). Fires 'change' {detail:{value}} on blur OR Enter (multiline: Cmd/Ctrl+Enter),
+  // and 'input' {detail:{value}} live as the user types. The kit owns the styling so a plan widget never hand-rolls a
+  // contenteditable. Seed/refresh from the host by setting the value attribute (reflected into the field when not focused).
+  customElements.define('blitz-edit', class extends HTMLElement{
+    static get observedAttributes(){ return ['value']; }
+    connectedCallback(){ if(this.shadowRoot)return; var multi=this.hasAttribute('multiline');
+      var sr=shadow(this, ':host{display:block}'+
+        '.f{min-height:1.4em;padding:4px 7px;border-radius:var(--blitz-radius-sm);border:1px solid transparent;color:var(--blitz-text);font:inherit;outline:none;cursor:text;white-space:'+(multi?'pre-wrap':'nowrap')+';overflow:'+(multi?'visible':'hidden')+';text-overflow:ellipsis}'+
+        '.f:hover{background:var(--blitz-surface-2)}'+
+        '.f:focus{background:var(--blitz-surface);border-color:var(--blitz-accent);white-space:pre-wrap;overflow:visible}'+
+        '.f:empty:before{content:attr(data-ph);color:var(--blitz-text-dim)}',
+        '<div class="f" contenteditable="true" data-ph="'+((this.getAttribute('placeholder')||'').replace(/[<>&"]/g,''))+'"></div>');
+      var f=sr.querySelector('.f'); this._f=f; f.textContent=this.getAttribute('value')||'';
+      var emit=function(name){ this.dispatchEvent(new CustomEvent(name,{bubbles:true,detail:{value:f.textContent}})); }.bind(this);
+      f.addEventListener('input', function(){ emit('input'); });
+      f.addEventListener('blur', function(){ emit('change'); });
+      f.addEventListener('keydown', function(e){ if(e.key==='Enter' && (multi ? (e.metaKey||e.ctrlKey) : !e.shiftKey)){ e.preventDefault(); f.blur(); } });
+    }
+    attributeChangedCallback(_n, _o, v){ if(this._f && this.shadowRoot && this._f!==this.shadowRoot.activeElement && this._f.textContent!==(v||'')) this._f.textContent=v||''; }});
+
+  // <blitz-toggle on label> — a small pill switch for a per-decision yes/no (a plan toggle, an option). Fires
+  // 'change' {detail:{on}}. Read its state from the event or the reflected on attribute. Click anywhere on it flips.
+  customElements.define('blitz-toggle', class extends HTMLElement{
+    static get observedAttributes(){ return ['on']; }
+    connectedCallback(){ if(this.shadowRoot)return; var lbl=this.getAttribute('label')||'';
+      var sr=shadow(this, ':host{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}'+
+        '.sw{position:relative;width:34px;height:20px;border-radius:11px;background:var(--blitz-surface-2);border:1px solid var(--blitz-hairline);transition:background .15s,border-color .15s;flex:0 0 auto}'+
+        '.sw.on{background:var(--blitz-accent);border-color:transparent}'+
+        '.kn{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}'+
+        '.sw.on .kn{transform:translateX(14px)}'+
+        '.lb{font-size:12px;color:var(--blitz-text)}',
+        '<div class="sw"><div class="kn"></div></div>'+(lbl?'<span class="lb">'+lbl.replace(/[<>&]/g,'')+'</span>':''));
+      var sw=sr.querySelector('.sw'); this._sw=sw; if(this.hasAttribute('on')) sw.classList.add('on');
+      this.addEventListener('click', function(){ var on=!sw.classList.contains('on'); sw.classList.toggle('on', on);
+        if(on) this.setAttribute('on',''); else this.removeAttribute('on');
+        this.dispatchEvent(new CustomEvent('change',{bubbles:true,detail:{on:on}})); }.bind(this));
+    }
+    attributeChangedCallback(_n, _o, v){ if(this._sw) this._sw.classList.toggle('on', v!=null); }});
+
   // Imperative helpers under window.blitz.ui (the bridge runs first, so window.blitz exists). Mirrors the tags.
   function attach(){
     if(!window.blitz){ return setTimeout(attach, 0); } // bridge not up yet — retry next tick
@@ -119,7 +159,9 @@ body.blitz-app{height:100%;display:flex;flex-direction:column;overflow:hidden}
       message: function(role, text){ return el('blitz-message', {role:role, text:text}); },
       row: function(o){ o=o||{}; return el('blitz-row', {name:o.name||'', meta:o.meta||'', kind:o.kind||'file', ext:o.ext||'', path:o.path||''}); },
       input: function(o){ o=o||{}; var i=el('blitz-input', {placeholder:o.placeholder||''}); if(o.onSend) i.addEventListener('send', function(e){ o.onSend(e.detail.text); }); return i; },
-      button: function(label, onClick, variant){ var b=el('blitz-button', variant?{variant:variant}:{}, [label]); if(onClick) b.addEventListener('click', onClick); return b; }
+      button: function(label, onClick, variant){ var b=el('blitz-button', variant?{variant:variant}:{}, [label]); if(onClick) b.addEventListener('click', onClick); return b; },
+      edit: function(o){ o=o||{}; var a={value:o.value||'', placeholder:o.placeholder||''}; if(o.multiline) a.multiline=''; var e=el('blitz-edit', a); if(o.onChange) e.addEventListener('change', function(ev){ o.onChange(ev.detail.value); }); if(o.onInput) e.addEventListener('input', function(ev){ o.onInput(ev.detail.value); }); return e; },
+      toggle: function(o){ o=o||{}; var a={}; if(o.label) a.label=o.label; if(o.on) a.on=''; var t=el('blitz-toggle', a); if(o.onChange) t.addEventListener('change', function(ev){ o.onChange(ev.detail.on); }); return t; }
     };
   }
   attach();
