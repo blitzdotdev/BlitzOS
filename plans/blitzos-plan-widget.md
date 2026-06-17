@@ -28,7 +28,7 @@ Agent->widget update-in-place (E3) is FULLY built: `update_surface{props}` -> `b
 
 ## Sequencing
 
-Author the jsx plan widget -> wire the two-step return+reconcile -> extend the authoring guide + point the Phase-1 duty at it -> E3 mode flip + bind the surface id onto the WorkUnit -> optional kit elements.
+Author the jsx plan widget -> wire the two-step return+reconcile -> extend the authoring guide + point the Phase-1 duty at it -> E3 mode flip + bind the surface id onto the Job -> optional kit elements.
 
 Risks: the 4000B cap is invisible (avoided by the two-step); `props.lastError` lands silently so the agent MUST `get_surface` after each update; the widget->agent moment is PRIVATE per `agentId` (a missing `props.agentId` wakes primary '0', not the job agent).
 
@@ -36,5 +36,5 @@ Risks: the 4000B cap is invisible (avoided by the two-step); `props.lastError` l
 
 - `plans/blitzos-user-journey.md` (the fuller index).
 - `plans/blitzos-agent-autonomy-guardrails.md` (owns the plan-AUTHORING DUTY + the `plan.md` proposed/approved status convention).
-- `plans/blitzos-job-task-model.md` (the WorkUnit binding: `agentId`, `planSurfaceId`, plus the `role:'plan'` surface decision).
+- `plans/blitzos-job-task-model.md` (the Job binding: `agentId`, `planSurfaceId`, plus the `role:'plan'` surface decision).
 - `plans/blitzos-tick-diff-steer.md` (W2 supervisor that visualizes the status widget); `plans/blitzos-job-entrypoints.md` (the Send payload that mints the job).
