@@ -6,17 +6,17 @@ import { ingestSignals, ingestCanvasOps, emitSurfaceAction, emitUserMessage, emi
 import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
 import { tel } from './telemetry'
-import {
-  closeWebContentsView,
-  focusWebContentsView,
-  initWebContentsViewHost,
-  navigateWebContentsView,
-  syncWebContentsViewTabs,
-  applyWebGeometry,
-  webContentsForSurface,
-  webContentsViewNavAction,
-  type TabDecl
-} from './webcontents-view-host'
+import type { WebContents } from 'electron'
+
+// A web surface is now an in-DOM <webview> guest. The renderer reports its guest WebContents id via
+// os:register-webview (→ registerLiveWebContent → browserContentIds), so the agent's read/control/
+// perception path can reach the live page. This resolves a surface id to that guest's WebContents.
+function webContentsForSurface(surfaceId: string): WebContents | null {
+  const wcid = browserContentIds.get(surfaceId)
+  if (wcid == null) return null
+  const wc = webContents.fromId(wcid)
+  return wc && !wc.isDestroyed() ? wc : null
+}
 
 export type SurfaceKind = 'native' | 'srcdoc' | 'web' | 'app'
 
@@ -82,14 +82,6 @@ export interface OsState {
 }
 
 let getWin: () => BrowserWindow | null = () => null
-// The sandwich's L0 (pages) window — where page WebContentsViews live. getWin() stays the UI window
-// (the renderer face); these two are different windows by design (plans/blitzos-sandwich-compositor.md).
-let getPagesWin: () => BrowserWindow | null = () => null
-let sandwichFocus: { focusPages: () => void; focusUi: () => void; dragShell: (op: 'start' | 'move', dx: number, dy: number) => void } = {
-  focusPages: () => {},
-  focusUi: () => {},
-  dragShell: () => {}
-}
 let cached: OsState = { surfaces: [] }
 // The workspaces root this process runs on (~/Blitz unless overridden) — index.ts needs it for the
 // boot journal (root-level runtime state lives at <root>/.blitzos/state.json).
@@ -131,11 +123,20 @@ const newWorkspaceAgentStarts = new Set<string>()
 // surfaceId -> the browser guest's WebContents id (so we can read/control its DOM)
 const browserContentIds = new Map<string, number>()
 
+const lifecycleWired = new Set<number>()
 function registerLiveWebContent(surfaceId: string, wcid: number): void {
   browserContentIds.set(surfaceId, wcid)
   registerCdpSurface(surfaceId, wcid)
   ensureCapture(surfaceId)
   ensureNavEmitter(surfaceId, wcid)
+  // The <webview> guest's lifecycle (re-inject perception sensors after each navigation destroys them;
+  // drop the registration when the guest dies). Wired once per guest webContents.
+  if (lifecycleWired.has(wcid)) return
+  const wc = webContents.fromId(wcid)
+  if (!wc || wc.isDestroyed()) return
+  lifecycleWired.add(wcid)
+  wc.on('dom-ready', () => { void osReadWindow(surfaceId, INJECT).catch(() => {}) })
+  wc.once('destroyed', () => { lifecycleWired.delete(wcid); unregisterLiveWebContent(surfaceId, wcid) })
 }
 
 function unregisterLiveWebContent(surfaceId: string, wcid?: number): void {
@@ -156,19 +157,10 @@ function osWebContentNavigated(id: string, url: string, title?: string): void {
 
 /** Wire the renderer<->main control channel. Renderer pushes state on change. */
 export function initOsActions(opts: {
-  /** L1 — the transparent UI window (the renderer; every os:action/IPC send targets it). */
+  /** The single app window (the renderer; every os:action/IPC send targets it). */
   getWindow: () => BrowserWindow | null
-  /** L0 — the pages window (where the browser WebContentsViews live). */
-  getPagesWindow: () => BrowserWindow | null
-  /** Keyboard handoff: typing into a page vs back to the UI (the attached child stays on top). */
-  focusPages: () => void
-  focusUi: () => void
-  /** Titlebar drag protocol → moves the PARENT window (sandwich.ts). */
-  dragShell: (op: 'start' | 'move', dx: number, dy: number) => void
 }): void {
   getWin = opts.getWindow
-  getPagesWin = opts.getPagesWindow
-  sandwichFocus = { focusPages: opts.focusPages, focusUi: opts.focusUi, dragShell: opts.dragShell }
 
   // The shared workspace host. Root honors BLITZ_WORKSPACES_ROOT / BLITZ_WORKSPACE (parity with the
   // server backend), defaulting to ~/Blitz (user-browseable folders). SAME module as the server.
@@ -201,7 +193,7 @@ export function initOsActions(opts: {
       if (bt === 'reconcile' || bt === 'hydrate' || bt === 'switch') canvasBulkAt = Date.now()
       sendToRenderer('os:action', obj)
     },
-    onSurfaces: () => {}, // Electron browser guests are hosted by webcontents-view-host.ts
+    onSurfaces: () => {}, // Electron web surfaces are in-DOM <webview> guests (renderer-owned)
     getActionItems: () => (actionItemsProvider ? actionItemsProvider() : []), // authoritative inbox items (index.ts wires it)
     defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
     // An agent backend runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
@@ -212,34 +204,6 @@ export function initOsActions(opts: {
   })
   wsHost.hydrateOnBoot()
   wsHost.startWatch()
-
-  initWebContentsViewHost({
-    getWindow: getPagesWin, // views live in the sandwich's L0 (pages) window, under the UI layer
-    // Per-tab page state → the renderer chrome (tab strip / navbar). The ACTIVE tab's url/title also
-    // fold into the surface itself (the agent + .weblink persistence contract is unchanged by tabs).
-    onTabState: (surfaceId, tabId, patch, isActive) => {
-      sendToRenderer('os:web-tab', { surfaceId, tabId, patch })
-      if (isActive && patch.url) osWebContentNavigated(surfaceId, patch.url, patch.title)
-    },
-    onTabGone: (surfaceId, tabId) => sendToRenderer('os:web-tab', { surfaceId, tabId, removed: true }),
-    // CDP + perception always follow the surface's ACTIVE tab — one live target per surface. Fired
-    // on tab switch AND on the active tab's every dom-ready (same wcId): the re-register re-injects
-    // the perception sensors a navigation destroyed, so don't dedupe on wcId.
-    onActiveContent: (surfaceId, wcId) => {
-      unregisterLiveWebContent(surfaceId)
-      if (wcId != null) registerLiveWebContent(surfaceId, wcId)
-    },
-    // A link-disposition popup opens as a NEW TAB of its surface (browser semantics). The renderer
-    // owns the tab list, so it materializes the tab and syncs back.
-    onOpenTab: (surfaceId, url) => sendToRenderer('os:web-tab', { surfaceId, openTab: { url } }),
-    // Page cursor feedback: the UI window owns the OS cursor (it is the window under the mouse), so
-    // the page's cursor changes (text beam, link hand) mirror onto the hole div's CSS cursor.
-    onCursor: (surfaceId, cursor) => sendToRenderer('os:page-cursor', { surfaceId, cursor }),
-    onFocus: (id) => send('focus', { id }),
-    onContextMenu: (surfaceId, x, y) => sendToRenderer('os:action', { type: 'surface-contextmenu', surfaceId, x, y }),
-    onShiftTap: () => sendToRenderer('os:shifttap', undefined),
-    onAltHold: (phase) => osRadialPhase(phase)
-  })
 
   // Workspace launcher / Mission-Control IPC — mirrors the server's /api/os/workspace* routes.
   ipcMain.handle('workspace:list', () => ({
@@ -301,85 +265,11 @@ export function initOsActions(opts: {
       }
     }
   })
+  // A web surface's in-DOM <webview> reports its guest WebContents id (on dom-ready) so the agent's
+  // read/control/perception path can reach the live page.
   ipcMain.on('os:webview', (_e, m: { surfaceId: string; wcid: number }) => {
     if (m && m.surfaceId) registerLiveWebContent(m.surfaceId, m.wcid)
   })
-  // The renderer declares each web surface's tab list; the host reconciles live views to it.
-  ipcMain.on('os:webcontents-view:sync', (_e, m: { id?: string; tabs?: TabDecl[]; active?: string | null; zoom?: number }) => {
-    if (!m?.id || !Array.isArray(m.tabs)) return
-    syncWebContentsViewTabs(String(m.id), m.tabs, typeof m.active === 'string' ? m.active : null, Number(m.zoom) || 1)
-  })
-  // Coalesced geometry pass (pillar 2): ONE message carries every browser's rect+z+visibility; the
-  // host sets them all and reorders the L0 child views once (replaces the per-surface bounds storm).
-  ipcMain.on('os:web-geometry', (_e, list: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; visible: boolean; z: number; zoom?: number }>) => {
-    if (Array.isArray(list)) applyWebGeometry(list)
-  })
-  ipcMain.on('os:webcontents-view:navigate', (_e, m: { id?: string; tabId?: string; url?: string }) => {
-    if (m?.id && typeof m.url === 'string') navigateWebContentsView(String(m.id), typeof m.tabId === 'string' ? m.tabId : null, m.url)
-  })
-  // Browser chrome buttons (back/forward/reload/stop) → the surface's active tab.
-  ipcMain.on('os:webcontents-view:nav-action', (_e, m: { id?: string; action?: string }) => {
-    const a = String(m?.action || '')
-    if (m?.id && (a === 'back' || a === 'forward' || a === 'reload' || a === 'stop')) webContentsViewNavAction(String(m.id), a)
-  })
-  // The sandwich input router: the UI window owns ALL mouse; events landing on a browser HOLE
-  // forward to that surface's active tab. Wheel deltas are NEGATED (Electron's mouseWheel scrolls
-  // down on negative deltaY — spike-verified, inverse of the DOM's convention). Keyboard is NATIVE
-  // via the focus handoff below, so typing and IME never ride synthetic events.
-  ipcMain.on('os:page-input', (_e, m: { id?: string; ev?: Record<string, unknown> }) => {
-    const wc = m?.id ? webContentsForSurface(String(m.id)) : null
-    const ev = m?.ev
-    if (!wc || !ev) return
-    const x = Math.round(Number(ev.x) || 0)
-    const y = Math.round(Number(ev.y) || 0)
-    const mods = (Array.isArray(ev.modifiers) ? ev.modifiers : []) as Array<'shift' | 'control' | 'alt' | 'meta'>
-    try {
-      if (ev.type === 'wheel') {
-        wc.sendInputEvent({ type: 'mouseWheel', x, y, deltaX: -Math.round(Number(ev.dx) || 0), deltaY: -Math.round(Number(ev.dy) || 0), modifiers: mods })
-      } else if (ev.type === 'move') {
-        wc.sendInputEvent({ type: 'mouseMove', x, y, modifiers: mods })
-      } else if (ev.type === 'down' || ev.type === 'up') {
-        const button = ev.button === 2 ? 'right' : ev.button === 1 ? 'middle' : 'left'
-        wc.sendInputEvent({ type: ev.type === 'down' ? 'mouseDown' : 'mouseUp', x, y, button, clickCount: Math.max(1, Number(ev.clicks) || 1), modifiers: mods })
-      }
-    } catch {
-      /* view torn down mid-event */
-    }
-  })
-  // Keyboard handoff, CONDITIONAL: fired after a click lands in a page; probe what it focused.
-  // Only an EDITABLE target (typing/IME) needs the pages window to become key — flipping the key
-  // window on every click grays the UI window's chrome and reads as the app losing focus. A
-  // non-editable click returns the keyboard to the UI so app keybinds keep working.
-  ipcMain.on('os:page-focus', (_e, id: string) => {
-    const wc = webContentsForSurface(String(id || ''))
-    if (!wc) return
-    wc.executeJavaScript(
-      '(()=>{const e=document.activeElement;if(!e)return false;if(e.isContentEditable)return true;const t=e.tagName;return t==="INPUT"||t==="TEXTAREA"||t==="SELECT"})()',
-      true
-    )
-      .then((editable) => {
-        if (editable) {
-          sandwichFocus.focusPages()
-          try {
-            wc.focus()
-          } catch {
-            /* gone */
-          }
-        } else {
-          sandwichFocus.focusUi()
-        }
-      })
-      .catch(() => {})
-  })
-  ipcMain.on('os:ui-focus', () => sandwichFocus.focusUi())
-  // Titlebar drag (sandwich): the renderer streams screen deltas; main moves the PARENT window and
-  // the attached UI child follows natively (CSS app-region would drag the child alone, detaching it).
-  ipcMain.on('os:shell-drag', (_e, m: { op?: string; dx?: number; dy?: number }) => {
-    const op = m?.op === 'start' ? 'start' : 'move'
-    sandwichFocus.dragShell(op, Number(m?.dx) || 0, Number(m?.dy) || 0)
-  })
-  ipcMain.on('os:webcontents-view:focus', (_e, id: string) => focusWebContentsView(String(id || '')))
-  ipcMain.on('os:webcontents-view:close', (_e, id: string) => closeWebContentsView(String(id || '')))
   // Machine-global browser bookmarks (root journal — a bookmark isn't workspace-specific).
   ipcMain.handle('os:bookmarks', () => readBookmarks(root))
   ipcMain.handle('os:bookmarks-toggle', (_e, m: { url?: unknown; title?: unknown }) => {
@@ -752,7 +642,6 @@ export function osUpdateSurface(id: string, patch: Record<string, unknown>): Mut
 export function osCloseSurface(id: string): MutationResult {
   if (!surfaceExists(id)) return noSuch(id)
   dropContentShare(id)
-  closeWebContentsView(id)
   pendingCreates.delete(id)
   cached = { ...cached, surfaces: (cached.surfaces || []).filter((s) => s.id !== id) }
   send('close', { id })

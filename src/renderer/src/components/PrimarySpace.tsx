@@ -1,8 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
-import { Surface } from '../types'
 import { useDesktop, orderedStageRect, addStageRect, splaySlotRect, insertAt, stageForAgent } from '../store'
-import { holesPath, type HolesClip } from './SurfaceFrame'
 
 type PrimarySpaceProps = {
   showAddArea?: boolean

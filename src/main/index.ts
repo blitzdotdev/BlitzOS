@@ -7,7 +7,7 @@ import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlu
 import { emitSystemMoment, setMomentTap } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
-import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
+import { installGuestSessionPolicy, resolvePermissionPrompt, attachGuestWindowPolicy } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
@@ -23,8 +23,6 @@ import { registerWallpaperIpc } from './wallpaper'
 import { registerOnboarding, interviewBootTask, claudeCliPath, codexCliPath, setInterviewAgentAvailable } from './onboarding'
 import { initUpdater, openBuildPicker, isDevMachine } from './update'
 import { resolveTmuxBin } from './tmux-host.mjs'
-import { setWebContentsViewInputForwarder, setWebContentsViewDiagTap } from './webcontents-view-host'
-import { createSandwich, type Sandwich } from './sandwich'
 import { computerUseHelper } from './computer-use-helper'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
@@ -70,9 +68,6 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
-// The window pair (sandwich compositor) — mainWindow above is its UI layer; sandwich.pages hosts
-// the browser WebContentsViews underneath it.
-let sandwich: Sandwich | null = null
 // The boot journal (crash dirty-bit + root lease) — opened once the workspace host exists, marked
 // clean as the LAST step of a graceful quit ("clean" = state was flushed first).
 let bootJournal: BootJournal | null = null
@@ -140,9 +135,7 @@ function installAppMenu(): void {
           label: 'Toggle Full Screen',
           accelerator: 'Ctrl+Cmd+F',
           click: () => {
-            const s = sandwich
-            if (!s || s.pages.isDestroyed()) return
-            s.setFullScreen(!s.pages.isFullScreen())
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setFullScreen(!mainWindow.isFullScreen())
           }
         }
       ]
@@ -153,16 +146,27 @@ function installAppMenu(): void {
 }
 
 function createWindow(): void {
-  // The sandwich compositor (plans/blitzos-sandwich-compositor.md): two congruent windows — L0
-  // hosts the page WebContentsViews, L1 (transparent) hosts the entire renderer with a hole per
-  // browser body. `mainWindow` stays the UI window: every renderer-facing reference is unchanged.
-  sandwich = createSandwich({
+  // ONE plain window. Web surfaces are in-DOM <webview> tags (a real guest WebContents embedded in the
+  // renderer), so they move/stack with their frame like any other DOM — no sandwich compositor, no clip
+  // holes, no geometry sync. webviewTag enables the <webview> element; the guest session/policy is wired
+  // per attach below (did-attach-webview) on the shared persist:agentos partition.
+  mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
+    show: false,
+    titleBarStyle: 'hiddenInset',
     fullscreen: FULLSCREEN,
-    preload: join(__dirname, '../preload/index.js')
+    backgroundColor: '#e9e9e7',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+      webviewTag: true
+    }
   })
-  mainWindow = sandwich.ui
+  mainWindow.once('ready-to-show', () => mainWindow?.show())
 
   // Stage keybinds must work no matter WHAT has keyboard focus — the host, a srcdoc iframe (the
   // chat hub!), or a WebContentsView guest. DOM keydown dies the moment a guest focuses, so main
@@ -181,10 +185,18 @@ function createWindow(): void {
     mainWindow?.webContents.send('os:keybind', { id: 'tile', shift: !!input.shift })
     return true
   }
-  setWebContentsViewInputForwarder(forwardTileKeybind)
+  // Each in-DOM <webview> guest is a separate process: hook its before-input-event so stage keybinds
+  // (⌘T etc.) still fire while a web surface holds focus, and attach the popup/download/beforeunload
+  // guest policy. (CDP + perception are wired renderer-side via os:register-webview on the guest's id.)
+  mainWindow.webContents.on('did-attach-webview', (_e, guest) => {
+    guest.on('before-input-event', (ev, input) => {
+      if (forwardTileKeybind(input)) ev.preventDefault()
+    })
+    attachGuestWindowPolicy(guest, { openSurface: () => {}, logPlan: () => {} })
+  })
   // Bare-Option hold → the radial create menu, same focus-proof route as the keybinds above: the
   // host webContents sees the key even when an app/srcdoc iframe holds focus (the renderer's own
-  // DOM keydown does not). Browser guests get the mirror tracker in webcontents-view-host.ts.
+  // DOM keydown does not).
   let altHeld = false
   mainWindow.webContents.on('before-input-event', (ev, input) => {
     if (forwardTileKeybind(input)) {
@@ -273,11 +285,7 @@ app.whenReady().then(() => {
   // the shared workspace host (hydrate/persist/switch/list/create/thumb) — the SAME module the server
   // backend uses, so workspaces are one feature across both modes.
   initOsActions({
-    getWindow: () => mainWindow,
-    getPagesWindow: () => sandwich?.pages ?? null,
-    focusPages: () => sandwich?.focusPages(),
-    focusUi: () => sandwich?.focusUi(),
-    dragShell: (op, dx, dy) => sandwich?.dragShell(op, dx, dy)
+    getWindow: () => mainWindow
   })
 
   // Session telemetry (plans/blitzos-telemetry.md): events + frames → the replay dashboard. Off unless
@@ -308,8 +316,6 @@ app.whenReady().then(() => {
       }
       process.on('uncaughtException', (e) => { try { sessionTape?.diagError({ source: 'main', via: 'uncaught', message: String((e as Error)?.stack || e) }) } catch { /* ignore */ } })
       process.on('unhandledRejection', (e) => { try { sessionTape?.diagError({ source: 'main', via: 'rejection', message: String((e as Error)?.stack || e) }) } catch { /* ignore */ } })
-      // Stream C diagnostics from the browser host: a web surface load failure, and a guest popup decision.
-      setWebContentsViewDiagTap((d) => { try { if (d.type === 'web.fail') sessionTape?.webFail(d); else sessionTape?.guestDecision(d) } catch { /* ignore */ } })
       // model.io: discover every agent's TUI transcript and collect new bytes (resumed agents never hit
       // agent.spawn, so we scan the active workspace's terminals each tick; registerTranscript no-ops on dupes).
       const registerWorkspaceTranscripts = (): void => {
@@ -484,15 +490,6 @@ app.whenReady().then(() => {
   ipcMain.handle('os:action-list', (_e, status?: string) => electronActionItems.listActions(status as ActionStatus | undefined))
   ipcMain.on('os:action-resolve', (_e, p: { id: string; resolution?: string }) => { electronActionItems.resolveAction(String(p?.id), p?.resolution ? String(p.resolution) : 'done') })
   ipcMain.on('os:action-clear', (_e, id: string) => { electronActionItems.clearAction(String(id)) })
-
-  // Native-input passthrough (plans/features/blitzos-native-input.md): the renderer flips this as the
-  // cursor crosses a page hole so the human's mouse falls to the page as a REAL trusted OS event, which
-  // is what lets the Cloudflare Turnstile checkbox (and native drag/hover/pinch) work — synthetic
-  // sendInputEvent is isTrusted:false and Turnstile rejects it. ON by default; BLITZ_NATIVE_INPUT=0 opts out.
-  ipcMain.on('os:native-passthrough', (_e, on: boolean) => {
-    if (process.env.BLITZ_NATIVE_INPUT === '0') return
-    sandwich?.setPassthrough(!!on)
-  })
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()

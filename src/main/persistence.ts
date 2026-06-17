@@ -1,5 +1,4 @@
 import { app, session, webContents, type Session, type WebContents } from 'electron'
-import { hostedWebContents } from './webcontents-view-host'
 
 // Why this exists: keeping web surfaces (`WebContentsView` guests in `persist:agentos`) logged in
 // across a quit + relaunch turned out to need two distinct guarantees, because there are two
@@ -42,10 +41,10 @@ function flushAll(): Promise<unknown> {
 }
 
 function webGuests(): WebContents[] {
-  const hosted = new Set(hostedWebContents().map((wc) => wc.id))
+  // Every web surface is an in-DOM <webview> guest now (getType() === 'webview').
   return webContents.getAllWebContents().filter((wc) => {
     try {
-      return !wc.isDestroyed() && (hosted.has(wc.id) || wc.getType() === 'webview')
+      return !wc.isDestroyed() && wc.getType() === 'webview'
     } catch {
       return false
     }

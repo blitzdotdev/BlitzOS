@@ -8,7 +8,7 @@ import type { Surface, CanvasTransform } from './types'
 import { isRuntimePanel } from './types'
 import { Overview } from './components/Overview'
 import { capturePrimaryThumb } from './capture'
-import { SurfaceFrame, snapPreviewClip, holesPath, WINDOW_RADIUS } from './components/SurfaceFrame'
+import { SurfaceFrame } from './components/SurfaceFrame'
 import { AnnotationLayer } from './components/AnnotationLayer'
 import { AreaChromeOverlay, PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
@@ -397,10 +397,13 @@ export default function App(): JSX.Element {
   // Agent relay connection health, broadcast by the backend (server mode). null = unknown/not reported yet.
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [showOverview, setShowOverview] = useState(false)
-  // Pair-level fullscreen (the sandwich parent): hide the shell titlebar — the attached child
-  // window never enters native fullscreen, so its chrome would not auto-hide by itself.
+  // Native fullscreen hides the custom titlebar (macOS auto-hides the traffic lights).
   const [shellFullscreen, setShellFullscreen] = useState(false)
-  useEffect(() => window.agentOS?.onShellFullScreen?.(setShellFullscreen), [])
+  useEffect(() => {
+    const sync = (): void => setShellFullscreen(!!document.fullscreenElement || window.innerHeight === screen.height)
+    window.addEventListener('resize', sync)
+    return () => window.removeEventListener('resize', sync)
+  }, [])
   // The home orb is hidden until the pointer nears the bottom-center screen edge. Hysteresis:
   // a thin edge strip reveals it, a taller zone around the revealed button keeps it shown.
   const [homeRevealed, setHomeRevealed] = useState(false)
@@ -465,9 +468,6 @@ export default function App(): JSX.Element {
   const [renamingDirPath, setRenamingDirPath] = useState<string | null>(null)
   const annotationMenu = useDesktop((s) => s.annotationMenu) // item 5b: surface right-click annotation menu
   const [dockAnimations, setDockAnimations] = useState<Record<string, DockAnimationPhase>>({})
-  // Read in the geometry RAF below (a []-deps loop) without re-subscribing: mirror the latest into a ref.
-  const dockAnimRef = useRef(dockAnimations)
-  dockAnimRef.current = dockAnimations
   const isServer = !!window.agentOS?.serverMode
   const hasWorkspaces = !!window.agentOS?.workspaces // present in BOTH modes (Electron preload + server shim)
   // ! DEBUG: runtime switch state is intentionally UI-only; the selected value is persisted in main.
@@ -516,13 +516,6 @@ export default function App(): JSX.Element {
   // gated on this so a freshly-loaded renderer can't post its empty store and clobber the
   // restored canvas before hydration arrives.
   const hydrated = useRef(false)
-  // Shell titlebar drag origin (screen coords at pointerdown) — deltas stream to main, which moves
-  // the sandwich's parent window (the UI child follows natively).
-  const shellDragFrom = useRef<{ x: number; y: number } | null>(null)
-  // The opaque desktop base — its page-holes are punched imperatively from the geometry RAF (below),
-  // off the live measured hole rects, so the holes track an imperative window drag + camera pan with
-  // no store read (the React bgClip went stale when a drag stopped writing surface.x/y to the store).
-  const bgRef = useRef<HTMLDivElement>(null)
   // The active workspace name, mirrored into a ref so the state-push closure (an effect with []
   // deps) reads the CURRENT value — each push is tagged with it so the backend can drop a stale
   // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
@@ -754,12 +747,9 @@ export default function App(): JSX.Element {
     const el = rootRef.current
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
-      // A browser surface is a transparent HOLE: its own wheel listener (SurfaceFrame webHostRef,
-      // bubble phase, SurfaceFrame.tsx) forwards the scroll into the WebContentsView. This
-      // capture-phase listener must NOT stopPropagation here or that bubble listener never runs.
-      // No preventDefault either: the canvas root is overflow:hidden (no native scroll to suppress)
-      // and the hole listener already calls preventDefault. Let the event keep flowing to it.
-      if (e.target instanceof Element && e.target.closest('.webcontents-host')) return
+      // A <webview> handles its own scroll natively (separate guest process); never hijack a wheel
+      // event over a web surface for the canvas pan/zoom.
+      if (e.target instanceof Element && e.target.tagName.toLowerCase() === 'webview') return
       // Route gestures by what is under the cursor: surface content keeps its native scroll/pinch,
       // while empty canvas gestures pan/zoom the Blitz camera. This listener runs in capture phase
       // because xterm and other custom scrollers can otherwise consume wheel events before the canvas
@@ -805,85 +795,8 @@ export default function App(): JSX.Element {
     return () => el.removeEventListener('wheel', onWheel, { capture: true })
   }, [])
 
-  // Coalesced page-geometry pass (plans/blitzos-compositor-hardening.md, pillar 2). ONE RAF reads
-  // EVERY browser hole's rect + the full z-order together and pushes a single ordered message; main
-  // applies all bounds and reorders the L0 page views ONCE. This replaces the N independent
-  // per-surface RAFs (each forced a layout/style flush every frame and re-ran the global reorder with
-  // a mix of fresh/stale z) — the engine of the multi-browser bleed-order race and the multi-widget
-  // glitch. The RAF (not a render effect) is required because canvas pan/zoom moves the holes via a
-  // CSS transform on .world without re-rendering the memoized frames. z is store.effectiveZ (no
-  // getComputedStyle flush); the drag-lift is component-local but never changes browser-vs-browser
-  // order, so it is irrelevant to the L0 page stacking computed here.
-  useEffect(() => {
-    if (!window.agentOS || window.agentOS.serverMode) return
-    let raf = 0
-    let last = ''
-    const tick = (): void => {
-      const st = useDesktop.getState()
-      const anims = dockAnimRef.current
-      const winW = window.innerWidth || 0
-      const winH = window.innerHeight || 0
-      // One querySelectorAll, then W getBoundingClientRect reads back-to-back (one layout flush).
-      const holes = document.querySelectorAll<HTMLElement>('.webcontents-host[data-sid]')
-      const byId = new Map<string, HTMLElement>()
-      holes.forEach((h) => {
-        const id = h.getAttribute('data-sid')
-        if (id) byId.set(id, h)
-      })
-      const list: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; visible: boolean; z: number; zoom: number }> = []
-      for (const s of st.surfaces) {
-        if (s.kind !== 'web') continue
-        const el = byId.get(s.id)
-        if (!el) continue
-        const r = el.getBoundingClientRect()
-        const visible =
-          !s.minimized && anims[s.id] !== 'restoring' && r.width > 1 && r.height > 1 && r.right > 0 && r.bottom > 0 && r.left < winW && r.top < winH
-        list.push({
-          id: s.id,
-          rect: { x: r.left, y: r.top, width: r.width, height: r.height },
-          visible,
-          z: effectiveZ(s),
-          zoom: s.zoom ?? 1
-        })
-      }
-      const key = list
-        .map((g) => `${g.id}:${Math.round(g.rect.x)},${Math.round(g.rect.y)},${Math.round(g.rect.width)},${Math.round(g.rect.height)},${g.visible ? 1 : 0},${g.z},${g.zoom}`)
-        .join('|')
-      if (key !== last) {
-        last = key
-        window.agentOS?.webGeometry?.(list)
-        // Every opaque/tinted L1 layer the live pages must show through gets its page-holes from these
-        // SAME live measured rects (NOT the store), so a hole tracks an imperative window drag + camera
-        // pan. holesPath returns 'HIDE' when a page fully covers the element; undefined when no page hits it.
-        const scale = st.transform.scale || 1
-        // viewport-space page holes (the page area = the .webcontents-host rect, already chrome-inset).
-        const vHoles = list.filter((g) => g.visible).map((g) => ({ x1: g.rect.x, y1: g.rect.y, x2: g.rect.x + g.rect.width, y2: g.rect.y + g.rect.height }))
-        // .bg — full-viewport opaque desktop base; holes are viewport-space.
-        const bg = bgRef.current
-        if (bg) {
-          const clip = vHoles.length ? holesPath(winW, winH, vHoles, WINDOW_RADIUS * scale) : undefined
-          bg.style.visibility = clip === 'HIDE' ? 'hidden' : ''
-          bg.style.clipPath = clip && clip !== 'HIDE' ? clip : ''
-        }
-        // Stage scenery — the translucent tint lives INSIDE .world (camera-scaled), so its clip-path is in
-        // the element's own (unscaled) px: convert each viewport hole to local via (hole - elRect)/scale.
-        document.querySelectorAll<HTMLElement>('.primary-space:not(.primary-space-add)').forEach((el) => {
-          const S = el.getBoundingClientRect()
-          const w = el.offsetWidth
-          const h = el.offsetHeight
-          const local = vHoles
-            .map((r) => ({ x1: (r.x1 - S.left) / scale, y1: (r.y1 - S.top) / scale, x2: (r.x2 - S.left) / scale, y2: (r.y2 - S.top) / scale }))
-            .filter((r) => r.x2 > 0 && r.y2 > 0 && r.x1 < w && r.y1 < h)
-          const clip = local.length ? holesPath(w, h, local, 14) : undefined
-          el.style.visibility = clip === 'HIDE' ? 'hidden' : ''
-          el.style.clipPath = clip && clip !== 'HIDE' ? clip : ''
-        })
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [])
+  // (Web surfaces are in-DOM <webview> elements now — they move/stack/clip with their frame as normal
+  // DOM, so there is no page-geometry RAF and no clip-hole pass. The whole sandwich compositor is gone.)
 
   // ⌘T / ⇧⌘T — tile toggle + size cycle on the window the user means: the single selection if there
   // is one, else the front-most. No editable guard (a ⌘-chord types nothing; a focused note textarea
@@ -1123,81 +1036,16 @@ export default function App(): JSX.Element {
     return window.agentOS?.onWebTab?.((m) => useDesktop.getState().applyWebTab(m))
   }, [])
 
-  // Sandwich compositor: the opaque desktop base (.bg) gets screen-space clip holes where pages are
-  // (so the live views below show through while window shadows keep compositing against solid color —
-  // a fully transparent base made shadows render as dark pooling fringes). The holes are applied
-  // IMPERATIVELY from the geometry RAF off the live measured rects (see bgRef), not from a store
-  // selector, so they track an imperative window drag and camera pan without a React re-render.
-
-  // The snap/tiling preview is .world DOM with no z; in the sandwich it would paint OVER a browser
-  // page (z-index can't order DOM under a page). Cut a page-hole around any web surface so the live
-  // page shows through where it covers the preview — same world-coords trick as a SurfaceFrame.
-  const snapClip = useDesktop((s) =>
-    s.snapPreview && window.agentOS && !window.agentOS.serverMode ? snapPreviewClip(s.snapPreview, s.surfaces) : undefined
-  )
-
-  // The radial create-menu is screen-space DOM that fringes over a browser page (the GLASS RULE,
-  // see RadialSurfaceMenu). Detect whether the menu's screen rect overlaps any live browser by
-  // mapping each web surface's WORLD rect through the live camera (x*scale+tx, as bgHolesClip does)
-  // and intersecting the menu's clamped origin rect (286-box at the cursor). Only computed while
-  // the menu is open; in server mode there is no page layer so it stays false.
-  // True when the radial's center sits over a live browser page. elementsFromPoint is occlusion-
-  // correct and needs NO camera math (the earlier world→screen mapping silently missed in this mode,
-  // leaving the donut glassy + wired over the page). A page hole anywhere in the stack under the
-  // donut center ⇒ it is over a page, so it must drop glass and paint solid (styles.css over-page).
+  // The radial create-menu drops its glass when it sits over a live browser page (it would fringe).
   const radialOverWeb =
     radialMenu && window.agentOS && !window.agentOS.serverMode
       ? (() => {
           const o = menuOrigin(radialMenu)
           return document
             .elementsFromPoint(o.left + MENU_SIZE / 2, o.top + MENU_SIZE / 2)
-            .some((el) => !!(el as Element).closest?.('.webcontents-host'))
+            .some((el) => (el as Element).tagName?.toLowerCase() === 'webview')
         })()
       : false
-
-
-  // Sandwich keyboard handoff, return path: a pointerdown anywhere on UI chrome (anything that is
-  // not a page hole) takes the keyboard back from the pages window. The forward path lives on the
-  // hole itself (SurfaceFrame onHoleDown → pageFocus).
-  useEffect(() => {
-    const onDown = (e: globalThis.PointerEvent): void => {
-      if (!(e.target as HTMLElement)?.closest?.('.webcontents-host')) window.agentOS?.uiFocus?.()
-    }
-    window.addEventListener('pointerdown', onDown, true)
-    return () => window.removeEventListener('pointerdown', onDown, true)
-  }, [])
-
-  // Native-input passthrough (SPIKE, plans/blitzos-native-input.md, default OFF). When on, make the UI
-  // window click-through while the cursor is over a page hole so the human's mouse reaches the page as
-  // a REAL trusted OS event (fixes the Turnstile checkbox + hover/drag/pinch), and opaque over chrome.
-  // elementFromPoint is occlusion-correct: a widget or menu above a page returns that element, not the
-  // hole, so the UI keeps the click. forward:true keeps mousemove flowing so we flip back off on exit.
-  useEffect(() => {
-    if (!window.agentOS?.nativeInput) return
-    let over = false
-    const onMove = (e: globalThis.MouseEvent): void => {
-      // A titlebar shell-drag (manual window move) must own the pointer for its whole duration. The
-      // window trails the cursor by the IPC-delta latency, so mid-drag the cursor can sit over a page
-      // hole — but flipping the UI click-through here would route the HELD-button stream to the page
-      // below (setIgnoreMouseEvents), killing the captured pointermove and making the window stutter/
-      // jump (the "drag sync" bug). Keep L1 opaque for the whole drag; re-evaluate on the next move.
-      if (shellDragFrom.current) {
-        if (over) { over = false; window.agentOS?.nativePassthrough?.(false) }
-        return
-      }
-      const el = document.elementFromPoint(e.clientX, e.clientY) as Element | null
-      const nowOver = !!el?.closest?.('.webcontents-host')
-      if (nowOver !== over) {
-        over = nowOver
-        window.agentOS?.nativePassthrough?.(nowOver)
-      }
-    }
-    window.addEventListener('mousemove', onMove, true)
-    return () => {
-      window.removeEventListener('mousemove', onMove, true)
-      window.agentOS?.nativePassthrough?.(false)
-    }
-  }, [])
 
   // Control actions from main (local control server or agent-socket).
   useEffect(() => {
@@ -2223,40 +2071,14 @@ export default function App(): JSX.Element {
         if (ae && ae.tagName === 'IFRAME') ae.blur()
       }}
     >
-      {/* draggable shell title bar — MANUAL drag (pointer deltas → main moves the sandwich's parent
-          window; CSS app-region would drag only the attached child and detach the layers).
-          Hidden while the pair is fullscreen (a fullscreen shell can't be dragged anyway). */}
+      {/* Draggable title bar — ONE normal window, so a plain CSS app-region drags it natively (zero IPC). */}
       {!shellFullscreen && (
-      <div
-        className="titlebar"
-        onPointerDown={(e) => {
-          if (e.button !== 0) return
-          ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-          shellDragFrom.current = { x: e.screenX, y: e.screenY }
-          window.agentOS?.shellDrag?.('start')
-        }}
-        onPointerMove={(e) => {
-          const o = shellDragFrom.current
-          if (o) window.agentOS?.shellDrag?.('move', e.screenX - o.x, e.screenY - o.y)
-        }}
-        onPointerUp={(e) => {
-          shellDragFrom.current = null
-          try {
-            ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
-          } catch {
-            /* ignore */
-          }
-        }}
-        onPointerCancel={() => {
-          shellDragFrom.current = null
-        }}
-      >
-        <span className="titlebar-label">BlitzOS</span>
-      </div>
+        <div className="titlebar" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <span className="titlebar-label">BlitzOS</span>
+        </div>
       )}
 
       <div
-        ref={bgRef}
         className="bg"
         onPointerDown={onBgDown}
         onPointerMove={onBgMove}
@@ -2278,9 +2100,7 @@ export default function App(): JSX.Element {
               left: snapPreview.x,
               top: snapPreview.y,
               width: snapPreview.w,
-              height: snapPreview.h,
-              ...(snapClip && snapClip !== 'HIDE' ? { clipPath: snapClip } : {}),
-              ...(snapClip === 'HIDE' ? { display: 'none' } : {})
+              height: snapPreview.h
             }}
           />
         )}

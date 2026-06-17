@@ -160,14 +160,6 @@ const api = {
     ipcRenderer.on('os:shifttap', listener)
     return () => ipcRenderer.removeListener('os:shifttap', listener)
   },
-  /** Pair-level fullscreen state (the sandwich's parent window): the renderer hides its titlebar
-   *  strip while fullscreen — the attached child never enters NATIVE fullscreen, so its chrome
-   *  would not auto-hide on its own. */
-  onShellFullScreen(cb: (on: boolean) => void): () => void {
-    const listener = (_e: unknown, m: { on: boolean }): void => cb(!!m?.on)
-    ipcRenderer.on('os:fullscreen', listener)
-    return () => ipcRenderer.removeListener('os:fullscreen', listener)
-  },
   /** Bare-Option hold/release for the radial create menu, forwarded from main's before-input-event —
    *  fires no matter what holds keyboard focus (host DOM, an app/srcdoc iframe, a browser guest).
    *  'down' carries the true cursor position in window coords (the renderer's own pointermove never
@@ -178,68 +170,10 @@ const api = {
     return () => ipcRenderer.removeListener('os:radial', listener)
   },
 
-  /** Legacy webview path: report a live guest webContents id so main can CDP-drive it. */
-  registerWebview(windowId: string, webContentsId: number): void {
-    ipcRenderer.send('os:register-webview', windowId, webContentsId)
-  },
-  unregisterWebview(windowId: string): void {
-    ipcRenderer.send('os:unregister-webview', windowId)
-  },
-  /** Electron-only: main owns live web surfaces as WebContentsViews (one per browser TAB); the
-   *  renderer declares the tab list + reports layout, main pushes per-tab page state back. */
-  webContentsViewSync(payload: { id: string; tabs: Array<{ id: string; url?: string }>; active: string | null; zoom?: number }): void {
-    ipcRenderer.send('os:webcontents-view:sync', payload)
-  },
-  /** Coalesced geometry pass (pillar 2): ONE message with every browser's rect+z+visibility, so main
-   *  applies bounds + reorders the page views once instead of a per-surface RAF storm. */
-  webGeometry(list: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; visible: boolean; z: number; zoom?: number }>): void {
-    ipcRenderer.send('os:web-geometry', list)
-  },
-  webContentsViewNavigate(id: string, tabId: string | null, url: string): void {
-    ipcRenderer.send('os:webcontents-view:navigate', { id, tabId, url })
-  },
-  /** Browser chrome buttons → the surface's active tab. */
-  webContentsViewNavAction(id: string, action: 'back' | 'forward' | 'reload' | 'stop'): void {
-    ipcRenderer.send('os:webcontents-view:nav-action', { id, action })
-  },
-  /** Sandwich input router: forward a pointer/wheel event landing on a browser HOLE to its page.
-   *  Coordinates are view-local CSS px; wheel deltas are the DOM's (main negates for Electron). */
-  pageInput(id: string, ev: { type: 'move' | 'down' | 'up' | 'wheel'; x: number; y: number; button?: number; clicks?: number; dx?: number; dy?: number; modifiers?: string[] }): void {
-    ipcRenderer.send('os:page-input', { id, ev })
-  },
-  /** Keyboard handoff: typing target is this page (pages window becomes key, stays under the UI). */
-  pageFocus(id: string): void {
-    ipcRenderer.send('os:page-focus', id)
-  },
-  /** Keyboard back to the UI window (any pointerdown on UI chrome). */
-  uiFocus(): void {
-    ipcRenderer.send('os:ui-focus')
-  },
-  /** Native input (plans/features/blitzos-native-input.md), ON by default (BLITZ_NATIVE_INPUT=0 opts out):
-   *  the renderer routes the human's mouse to a page NATIVELY (real, trusted OS events) over page holes
-   *  instead of the synthetic os:page-input path, so the Cloudflare Turnstile checkbox and native drag work. */
-  nativeInput: process.env.BLITZ_NATIVE_INPUT !== '0',
-  /** Native-input toggle: make the UI window click-through (the mouse falls to the page below) while
-   *  the cursor is over a page hole, opaque again over chrome. No-op in main unless nativeInput is on. */
-  nativePassthrough(on: boolean): void {
-    ipcRenderer.send('os:native-passthrough', !!on)
-  },
-  /** Titlebar drag: 'start' latches the window origin, 'move' applies screen deltas (main moves the
-   *  parent window of the sandwich; CSS app-region cannot be used on the attached child). */
-  shellDrag(op: 'start' | 'move', dx = 0, dy = 0): void {
-    ipcRenderer.send('os:shell-drag', { op, dx, dy })
-  },
-  /** The page's cursor changed (text beam over inputs, hand over links) — mirror it onto the hole. */
-  onPageCursor(cb: (m: { surfaceId: string; cursor: string }) => void): () => void {
-    const listener = (_e: unknown, m: { surfaceId: string; cursor: string }): void => cb(m)
-    ipcRenderer.on('os:page-cursor', listener)
-    return () => ipcRenderer.removeListener('os:page-cursor', listener)
-  },
-  webContentsViewFocus(id: string): void {
-    ipcRenderer.send('os:webcontents-view:focus', id)
-  },
-  webContentsViewClose(id: string): void {
-    ipcRenderer.send('os:webcontents-view:close', id)
+  /** A web surface's in-DOM <webview> reports its guest WebContents id (on dom-ready) so main's agent
+   *  read/control/perception path can reach the live page. */
+  registerWebview(surfaceId: string, wcid: number): void {
+    ipcRenderer.send('os:webview', { surfaceId, wcid })
   },
   /** Per-tab page state pushed from main: {patch} = url/title/favicon/loading/canGoBack/canGoForward;
    *  {removed} = the tab's webContents died; {openTab} = a popup wants a new tab in this surface. */
