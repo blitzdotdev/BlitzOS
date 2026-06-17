@@ -60,6 +60,8 @@ export interface WorkspaceHost {
   systemUiInfo(name: string): { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null
   setChatStatus(agentId: string, status: 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error'): { ok: boolean }
   noteAgentActivity(agentId: string, source?: string): { ok: boolean; throttled?: boolean; error?: string }
+  /** Snapshot { agentId -> status } of every chat-bearing agent — the W2 supervisor tick's agent-state input. */
+  chatStatusSnapshot(): Record<string, 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error'>
   agentIds(): string[]
   restoreChatHub(): { ok: boolean; id?: string; error?: string }
   newAgentId(): string

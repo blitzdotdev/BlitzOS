@@ -588,6 +588,22 @@ export function makeOsTools(ops) {
       }
     },
     {
+      path: '/steer',
+      description:
+        "STEER another agent: inject a short directive INTO agent N's chat that WAKES it (the W2 supervisor heartbeat). This is how a supervisor nudges a running Job mid-flight — e.g. after a trigger:'tick' moment shows the user edited the plan, or the job stalled/erred. Unlike `say` (which is agent->user and does NOT wake the target), `steer` lands in the target agent's chat as a fresh directive and triggers its `/events` loop, so it actually reacts. Use it to course-correct, hand over new context the user just produced, or unblock an agent — NOT for chatting with the user (that is `say`). Args: {agent, text}. `agent` is the target agent id (required; '0' is the primary). Returns { ok }.",
+      input_schema: { type: 'object', required: ['agent', 'text'], properties: { agent: { type: 'string' }, text: { type: 'string' } } },
+      handler: ({ body }) => {
+        const b = parse(body)
+        if (typeof ops.steer !== 'function') return { status: 501, body: { error: 'steer not available in this transport' } }
+        const agent = String(b.agent ?? '')
+        const text = String(b.text || '')
+        if (!agent) return { status: 400, body: { error: 'agent required (the target agent id to steer)' } }
+        if (!text.trim()) return { status: 400, body: { error: 'text required' } }
+        ops.steer(text, agent)
+        return { ok: true }
+      }
+    },
+    {
       path: '/user_say',
       description:
         "TEST/DEV syscall (localhost transport ONLY — rejected over the relay): enter a chat message AS THE USER through the exact same path as the human composer (appends '### user' to that agent's chat.md and wakes it with a message moment). Exists so a co-located test agent can drive BlitzOS like a real user; an external agent must never be able to forge user input. Args: {text, agent?}.",

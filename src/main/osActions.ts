@@ -2,7 +2,7 @@ import { BrowserWindow, ipcMain, webContents, app, screen } from 'electron'
 import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, pinchSurface, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
-import { ingestSignals, ingestCanvasOps, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, INJECT, DRAIN } from './events'
+import { ingestSignals, ingestCanvasOps, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, setTickSource, resetTickBaseline, absorbTickEcho, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
 import { tel } from './telemetry'
@@ -183,6 +183,26 @@ export function initOsActions(opts: {
   // v2 bleed fix: every perception moment is stamped with the workspace that was active when it
   // happened, so workspace-pinned agents (/events {workspace}) never see another desktop's activity.
   setWorkspaceProvider(() => wsHost?.active() || null)
+  // W2 supervisor tick (plans/blitzos-tick-diff-steer.md): feed the perception kernel the host world snapshot
+  // it diffs each tick — surfaces (incl. props, host-readable in `cached`) + per-agent status + terminals.
+  // wsHost is a module-level let; this closure reads it lazily (it's set just below), parity with the
+  // setWorkspaceProvider closure above. The snapshot is content-AGNOSTIC structure; the agent owns judgment.
+  setTickSource(() => ({
+    surfaces: osGetState().surfaces,
+    agentStatus: wsHost ? wsHost.chatStatusSnapshot() : {},
+    terminals: terminalStatusProvider ? terminalStatusProvider() : [],
+    workspace: wsHost ? wsHost.active() : undefined
+  }))
+  // Self-reaction guard (TIMING-ROBUST — replaces the old setTickSuppressed Date.now() window): a tick must
+  // not read tool-origin churn (a just-applied syscall) or a workspace switch as a spurious user/agent change.
+  //  - A LONE tool op the tick still diffs (update_surface/customize_widget → a props-edit; spawn/close → the
+  //    agent set) calls absorbTickEcho({surfaces|agents}) at the op site, so the NEXT tick SKIPS exactly that
+  //    delta (per-delta, no whole-tick veto → a concurrent genuine agent-status edge in the same tick still
+  //    wakes), one-shot (consumed by that one tick). No dependency on WHEN the next tick fires.
+  //  - A BULK transition (hydrate/switch/reconcile, also stamped into canvasBulkAt for the canvas differ)
+  //    calls resetTickBaseline() so the next tick RE-SEEDS instead of diffing a world that changed wholesale.
+  // A USER's widget edit (renderer push, not a tool op) is never absorbed → it STILL wakes '0' (the desired
+  // plan-edit -> steer signal); a crash (terminal exit) is likewise never absorbed → it STILL wakes.
   wsHost = createWorkspaceHost({
     root,
     initialName,
@@ -198,7 +218,10 @@ export function initOsActions(opts: {
       // bulk transitions flow over THIS seam (workspace-host reconcile/switch) — suppress the
       // canvas-gesture differ for a beat so a folder-wide change never reads as human gestures
       const bt = (obj as { type?: unknown })?.type
-      if (bt === 'reconcile' || bt === 'hydrate' || bt === 'switch') canvasBulkAt = Date.now()
+      if (bt === 'reconcile' || bt === 'hydrate' || bt === 'switch') {
+        canvasBulkAt = Date.now()
+        resetTickBaseline() // W2: a bulk transaction changes the world wholesale — re-seed the tick baseline, never diff it
+      }
       sendToRenderer('os:action', obj)
     },
     onSurfaces: () => {}, // Electron browser guests are hosted by webcontents-view-host.ts
@@ -293,6 +316,7 @@ export function initOsActions(opts: {
       if (typeof state.bulkAt === 'number' && state.bulkAt !== lastRendererBulkAt) {
         lastRendererBulkAt = state.bulkAt
         canvasBulkAt = Date.now()
+        resetTickBaseline() // W2: a stage reorder translates many windows at once — re-seed the tick baseline, never diff it
       }
       wsHost?.onStatePush(state)
       diffCanvasOps(prev, state)
@@ -622,6 +646,7 @@ function noteCanvasOpFromMain(type: string, payload: Record<string, unknown>): v
   try {
     if (type === 'hydrate' || type === 'switch' || type === 'reconcile') {
       canvasBulkAt = Date.now()
+      resetTickBaseline() // W2: a bulk transaction changes the world wholesale — re-seed the tick baseline, never diff it
       return
     }
     if (type === 'create') {
@@ -753,6 +778,7 @@ export function osMoveSurface(id: string, x: number, y: number): MutationResult 
 /** Patch an existing surface (e.g. update a srcdoc's html, a note's text, geometry). */
 export function osUpdateSurface(id: string, patch: Record<string, unknown>): MutationResult {
   if (!surfaceExists(id)) return noSuch(id)
+  absorbTickEcho({ surfaces: [id] }) // W2: a tool-origin props edit must not self-wake the supervisor tick — the next tick skips this surface's delta (one-shot, per-delta)
   // Apply the SAME merge the renderer does (props deep-merge, other fields assign) so the durable flush
   // persists exactly what the agent set — this is the note-memory write whose loss we're fixing.
   const props = patch.props as Record<string, unknown> | undefined
@@ -829,7 +855,14 @@ export function setOnUserMessage(fn: ((agentId: string) => void) | null): void {
 }
 /** The agent customizes a system widget UI (chat can now be html/jsx/tsx). Live-reloads. */
 export function osCustomizeWidget(name: string, html: string, agentId = '0', lang: 'html' | 'jsx' | 'tsx' = 'html'): { ok: boolean; rel?: string; lang?: string; error?: string } {
-  return wsHost ? wsHost.customizeWidget(String(name), String(html), agentId, lang) : { ok: false, error: 'no workspace host' }
+  if (!wsHost) return { ok: false, error: 'no workspace host' }
+  const r = wsHost.customizeWidget(String(name), String(html), agentId, lang) as { ok: boolean; rel?: string; lang?: string; surfaceId?: string; error?: string }
+  // W2: a tool-origin widget edit must not self-wake the supervisor tick. customizeWidget reports the
+  // affected surface id (the chat widget's surface for a chat edit); absorb it so the next tick skips its
+  // delta (one-shot, per-delta). The 'note' path is a doReconcile (a BULK transition the host's broadcast
+  // adapter already covers via resetTickBaseline), so it has no per-surface id to absorb here.
+  if (r.ok && r.surfaceId) absorbTickEcho({ surfaces: [r.surfaceId] })
+  return r
 }
 /** Read a built-in widget's current UI source (workspace file or shipped default) — read-before-edit. */
 export function osSystemUi(name: string): string | null {
@@ -865,6 +898,18 @@ let actionItemsProvider: (() => unknown[]) | null = null
 export function setActionItemsProvider(fn: () => unknown[]): void {
   actionItemsProvider = fn
 }
+// The live terminal list (id/status/exitCode), wired by index.ts (osActions can't import electronTerminalOps —
+// terminal-ops lives in electron-os-tools, which imports osActions). Feeds the W2 supervisor tick's
+// terminal-exit + agent-added/closed diff. Absent ⇒ the tick sees no terminals (degrades to surface/status only).
+let terminalStatusProvider: (() => Array<{ id: string; status?: string; exitCode?: number | null }>) | null = null
+export function setTerminalStatusProvider(fn: () => Array<{ id: string; status?: string; exitCode?: number | null }>): void {
+  terminalStatusProvider = fn
+}
+/** The current per-agent chat status map ({ id -> status }) — the agent-state half of the W2 tick snapshot,
+ *  also handy as a standalone accessor. Empty until the workspace host exists. */
+export function osAgentStatus(): Record<string, string> {
+  return wsHost ? wsHost.chatStatusSnapshot() : {}
+}
 export function osClearBrainContext(agentId = '0'): void {
   clearBrainContextHook?.(String(agentId))
 }
@@ -880,6 +925,7 @@ export function osKickBrain(agentId = '0'): void {
 export function osSpawnAgent(title?: string, focus = false, job?: import('./job-model.mjs').Job): { id: string; title: string } {
   if (!wsHost) throw new Error('no workspace host')
   const id = wsHost.newAgentId()
+  absorbTickEcho({ agents: [id] }) // W2: a tool-origin spawn changes the agent SET — the next tick skips this add (one-shot); a real status edge still wakes
   // A job (from start_job) is stamped onto the agent's meta by addAgent BEFORE its terminal launches, so the
   // first bootstrap already carries the planning duty (bootTaskProvider reads it) — no post-spawn re-exec.
   wsHost.addAgent(id, title, job && typeof job === 'object' ? { focus, job } : { focus })
@@ -887,6 +933,7 @@ export function osSpawnAgent(title?: string, focus = false, job?: import('./job-
 }
 /** Close a non-primary agent (stop its backend + remove its widget/files/stage). */
 export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
+  absorbTickEcho({ agents: [String(agentId)] }) // W2: a tool-origin close changes the agent SET — the next tick skips this close (one-shot, per-delta)
   return wsHost ? wsHost.closeAgent(agentId) : { ok: false, error: 'no workspace host' }
 }
 /** Rename an agent (cosmetic title). */

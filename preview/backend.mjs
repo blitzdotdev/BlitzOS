@@ -27,8 +27,9 @@ import { makeOsTools } from '../src/main/os-tools.mjs'
 import { wireJobModel, makeJob, setJobStatus as jobSetStatus, readJob, dutyForJobStatus } from '../src/main/job-model.mjs'
 // Shared perception kernel — the SAME modules the Electron main runs,
 // so server mode gets the autonomy loop with no duplicated code.
-// waitForEvents/latestSeq/redactMoment/EVENTS_REMINDER/isContentShared are consumed INSIDE the shared
-// os-tools.mjs registry now (same module instance) — backend.mjs keeps only what its own HTTP routes + ingest use.
+// waitForEvents/latestSeq/EVENTS_REMINDER/isContentShared are consumed INSIDE the shared os-tools.mjs
+// registry now (same module instance) — backend.mjs keeps only what its own HTTP routes + ingest use.
+// (redactMoment is NOT consumed anywhere — it is currently uncalled repo-wide; see perception-core.mjs.)
 import {
   ingestSignals,
   setContentShare,
@@ -36,6 +37,9 @@ import {
   emitSurfaceAction,
   emitSystemMoment,
   setWorkspaceProvider,
+  setTickSource,
+  resetTickBaseline,
+  absorbTickEcho,
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
@@ -276,6 +280,11 @@ function broadcast(obj) {
     else if (obj?.type === 'terminal-data' && obj.id != null) wsHost?.noteAgentActivity(String(obj.id), 'terminal')
     else if (obj?.type === 'terminal-stop' && obj.id != null) wsHost?.setChatStatus(String(obj.id), 'stopped')
     else if (obj?.type === 'terminal-exit' && obj.id != null) wsHost?.setChatStatus(String(obj.id), Number(obj.exitCode) ? 'error' : 'stopped')
+    // W2 supervisor tick (server parity with Electron's osActions broadcast adapter): a BULK transaction
+    // (hydrate/switch/reconcile from the shared workspace host) changes the world wholesale, so re-SEED the
+    // tick baseline rather than diff it as a storm of phantom user/agent signals. (Before this, server mode
+    // had NO self-reaction guard at all — a workspace switch / reconcile could self-wake the supervisor.)
+    if (obj?.type === 'reconcile' || obj?.type === 'hydrate' || obj?.type === 'switch') resetTickBaseline()
   } catch {
     /* status sync is best-effort */
   }
@@ -295,6 +304,24 @@ function broadcast(obj) {
 // targets — Electron passes a no-op since the renderer owns its <webview>s).
 // v2 bleed fix: stamp every perception moment with the active workspace (same as Electron main).
 setWorkspaceProvider(() => { try { return wsHost.active() } catch { return null } })
+// W2 supervisor tick (plans/blitzos-tick-diff-steer.md): feed the SAME host snapshot Electron does — surfaces
+// (incl. props) + per-agent status + terminals — so server mode gets the steering heartbeat with no fork. The
+// closure reads wsHost / serverTerminalOps lazily (declared below; only invoked at tick time, well after init).
+// Self-reaction guard (TIMING-ROBUST, parity with Electron): the serverOps tool ops below call
+// absorbTickEcho (a tool-origin surface/agent delta the next tick skips), and the broadcast adapter calls
+// resetTickBaseline on a BULK transaction (reconcile/hydrate/switch). Both are timing-independent.
+setTickSource(() => {
+  try {
+    return {
+      surfaces: osState.surfaces || [],
+      agentStatus: wsHost.chatStatusSnapshot(),
+      terminals: serverTerminalOps.listTerminals().map((t) => ({ id: String(t.id), status: t.status, exitCode: t.exitCode ?? null })),
+      workspace: wsHost.active()
+    }
+  } catch {
+    return null
+  }
+})
 const wsHost = createWorkspaceHost({
   root: WORKSPACES_ROOT,
   initialName: INITIAL_WS,
@@ -439,6 +466,7 @@ const serverOps = {
   updateSurface: (id, patch) => {
     const i = String(id)
     if (!surfaceExists(i)) return noSuch(i)
+    absorbTickEcho({ surfaces: [i] }) // W2: a tool-origin props edit must not self-wake the supervisor tick (the next tick skips this surface's delta; one-shot, per-delta)
     const props = patch.props
     osState = { ...osState, surfaces: (osState.surfaces || []).map((s) => (s.id === i ? { ...s, ...patch, props: { ...(s.props || {}), ...(props || {}) } } : s)) }
     broadcast({ type: 'update', id: i, patch })
@@ -510,7 +538,23 @@ const serverOps = {
     }
     return wsHost.appendChat('agent', String(text), agentId) // append to that agent's chat.md + broadcast
   },
-  customizeWidget: (name, html, agentId, lang) => wsHost.customizeWidget(String(name), String(html), agentId, lang),
+  // steer (W2 supervisor): nudge a SPECIFIC agent — the relay-safe wake-a-target path. Mirrors Electron's
+  // osUserMessage: append the directive AS the user to that agent's chat.md (appendChat('user') also flips it
+  // to 'working' + echoes the widget) AND emit a 'message' moment that wakes ONLY that agent. `say` does NOT
+  // wake the target (agent->user) and `user_say` is localhost-only, so this is the steering primitive.
+  steer: (text, agentId) => {
+    const aid = String(agentId ?? '0')
+    wsHost.appendChat('user', String(text), aid)
+    emitUserMessage(String(text), aid)
+  },
+  customizeWidget: (name, html, agentId, lang) => {
+    const r = wsHost.customizeWidget(String(name), String(html), agentId, lang)
+    // W2: a tool-origin widget edit must not self-wake the supervisor tick — absorb the affected surface id
+    // the host reports (the chat widget's surface for a chat edit). The 'note' path doReconciles (a BULK
+    // transition the broadcast adapter covers via resetTickBaseline), so it has no per-surface id here.
+    if (r && r.ok && r.surfaceId) absorbTickEcho({ surfaces: [r.surfaceId] })
+    return r
+  },
   // Live OS theme (the onboarding wardrobe card / an agent picking an accent). Mirrors Electron's
   // osSetTheme: sanitize each role to a #rrggbb hex, then broadcast the SAME `set-theme` action the
   // shared renderer applies (App.tsx) — so theming works identically in both transports, not Electron-only.
@@ -522,12 +566,16 @@ const serverOps = {
     broadcast({ type: 'set-theme', theme: out })
     return { ok: true }
   },
-  closeAgent: (id) => wsHost.closeAgent(String(id)),
+  closeAgent: (id) => {
+    absorbTickEcho({ agents: [String(id)] }) // W2: a tool-origin close changes the agent SET — the next tick skips this close (one-shot, per-delta)
+    return wsHost.closeAgent(String(id))
+  },
   renameAgent: (id, title) => wsHost.renameAgent(String(id), String(title ?? '')),
   // Open a new agent: register + surface it; addAgent launches its managed terminal (launchAgent).
   // focus:true (a USER '+ Agent') tells the renderer to follow the camera to the new stage.
   spawnAgent: async (title, focus = false) => {
     const id = wsHost.newAgentId()
+    absorbTickEcho({ agents: [id] }) // W2: a tool-origin spawn changes the agent SET — the next tick skips this add (one-shot); a real status edge still wakes
     wsHost.addAgent(id, title, { focus })
     return { id, title: title || `Agent ${id}` }
   },
@@ -540,6 +588,7 @@ const serverOps = {
     // bootstrap already carries the planning duty — no post-spawn re-exec (parity with Electron's startJob).
     const job = makeJob({ goal: spec?.goal, title: spec?.title, contextRefs: spec?.contextRefs })
     const id = wsHost.newAgentId()
+    absorbTickEcho({ agents: [id] }) // W2: start_job spawns a fresh agent — the next tick skips this add (one-shot); a real status edge still wakes
     wsHost.addAgent(id, spec?.title, { focus: true, job })
     const agent = { id, title: spec?.title || `Agent ${id}` }
     return { ok: true, agent, job }

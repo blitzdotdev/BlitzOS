@@ -68,6 +68,10 @@ export const electronOps = {
   say: (text: string, agentId?: string, workspace?: string) => osSay(text, agentId, workspace),
   // user_say (localhost-only test syscall): programmatic user input through the human composer's exact path
   userMessage: (text: string, agentId?: string) => osUserMessage(text, agentId),
+  // steer (W2 supervisor): nudge a SPECIFIC agent — same waking path as a user message (osUserMessage appends
+  // to that agent's chat.md + emits a 'message' moment that wakes ONLY that agent). `say` doesn't wake the
+  // target (it's agent->user) and `user_say` is localhost-only; steer is the relay-safe wake-a-target path.
+  steer: (text: string, agentId: string) => osUserMessage(text, agentId),
   customizeWidget: (name: string, html: string, agentId?: string, lang?: 'html' | 'jsx' | 'tsx') => osCustomizeWidget(name, html, agentId, lang),
   spawnAgent: (title?: string) => osSpawnAgent(title),
   closeAgent: (id: string) => osCloseAgent(id),

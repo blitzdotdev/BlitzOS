@@ -3,7 +3,7 @@ import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, osRadialPhase } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase } from './osActions'
 import { emitSystemMoment, setMomentTap } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -710,6 +710,10 @@ app.whenReady().then(() => {
     setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
     setClearBrainContext((id) => { void electronTerminalOps.clearAgentContext(id) }) // interview→resident HANDOFF: rotate the session (fresh context) so the resident rebuilds from the .md files + chat.md at resident (xhigh) effort
     setActionItemsProvider(() => electronActionItems.listActions()) // host reconciles the inbox surface against the authoritative store
+    // W2 supervisor tick: feed it the live terminal list (id/status/exitCode) so the heartbeat can diff
+    // terminal exits + agent add/close. osActions can't import electronTerminalOps (terminal-ops lives here,
+    // and it imports osActions); this DI seam mirrors setActionItemsProvider / setLaunchAgent.
+    setTerminalStatusProvider(() => electronTerminalOps.listTerminals().map((t) => ({ id: String(t.id), status: t.status, exitCode: t.exitCode ?? null })))
     // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
     let resumed = false
     const resumeAll = async (): Promise<void> => {
