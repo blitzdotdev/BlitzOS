@@ -17,6 +17,31 @@ Legend: ✅ built · 🟡 partial (primitives exist) · ⬜ not built
 
 ---
 
+## Build status (host-side slices landed on branch `blitzos-journey-build`, 2026-06-17)
+
+All committed + headless-tested (8 suites green, `npm run typecheck` + `npm run build` green). The spine of the journey (Job → plan → execute → steer) plus the Phase-2 Shell A entry point are built. What remains is visual / runtime / needs-sign-off, not more headless code.
+
+| Slice | Status | Commit | Headless test |
+|---|---|---|---|
+| Job model (Option 1: Job on per-agent `meta.json`) + `start_job` / `set_job_status` tools | ✅ | 671e355 | `test-job-model` |
+| W1 editable plan widget + the two-step (`setProps` + tiny `sendMessage` + `get_surface`) return channel | ✅ | c74787f | `test-plan-widget` |
+| E1 continuation engine (plan.md-gated Stop hook + spin-guard) | ✅ | c08e069 | `test-continue-hook`, `test-plan-doc`, `test-plan-continuation` |
+| W2 tick → diff → steer; a `srcdoc`/`native` props-edit wakes supervisor '0'; echo + bulk self-reaction guards | ✅ | 26a824d | `test-tick-diff` |
+| P0 cooperative path (the plan widget pushes its content via `blitz.setProps` → the tick diffs it → steer) | ✅ | in 26a824d | `test-tick-diff` #10/#14a |
+| Phase-2 Shell A: standalone job launcher (global ⌥Space bar → `start_job`) | ✅ | 94238ec | `test-launcher` |
+
+Still open, each needing your eyes or your call (NOT more headless work):
+- **P0 generic auto-serializer** (a MutationObserver in `widget-bridge` so NON-cooperative widgets are snapshot-diffable too): lives inside the sandboxed iframe, renderer/runtime, visual.
+- **Shell B in-app HUD** (the same launcher UI behind an in-app keybind): renderer, touches `App.tsx` (your single-canvas-navigation WIP) — coordinate after that lands.
+- **A2 drag-drop file context onto the bar**: the drop is visual; the host-side ingest + `contextRefs` persistence touch wants sign-off (three-serializer rule).
+- **A3 extension → BlitzOS discovery**: a blocked design decision (the recommended "hand BlitzOS a URL to open the logged-in tab" reframe).
+- **A5 Tray + [N] notifications + dock badge**: native OS surfaces, runtime/visual.
+- **W3 session-summary widget**: cadence is an unresolved design choice (a new 2-minute host primitive vs a pure agent-duty on the existing wake stream).
+- **E3 job-status widget**: largely subsumed by W1 (the plan widget already shows status and morphs into it); low marginal value.
+- **O2b**: out of scope (browsers are being removed).
+
+---
+
 ## The flow
 
 ```
