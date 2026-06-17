@@ -469,11 +469,14 @@ const api = {
   // shares this preload). startJob → start_job (mints a Job whose planning agent authors the plan widget);
   // hide closes the bar; onShow lets the bar refocus its input each time main re-shows the panel.
   launcher: {
-    startJob(prompt: string): Promise<{ ok: boolean; agentId?: string | null; error?: string }> {
-      return ipcRenderer.invoke('launcher:start-job', prompt) as Promise<{ ok: boolean; agentId?: string | null; error?: string }>
+    startJob(prompt: string, attachments?: string[]): Promise<{ ok: boolean; agentId?: string | null; error?: string }> {
+      return ipcRenderer.invoke('launcher:start-job', { prompt, attachments: attachments || [] }) as Promise<{ ok: boolean; agentId?: string | null; error?: string }>
     },
     hide(): void {
       ipcRenderer.send('launcher:hide')
+    },
+    autosize(height: number): void {
+      ipcRenderer.send('launcher:autosize', height)
     },
     onShow(cb: () => void): () => void {
       const listener = (): void => cb()

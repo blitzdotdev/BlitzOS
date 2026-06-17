@@ -84,12 +84,16 @@ const startJobOp = (spec) => {
 // is electron-only). startJobFn is the DI seam wireLauncher() fills (index.ts:527 → electronOps.startJob).
 const hideCalls = { n: 0 }, focusCalls = { n: 0 }
 function makeHandler(startJobFn) {
-  return (prompt) => {
-    const goal = String(prompt ?? '').trim()
+  // The launcher accepts { prompt, attachments } (attachments = dropped absolute paths → contextRefs); a bare
+  // string prompt stays valid (back-compat). Mirrors launcher.ts:187-208.
+  return (payload) => {
+    const obj = (payload && typeof payload === 'object') ? payload : { prompt: payload, attachments: [] }
+    const goal = String(obj.prompt ?? '').trim()
     if (!goal) return { ok: false, error: 'empty prompt' }
     if (!startJobFn) return { ok: false, error: 'launcher not wired (no workspace host yet)' }
+    const contextRefs = Array.isArray(obj.attachments) ? obj.attachments.filter((p) => typeof p === 'string' && p.length > 0) : []
     try {
-      const r = startJobFn({ goal })
+      const r = startJobFn({ goal, contextRefs })
       if (r && r.ok === false) return { ok: false, error: r.error || 'start_job failed' }
       hideCalls.n++            // hideLauncher()
       focusCalls.n++           // focusMainFn?.()
@@ -120,10 +124,11 @@ const handler = makeHandler(startJobOp)
   const meta = JSON.parse(readFileSync(join(terminalsDir, res.agentId, 'meta.json'), 'utf8'))
   ok('the job rides ON meta.json as `job` (kind:agent intact)', !!meta.job && meta.job.goal === PROMPT.trim() && meta.kind === 'agent', meta.job)
 
-  // The handler passed the prompt straight through as { goal } to startJob (not title/contextRefs) — guards the
-  // wiring at index.ts:527 (startJob: (spec) => electronOps.startJob({ goal: spec.goal })).
-  ok('startJob received { goal: <prompt> } (no title/contextRefs from the bar)',
-    lastSpawnArgs && lastSpawnArgs.job.goal === PROMPT.trim() && lastSpawnArgs.title === undefined, lastSpawnArgs)
+  // The handler passed the prompt through as { goal, contextRefs }; with NO files dropped the contextRefs is an
+  // empty array (guards the wiring at index.ts → electronOps.startJob({ goal: spec.goal, contextRefs: ... })).
+  ok('startJob received { goal: <prompt> }, contextRefs empty when nothing is attached',
+    lastSpawnArgs && lastSpawnArgs.job.goal === PROMPT.trim() && lastSpawnArgs.title === undefined &&
+      (!lastSpawnArgs.job.contextRefs || lastSpawnArgs.job.contextRefs.length === 0), lastSpawnArgs)
 }
 
 // (A2) A SECOND Send → a SECOND, DISTINCT agent (a job entrypoint never reuses/clobbers an existing agent).
@@ -169,6 +174,30 @@ const handler = makeHandler(startJobOp)
   ok('a throwing startJob is caught → { ok:false, error:<message> }', rt.ok === false && rt.error === 'spawn blew up', rt)
 }
 
+// (A6) Dropped attachments → the bar passes them as contextRefs; they land on the minted Job (the A2 path:
+// the user drops files/folders, the chips' paths ride start_job into the planning context).
+{
+  const ATTACH = ['/Users/me/Downloads/report.pdf', '/Users/me/Projects/site']
+  const res = handler({ prompt: 'summarize these and build a status page', attachments: ATTACH })
+  ok('Send WITH attachments → ok:true on a new agent', res.ok === true && typeof res.agentId === 'string', res)
+  const job = readJob(res.agentId)
+  ok('the dropped paths are stored on the job as contextRefs (verbatim, in order)',
+    !!job && Array.isArray(job.contextRefs) && job.contextRefs.length === 2 &&
+      job.contextRefs[0] === ATTACH[0] && job.contextRefs[1] === ATTACH[1], job && job.contextRefs)
+  ok('the goal is still the typed prompt (attachments augment, not replace)',
+    !!job && job.goal === 'summarize these and build a status page', job && job.goal)
+  // The handler must not trust the renderer payload: non-string / empty entries are filtered.
+  const res2 = handler({ prompt: 'x', attachments: ['/a/b.txt', '', null, 42, '/c/d'] })
+  const job2 = readJob(res2.agentId)
+  ok('non-string / empty attachment entries are filtered out',
+    !!job2 && Array.isArray(job2.contextRefs) && job2.contextRefs.length === 2 &&
+      job2.contextRefs[0] === '/a/b.txt' && job2.contextRefs[1] === '/c/d', job2 && job2.contextRefs)
+  // A bare-string payload (back-compat) still works and yields empty contextRefs.
+  const res3 = handler('plain string still works')
+  ok('a bare-string prompt (back-compat) still mints a job with empty contextRefs',
+    res3.ok === true && (readJob(res3.agentId)?.contextRefs || []).length === 0, readJob(res3.agentId))
+}
+
 rmSync(terminalsDir, { recursive: true, force: true })
 
 // ===========================================================================================================
@@ -194,16 +223,31 @@ ok('the hotkey is unregistered on quit (will-quit → globalShortcut.unregisterA
 ok('a failed registration is logged, not fatal (no throw on a taken chord)',
   /FAILED to register global hotkey/.test(launcherSrc) && !/throw/.test(launcherSrc.split('will-quit')[0].split('globalShortcut.register')[1] || ''))
 
-// -- the Send IPC handler: the exact prompt→start_job mapping + the guards (the contract Part A exercised) -----
+// -- the Send IPC handler: the prompt+attachments → start_job mapping + the guards (the contract Part A ran) ---
 ok("the Send IPC channel is 'launcher:start-job'", /ipcMain\.handle\(\s*'launcher:start-job'/.test(launcherSrc))
-ok('the handler trims the prompt and guards empty', /String\(prompt[^)]*\)\.trim\(\)/.test(launcherSrc) && /if\s*\(!goal\)\s*return\s*\{\s*ok:\s*false/.test(launcherSrc))
+ok('the handler trims the prompt and guards empty', /String\(obj\.prompt[^)]*\)\.trim\(\)/.test(launcherSrc) && /if\s*\(!goal\)\s*return\s*\{\s*ok:\s*false/.test(launcherSrc))
 ok('the handler guards the not-wired case (no startJobFn)', /if\s*\(!startJobFn\)\s*return\s*\{\s*ok:\s*false/.test(launcherSrc))
-ok('the handler calls startJobFn({ goal }) — the prompt becomes the job goal', /startJobFn\(\s*\{\s*goal\s*\}\s*\)/.test(launcherSrc))
+ok('the handler maps dropped attachments → contextRefs (string-filtered)',
+  /Array\.isArray\(obj\.attachments\)/.test(launcherSrc) && /\.filter\(/.test(launcherSrc) && /typeof p === 'string'/.test(launcherSrc))
+ok('the handler calls startJobFn({ goal, contextRefs }) — prompt→goal, drops→context',
+  /startJobFn\(\s*\{\s*goal\s*,\s*contextRefs\s*\}\s*\)/.test(launcherSrc))
 ok('on success the handler hides the bar + focuses main', /hideLauncher\(\)/.test(launcherSrc) && /focusMainFn\?\.\(\)/.test(launcherSrc))
 
+// -- the reported-bug fix + the new attachment affordances (keep-open, drag-drop, autosize) ------------------
+ok('NO hide-on-blur (the bar STAYS OPEN while gathering attachments — the reported bug)', !/\.on\(\s*'blur'\s*,/.test(launcherSrc))
+ok('drag-drop resolves files via the shared agentOS.dropPaths helper', /agentOS\.dropPaths\(/.test(launcherSrc))
+ok('a dragged browser tab / link (URL) is accepted too (uri-list/plain → contextRef)',
+  /text\/uri-list/.test(launcherSrc) && /isUrl\(/.test(launcherSrc))
+ok('window drop is preventDefaulted (no navigate-to-file that would destroy the UI)',
+  /addEventListener\(\s*'drop'/.test(launcherSrc) && /preventDefault\(\)/.test(launcherSrc))
+ok('the bar autosizes the window (launcher:autosize → setBounds, width locked to LAUNCHER_W)',
+  /ipcMain\.on\(\s*'launcher:autosize'/.test(launcherSrc) && /setBounds\(\{\s*x:\s*b\.x[\s\S]*?width:\s*LAUNCHER_W/.test(launcherSrc))
+ok('the window is resizable with width locked via min/max (so autosize setBounds works on macOS)',
+  /resizable:\s*true/.test(launcherSrc) && /minWidth:\s*LAUNCHER_W/.test(launcherSrc) && /maxWidth:\s*LAUNCHER_W/.test(launcherSrc))
+
 // -- wireLauncher is called from index.ts with electronOps.startJob({ goal }) as the seam --------------------
-ok('index.ts wires the launcher to electronOps.startJob({ goal: spec.goal })',
-  /wireLauncher\(\{/.test(indexSrc) && /electronOps\.startJob[\s\S]*?\(\s*\{\s*goal:\s*spec\.goal\s*\}\s*\)/.test(indexSrc))
+ok('index.ts wires the launcher to electronOps.startJob({ goal, contextRefs })',
+  /wireLauncher\(\{/.test(indexSrc) && /electronOps\.startJob[\s\S]*?goal:\s*spec\.goal[\s\S]*?contextRefs:\s*spec\.contextRefs/.test(indexSrc))
 ok('index.ts calls registerLauncher() (the hotkey + handler install)', /registerLauncher\(\)/.test(indexSrc))
 
 // -- electronOps.startJob is the real start_job (makeJob + osSpawnAgent with the job stamped) ----------------
@@ -213,6 +257,10 @@ ok('electronOps.startJob mints a job via makeJob and spawns an agent WITH it',
 // -- the preload bridge is namespaced under agentOS.launcher (isolated; the renderer never sees it) ----------
 ok('preload exposes the guarded launcher bridge (agentOS.launcher.startJob → launcher:start-job)',
   /launcher:\s*\{[\s\S]*?ipcRenderer\.invoke\(\s*'launcher:start-job'/.test(preloadSrc))
+ok('preload startJob forwards { prompt, attachments } to launcher:start-job',
+  /startJob\(prompt[\s\S]*?attachments[\s\S]*?ipcRenderer\.invoke\(\s*'launcher:start-job',\s*\{\s*prompt,\s*attachments/.test(preloadSrc))
+ok('preload exposes launcher.autosize → launcher:autosize (window grows to fit chips)',
+  /autosize\(height[\s\S]*?ipcRenderer\.send\(\s*'launcher:autosize'/.test(preloadSrc))
 
 // -- ISOLATION guard: launcher.ts never IMPORTS the renderer WIP files (App/store/PrimarySpace/styles). The
 //    only references to those names live in a documentation comment ("NOT wired into ... App.tsx/store/..."),

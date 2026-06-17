@@ -526,7 +526,7 @@ app.whenReady().then(() => {
     // electronOps is typed as a Record<string, (...args:never[])=>unknown> (so the shared registry can hold
     // every tool uniformly); cast startJob to its real signature at this one call site (no runtime change).
     startJob: (spec) =>
-      (electronOps.startJob as unknown as (s: { goal: string }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string })({ goal: spec.goal }),
+      (electronOps.startJob as unknown as (s: { goal: string; contextRefs?: string[] }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string })({ goal: spec.goal, contextRefs: spec.contextRefs }),
     focusMain: () => {
       const w = mainWindow
       if (!w || w.isDestroyed()) return
