@@ -12,6 +12,7 @@ import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
 import { wireJobModel, readJob, dutyForJobStatus } from './job-model.mjs'
+import { wirePlanDoc } from './plan-doc.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -653,6 +654,9 @@ app.whenReady().then(() => {
     // job-model reads/writes the `job` on each agent's meta.json — tell it where the active workspace's
     // terminals dir is (it must not import the IPC-bound osActions; same DI seam as setLaunchAgent).
     wireJobModel({ getTerminalsDir: terminalsDirOf })
+    // plan-doc (E1) reads each job's `.blitzos/jobs/<id>/plan.md` for the continuation engine — point it at the
+    // active workspace's jobs dir (sibling of terminals; same DI seam).
+    wirePlanDoc({ getJobsDir: (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'jobs') : null } })
     // The per-(re)launch standing-duty mapper (prepareAgentLaunch re-reads it + rewrites bootstrap.txt, so a
     // duty changes as workspace state changes). Generalized to the JOB model: an agent with a JOB gets the duty
     // for its job status (proposed/approved -> author + present a plan; running -> execute the approved plan;

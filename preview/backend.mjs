@@ -25,6 +25,8 @@ import { makeWidgetToolRunner, makeWidgetToolHandlers } from '../src/main/widget
 import { makeOsTools } from '../src/main/os-tools.mjs'
 // The JOB model (job-model.mjs) — the SAME shared module Electron binds, so server mode gets jobs with no fork.
 import { wireJobModel, makeJob, setJobStatus as jobSetStatus, readJob, dutyForJobStatus } from '../src/main/job-model.mjs'
+// plan-doc (E1 continuation engine) — the SAME shared module Electron binds; server mode gets the Stop-hook wiring.
+import { wirePlanDoc } from '../src/main/plan-doc.mjs'
 // Shared perception kernel — the SAME modules the Electron main runs,
 // so server mode gets the autonomy loop with no duplicated code.
 // waitForEvents/latestSeq/EVENTS_REMINDER/isContentShared are consumed INSIDE the shared os-tools.mjs
@@ -124,6 +126,9 @@ const launchAgent = process.env.BLITZ_AGENT
 // job-driven: a job agent gets the duty for its job status; any other agent gets null. (prepareAgentLaunch re-reads
 // this provider on every (re)launch, so the approved->running re-exec injects JOB_EXECUTE_DUTY into the bootstrap.)
 wireJobModel({ getTerminalsDir: () => { const ws = wsHost.activePath(); return ws ? join(ws, '.blitzos', 'terminals') : null } })
+// E1: plan-doc reads each job's `.blitzos/jobs/<id>/plan.md`; prepareAgentLaunch arms the continuation Stop hook for
+// a running-job CLAUDE agent (server mode usually runs Codex, where the hook is a no-op — see the buildAgentCommand TODO).
+wirePlanDoc({ getJobsDir: () => { const ws = wsHost.activePath(); return ws ? join(ws, '.blitzos', 'jobs') : null } })
 setBootTaskProvider((id) => { const job = readJob(id); return job ? dutyForJobStatus(job.status) : null })
 const sseClients = new Set()
 

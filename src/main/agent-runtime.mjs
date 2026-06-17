@@ -12,6 +12,11 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
+// E1 continuation engine: the job record (readJob) gates the Stop hook; plan-doc resolves the job's plan.md path.
+// Both are pure .mjs (no IPC-bound osActions import) and read their resolvers set by the transport (wireJobModel /
+// wirePlanDoc), so reading them here is safe on BOTH launch paths (workspace-host launchAgent + terminal-ops re-exec).
+import { readJob } from './job-model.mjs'
+import { planPath } from './plan-doc.mjs'
 
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
 const metaPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'meta.json')
@@ -105,7 +110,7 @@ export function shellQuote(s) {
  *  INTERACTIVE (no -p): claude renders its full TUI in the terminal so the user can WATCH it work — print
  *  mode (-p) ran silently, leaving the terminal blank. --dangerously-skip-permissions: the agent acts
  *  unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
-export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, effort = null, pinFastModel = false }) {
+export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, effort = null, pinFastModel = false, hooks = null }) {
   const sessionArg = mode === 'resume' ? `--resume ${claudeSid}` : `--session-id ${claudeSid}`
   // `effort` sets the reasoning level for THIS launch (INTERVIEW_EFFORT 'low' for the snappy interview,
   // RESIDENT_EFFORT 'xhigh' for the resident so it follows the boundary and decides well). The real control
@@ -114,12 +119,21 @@ export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create',
   // own MODEL untouched. pinFastModel ALSO pins the fast standard-context model — INTERVIEW ONLY (a user's
   // 1M-context model would burn a usage credit per dynamic question). Timing on a small prompt: xhigh ~7.9s,
   // --effort low ~3.9s, --settings low ~2.7s.
+  // `hooks` (E1): a settings hooks object (the continuation Stop hook for a RUNNING job) MERGED into the SAME
+  // --settings JSON. A non-running / no-job agent passes hooks=null → byte-identical to before. The merge keeps
+  // the effort/model logic intact; --settings is emitted when EITHER effort OR hooks is present.
   let tuned = ''
-  if (effort) {
+  const settings = pinFastModel ? { ...INTERVIEW_FAST_SETTINGS } : effort ? { effortLevel: effort, env: { CLAUDE_CODE_EFFORT_LEVEL: effort } } : {}
+  if (hooks && typeof hooks === 'object') Object.assign(settings, hooks) // hooks is a top-level settings key alongside effortLevel/env/model
+  if (effort || (hooks && typeof hooks === 'object')) {
     const model = pinFastModel ? `--model ${INTERVIEW_FAST_MODEL} ` : ''
-    const settings = pinFastModel ? INTERVIEW_FAST_SETTINGS : { effortLevel: effort, env: { CLAUDE_CODE_EFFORT_LEVEL: effort } }
-    tuned = `${model}--effort ${effort} --settings ${shellQuote(JSON.stringify(settings))} `
+    const effortArg = effort ? `--effort ${effort} ` : ''
+    tuned = `${model}${effortArg}--settings ${shellQuote(JSON.stringify(settings))} `
   }
+  // TODO(E1 irreversible gate — guardrails-doc Phase 2 "Irreversible gate", a SEPARATE decision, deliberately out of
+  // this slice): for a real "ask before send/post/deploy/spend", drop `--dangerously-skip-permissions` to
+  // `--permission-mode auto` + deny rules in the SAME --settings JSON (today the bypass defeats Auto mode, so the
+  // act/ask boundary is the EXECUTE-duty prose only). Wire it the same way as hooks (a settings merge) once signed off.
   return `${cmd} ${sessionArg} ${tuned}--dangerously-skip-permissions "$(cat ${shellQuote(bootstrapFile)})"`
 }
 
@@ -133,11 +147,13 @@ export function buildCodexServerlessCommand({ cmd = 'codex', bootstrapFile, lowT
   return `${cmd} exec ${effort}--disable plugins --ignore-user-config --ignore-rules --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --color never "$(cat ${shellQuote(bootstrapFile)})"`
 }
 
-export function buildAgentCommand({ runtime = AGENT_RUNTIME_CLAUDE, cmd, claudeSid, mode = 'create', bootstrapFile, effort = null, pinFastModel = false }) {
+export function buildAgentCommand({ runtime = AGENT_RUNTIME_CLAUDE, cmd, claudeSid, mode = 'create', bootstrapFile, effort = null, pinFastModel = false, hooks = null }) {
   const r = normalizeAgentRuntime(runtime)
   // Codex only has the low cap (its reasoning effort lever is a single low/default), so map effort 'low' → it.
+  // The continuation Stop hook is a Claude Code --settings feature; Codex has no equivalent, so `hooks` is dropped
+  // for Codex (a running job on the Codex backend keeps driving via the EXECUTE duty prose alone — see the TODO).
   if (r === AGENT_RUNTIME_CODEX_SERVERLESS) return buildCodexServerlessCommand({ cmd: cmd || 'codex', bootstrapFile, lowThinking: effort === 'low' })
-  return buildClaudeCommand({ cmd: cmd || 'claude', claudeSid, mode, bootstrapFile, effort, pinFastModel })
+  return buildClaudeCommand({ cmd: cmd || 'claude', claudeSid, mode, bootstrapFile, effort, pinFastModel, hooks })
 }
 
 /** Has claude ALREADY created this conversation on disk? claude writes `<configDir>/projects/<encoded-cwd>/
@@ -176,6 +192,36 @@ export function ensureClaudeSessionId(sessionsDir, id) {
   return { claudeSessionId, established }
 }
 
+/** E1 install seam: decide whether THIS launch arms the /goal continuation Stop hook, and if so write the per-agent
+ *  hook script + return its --settings hooks object (else null). Armed ⇔ a CLAUDE agent whose JOB status is exactly
+ *  'running' (the execution phase). Everything else returns null → an unchanged launch (no hook). Best-effort: any
+ *  failure (no job, unwritable dir, missing resolver) just returns null, never blocking a spawn.
+ *
+ *  Plan path: prefer plan-doc's resolver (planPath, wired by the transport); fall back to deriving it from
+ *  sessionsDir (`<ws>/.blitzos/terminals` → sibling `<ws>/.blitzos/jobs/<id>/plan.md`) so the hook is correct even
+ *  on the re-exec path before/without wirePlanDoc — the two resolve to the SAME path. */
+function installContinuationHook({ id, sessionsDir, isClaude }) {
+  if (!isClaude) return null // the Stop hook is a Claude Code --settings feature; Codex has no equivalent.
+  let job = null
+  try {
+    job = readJob(String(id))
+  } catch {
+    return null // a broken resolver never blocks the launch.
+  }
+  if (!job || job.status !== 'running') return null // only an APPROVED job in its EXECUTION phase drives.
+  // Resolve the job's plan.md path (plan-doc resolver first, then the deterministic sessionsDir-derived fallback).
+  let plan = null
+  try {
+    plan = planPath(String(id))
+  } catch {
+    plan = null
+  }
+  if (!plan && sessionsDir) plan = join(dirname(sessionsDir), 'jobs', String(id), 'plan.md')
+  if (!plan) return null
+  const script = writeContinueHook(plan)
+  return continuationHookSettings(script)
+}
+
 /** Prepare an agent (re)launch: ensure the claude session-id, (re)write the bootstrap file with the CURRENT
  *  relay url, and build the command. Returns { command, claudeSessionId } for terminal-manager.spawnTerminal.
  *  Used by BOTH the new-agent launch (workspace-host launchAgent) AND the re-exec path (restartTerminal's
@@ -205,6 +251,11 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
   const isClaude = agentRuntime === AGENT_RUNTIME_CLAUDE
   const effort = interview ? INTERVIEW_EFFORT : isClaude ? RESIDENT_EFFORT : null
   const pinFastModel = interview && isClaude
+  // E1: install the /goal continuation Stop hook ONLY for a CLAUDE agent whose JOB is mode RUNNING (status
+  // 'running'). A non-running job, a planning job, or a no-job agent installs NO hook → the launch is unchanged.
+  // Read the job here (readJob; the resolver is wired by the transport at boot) and, when running, write the
+  // per-agent hook script + build the settings hooks object that buildClaudeCommand merges into --settings.
+  const hooks = installContinuationHook({ id, sessionsDir, isClaude })
   return {
     agentRuntime,
     agentSessionId,
@@ -217,7 +268,8 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
       mode: claudeState.established ? 'resume' : 'create',
       bootstrapFile: file,
       effort,
-      pinFastModel
+      pinFastModel,
+      hooks
     })
   }
 }
@@ -285,4 +337,112 @@ done
 export function writeWaitScript(blitzDir) {
   if (!blitzDir) return
   try { mkdirSync(blitzDir, { recursive: true }); writeFileSync(join(blitzDir, 'wait.sh'), WAIT_SCRIPT) } catch { /* best-effort */ }
+}
+
+// ─── E1: the /goal continuation Stop hook (plans/blitzos-agent-autonomy-guardrails.md Phase 2) ────────────────
+// A RUNNING job is a do-not-stop-until-done loop. Claude Code (2.1.170) fires a session **Stop hook** when the
+// agent YIELDS (the backgrounded wait.sh now makes it yield — the prerequisite that made every Stop-hook path a
+// no-op is fixed). This script IS /goal's engine, gated on plan.md: on each yield it reads the job's plan.md, runs
+// the continuation decision (+ the spin-guard), and prints Claude Code's Stop-hook JSON — `{"decision":"block",
+// "reason":<next-step>}` to FORCE another turn while the approved plan is incomplete, or nothing to allow the stop.
+//
+// SELF-CONTAINED POSIX sh BY NECESSITY: a packaged `claude` spawns the hook as a plain shell command with cwd=the
+// workspace and NO access to this asar-internal module, exactly like wait.sh. So it parses plan.md with shell tools
+// (grep/sed) using the SAME tiny grammar plan-doc.mjs documents — keep the two in lock-step (the e2e test runs THIS
+// script against fixtures to catch drift). $PLAN (absolute plan.md path) is baked in at write time. The spin-guard
+// counter + the plan-content fingerprint live next to plan.md (`.continue-spin` / `.continue-plan.sum`) so a stalled
+// agent that keeps yielding without advancing the plan stops after SPIN_GUARD_LIMIT no-change turns.
+//
+// Claude Code Stop-hook contract (the bytes this prints): exit 0 always; to BLOCK the stop (continue) print a JSON
+// object `{"decision":"block","reason":"…"}` on stdout (reason is fed to the model as the next instruction); to
+// ALLOW the stop print nothing. The harness passes `{"stop_hook_active":true,…}` on stdin once it is already
+// continuing because of a prior block — we honor it as a belt-and-suspenders loop-guard on top of our spin-guard.
+const SPIN_GUARD_LIMIT = 3
+export const CONTINUE_HOOK_SCRIPT = `#!/bin/sh
+# BlitzOS /goal continuation Stop hook (E1). Generated per running-job agent — see agent-runtime.mjs.
+# Reads the job's plan.md, decides continue-vs-stop (+ spin-guard), prints Claude Code's Stop-hook JSON. $PLAN is
+# the absolute plan.md path, baked in at write time. Allow-stop = print nothing + exit 0.
+PLAN=%PLAN%
+LIMIT=${SPIN_GUARD_LIMIT}
+DIR=$(dirname "$PLAN")
+SPIN_FILE="$DIR/.continue-spin"
+SUM_FILE="$DIR/.continue-plan.sum"
+
+# Drain the Stop-hook stdin payload so the pipe never blocks the harness (we don't need its fields: our spin-guard,
+# not the harness's stop_hook_active flag, is the authority that bounds the continue loop). Best-effort.
+cat >/dev/null 2>&1
+
+# No plan.md ⇒ nothing to drive; allow the stop.
+[ -f "$PLAN" ] || exit 0
+
+# STATUS: first \`status: <word>\` line (front-matter or a bare header). Lowercased.
+STATUS=$(grep -iE '^[[:space:]]*status:[[:space:]]*[A-Za-z]+[[:space:]]*$' "$PLAN" 2>/dev/null | head -n1 | sed -E 's/^[[:space:]]*[Ss][Tt][Aa][Tt][Uu][Ss]:[[:space:]]*([A-Za-z]+).*/\\1/' | tr '[:upper:]' '[:lower:]')
+
+# STAGES: count task-list checkboxes. A stage line = indent, a bullet (-,*, or N.), then a [mark] box.
+STAGE_RE='^[[:space:]]*([-*]|[0-9]+\\.)[[:space:]]+\\[[ xXbB]\\]'
+TOTAL=$(grep -cE "$STAGE_RE" "$PLAN" 2>/dev/null); TOTAL=\${TOTAL:-0}
+DONE=$(grep -cE '^[[:space:]]*([-*]|[0-9]+\\.)[[:space:]]+\\[[xX]\\]' "$PLAN" 2>/dev/null); DONE=\${DONE:-0}
+# blocked = a [b] box, or an unchecked box whose title is tagged (blocked)/[blocked].
+BLOCKED=$(grep -E '^[[:space:]]*([-*]|[0-9]+\\.)[[:space:]]+(\\[[bB]\\]|\\[ \\][^\\n]*(\\(blocked\\)|\\[blocked\\]))' "$PLAN" 2>/dev/null | head -n1)
+
+# complete = >=1 stage and all done, OR status:done. blocked = any blocked stage OR status:blocked.
+COMPLETE=0
+{ [ "$TOTAL" -gt 0 ] && [ "$DONE" -eq "$TOTAL" ]; } && COMPLETE=1
+[ "$STATUS" = "done" ] && COMPLETE=1
+IS_BLOCKED=0
+[ -n "$BLOCKED" ] && IS_BLOCKED=1
+[ "$STATUS" = "blocked" ] && IS_BLOCKED=1
+
+# Terminal states ⇒ allow the stop (and clear the spin state so a re-approval starts fresh).
+if [ "$COMPLETE" = 1 ] || [ "$IS_BLOCKED" = 1 ]; then rm -f "$SPIN_FILE" "$SUM_FILE" 2>/dev/null; exit 0; fi
+# Only an approved/running plan is in its execution phase; anything else ⇒ allow the stop.
+case "$STATUS" in approved|running) : ;; *) exit 0 ;; esac
+
+# Spin-guard: fingerprint plan.md; if unchanged since the last continue, increment the no-change counter, else reset.
+SUM=$(cksum "$PLAN" 2>/dev/null | awk '{print $1"-"$2}')
+PREV=$(cat "$SUM_FILE" 2>/dev/null)
+if [ -n "$SUM" ] && [ "$SUM" = "$PREV" ]; then
+  N=$(cat "$SPIN_FILE" 2>/dev/null); case "$N" in ''|*[!0-9]*) N=0 ;; esac; N=$((N + 1))
+else
+  N=0
+fi
+printf '%s' "$N" > "$SPIN_FILE" 2>/dev/null
+printf '%s' "$SUM" > "$SUM_FILE" 2>/dev/null
+
+if [ "$N" -ge "$LIMIT" ]; then
+  # Stalled: the plan has not advanced in LIMIT consecutive turns. Stop + flag stuck (do not loop forever).
+  rm -f "$SPIN_FILE" "$SUM_FILE" 2>/dev/null
+  printf '{"decision":"block","reason":"Stopping the continuation loop: the plan has not advanced in %s consecutive turns (spin-guard). Re-read plan.md and either make concrete progress on the next stage, mark the blocking stage blocked, or ask the user before continuing."}\\n' "$LIMIT"
+  exit 0
+fi
+
+# Approved + incomplete + not blocked + not stuck ⇒ FORCE another turn.
+printf '%s' '{"decision":"block","reason":"Keep going — the approved plan in .blitzos/jobs/<your-agent-id>/plan.md is not fully done. Re-read plan.md, find the next incomplete stage, do it, and mark that stage done (update the plan + your progress widget). Do all reversible work automatically; ask only before an irreversible outward act. When every stage is done, mark the job done with set_job_status status:\\"done\\"."}'
+printf '\\n'
+exit 0
+`
+
+/** Write the per-agent continuation Stop hook to `<jobDir>/continue-hook.sh` and return its ABSOLUTE path (for the
+ *  --settings Stop-hook command), or null if it can't be written. `planFilePath` is the absolute plan.md path the
+ *  script reads (its job dir = the script's home + the spin-counter's home). Mirrors writeWaitScript. */
+export function writeContinueHook(planFilePath) {
+  if (!planFilePath) return null
+  const jobDir = dirname(planFilePath)
+  const file = join(jobDir, 'continue-hook.sh')
+  try {
+    mkdirSync(jobDir, { recursive: true })
+    // Bake the absolute plan path in via a POSIX single-quoted literal (escape embedded ' as '\\'').
+    writeFileSync(file, CONTINUE_HOOK_SCRIPT.replace('%PLAN%', `'${planFilePath.replace(/'/g, "'\\''")}'`))
+    return file
+  } catch {
+    return null
+  }
+}
+
+/** The Claude Code `--settings` hooks object that installs the continuation Stop hook at `hookScriptPath`. Returns
+ *  null when there is no script (so a non-running / no-job agent installs no hook). The command runs the script with
+ *  `sh` from the workspace cwd; Claude Code fires it on every yield. */
+export function continuationHookSettings(hookScriptPath) {
+  if (!hookScriptPath) return null
+  return { hooks: { Stop: [{ hooks: [{ type: 'command', command: `sh ${shellQuote(hookScriptPath)}` }] }] } }
 }
