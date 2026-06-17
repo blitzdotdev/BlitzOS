@@ -30,15 +30,7 @@ All committed + headless-tested (8 suites green, `npm run typecheck` + `npm run 
 | P0 cooperative path (the plan widget pushes its content via `blitz.setProps` → the tick diffs it → steer) | ✅ | in 26a824d | `test-tick-diff` #10/#14a |
 | Phase-2 Shell A: standalone job launcher (global ⌥Space bar → `start_job`) | ✅ | 94238ec | `test-launcher` |
 
-Still open, each needing your eyes or your call (NOT more headless work):
-- **P0 generic auto-serializer** (a MutationObserver in `widget-bridge` so NON-cooperative widgets are snapshot-diffable too): lives inside the sandboxed iframe, renderer/runtime, visual.
-- **Shell B in-app HUD** (the same launcher UI behind an in-app keybind): renderer, touches `App.tsx` (your single-canvas-navigation WIP) — coordinate after that lands.
-- **A2 drag-drop file context onto the bar**: the drop is visual; the host-side ingest + `contextRefs` persistence touch wants sign-off (three-serializer rule).
-- **A3 extension → BlitzOS discovery**: a blocked design decision (the recommended "hand BlitzOS a URL to open the logged-in tab" reframe).
-- **A5 Tray + [N] notifications + dock badge**: native OS surfaces, runtime/visual.
-- **W3 session-summary widget**: cadence is an unresolved design choice (a new 2-minute host primitive vs a pure agent-duty on the existing wake stream).
-- **E3 job-status widget**: largely subsumed by W1 (the plan widget already shows status and morphs into it); low marginal value.
-- **O2b**: out of scope (browsers are being removed).
+Each committed slice above is detailed in **Implementation log + decisions I made** near the end of this doc: how it was built, the calls I made where the spec left a blank (so you can override them), and the full not-yet-built list.
 
 ---
 
@@ -147,6 +139,50 @@ Each cycle, fold the current bottom (the 2 minutes that just elapsed) into the t
 5. **W2 new perception primitive** (`setTickSource` + `emitTick` + `trigger:'tick'`), its cadence, the host-side `chatStatusSnapshot()` accessor, and a `/steer` tool vs wiring wake into `/say`. → tick-diff-steer
 6. **A2/A3 core touches:** `ingestPaths` symlink mode + Job context association; the A3 extension discovery mechanism (recommended: the "hand BlitzOS a URL to open the logged-in tab" reframe). → job-entrypoints
 7. **Onboarding interview as the FIRST Job** (unify the two duty strings) vs keeping it a special path. Lean: generalize the mapper first with onboarding unchanged, unify later. → job-task-model
+
+## Implementation log + decisions I made (build of 2026-06-17)
+
+A record of HOW each landed slice was built, the calls I made on my own where the spec left a blank (flagged so you can override them), and what is deferred. All committed on `blitzos-journey-build`, headless-tested (8 suites + typecheck + build green). You answered two of the seven sign-off decisions directly (Option 1 persistence; Option A for W2); for the rest I took the recommended option, noted per slice.
+
+### 1. Job model — `src/main/job-model.mjs` (671e355)
+HOW: a Job is a `job` object on the existing per-agent `.blitzos/terminals/<id>/meta.json` (Option 1, 1:1 agent:job). `JOB_STATUSES = ['proposed','approved','running','done','blocked']`; a Job always plans before it executes. `makeJob(spec)` builds a `proposed` job WITHOUT writing it, so `start_job` stamps it onto the meta BEFORE the terminal launches (the first bootstrap already carries the planning duty). `dutyForJobStatus` maps proposed|approved → `JOB_PLAN_DUTY`, running → `JOB_EXECUTE_DUTY`, done|blocked → null. `wireJobModel({getTerminalsDir})` is the DI seam. Tools `start_job {goal,title?,contextRefs?}` + `set_job_status {agent,status?,planSurfaceId?}` registered once in `os-tools.mjs` for all three transports.
+DECISIONS I MADE: the five-state lifecycle and the always-plan-first rule; `start_job` as a NEW tool with `spawn_agent` left as the bare-peer primitive (sign-off 3); `JOB_PLAN_DUTY` as a five-step protocol (author widget, bind `planSurfaceId`, write `plan.md`, present + ask approve/edit/reject, reconcile on edit). The blocker fix after adversarial review: inject the planning duty by stamping the job pre-launch, NOT a post-spawn re-exec (the re-exec was a silent no-op since a just-born agent has no `claudeSessionId`).
+DEFERRED: v2 multi-agent jobs (the record is migration-ready); unifying onboarding-as-first-Job (sign-off 7: I generalized the boot mapper but left onboarding on its own duty).
+
+### 2. W1 editable plan widget — `widgets/plan.jsx`, `widget-ui-kit.ts` (c74787f)
+HOW: a lean functional `srcdoc` widget (edit mode + read-only status mode). Return channel = the no-core-edit TWO-STEP: push the full plan via `blitz.setProps`, then a tiny `blitz.sendMessage` carrying `props.agentId`; the agent reads the plan back via `get_surface`. Dodges the 4000-byte `__blitz:'action'` cap. Added `<blitz-edit>` + `<blitz-toggle>` kit elements + the authoring idiom doc.
+DECISIONS I MADE: the two-step channel over raising the App.tsx 4000-byte cap (sign-off 4); the widget is `srcdoc`, never `native`; the tiny shell-parseable `plan.md` grammar shared with E1. Fixed a stale-closure bug (functional updaters + a ref).
+DEFERRED: E3's durable status widget is this same widget in status mode (no separate build).
+
+### 3. E1 continuation engine — `agent-runtime.mjs`, `plan-doc.mjs` (c08e069)
+HOW: a `plan.md`-gated Stop hook keeps a RUNNING Claude job driving until its plan is done. `installContinuationHook` returns null unless `isClaude && readJob(id).status==='running'`; `buildClaudeCommand` merges the hook into `--settings`. `plan-doc.mjs` parses `<ws>/.blitzos/jobs/<id>/plan.md` into `{status,stages,complete,blocked}`; the grammar is tiny so the SHELL hook can parse the SAME doc with no JS runtime.
+DECISIONS I MADE: `SPIN_GUARD_LIMIT = 3` (three consecutive no-change continues then stop + flag `stuck`); the `plan.md` path + front-matter `status:` + checklist grammar; arm ONLY for Claude jobs in `running`.
+DEFERRED: a Codex-equivalent continuation (returns null for Codex by design); spin-counter cleanup on re-arm.
+
+### 4. W2 tick → diff → steer — `perception-core.mjs`, `osActions.ts` (26a824d)
+HOW: a host heartbeat off the existing `sweepTimer`. `setTickSource(fn)` feeds a unified snapshot each tick (surfaces incl. `props` from `cached`, per-agent status, terminals, workspace); `emitTick` diffs against the prior tick and emits ONE content-FREE `trigger:'tick'` moment of only what changed, to supervisor '0' over the existing `/events` loop. `/steer {agent,text}` → `emitUserMessage`.
+MATERIALITY (my design): agent status EDGES only (`working` → `waiting|stopped|error`; `*` → `error` always); a surface `props` EDIT (the user-action half); open/close/move/geometry are NOT diffed here (the `canvas` moment owns them); an empty diff emits nothing.
+DECISIONS I MADE: `TICK_MS = max(2000, BLITZ_TICK_MS || 10000)` (10s default, sign-off 4); the self-reaction guard is a per-delta one-shot `absorbTickEcho` + `resetTickBaseline` for bulk, which REPLACED a fragile `Date.now()` window after adversarial review proved the window self-woke ~70% of the time at 10s; `/steer` as a new tool (sign-off 6); flags+ids only with content pulled via `get_surface` (sign-off 7).
+P0: the COOPERATIVE path is done (the plan widget pushes content via `setProps`, the tick diffs the `props` delta, the supervisor wakes; `test-tick-diff` #10/#14a). The GENERIC auto-serializer (a MutationObserver in the widget bridge for non-cooperative widgets) is deferred (it lives in the sandboxed iframe, renderer/runtime).
+
+### 5. Shell A standalone launcher — `src/main/launcher.ts` (94238ec)
+HOW: a frameless transparent always-on-top NSPanel (the onboarding drag-helper recipe but `focusable:true`), toggled by the first `globalShortcut` in the tree. Self-contained inline HTML (`data:` URL); Send → `ipcRenderer.invoke('launcher:start-job')` → `electronOps.startJob({goal})`, which mints a Job whose planning agent authors the plan widget. `wireLauncher({startJob,focusMain})` DI seam; a guarded `agentOS.launcher` preload bridge; fully isolated from the renderer.
+DECISIONS I MADE: default keybind ⌥Space (`Alt+Space`), `BLITZ_LAUNCHER_HOTKEY` override (the canonical launcher chord, also why Raycast had to go); v1 scope = prompt + Send only; a standalone isolated window over wiring into App.tsx (to protect your WIP); a taken chord is logged-not-fatal.
+IN PROGRESS (your 2026-06-17 feedback): the bar hid on blur, which defeated attaching, so keep-open-while-gathering + A2 drag-drop attachment chips (passed as `contextRefs`) are being built; A3 add-browser-tab is the next piece (needs an in-browser "add" affordance).
+
+### Cross-cutting
+- DECISIONS YOU MADE (not my fill-ins): Option 1 persistence; Option A for W2 (the OS ticks/diffs/emits, the agent owns all steering, zero per-task heuristics in the OS).
+- TWO production bugs adversarial review caught + I fixed pre-commit: the `start_job` re-exec no-op; the W2 timing-window self-wake.
+- `.d.mts` discipline: every new `.mjs` export has a hand-written declaration sibling (typecheck enforces it).
+
+### Not yet built (visual / runtime / sign-off remainder)
+- P0 generic auto-serializer (MutationObserver in `widget-bridge` for non-cooperative widgets): renderer/iframe runtime.
+- Shell B in-app HUD (the same UI behind an in-app keybind): renderer, touches `App.tsx` (your WIP).
+- A2 drag-drop file context + A3 add-browser-tab: IN PROGRESS (see Shell A above).
+- A5 Tray + [N] notifications + dock badge: native OS surfaces, runtime/visual.
+- W3 session-summary widget: open cadence design (a new 2-minute host primitive vs a pure agent-duty on the existing wake stream).
+- E3 job-status widget: subsumed by W1's status mode.
+- O2b: out of scope (browsers being removed).
 
 ## Cross-references
 - `plans/blitzos-job-task-model.md`: the Job spine (read first)
