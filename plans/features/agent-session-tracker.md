@@ -48,7 +48,7 @@ All of the above is **done, committed, and chromium-verified** (server mode). El
 7. ✅ **Electron ↔ server: no divergence** — every runtime seam (launchAgent/stopAgent/setRelayUrl/resumeAgentsOnBoot/whenRestored/setBootTaskProvider, spawn/close/rename agent, removeTerminal, the slot tools, action-items) wired in BOTH transports; parity green (11 cores). Re-audited 2026-06-11 (28-agent adversarial sweep): 0 structural breaks. **Caveat:** Electron can't be live-tested here (no display) — verified by code parity + the live server path.
 8. ✅ **Remove obsolete/brain references** — `restartBrain` seam gone; `brain:` status flag → `agent:`; `start-all.sh` dead pkills + `blitz-brain-poll.sh` removed; stale code comments scrubbed.
 9. ✅ **Sessions get the agents.md link + connect** — every agent's `bootstrap.txt` carries the manual url + fetch + `/events` connect loop; the relay url is a self-healing file (`.blitzos/relay-url`) re-read per curl. Verified live.
-10. ✅ **Stage-slot desktop merge** (`agent-runtime-moments`) — stages vocabulary + slot lattice (`place_widget`/`bring_to_stage`/`send_backstage`) + per-agent chat widget (no hub). (`e83f7c4`)
+10. ✅ **Stage-slot desktop merge** (`agent-runtime-moments`) — stages vocabulary + slot lattice (`place_widget`/`bring_home`/`send_offscreen`) + per-agent chat widget (no hub). (`e83f7c4`)
 
 ## 🔴 Bugs found → ✅ FIXED + verified
 - ✅ Blank terminal (`-p` silent) → interactive TUI.

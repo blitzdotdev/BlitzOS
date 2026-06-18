@@ -23,10 +23,9 @@ import { makeWidgetToolRunner, makeWidgetToolHandlers } from '../src/main/widget
 // The ONE shared agent tool registry — the SAME module Electron's relay + localhost transports bind. The server
 // supplies its own primitive ops (broadcast + headless-Chromium) so there is no server/Electron tool difference.
 import { makeOsTools } from '../src/main/os-tools.mjs'
-// The JOB model (job-model.mjs) — the SAME shared module Electron binds, so server mode gets jobs with no fork.
-import { wireJobModel, makeJob, setJobStatus as jobSetStatus, readJob, dutyForJobStatus } from '../src/main/job-model.mjs'
-// plan-doc (E1 continuation engine) — the SAME shared module Electron binds; server mode gets the Stop-hook wiring.
-import { wirePlanDoc } from '../src/main/plan-doc.mjs'
+// Orchestrators (dynamic-workflows) toggle: the boot-task provider reads the per-agent flag off meta.json (the same
+// shared serializer Electron uses). The Job model is retired — server mode is now purely orchestrator-driven.
+import { readTerminalMeta } from '../src/main/terminal-manager.mjs'
 // Shared perception kernel — the SAME modules the Electron main runs,
 // so server mode gets the autonomy loop with no duplicated code.
 // waitForEvents/latestSeq/EVENTS_REMINDER/isContentShared are consumed INSIDE the shared os-tools.mjs
@@ -45,7 +44,7 @@ import {
   INJECT,
   DRAIN
 } from '../src/main/perception-core.mjs'
-import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider } from '../src/main/agent-runtime.mjs'
+import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, orchestratorBootTask } from '../src/main/agent-runtime.mjs'
 // Boot journal (crash dirty-bit + root lease) — the SAME root-state store the Electron main uses.
 import { openBootJournal, resolveWorkspace, appendChatMessage } from '../src/main/workspace.mjs'
 // The SHARED relay lifecycle (connect + self-heal + watchdog + status) — the SAME module Electron uses, so
@@ -121,15 +120,17 @@ const launchAgent = process.env.BLITZ_AGENT
       })).catch(() => {})
     }
   : null
-// JOB model wiring (server). Tell job-model where the active workspace's terminals dir is (it reads/writes the
-// `job` on each agent's meta.json). Server mode has NO onboarding interview, so the boot-task mapper is purely
-// job-driven: a job agent gets the duty for its job status; any other agent gets null. (prepareAgentLaunch re-reads
-// this provider on every (re)launch, so the approved->running re-exec injects JOB_EXECUTE_DUTY into the bootstrap.)
-wireJobModel({ getTerminalsDir: () => { const ws = wsHost.activePath(); return ws ? join(ws, '.blitzos', 'terminals') : null } })
-// E1: plan-doc reads each job's `.blitzos/jobs/<id>/plan.md`; prepareAgentLaunch arms the continuation Stop hook for
-// a running-job CLAUDE agent (server mode usually runs Codex, where the hook is a no-op — see the buildAgentCommand TODO).
-wirePlanDoc({ getJobsDir: () => { const ws = wsHost.activePath(); return ws ? join(ws, '.blitzos', 'jobs') : null } })
-setBootTaskProvider((id) => { const job = readJob(id); return job ? dutyForJobStatus(job.status) : null })
+// Boot-task mapper (server). Server mode has NO onboarding interview, so the duty is purely orchestrator-driven: an
+// agent with the ORCHESTRATORS flag on its meta.json gets the duty to author + run blitzscript workflows; any other
+// agent gets null. (prepareAgentLaunch re-reads this provider on every (re)launch.)
+setBootTaskProvider((id) => {
+  try {
+    const ws = wsHost.activePath()
+    const td = ws ? join(ws, '.blitzos', 'terminals') : null
+    if (td && readTerminalMeta(td, String(id))?.orchestrators) return orchestratorBootTask()
+  } catch { /* fall through */ }
+  return null
+})
 const sseClients = new Set()
 
 // ---------- SERVER MODE: live web surfaces via a headless browser ----------
@@ -340,7 +341,7 @@ const wsHost = createWorkspaceHost({
   broadcast,
   getActionItems: () => serverActionItems.listActions(), // authoritative inbox items (reconciled into hydrate + onStatePush)
   onSurfaces: (surfaces) => (SERVER_MODE ? reconcileSurfaces(surfaces) : undefined),
-  defaultMode: 'canvas',
+  defaultMode: 'desktop', // single-canvas nav: mode is pinned to 'desktop' (wsHost ignores this and hard-pins it too)
   // An agent backend runs in a VISIBLE terminal in its stage (no headless brain). null ⇒ BLITZ_AGENT off.
   launchAgent: launchAgent ? (id, stage, title) => launchAgent(id, stage, title) : undefined,
   stopAgent: (id) => { serverTerminalOps.removeTerminal(id) } // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
@@ -584,33 +585,19 @@ const serverOps = {
     wsHost.addAgent(id, title, { focus })
     return { id, title: title || `Agent ${id}` }
   },
-  // Jobs (job-model.mjs) — SAME shape as Electron's electronOps. startJob spawns a fresh agent then stamps its
-  // Job (status 'proposed'); the boot-task mapper feeds it the planning duty. setJobStatus validates + writes,
-  // and on approved->running re-execs the job agent into the execution duty via clearAgentContext (serverTerminalOps,
-  // defined below — referenced lazily at request time, so source order is fine).
-  startJob: async (spec) => {
-    // Stamp the job onto the meta BEFORE the terminal launches (opts.job -> addAgent), so the agent's first
-    // bootstrap already carries the planning duty — no post-spawn re-exec (parity with Electron's startJob).
-    const job = makeJob({ goal: spec?.goal, title: spec?.title, contextRefs: spec?.contextRefs })
+  // start_workflow (replaces the retired start_job) — SAME shape as Electron's electronOps: spawn a fresh agent with
+  // the ORCHESTRATORS capability ON (its first bootstrap carries the orchestrator duty), then SEED it with the task
+  // (+ any dropped context refs) as a 'user' chat line that wakes it (appendChat + emitUserMessage, the steer path).
+  startWorkflow: (spec) => {
     const id = wsHost.newAgentId()
-    absorbTickEcho({ agents: [id] }) // W2: start_job spawns a fresh agent — the next tick skips this add (one-shot); a real status edge still wakes
-    wsHost.addAgent(id, spec?.title, { focus: true, job })
+    absorbTickEcho({ agents: [id] }) // W2: a tool-origin spawn changes the agent SET — the next tick skips this add (one-shot); a real status edge still wakes
+    wsHost.addAgent(id, spec?.title, { focus: true, orchestrators: true })
     const agent = { id, title: spec?.title || `Agent ${id}` }
-    return { ok: true, agent, job }
-  },
-  setJobStatus: (agent, status, fields) => {
-    const before = readJob(agent)
-    const r = jobSetStatus(agent, status, fields)
-    // Re-exec into the new duty when the status crosses a DUTY boundary (PLAN -> EXECUTE), e.g. approved/proposed
-    // -> running. The agent is alive with a session id by now, so the re-exec actually fires (parity with Electron).
-    // A planSurfaceId-only bind (empty status) must NOT re-exec — guarded by `status` (dutyForJobStatus('') is null).
-    if (r.ok && before && status) {
-      const afterDuty = dutyForJobStatus(status)
-      if (afterDuty && afterDuty !== dutyForJobStatus(before.status)) {
-        try { Promise.resolve(serverTerminalOps.clearAgentContext(String(agent))).catch(() => {}) } catch { /* best-effort */ }
-      }
-    }
-    return r
+    const refs = Array.isArray(spec?.contextRefs) && spec.contextRefs.length
+      ? `\n\nContext (dropped onto the launcher):\n${spec.contextRefs.map((r) => `- ${r}`).join('\n')}` : ''
+    const seed = `${String(spec?.task || '')}${refs}`
+    try { wsHost.appendChat('user', seed, id); emitUserMessage(seed, id) } catch { /* the agent still boots with the duty */ }
+    return { ok: true, agent }
   },
   systemUi: (name) => wsHost.systemUi(String(name)),
   systemUiInfo: (name) => wsHost.systemUiInfo(String(name)),
@@ -706,8 +693,10 @@ const server = createServer(async (req, res) => {
     res.write(`data: ${JSON.stringify({ type: 'agentStatus', online: !!(relay && relay.isOnline()), agentUrl, agent: !!process.env.BLITZ_AGENT })}\n\n`)
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
+    // Single-canvas nav: ONE home region, no stages — so no stageCount/stageOrder/currentStage
+    // is sent (the field is pinned 'desktop' where unset; legacy persisted 'canvas' is ignored).
     res.write(
-      `data: ${JSON.stringify({ type: 'hydrate', surfaces: wsHost.hydrateSurfaces(), camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', stageCount: osState.stageCount || 1, stageOrder: osState.stageOrder, workspace: wsHost.active() })}\n\n`
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: wsHost.hydrateSurfaces(), camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'desktop', workspace: wsHost.active() })}\n\n`
     )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))

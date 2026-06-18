@@ -32,9 +32,8 @@ export interface SurfaceDescriptor {
   html?: string
   component?: string
   props?: Record<string, unknown>
-  /** A tile on the stage slot lattice — geometry derives from the cell (stage-core). */
+  /** A tile on the home slot lattice — geometry derives from the cell (stage-core). */
   slot?: { col: number; row: number; size: string }
-  slotStage?: number
   /** Browser (web) tabs declared up front — opens a multi-tab browser with its strip pre-filled
    *  (the host lazy-restores: only activeTab loads, the rest load on click). */
   tabs?: Array<{ id: string; title?: string; url?: string }>
@@ -57,7 +56,6 @@ export interface OsState {
     z?: number
     props?: Record<string, unknown>
     slot?: { col: number; row: number; size: string }
-    slotStage?: number
     pinned?: boolean
     agentId?: string
     focus?: boolean
@@ -65,15 +63,8 @@ export interface OsState {
   camera?: { x: number; y: number; scale: number }
   view?: { cx: number; cy: number }
   mode?: string
-  // #45 workspace stages: how many tiled desktops + which is active + the current one's world rect (so
-  // the agent places surfaces in the stage the human is looking at, not blindly at the origin).
-  stageCount?: number
-  /** Reading order of stages on the splay lattice (stageOrder[orderIndex] = stage id); persisted. */
-  stageOrder?: number[]
-  /** Last bulk layout transaction (stage reorder) — perception treats the push as ONE gesture. */
+  /** Last bulk layout transaction (a folder-wide reconcile) — perception treats the push as ONE gesture. */
   bulkAt?: number
-  currentStage?: number
-  currentStageRect?: { x: number; y: number; w: number; h: number }
   workspace?: string
   // The active workspace's absolute folder path (~/Blitz/<name>). The filesystem IS the canvas: a LOCAL
   // agent authors surfaces by writing files INTO this folder (.html=panel, .md=note, .weblink=web) and the
@@ -226,10 +217,10 @@ export function initOsActions(opts: {
     },
     onSurfaces: () => {}, // Electron browser guests are hosted by webcontents-view-host.ts
     getActionItems: () => (actionItemsProvider ? actionItemsProvider() : []), // authoritative inbox items (index.ts wires it)
-    defaultMode: 'canvas', // BlitzOS is canvas-first: new Electron boards open on the infinite canvas
-    // An agent backend runs in a VISIBLE terminal in its stage; index.ts wires this from the shared
-    // agent-runtime core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
-    launchAgent: (id, stage, title) => launchAgentHook?.(id, stage, title),
+    defaultMode: 'desktop', // home-only: new Electron boards home on the single bounded lattice (single-canvas navigation)
+    // An agent backend runs in a VISIBLE terminal; index.ts wires this from the shared agent-runtime
+    // core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
+    launchAgent: (id, home, title) => launchAgentHook?.(id, home, title),
     // Stop an agent (when closing it) — index.ts wires this to terminal-ops.stopTerminal.
     stopAgent: (id) => stopAgentHook?.(id)
   })
@@ -311,12 +302,12 @@ export function initOsActions(opts: {
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) {
       const prev = cached // BEFORE the host replaces it — the diff baseline for human canvas ops
-      // A stage reorder translates MANY windows in one transaction; the renderer stamps the push
-      // with bulkAt so the differ reports nothing (else: a storm of phantom "human moved" ops).
+      // A bulk layout transaction (a folder-wide reconcile) translates MANY windows at once; the renderer
+      // stamps the push with bulkAt so the differ reports nothing (else: a storm of phantom "human moved" ops).
       if (typeof state.bulkAt === 'number' && state.bulkAt !== lastRendererBulkAt) {
         lastRendererBulkAt = state.bulkAt
         canvasBulkAt = Date.now()
-        resetTickBaseline() // W2: a stage reorder translates many windows at once — re-seed the tick baseline, never diff it
+        resetTickBaseline() // W2: a bulk transaction translates many windows at once — re-seed the tick baseline, never diff it
       }
       wsHost?.onStatePush(state)
       diffCanvasOps(prev, state)
@@ -627,7 +618,7 @@ export function osRadialPhase(phase: 'down' | 'up' | 'cancel'): void {
 const canvasEcho = new Map<string, number>() // `${op}:${id}` -> armed-at
 const CANVAS_ECHO_TTL = 5000
 let canvasBulkAt = 0
-let lastRendererBulkAt = 0 // last bulk stamp seen on an os:state push (stage reorders)
+let lastRendererBulkAt = 0 // last bulk stamp seen on an os:state push (a folder-wide reconcile)
 const CANVAS_BULK_WINDOW = 3000
 const CANVAS_MOVE_MIN = 8 // px; below this a "move" is layout jitter, not a gesture
 
@@ -875,8 +866,10 @@ let lastStateKeyframe = 0
 // index.ts owns the relay url + terminal-ops, so it registers HOW to launch an agent backend in a
 // tmux terminal. osActions handles the workspace-side (mint id + surface the widget); addAgent then
 // calls launchAgent via the host adapter.
-let launchAgentHook: ((agentId: string, stage: number, title?: string) => void) | null = null
-export function setLaunchAgent(fn: (agentId: string, stage: number, title?: string) => void): void {
+// home-only: every agent launches at home (0). The second arg is kept as a positional slot for the
+// transport's launch backend (index.ts), but it is always 0 now (single-canvas navigation).
+let launchAgentHook: ((agentId: string, home: number, title?: string) => void) | null = null
+export function setLaunchAgent(fn: (agentId: string, home: number, title?: string) => void): void {
   launchAgentHook = fn
 }
 let stopAgentHook: ((agentId: string) => void) | null = null
@@ -917,21 +910,38 @@ export function osClearBrainContext(agentId = '0'): void {
  *  resident interviewer at board-ready (its standing duty rides the bootstrap). Re-execs via the tmux
  *  launcher (replaces any stale terminal); no-op when no launcher is wired. */
 export function osKickBrain(agentId = '0'): void {
-  const id = String(agentId)
-  launchAgentHook?.(id, id === '0' ? 0 : 0)
+  launchAgentHook?.(String(agentId), 0) // home-only: every agent launches at home (0)
 }
 /** Open a new agent: mint its id, register + live-surface its chat widget; addAgent launches
  *  its managed terminal (via the launchAgent seam). focus:true (a USER '+ Agent') follows the camera to it. */
-export function osSpawnAgent(title?: string, focus = false, job?: import('./job-model.mjs').Job): { id: string; title: string } {
+export function osSpawnAgent(title?: string, focus = false, orchestrators = false): { id: string; title: string } {
   if (!wsHost) throw new Error('no workspace host')
   const id = wsHost.newAgentId()
   absorbTickEcho({ agents: [id] }) // W2: a tool-origin spawn changes the agent SET — the next tick skips this add (one-shot); a real status edge still wakes
-  // A job (from start_job) is stamped onto the agent's meta by addAgent BEFORE its terminal launches, so the
-  // first bootstrap already carries the planning duty (bootTaskProvider reads it) — no post-spawn re-exec.
-  wsHost.addAgent(id, title, job && typeof job === 'object' ? { focus, job } : { focus })
+  // The ORCHESTRATORS toggle is stamped onto the agent's meta by addAgent BEFORE its terminal launches, so the
+  // first bootstrap already carries the orchestrator duty (bootTaskProvider reads it) — no post-spawn re-exec.
+  const opts: { focus: boolean; orchestrators?: boolean } = { focus }
+  if (orchestrators) opts.orchestrators = true
+  wsHost.addAgent(id, title, opts)
   return { id, title: title || `Chat ${id}` }
 }
-/** Close a non-primary agent (stop its backend + remove its widget/files/stage). */
+/** Toggle the ORCHESTRATORS (dynamic-workflows) capability on an agent — delivery B (the plan): set the DURABLE
+ *  meta flag (so every future launch bootstraps the orchestrator duty + spawnTerminal carries it across re-exec),
+ *  then WAKE the live agent now with a short pointer to .blitzos/orchestrator.md so it gains the capability THIS
+ *  session without a disruptive re-exec. The on=false path clears the flag + tells the agent to stop. */
+export function osSetOrchestrators(agentId: string, on = true): { ok: boolean; error?: string; orchestrators?: boolean } {
+  if (!wsHost) return { ok: false, error: 'no workspace host' }
+  const r = wsHost.setAgentOrchestrators(String(agentId), !!on)
+  if (!r.ok) return r
+  // Delivery B live-wake: the durable flag is already persisted; this message lands in the agent's chat and wakes
+  // ONLY it (osUserMessage = the steer path). Keep it short — the full how-to is the on-disk .blitzos/orchestrator.md.
+  const msg = on
+    ? 'Orchestrators ENABLED: you can now AUTHOR and RUN blitzscript workflows (plain-Node programs whose `llm()` spawns local agent leaves) for genuinely hard, large, massively parallel, or adversarial tasks. The runner is `.blitzos/blitz` — run `bash .blitzos/blitz capabilities` FIRST, then `bash .blitzos/blitz check <wf.mjs>`, then `bash .blitzos/blitz run <wf.mjs>`; the full how-to + built-ins (verify-job, supervise-tick) are described in `.blitzos/orchestrator.md`. For trivial/one-shot requests, just answer directly.'
+    : 'Orchestrators DISABLED: stop authoring/running blitzscript workflows; handle requests directly in chat.'
+  try { osUserMessage(msg, String(agentId)) } catch { /* the flag still persisted; the duty lands on the next launch */ }
+  return r
+}
+/** Close a non-primary agent (stop its backend + remove its widget and files). */
 export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
   absorbTickEcho({ agents: [String(agentId)] }) // W2: a tool-origin close changes the agent SET — the next tick skips this close (one-shot, per-delta)
   return wsHost ? wsHost.closeAgent(agentId) : { ok: false, error: 'no workspace host' }
@@ -1094,7 +1104,7 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
 /** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
 export function osSendHydrate(): void {
   if (!wsHost) return
-  send('hydrate', { surfaces: wsHost.hydrateSurfaces(), camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, stageOrder: cached.stageOrder, workspace: wsHost.active() })
+  send('hydrate', { surfaces: wsHost.hydrateSurfaces(), camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', workspace: wsHost.active() })
 }
 export function osRestoreChatHub(): { ok: boolean; id?: string; error?: string } {
   try {
@@ -1116,7 +1126,7 @@ export function osFlushWorkspace(): void {
   wsHost?.flush()
   wsHost?.stopWatch()
 }
-/** Capture the primary stage (1440x900, centered) of the current board → store as `name`'s thumbnail. */
+/** Capture the home frame (1440x900, centered) of the current board → store as `name`'s thumbnail. */
 async function osCaptureThumb(name: string): Promise<{ ok: boolean; error?: string }> {
   const win = getWin()
   if (!win || !wsHost) return { ok: false }

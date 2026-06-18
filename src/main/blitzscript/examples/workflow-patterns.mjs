@@ -1,7 +1,7 @@
 // blitzscript example — Research workflow patterns, then extract the principal
 // dimensions that explain variance across them (so we can give users control knobs).
 //
-//   node src/main/blitz/run.mjs run src/main/blitz/examples/workflow-patterns.mjs
+//   node src/main/blitzscript/run.mjs run src/main/blitzscript/examples/workflow-patterns.mjs
 //
 // SHAPE (the canonical RLM fan-out → fan-in, no per-task code):
 //   • 3 PARALLEL leaves (Promise.all), each enumerating + describing ONE family of

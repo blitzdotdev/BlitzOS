@@ -1,5 +1,7 @@
 # Stage splay lattice — hybrid Mission-Control splay
 
+> SUPERSEDED (2026-06-17): the multi-stage splay was removed when BlitzOS collapsed to a single home region. See blitzos-single-canvas-navigation.md. Kept for history.
+
 Status: **implemented (phase 1) — 2026-06-12.** Shipped: the ported ragged-row core + tests
 (`stages-core.mjs` splay section, `scripts/test-stage-splay-core.mjs`), order-aware geometry across
 all consumers (store/App/PrimarySpace/SurfaceFrame/stage-core lattice/os-tools/workspace-host),

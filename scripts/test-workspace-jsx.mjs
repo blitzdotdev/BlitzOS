@@ -13,7 +13,7 @@ const ok = (c, m) => { console.log((c ? '  ✓ ' : '  ✗ ') + m); if (!c) fails
 const SRC = "import React from 'react'\nexport default function Clock(){ return <div>hi</div> }"
 
 const surf = { id: 'abc-1', kind: 'srcdoc', lang: 'jsx', title: 'My Clock', html: SRC, x: 0, y: 0, w: 320, h: 200, z: 1, props: { format: '12h' } }
-writeWorkspace(dir, { surfaces: [surf], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', stageCount: 1 })
+writeWorkspace(dir, { surfaces: [surf], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' })
 const jsxFile = readdirSync(dir).find((f) => f.endsWith('.jsx'))
 ok(!!jsxFile, 'jsx surface → a .jsx content file (not .html): ' + jsxFile)
 ok(jsxFile && readFileSync(join(dir, jsxFile), 'utf8').includes('export default function Clock'), '.jsx holds the source verbatim')

@@ -1,4 +1,4 @@
-# Onboarding board oversubscribes small stages → permanent stage_full lockout
+# Onboarding board oversubscribes small stages → permanent home_full lockout
 
 **Found:** 2026-06-11, live on the VM test rig (the first catch of the host↔VM agent test loop).
 **Build:** v0.0.1-10 (`build-agent-runtime-moments-10`), fresh install, onboarding ran on first boot.
@@ -9,13 +9,13 @@
 
 ```
 stage.budget: {"used": 19, "total": 16, "remaining": 0}
-place_widget → {"error":"stage_full","reason":"attention budget","stage":0,
+place_widget → {"error":"home_full","reason":"attention budget","stage":0,
                 "grid":{"cols":7,"rows":3,"tile":180},"occupied_cells":25,"free_cells":-4}
 ```
 
 The VM's stage lattice is **7×3 = 21 cells**, but the seeded board occupies **25 cells**
 (`free_cells: -4`) and uses **19/16 budget units**. Every subsequent `place_widget` /
-`bring_to_stage` fails with `stage_full` — the desktop is permanently locked for agents until
+`bring_home` fails with `home_full` — the desktop is permanently locked for agents until
 tiles are manually removed.
 
 ## Likely mechanism (unverified)
@@ -44,7 +44,7 @@ Any display in that class + a fresh onboarding run reproduces. The VM rig reprod
 ## Update 2026-06-11 (build #11, VM): `offstage:true` does NOT bypass the budget gate
 
 The VM agent retested on v0.0.1-11: `place_widget {kind:'native', component:'timeline', offstage:true}`
-still returns `{error:'stage_full', reason:'attention budget', occupied_cells:25, free_cells:-3,
+still returns `{error:'home_full', reason:'attention budget', occupied_cells:25, free_cells:-3,
 used:18/16}` — even after closing two stage tiles. Two additional wrinkles beyond the original
 oversubscription: (1) an explicitly OFF-stage placement should not consume on-stage attention
 budget at all; (2) closing tiles did not free the tracked budget (used stayed over), suggesting

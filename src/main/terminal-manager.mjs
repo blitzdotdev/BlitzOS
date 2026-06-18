@@ -45,6 +45,19 @@ export function writeTerminalMeta(terminalsDir, id, meta) {
   writeFileSync(terminalMetaPath(terminalsDir, id), JSON.stringify(meta, null, 2))
 }
 
+/** Set or clear the ORCHESTRATORS capability flag on an agent's meta.json (the dynamic-workflows toggle).
+ *  Pure (terminalsDir injected) + uses the shared serializer, so it is directly unit-testable. The flag is
+ *  durable: the boot-task provider reads it on every (re)launch, and spawnTerminal carries it across re-exec.
+ *  Returns { ok, orchestrators } or { ok:false, error } when there is no meta for the id. */
+export function setTerminalOrchestrators(terminalsDir, id, on) {
+  const meta = readTerminalMeta(terminalsDir, String(id))
+  if (!meta) return { ok: false, error: `no agent ${id}` }
+  if (on) meta.orchestrators = true
+  else delete meta.orchestrators
+  writeTerminalMeta(terminalsDir, String(id), meta)
+  return { ok: true, orchestrators: !!on }
+}
+
 export function createTerminalManager({ host, terminalsDir, emit = () => {}, markWrite = () => {}, rebuildAgentCommand = null }) {
   const live = new Map() // id -> { meta, buf, flushTimer, establishTimer, restartTimer, stopping, unsubData, unsubExit }
   const agentFails = new Map() // id -> consecutive fast-exit count (drives the auto-restart backoff)
@@ -59,15 +72,9 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     id: m.id, kind: m.kind, title: m.title, command: m.command, cwd: m.cwd, status: m.status,
     pid: m.pid, exitCode: m.exitCode, autonomy: m.autonomy, createdAt: m.createdAt, endedAt: m.endedAt || null, cols: m.cols, rows: m.rows,
     agentRuntime: m.agentRuntime || (m.claudeSessionId ? 'claude' : null),
-    agentSessionId: m.agentSessionId || null,
-    // The workspace stage this terminal belongs to (the spawning agent's stage). Persisted so a
-    // restart restores an agent's terminal into its stage. null = unscoped (a human spawn) → the renderer
-    // opens it in the current stage, today's behavior. Legacy `area` (pre-stage-rename meta) tolerated on read.
-    stage: Number.isInteger(m.stage) ? m.stage : Number.isInteger(m.area) ? m.area : null,
-    // The agent's JOB record (job-model.mjs), when this is a job agent. Surfaced on the public meta per the
-    // three-serializer rule (writeMeta dumps it, readMeta parses it; this is the explicit-field serializer the
-    // tray/chat hub read) so consumers can see a terminal's job. null = a normal-request peer (no job).
-    job: m.job && typeof m.job === 'object' ? m.job : null
+    agentSessionId: m.agentSessionId || null
+    // (Single-canvas nav: there are no stages, so a terminal has no `stage`/`area`. Legacy persisted
+    // meta with a stale `stage`/`area` is simply not surfaced — everything opens at home.)
   })
 
   function writeMeta(meta) {
@@ -153,7 +160,7 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
       command: opts.command || null,
       cwd: opts.cwd || null,
       autonomy: opts.autonomy || 'auto',
-      stage: Number.isInteger(opts.stage) ? opts.stage : Number.isInteger(opts.area) ? opts.area : null, // the spawning agent's stage; null = human spawn → current stage (legacy `area` opt tolerated)
+      // (Single-canvas nav: no stages. A legacy opts.stage/opts.area is accepted but ignored — not stored.)
       status: 'running', pid: null, exitCode: null, signal: null,
       createdAt: Date.now(), endedAt: null,
       cols: opts.cols || 120, rows: opts.rows || 40,
@@ -164,12 +171,11 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
       ...(opts.claudeSessionId ? { claudeSessionId: opts.claudeSessionId } : {}),
       ...(opts.claudeEstablished ? { claudeEstablished: true } : {})
     }
-    // Carry forward a persisted JOB (job-model.mjs) across a re-spawn. spawnTerminal rebuilds meta from scratch,
-    // and restartTerminal / clearAgentContext re-spawn an existing id WITHOUT passing `job` (it's owned by the
-    // job tools, not the launch path) — so without this the approved→running re-exec (which restarts the agent)
-    // would CLOBBER the job, losing its status/plan. An explicit opts.job (none today) wins; else inherit on-disk.
-    const carriedJob = opts.job && typeof opts.job === 'object' ? opts.job : readMeta(id)?.job
-    if (carriedJob && typeof carriedJob === 'object') meta.job = carriedJob
+    // Carry forward the ORCHESTRATORS capability flag (the dynamic-workflows toggle): a re-spawn/re-exec
+    // rebuilds meta from scratch and must NOT drop it, else the boot-task provider would stop handing the agent
+    // its orchestrator duty after the first launch. An explicit opts.orchestrators wins; else inherit on-disk.
+    const carriedOrchestrators = opts.orchestrators != null ? opts.orchestrators : readMeta(id)?.orchestrators
+    if (carriedOrchestrators) meta.orchestrators = true
     // Replace any existing window for this id first (idempotent for a fresh id) — so a re-spawn/re-exec
     // (boot resume of a survivor with a now-stale relay url) cleanly REPLACES it instead of leaving a
     // duplicate window (tmux allows same-named windows). A prior live rec is torn down by wireTerminal below.
@@ -237,7 +243,7 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     const claudeEstablished = rebuilt ? rebuilt.established : meta.claudeEstablished
     const agentRuntime = rebuilt ? rebuilt.agentRuntime : meta.agentRuntime
     const agentSessionId = rebuilt ? rebuilt.agentSessionId : meta.agentSessionId
-    return spawnTerminal({ id, kind: meta.kind, command, cwd: meta.cwd, title: meta.title, autonomy: meta.autonomy, cols: meta.cols, rows: meta.rows, stage: meta.stage ?? meta.area, agentRuntime, agentSessionId, claudeSessionId, claudeEstablished })
+    return spawnTerminal({ id, kind: meta.kind, command, cwd: meta.cwd, title: meta.title, autonomy: meta.autonomy, cols: meta.cols, rows: meta.rows, agentRuntime, agentSessionId, claudeSessionId, claudeEstablished })
   }
   /** Clear an AGENT's claude context ON DEMAND (the user's "new context" button) — uniform for EVERY agent,
    *  no primary special-case. Rotate to a FRESH claude session id + mark unestablished, then restart: the

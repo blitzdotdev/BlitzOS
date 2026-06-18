@@ -1,6 +1,8 @@
 # BlitzOS Stage — the slotted desktop (widgets in fixed slots, agent works backstage)
 
-**Status:** design ratified 2026-06-10 (four forks answered, fork 3 corrected against the real macOS recording). **P1+P2 SHIPPED 2026-06-11**, then REVISED same day per user: **no separate backstage zone** — the stage IS the stage; off-stage = the open infinite canvas around it (web/app auto-park below the stage, geometric `isOffstage`, reveal = zoom out / control mode; the Backstage strip + toolbar button were built then deleted as clutter). Shipped: `stage-core.mjs` pure placer (180pt tiles, 8pt card inset, s/m/l/xl/tall, budget) + `place_widget`/`bring_to_stage`/`send_backstage` tools + slot persistence (`stageFields`) + renderer (tile drag = float+outline-ghost+spring-snap, ⌘-drag escape hatch, **window-bar grid toggle ⊞/⤢ + keybinds ⌘T (toggle) / ⇧⌘T (cycle size through s→m→l→tall→xl→xxl)** to snap any window in / pop any tile out with `preSnap` size restore; `xxl` 4×4 added, budget 16 (= one xxl), fluid file layer via `flowFiles`) + chat hub as a pinned `tall` tile + doctrine rewrite. Tests: `scripts/test-stage-core.mjs` (225) + `scripts/test-stage-e2e.mjs` (24). P3 visual tuning (animation vibes) is the user's to confirm in the GUI. Field-fix round (2026-06-11, from screen recordings): minimized/foldered tiles RELEASE their cells (the top-left dead zone) and re-place on restore; free-form windows FLOAT above the tile layer and reserve no cells (z-banded: desktop layer → free windows → focus → pinned) — superseding the earlier free-window blocker model.
+> PARTLY SUPERSEDED (2026-06-17): multi-stage collapsed to ONE home lattice (see blitzos-single-canvas-navigation.md). The slot-lattice mechanics here still describe home; the stage framing is gone, tools renamed bring_home/send_offscreen, error home_full.
+
+**Status:** design ratified 2026-06-10 (four forks answered, fork 3 corrected against the real macOS recording). **P1+P2 SHIPPED 2026-06-11**, then REVISED same day per user: **no separate backstage zone** — the stage IS the stage; off-stage = the open infinite canvas around it (web/app auto-park below the stage, geometric `isOffstage`, reveal = zoom out / control mode; the Backstage strip + toolbar button were built then deleted as clutter). Shipped: `stage-core.mjs` pure placer (180pt tiles, 8pt card inset, s/m/l/xl/tall, budget) + `place_widget`/`bring_home`/`send_offscreen` tools + slot persistence (`stageFields`) + renderer (tile drag = float+outline-ghost+spring-snap, ⌘-drag escape hatch, **window-bar grid toggle ⊞/⤢ + keybinds ⌘T (toggle) / ⇧⌘T (cycle size through s→m→l→tall→xl→xxl)** to snap any window in / pop any tile out with `preSnap` size restore; `xxl` 4×4 added, budget 16 (= one xxl), fluid file layer via `flowFiles`) + chat hub as a pinned `tall` tile + doctrine rewrite. Tests: `scripts/test-stage-core.mjs` (225) + `scripts/test-stage-e2e.mjs` (24). P3 visual tuning (animation vibes) is the user's to confirm in the GUI. Field-fix round (2026-06-11, from screen recordings): minimized/foldered tiles RELEASE their cells (the top-left dead zone) and re-place on restore; free-form windows FLOAT above the tile layer and reserve no cells (z-banded: desktop layer → free windows → focus → pinned) — superseding the earlier free-window blocker model.
 **Companions:** `agent-os-desktop-architecture.md` §1/§5 (this supersedes the free-pan canvas as the *human-facing* model; the canvas survives only as invisible substrate), `onboarding-case-file.md` (its `onboarding-board.mjs` 3×3 SLOTS grid is the proto-slot-system this generalizes — the board becomes the first client of the shared placer), `agent-os-window-management.md` (cascade/clamp/z-stack policy dies with free-form).
 **UX reference (watched frame-by-frame 2026-06-10):** `~/Desktop/Screen Recording 2026-06-10 at 7.23.04 PM.mov` — the native macOS widget system on this machine. Observed: a dragged widget floats under the cursor; a rounded-rect **outline previews the landing spot**; drop **spring-snaps**; **no other widget ever moves** through the whole clip; desktop **files flow out from under** a landed widget to nearby free icon cells; right-click gives **Small / Medium / Large + Remove Widget + Edit Widgets**. Copy this feel 100%.
 
@@ -68,14 +70,14 @@ NumberedDisplays[ {Number, Resolutions[ {Size:{1512,949}, Groups[
 
 - Tile = **180×180 logical pt, edge-to-edge** (Apple's real model): the visible card is the tile **inset 8pt per side** (164×164 visible, 16pt visible gap), 18pt content margins, radius 27.88 stored / ≈30 measured squircle. Sizes: **S=1×1, M=2×1, L=2×2, XL=4×2** tiles.
 - A widget occupies a span of cells; **the placer only ever returns spans whose every cell is free**. Non-overlap is enforced by the placer, not by policy. The grid may stay sparse (Apple's does).
-- **Stage budget:** a soft cap (~8 S-equivalents, tune in spike 6) below the hard capacity. Past budget, placement returns `stage_full` + current occupants; the agent must evict explicitly or queue. It cannot overflow attention even with a bad policy.
+- **Stage budget:** a soft cap (~8 S-equivalents, tune in spike 6) below the hard capacity. Past budget, placement returns `home_full` + current occupants; the agent must evict explicitly or queue. It cannot overflow attention even with a bad policy.
 - **Per-window-size layouts** like Apple: each window size remembers its own arrangement; no live reflow on resize (spike 4 reduces to remembering layouts per size bucket).
 
 ## Agent API (the guardrails)
 
-- `place_widget { id|spec, size: s|m|l|xl, near?: <edge|widget-id>, priority? }` → `{slot}` or `{stage_full, occupants[]}`. **No x/y/w/h anywhere in the agent surface.**
+- `place_widget { id|spec, size: s|m|l|xl, near?: <edge|widget-id>, priority? }` → `{slot}` or `{home_full, occupants[]}`. **No x/y/w/h anywhere in the agent surface.**
 - `create_surface`: web/app are **born Backstage, always**. srcdoc/native also default Backstage unless placed via `place_widget`.
-- `bring_to_stage(id, size)` / `send_backstage(id)` — promotion/demotion are deliberate named verbs. `evict` is explicit, never implicit.
+- `bring_home(id, size)` / `send_offscreen(id)` — promotion/demotion are deliberate named verbs. `evict` is explicit, never implicit.
 - `list_state` gains `stage {grid, free_cells, occupants, budget}` + `backstage []` so the agent reasons in slots, not pixels.
 - Raw web in a slot is allowed (fork 2) but doctrine-default is ONE synthesized widget over N raw tabs; if testing shows tab-dumping, add the soft cap (max 1 raw web tile) — explicitly deferred, not silently decided.
 
@@ -109,7 +111,7 @@ NumberedDisplays[ {Number, Resolutions[ {Size:{1512,949}, Groups[
 
 ## Test plan (`scripts/test-*.mjs`, headless)
 
-- `test-slot-placer.mjs`: pure placer — non-overlap invariant under fuzz, `stage_full` behavior, size fitting, deterministic assignment, resize remap.
+- `test-slot-placer.mjs`: pure placer — non-overlap invariant under fuzz, `home_full` behavior, size fitting, deterministic assignment, resize remap.
 - Parity: Electron + server bind the same placer; identical assignments for identical inputs.
 - Doctrine: drive via control API; assert web `create_surface` lands Backstage and `place_widget` refuses occupied cells.
 

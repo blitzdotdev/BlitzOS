@@ -20,7 +20,7 @@ let failed = false
 const ok = (c, m) => { if (!c) { failed = true; console.error('  ✗ ' + m) } else console.log('  ✓ ' + m) }
 
 try {
-  let osState = { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop', stageCount: 1, stageOrder: [0], view: { cx: 0, cy: 0 } }
+  let osState = { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop', view: { cx: 0, cy: 0 } }
   const host = createWorkspaceHost({
     root,
     initialName: 'Home',
@@ -32,7 +32,7 @@ try {
   const wsDir = host.activePath()
   const metaFile = join(wsDir, '.blitzos', 'workspace.json')
   const nodes = () => { try { return JSON.parse(readFileSync(metaFile, 'utf8')).nodes } catch { return [] } }
-  const card = { id: 'card-rhythm', kind: 'srcdoc', html: '<div>rhythm</div>', title: 'Working rhythm', x: 100, y: 100, w: 344, h: 344, slot: { col: 4, row: 0, size: 'l' }, slotStage: 0, props: {} }
+  const card = { id: 'card-rhythm', kind: 'srcdoc', html: '<div>rhythm</div>', title: 'Working rhythm', x: 100, y: 100, w: 344, h: 344, slot: { col: 4, row: 0, size: 'l' }, props: {} }
 
   // SEED: the card is live in osState; persist it (the onboarding seed steady state).
   osState = { ...osState, surfaces: [card] }

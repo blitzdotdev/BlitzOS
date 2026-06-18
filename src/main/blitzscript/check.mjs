@@ -13,7 +13,7 @@ import { resolve, join } from 'node:path'
 const TIMEOUT_MS = Number(process.env.BLITZ_CHECK_TIMEOUT_MS || 15000)
 const MAX_CALLS = Number(process.env.BLITZ_DRY_MAX_CALLS || 5000)
 
-export async function check(workflowPath) {
+export async function check(workflowPath, args = []) {
   const file = resolve(workflowPath)
   const report = { file, syntax: 'ok', dryRun: 'ok', ok: true, errors: [] }
 
@@ -28,7 +28,7 @@ export async function check(workflowPath) {
   // 2) DRY RUN — execute with llm() returning fallbacks, a scratch mem dir, a call cap + a timeout.
   const mem = mkdtempSync(join(tmpdir(), 'blitz-check-'))
   const res = await new Promise((done) => {
-    const child = spawn(process.execPath, [file], {
+    const child = spawn(process.execPath, [file, ...args.map(String)], {
       env: {
         ...process.env,
         BLITZ_DRY_RUN: '1',

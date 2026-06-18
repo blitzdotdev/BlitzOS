@@ -496,7 +496,7 @@ function liveStage(): { surfaces: StagedSurface[]; viewport: { w: number; h: num
   return { surfaces: st.surfaces || [], viewport }
 }
 
-/** Re-ensure path (cached board): slot the unlock card against the LIVE lattice; a full stage
+/** Re-ensure path (cached board): slot the unlock card against the LIVE lattice; a full home lattice
  *  degrades to a free-floating window (floats above tiles, never overlaps them). */
 function spawnUnlockCard(): string {
   const live = liveStage()
@@ -512,8 +512,8 @@ async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
   const plan = buildBoardPlan(scan, { ...liveStage(), layout: branchA ? BRANCH_A_LAYOUT : null })
   progress({ phase: 'seeding', cards: plan.length })
   for (const card of plan) {
-    // staged cards carry slot/slotStage (tiles on the lattice); parked ones carry x/y/w/h below the stage
-    const place = card.slot ? { slot: card.slot, slotStage: card.slotStage } : { x: card.x, y: card.y, w: card.w, h: card.h }
+    // home cards carry slot (tiles on the home lattice); parked ones carry x/y/w/h below the home frame
+    const place = card.slot ? { slot: card.slot } : { x: card.x, y: card.y, w: card.w, h: card.h }
     if (card.native === 'unlock') {
       board.ids.unlock = osCreateSurface({ kind: 'native', component: 'unlock', title: card.title, ...place, props: unlockCardProps(fdaAppName()) })
     } else {
@@ -525,8 +525,8 @@ async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
   }
   // Branch A: tile the pinned chat hub into its hand-tuned slot (xxl, top-left) so it is EMBEDDED, not
   // free-float covering cards. Persists via the runtime-panel slot (workspace.mjs) so it stays put.
-  if (branchA && BRANCH_A_LAYOUT.chat) osUpdateSurface('chat', { slot: BRANCH_A_LAYOUT.chat, slotStage: 0 })
-  // If they brought their browser in, open it on the stage with their captured tabs (lazy-restored) —
+  if (branchA && BRANCH_A_LAYOUT.chat) osUpdateSurface('chat', { slot: BRANCH_A_LAYOUT.chat })
+  // If they brought their browser in, open it at home with their captured tabs (lazy-restored) —
   // signed-in (if they imported the Google sign-in), so the first thing they see feels like home.
   const browserId = openWorkingSetBrowser()
   if (browserId) board.ids.browser = browserId
@@ -536,7 +536,7 @@ async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
   return board
 }
 
-/** Open ONE browser surface on the stage holding every captured open tab (the pre-board working set),
+/** Open ONE browser surface at home holding every captured open tab (the pre-board working set),
  *  as a tab strip. The host lazy-restores: only the active tab loads, the rest load on click. Returns
  *  the surface id, or null when no tabs were captured (the browser step was skipped). */
 function openWorkingSetBrowser(): string | null {
@@ -553,7 +553,7 @@ function openWorkingSetBrowser(): string | null {
     }
   }
   if (!tabs.length) return null
-  // No explicit x/y: the store centers it on the current stage (stage 0). focus:true ⇒ frontmost.
+  // No explicit x/y: the store centers it at home. focus:true ⇒ frontmost.
   return osCreateSurface({ kind: 'web', title: tabs[0].title, tabs, activeTab: 0, w: 1200, h: 780, focus: true })
 }
 

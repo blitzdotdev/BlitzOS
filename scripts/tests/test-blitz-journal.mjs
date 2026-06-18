@@ -3,7 +3,7 @@
 // Zero real LLM calls: an injected stub spawner stands in for claude/codex. The resume cases run a
 // fixture WORKFLOW as a real subprocess (fresh node process per "run", journal file persists between
 // them) so the index/journal behave exactly as under `blitz run`. Run: `node scripts/tests/test-blitz-journal.mjs`.
-import { llm, _setSpawn, _resetJournal } from '../../src/main/blitz/llm.mjs'
+import { llm, _setSpawn, _resetJournal } from '../../src/main/blitzscript/llm.mjs'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const LLM = join(__dirname, '..', '..', 'src', 'main', 'blitz', 'llm.mjs')
+const LLM = join(__dirname, '..', '..', 'src', 'main', 'blitzscript', 'llm.mjs')
 delete process.env.BLITZ_MEM_DIR // in-process tests must not journal to a stray dir
 
 let failures = 0

@@ -11,24 +11,23 @@
 // localhost is trusted; relay + server are untrusted (gate page content to surfaces the user shared).
 import { listWidgets, getWidgetSource, saveWidget, widgetAuthoringMd } from './widget-catalog.mjs'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
-// Stage grid: agent N owns stage N (stageForAgent). When an agent-scoped call creates a surface, we tag it
-// with {stage} so the renderer cascades it into that agent's stage — isolated from the user's primary (stage 0).
-import { stageForAgent, orderedStageRect, stageOfPoint, parkBandRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
-// Stage slot lattice (plans/blitzos-stage-slot-desktop.md): the SAME pure placer the renderer uses,
-// so an agent placement and a human drag-snap can never disagree about what is free.
-import { latticeFor, cardRect, findSlot, budgetUsed, stageSummary, sizeForDims, spanOf, STAGE_BUDGET } from '../renderer/src/stage-core.mjs'
+// Home-grid geometry (plans/blitzos-single-canvas-navigation.md): the single bounded region ("home")
+// on the infinite canvas, and the park band just below it where off-home work surfaces land.
+import { homeRect, parkBandRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
+// Home slot lattice: the SAME pure placer the renderer uses, so an agent placement and a human
+// drag-snap can never disagree about what is free.
+import { latticeFor, cardRect, findSlot, budgetUsed, gridSummary, sizeForDims, spanOf, HOME_BUDGET } from '../renderer/src/stage-core.mjs'
 
-// OFF-STAGE = the open infinite canvas OUTSIDE the stage (the bounded per-workspace "stage" the user's
-// desktop-mode camera frames). There is no separate hidden pool: a work surface parks below the stage,
-// naturally off-screen at scale 1 and revealed when the user zooms out or enters Control Mode. Computed
-// geometrically — a surface is offstage iff it has no slot and sits outside its stage's rect.
-function isOffstage(s, vp, order, count) {
+// OFF-SCREEN = the open infinite canvas OUTSIDE home (the single bounded region the user's scale-1
+// frame shows). There is no separate hidden pool: a work surface parks below home, naturally off-screen
+// at scale 1 and revealed when the user zooms out. Computed geometrically — a surface is off-screen iff
+// it has no slot and its CENTER falls outside the home rect.
+function isOffstage(s, vp) {
   if (!s || s.slot) return false
-  const v = vp || DEFAULT_VP
+  const r = homeRect(vp || DEFAULT_VP)
   const cx = (Number(s.x) || 0) + (Number(s.w) || 0) / 2
-  const ty = Number(s.y) || 0 // TOP probe: a parked window belongs to the stage it hangs from
-  const r = orderedStageRect(stageOfPoint(cx, ty, v, order, count), v, order, count)
-  return s.x + s.w <= r.x || s.x >= r.x + r.w || s.y + s.h <= r.y || s.y >= r.y + r.h
+  const cy = (Number(s.y) || 0) + (Number(s.h) || 0) / 2
+  return cx < r.x || cx >= r.x + r.w || cy < r.y || cy >= r.y + r.h
 }
 
 function parse(body) {
@@ -100,17 +99,24 @@ function instrument(t) {
 // ONE definition so every transport (and the widget list_state tool) returns the IDENTICAL shape.
 export function serializeStateForAgent(state) {
   const s = state || {}
+  // WHITELIST (never spread `...s`): live state carries internal bookkeeping the agent must not see
+  // (it once leaked stage indices). Project exactly the agent-facing fields, no more.
   return {
-    ...s,
+    viewport: s.viewport,
+    view: s.view,
+    camera: s.camera,
+    mode: s.mode,
+    workspace: s.workspace,
+    workspace_path: s.workspace_path,
     surfaces: (s.surfaces || []).map((x) => {
       const out = {
         id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
         // A web surface is a BROWSER WINDOW: url/title above are its ACTIVE tab's; `tabs` lists all
         // of them. update_surface{url} / read_window / surface_control act on the active tab.
         ...(x.kind === 'web' && Array.isArray(x.tabs) && x.tabs.length ? { tabs: x.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url })), activeTab: x.activeTab || 0 } : {}),
-        // Stage desktop: a slotted surface is ON the user's stage; offstage = parked on the open canvas.
-        ...(x.slot ? { slot: x.slot, ...(x.slotStage ? { slotStage: x.slotStage } : {}) } : {}),
-        ...(isOffstage(x, s.viewport, s.stageOrder, Number(s.stageCount) || 1) ? { offstage: true } : {}),
+        // Home desktop: a slotted surface is ON home; off-screen = parked on the open canvas below home.
+        ...(x.slot ? { slot: x.slot } : {}),
+        ...(isOffstage(x, s.viewport) ? { offstage: true } : {}),
         ...(x.focus ? { focus: true } : {}),
         // jsx/tsx widgets advertise their lang; a compile/runtime failure surfaces as lastError
         // (the confirm-a-drive read: fix the source, update_surface, re-check).
@@ -123,10 +129,10 @@ export function serializeStateForAgent(state) {
       if (x.component === 'terminal') out.terminals = (x.tabs || []).map((t) => ({ id: t.terminalId, title: t.title }))
       return out
     }),
-    // The user's desktop at a glance: the slot grid, what's tiled, the attention budget, and the
-    // offstage pool (work parked on the canvas around the stage) — reason in slots, never pixels.
-    stage: stageSummary(s.surfaces || [], s.viewport, 0),
-    backstage: (s.surfaces || []).filter((x) => isOffstage(x, s.viewport, s.stageOrder, Number(s.stageCount) || 1)).map((x) => ({ id: x.id, kind: x.kind, title: x.title, url: x.url }))
+    // The user's desktop at a glance: the home slot grid, what's tiled, the attention budget, and the
+    // off-screen pool (work parked on the canvas below home) — reason in slots, never pixels.
+    grid: gridSummary(s.surfaces || [], s.viewport),
+    offstage: (s.surfaces || []).filter((x) => isOffstage(x, s.viewport)).map((x) => ({ id: x.id, kind: x.kind, title: x.title, url: x.url }))
   }
 }
 
@@ -176,32 +182,28 @@ async function provisionBlitzApp(slug) {
  *   customizeWidget(name,html,agentId?,lang?)->{ok,rel}, systemUi(name)->html|null, systemUiInfo(name)->{source,lang}|null, groupIntoFolder(name,ids,x,y,kind)->{ok,...} }
  */
 export function makeOsTools(ops) {
-  // Stage placement (shared by place_widget / bring_to_stage / auto-placed creates): budget-check,
-  // find a free span on the agent-stage's lattice, derive the tile's world rect. Returns either
-  // { slot, slotStage, rect } or { full } (budget or space) with the occupants so the agent can evict.
-  const placeOnStage = (sizeArg, near, agentId, dims, pinned) => {
+  // Home placement (shared by place_widget / bring_home / auto-placed creates): budget-check, find a
+  // free span on the home lattice, derive the tile's world rect. Returns either { slot, rect } or
+  // { full } (budget or space) with the occupants so the agent can evict.
+  const placeOnStage = (sizeArg, near, dims, pinned) => {
     const st = ops.getState() || {}
     const surfaces = st.surfaces || []
-    const stage = agentId != null ? stageForAgent(agentId) : 0
     const size = typeof sizeArg === 'string' && sizeArg ? sizeArg.toLowerCase() : sizeForDims(dims?.w, dims?.h)
     const sp = spanOf(size)
-    if (!pinned && budgetUsed(surfaces, stage) + sp.c * sp.r > STAGE_BUDGET) {
-      return { full: { error: 'stage_full', reason: 'attention budget', ...stageSummary(surfaces, st.viewport, stage) } }
+    if (!pinned && budgetUsed(surfaces) + sp.c * sp.r > HOME_BUDGET) {
+      return { full: { error: 'home_full', reason: 'attention budget', ...gridSummary(surfaces, st.viewport) } }
     }
-    const lat = latticeFor(st.viewport, stage, st.stageOrder, Math.max(Number(st.stageCount) || 1, stage + 1))
-    const slot = findSlot(surfaces, lat, size, near || null, stage)
-    if (!slot) return { full: { error: 'stage_full', reason: 'no free span for ' + size, ...stageSummary(surfaces, st.viewport, stage) } }
-    return { slot: { col: slot.col, row: slot.row, size }, slotStage: stage, rect: cardRect(lat, slot.col, slot.row, size) }
+    const lat = latticeFor(st.viewport)
+    const slot = findSlot(surfaces, lat, size, near || null)
+    if (!slot) return { full: { error: 'home_full', reason: 'no free span for ' + size, ...gridSummary(surfaces, st.viewport) } }
+    return { slot: { col: slot.col, row: slot.row, size }, rect: cardRect(lat, slot.col, slot.row, size) }
   }
-  // Park a work surface OFF-STAGE: on the open canvas just below the agent's stage — outside the
-  // user's desktop-mode frame, in plain view when they zoom out. Cascaded so parked windows fan out.
-  const parkOffstage = (agentId) => {
+  // Park a work surface OFF-SCREEN: on the open canvas just below home — outside the user's scale-1
+  // frame, in plain view when they zoom out. Cascaded so parked windows fan out.
+  const parkOffstage = () => {
     const st = ops.getState() || {}
     const vp = st.viewport || DEFAULT_VP
-    const stage = agentId != null ? stageForAgent(agentId) : 0
-    const count = Math.max(Number(st.stageCount) || 1, stage + 1)
-    // The stage's own park band: the gutter strip below ITS splay cell (never another stage's row).
-    const band = parkBandRect(stage, vp, st.stageOrder, count)
+    const band = parkBandRect(vp)
     const parked = (st.surfaces || []).filter(
       (s) => s && !s.slot && s.y >= band.y && s.y < band.y + band.h && s.x + (s.w || 0) > band.x && s.x < band.x + band.w
     ).length % 8
@@ -211,11 +213,11 @@ export function makeOsTools(ops) {
     {
       path: '/create_surface',
       description:
-        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html (+ lang:"jsx"|"tsx" for a React widget — see get_widget_authoring), native takes component+props. Before passing authored srcdoc/JSX/TSX source, self-review it against get_widget_authoring, fix obvious issues, then verify after mount. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.jsx`=React widget, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace). If you are a non-primary agent, pass {agent:"<your id>"} so it opens in YOUR stage (do NOT also pass x/y unless repositioning within your stage).',
+        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html (+ lang:"jsx"|"tsx" for a React widget — see get_widget_authoring), native takes component+props. Before passing authored srcdoc/JSX/TSX source, self-review it against get_widget_authoring, fix obvious issues, then verify after mount. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.jsx`=React widget, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace).',
       input_schema: {
         type: 'object',
         required: ['kind'],
-        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' }, agent: { type: 'string' } }
+        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' } }
       },
       handler: ({ body }) => {
         const a = parse(body)
@@ -224,26 +226,22 @@ export function makeOsTools(ops) {
           const widgetError = nativeCatalogWidgetError(a.component)
           if (widgetError) return widgetError
         }
-        // An agent-scoped surface lands in ITS stage (the renderer cascades by `stage` when no
-        // explicit x is given); the primary agent '0' → stage 0 = today's behavior.
-        if (a.agent != null) a.stage = stageForAgent(a.agent)
-        // Stage desktop: web/app are WORK surfaces — born OFF-STAGE (parked on the canvas below the
-        // user's stage frame), never on the desktop uninvited; bring_to_stage is the deliberate act
-        // that stages something. srcdoc/native widgets auto-take a free slot (a created widget the
-        // user can't see is useless) and park offstage when the stage is full — the reply says which.
+        // Home desktop: web/app are WORK surfaces — born OFF-SCREEN (parked on the canvas below home),
+        // never on home uninvited; bring_home is the deliberate act that brings something to attention.
+        // srcdoc/native widgets auto-take a free slot (a created widget the user can't see is useless)
+        // and park off-screen when home is full — the reply says which.
         let staged = null
         let offstage = false
         if (a.kind === 'web' || a.kind === 'app') {
-          if (a.x == null && a.y == null) Object.assign(a, parkOffstage(a.agent))
+          if (a.x == null && a.y == null) Object.assign(a, parkOffstage())
           offstage = true
         } else if (!a.slot && !a.role && !a.pinned) {
-          const p = placeOnStage(a.size, a.near, a.agent, { w: a.w, h: a.h }, false)
+          const p = placeOnStage(a.size, a.near, { w: a.w, h: a.h }, false)
           if (p.slot) {
             a.slot = p.slot
-            a.slotStage = p.slotStage
             staged = p.slot
           } else {
-            Object.assign(a, parkOffstage(a.agent))
+            Object.assign(a, parkOffstage())
             offstage = true
           }
         }
@@ -251,7 +249,7 @@ export function makeOsTools(ops) {
         const ctx = ops.workspaceContext()
         return {
           id,
-          ...(staged ? { slot: staged } : offstage ? { offstage: true, hint: a.kind === 'web' || a.kind === 'app' ? 'parked on the canvas below the stage — bring_to_stage {id} only when the user should SEE it' : 'stage was full — parked below it; bring_to_stage later or evict' } : {}),
+          ...(staged ? { slot: staged } : offstage ? { offstage: true, hint: a.kind === 'web' || a.kind === 'app' ? 'parked on the canvas below home — bring_home {id} only when the user should SEE it' : 'home was full — parked below it; bring_home later or evict' } : {}),
           workspace: ctx.workspace,
           workspace_path: ctx.workspace_path,
           siblings: (ctx.siblings || []).filter((s) => s.id !== id).map((s) => s.title)
@@ -261,27 +259,25 @@ export function makeOsTools(ops) {
     {
       path: '/open_window',
       description:
-        'Open a third-party website as a live web surface. This is the default way to make public/current web evidence visible in Blitz, then drive it with surface_control/read_window. Internal web search is allowed only as a discovery index for candidate URLs/query angles; every source you rely on must be opened in Blitz before you present findings. For open-ended research, use multiple query angles when useful rather than doing one visible search. Tab rule: do not call open_window repeatedly for sources in the SAME research lane when you can write/update one tabbed .weblink in workspace_path; use open_window for a single source, the first page in a lane, or a genuinely separate lane. It opens OFF-STAGE (parked on the canvas just below the user\'s desktop frame), visible when they zoom out to watch you work. Call bring_to_stage {id} only when they should look at it. Returns { id, offstage:true }. Non-primary agents pass {agent:"<your id>"}.',
-      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, title: { type: 'string' }, agent: { type: 'string' } } },
+        'Open a third-party website as a live web surface. This is the default way to make public/current web evidence visible in Blitz, then drive it with surface_control/read_window. Internal web search is allowed only as a discovery index for candidate URLs/query angles; every source you rely on must be opened in Blitz before you present findings. For open-ended research, use multiple query angles when useful rather than doing one visible search. Tab rule: do not call open_window repeatedly for sources in the SAME research lane when you can write/update one tabbed .weblink in workspace_path; use open_window for a single source, the first page in a lane, or a genuinely separate lane. It opens OFF-SCREEN (parked on the canvas just below the user\'s scale-1 frame), visible when they zoom out to watch you work. Call bring_home {id} only when they should look at it. Returns { id, offstage:true }.',
+      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, title: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
         if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
-        if (a.agent != null) a.stage = stageForAgent(a.agent) // open in the agent's own stage
-        Object.assign(a, parkOffstage(a.agent)) // work surface: off the stage, on the open canvas
+        Object.assign(a, parkOffstage()) // work surface: off-screen, on the open canvas below home
         return { id: ops.openWindow(a), offstage: true }
       }
     },
     {
       path: '/place_widget',
       description:
-        "Put a widget on the user's desktop (the STAGE — a slot grid that never overlaps and never reflows). You pick a SIZE + optional position HINT; the OS picks the exact free slot — there is NO x/y. size: s (1x1 square) | m (2x1 wide) | l (2x2 big) | xl (4x2 hero) | tall (2x3, chat-shaped) | xxl (4x4 full-focus — alone it IS the stage). near: 'top-left'|'top-right'|'bottom-left'|'bottom-right'|'center' or another surface's id (lands adjacent). Pass an EXISTING surface id to stage it, OR kind+html/component/props to create directly into the slot. Before creating from authored srcdoc/JSX/TSX source, self-review it against get_widget_authoring and fix obvious issues. Returns { id, slot } or { error:'stage_full', tiles, budget } — then evict (send_backstage) or queue. The stage is the user's ATTENTION: one widget that lets them act beats N raw windows.",
+        "Put a widget on the user's desktop (HOME — a slot grid that never overlaps and never reflows). You pick a SIZE + optional position HINT; the OS picks the exact free slot — there is NO x/y. size: s (1x1 square) | m (2x1 wide) | l (2x2 big) | xl (4x2 hero) | tall (2x3, chat-shaped) | xxl (4x4 full-focus — alone it IS home). near: 'top-left'|'top-right'|'bottom-left'|'bottom-right'|'center' or another surface's id (lands adjacent). Pass an EXISTING surface id to bring it home, OR kind+html/component/props to create directly into the slot. Before creating from authored srcdoc/JSX/TSX source, self-review it against get_widget_authoring and fix obvious issues. Returns { id, slot } or { error:'home_full', tiles, budget } — then evict (send_offscreen) or queue. Home is the user's ATTENTION: one widget that lets them act beats N raw windows.",
       input_schema: {
         type: 'object',
         properties: {
           id: { type: 'string' },
           size: { type: 'string', enum: ['s', 'm', 'l', 'xl', 'tall', 'xxl'] },
           near: { type: 'string' },
-          agent: { type: 'string' },
           kind: { type: 'string', enum: ['srcdoc', 'native', 'web', 'app'] },
           html: { type: 'string' },
           url: { type: 'string' },
@@ -296,9 +292,9 @@ export function makeOsTools(ops) {
         if (a.id) {
           const cur = (st.surfaces || []).find((s) => s && s.id === String(a.id))
           if (!cur) return { status: 404, body: { error: `no surface ${a.id}` } }
-          const p = placeOnStage(a.size, a.near, a.agent ?? cur.agentId, { w: cur.w, h: cur.h }, !!cur.pinned)
+          const p = placeOnStage(a.size, a.near, { w: cur.w, h: cur.h }, !!cur.pinned)
           if (p.full) return { status: 409, body: p.full }
-          const r = ops.updateSurface(String(a.id), { slot: p.slot, slotStage: p.slotStage, focus: null, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h })
+          const r = ops.updateSurface(String(a.id), { slot: p.slot, focus: null, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h })
           return r && r.ok === false ? { status: 404, body: { error: r.error } } : { id: String(a.id), slot: p.slot }
         }
         if (!a.kind) return { status: 400, body: { error: 'pass an existing id, or kind(+html/component/url) to create into the slot' } }
@@ -306,39 +302,39 @@ export function makeOsTools(ops) {
           const widgetError = nativeCatalogWidgetError(a.component)
           if (widgetError) return widgetError
         }
-        const p = placeOnStage(a.size, a.near, a.agent, { w: a.w, h: a.h }, false)
+        const p = placeOnStage(a.size, a.near, { w: a.w, h: a.h }, false)
         if (p.full) return { status: 409, body: p.full }
-        const id = ops.createSurface({ kind: a.kind, html: a.html, url: a.url, component: a.component, props: a.props, title: a.title, slot: p.slot, slotStage: p.slotStage, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h, ...(a.agent != null ? { stage: stageForAgent(a.agent) } : {}) })
+        const id = ops.createSurface({ kind: a.kind, html: a.html, url: a.url, component: a.component, props: a.props, title: a.title, slot: p.slot, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h })
         return { id, slot: p.slot }
       }
     },
     {
-      path: '/bring_to_stage',
+      path: '/bring_home',
       description:
-        "Promote an off-stage surface onto the user's desktop, into a free slot (size defaults to fit; same slot system as place_widget). The deliberate act of asking for the user's attention — do it when they should SEE or ACT on the surface, not for every working window. Args: {id, size?, near?}. Returns { id, slot } or stage_full.",
+        "Bring an off-screen surface HOME onto the user's desktop, into a free slot (size defaults to fit; same slot system as place_widget). The deliberate act of asking for the user's attention — do it when they should SEE or ACT on the surface, not for every working window. Args: {id, size?, near?}. Returns { id, slot } or home_full.",
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, size: { type: 'string', enum: ['s', 'm', 'l', 'xl', 'tall', 'xxl'] }, near: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
         const st = ops.getState() || {}
         const cur = (st.surfaces || []).find((s) => s && s.id === String(a.id))
         if (!cur) return { status: 404, body: { error: `no surface ${a.id}` } }
-        const p = placeOnStage(a.size, a.near, cur.agentId, { w: cur.w, h: cur.h }, !!cur.pinned)
+        const p = placeOnStage(a.size, a.near, { w: cur.w, h: cur.h }, !!cur.pinned)
         if (p.full) return { status: 409, body: p.full }
-        const r = ops.updateSurface(String(a.id), { slot: p.slot, slotStage: p.slotStage, focus: null, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h })
+        const r = ops.updateSurface(String(a.id), { slot: p.slot, focus: null, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h })
         return r && r.ok === false ? { status: 404, body: { error: r.error } } : { id: String(a.id), slot: p.slot }
       }
     },
     {
-      path: '/send_backstage',
+      path: '/send_offscreen',
       description:
-        "Move a surface OFF the user's stage: it parks on the open canvas just below their desktop frame (still alive — keep driving it; they see it when they zoom out; bring_to_stage returns it). Use to free stage budget or tidy after a task. Args: {id}.",
+        "Move a surface OFF-SCREEN: it parks on the open canvas just below the user's home frame (still alive — keep driving it; they see it when they zoom out; bring_home returns it). Use to free home's attention budget or tidy after a task. Args: {id}.",
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
         const st = ops.getState() || {}
         const cur = (st.surfaces || []).find((s) => s && s.id === String(a.id))
         if (!cur) return { status: 404, body: { error: `no surface ${a.id}` } }
-        const r = ops.updateSurface(String(a.id), { slot: null, focus: null, ...parkOffstage(cur.agentId) })
+        const r = ops.updateSurface(String(a.id), { slot: null, focus: null, ...parkOffstage() })
         return r && r.ok === false ? { status: 404, body: { error: r.error } } : { ok: true, offstage: true }
       }
     },
@@ -376,7 +372,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/go_to_primary',
-      description: 'Recenter the view on the primary workspace.',
+      description: 'Fly to home — recenter the view on the home frame of the active workspace.',
       handler: () => {
         ops.goToPrimary()
         return { ok: true }
@@ -590,7 +586,7 @@ export function makeOsTools(ops) {
     {
       path: '/steer',
       description:
-        "STEER another agent: inject a short directive INTO agent N's chat that WAKES it (the W2 supervisor heartbeat). This is how a supervisor nudges a running Job mid-flight — e.g. after a trigger:'tick' moment shows the user edited the plan, or the job stalled/erred. Unlike `say` (which is agent->user and does NOT wake the target), `steer` lands in the target agent's chat as a fresh directive and triggers its `/events` loop, so it actually reacts. Use it to course-correct, hand over new context the user just produced, or unblock an agent — NOT for chatting with the user (that is `say`). Args: {agent, text}. `agent` is the target agent id (required; '0' is the primary). Returns { ok }.",
+        "STEER another agent: inject a short directive INTO agent N's chat that WAKES it (the W2 supervisor heartbeat). This is how a supervisor nudges a running agent mid-task — e.g. after a trigger:'tick' moment shows the work stalled, erred, or diverged from the goal (the supervise-tick workflow emits exactly this kind of steer/noop decision). Unlike `say` (which is agent->user and does NOT wake the target), `steer` lands in the target agent's chat as a fresh directive and triggers its `/events` loop, so it actually reacts. Use it to course-correct, hand over new context the user just produced, or unblock an agent — NOT for chatting with the user (that is `say`). Args: {agent, text}. `agent` is the target agent id (required; '0' is the primary). Returns { ok }.",
       input_schema: { type: 'object', required: ['agent', 'text'], properties: { agent: { type: 'string' }, text: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
@@ -654,41 +650,38 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/start_job',
+      path: '/start_workflow',
       description:
-        "Start a JOB — the formalized unit of work in BlitzOS (it PLANS first, gets the user's approval, then EXECUTES the approved plan to completion). Use this (instead of spawn_agent) when the work is substantial enough to warrant a plan the user reviews: a multi-step task, something with an irreversible outward step, anything the user should approve before it runs. A normal one-off request you should just handle in chat — do NOT start a job for it. This spawns a fresh agent dedicated to the job, gives it the planning duty, and records the job (status 'proposed') on that agent. The job agent will author an editable plan and ask the user to approve; on approval, advance it with set_job_status status:'running'. Args: {title, goal, contextRefs?}. Returns { agent:{id,title}, job }.",
-      input_schema: { type: 'object', required: ['goal'], properties: { title: { type: 'string' }, goal: { type: 'string' }, contextRefs: { type: 'array', items: { type: 'string' } } } },
-      handler: async ({ body }) => {
+        "Start a WORKFLOW: spawn a fresh agent with the ORCHESTRATORS capability ON and hand it a task. Use this (instead of spawn_agent) for a substantial task you want a dedicated, workflow-capable agent to own — especially anything HARD, large, massively parallel, or adversarial (mining many sessions, ranking N items, verifying every claim in a doc, deep research, a tournament, a wide migration). The spawned agent boots with the orchestrator duty (it can AUTHOR and RUN blitzscript workflows via `.blitzos/blitz`) and receives your task as its first directive; it decides whether to write a workflow or just do the task directly. A trivial one-off you should handle in chat yourself. Args: {task, title?, contextRefs?}. Returns { agent:{id,title} }.",
+      input_schema: { type: 'object', required: ['task'], properties: { task: { type: 'string' }, title: { type: 'string' }, contextRefs: { type: 'array', items: { type: 'string' } } } },
+      handler: ({ body }) => {
         const a = parse(body)
-        if (typeof ops.startJob !== 'function') return { status: 501, body: { error: 'jobs not supported on this transport' } }
-        const goal = String(a.goal || '')
-        if (!goal.trim()) return { status: 400, body: { error: 'goal required' } }
+        if (typeof ops.startWorkflow !== 'function') return { status: 501, body: { error: 'workflows not supported on this transport' } }
+        const task = String(a.task || '')
+        if (!task.trim()) return { status: 400, body: { error: 'task required' } }
         const contextRefs = Array.isArray(a.contextRefs) ? a.contextRefs.map(String) : undefined
-        const r = await ops.startJob({ title: a.title != null ? String(a.title) : undefined, goal, contextRefs })
-        if (!r || r.ok === false) return { status: 400, body: { error: (r && r.error) || 'could not start job' } }
-        return { agent: r.agent, job: r.job }
+        const r = ops.startWorkflow({ title: a.title != null ? String(a.title) : undefined, task, contextRefs })
+        if (!r || r.ok === false) return { status: 400, body: { error: (r && r.error) || 'could not start workflow' } }
+        return { agent: r.agent }
       }
     },
     {
-      path: '/set_job_status',
+      path: '/set_orchestrators',
       description:
-        "Advance a JOB's lifecycle and/or bind its plan surface. STATUS: proposed -> approved -> running -> done | blocked. The agent owns its own job's status. The load-bearing edge is approved -> running: set status:'running' once the user APPROVES the plan, and BlitzOS re-launches the job agent into its EXECUTION phase (run the approved plan to completion under /goal). Mark 'done' when the whole plan is complete, or 'blocked' when stuck waiting on the user. BIND THE PLAN WIDGET: during planning, pass planSurfaceId:'<the editable plan widget's surface id>' to record it on the job (so the supervisor can find the plan); you may pass planSurfaceId WITHOUT a status (just binding), or together with a status. Args: {agent, status?, planSurfaceId?} — at least one of status/planSurfaceId. Returns { ok, job } or { ok:false, error }.",
-      input_schema: { type: 'object', required: ['agent'], properties: { agent: { type: 'string' }, status: { type: 'string', enum: ['proposed', 'approved', 'running', 'done', 'blocked'] }, planSurfaceId: { type: 'string', description: "the editable plan widget's surface id (binds the plan surface to the job)" } } },
+        "Toggle the ORCHESTRATORS capability on an agent. When ON, that agent may AUTHOR and RUN blitzscript workflows (plain-Node programs whose llm() spawns local agent 'leaves' over chunked data — Recursive Language Models on this machine) for genuinely HARD, large, massively parallel, or adversarial tasks: mining many sessions, ranking N items, verifying every claim, deep research, a tournament, a wide migration. Enabling WAKES the agent immediately with the how-to and PERSISTS across restarts; it gains the runner `.blitzos/blitz` (run `bash .blitzos/blitz capabilities` first, then `check`, then `run`), the duty doc `.blitzos/orchestrator.md`, and the built-ins (verify-job, supervise-tick). For trivial/one-shot work the agent still just answers directly. Use it to upgrade an agent (e.g. one you just spawned for a big task) into an orchestrator; turn it OFF to stop. Args: {agent, on?} — on defaults to true. Returns { ok, orchestrators } or { ok:false, error }.",
+      input_schema: { type: 'object', required: ['agent'], properties: { agent: { type: 'string' }, on: { type: 'boolean', description: 'enable (default true) or disable the orchestrators capability' } } },
       handler: ({ body }) => {
         const b = parse(body)
-        if (typeof ops.setJobStatus !== 'function') return { status: 501, body: { error: 'jobs not supported on this transport' } }
+        if (typeof ops.setOrchestrators !== 'function') return { status: 501, body: { error: 'orchestrators not supported on this transport' } }
         const agent = String(b.agent || '')
-        const status = b.status != null ? String(b.status) : ''
-        const fields = b.planSurfaceId != null ? { planSurfaceId: String(b.planSurfaceId) } : {}
         if (!agent) return { status: 400, body: { error: 'agent required' } }
-        if (!status && !fields.planSurfaceId) return { status: 400, body: { error: 'pass status and/or planSurfaceId' } }
-        return ops.setJobStatus(agent, status, fields)
+        return ops.setOrchestrators(agent, b.on === undefined ? true : !!b.on)
       }
     },
     {
       path: '/close_agent',
       description:
-        "Close an agent you previously spawned — stops it, removes its chat widget + terminal, deletes its files, and frees its workspace stage. Args: {id}. The PRIMARY agent '0' (the user's main chat) cannot be closed. Returns { ok } or { ok:false, error }.",
+        "Close an agent you previously spawned — stops it, removes its chat widget + terminal, and deletes its files. Args: {id}. The PRIMARY agent '0' (the user's main chat) cannot be closed. Returns { ok } or { ok:false, error }.",
       input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
       handler: ({ body }) => {
         const id = String(parse(body).id || '')
@@ -713,14 +706,11 @@ export function makeOsTools(ops) {
     {
       path: '/open_terminal',
       description:
-        "Open a TERMINAL — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (Codex/Claude), a build/test runner, or any long job. The terminal SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/terminals/. If you are a non-primary agent, pass {agent:\"<your id>\"} so the terminal opens in YOUR stage, not the user's. Args: {command (e.g. 'bash', \"codex exec '…'\", or \"claude '…'\"), cwd?, title?, cols?, rows?, agent?}. Returns { terminal }.",
-      input_schema: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' }, agent: { type: 'string' } } },
+        "Open a TERMINAL — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (Codex/Claude), a build/test runner, or any long job. The terminal SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/terminals/. Args: {command (e.g. 'bash', \"codex exec '…'\", or \"claude '…'\"), cwd?, title?, cols?, rows?}. Returns { terminal }.",
+      input_schema: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' } } },
       handler: async ({ body }) => {
         const a = parse(body)
-        // An agent-scoped terminal opens in ITS stage; an unscoped call leaves stage undefined so
-        // the renderer opens it in the current stage (today's behavior for the primary agent + human spawns).
-        const stage = a.agent != null ? stageForAgent(a.agent) : undefined
-        const terminal = await ops.spawnTerminal({ command: a.command, cwd: a.cwd, title: a.title, cols: a.cols, rows: a.rows, stage })
+        const terminal = await ops.spawnTerminal({ command: a.command, cwd: a.cwd, title: a.title, cols: a.cols, rows: a.rows })
         return { terminal }
       }
     },

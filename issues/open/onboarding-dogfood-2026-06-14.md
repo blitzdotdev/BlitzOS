@@ -12,8 +12,8 @@ The sign-in beat already has the right rule: _"A leftover open tab is not a work
 **Fix (prompt, `blitzos-interview.md` Finish step 2):** forbid designating an open document as the spec/work unless its content is verified non-empty; prefer teeing the first task at a tool the user **confirmed in the checklist**, framed as "explore and discover the workflow," not at whatever tab happened to be open. If the first task does point at a doc, require the resident to verify content before treating it as the spec.
 
 ### 2. The board hands off saturated, so the resident's first surface is blocked [HIGH, reproduced live]
-The seed places 8 cards; with chat + notepad the stage sits at **15/16 attention units**. My very first `place_widget` (a status card) returned `stage_full` (`occupied_cells:15, budget remaining:1`). This is the `onboarding-board-overflows-small-stage` issue, and it bites at the worst moment: the instant the resident wants to show its first work.
-The prompt tells the interviewer to "curate DOWN to the 16-unit budget" and "evict first on stage_full," but by handoff that curation had not happened, and the **fresh resident inherits no instruction to evict before adding**.
+The seed places 8 cards; with chat + notepad the stage sits at **15/16 attention units**. My very first `place_widget` (a status card) returned `home_full` (`occupied_cells:15, budget remaining:1`). This is the `onboarding-board-overflows-small-stage` issue, and it bites at the worst moment: the instant the resident wants to show its first work.
+The prompt tells the interviewer to "curate DOWN to the 16-unit budget" and "evict first on home_full," but by handoff that curation had not happened, and the **fresh resident inherits no instruction to evict before adding**.
 **Fix:** leave headroom on handoff (seed/curate to <=12 units, or auto-park the lowest-value cards as the last Finish step), OR make `place_widget` auto-evict the lowest-value backstage-eligible tile instead of hard-failing. The resident's first act should never be blocked by the seed.
 
 ### 3. "Tool is in scope" got conflated with "this open artifact is the task" [MED]

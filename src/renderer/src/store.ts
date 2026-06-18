@@ -9,46 +9,13 @@ import {
   Bookmark,
   isRuntimePanel
 } from './types'
-// The stage-grid geometry (insets, primaryRect, stageStride, stageRect, stageCenterX, stageForAgent) lives
-// in the shared stages-core so the renderer and the main-process cores share ONE definition (no divergence).
+// The home-grid geometry (chrome insets, homeRect, parkBandRect) lives in the shared stages-core so the
+// renderer and the main-process cores share ONE definition (no divergence). Single-canvas model
+// (plans/blitzos-single-canvas-navigation.md): one bounded "home" region, no stages/splay.
 // Re-exported below so existing `from './store'` importers (capture/App/SurfaceFrame/PrimarySpace) don't churn.
-import {
-  primaryRect,
-  stageStride,
-  stageRect,
-  stageCenterX,
-  stageForAgent,
-  stageOfX,
-  splayLayout,
-  splaySlotRect,
-  orderedStageRect,
-  addStageRect,
-  parkBandRect,
-  stageOfPoint,
-  surfaceStage,
-  insertAt,
-  identityOrder,
-  stagePitchY
-} from './stages-core.mjs'
-export {
-  primaryRect,
-  stageStride,
-  stageRect,
-  stageCenterX,
-  stageForAgent,
-  stageOfX,
-  splayLayout,
-  splaySlotRect,
-  orderedStageRect,
-  addStageRect,
-  parkBandRect,
-  stageOfPoint,
-  surfaceStage,
-  insertAt,
-  identityOrder,
-  stagePitchY
-}
-// Stage slot lattice (plans/blitzos-stage-slot-desktop.md): pure shared placer — tiles at integer
+import { homeRect, parkBandRect, DEFAULT_VP } from './stages-core.mjs'
+export { homeRect, parkBandRect, DEFAULT_VP }
+// Home slot lattice (plans/blitzos-single-canvas-navigation.md): pure shared placer — tiles at integer
 // cells, geometry derived; the SAME module places in main (place_widget) and snaps drags here.
 import { latticeFor, slotRect, cardRect, slotOf, nearestFreeSlot, flowFiles, sizeForDims, occupancy, spanOf, SIZE_ORDER } from './stage-core.mjs'
 export { latticeFor, slotRect, cardRect, slotOf, nearestFreeSlot, sizeForDims }
@@ -59,134 +26,49 @@ function clamp(v: number, lo: number, hi: number): number {
 function sameCamera(a: CanvasTransform, b: CanvasTransform): boolean {
   return Math.abs(a.x - b.x) < 0.75 && Math.abs(a.y - b.y) < 0.75 && Math.abs(a.scale - b.scale) < 0.006
 }
-/** A valid stageOrder is a permutation of 0..count-1. Anything else (legacy folders, partial
- *  payloads, deleted stages) repairs to: the valid prefix in given order + missing ids ascending. */
-function sanitizeOrder(order: unknown, count: number): number[] {
-  if (!Array.isArray(order)) return identityOrder(count)
-  const seen = new Set<number>()
-  const out: number[] = []
-  for (const v of order) {
-    const n = Number(v)
-    if (Number.isInteger(n) && n >= 0 && n < count && !seen.has(n)) {
-      seen.add(n)
-      out.push(n)
-    }
-  }
-  for (let i = 0; i < count; i++) if (!seen.has(i)) out.push(i)
-  return out
-}
-
-// (stage-grid geometry moved to ./stages-core — imported + re-exported above)
+// (home-grid geometry moved to ./stages-core — imported + re-exported above)
 // These two insets are still used by the camera anchor below (cx = SIDEBAR + r.w/2, cy = TITLEBAR + r.h/2).
 const SIDEBAR = 52
 const TITLEBAR = 32
-/** Clamp a window so it stays inside its workspace stage (its title bar therefore can't slide under
- *  the top titlebar in normal mode — #29). `stage` defaults to 0, whose rect IS primaryRect, so the
- *  single-stage path is byte-identical to before. */
-function desktopClamp(x: number, y: number, w: number, h: number, vp: { w: number; h: number }, stage = 0, order?: number[] | null, count?: number): Vec2 {
-  const r = orderedStageRect(stage, vp, order ?? null, count ?? stage + 1)
+/** Clamp a window so it stays inside the home region (its title bar therefore can't slide under
+ *  the top titlebar at the home frame — #29). Single-canvas model: there is only home, so this is a
+ *  plain clamp into homeRect (plans/blitzos-single-canvas-navigation.md). */
+function desktopClamp(x: number, y: number, w: number, h: number, vp: { w: number; h: number }): Vec2 {
+  const r = homeRect(vp)
   return { x: clamp(x, r.x, Math.max(r.x, r.x + r.w - w)), y: clamp(y, r.y, Math.max(r.y, r.y + r.h - h)) }
 }
 
-/** Desktop CAMERA clamp (the dual of desktopClamp, which clamps WINDOWS): lock the view to the CURRENT
- *  stage. At the home scale (1) the stage EXACTLY fills its framed on-screen area, so the camera pins to
- *  home — no scroll on either axis. Zoomed in (up to 3x) you can pan, but never far enough to reveal past
- *  the stage. The framed area is the stage's on-screen rect AT HOME (viewTransform), so the clamp honours
- *  the real SIDEBAR/RIGHTPAD/TITLEBAR/TOOLBAR insets exactly — a cover-fit that ignored RIGHTPAD/TOOLBAR is
- *  what let the stage overflow the screen width (horizontal scroll on full zoom-out). Math.min/max keeps it
- *  valid so it never wedges. Min zoom-out is 1 (the stage just fills home); other stages: Control mode. */
-function clampStagePan(t: CanvasTransform, vp: { w: number; h: number }, stage: number, order?: number[] | null, count?: number): CanvasTransform {
-  const c = count ?? stage + 1
-  const sr = orderedStageRect(stage, vp, order ?? null, c)
-  const home = viewTransform('desktop', vp, stage, c, order ?? null) // scale 1, stage framed by its insets
-  // the stage's on-screen rect at home = the viewport the camera must keep filled
-  const vx0 = home.x + sr.x
-  const vx1 = home.x + sr.x + sr.w
-  const vy0 = home.y + sr.y
-  const vy1 = home.y + sr.y + sr.h
-  // keep that screen rect inside the stage's world rect at the current scale (at scale 1: xa===xb===home → locked)
-  const xa = vx1 - (sr.x + sr.w) * t.scale
-  const xb = vx0 - sr.x * t.scale
-  const ya = vy1 - (sr.y + sr.h) * t.scale
-  const yb = vy0 - sr.y * t.scale
-  return {
-    scale: t.scale,
-    x: clamp(t.x, Math.min(xa, xb), Math.max(xa, xb)),
-    y: clamp(t.y, Math.min(ya, yb), Math.max(ya, yb))
-  }
-}
-/** Home camera per mode. Normal's home = scale 1 on the CURRENT stage (its center maps to a fixed
- *  screen point, so every stage lands in the same on-screen desktop region). The user can temporarily
- *  pinch/scroll away from that home frame in desktop mode. Control = a gentle zoom-out: a single stage
- *  uses controlScale (0.7); multiple stages fit the whole tiled row in the same on-screen span. */
-export function viewTransform(
-  mode: 'desktop' | 'canvas',
-  vp: { w: number; h: number },
-  stage = 0,
-  stageCount = 1,
-  order?: number[] | null
-): CanvasTransform {
-  const r = primaryRect(vp)
-  const cx = SIDEBAR + r.w / 2 // screen point of stage 0's center (world origin) — today's anchor
+/** The scale-1 HOME camera: home's center maps to a fixed on-screen anchor (right of the dock, below
+ *  the titlebar), so home always lands in the same on-screen desktop region. There is no saved camera —
+ *  go_to_primary / double-Shift fly here (plans/blitzos-single-canvas-navigation.md). Home's center IS
+ *  the world origin, so this is just the screen anchor (cx,cy). */
+export function homeTransform(vp: { w: number; h: number }): CanvasTransform {
+  const r = homeRect(vp)
+  const cx = SIDEBAR + r.w / 2
   const cy = TITLEBAR + r.h / 2
-  if (mode === 'desktop') {
-    // Home the current stage: put its center at the same (cx,cy) screen anchor. In a 1-row layout
-    // stage 0's center is the world origin (t = (cx,cy), byte-identical); the splay lattice can put
-    // a stage on a lower row, so the camera homes on BOTH axes of its ordered cell.
-    const sr = orderedStageRect(stage, vp, order ?? null, stageCount)
-    return { scale: 1, x: cx - (sr.x + sr.w / 2), y: cy - (sr.y + sr.h / 2) }
-  }
-  // CONTROL = a GENTLE zoom-out (controlScale 0.7; was a 0.31 wide bird's-eye, which was too much).
-  // FIT the bounding box of the WHOLE splay lattice (every stage cell plus the create-stage
-  // placeholder slot). The top row's "Stage N" pills are SCREEN-SPACE chrome (~36px) hanging ABOVE
-  // the lattice bbox, so the fit reserves EXPLICIT headroom for them (LABEL_HEAD) instead of hoping
-  // a symmetric margin covers it — clearance by construction at any viewport. Tile size comes from
-  // tight WORLD gaps (stages-core STAGE_GAP/PARK_GAP), never from overflowing the frame. Capped at
-  // the single-stage 0.7 (never zoom IN past baseline). No single-stage early return: even with ONE
-  // stage the lattice has TWO cells (the stage + the placeholder — it IS stage N+1).
-  const controlScale = 0.7
-  const LABEL_HEAD = 52 // screen px above the top row: 10 gap + 26 pill + clearance under the titlebar
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  for (let idx = 0; idx <= stageCount; idx++) {
-    const c = splaySlotRect(idx, stageCount, vp)
-    minX = Math.min(minX, c.x)
-    minY = Math.min(minY, c.y)
-    maxX = Math.max(maxX, c.x + c.w)
-    maxY = Math.max(maxY, c.y + c.h)
-  }
-  const availW = r.w * 0.96
-  const availH = r.h - LABEL_HEAD
-  const scale = Math.min(controlScale, availW / (maxX - minX), availH / (maxY - minY))
-  const x = cx - ((minX + maxX) / 2) * scale
-  // top-anchored under the reserved label band, centered in the remaining height
-  const yTop = TITLEBAR + LABEL_HEAD + (availH - (maxY - minY) * scale) / 2
-  return { scale, x, y: yTop - minY * scale }
+  return { scale: 1, x: cx - (r.x + r.w / 2), y: cy - (r.y + r.h / 2) }
 }
-/** While dragging a window, if the CURSOR (world coords) reaches a primary-stage edge, return the
+/** While dragging a window, if the CURSOR (world coords) reaches a home-region edge, return the
  *  macOS tiling target: left/right half (a side edge) or a quarter (a corner). There is intentionally
  *  NO full-screen / top-half / bottom-half snap — macOS only tiles to halves and quarters, and the
  *  user explicitly does not want a window full-screening on a stray upward drag. Null = free drag.
- *  Mirrors macOS edge-tiling, relative to the PRIMARY AREA (so it works on the infinite canvas). */
+ *  Mirrors macOS edge-tiling, relative to home (so it works on the infinite canvas). `tight` (the
+ *  static-home default) uses a thin edge zone so nudging a window doesn't fire an unwanted tile; a
+ *  panned/arranging canvas can pass `false` for a more generous zone. */
 export function snapTargetFor(
   wx: number,
   wy: number,
   vp: { w: number; h: number },
-  stage = 0,
-  mode: 'desktop' | 'canvas' = 'canvas',
-  order?: number[] | null,
-  count?: number
+  tight = true
 ): { x: number; y: number; w: number; h: number } | null {
-  const r = orderedStageRect(stage, vp, order ?? null, count ?? stage + 1)
+  const r = homeRect(vp)
   const nx = (wx - r.x) / r.w
   const ny = (wy - r.y) / r.h
-  if (nx < -0.05 || nx > 1.05 || ny < -0.05 || ny > 1.05) return null // cursor well outside the stage
-  // Edge/corner snap-intent zone per side. CONTROL mode (the zoomed-out bird's-eye, mode==='canvas') keeps
-  // a GENEROUS zone for easy arranging; NORMAL mode (mode==='desktop') uses a thin zone so the cursor must
-  // nearly TOUCH the stage border to tile — otherwise nudging a window slightly kept firing an unwanted tile.
-  const E = mode === 'desktop' ? 0.03 : 0.135
+  if (nx < -0.05 || nx > 1.05 || ny < -0.05 || ny > 1.05) return null // cursor well outside home
+  // Edge/corner snap-intent zone per side. A panned/arranging canvas (tight=false) keeps a GENEROUS
+  // zone for easy arranging; the static home (tight) uses a thin zone so the cursor must nearly TOUCH
+  // the home border to tile — otherwise nudging a window slightly kept firing an unwanted tile.
+  const E = tight ? 0.03 : 0.135
   const nearL = nx < E
   const nearR = nx > 1 - E
   const nearT = ny < E
@@ -238,29 +120,24 @@ export interface CreateSurfaceInput {
   pinned?: boolean
   /** the agent/thread this surface belongs to. */
   agentId?: string
-  /** place this surface in a SPECIFIC workspace stage (an agent → its own stage N); when
-   *  omitted, it cascades into the current stage. Derived from x afterward — never stored on the Surface. */
+  /** Legacy stage hint (single-canvas model: there is one home region). Accepted for back-compat but
+   *  IGNORED — the surface cascades into / derives from the single home lattice. */
   stage?: number
-  /** Born slotted: a tile on the stage lattice — x/y/w/h are derived from it, never trusted. */
+  /** Born slotted: a tile on the home lattice — x/y/w/h are derived from it, never trusted. */
   slot?: { col: number; row: number; size: string }
-  slotStage?: number
   /** Born as the free-form focus floater (human pull-in). */
   focus?: boolean
+  /** Place at the given x/y EXACTLY, skipping the home cascade clamp: the human created it at their
+   *  cursor on the open canvas, which may be off-home (plans/blitzos-single-canvas-navigation.md). */
+  free?: boolean
 }
 
 interface DesktopState {
   transform: CanvasTransform
-  // The last camera the user had while IN control mode — restored on re-entry so control mode
-  // "remembers" where you were panned/zoomed (instead of always snapping back to the default view).
-  controlTransform: CanvasTransform | null
   viewport: { w: number; h: number }
+  // Single-canvas model (plans/blitzos-single-canvas-navigation.md): there is ONE bounded "home" region,
+  // no stages/splay. `mode` is pinned to 'desktop' (the field is kept; removing it is a deferred cleanup).
   mode: 'desktop' | 'canvas'
-  // Workspace stages (#45): bounded desktops tiled left→right. `stageCount` = how many (1 today),
-  // `currentStage` = the active one (0 today). A surface's stage is DERIVED from its world x; these two
-  // fields drive which stage's rect clamp/snap/maximize/camera operate on. At stageCount===1 everything
-  // is byte-identical to the single-stage model.
-  stageCount: number
-  currentStage: number
   surfaces: Surface[]
   activeSurfaceId: string | null
   layoutHistory: Surface[][]
@@ -292,8 +169,8 @@ interface DesktopState {
   setPageFullscreen: (id: string | null) => void
 
   setViewport: (w: number, h: number) => void
-  /** Stage tiles (slot lattice): commit a tile to a cell / pop it off / flow the file layer. */
-  placeSurfaceSlot: (id: string, col: number, row: number, size?: string, stage?: number) => void
+  /** Home tiles (slot lattice): commit a tile to a cell / pop it off / flow the file layer. */
+  placeSurfaceSlot: (id: string, col: number, row: number, size?: string) => void
   clearSurfaceSlot: (id: string) => void
   parkFolderOffstage: (id: string) => void
   /** ⊞/⤢ + ⌃⌥Return: snap the window into the nearest free span / pop the tile out (preSnap restore). */
@@ -303,28 +180,16 @@ interface DesktopState {
   reflowFiles: (avoid?: { x: number; y: number; w: number; h: number } | null) => void
   setMode: (m: 'desktop' | 'canvas') => void
   setTransform: (t: CanvasTransform) => void
-  setControlTransform: (t: CanvasTransform | null) => void
-  setCurrentStage: (i: number) => void
-  setStageCount: (n: number) => void
-  /** Reading order of stages on the splay lattice (stageOrder[orderIndex] = stage id). Identity by
-   *  default; ONLY explicit user drags reorder it (plans/blitzos-stage-splay-lattice.md). */
-  stageOrder: number[]
-  /** Commit a reorder: stages whose lattice cell changes are MOVED in world space — every member
-   *  surface (tiles, free windows, parked work) translates with its stage, one transaction. */
-  applyStageOrder: (next: number[]) => void
-  /** Delete stage k (the splay's × button). macOS Spaces semantics: its windows MOVE to the
-   *  primary stage (never closed), stages above renumber down one, the lattice reflows. Stage 0
-   *  and any stage ≤ an agent's are not deletable (agent N owns stage N by identity). */
-  deleteStage: (stage: number) => void
-  /** Timestamp of the last BULK layout transaction (stage reorder/delete). Rides the os:state push
-   *  so the main-side perception differ suppresses it (one gesture, not N human window-moves). */
+  /** Timestamp of the last BULK layout transaction (rides the os:state push so perception treats it as
+   *  one gesture). Single-canvas model has no bulk transaction left, so this stays 0 (vestigial; kept so
+   *  the os:state push compiles — removing it is part of the deferred mode/field cleanup). */
   lastBulkAt: number
-  /** Jump the camera to a workspace stage (set currentStage + retarget the view) — e.g. the Runtime tray's "Stage N". */
-  goToStage: (area: number) => void
-  addArea: () => void
   panBy: (dx: number, dy: number) => void
   zoomAt: (cursorX: number, cursorY: number, deltaY: number) => void
   goToPrimary: () => void
+  /** Single-⇧ from the LOCKED home screen: pull back 50% (anchored on home's screen center) and unfreeze,
+   *  so the user can survey the surrounding canvas. One-shot; after this, ⇧ is the normal freeze toggle. */
+  zoomOutFromHome: () => void
   focusAndZoom: (id: string) => void
   /** Mission-Control "splay": frame ALL free-form windows (not slotted widgets) by zooming the
    *  camera out just enough to show them all, no more. A pure camera move (reversible by pan/zoom). */
@@ -343,8 +208,10 @@ interface DesktopState {
   toggleLock: () => void
 
   createSurface: (input: CreateSurfaceInput) => string
-  // Phase 2: adopt a persisted workspace (restore surfaces + camera + mode + stage count from disk).
-  hydrate: (surfaces: Surface[], camera: CanvasTransform, mode: 'desktop' | 'canvas', stageCount?: number, stageOrder?: number[]) => void
+  // Adopt a persisted workspace (restore surfaces from disk). Single-canvas model: the boot camera is
+  // always the computed home frame, so the legacy camera/mode + the two trailing legacy region args are
+  // accepted (the host still passes them positionally) but ignored.
+  hydrate: (surfaces: Surface[], camera?: CanvasTransform, mode?: 'desktop' | 'canvas', legacyA?: number, legacyB?: number[]) => void
   applyReconcile: (surfaces: Surface[]) => void
   moveSurface: (id: string, x: number, y: number) => void
   removeSurfacesFromCanvas: (ids: string[]) => void
@@ -401,12 +268,8 @@ function defaultSize(kind: SurfaceKind): { w: number; h: number } {
 
 export const useDesktop = create<DesktopState>((set, get) => ({
   transform: { x: 0, y: 0, scale: 1 },
-  controlTransform: null,
   viewport: { w: window.innerWidth, h: window.innerHeight },
   mode: 'desktop',
-  stageCount: 1,
-  currentStage: 0,
-  stageOrder: [0],
   lastBulkAt: 0,
   surfaces: [],
   activeSurfaceId: null,
@@ -423,8 +286,8 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   grabMode: false,
   osAccent: null,
   // Boot LOCKED = work mode: the desktop is interactive at rest (click widgets, marquee on the
-  // background), the camera frozen at the stage frame. Single-tap ⇧ unlocks for pan/zoom/arrange.
-  // (Canvas-first made 'canvas' the permanent mode, so the lock — not the mode — is the interact gate.)
+  // background), the camera frozen at the home frame. Single-tap ⇧ unlocks (the FREEZE gate) for
+  // pan/zoom; the lock, not a mode, is the interact gate (plans/blitzos-single-canvas-navigation.md).
   locked: true,
   pageFullscreenId: null,
 
@@ -434,20 +297,12 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       // tile's x/y/w/h from its cell (Apple stores layouts per resolution; we re-anchor — same effect,
       // no reflow: cells never change, only the lattice origin shifts).
       const vp = { w, h }
-      const lats = new Map<number, ReturnType<typeof latticeFor>>()
-      const latOf = (a: number): ReturnType<typeof latticeFor> => {
-        let l = lats.get(a)
-        if (!l) {
-          l = latticeFor(vp, a, s.stageOrder, s.stageCount)
-          lats.set(a, l)
-        }
-        return l
-      }
+      const lat = latticeFor(vp)
       let changed = false
       const surfaces = s.surfaces.map((sf) => {
         const sl = slotOf(sf)
         if (!sl) return sf
-        const r = cardRect(latOf(sf.slotStage ?? 0), sl.col, sl.row, sl.size)
+        const r = cardRect(lat, sl.col, sl.row, sl.size)
         if (r.x === sf.x && r.y === sf.y && r.w === sf.w && r.h === sf.h) return sf
         changed = true
         return { ...sf, x: r.x, y: r.y, w: r.w, h: r.h }
@@ -455,25 +310,24 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       return changed ? { viewport: vp, surfaces } : { viewport: vp }
     }),
 
-  /** Snap a tile to a lattice cell (drag drop / bar toggle / place_widget update). Geometry derives
-   *  from the cell; never reflows neighbors — the placer only ever offers free spans, this just
+  /** Snap a tile to a home-lattice cell (drag drop / bar toggle / place_widget update). Geometry
+   *  derives from the cell; never reflows neighbors — the placer only ever offers free spans, this just
    *  commits one. First snap remembers the free-form size in preSnap so popping out restores it
    *  (a slot size that squishes a widget must never be a one-way door). */
-  placeSurfaceSlot: (id, col, row, size, stageArg) =>
+  placeSurfaceSlot: (id, col, row, size) =>
     set((s) => {
       const cur = s.surfaces.find((x) => x.id === id)
       if (!cur) return {}
       const sz = size || slotOf(cur)?.size || sizeForDims(cur.w, cur.h)
-      const stage = Number.isInteger(stageArg) ? (stageArg as number) : (cur.slotStage ?? 0)
-      const r = cardRect(latticeFor(s.viewport, stage, s.stageOrder, s.stageCount), col, row, sz)
+      const r = cardRect(latticeFor(s.viewport), col, row, sz)
       const keepFree = cur.slot ? cur.preSnap : { w: cur.w, h: cur.h }
       return {
-        surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, slot: { col, row, size: sz }, ...(stage > 0 ? { slotStage: stage } : { slotStage: undefined }), x: r.x, y: r.y, w: r.w, h: r.h, focus: undefined, ...(keepFree ? { preSnap: keepFree } : {}) } : x))
+        surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, slot: { col, row, size: sz }, x: r.x, y: r.y, w: r.w, h: r.h, focus: undefined, ...(keepFree ? { preSnap: keepFree } : {}) } : x))
       }
     }),
 
   /** Pop a tile OFF the lattice (bar toggle / ⌘-drag escape hatch): free-form again, restoring its
-   *  pre-slot size centered where the tile sat (clamped into the stage so it never lands off-screen). */
+   *  pre-slot size centered where the tile sat (clamped into home so it never lands off-screen). */
   clearSurfaceSlot: (id) =>
     set((s) => {
       const cur = s.surfaces.find((x) => x.id === id)
@@ -481,7 +335,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const free = cur.preSnap ?? { w: cur.w, h: cur.h }
       const cx = cur.x + cur.w / 2
       const cy = cur.y + cur.h / 2
-      const p = desktopClamp(cx - free.w / 2, cy - free.h / 2, free.w, free.h, s.viewport, cur.slotStage ?? 0, s.stageOrder, s.stageCount)
+      const p = desktopClamp(cx - free.w / 2, cy - free.h / 2, free.w, free.h, s.viewport)
       return {
         surfaces: s.surfaces.map((x) => (x.id === id ? { ...x, slot: undefined, preSnap: undefined, x: p.x, y: p.y, w: free.w, h: free.h } : x))
       }
@@ -492,19 +346,18 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => {
       const cur = s.surfaces.find((x) => x.id === id && x.kind === 'native' && x.component === 'dir')
       if (!cur) return {}
-      const stage = cur.slotStage ?? s.currentStage ?? 0
-      const stageRect = orderedStageRect(stage, s.viewport, s.stageOrder, s.stageCount)
+      const home = homeRect(s.viewport)
       const free = cur.preSnap ?? { w: cur.w, h: cur.h }
-      const parked = s.surfaces.filter((x) => x.id !== id && x.kind === 'native' && x.component === 'dir' && !x.slot && x.y >= stageRect.y + stageRect.h)
+      const parked = s.surfaces.filter((x) => x.id !== id && x.kind === 'native' && x.component === 'dir' && !x.slot && x.y >= home.y + home.h)
       const idx = parked.length
-      const x = Math.round(stageRect.x + 40 + (idx % 6) * Math.min(free.w + 24, 220))
-      const y = Math.round(stageRect.y + stageRect.h + 48 + Math.floor(idx / 6) * (free.h + 28))
-      // Folder context-menu "Move off stage" is visual stage removal only: keep the real directory and its
-      // workspace node, clear any slot, and park the icon off-stage so reconcile cannot resurrect a duplicate.
+      const x = Math.round(home.x + 40 + (idx % 6) * Math.min(free.w + 24, 220))
+      const y = Math.round(home.y + home.h + 48 + Math.floor(idx / 6) * (free.h + 28))
+      // Folder context-menu "Move off screen" keeps the real directory and its workspace node, clears
+      // any slot, and parks the icon below home so reconcile cannot resurrect a duplicate.
       return {
         surfaces: s.surfaces.map((item) =>
           item.id === id
-            ? { ...item, x, y, w: free.w, h: free.h, slot: undefined, ...(stage > 0 ? { slotStage: stage } : { slotStage: undefined }), preSnap: undefined, restore: undefined }
+            ? { ...item, x, y, w: free.w, h: free.h, slot: undefined, preSnap: undefined, restore: undefined }
             : item
         ),
         selection: s.selection.filter((xid) => xid !== id),
@@ -520,16 +373,15 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     if (slotOf(cur)) {
       st.clearSurfaceSlot(id)
     } else {
-      const stage = stageOfPoint(cur.x + cur.w / 2, cur.y, st.viewport, st.stageOrder, st.stageCount)
-      // A crowded stage must not make ⌘T a silent no-op: when the window's natural span has no
+      // A crowded home must not make ⌘T a silent no-op: when the window's natural span has no
       // free cells, fall back through smaller spans until one fits (truly full → nothing happens,
       // matching the placer's contract that tiles never overlap).
       const start = SIZE_ORDER.indexOf(sizeForDims(cur.w, cur.h))
       for (let i = start; i >= 0; i--) {
         const size = SIZE_ORDER[i]
-        const slot = nearestFreeSlot(st.surfaces, latticeFor(st.viewport, stage, st.stageOrder, st.stageCount), size, cur.x + cur.w / 2, cur.y + cur.h / 2, stage, id)
+        const slot = nearestFreeSlot(st.surfaces, latticeFor(st.viewport), size, cur.x + cur.w / 2, cur.y + cur.h / 2, id)
         if (slot) {
-          st.placeSurfaceSlot(id, slot.col, slot.row, size, stage)
+          st.placeSurfaceSlot(id, slot.col, slot.row, size)
           break
         }
       }
@@ -548,12 +400,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       return
     }
     if (!cur || !sl) return
-    const stage = cur.slotStage ?? 0
-    const lat = latticeFor(st.viewport, stage, st.stageOrder, st.stageCount)
-    const occ = occupancy(st.surfaces, stage, id)
+    const lat = latticeFor(st.viewport)
+    const occ = occupancy(st.surfaces, id)
     const idx = SIZE_ORDER.indexOf(sl.size)
     const n = SIZE_ORDER.length
-    // walk the cycle, SKIPPING sizes with no free span anywhere (a crowded stage must not turn the
+    // walk the cycle, SKIPPING sizes with no free span anywhere (a crowded home must not turn the
     // keybind into a silent no-op — blocked size -> land on whatever fits next).
     for (let step = 1; step < n; step++) {
       const next = SIZE_ORDER[(idx + (dir > 0 ? step : n - step)) % n]
@@ -567,26 +418,25 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       }
       // … else the nearest free span to its center — never overlap, never reflow neighbors.
       if (!fits) {
-        const ns = nearestFreeSlot(st.surfaces, lat, next, cur.x + cur.w / 2, cur.y + cur.h / 2, stage, id)
+        const ns = nearestFreeSlot(st.surfaces, lat, next, cur.x + cur.w / 2, cur.y + cur.h / 2, id)
         if (!ns) continue // this size fits nowhere — skip to the next one
         col = ns.col
         row = ns.row
       }
-      st.placeSurfaceSlot(id, col, row, next, stage)
+      st.placeSurfaceSlot(id, col, row, next)
       st.reflowFiles()
       return
     }
   },
 
-  /** The fluid file layer: flow file/dir tiles around the slotted widgets (macOS desktop-icon feel).
-   *  `avoid` = the in-flight drag ghost's rect so files part around it live. Stage 0 only (workspace
-   *  files are root tiles; agent stages hold windows, not files). */
+  /** The fluid file layer: flow file/dir tiles around the slotted widgets on home (macOS desktop-icon
+   *  feel). `avoid` = the in-flight drag ghost's rect so files part around it live. */
   reflowFiles: (avoid) =>
     set((s) => {
       const isFile = (x: Surface): boolean => x.kind === 'native' && (x.component === 'file' || x.component === 'dir') && !x.groupId && !x.minimized
       const files = s.surfaces.filter(isFile)
       if (!files.length) return {}
-      const placed = flowFiles(files, s.surfaces, s.viewport, 0, avoid ?? null, s.stageOrder, s.stageCount)
+      const placed = flowFiles(files, s.surfaces, s.viewport, avoid ?? null)
       const pos = new Map(placed.map((p) => [p.id, p]))
       let changed = false
       const surfaces = s.surfaces.map((x) => {
@@ -599,99 +449,6 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     }),
   setMode: (m) => set({ mode: m }),
   setTransform: (t) => set({ transform: t }),
-  setControlTransform: (t) => set({ controlTransform: t }),
-  // Pure state mutations (the camera animation on switch is wired by the caller in App.tsx).
-  setCurrentStage: (i) => set((s) => ({ currentStage: clamp(Math.round(i), 0, s.stageCount - 1) })),
-  setStageCount: (n) =>
-    set((s) => {
-      const count = Math.max(1, Math.round(n))
-      return { stageCount: count, currentStage: clamp(s.currentStage, 0, count - 1), stageOrder: sanitizeOrder(s.stageOrder, count) }
-    }),
-  goToStage: (area) =>
-    set((s) => {
-      const a = clamp(Math.round(area), 0, s.stageCount - 1)
-      return { currentStage: a, transform: viewTransform(s.mode, s.viewport, a, s.stageCount, s.stageOrder) }
-    }),
-  addArea: () =>
-    set((s) => ({
-      stageCount: s.stageCount + 1,
-      currentStage: s.stageCount,
-      // the new stage takes the placeholder's slot: appended to reading order (it WAS slot N)
-      stageOrder: [...sanitizeOrder(s.stageOrder, s.stageCount), s.stageCount]
-    })),
-  deleteStage: (k) =>
-    set((s) => {
-      const count = s.stageCount
-      if (!Number.isInteger(k) || k <= 0 || k >= count) return {} // stage 0 is the primary — never deletable
-      // Agent N owns stage N by IDENTITY: deleting any stage ≤ an agent's would renumber it away.
-      const agentMax = s.surfaces.reduce(
-        (m, w) => (w.role === 'chat' && w.agentId != null ? Math.max(m, stageForAgent(w.agentId)) : m),
-        0
-      )
-      if (k <= agentMax) return {}
-      const prevOrder = sanitizeOrder(s.stageOrder, count)
-      const nextCount = count - 1
-      const nextOrder = prevOrder.filter((id) => id !== k).map((id) => (id > k ? id - 1 : id))
-      // macOS Spaces semantics: the deleted stage's windows MOVE to the primary (same relative
-      // spot in its cell); everything else rides its (possibly renumbered) cell. A slotted tile
-      // from the deleted stage becomes a free float — its cell may be occupied in stage 0, and
-      // tiles never overlap.
-      const surfaces = s.surfaces.map((w) => {
-        const from = surfaceStage(w, s.viewport, prevOrder, count)
-        const target = from === k ? 0 : from > k ? from - 1 : from
-        const a0 = orderedStageRect(from, s.viewport, prevOrder, count)
-        const b0 = orderedStageRect(target, s.viewport, nextOrder, nextCount)
-        const dx = b0.x - a0.x
-        const dy = b0.y - a0.y
-        const reslot = w.slotStage != null && w.slotStage > k
-        if (!dx && !dy && from !== k && !reslot) return w
-        const moved: Surface = { ...w, x: w.x + dx, y: w.y + dy }
-        if (from === k) {
-          moved.slot = undefined
-          moved.slotStage = undefined
-        } else if (reslot) {
-          moved.slotStage = (w.slotStage as number) - 1
-        }
-        return moved
-      })
-      return {
-        stageCount: nextCount,
-        stageOrder: nextOrder,
-        currentStage: s.currentStage === k ? 0 : s.currentStage > k ? s.currentStage - 1 : s.currentStage,
-        surfaces,
-        lastBulkAt: Date.now(),
-        ...(s.mode === 'desktop'
-          ? { transform: viewTransform('desktop', s.viewport, s.currentStage === k ? 0 : s.currentStage > k ? s.currentStage - 1 : s.currentStage, nextCount, nextOrder) }
-          : {})
-      }
-    }),
-  applyStageOrder: (next) =>
-    set((s) => {
-      const order = sanitizeOrder(next, s.stageCount)
-      if (order.join() === sanitizeOrder(s.stageOrder, s.stageCount).join()) return {}
-      // World-real reorder: a stage whose lattice cell changed carries every member surface with
-      // it (membership = the SAME shared rule the per-stage dock uses), one store transaction.
-      const prev = sanitizeOrder(s.stageOrder, s.stageCount)
-      const deltas = new Map<number, { dx: number; dy: number }>()
-      for (let id = 0; id < s.stageCount; id++) {
-        const a = orderedStageRect(id, s.viewport, prev, s.stageCount)
-        const b = orderedStageRect(id, s.viewport, order, s.stageCount)
-        if (a.x !== b.x || a.y !== b.y) deltas.set(id, { dx: b.x - a.x, dy: b.y - a.y })
-      }
-      if (!deltas.size) return { stageOrder: order }
-      const surfaces = s.surfaces.map((w) => {
-        const d = deltas.get(surfaceStage(w, s.viewport, prev, s.stageCount))
-        return d ? { ...w, x: w.x + d.dx, y: w.y + d.dy } : w
-      })
-      // Desktop mode re-homes the camera on the current stage's (possibly moved) cell; the splay
-      // camera needs nothing — a permutation never changes the lattice's bounding box.
-      return {
-        stageOrder: order,
-        surfaces,
-        lastBulkAt: Date.now(),
-        ...(s.mode === 'desktop' ? { transform: viewTransform('desktop', s.viewport, s.currentStage, s.stageCount, order) } : {})
-      }
-    }),
 
   setSelection: (ids) => set({ selection: ids }),
   clearSelection: () => set({ selection: [] }),
@@ -798,68 +555,61 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     }, 220)
   },
 
-  // Every user-driven camera move in CONTROL mode also updates controlTransform, so the remembered
-  // bird's-eye position is always a settled value — this is what makes "enter/exit returns to the same
-  // position" hold even across a resize, a Center, or a fast toggle (no mid-animation capture needed).
+  // The FREEZE gate is the single navigation rail (plans/blitzos-single-canvas-navigation.md): a
+  // frozen desktop (locked) ignores empty-canvas pans entirely — the static home screen — while a
+  // single-⇧ UNFREEZE (locked=false) pans the infinite canvas freely with no clamp.
   panBy: (dx, dy) =>
     set((s) => {
-      const moved = { ...s.transform, x: s.transform.x + dx, y: s.transform.y + dy }
-      // Control mode pans freely across the splay; desktop pan is clamped to the current stage (a pan
-      // never changes scale — clampStagePan leaves it untouched). At home scale the clamp is a no-op.
-      if (s.mode === 'canvas') return { transform: moved, controlTransform: moved }
-      return { transform: clampStagePan(moved, s.viewport, s.currentStage, s.stageOrder, s.stageCount) }
+      if (s.locked) return {}
+      return { transform: { ...s.transform, x: s.transform.x + dx, y: s.transform.y + dy } }
     }),
 
   zoomAt: (cursorX, cursorY, deltaY) =>
     set((s) => {
+      // FREEZE gate (plans/blitzos-single-canvas-navigation.md): a frozen desktop (locked) is fully
+      // static — empty-canvas zoom is a no-op too, not just pan, so the home screen never drifts. A
+      // single-⇧ UNFREEZE (locked=false) = cursor-anchored zoom into ANY point, wide infinite-canvas
+      // range, no clamp.
+      if (s.locked) return {}
       const { x: tx, y: ty, scale } = s.transform
       const factor = Math.exp(-deltaY * 0.006)
       const wx = (cursorX - tx) / scale
       const wy = (cursorY - ty) / scale
-      if (s.mode === 'canvas') {
-        // Control mode keeps the wide free range so the bird's-eye splay can frame every stage.
-        const newScale = clamp(scale * factor, 0.2, 3)
-        const transform = { scale: newScale, x: cursorX - wx * newScale, y: cursorY - wy * newScale }
-        return { transform, controlTransform: transform }
-      }
-      // Desktop: zoom INTO the cursor (any point), then clamp to the current stage — never out past it.
-      const newScale = clamp(scale * factor, 1, 3) // min 1 = the home scale: the stage exactly fills, no zoom-out past it
-      const anchored = { scale: newScale, x: cursorX - wx * newScale, y: cursorY - wy * newScale }
-      return { transform: clampStagePan(anchored, s.viewport, s.currentStage, s.stageOrder, s.stageCount) }
+      const newScale = clamp(scale * factor, 0.2, 3)
+      return { transform: { scale: newScale, x: cursorX - wx * newScale, y: cursorY - wy * newScale } }
     }),
 
-  goToPrimary: () =>
+  // Fly to home: the computed scale-1 home frame (go_to_primary / double-Shift).
+  goToPrimary: () => set((s) => ({ transform: homeTransform(s.viewport) })),
+
+  // One-shot survey zoom (plans/blitzos-single-canvas-navigation.md): a single ⇧ from the locked home
+  // screen pulls the camera straight back 50%, anchored on home's on-screen center (homeTransform's
+  // cx,cy) so home shrinks in place, and UNFREEZES so the canvas can be panned. The 0.2 floor mirrors
+  // zoomAt's wide-canvas minimum. Subsequent ⇧ taps are the plain freeze toggle.
+  zoomOutFromHome: () =>
     set((s) => {
-      const transform = viewTransform(s.mode, s.viewport, s.currentStage, s.stageCount, s.stageOrder)
-      return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
+      const { x: tx, y: ty, scale } = s.transform
+      const r = homeRect(s.viewport)
+      const cx = SIDEBAR + r.w / 2
+      const cy = TITLEBAR + r.h / 2
+      const wx = (cx - tx) / scale
+      const wy = (cy - ty) / scale
+      const newScale = clamp(scale * 0.5, 0.2, 3)
+      return { locked: false, transform: { scale: newScale, x: cx - wx * newScale, y: cy - wy * newScale } }
     }),
 
-  // Bring a surface to the front. Desktop: raise z + clamp on-screen. Canvas: center at 1:1.
+  // Bring a surface to the front: raise z + clamp it back inside home.
   focusAndZoom: (id) =>
     set((s) => {
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
-      if (s.mode === 'desktop') {
-        const p = desktopClamp(surf.x, surf.y, surf.w, surf.h, s.viewport, s.currentStage, s.stageOrder, s.stageCount)
-        return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y, z: ++zCounter, focus: true } : w.focus ? { ...w, focus: false } : w)), activeSurfaceId: id }
-      }
-      const m = 56
-      const fit = Math.min((s.viewport.w - m) / surf.w, (s.viewport.h - m) / surf.h)
-      const scale = clamp(Math.min(1, fit), 0.2, 3)
-      const cx = surf.x + surf.w / 2
-      const cy = surf.y + surf.h / 2
-      const transform = { scale, x: s.viewport.w / 2 - cx * scale, y: s.viewport.h / 2 - cy * scale }
-      return {
-        surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, z: ++zCounter, focus: true } : w.focus ? { ...w, focus: false } : w)),
-        activeSurfaceId: id,
-        transform,
-        controlTransform: transform // a dock-focus in control mode is a settled camera to remember
-      }
+      const p = desktopClamp(surf.x, surf.y, surf.w, surf.h, s.viewport)
+      return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y, z: ++zCounter, focus: true } : w.focus ? { ...w, focus: false } : w)), activeSurfaceId: id }
     }),
 
   // "Splay out" (macOS Mission Control intent): show me ALL my free-form windows at once. Frees the
   // user from hunting a window they panned away from. We zoom the camera to fit the bounding box of
-  // every FREE window (anything floating: web/app/srcdoc/note that is NOT a slotted stage tile, NOT a
+  // every FREE window (anything floating: web/app/srcdoc/note that is NOT a slotted home tile, NOT a
   // pinned chat/activity panel, NOT a file/folder desktop tile, NOT minimized/foldered). "Zoomed out
   // just enough but not more": scale = fit-to-bbox, capped at 1 so we never zoom IN past natural size.
   splayWindows: () =>
@@ -892,7 +642,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const cx = minX + bw / 2
       const cy = minY + bh / 2
       const transform = { scale, x: s.viewport.w / 2 - cx * scale, y: s.viewport.h / 2 - cy * scale }
-      return s.mode === 'canvas' ? { transform, controlTransform: transform } : { transform }
+      return { transform }
     }),
 
   createSurface: (input) => {
@@ -905,18 +655,19 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     const w = input.w ?? size.w
     const h = input.h ?? size.h
     const st = get()
-    // cascade if no explicit position (macOS-style stagger), centered on the TARGET stage: input.stage when
-    // given (an agent's surface → its own stage, isolating it from the user) else currentStage.
-    // stage 0 ⇒ the world origin ⇒ byte-identical to before; a later stage shifts the cascade by its offset.
-    const targetStage = Number.isInteger(input.stage) ? (input.stage as number) : st.currentStage
+    // cascade if no explicit position (macOS-style stagger), centered on home (single-canvas model:
+    // there is one bounded region). The legacy `input.stage` hint is ignored — x/y is the
+    // truth (plans/blitzos-single-canvas-navigation.md).
     const n = st.surfaces.length % 7
-    const tr = orderedStageRect(targetStage, st.viewport, st.stageOrder, Math.max(st.stageCount, targetStage + 1))
+    const tr = homeRect(st.viewport)
     const ax = tr.x + tr.w / 2
     const ay = tr.y + tr.h / 2
     let x = input.x ?? ax - w / 2 + n * 34 - 100
     let y = input.y ?? ay - h / 2 + n * 30 - 70
-    if (st.mode === 'desktop') {
-      const p = desktopClamp(x, y, w, h, st.viewport, targetStage, st.stageOrder, st.stageCount)
+    // The default cascade is clamped into the home frame so a no-position create stays on-screen; an
+    // explicit FREE position (the human's cursor on the open canvas) is trusted as-is, even off-home.
+    if (!input.free) {
+      const p = desktopClamp(x, y, w, h, st.viewport)
       x = p.x
       y = p.y
     }
@@ -943,14 +694,12 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       ...(input.tabs ? { tabs: input.tabs, activeTab: input.activeTab ?? 0 } : {}),
       ...(input.focus ? { focus: true } : {})
     }
-    // Born slotted: the tile's geometry is DERIVED from its lattice cell (stage-core), never the
+    // Born slotted: the tile's geometry is DERIVED from its home-lattice cell (stage-core), never the
     // cascade — so a place_widget create lands exactly on its slot, immune to clamp/stagger drift.
     if (input.slot && typeof input.slot === 'object') {
-      const sa = Number.isInteger(input.slotStage) ? (input.slotStage as number) : targetStage
-      const lat = latticeFor(st.viewport, sa, st.stageOrder, st.stageCount)
+      const lat = latticeFor(st.viewport)
       const r = cardRect(lat, Number(input.slot.col) || 0, Number(input.slot.row) || 0, String(input.slot.size || 's'))
       surface.slot = { col: Number(input.slot.col) || 0, row: Number(input.slot.row) || 0, size: String(input.slot.size || 's') }
-      if (sa > 0) surface.slotStage = sa
       surface.x = r.x
       surface.y = r.y
       surface.w = r.w
@@ -966,53 +715,36 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     return id
   },
 
-  hydrate: (surfaces, camera, mode, stageCount, stageOrder) =>
+  // Legacy `mode` + the two trailing region args are accepted (the host still passes them) but ignored —
+  // single-canvas model has one home region and no saved camera (plans/blitzos-single-canvas-navigation.md).
+  hydrate: (surfaces, _camera, _mode, _legacyA, _legacyB) =>
     set((s) => {
       // Normalize incoming descriptors to full Surface objects (defaults for anything the
       // persisted node didn't carry), and lift the z-allocator above the restored max so
-      // surfaces created after a restore land on top.
-      // Restore the persisted stage count + reading order (defaults for old folders); currentStage
-      // always boots to 0 (control mode + which stage you're on are transient, never persisted).
-      const nAreas = Number.isInteger(stageCount) && (stageCount as number) > 0 ? (stageCount as number) : 1
-      const order = sanitizeOrder(stageOrder, nAreas)
+      // surfaces created after a restore land on top. The boot camera is always the computed home
+      // frame, never a saved one (the persisted-camera restore path was canvas-mode only and is gone).
       const restored: Surface[] = surfaces.map((w) => {
         const base = { zoom: 1, props: {}, ...w, z: w.z ?? ++zCounter } as Surface
-        // A slotted tile's geometry derives from its lattice cell at THIS renderer's real viewport
+        // A slotted tile's geometry derives from its home-lattice cell at THIS renderer's real viewport
         // (the persisted x/y may come from a different window size) — slots beat the legacy paths.
         const sl = slotOf(base)
         if (sl) {
-          const stage = base.slotStage ?? 0
-          const lat0 = latticeFor(s.viewport, stage, order, nAreas)
-          const r = cardRect(lat0, sl.col, sl.row, sl.size)
+          const r = cardRect(latticeFor(s.viewport), sl.col, sl.row, sl.size)
           return { ...base, x: r.x, y: r.y, w: r.w, h: r.h }
         }
-        // Runtime chat/activity panels persist absolute x/y. A per-agent chat lives in ITS OWN stage
-        // (stage N for agent N); the activity feed + the primary chat live in stage 0. Recompute an agent
-        // chat's position from its stage's ORDERED cell using the renderer's REAL viewport (authoritative —
-        // the host may have guessed a default vp), then clamp into that stage. Single-stage / primary case
-        // is byte-identical (stage 0's cell center is the world origin in a 1-row layout → x=-700).
+        // Runtime chat/activity panels persist absolute x/y; clamp them back inside home at the
+        // renderer's REAL viewport (the host may have guessed a default vp). A legacy per-agent chat
+        // simply keeps its persisted x/y, then clamps — there is no per-agent stage anymore.
         if (isRuntimePanel(base)) {
-          const stage = base.role === 'chat' && base.agentId != null ? stageForAgent(base.agentId) : 0
-          const sr = orderedStageRect(stage, s.viewport, order, Math.max(nAreas, stage + 1))
-          const isAgentChat = base.role === 'chat' && base.agentId != null
-          const x = isAgentChat ? Math.round(sr.x + sr.w / 2 - 700) : base.x
-          const y = isAgentChat ? Math.round(sr.y + sr.h / 2 - base.h / 2) : base.y
-          const p = desktopClamp(x, y, base.w, base.h, s.viewport, stage, order, Math.max(nAreas, stage + 1))
+          const p = desktopClamp(base.x, base.y, base.w, base.h, s.viewport)
           return { ...base, x: p.x, y: p.y }
         }
         return base
       })
       const maxZ = restored.reduce((m, w) => Math.max(m, w.z || 0), 0)
       zCounter = Math.max(zCounter, maxZ + 1)
-      const sc = clamp(Number(camera.scale) || 1, 0.2, 3) // never a 0/Infinity/NaN scale (would wedge the canvas)
-      // Normal mode boots to the current (stage 0 on boot) stage; ad-hoc pinch zoom is live navigation,
-      // not persisted workspace layout. Control mode restores the saved camera.
-      const transform =
-        mode === 'desktop'
-          ? viewTransform('desktop', s.viewport, 0, nAreas, order)
-          : { x: s.viewport.w / 2 - camera.x * sc, y: s.viewport.h / 2 - camera.y * sc, scale: sc }
-      // A fresh board starts control mode from the default bird's-eye (no stale camera from a prior workspace).
-      return { surfaces: restored, activeSurfaceId: null, transform, mode, stageCount: nAreas, stageOrder: order, currentStage: 0, layoutHistory: [], controlTransform: null }
+      // Always boot to the home frame; ad-hoc pinch zoom is live navigation, not persisted layout.
+      return { surfaces: restored, activeSurfaceId: null, transform: homeTransform(s.viewport), mode: 'desktop', layoutHistory: [] }
     }),
 
   // Apply an external folder reconcile (dropped/edited/removed files) to a LIVE canvas WITHOUT
@@ -1094,11 +826,10 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     set((s) => {
       const surf = s.surfaces.find((w) => w.id === id)
       if (!surf) return {}
-      // At the normal home frame, keep the old safety rail: the title bar can't slide above the stage's top
-      // edge. Once the human has zoomed/panned the canvas, all sides are reachable, so free drag is truly free.
-      const home = viewTransform('desktop', s.viewport, s.currentStage, s.stageCount, s.stageOrder)
-      const clampTop = s.mode === 'desktop' && sameCamera(s.transform, home)
-      const p = clampTop ? { x, y: Math.max(primaryRect(s.viewport).y, y) } : { x, y }
+      // At the home frame, keep the safety rail: the title bar can't slide above home's top edge. Once
+      // the human has zoomed/panned the canvas, all sides are reachable, so free drag is truly free.
+      const clampTop = sameCamera(s.transform, homeTransform(s.viewport))
+      const p = clampTop ? { x, y: Math.max(homeRect(s.viewport).y, y) } : { x, y }
       return { surfaces: s.surfaces.map((w) => (w.id === id ? { ...w, x: p.x, y: p.y } : w)) }
     })
   },
@@ -1176,7 +907,8 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   toggleBookmark: (url, title) => {
     void window.agentOS?.bookmarksToggle?.(url, title).then((b) => set({ bookmarks: Array.isArray(b) ? b : [] }))
   },
-  openTerminal: (terminalId, title, stage) => {
+  // The legacy `stage` arg is ignored (single-canvas model: terminals live on home).
+  openTerminal: (terminalId, title) => {
     const s = get()
     // Already a tab somewhere? activate it + raise its window (idempotent — no duplicate tab).
     for (const w of s.surfaces) {
@@ -1189,15 +921,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
         }
       }
     }
-    // Dock the terminal in ITS stage: an agent's terminal carries a stage (so it stays out of the user's
-    // stage); a human spawn has none → the current stage, today's behavior. Add to a
-    // terminal window ALREADY in that stage, else open one there (createSurface honors the `stage` hint).
-    const want = Number.isInteger(stage) ? (stage as number) : s.currentStage
-    const term = s.surfaces.find(
-      (w) => w.kind === 'native' && w.component === 'terminal' && stageOfPoint(w.x + (w.w || 0) / 2, w.y, s.viewport, s.stageOrder, s.stageCount) === want
-    )
+    // Dock into an existing terminal window if there is one, else open one on home (createSurface
+    // cascades it into the home frame).
+    const term = s.surfaces.find((w) => w.kind === 'native' && w.component === 'terminal')
     if (term) get().addTab(term.id, { id: terminalId, title, terminalId })
-    else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, stage: want, tabs: [{ id: terminalId, title, terminalId }], activeTab: 0 })
+    else get().createSurface({ kind: 'native', component: 'terminal', title: 'Terminal', w: 620, h: 380, tabs: [{ id: terminalId, title, terminalId }], activeTab: 0 })
   },
 
   // Drop terminal windows left with zero tabs (a removed terminal's leftover shell) — a tab-less terminal
@@ -1255,9 +983,9 @@ export const useDesktop = create<DesktopState>((set, get) => ({
           activeSurfaceId: id
         }
       }
-      // fill the CURRENT AREA (with a small inset), not the viewport — so 'zoom' means full-screen
-      // inside the workspace stage, consistent in both normal and control mode (#35). Stage 0 ⇒ primaryRect.
-      const r = orderedStageRect(s.currentStage, s.viewport, s.stageOrder, s.stageCount)
+      // fill HOME (with a small inset), not the viewport — so 'zoom' means full-screen inside the home
+      // region (#35).
+      const r = homeRect(s.viewport)
       const inset = 8
       const fill = { x: r.x + inset, y: r.y + inset, w: r.w - inset * 2, h: r.h - inset * 2 }
       return {
@@ -1304,18 +1032,17 @@ export const useDesktop = create<DesktopState>((set, get) => ({
       const cur = st.surfaces.find((x) => x.id === id)
       const sl = cur && slotOf(cur)
       if (cur && sl) {
-        const stage = cur.slotStage ?? 0
-        const lat = latticeFor(st.viewport, stage, st.stageOrder, st.stageCount)
-        const occ = occupancy(st.surfaces, stage, id)
+        const lat = latticeFor(st.viewport)
+        const occ = occupancy(st.surfaces, id)
         const sp = spanOf(sl.size)
         let blocked = sl.col + sp.c > lat.cols || sl.row + sp.r > lat.rows
         if (!blocked) {
           for (let c = sl.col; c < sl.col + sp.c && !blocked; c++) for (let r = sl.row; r < sl.row + sp.r && !blocked; r++) if (occ.has(c + ',' + r)) blocked = true
         }
         if (blocked) {
-          const ns = nearestFreeSlot(st.surfaces, lat, sl.size, cur.x + cur.w / 2, cur.y + cur.h / 2, stage, id)
-          if (ns) st.placeSurfaceSlot(id, ns.col, ns.row, sl.size, stage)
-          else st.clearSurfaceSlot(id) // stage too full for its size — come back free-form, overlap-free
+          const ns = nearestFreeSlot(st.surfaces, lat, sl.size, cur.x + cur.w / 2, cur.y + cur.h / 2, id)
+          if (ns) st.placeSurfaceSlot(id, ns.col, ns.row, sl.size)
+          else st.clearSurfaceSlot(id) // home too full for its size — come back free-form, overlap-free
         }
         st.reflowFiles()
       }

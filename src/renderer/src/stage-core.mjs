@@ -1,4 +1,4 @@
-// Stage slot lattice — the PURE half of the slotted desktop (plans/blitzos-stage-slot-desktop.md).
+// Home slot lattice — the PURE half of the slotted desktop (plans/blitzos-single-canvas-navigation.md).
 // Zero deps, zero I/O, so the SAME placer runs in the renderer (drag snap, file flow), Electron main
 // (os-tools place_widget), and the server backend — one placement algorithm, no divergence. This is
 // the stages-core.mjs pattern: pure shared geometry.
@@ -6,11 +6,11 @@
 // The model is reverse-engineered from macOS (see the plan): widgets sit at integer (col,row) cells
 // of an edge-to-edge 180pt-pitch lattice; the visible card is the tile inset 8pt per side; spans are
 // S=1x1, M=2x1, L=2x2, XL=4x2 (+ TALL=2x3, ours, for the chat hub). Occupied spans are simply never
-// offered, which is the whole never-reflow / never-overlap guarantee. The lattice lives INSIDE a
-// workspace stage's rect (stages-core stageRect), centered, so slot -> world x/y is a pure function and
+// offered, which is the whole never-reflow / never-overlap guarantee. The lattice lives INSIDE the
+// single home rect (stages-core homeRect), centered, so slot -> world x/y is a pure function and
 // x/y/w/h stay the rendering+persistence truth (slots re-derive them on viewport change).
 
-import { orderedStageRect } from './stages-core.mjs'
+import { homeRect, DEFAULT_VP } from './stages-core.mjs'
 
 export const TILE = 180 // cell pitch, edge-to-edge (Apple's exact metric)
 export const CARD_INSET = 8 // visible card inset per side (16pt visible gap between neighbors)
@@ -29,11 +29,11 @@ export const SPANS = {
 export const SIZE_ORDER = ['s', 'm', 'l', 'tall', 'xl', 'xxl']
 
 /** Soft attention budget in S-cell units for NON-PINNED slotted tiles (pinned system UI — the chat
- *  hub — is exempt). Past this, place_widget returns stage_full and the agent must evict or queue.
- *  16 = exactly ONE xxl full-focus hero (a legitimate single-surface stage), or e.g. an XL + an L +
- *  an M + two S — sized so the largest tile is placeable while doctrine + stage_full still police
+ *  hub — is exempt). Past this, place_widget returns home_full and the agent must evict or queue.
+ *  16 = exactly ONE xxl full-focus hero (a legitimate single-surface home), or e.g. an XL + an L +
+ *  an M + two S — sized so the largest tile is placeable while doctrine + home_full still police
  *  clutter (the lattice itself caps the worst case on small screens). */
-export const STAGE_BUDGET = 16
+export const HOME_BUDGET = 16
 
 export function spanOf(size) {
   return SPANS[String(size || '').toLowerCase()] || SPANS.s
@@ -45,13 +45,13 @@ export function sizePx(size) {
   return { w: sp.c * TILE, h: sp.r * TILE }
 }
 
-/** The lattice inside stage `i`: integer cols/rows that fit the stage rect, centered (equal margins).
- *  Returns { stage, cols, rows, x, y } where (x,y) is the world top-left of cell (0,0). */
-export function latticeFor(vp, stage = 0, order = null, count = undefined) {
-  const r = orderedStageRect(stage, vp || { w: 1600, h: 1000 }, order, count ?? stage + 1)
+/** The lattice inside home: integer cols/rows that fit the home rect, centered (equal margins).
+ *  Returns { cols, rows, x, y } where (x,y) is the world top-left of cell (0,0). */
+export function latticeFor(vp) {
+  const r = homeRect(vp || DEFAULT_VP)
   const cols = Math.max(2, Math.floor(r.w / TILE))
   const rows = Math.max(2, Math.floor(r.h / TILE))
-  return { stage, cols, rows, x: r.x + (r.w - cols * TILE) / 2, y: r.y + (r.h - rows * TILE) / 2 }
+  return { cols, rows, x: r.x + (r.w - cols * TILE) / 2, y: r.y + (r.h - rows * TILE) / 2 }
 }
 
 /** World rect of a span at (col,row) — the TILE footprint (renderer insets the card by CARD_INSET). */
@@ -77,16 +77,15 @@ export function slotOf(s) {
   return { col, row, size: SPANS[String(sl.size || '').toLowerCase()] ? String(sl.size).toLowerCase() : 's' }
 }
 
-/** Occupancy set "col,row" of every cell covered by slotted surfaces in `stage` (excluding excludeId).
+/** Occupancy set "col,row" of every cell covered by slotted surfaces on home (excluding excludeId).
  *  FREE-FORM windows do NOT block: the desktop is layered like macOS — tiles + file icons are the
  *  desktop layer, free windows FLOAT ABOVE it (z-banded in the renderer) — so a tile snapping "under"
  *  a window simply sits behind it, exactly like a window over desktop widgets. */
-export function occupancy(surfaces, stage = 0, excludeId = null) {
+export function occupancy(surfaces, excludeId = null) {
   const occ = new Set()
   for (const s of surfaces || []) {
     if (!s || s.id === excludeId) continue
     if (s.minimized || s.groupId) continue // an INVISIBLE tile must not reserve cells (the top-left dead-zone bug: a minimized chat kept its 2x3 span); restore re-places if its span got taken
-    if ((s.slotStage ?? 0) !== stage) continue
     const sl = slotOf(s)
     if (!sl) continue
     const sp = spanOf(sl.size)
@@ -101,13 +100,12 @@ function spanFree(occ, lat, col, row, sp) {
   return true
 }
 
-/** Budget used (in S-cell units) by non-pinned slotted surfaces in `stage`. */
-export function budgetUsed(surfaces, stage = 0) {
+/** Budget used (in S-cell units) by non-pinned slotted surfaces on home. */
+export function budgetUsed(surfaces) {
   let used = 0
   for (const s of surfaces || []) {
     if (!s || s.pinned) continue
-    if (s.minimized || s.groupId) continue // off the stage = off the budget (mirrors occupancy)
-    if ((s.slotStage ?? 0) !== stage) continue
+    if (s.minimized || s.groupId) continue // off home = off the budget (mirrors occupancy)
     const sl = slotOf(s)
     if (!sl) continue
     const sp = spanOf(sl.size)
@@ -132,14 +130,14 @@ const NEAR_ORDER = {
 /**
  * First free span for `size` in scan order. `near` is an edge/corner hint ('top-left' | 'top-right' |
  * 'bottom-left' | 'bottom-right' | 'center'), a surface id (place adjacent to it), or omitted
- * (top-left reading order). Returns {col,row} or null when no span fits (the stage is spatially full).
+ * (top-left reading order). Returns {col,row} or null when no span fits (home is spatially full).
  */
-export function findSlot(surfaces, lat, size, near = null, stage = 0, excludeId = null) {
-  const occ = occupancy(surfaces, stage, excludeId)
+export function findSlot(surfaces, lat, size, near = null, excludeId = null) {
+  const occ = occupancy(surfaces, excludeId)
   const sp = spanOf(size)
   // near = a surface id -> nearest free span to that surface's slot center
   if (near && !NEAR_ORDER[near]) {
-    const anchor = (surfaces || []).find((s) => s && s.id === near && slotOf(s) && (s.slotStage ?? 0) === stage)
+    const anchor = (surfaces || []).find((s) => s && s.id === near && slotOf(s))
     if (anchor) {
       const a = slotOf(anchor)
       const asp = spanOf(a.size)
@@ -175,8 +173,8 @@ export function findSlot(surfaces, lat, size, near = null, stage = 0, excludeId 
 }
 
 /** Free span nearest a WORLD point (drag snap: the outline ghost's cell). Null when none fits. */
-export function nearestFreeSlot(surfaces, lat, size, wx, wy, stage = 0, excludeId = null) {
-  const occ = occupancy(surfaces, stage, excludeId)
+export function nearestFreeSlot(surfaces, lat, size, wx, wy, excludeId = null) {
+  const occ = occupancy(surfaces, excludeId)
   const sp = spanOf(size)
   let best = null
   let bestD = Infinity
@@ -195,7 +193,7 @@ export function nearestFreeSlot(surfaces, lat, size, wx, wy, stage = 0, excludeI
   return best
 }
 
-/** Best slot size for a free-form w/h (bring_to_stage of a surface that has no size argument). */
+/** Best slot size for a free-form w/h (bring_home of a surface that has no size argument). */
 export function sizeForDims(w, h) {
   const ww = Number(w) || TILE
   const hh = Number(h) || TILE
@@ -206,40 +204,39 @@ export function sizeForDims(w, h) {
   return 's'
 }
 
-/** The agent-facing stage summary for list_state: lattice, occupancy, budget, free space. */
-export function stageSummary(surfaces, vp, stage = 0) {
-  const lat = latticeFor(vp, stage)
-  const occ = occupancy(surfaces, stage)
-  const used = budgetUsed(surfaces, stage)
+/** The agent-facing home-grid summary for list_state: lattice, occupancy, budget, free space. */
+export function gridSummary(surfaces, vp) {
+  const lat = latticeFor(vp)
+  const occ = occupancy(surfaces)
+  const used = budgetUsed(surfaces)
   const slotted = []
   for (const s of surfaces || []) {
-    if (!s || s.minimized || s.groupId || (s.slotStage ?? 0) !== stage) continue
+    if (!s || s.minimized || s.groupId) continue
     const sl = slotOf(s)
     if (sl) slotted.push({ id: s.id, title: s.title, col: sl.col, row: sl.row, size: sl.size, pinned: !!s.pinned })
   }
   const fits = {}
-  for (const name of Object.keys(SPANS)) fits[name] = !!findSlot(surfaces, lat, name, null, stage)
+  for (const name of Object.keys(SPANS)) fits[name] = !!findSlot(surfaces, lat, name, null)
   return {
-    stage,
     grid: { cols: lat.cols, rows: lat.rows, tile: TILE },
     occupied_cells: occ.size,
     free_cells: lat.cols * lat.rows - occ.size,
-    budget: { used, total: STAGE_BUDGET, remaining: Math.max(0, STAGE_BUDGET - used) },
+    budget: { used, total: HOME_BUDGET, remaining: Math.max(0, HOME_BUDGET - used) },
     fits,
     tiles: slotted
   }
 }
 
 /** Flow file/folder tiles around the slotted widgets — macOS's fluid icon layer. Pure: returns
- *  [{id, x, y}] placements on a fine icon grid (column-major from the stage's top-RIGHT, like the Mac
+ *  [{id, x, y}] placements on a fine icon grid (column-major from home's top-RIGHT, like the Mac
  *  desktop), skipping any icon cell whose rect intersects a slotted tile or the avoid rect (the
  *  in-flight drag ghost). Sizes come from each file surface's own w/h. */
-export function flowFiles(files, surfaces, vp, stage = 0, avoid = null, order = null, count = undefined) {
-  const r = orderedStageRect(stage, vp || { w: 1600, h: 1000 }, order, count ?? stage + 1)
-  const lat = latticeFor(vp, stage, order, count)
+export function flowFiles(files, surfaces, vp, avoid = null) {
+  const r = homeRect(vp || DEFAULT_VP)
+  const lat = latticeFor(vp)
   const blocked = []
   for (const s of surfaces || []) {
-    if (!s || s.minimized || s.groupId || (s.slotStage ?? 0) !== stage) continue
+    if (!s || s.minimized || s.groupId) continue
     const sl = slotOf(s)
     if (sl) blocked.push(slotRect(lat, sl.col, sl.row, sl.size))
   }
@@ -262,7 +259,7 @@ export function flowFiles(files, surfaces, vp, stage = 0, avoid = null, order = 
         colRight -= (colW || w) + 14
         colW = 0
         y = r.y + 16
-        if (colRight - w < r.x + 16) break // stage exhausted — leave remaining at last position
+        if (colRight - w < r.x + 16) break // home exhausted — leave remaining at last position
       }
       const x = colRight - w
       if (hit(x, y, w, h)) {

@@ -67,29 +67,6 @@ function safeUrl(u) {
   const s = String(u || '')
   return /^https?:\/\//i.test(s) ? s : '' // never hydrate javascript:/data:/file: into a web surface
 }
-// Number of workspace stages (#45). Default 1 for old folders / missing / invalid (NaN/0/negative).
-/** A valid stageOrder is a permutation of 0..count-1; repair = valid prefix + missing ids ascending
- *  (plans/blitzos-stage-splay-lattice.md — the splay lattice reading order, user-curated). */
-function safeStageOrder(order, count) {
-  const out = []
-  const seen = new Set()
-  if (Array.isArray(order)) {
-    for (const v of order) {
-      const n = Number(v)
-      if (Number.isInteger(n) && n >= 0 && n < count && !seen.has(n)) {
-        seen.add(n)
-        out.push(n)
-      }
-    }
-  }
-  for (let i = 0; i < count; i++) if (!seen.has(i)) out.push(i)
-  return out
-}
-
-function safeStageCount(n) {
-  return Number.isInteger(n) && n > 0 ? n : 1
-}
-
 // Which surfaces become canvas NODES. The chat + agent-activity native panels are RUNTIME
 // (they belong in .blitzos/state/*.jsonl, Phase 4), never nodes. Unknown kinds are skipped.
 function nodeKind(s) {
@@ -457,10 +434,11 @@ export function openBootJournal(root, mode) {
   }
 }
 
-/** Stage-desktop fields a node carries (plans/blitzos-stage-slot-desktop.md): `slot {col,row,size}`
- *  (+ slotStage) for tiles pinned to the slot lattice. Off-stage is GEOMETRIC (a surface parked outside
- *  its stage's rect), so no zone field exists. Normalized on write so a hand-edited workspace.json can't
- *  poison the placer (x/y/w/h stay the rendering truth; slots re-derive them on viewport change). */
+/** Home-grid field a node carries (plans/blitzos-single-canvas-navigation.md): `slot {col,row,size}`
+ *  for tiles pinned to the single home lattice. Off-home is GEOMETRIC (a surface parked outside the home
+ *  rect), so no zone field exists. Normalized on write so a hand-edited workspace.json can't poison the
+ *  placer (x/y/w/h stay the rendering truth; slots re-derive them on viewport change). The legacy
+ *  `slotStage`/`slotArea` are IGNORED — there are no stages anymore (an old file's extra field just loads). */
 function stageFields(s) {
   const out = {}
   if (s.slot && typeof s.slot === 'object') {
@@ -468,8 +446,6 @@ function stageFields(s) {
     const row = Math.max(0, Math.round(Number(s.slot.row) || 0))
     const size = typeof s.slot.size === 'string' ? s.slot.size.toLowerCase() : 's'
     out.slot = { col, row, size }
-    const a = Math.round(Number(s.slotStage ?? s.slotArea) || 0) // ?? slotArea: pre-rename nodes
-    if (a > 0) out.slotStage = a
   }
   return out
 }
@@ -571,16 +547,14 @@ export function writeWorkspace(dir, osState) {
       ? { x: Math.round(cam.x || 0), y: Math.round(cam.y || 0), scale: Math.round(cam.scale * 1000) / 1000 }
       : { x: 0, y: 0, scale: 1 }
 
-  // Number of workspace stages (#45 — bounded desktops tiled left→right). Default 1; floor invalid values.
-  const stageCount = Number.isInteger(osState?.stageCount) && osState.stageCount > 0 ? osState.stageCount : 1
+  // Single-canvas nav: ONE home region, so no stage fields are written. `mode` is pinned to 'desktop'
+  // (canvas/Control-Mode is gone; the field is slated for removal — plans/blitzos-single-canvas-navigation.md).
   const ws = {
     version: VERSION,
     id: wsId || randomUUID(),
     kind: 'blitzos.workspace',
     camera,
-    mode: osState?.mode === 'desktop' ? 'desktop' : 'canvas',
-    stageCount,
-    stageOrder: safeStageOrder(osState?.stageOrder, stageCount),
+    mode: 'desktop',
     stack,
     groups,
     nodes
@@ -636,7 +610,7 @@ function writeRuntimePanels(dir, panels) {
         z: s.z || 0,
         // Persist the tile slot so a slotted chat/activity panel survives a restart (the user tiles the
         // chat, or onboarding seeds it; without this it reverts to free-float — the "popped out" bug).
-        ...(s.slot ? { slot: s.slot, slotStage: s.slotStage ?? 0 } : {}),
+        ...(s.slot ? { slot: s.slot } : {}),
         title: typeof s.title === 'string' ? s.title : s.component,
         props: sp
       }
@@ -669,7 +643,7 @@ export function readRuntimePanels(dir) {
         w: Number(s.w) || (s.component === 'activity' ? 320 : 360),
         h: Number(s.h) || (s.component === 'activity' ? 200 : 460),
         z: Number(s.z) || 0,
-        ...(s.slot && typeof s.slot === 'object' ? { slot: s.slot, slotStage: Number(s.slotStage) || 0 } : {}),
+        ...(s.slot && typeof s.slot === 'object' ? { slot: s.slot } : {}),
         title: typeof s.title === 'string' ? s.title : s.component,
         props: s.props && typeof s.props === 'object' ? s.props : {}
       }))
@@ -849,8 +823,9 @@ export function readWorkspace(dir) {
     if (s) surfaces.push(s)
   }
   const groupedSurfaces = applyVisualGroups(surfaces, ws.groups)
-  const rsc = safeStageCount(ws.stageCount ?? ws.areaCount) // ?? areaCount: pre-rename folders
-  return { surfaces: groupedSurfaces, camera: safeCamera(ws.camera), mode: ws.mode === 'desktop' ? 'desktop' : 'canvas', stageCount: rsc, stageOrder: safeStageOrder(ws.stageOrder, rsc) }
+  // Single-canvas nav: no stages, and `mode` is pinned to 'desktop' (a legacy 'canvas' file just loads as
+  // desktop — Control Mode is gone). Any leftover stageCount/stageOrder on disk is simply ignored.
+  return { surfaces: groupedSurfaces, camera: safeCamera(ws.camera), mode: 'desktop' }
 }
 
 /** Ground truth: is surface `id` STILL a real on-disk node of `dir` — i.e. its persisted workspace.json
@@ -1186,16 +1161,17 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     if (s) surfaces.push(s)
   }
   const camera = safeCamera(ws.camera)
-  const mode = ws.mode === 'desktop' ? 'desktop' : 'canvas'
-  const stageCount = safeStageCount(ws.stageCount ?? ws.areaCount) // ?? areaCount: pre-rename folders; preserve across reconcile
-  const stageOrder = safeStageOrder(ws.stageOrder, stageCount)
+  // Single-canvas nav: `mode` is pinned to 'desktop' and there are no stages. A rewrite (only when the node
+  // set actually changed) drops any leftover stageCount/stageOrder/mode:'canvas' from disk — extra fields
+  // on an old file just load and then fall away on the next reconcile.
+  const mode = 'desktop'
 
   if (changed) {
     const groups = visualGroupsFromMeta(ws.groups, new Set(alive.map((n) => n.id)))
-    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stageCount, stageOrder, stack: surfaces.map((s) => s.id), groups, nodes: alive }
+    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stack: surfaces.map((s) => s.id), groups, nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
-  return { surfaces, camera, mode, stageCount, stageOrder, changed, knownIds }
+  return { surfaces, camera, mode, changed, knownIds }
 }
 
 // ---- cross-workspace surface addressing (item 4): a surface id lives in exactly one workspace folder.

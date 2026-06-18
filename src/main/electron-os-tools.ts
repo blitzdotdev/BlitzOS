@@ -25,7 +25,7 @@ import {
   osSpawnAgent,
   osCloseAgent,
   osRenameAgent,
-  osClearBrainContext,
+  osSetOrchestrators,
   osSystemUi,
   osSystemUiInfo,
   osGroupIntoFolder,
@@ -36,7 +36,6 @@ import {
 import { makeTerminalOps } from './terminal-ops.mjs'
 import { makeActionItems } from './action-items.mjs'
 import { emitSurfaceAction } from './events'
-import { makeJob, setJobStatus as jobSetStatus, readJob, dutyForJobStatus } from './job-model.mjs'
 
 // Exported so the widget-tool runner (src/main/widgets.ts) can build its handler map from the SAME ops —
 // see makeWidgetToolHandlers in widget-tools.mjs. One ops object → both the agent registry and the widget
@@ -76,30 +75,18 @@ export const electronOps = {
   spawnAgent: (title?: string) => osSpawnAgent(title),
   closeAgent: (id: string) => osCloseAgent(id),
   renameAgent: (id: string, title: string) => osRenameAgent(id, title),
-  // Jobs (job-model.mjs): startJob spawns a fresh agent (the bare-peer spawnAgent primitive) WITH the job stamped
-  // onto its meta BEFORE the terminal launches — so the agent's FIRST bootstrap already carries the planning duty
-  // (osSpawnAgent -> addAgent writes the job, then launchAgent's prepareAgentLaunch reads bootTaskProvider). No
-  // post-spawn re-exec: the earlier re-exec was a silent no-op (clearAgentContext's claudeSessionId guard fails on
-  // a just-spawned agent whose terminal hasn't written its session id yet), so the planning duty never landed.
-  startJob: (spec: { title?: string; goal: string; contextRefs?: string[] }) => {
-    const job = makeJob({ goal: spec.goal, title: spec.title, contextRefs: spec.contextRefs })
-    const agent = osSpawnAgent(spec.title, false, job)
-    return { ok: true, agent, job }
-  },
-  // setJobStatus validates + writes meta.job.status; when the new status crosses a DUTY boundary (e.g. approved or
-  // proposed -> running = PLAN -> EXECUTE) it re-execs the job agent into the new duty by clearing its brain context
-  // (the interview->resident handoff path), so the boot-task mapper re-reads the job and injects the new duty. Safe
-  // here (the agent is alive with a session id by now, unlike the just-born start_job case).
-  setJobStatus: (agent: string, status: string, fields?: { planSurfaceId?: string; planPath?: string }) => {
-    const before = readJob(agent)
-    const r = jobSetStatus(agent, status, fields)
-    // Only a real STATUS change across a DUTY boundary re-execs; a planSurfaceId-only bind (empty status) must not
-    // (dutyForJobStatus('') is null, so afterDuty is null and this is skipped — the W1 widget-bind never re-execs).
-    if (r.ok && before && status) {
-      const afterDuty = dutyForJobStatus(status)
-      if (afterDuty && afterDuty !== dutyForJobStatus(before.status)) osClearBrainContext(agent)
-    }
-    return r
+  setOrchestrators: (agent: string, on: boolean) => osSetOrchestrators(agent, on),
+  // start_workflow (replaces the retired start_job): spawn a fresh agent with the ORCHESTRATORS capability ON — so
+  // its FIRST bootstrap already carries the orchestrator duty (osSpawnAgent -> addAgent stamps the flag, then
+  // launchAgent's prepareAgentLaunch reads bootTaskProvider) — then SEED it with the task (+ any dropped context
+  // refs) as its first directive. The orchestrator agent itself decides whether the task warrants a blitzscript
+  // workflow (hard/large/parallel) or a direct answer. The task lands in chat.md, read on boot, so no re-exec.
+  startWorkflow: (spec: { title?: string; task: string; contextRefs?: string[] }) => {
+    const agent = osSpawnAgent(spec.title, false, true)
+    const refs = Array.isArray(spec.contextRefs) && spec.contextRefs.length
+      ? `\n\nContext (dropped onto the launcher):\n${spec.contextRefs.map((r) => `- ${r}`).join('\n')}` : ''
+    try { osUserMessage(`${spec.task || ''}${refs}`, agent.id) } catch { /* the agent still boots with the duty; the task lands when chat.md is read */ }
+    return { ok: true, agent }
   },
   systemUi: (name: string) => osSystemUi(name),
   systemUiInfo: (name: string) => osSystemUiInfo(name),

@@ -1,6 +1,6 @@
 // blitzscript — llm(): the ONE abstraction a workflow imports.
 //
-//   import { llm } from '.../blitz/llm.mjs'
+//   import { llm } from '.../blitzscript/llm.mjs'
 //   const text = await llm('summarize this slice…', { harness: 'claude', model: 'haiku' })
 //
 // A workflow is otherwise plain Node (fs, Promise.all, strings); llm() is the single chokepoint
@@ -110,6 +110,39 @@ function _journalRecord(i, hash, result) {
 /** Test hook: clear in-process journal/counter state to simulate a fresh process (the journal FILE persists). */
 export function _resetJournal() { _jIndex = 0; _journal = null; _divergedAt = Infinity; _calls = 0; _active = 0; _waiters.length = 0 }
 
+// ── model alias resolution (cheap | strong | default) ────────────────────────────────────────────
+// `blitz capabilities` advertises a per-harness cheap/strong pick, and the orchestrator duty tells the
+// agent to "prefer the `cheap` alias". llm() HONORS those aliases here so a workflow is PORTABLE — it says
+// model:'cheap' and gets THIS machine's cheap pick — instead of hardcoding a model id another account may
+// lack. Order: a concrete model id passes through untouched; 'cheap'/'strong' map via the capabilities
+// cache `blitz capabilities` writes, with a safe built-in fallback (claude cheap=haiku / strong=opus, the
+// same picks capabilities.mjs uses); 'default' (or an unknown alias with no cache) => omit --model so the
+// harness uses its OWN configured default. The cache is read once per process (lazy + memoized).
+const _MODEL_ALIASES = new Set(['cheap', 'strong', 'default'])
+const _CLAUDE_ALIAS_FALLBACK = { cheap: 'haiku', strong: 'opus' } // mirrors capabilities.mjs probeClaude
+let _caps                       // undefined = not loaded; null = none found; else the parsed caps object
+const _capsFile = () => process.env.BLITZ_CAPS_FILE || join(os.homedir(), '.blitzos', 'blitz-caps.json')
+function _loadCaps() {
+  if (_caps !== undefined) return _caps
+  _caps = null
+  try { _caps = JSON.parse(readFileSync(_capsFile(), 'utf8')) } catch { /* no cache yet -> built-in fallbacks */ }
+  return _caps
+}
+/** Resolve opts.model for a harness: a concrete id passes through; 'cheap'/'strong'/'default' map via the
+ *  caps cache (then claude's built-in fallback); anything unresolved => undefined (omit --model). */
+function _resolveModel(harnessName, model) {
+  if (model == null || model === '') return undefined
+  const alias = String(model).toLowerCase()
+  if (!_MODEL_ALIASES.has(alias)) return String(model) // a real model id/alias -> as-is
+  if (alias === 'default') return undefined
+  const h = _loadCaps()?.harnesses?.[harnessName]
+  if (h && typeof h[alias] === 'string' && h[alias]) return h[alias] // the SAME pick the agent was shown
+  if (harnessName === 'claude') return _CLAUDE_ALIAS_FALLBACK[alias]
+  return undefined // codex/other with no cache -> omit -> the harness's configured default
+}
+/** Test hook: inject (obj) or clear (undefined) the in-process capabilities cache. */
+export function _setCaps(obj) { _caps = obj }
+
 // ── the leaf-prompt metadata block (the plan's guardrail #1 + #5) ──────────────────────────────
 // Appended to EVERY leaf prompt. The leaf is a capable instruction-follower, so being told its
 // depth + the no-recurse rule should suffice (we watch rollouts/process-tree to confirm).
@@ -188,8 +221,9 @@ export async function llm(prompt, opts = {}, fallback = undefined) {
   const fullPrompt = prompt + leafMetadata(depth)
 
   // build() produces the spawn descriptor; merge the depth env so the child self-labels. It also
-  // VALIDATES the flags (e.g. claude effort), so bad opts throw here — in dry-run too.
-  const built = harness.build(fullPrompt, opts)
+  // VALIDATES the flags (e.g. claude effort), so bad opts throw here — in dry-run too. Resolve a model
+  // ALIAS ('cheap'/'strong'/'default') to a concrete id first, so the agent's portable alias just works.
+  const built = harness.build(fullPrompt, { ...opts, model: _resolveModel(harnessName, opts.model) })
   const childEnv = { ...(built.env || {}), BLITZ_DEPTH: String(depth) }
 
   // Stable invocation index (sync, so Promise.all is deterministic) — the positional half of the journal key.

@@ -5,7 +5,7 @@
 // No Electron, no model. Run: node scripts/test-onboarding-seed.mjs
 import { buildBoardPlan, unlockCardProps, findUnlockSlot, UNLOCK_SIZE } from '../../src/main/onboarding-board.mjs'
 import { latticeFor, spanOf } from '../../src/renderer/src/stage-core.mjs'
-import { stageRect } from '../../src/renderer/src/stages-core.mjs'
+import { homeRect } from '../../src/renderer/src/stages-core.mjs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -22,7 +22,7 @@ const ok = (cond, msg) => {
 }
 const at = (plan, role) => plan.find((c) => c.role === role)
 const VP = { w: 1600, h: 1000 }
-const CHAT_HUB = { id: 'chat', slot: { col: 0, row: 0, size: 'tall' }, slotStage: 0 }
+const CHAT_HUB = { id: 'chat', slot: { col: 0, row: 0, size: 'tall' } }
 
 /** Every cell each staged thing covers; duplicates = an overlap (the cardinal lattice sin). */
 function cellsOf(items) {
@@ -162,16 +162,16 @@ console.log('3) web-first life — workflows wins the prime spans, projects yiel
   ok(!at(plan, 'projects'), 'no projects card for a web-first life')
 }
 
-console.log('4) tiny lattice — shrink first, then park off-stage below the frame (never overlap)')
+console.log('4) tiny lattice — shrink first, then park off-screen below the frame (never overlap)')
 {
   const smallVP = { w: 800, h: 600 }
   const plan = buildBoardPlan(FIXTURE, { surfaces: [], viewport: smallVP })
   const staged = plan.filter((c) => c.slot)
   const parked = plan.filter((c) => c.offstage)
   ok(staged.length >= 1, `something still makes the tiny stage (${staged.length} staged)`)
-  ok(parked.length >= 1, `overflow parks off-stage instead of overlapping (${parked.length} parked)`)
-  const r = stageRect(0, smallVP)
-  ok(parked.every((c) => c.y >= r.y + r.h && typeof c.w === 'number' && typeof c.h === 'number'), 'parked cards sit BELOW the stage frame with real dims')
+  ok(parked.length >= 1, `overflow parks off-screen instead of overlapping (${parked.length} parked)`)
+  const r = homeRect(smallVP)
+  ok(parked.every((c) => c.y >= r.y + r.h && typeof c.w === 'number' && typeof c.h === 'number'), 'parked cards sit BELOW the home frame with real dims')
   const { clash } = cellsOf(staged)
   ok(!clash, 'no overlaps even under pressure')
   // backstage is a clean grid too: no parked card may overlap another (the 64px-cascade pile bug)
@@ -223,10 +223,10 @@ console.log('7) unlock card contract')
   ok(p.state === 'locked' && p.appName === 'Electron' && Array.isArray(p.sources) && p.sources.length >= 4, 'unlock props complete')
   ok(UNLOCK_SIZE === 'l', 'unlock prefers a l span')
   const slotted = findUnlockSlot([CHAT_HUB], VP)
-  ok(slotted && slotted.slot && slotted.slotStage === 0, 'findUnlockSlot lands a span against live surfaces')
+  ok(slotted && slotted.slot && Number.isInteger(slotted.slot.col), 'findUnlockSlot lands a span against live surfaces')
   // a saturated tiny lattice (an xxl tile owns it) → no span at all → null (caller parks)
-  const full = findUnlockSlot([{ id: 'big', slot: { col: 0, row: 0, size: 'xxl' }, slotStage: 0 }], { w: 700, h: 500 })
-  ok(full === null, 'a truly full stage returns null instead of overlapping')
+  const full = findUnlockSlot([{ id: 'big', slot: { col: 0, row: 0, size: 'xxl' } }], { w: 700, h: 500 })
+  ok(full === null, 'a truly full home returns null instead of overlapping')
 }
 
 console.log('8) live working set — the open-tabs card is placed, populated, and never overlaps')

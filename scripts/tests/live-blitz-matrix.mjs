@@ -22,7 +22,7 @@
 // event on STDOUT, so without this the thrown error is the uninformative "codex exited 1". Capturing
 // stdout lets the test (and, this surfaces, any real caller would want the same) name the real reason.
 
-import { llm, _stats, _setSpawn } from '/Users/minjunes/superapp/teenybase/agent-os/src/main/blitz/llm.mjs'
+import { llm, _stats, _setSpawn } from '/Users/minjunes/superapp/teenybase/agent-os/src/main/blitzscript/llm.mjs'
 import { spawn } from 'node:child_process'
 
 // REAL spawner, identical semantics to the lib's _defaultSpawn (stdio ignore/pipe/pipe so codex does

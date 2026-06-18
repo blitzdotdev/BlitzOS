@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FocusEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent } from 'react'
 import { createPortal, flushSync } from 'react-dom'
-import { useDesktop, viewTransform, orderedStageRect, addStageRect, stageForAgent, nextTerminalName, latticeFor, nearestFreeSlot, effectiveZ, type CreateSurfaceInput } from './store'
+import { useDesktop, homeRect, homeTransform, nextTerminalName, latticeFor, nearestFreeSlot, effectiveZ, type CreateSurfaceInput } from './store'
 import { applyTheme, saveTheme, type Theme } from './theme'
 import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface, CanvasTransform } from './types'
@@ -10,7 +10,7 @@ import { Overview } from './components/Overview'
 import { capturePrimaryThumb } from './capture'
 import { SurfaceFrame, bgHolesClip, snapPreviewClip } from './components/SurfaceFrame'
 import { AnnotationLayer } from './components/AnnotationLayer'
-import { AreaChromeOverlay, PrimarySpace } from './components/PrimarySpace'
+import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
 import { RadialSurfaceMenu, menuOrigin, MENU_SIZE } from './components/RadialSurfaceMenu'
 import type { SurfaceLauncherKind } from './components/SurfaceLauncherButton'
@@ -36,8 +36,6 @@ type AgentRuntimeDebugStatus = {
   error?: string
 }
 const THEME_STORAGE_KEY = 'blitzos.theme'
-const AREA_FRAME_SCALE_THRESHOLD = 0.92
-const AREA_ADD_SCALE_THRESHOLD = 0.8
 const HOME_TRANSFORM_EPS = 0.75
 const HOME_SCALE_EPS = 0.006
 const CANVAS_WHEEL_GESTURE_MS = 220
@@ -310,16 +308,16 @@ function ensureNotepad(): void {
   // memory; the manual + the dynamic-boot instruction both rely on it existing, incl. server mode).
   const st = useDesktop.getState()
   if (st.surfaces.some((s) => s.kind === 'native' && s.component === 'note' && s.title === 'Notepad')) return
-  // Born SLOTTED (an s tile near the stage's bottom-right), never a free float over the middle of
-  // the desktop; a packed lattice parks it below the stage frame instead.
-  const lat = latticeFor(st.viewport, st.currentStage, st.stageOrder, st.stageCount)
-  const r = orderedStageRect(st.currentStage, st.viewport, st.stageOrder, st.stageCount)
-  const slot = nearestFreeSlot(st.surfaces, lat, 's', r.x + r.w - 90, r.y + r.h - 90, st.currentStage)
+  // Born SLOTTED (an s tile near home's bottom-right), never a free float over the middle of the
+  // desktop; a packed lattice parks it below the home frame instead (single-canvas model).
+  const lat = latticeFor(st.viewport)
+  const r = homeRect(st.viewport)
+  const slot = nearestFreeSlot(st.surfaces, lat, 's', r.x + r.w - 90, r.y + r.h - 90)
   st.createSurface({
     kind: 'native',
     component: 'note',
     title: 'Notepad',
-    ...(slot ? { slot: { col: slot.col, row: slot.row, size: 's' }, slotStage: st.currentStage } : { x: Math.round(r.x + 40), y: Math.round(r.y + r.h + 360) }),
+    ...(slot ? { slot: { col: slot.col, row: slot.row, size: 's' } } : { x: Math.round(r.x + 40), y: Math.round(r.y + r.h + 360) }),
     props: {
       text: '# Notepad\n\nShared working memory for you and BlitzOS. The agent keeps context and notes here; you can edit it too.\n',
       color: 'yellow'
@@ -379,7 +377,7 @@ export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const worldRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
-  const mode = useDesktop((s) => s.mode)
+  const locked = useDesktop((s) => s.locked)
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
   const snapPreview = useDesktop((s) => s.snapPreview)
@@ -452,6 +450,21 @@ export default function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
+  }, [shellFullscreen])
+  // ESC = the workspace switcher overlay (plans/blitzos-single-canvas-navigation.md), the IDE-style
+  // project switcher that replaces the old double-⇧ selector. Inactive in shell fullscreen (that ESC
+  // exits fullscreen, above) or page video-fullscreen; over a text field ESC cancels the field.
+  // openOverview self-guards when already open, and the overlay's own ESC closes it.
+  useEffect(() => {
+    if (shellFullscreen) return
+    const onEsc = (e: globalThis.KeyboardEvent): void => {
+      if (e.key !== 'Escape' || useDesktop.getState().pageFullscreenId) return
+      const ae = document.activeElement as HTMLElement | null
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return
+      void openOverview()
+    }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
   }, [shellFullscreen])
   // The home orb is hidden until the pointer nears the bottom-center screen edge. Hysteresis:
   // a thin edge strip reveals it, a taller zone around the revealed button keeps it shown.
@@ -575,7 +588,6 @@ export default function App(): JSX.Element {
   // deps) reads the CURRENT value — each push is tagged with it so the backend can drop a stale
   // push that belongs to a workspace we already switched away from (else it corrupts the new folder).
   const activeWsRef = useRef<string | null>(null)
-  const animRef = useRef<number | null>(null)
   const viewportReady = useRef(false)
   const canvasWheelGestureUntil = useRef(0)
   const pointerRef = useRef<{ x: number; y: number }>({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
@@ -706,72 +718,6 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener('resize', onResize)
   }, [showAdvanced])
 
-  // Smoothly tween the camera (used when entering/leaving control mode).
-  function animateTransform(target: CanvasTransform, dur = 320): void {
-    const from = useDesktop.getState().transform
-    if (animRef.current) cancelAnimationFrame(animRef.current)
-    const t0 = performance.now()
-    const ease = (p: number): number => 1 - Math.pow(1 - p, 3) // cubic ease-out
-    const step = (now: number): void => {
-      const p = Math.min(1, (now - t0) / dur)
-      const k = ease(p)
-      useDesktop.getState().setTransform({
-        x: from.x + (target.x - from.x) * k,
-        y: from.y + (target.y - from.y) * k,
-        scale: from.scale + (target.scale - from.scale) * k
-      })
-      animRef.current = p < 1 ? requestAnimationFrame(step) : null
-    }
-    animRef.current = requestAnimationFrame(step)
-  }
-  function enterStageOverview(): void {
-    const st = useDesktop.getState()
-    st.setSnapPreview(null)
-    st.setDragTarget(null)
-    st.clearActiveSurface()
-    const now = useDesktop.getState()
-    const target = viewTransform('canvas', now.viewport, now.currentStage, now.stageCount, now.stageOrder)
-    now.setMode('canvas')
-    now.setControlTransform(target)
-    animateTransform(target)
-  }
-
-  // Switch to an adjacent workspace stage (#45). In normal mode the camera animates to the new stage's
-  // home frame; in control mode the bird's-eye already shows every stage, so only the highlight changes.
-  function switchStage(delta: number): void {
-    const st = useDesktop.getState()
-    const next = Math.max(0, Math.min(st.stageCount - 1, st.currentStage + delta))
-    if (next === st.currentStage) return
-    st.setCurrentStage(next)
-    if (st.mode === 'desktop') animateTransform(viewTransform('desktop', st.viewport, next, st.stageCount, st.stageOrder))
-  }
-  function enterStage(stage: number): void {
-    const st = useDesktop.getState()
-    st.clearActiveSurface()
-    const next = Math.max(0, Math.min(st.stageCount - 1, Math.round(stage)))
-    st.setCurrentStage(next)
-    if (st.mode !== 'desktop') st.setMode('desktop')
-    const now = useDesktop.getState()
-    animateTransform(viewTransform('desktop', now.viewport, next, now.stageCount, now.stageOrder))
-  }
-
-  function addAreaFromOverview(): void {
-    const st = useDesktop.getState()
-    st.clearActiveSurface()
-    st.addArea()
-    const now = useDesktop.getState()
-    if (now.mode !== 'desktop') now.setMode('desktop')
-    const latest = useDesktop.getState()
-    animateTransform(viewTransform('desktop', latest.viewport, latest.currentStage, latest.stageCount, latest.stageOrder))
-  }
-
-  // Add a new (empty) stage to the right and go to it (re-fits the bird's-eye in control mode).
-  function addStageAndGo(): void {
-    useDesktop.getState().addArea()
-    const now = useDesktop.getState()
-    animateTransform(viewTransform(now.mode, now.viewport, now.currentStage, now.stageCount, now.stageOrder))
-  }
-
   // The default Notepad is ensured after each hydrate (see the 'hydrate'/'switch' handlers below),
   // so it persists as a file in the active workspace instead of being recreated on each boot.
 
@@ -780,16 +726,16 @@ export default function App(): JSX.Element {
       const st = useDesktop.getState()
       const fromVp = st.viewport
       const toVp = { w: window.innerWidth, h: window.innerHeight }
-      const wasHome = viewportReady.current && isHomeTransform(st.transform, viewTransform(st.mode, fromVp, st.currentStage, st.stageCount, st.stageOrder))
+      // At rest the camera sits at the computed home frame, so a viewport change just re-flies home;
+      // a user-zoomed/panned canvas instead keeps the same world center (single-canvas model).
+      const wasHome = viewportReady.current && isHomeTransform(st.transform, homeTransform(fromVp))
       const previous = st.transform
       st.setViewport(toVp.w, toVp.h)
       const next = useDesktop.getState()
       if (!viewportReady.current || wasHome) {
         next.goToPrimary()
       } else {
-        const transform = preserveWorldCenterForViewport(previous, fromVp, toVp)
-        next.setTransform(transform)
-        if (next.mode === 'canvas') next.setControlTransform(transform)
+        next.setTransform(preserveWorldCenterForViewport(previous, fromVp, toVp))
       }
       viewportReady.current = true
     }
@@ -816,11 +762,12 @@ export default function App(): JSX.Element {
       // can preserve ownership of an already-started pan.
       const activeWindowTarget = isActiveWindowTarget(e.target)
       const isPanGesture = !e.ctrlKey
-      // Trackpad wheel gestures are a burst, not one event. Once a burst begins as canvas pan, keep it
-      // owned by the canvas even if the cursor crosses a terminal or other custom scroll surface.
-      const modeForGesture = useDesktop.getState().mode
+      // Trackpad wheel gestures are a burst, not one event. Once a burst begins as a canvas pan, keep it
+      // owned by the canvas even if the cursor crosses a terminal or other custom scroll surface. Only the
+      // UNFROZEN infinite canvas (single-⇧, !locked) pans — a frozen desktop never owns a pan burst.
+      const unfrozen = !useDesktop.getState().locked
       const continuingCanvasPan =
-        modeForGesture === 'canvas' &&
+        unfrozen &&
         isPanGesture &&
         canvasWheelGestureUntil.current > performance.now() &&
         !isCanvasGestureBlockedTarget(e.target)
@@ -834,28 +781,20 @@ export default function App(): JSX.Element {
         return
       }
       // Focus-aware zoom: a pinch over a NON-focused surface (or empty canvas) drives the Blitz CAMERA, so
-      // you can zoom into any point on the stage. Over the FOCUSED window the gesture stays INSIDE it — a
-      // focused browser zooms its own page, a focused widget zooms itself, nothing else moves.
+      // you can zoom into any point. Over the FOCUSED window the gesture stays INSIDE it — a focused browser
+      // zooms its own page, a focused widget zooms itself, nothing else moves.
       if (activeWindowTarget && e.ctrlKey) return
       if (activeWindowTarget && !e.ctrlKey && isScrollableSurfaceTarget(e.target, e.deltaX, e.deltaY)) return
       if (!activeWindowTarget && !isCanvasGestureTarget(e.target)) return
       const w = useDesktop.getState()
       if (activeWindowTarget || isPanGesture) w.clearActiveSurface()
-      if (w.mode === 'canvas') {
-        e.preventDefault()
-        if (isPanGesture) {
-          e.stopPropagation()
-          canvasWheelGestureUntil.current = performance.now() + CANVAS_WHEEL_GESTURE_MS
-        }
-        if (e.ctrlKey) w.zoomAt(e.clientX, e.clientY, e.deltaY)
-        else w.panBy(-e.deltaX, -e.deltaY)
-        return
-      }
-      // Desktop mode: cursor-anchored pinch-zoom into ANY point, and pan when zoomed in. Both clamp to
-      // the current stage in the store (zoomAt/panBy) — zoom in freely, never out past the stage (other
-      // stages live in Control mode). At home scale the pan clamp makes a stray two-finger scroll a no-op.
+      // Single-canvas model (plans/blitzos-single-canvas-navigation.md): cursor-anchored pinch-zoom into
+      // ANY point, pan to roam the infinite canvas. The FREEZE lock is the gate — store panBy/zoomAt no-op
+      // while frozen (a stray two-finger scroll on the static home does nothing); unfrozen, they roam free.
+      // An unfrozen pan claims the gesture burst so crossing a custom scroller can't steal it mid-pan.
       e.preventDefault()
       e.stopPropagation()
+      if (isPanGesture && unfrozen) canvasWheelGestureUntil.current = performance.now() + CANVAS_WHEEL_GESTURE_MS
       if (e.ctrlKey) w.zoomAt(e.clientX, e.clientY, e.deltaY)
       else w.panBy(-e.deltaX, -e.deltaY)
     }
@@ -1019,27 +958,9 @@ export default function App(): JSX.Element {
           e.preventDefault()
           useDesktop.getState().undoLayout()
         }
-      } else if (e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        // Cmd + ← / → : switch BlitzOS workspace stage (#45). Ctrl + ← / → is intentionally NOT bound — it's
-        // the macOS "switch desktop/Space" shortcut, left free so the user can swap real desktops (their way
-        // out of fullscreen). Skip when typing, and when there's only one stage.
-        const ae = document.activeElement as HTMLElement | null
-        const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
-        if (!editable && useDesktop.getState().stageCount > 1) {
-          e.preventDefault()
-          switchStage(e.key === 'ArrowLeft' ? -1 : 1)
-        }
-      } else if ((e.metaKey || e.ctrlKey) && (e.key === 'n' || e.key === 'N')) {
-        // Cmd/Ctrl + N : add a new workspace stage and jump to it (#45). Skip when typing in a field.
-        const ae = document.activeElement as HTMLElement | null
-        const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
-        if (!editable) {
-          e.preventDefault()
-          addStageAndGo()
-        }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         // Delete / ⌫ closes selected surfaces, except real folders: keyboard delete is a no-op for
-        // filesystem folders. Their context-menu Move off stage is the explicit non-destructive removal.
+        // filesystem folders. Their context-menu Move off screen is the explicit non-destructive removal.
         const ae = document.activeElement as HTMLElement | null
         const editable = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
         const st = useDesktop.getState()
@@ -1140,12 +1061,13 @@ export default function App(): JSX.Element {
     }
   }, [])
 
-  // ⇧ is the keyboard twin of the home orb: a single bare ⇧ tap toggles the splayed all-stages overview
-  // (Control Mode), a double tap opens the workspace selector. Both route through the SAME handleHomePress
+  // ⇧ is the keyboard twin of the home orb (single-canvas model, plans/blitzos-single-canvas-navigation.md):
+  // a single bare ⇧ tap is the FREEZE TOGGLE (freeze the current view as the static desktop / unfreeze into
+  // the infinite canvas), a double tap flies HOME and freezes. Both route through the SAME handleHomePress
   // arbiter so the key and the orb never diverge — and because handleHomePress defers the single-tap action
-  // one HOME_DOUBLE_TAP_MS, a double tap opens workspaces WITHOUT first flashing the splay. No long-press.
-  // A bare ⇧ tap from a focused WebContentsView arrives via onShiftTap (main); plain keydown/keyup covers
-  // the browser/server transport.
+  // one HOME_DOUBLE_TAP_MS, a double tap goes home WITHOUT first flashing a freeze toggle. No long-press.
+  // (ESC is the separate workspace switcher.) A bare ⇧ tap from a focused WebContentsView arrives via
+  // onShiftTap (main); plain keydown/keyup covers the browser/server transport.
   // GUARD: ⇧ is a typing/selection modifier, so a tap is suppressed whenever a renderer text field or
   // contenteditable holds focus (priming a capital must never move the camera). Combos (⇧⌘T, ⇧-click)
   // self-cancel via the keydown/pointer `sawOther` paths; browser-page typing leans on the same
@@ -1170,7 +1092,7 @@ export default function App(): JSX.Element {
     }
     const up = (e: KeyboardEvent): void => {
       if (e.key === 'Shift') {
-        if (shiftDown && !sawOther) handleHomePress() // single → splay stages, double → workspace selector
+        if (shiftDown && !sawOther) handleHomePress() // single → freeze toggle, double → fly home + freeze
         shiftDown = false
       }
     }
@@ -1288,8 +1210,9 @@ export default function App(): JSX.Element {
         // Restore a persisted workspace from disk (Phase 2). Replaces the canvas wholesale.
         const surfs = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cam = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        // Control mode is a transient view toggle, never persisted — always boot the normal desktop.
-        st.hydrate(surfs, cam, 'desktop', Number(a.stageCount) || 1, Array.isArray(a.stageOrder) ? (a.stageOrder as number[]) : undefined)
+        // Single-canvas model: mode is pinned to 'desktop' and the boot camera is always the computed home
+        // frame, so the persisted camera + any legacy stage fields are ignored by the store on hydrate.
+        st.hydrate(surfs, cam, 'desktop')
         ensureNotepad()
         hydrated.current = true
         if (typeof a.workspace === 'string') {
@@ -1302,7 +1225,7 @@ export default function App(): JSX.Element {
         // reconnect's hydrate still can't clobber the new board.
         const sf = Array.isArray(a.surfaces) ? (a.surfaces as Surface[]) : []
         const cm = (a.camera as { x: number; y: number; scale: number }) ?? { x: 0, y: 0, scale: 1 }
-        st.hydrate(sf, cm, 'desktop', Number(a.stageCount) || 1, Array.isArray(a.stageOrder) ? (a.stageOrder as number[]) : undefined)
+        st.hydrate(sf, cm, 'desktop')
         ensureNotepad()
         hydrated.current = true // a switch is also a valid first hydrate — don't depend on a prior 'hydrate'
         if (typeof a.workspace === 'string') {
@@ -1349,16 +1272,10 @@ export default function App(): JSX.Element {
           if (chatSource && surf.role === 'chat') restoreOrFocusFromSource(existingSurface.id, chatSource)
           return
         }
-        // A NEW agent owns its own stage N. Recompute its x from the stage with the renderer's REAL
-        // viewport (the host may have used a default vp), so its widget lands precisely in stage N.
-        const isNewChat = hydrated.current && surf && surf.role === 'chat' && surf.agentId != null
-        const chatStage = isNewChat ? stageForAgent(surf.agentId as string) : 0
-        if (isNewChat && chatStage > 0) {
-          // stage tags it for createSurface's clamp (else it clamps to the CURRENT stage); x sets the precise
-          // left-of-center spot in stage N using the real viewport.
-          surf.stage = chatStage
-          surf.x = Math.round((() => { const g = useDesktop.getState(); const sr = orderedStageRect(chatStage, g.viewport, g.stageOrder, Math.max(g.stageCount, chatStage + 1)); return sr.x + sr.w / 2 })() - 700)
-        }
+        // Single-canvas model (plans/blitzos-single-canvas-navigation.md): there is one home region and no
+        // per-agent stages, so a new agent's chat widget just cascades onto the home lattice like any other
+        // surface. A user '+ Agent' (a.focus) is still flown-to/focused; a background agent's spawn never
+        // yanks the user's view.
         const shouldAnimateChat = !!(chatSource && surf?.role === 'chat' && !prefersReducedMotion())
         let createdId = ''
         if (shouldAnimateChat) {
@@ -1370,20 +1287,7 @@ export default function App(): JSX.Element {
         } else {
           createdId = st.createSurface(surf)
         }
-        if (isNewChat && chatStage > 0) {
-          // ALWAYS grow stageCount so the new stage exists + is navigable (whether a user or an agent spawned it).
-          const cur = useDesktop.getState()
-          if (chatStage + 1 > cur.stageCount) cur.setStageCount(chatStage + 1)
-          // Follow the camera ONLY for a USER '+ Agent' (a.focus) — so "+ Agent" visibly opens the new agent's
-          // workspace — never for an agent's spawn_agent (a background agent must not yank the user's view).
-          if (a.focus) {
-            const now = useDesktop.getState()
-            now.setCurrentStage(chatStage)
-            animateTransform(viewTransform(now.mode, now.viewport, chatStage, now.stageCount, now.stageOrder))
-          }
-        } else if (a.focus && createdId) {
-          useDesktop.getState().focusAndZoom(createdId)
-        }
+        if (a.focus && createdId) useDesktop.getState().focusAndZoom(createdId)
       }
       else if (a.type === 'surface-contextmenu') {
         // Item 5b: a WEB guest's right-click (main intercepts it — the browser guest owns the page).
@@ -1511,12 +1415,10 @@ export default function App(): JSX.Element {
           st.updateSurfaceProps(panel.id, { items: its.filter((x) => x.id !== id) })
         }
       } else if (a.type === 'agent-remove') {
-        // An agent was deleted (host removed its widget via the 'close' broadcast + its files). Collapse
-        // the now-empty stage: apply the host's recomputed stageCount (clamps currentStage so the camera
-        // doesn't strand on a vanished stage). Also drop the agent's terminal tab if it's still around.
+        // An agent was deleted (host removed its widget via the 'close' broadcast + its files). Single-canvas
+        // model: there are no per-agent stages to collapse — just drop the agent's terminal tab if it's
+        // still around.
         const cur = useDesktop.getState()
-        const removeCount = Number.isInteger(a.stageCount) ? (a.stageCount as number) : (a.areaCount as number) // tolerate legacy `areaCount`
-        if (Number.isInteger(removeCount) && removeCount < cur.stageCount) cur.setStageCount(removeCount)
         const rid = String(a.id)
         for (const w of cur.surfaces) {
           if (w.kind === 'native' && w.component === 'terminal' && w.tabs?.some((t) => t.terminalId === rid)) {
@@ -1639,14 +1541,12 @@ export default function App(): JSX.Element {
         props: s.props,
         component: s.component,
         role: s.role,
-        // Carry the agent id so a per-agent chat survives the round-trip (osState → a later hydrate):
-        // without it the surface would lose its stage on the next connect and snap back to stage 0.
+        // Carry the agent id so a per-agent chat surface survives the round-trip (osState → a later hydrate).
         agentId: s.agentId,
-        // Lattice membership must survive the round-trip too: workspace.mjs stageFields persists
-        // slot/slotStage from THIS push — dropping them here silently demoted every tile to a free
-        // window on the next flush (observed: the seeded case-file board lost its slots).
+        // Home-lattice membership must survive the round-trip too: workspace.mjs stageFields persists
+        // slot from THIS push — dropping it here silently demoted every tile to a free window on the next
+        // flush (observed: the seeded case-file board lost its slots).
         slot: s.slot,
-        slotStage: s.slotStage,
         // Browser tabs persist (.weblink) + surface in list_state from THIS push too — persistable
         // fields only ({id,title,url}; favicon/loading/nav state are runtime chrome).
         tabs: s.tabs?.map((t) => ({ id: t.id, title: t.title, url: t.url, terminalId: t.terminalId })),
@@ -1665,10 +1565,9 @@ export default function App(): JSX.Element {
         scale: Math.round(scale * 100) / 100
       }
       // camera = the WORLD point at screen center + scale (viewport-independent, so it restores
-      // correctly on a different screen size — view.cx/cy are exactly that world point).
-      // #45: also push the stage count + which stage is active + the CURRENT stage's world rect, so the
-      // agent (list_state) places surfaces in the stage the human is looking at, not blindly at origin.
-      const currentStageRect = orderedStageRect(st.currentStage, st.viewport, st.stageOrder, st.stageCount)
+      // correctly on a different screen size — view.cx/cy are exactly that world point). Single-canvas
+      // model: no stage count/order/current-stage are pushed — the agent places onto the one home
+      // region (list_state returns grid: gridSummary instead).
       window.agentOS?.sendState({
         workspace: activeWsRef.current ?? undefined,
         surfaces,
@@ -1676,11 +1575,7 @@ export default function App(): JSX.Element {
         view,
         mode: st.mode,
         camera: { x: view.cx, y: view.cy, scale },
-        stageCount: st.stageCount,
-        stageOrder: st.stageOrder,
-        bulkAt: st.lastBulkAt || undefined,
-        currentStage: st.currentStage,
-        currentStageRect
+        bulkAt: st.lastBulkAt || undefined
       })
     }
     push()
@@ -1700,8 +1595,6 @@ export default function App(): JSX.Element {
     let lastT = useDesktop.getState().transform
     let lastVp = useDesktop.getState().viewport
     let lastMode = useDesktop.getState().mode
-    let lastArea = useDesktop.getState().currentStage
-    let lastAreaCount = useDesktop.getState().stageCount
     const scheduleCamera = (): void => {
       if (timer) return
       timer = setTimeout(() => {
@@ -1713,11 +1606,6 @@ export default function App(): JSX.Element {
       if (state.surfaces !== lastS) {
         lastS = state.surfaces
         push() // surface set changed — reflect it at once
-      } else if (state.stageCount !== lastAreaCount || state.currentStage !== lastArea) {
-        // an stage switch / add changes which stage the agent should target — reflect it at once
-        lastArea = state.currentStage
-        lastAreaCount = state.stageCount
-        push()
       } else if (state.transform !== lastT || state.viewport !== lastVp || state.mode !== lastMode) {
         lastT = state.transform
         lastVp = state.viewport
@@ -1846,11 +1734,11 @@ export default function App(): JSX.Element {
     if (e.button !== 0) return
     const st = useDesktop.getState()
     st.clearActiveSurface()
-    if (st.mode === 'canvas') {
-      // Control mode: drag the background void to pan.
+    if (!st.locked) {
+      // UNFROZEN infinite canvas (single-⇧): drag the background void to pan (single-canvas model).
       pan.current = { x: e.clientX, y: e.clientY }
     } else {
-      // Normal mode: rubber-band (marquee) selection. Shift adds to the selection.
+      // Frozen desktop: rubber-band (marquee) selection. Shift adds to the selection.
       if (!e.shiftKey) st.clearSelection()
       marquee.current = { x0: e.clientX, y0: e.clientY }
       setMarqueeRect({ x: e.clientX, y: e.clientY, w: 0, h: 0 })
@@ -1939,9 +1827,11 @@ export default function App(): JSX.Element {
     }
   }
 
-  function addBrowser(source?: AnimationSourceRect | null): void {
-    // let the store cascade + clamp onto the desktop
-    createSurfaceFromSource({ kind: 'web', url: 'https://www.google.com', title: 'Google' }, source)
+  function addBrowser(source?: AnimationSourceRect | null, at?: { x: number; y: number } | null): void {
+    // Option menu: center the 920x640 browser on the cursor, free of the home clamp. From the dock
+    // (at == null) the store cascades + clamps it onto home.
+    const pos = at ? { x: Math.round(at.x - 460), y: Math.round(at.y - 320), free: true } : {}
+    createSurfaceFromSource({ kind: 'web', url: 'https://www.google.com', title: 'Google', ...pos }, source)
   }
 
   function visibleWorldCenter(): { x: number; y: number } {
@@ -1952,37 +1842,50 @@ export default function App(): JSX.Element {
     }
   }
 
+  // World point under the Option radial menu (= the cursor when it opened; the Electron path forwards the
+  // true cursor even over iframes). Null when createFromLauncher is invoked from the dock, so that path
+  // keeps the home cascade.
+  function radialWorldPos(): { x: number; y: number } | null {
+    if (!radialMenu) return null
+    const t = useDesktop.getState().transform
+    return { x: Math.round((radialMenu.x - t.x) / t.scale), y: Math.round((radialMenu.y - t.y) / t.scale) }
+  }
+
   function createFromLauncher(kind: SurfaceLauncherKind, source?: AnimationSourceRect | null): void {
+    // The Option radial menu opens AT the cursor, so create the surface centered there and FREE of the
+    // home clamp — it lands where the user pointed, even off-home. Invoked from the dock instead, `at` is
+    // null and creation falls back to the home cascade (plans/blitzos-single-canvas-navigation.md).
+    const at = radialWorldPos()
+    const centered = (w: number, h: number): Partial<CreateSurfaceInput> =>
+      at ? { x: Math.round(at.x - w / 2), y: Math.round(at.y - h / 2), free: true } : {}
     if (kind === 'browser') {
-      addBrowser(source)
+      addBrowser(source, at)
       return
     }
     if (kind === 'note') {
-      createSurfaceFromSource({ kind: 'native', component: 'note', title: 'Note', w: 280, h: 260, props: { text: '', color: 'yellow' } }, source)
+      createSurfaceFromSource({ kind: 'native', component: 'note', title: 'Note', w: 280, h: 260, props: { text: '', color: 'yellow' }, ...centered(280, 260) }, source)
       return
     }
     if (kind === 'chat') {
-      // One chat per stage: if the CURRENT stage already has a chat, select it — never spawn a
-      // duplicate (a fresh agent's chat would land in a DIFFERENT stage, stage N for agent N).
+      // Single-canvas model (plans/blitzos-single-canvas-navigation.md): there is one home region and one
+      // chat hub. If a chat surface already exists, select/restore it — never spawn a duplicate; otherwise
+      // spawn a fresh agent + its chat widget (the host broadcasts the surface create, so it appears without
+      // a refresh — Electron-only; the server shim has no agents).
       const st = useDesktop.getState()
-      const existing = st.surfaces.find(
-        (w) => w.role === 'chat' && (w.agentId != null ? stageForAgent(w.agentId) : 0) === st.currentStage
-      )
+      const existing = findChatHub(st.surfaces)
       if (existing) {
         if (existing.minimized) restoreOrFocusFromSource(existing.id, source)
         else st.focusSurface(existing.id)
         return
       }
-      // No chat here → a fresh peer agent + its own chat widget; the host broadcasts the surface
-      // create, so it appears without a refresh (Electron-only — the server shim has no agents).
       window.agentOS?.spawnAgent?.()
       return
     }
     if (kind === 'widget') {
-      createSurfaceFromSource({ kind: 'srcdoc', title: 'Widget', w: 420, h: 300, html: WIDGET_PLACEHOLDER_HTML }, source)
+      createSurfaceFromSource({ kind: 'srcdoc', title: 'Widget', w: 420, h: 300, html: WIDGET_PLACEHOLDER_HTML, ...centered(420, 300) }, source)
       return
     }
-    const c = visibleWorldCenter()
+    const c = at ?? visibleWorldCenter()
     makeFolder(kind, c.x, c.y, source)
   }
 
@@ -2024,22 +1927,28 @@ export default function App(): JSX.Element {
   }
   function handleHomeSingleTap(): void {
     closeToolbarTooltip()
+    // If the workspace switcher is open, a tap just closes it.
     if (showOverviewRef.current || overviewOpening.current) {
       closeOverview()
-      enterStageOverview()
       return
     }
-    if (useDesktop.getState().mode === 'canvas') {
-      enterStage(useDesktop.getState().currentStage)
+    // One-shot, then toggle (plans/blitzos-single-canvas-navigation.md): a single ⇧ from the LOCKED home
+    // screen pulls the camera back 50% and unfreezes (survey the canvas); after that ⇧ is the plain FREEZE
+    // TOGGLE (flip the pan/zoom lock so the current viewport freezes into the static desktop, or unfreezes).
+    const st = useDesktop.getState()
+    if (st.locked && isHomeTransform(st.transform, homeTransform(st.viewport))) {
+      st.zoomOutFromHome()
       return
     }
-    enterStageOverview()
+    st.toggleLock()
   }
 
-  async function handleHomeDoubleTap(): Promise<void> {
+  function handleHomeDoubleTap(): void {
     closeToolbarTooltip()
     if (showOverviewRef.current || overviewOpening.current) return
-    await openOverview(useDesktop.getState().mode !== 'canvas')
+    // Double ⇧ = return to the home screen, static: fly the camera to the home frame and FREEZE it.
+    useDesktop.getState().goToPrimary()
+    useDesktop.setState({ locked: true })
   }
 
   function handleHomePress(): void {
@@ -2267,14 +2176,11 @@ export default function App(): JSX.Element {
     const p = surfaces.find((s) => s.kind === 'native' && s.component === 'inbox')
     return ((p?.props?.items as Array<{ status?: string }>) ?? []).filter((i) => i.status === 'pending').length
   })()
-  const showAreaFrames = mode === 'canvas' || (mode === 'desktop' && transform.scale < AREA_FRAME_SCALE_THRESHOLD)
-  const showAddAreaFrame = showAreaFrames && transform.scale < AREA_ADD_SCALE_THRESHOLD
-
   return (
     <div
       id="root-canvas"
       ref={rootRef}
-      className={[grabMode ? 'grab-mode' : null, pageFullscreenId ? 'page-fullscreen' : null, mode === 'canvas' ? 'stage-overview-mode' : 'stage-fixed-mode'].filter(Boolean).join(' ')}
+      className={[grabMode ? 'grab-mode' : null, pageFullscreenId ? 'page-fullscreen' : null].filter(Boolean).join(' ')}
       onDragOver={onDragOver}
       onDrop={onDrop}
       onPointerDownCapture={() => {
@@ -2342,7 +2248,7 @@ export default function App(): JSX.Element {
         className="world"
         style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
       >
-        {showAreaFrames && <PrimarySpace showAddArea={showAddAreaFrame} />}
+        <PrimarySpace />
         {snapPreview && (
           <div
             className="snap-preview"
@@ -2378,11 +2284,30 @@ export default function App(): JSX.Element {
         <AnnotationLayer />
       </div>
 
-      {showAreaFrames && <AreaChromeOverlay showAddArea={showAddAreaFrame} onEnterStage={enterStage} onAddArea={addAreaFromOverview} />}
-
-      {mode === 'canvas' && (
-        <div className="pan-overlay">
-          <span className="pan-hint">Stage overview</span>
+      {/* FREEZE state hint (plans/blitzos-single-canvas-navigation.md): present = unfrozen infinite canvas
+          (pan/zoom live); absent = frozen static desktop. Inline-styled so this prototype slice touches no CSS. */}
+      {!locked && (
+        <div
+          className="freeze-hint"
+          style={{
+            position: 'fixed',
+            bottom: 18,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 6000,
+            pointerEvents: 'none',
+            padding: '6px 12px',
+            borderRadius: 999,
+            background: 'rgba(20,20,22,0.72)',
+            color: 'rgba(255,255,255,0.92)',
+            font: '12px -apple-system, system-ui, sans-serif',
+            letterSpacing: '0.2px',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            boxShadow: '0 2px 12px rgba(0,0,0,0.25)'
+          }}
+        >
+          Infinite canvas · ⇧ freeze here · ⇧⇧ home
         </div>
       )}
 
@@ -2394,14 +2319,16 @@ export default function App(): JSX.Element {
       )}
 
       {hasWorkspaces && (
-        <div className={`toolbar-shell toolbar-shell-workspace${homeRevealed || showOverview || mode === 'canvas' ? ' revealed' : ''}`}>
+        <div className={`toolbar-shell toolbar-shell-workspace${homeRevealed || showOverview || !locked ? ' revealed' : ''}`}>
           <div className="toolbar toolbar-nav toolbar-workspace">
+            {/* The home orb (keyboard twin = bare ⇧, single-canvas model). Single tap = freeze toggle,
+                double tap = fly home + freeze; active while the canvas is unfrozen or the switcher is open. */}
             <button
-              className={`ws-home-btn${showOverview || mode === 'canvas' ? ' active' : ''}`}
+              className={`ws-home-btn${showOverview || !locked ? ' active' : ''}`}
               onClick={handleHomePress}
-              aria-pressed={showOverview || mode === 'canvas'}
-              title={showOverview ? 'Back to stages' : mode === 'canvas' ? `Stages${activeWs ? ` · ${activeWs}` : ''}` : 'Stages'}
-              {...toolbarTip(showOverview ? 'Back to stages' : 'Stages')}
+              aria-pressed={showOverview || !locked}
+              title={showOverview ? 'Back to desktop' : !locked ? `Freeze here · ⇧⇧ home${activeWs ? ` · ${activeWs}` : ''}` : 'Home'}
+              {...toolbarTip(showOverview ? 'Back to desktop' : 'Home')}
             />
           </div>
           {SHOW_ADVANCED_TOOLBAR && (

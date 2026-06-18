@@ -7,7 +7,7 @@
 // This is what an orchestrator agent (orchestrators toggle ON) would AUTHOR and then
 // `blitz run`. It is PLAIN NODE — fs, Promise.all, string ops — and the ONLY injected
 // abstraction is llm() (each call shells out to a real local `claude -p` leaf on the
-// user's own auth; see plans/blitzos-blitzscript.md and src/main/blitz/llm.mjs).
+// user's own auth; see plans/blitzos-blitzscript.md and src/main/blitzscript/llm.mjs).
 //
 // RLM shape: the doc is "data on disk" (a VARIABLE), the model never reads it whole-cloth
 // in one mega-prompt; instead code fans the doc out to a few cheap leaves to brainstorm,
@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url'
 // The user named the doc relative to the repo root. BLITZ_WS is the workspace root the runner
 // sets; fall back to walking up from this file to the repo root so the example runs standalone too.
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const REPO_ROOT = process.env.BLITZ_WS || resolve(__dirname, '../../../..') // …/blitz/examples -> repo root
+const REPO_ROOT = process.env.BLITZ_WS || resolve(__dirname, '../../../..') // …/blitzscript/examples -> repo root
 const DOC_PATH = resolve(REPO_ROOT, 'plans/blitzos-blitzscript.md')
 
 let doc

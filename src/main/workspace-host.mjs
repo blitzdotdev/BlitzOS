@@ -44,11 +44,13 @@ import {
   moveOutOfFolder,
   openFolderEntry
 } from './workspace.mjs'
-// Stage grid: an agent N owns stage N (stageForAgent), so its chat widget + the windows it
-// opens land in stage N — isolated from the user's primary (stage 0). Shared with the renderer (one grid).
-import { stageForAgent, orderedStageRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
+// Home grid: ONE bounded region ("home") on the infinite canvas, shared with the renderer
+// (plans/blitzos-single-canvas-navigation.md). The chat hub anchors at home; off-home is open canvas.
+import { homeRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 // The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
 import { writeRelayUrl } from './agent-runtime.mjs'
+// The orchestrators (dynamic-workflows) flag rides the agent's meta.json — the same record addAgent stamps.
+import { setTerminalOrchestrators } from './terminal-manager.mjs'
 // The inbox is a runtime surface in osState; reconcileInboxItems keeps its items authoritative from the store.
 import { reconcileInboxItems } from './action-items.mjs'
 
@@ -63,14 +65,17 @@ import { reconcileInboxItems } from './action-items.mjs'
  *        surface's items are reconciled against this on hydrate + onStatePush so a stale osState copy never wins.
  * @param {(surfaces:any[]) => (Promise<any>|void)} [a.onSurfaces]  realize web surfaces (server: spin/tear
  *        headless targets; Electron: no-op, WebContentsView host owns browser guests)
- * @param {'canvas'|'desktop'} [a.defaultMode]  blank-workspace mode (server: canvas, Electron: desktop)
+ * @param {'desktop'} [a.defaultMode]  IGNORED — mode is pinned to 'desktop' for now (single-canvas nav;
+ *        the field is slated for removal). Kept for caller compatibility.
  * @param {boolean} [a.explicitInitial]  true when initialName was PINNED by the user (BLITZ_WORKSPACE):
  *        skip the boot-where-you-left-off preference and honor the pin.
  */
 export function createWorkspaceHost(a) {
   const root = resolve(a.root)
   const onSurfaces = a.onSurfaces || (() => {})
-  const defaultMode = a.defaultMode === 'desktop' ? 'desktop' : 'canvas'
+  // Single-canvas nav pins the navigation mode to 'desktop' (canvas/Control-Mode is gone). a.defaultMode
+  // is intentionally ignored until the `mode` field is removed (plans/blitzos-single-canvas-navigation.md).
+  const defaultMode = 'desktop'
   mkdirSync(root, { recursive: true })
 
   let initialName = a.initialName || 'Home'
@@ -127,15 +132,7 @@ export function createWorkspaceHost(a) {
     (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'files' || s.component === 'terminal' || s.component === 'runtime' || s.component === 'inbox' || s.component === 'unlock'))
 
   const active = () => basename(activeWorkspace)
-  /** Stage growth keeps the splay reading order: existing order survives, new ids append. */
-  const growOrder = (order, count) => {
-    const out = []
-    const seen = new Set()
-    if (Array.isArray(order)) for (const v of order) { const n = Number(v); if (Number.isInteger(n) && n >= 0 && n < count && !seen.has(n)) { seen.add(n); out.push(n) } }
-    for (let k = 0; k < count; k++) if (!seen.has(k)) out.push(k)
-    return out
-  }
-  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode, stageCount: 1, stageOrder: [0] })
+  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode })
 
   function flush() {
     if (writeTimer) {
@@ -580,17 +577,10 @@ export function createWorkspaceHost(a) {
     const primary = true
     const info = readSystemRendererInfo(activeWorkspace, 'chat', '0')
     const w = 360
-    // The hub lives in the primary stage at the legacy chat spot (left-of-center, -700 from center;
-    // -210 above it). Agent work still lands in each agent's own stage via tool placement.
-    const hostStateForChat = (typeof a.getState === 'function' && a.getState()) || {}
-    const chatStage = stageForAgent('0')
-    const chatCell = orderedStageRect(
-      chatStage,
-      viewportOf(),
-      Array.isArray(hostStateForChat.stageOrder) ? hostStateForChat.stageOrder : null,
-      Math.max(Number(hostStateForChat.stageCount) || 1, chatStage + 1)
-    )
-    const x = Math.round(chatCell.x + chatCell.w / 2 - 700)
+    // The hub anchors at the legacy chat spot relative to HOME center (left-of-center, -700; -210 above).
+    // Home is centered on the world origin, so this is the same free-float location as before the collapse.
+    const home = homeRect(viewportOf())
+    const x = Math.round(home.x + home.w / 2 - 700)
     // Restore a persisted tile slot (the user tiled the chat, or onboarding seeded it) so it comes back
     // EMBEDDED, not free-float. No persisted slot → the legacy free-float default (every existing
     // workspace stays exactly as it was). Geometry derives from the slot in the renderer on hydrate.
@@ -603,27 +593,21 @@ export function createWorkspaceHost(a) {
       agentId: String(agentId),
       title: 'Chat',
       x,
-      y: Math.round(chatCell.y + chatCell.h / 2 - 210),
+      y: Math.round(home.y + home.h / 2 - 210),
       w,
       h: 460,
       z: 5,
-      ...(persisted ? { slot: persisted.slot, slotStage: persisted.slotStage ?? 0 } : {}),
+      ...(persisted ? { slot: persisted.slot } : {}),
       html: info?.source || '',
       lang: info?.lang || 'html',
       props: chatHubProps(String(agentId ?? '0'))
     }
   }
-  /** The minimum stageCount needed for every agent to have its stage (max agent id + 1). */
-  function maxAgentStageCount() {
-    let max = 1
-    for (const id of agentIds()) max = Math.max(max, stageForAgent(id) + 1)
-    return max
-  }
   /** The one chat hub surface — built on hydrate/switch. */
   function buildAgentSurfaces() { return [buildAgentSurface('0')] }
   /** Re-open the primary chat widget after the human closes it. */
   function restoreChatHub() {
-    const st = a.getState() || { surfaces: [], stageCount: 1 }
+    const st = a.getState() || { surfaces: [] }
     const chat = buildAgentSurface('0')
     const surfaces = Array.isArray(st.surfaces) ? st.surfaces : []
     const matchesPrimaryChat = (s) => s && (s.id === chat.id || (s.role === 'chat' && String(s.agentId ?? '0') === '0'))
@@ -634,8 +618,7 @@ export function createWorkspaceHost(a) {
             : s
         ))
       : [...surfaces, chat]
-    const stageCount = Math.max(Number(st.stageCount) || 1, maxAgentStageCount())
-    a.setState({ ...st, surfaces: nextSurfaces, stageCount, stageOrder: growOrder(st.stageOrder, stageCount) })
+    a.setState({ ...st, surfaces: nextSurfaces })
     a.broadcast({ type: 'create', surface: { ...chat, minimized: false }, focus: true })
     return { ok: true, id: chat.id }
   }
@@ -650,36 +633,34 @@ export function createWorkspaceHost(a) {
    *  its managed terminal. Idempotent — re-adding an existing agent just refreshes the hub/thread. */
   function addAgent(agentId, title, opts = {}) {
     const id = String(agentId)
-    const stage = stageForAgent(id)
     const name = title || (id === '0' ? 'Chat' : `Chat ${id}`)
     // Persist the agent RECORD up front (kind:'agent') so the agent survives a restart even when no
     // backend is auto-launched. launchAgent (below) will overwrite this with the full live
-    // meta when it spawns the terminal; both keep the same id/kind/title/stage, so agentIds() finds it.
+    // meta when it spawns the terminal; both keep the same id/kind/title, so agentIds() finds it.
+    // Single-canvas nav: every agent lives at HOME (stage 0); there are no per-agent stages anymore.
     try {
       const dir = join(agentDir(), id) // canonical `.blitzos/terminals`, or the legacy dir if migration hasn't run yet
       mkdirSync(dir, { recursive: true })
       const mp = join(dir, 'meta.json')
       let m = {}
       try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
-      // A job (start_job -> osSpawnAgent -> opts.job) is stamped HERE, BEFORE launchAgent (below) builds the first
-      // bootstrap — so bootTaskProvider reads it and the agent's first launch carries the planning duty (no re-exec).
-      // `...m` already carries any on-disk job (idempotent re-add); opts.job overrides it when starting a new job.
-      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, stage, createdAt: m.createdAt || Date.now(), ...(opts.job && typeof opts.job === 'object' ? { job: opts.job } : {}) }, null, 2))
+      // The ORCHESTRATORS toggle is stamped HERE, BEFORE launchAgent (below) builds the first bootstrap — so
+      // bootTaskProvider reads it and the agent's first launch already carries the orchestrator duty (no re-exec).
+      // `...m` already carries an on-disk orchestrators flag (idempotent re-add); opts.orchestrators sets it on a
+      // new spawn. It is sticky: once set it is never unset via addAgent (the spread keeps it).
+      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, stage: 0, createdAt: m.createdAt || Date.now(), ...(opts.orchestrators ? { orchestrators: true } : {}) }, null, 2))
     } catch { /* best-effort: the surface still works in-memory this run */ }
     setChatStatusLocal(id, 'starting')
-    try {
-      const st = a.getState()
-      if (st && Array.isArray(st.surfaces)) {
-        // Grow stageCount so this agent's stage exists + is navigable (persisted via writeWorkspace). The
-        // terminal-spawn below also carries the stage to the renderer; this keeps osState correct meanwhile.
-        const stageCount = Math.max(Number(st.stageCount) || 1, stage + 1)
-        a.setState({ ...st, stageCount, stageOrder: growOrder(st.stageOrder, stageCount) })
-      }
-    } catch { /* adapter without getState/setState */ }
     updateChatHubState(id, true)
-    // Launch the agent in a VISIBLE terminal in its stage (only when a launcher is wired — BLITZ_AGENT on).
-    try { a.launchAgent?.(id, stage, name) } catch (e) { console.error('[workspace] launchAgent failed:', e?.message || e) }
+    // Launch the agent in a VISIBLE terminal at home (only when a launcher is wired — BLITZ_AGENT on).
+    try { a.launchAgent?.(id, 0, name) } catch (e) { console.error('[workspace] launchAgent failed:', e?.message || e) }
     return { id, title: name, focus: !!opts.focus }
+  }
+  /** Toggle the ORCHESTRATORS (dynamic-workflows) capability on an agent: set/clear the durable flag on its
+   *  meta.json. The boot-task provider reads it on every (re)launch (so the duty lands in bootstrap), and
+   *  spawnTerminal carries it across re-exec. The LIVE wake (delivery B) is the caller's job (osActions). */
+  function setAgentOrchestrators(agentId, on) {
+    return setTerminalOrchestrators(agentDir(), String(agentId), !!on)
   }
   /** Boot: (re)launch EVERY agent with the CURRENT relay url and persisted backend metadata. We deliberately
    *  re-exec rather than reattach a survivor: the relay url is re-minted each run, so a survivor would hold a
@@ -688,12 +669,12 @@ export function createWorkspaceHost(a) {
   function resumeAgentsOnBoot() {
     if (typeof a.launchAgent !== 'function') return
     for (const id of agentIds()) {
-      try { a.launchAgent(id, stageForAgent(id)) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) }
+      try { a.launchAgent(id, 0) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) } // single home → stage 0
     }
   }
   /** Close a NON-primary agent: stop it (no auto-restart), remove its transcript/system renderer files +
-   *  terminal metadata (chat-<id>.md, blitz-<id>-chat.*, .blitzos/terminals/<id>/), and collapse its now-empty
-   *  stage (stageCount recomputes DOWN). Primary '0' is never closable. Idempotent. */
+   *  terminal metadata (chat-<id>.md, blitz-<id>-chat.*, .blitzos/terminals/<id>/), and drop its chat widget.
+   *  Primary '0' is never closable. Idempotent. */
   function closeAgent(agentId) {
     const id = String(agentId)
     if (id === '0') return { ok: false, error: 'cannot close the primary agent' }
@@ -703,22 +684,21 @@ export function createWorkspaceHost(a) {
     if (!/^[0-9]+$/.test(id)) return { ok: false, error: 'invalid agent id' }
     if (switching) return { ok: false, error: 'switch in progress' }
     try { a.stopAgent?.(id) } catch (e) { console.error('[workspace] stopAgent failed for', id, e?.message || e) } // sets stopping → no auto-restart
-    removeAgentFiles(activeWorkspace, id) // delete the agent dir FIRST so agentIds() drops it before we recompute stageCount
+    removeAgentFiles(activeWorkspace, id) // delete the agent dir FIRST so agentIds() drops it
     clearChatQuietTimer(id)
     chatTerminalActivityAt.delete(id)
     chatStatuses.delete(id)
     const sid = chatSurfaceId(id)
-    const stageCount = Math.max(1, maxAgentStageCount())
     try {
       const st = a.getState()
-      if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.filter((s) => s && s.id !== sid), stageCount })
+      if (st && Array.isArray(st.surfaces)) a.setState({ ...st, surfaces: st.surfaces.filter((s) => s && s.id !== sid) })
     } catch { /* adapter without getState/setState */ }
     a.broadcast({ type: 'close', id: sid }) // renderer drops the chat widget (+ its terminal tab — see store.closeAgent)
-    a.broadcast({ type: 'agent-remove', id, stageCount }) // tray re-lists + renderer collapses the empty stage
+    a.broadcast({ type: 'agent-remove', id }) // tray re-lists
     updateChatHubState('0', true)
     return { ok: true }
   }
-  /** Rename an agent (cosmetic — the id stays the file/stage key). Updates meta + the widget title live. */
+  /** Rename an agent (cosmetic — the id stays the file key). Updates meta + the widget title live. */
   function renameAgent(agentId, newTitle) {
     const id = String(agentId)
     const title = String(newTitle || '').trim()
@@ -864,14 +844,10 @@ export function createWorkspaceHost(a) {
       // activity feed still lives in .blitzos/state/panels.json. Merge both back on boot.
       migrateChatToFile() // seed chat.md from an old panels.json transcript, once
       const panels = readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')
-      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'canvas', stageCount: 1 }
+      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' }
       const surfaces = [...base.surfaces, ...buildAgentSurfaces(), ...panels]
-      // Set state UNCONDITIONALLY (even with zero surfaces) so a persisted stageCount > 1 isn't lost on an
-      // empty workspace — the hydrate senders read cached.stageCount, which would otherwise stay undefined→1.
-      // stageCount self-heals to fit every agent's stage (max agent id + 1), so an old workspace whose
-      // stageCount wasn't bumped — or a hand-added agent — still lands its widget in a reachable stage.
-      const stageCount = Math.max(base.stageCount ?? 1, maxAgentStageCount())
-      a.setState({ surfaces, camera: base.camera, mode: base.mode, stageCount, stageOrder: growOrder(base.stageOrder, stageCount) })
+      // Single-canvas nav: ONE home region, no stages — so nothing to self-heal on hydrate.
+      a.setState({ surfaces, camera: base.camera, mode: base.mode })
       if (surfaces.length) console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
     } catch (e) {
       console.error('[workspace] hydrate failed:', e?.message || e)
@@ -957,13 +933,11 @@ export function createWorkspaceHost(a) {
       // activity panel — never carry the previous workspace's over.
       migrateChatToFile()
       const surfaces = [...next.surfaces, ...buildAgentSurfaces(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
-      const stageCount = Math.max(next.stageCount ?? 1, maxAgentStageCount()) // self-heal for the destination's agents
-      const stageOrder = growOrder(next.stageOrder, stageCount)
-      a.setState({ surfaces, camera: next.camera, mode: next.mode, stageCount, stageOrder, view: { cx: next.camera.x, cy: next.camera.y } })
+      a.setState({ surfaces, camera: next.camera, mode: next.mode, view: { cx: next.camera.x, cy: next.camera.y } })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
       rememberActive() // boot returns the user HERE, not to the default
-      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, stageCount, stageOrder, workspace: name })
+      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, workspace: name })
       console.log(`[workspace] switched → ${name}`)
       return { status: 200, body: { ok: true, active: name } }
     } finally {
@@ -1072,6 +1046,7 @@ export function createWorkspaceHost(a) {
     restoreChatHub,
     newAgentId,
     addAgent,
+    setAgentOrchestrators,
     closeAgent,
     renameAgent,
     resumeAgentsOnBoot,

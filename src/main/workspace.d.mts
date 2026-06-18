@@ -12,8 +12,6 @@ export interface HydratedWorkspace {
   surfaces: Array<Record<string, unknown>>
   camera: { x: number; y: number; scale: number }
   mode: 'desktop' | 'canvas'
-  /** #45: number of tiled workspace stages (1 for old folders / missing / invalid). */
-  stageCount: number
 }
 
 /** Reconstruct surface descriptors from a workspace folder (inverse of writeWorkspace). */
@@ -63,7 +61,7 @@ export interface WorkspaceEntry {
   path: string
   nodeCount: number
   updatedAt: number
-  /** mtime (ms) of the cached primary-stage thumbnail, 0 if none (cache-busts the overview tile). */
+  /** mtime (ms) of the cached home-frame thumbnail, 0 if none (cache-busts the overview tile). */
   thumbTs: number
 }
 
@@ -75,6 +73,9 @@ export function resolveWorkspace(root: string, name: string, opts: { mustExist: 
 
 /** Append one chat message to a workspace folder's chat[-<sessionId>].md (path-based; any workspace). */
 export function appendChatMessage(dir: string, role: 'user' | 'agent', text: string, sessionId?: string, meta?: Record<string, unknown>): void
+
+/** The chat transcript file name for an agent id: '0' → 'chat.md', N → 'chat-N.md'. (Workspace-root relative.) */
+export function chatFileName(sessionId?: string): string
 
 /** List workspace folders under root, newest-edited first. */
 export function listWorkspaces(root: string): WorkspaceEntry[]

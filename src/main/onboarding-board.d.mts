@@ -25,11 +25,10 @@ export interface ScanJson {
   gaps: string[]
 }
 
-/** A surface as the lattice sees it (occupancy input): only slot fields matter. */
+/** A surface as the lattice sees it (occupancy input): only the slot field matters. */
 export interface StagedSurface {
   id: string
   slot?: { col: number; row: number; size: string }
-  slotStage?: number
   minimized?: boolean
   groupId?: string
 }
@@ -42,10 +41,9 @@ export interface BoardCard {
   native?: string
   title: string
   props: Record<string, unknown>
-  /** Staged tile: the slot on the stage-0 lattice. */
+  /** Home tile: the slot on the home lattice. */
   slot?: { col: number; row: number; size: string }
-  slotStage?: number
-  /** Lattice was full: parked below the stage frame at these world coords instead. */
+  /** Lattice was full: parked below the home frame at these world coords instead. */
   offstage?: boolean
   x?: number
   y?: number
@@ -55,7 +53,7 @@ export interface BoardCard {
 
 export const UNLOCK_SIZE: string
 export function unlockCardProps(appName: string): Record<string, unknown>
-export function findUnlockSlot(surfaces: StagedSurface[] | null | undefined, viewport?: { w: number; h: number } | null): { slot: { col: number; row: number; size: string }; slotStage: number } | null
+export function findUnlockSlot(surfaces: StagedSurface[] | null | undefined, viewport?: { w: number; h: number } | null): { slot: { col: number; row: number; size: string } } | null
 /** The hand-tuned Branch A fixed layout: role → {col,row,size}. `chat` is applied to the chat hub. */
 export const BRANCH_A_LAYOUT: Record<string, { col: number; row: number; size: string }>
 export function buildBoardPlan(

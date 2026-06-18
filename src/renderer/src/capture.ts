@@ -1,14 +1,14 @@
-import { useDesktop, primaryRect } from './store'
+import { useDesktop, homeRect } from './store'
 import type { Surface } from './types'
 
-// Capture a "screenshot" of the PRIMARY AREA — the on-screen desktop region (screen-sized + dynamic,
-// see primaryRect) centered on the world origin — into a JPEG data URL. This is the last-seen snapshot shown in the Mission Control
-// overview (macOS-style). Since users are mostly locked to the primary space, this rectangle IS the
+// Capture a "screenshot" of the HOME REGION — the on-screen desktop region (screen-sized + dynamic,
+// see homeRect) centered on the world origin — into a JPEG data URL. This is the last-seen snapshot shown in the Mission Control
+// overview (macOS-style). Since users are mostly homed on this region, this rectangle IS the
 // board. Web surfaces are drawn from their live streamed <canvas> (real pixels, same-origin via the
 // data:-URL frame draw, so readable); notes / panels / srcdoc draw as titled cards (their content
 // isn't compositable here). Returns null if there's nothing meaningful to capture.
 
-// The thumbnail captures the PRIMARY AREA (the on-screen desktop region). The stage is screen-sized
+// The thumbnail captures the HOME REGION (the on-screen desktop region). The region is screen-sized
 // (dynamic), so the exact rect + scale are computed per call from the live viewport.
 const THUMB_W = 480
 
@@ -43,10 +43,10 @@ export function capturePrimaryThumb(): string | null {
   const surfaces = st.surfaces
   if (!surfaces.length) return null
 
-  const rect = primaryRect(st.viewport)
+  const rect = homeRect(st.viewport)
   const THUMB_H = Math.round((THUMB_W * rect.h) / rect.w)
   const SCALE = THUMB_W / rect.w // world px → thumb px
-  const ORIGIN_X = rect.x // primary rect left edge in world coords
+  const ORIGIN_X = rect.x // home rect left edge in world coords
   const ORIGIN_Y = rect.y // top edge
 
   const canvas = document.createElement('canvas')
@@ -72,7 +72,7 @@ export function capturePrimaryThumb(): string | null {
     const y = (s.y - ORIGIN_Y) * SCALE
     const w = s.w * SCALE
     const h = s.h * SCALE
-    if (x + w < 0 || y + h < 0 || x > THUMB_W || y > THUMB_H) continue // outside the primary rect
+    if (x + w < 0 || y + h < 0 || x > THUMB_W || y > THUMB_H) continue // outside the home rect
     drewAny++
 
     let drew = false
@@ -107,7 +107,7 @@ export function capturePrimaryThumb(): string | null {
     }
   }
 
-  if (!drewAny) return null // every surface was off the primary rect — don't clobber a good thumb with a blank one
+  if (!drewAny) return null // every surface was off the home rect — don't clobber a good thumb with a blank one
   try {
     return canvas.toDataURL('image/jpeg', 0.7)
   } catch {

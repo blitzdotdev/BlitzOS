@@ -4,19 +4,19 @@
 // server-mode onboarding can bind the same plan to its own ops. onboarding.ts owns the impure
 // half (the scan child, surface creation, FDA poll).
 //
-// STAGE LATTICE (plans/blitzos-stage-slot-desktop.md): the board is placed on the same slot grid
-// the agents use — sizes are chosen PER CARD FROM ITS CONTENT (a punchcard needs width → l; a
-// dossier grid is the hero → xl; 8 workflow rows are list-shaped → tall), then findSlot picks the
-// exact free span against the LIVE surfaces (the pinned chat hub already holds a tall span). A
-// card that can't fit shrinks one size at a time down to m; if the lattice is genuinely full it
-// PARKS off-stage below the stage frame (alive, zoom-out visible, bring_to_stage-able) — tiles
-// never overlap and never reflow, so there is no pixel math and no clamp dance to fight.
+// HOME LATTICE (plans/blitzos-single-canvas-navigation.md): the board is placed on the single home
+// slot grid the agents use. Sizes are chosen PER CARD FROM ITS CONTENT (a punchcard needs width, so
+// l; a dossier grid is the hero, so xl; 8 workflow rows are list-shaped, so tall), then findSlot
+// picks the exact free span against the LIVE surfaces (the pinned chat hub already holds a tall
+// span). A card that can't fit shrinks one size at a time down to m; if the lattice is genuinely
+// full it PARKS off-screen below the home frame (alive, zoom-out visible, bring_home-able), so tiles
+// never overlap and never reflow and there is no pixel math and no clamp dance to fight.
 // Composition is steered with `near` hints, not coordinates; webFirst puts Workflows first in
-// line for the prime spans (projects yields). The onboarding board deliberately saturates the
-// stage past the agents' soft STAGE_BUDGET (it IS the user's first desktop); the hard cap is the
+// line for the prime spans (projects yields). The onboarding board deliberately saturates the home
+// lattice past the agents' soft HOME_BUDGET (it IS the user's first desktop); the hard cap is the
 // lattice itself, and the resident brain is expected to curate it down from there.
 import { latticeFor, findSlot, sizePx, spanOf } from '../renderer/src/stage-core.mjs'
-import { stageRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
+import { homeRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 
 const fmtHour = (h) => `${String(h).padStart(2, '0')}:00`
 const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -174,7 +174,7 @@ const ACCENT_OF = {
 
 // ---- slot sizing: FIT-FIRST, then grow into leftover space ----
 // Every widget is responsive (gist at m, detail at bigger spans / popped out), so the planner's
-// job is to get EVERY card on the stage first: all cards start compact (m; the unlock card l —
+// job is to get EVERY card on home first: all cards start compact (m; the unlock card l, since
 // its consent copy needs the height), and only then are upgrades granted in priority order while
 // free cells remain. This is the inverse of "ideal size then overflow": clutter never beats fit.
 const count = (p) => ((p && p.items) || []).length
@@ -199,7 +199,7 @@ const cellsOf = (size) => {
 // When even the chosen span doesn't fit the fragmented lattice, shrink one step at a time, down
 // to s (every widget renders a gist at s, and s tiles soak up the 1-wide orphan column a 7-col
 // lattice strands). The unlock card floors at m (its consent copy needs the room). Below the
-// floor, the card goes BACKSTAGE.
+// floor, the card parks off-screen.
 const SHRINK = { xxl: 'xl', xl: 'l', tall: 'l', l: 'm', m: 's', s: null }
 const FLOOR = { unlock: 'm' }
 const shrinkFrom = (role, size) => {
@@ -239,20 +239,20 @@ export function unlockCardProps(appName) {
 }
 
 /** A free span for the unlock card against LIVE surfaces (the cached-board re-ensure path).
- *  Shrinks l→m; null when the stage is truly full (caller parks it). */
+ *  Shrinks l→m; null when home is truly full (caller parks it). */
 export function findUnlockSlot(surfaces, viewport = null) {
-  const lat = latticeFor(viewport || DEFAULT_VP, 0)
+  const lat = latticeFor(viewport || DEFAULT_VP)
   for (let size = UNLOCK_SIZE; size; size = SHRINK[size]) {
-    const at = findSlot(surfaces || [], lat, size, NEAR_OF.unlock, 0)
-    if (at) return { slot: { col: at.col, row: at.row, size }, slotStage: 0 }
+    const at = findSlot(surfaces || [], lat, size, NEAR_OF.unlock)
+    if (at) return { slot: { col: at.col, row: at.row, size } }
   }
   return null
 }
 
-/** Off-stage parking below the stage frame: a clean GRID spaced by the card's own footprint —
- *  parked cards must never overlap each other (the cascade-by-64px pile read as clutter). */
+/** Off-screen parking below the home frame: a clean GRID spaced by the card's own footprint, so
+ *  parked cards never overlap each other (the cascade-by-64px pile read as clutter). */
 function parkSpot(vp, i) {
-  const r = stageRect(0, vp)
+  const r = homeRect(vp)
   const cell = sizePx('m')
   const col = i % 3
   const row = Math.floor(i / 3)
@@ -262,11 +262,11 @@ function parkSpot(vp, i) {
 /**
  * scan.json → resolved, PLACED card plan. Spawn order = priority order (what wins the prime
  * spans, and the assembly the human watches). Pass the LIVE surfaces so occupancy includes the
- * pinned chat hub and anything else already on stage 0.
- * Returns cards as either { slot:{col,row,size}, slotStage:0 } (staged tiles) or
- * { offstage:true, x, y, w, h } (parked below the stage, brain can bring_to_stage later).
+ * pinned chat hub and anything else already on home.
+ * Returns cards as either { slot:{col,row,size} } (slotted home tiles) or
+ * { offstage:true, x, y, w, h } (parked below home, brain can bring_home later).
  * The unlock card is part of the plan when FDA is off (role 'unlock', native) so it gets
- * placement priority right after the gaps card — the director merges appName into its props.
+ * placement priority right after the gaps card (the director merges appName into its props).
  */
 /** A fixed slot fits the LIVE lattice (a smaller screen may not hold a col-6 card). */
 function slotFits(slot, lat) {
@@ -274,14 +274,14 @@ function slotFits(slot, lat) {
   const sp = spanOf(slot.size)
   return slot.col >= 0 && slot.row >= 0 && slot.col + sp.c <= lat.cols && slot.row + sp.r <= lat.rows
 }
-/** Does a candidate slot's cells overlap anything already placed on stage 0? (slotFits only checks
- *  lattice BOUNDS — this checks OCCUPANCY, so a fixed-layout card never lands on the chat hub or a
+/** Does a candidate slot's cells overlap anything already placed on home? (slotFits only checks
+ *  lattice BOUNDS; this checks OCCUPANCY, so a fixed-layout card never lands on the chat hub or a
  *  card a dynamic placement already took.) */
 function slotTaken(slot, occupied) {
   const a = spanOf(slot.size), ax2 = slot.col + a.c, ay2 = slot.row + a.r
   for (const o of occupied || []) {
     const os = o && o.slot
-    if (!os || (o.slotStage ?? 0) !== 0) continue
+    if (!os) continue
     const b = spanOf(os.size)
     if (slot.col < os.col + b.c && ax2 > os.col && slot.row < os.row + b.r && ay2 > os.row) return true
   }
@@ -304,7 +304,7 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null, layout = 
   const ORDER = ['profile', hero, 'worktabs', 'rhythm', 'gaps', ...(fdaOff ? ['unlock'] : []), 'workflows', 'schedule', 'sessions', 'projects']
 
   const vp = viewport || DEFAULT_VP
-  const lat = latticeFor(vp, 0)
+  const lat = latticeFor(vp)
   const occupied = [...(surfaces || [])] // live tiles (chat hub) + cards as we place them
 
   // Fit-first sizing: count the lattice cells already taken (the chat hub's span included), start
@@ -313,7 +313,7 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null, layout = 
   let usedCells = 0
   for (const s of occupied) {
     const sl = s && s.slot
-    if (sl && (s.slotStage ?? 0) === 0 && !s.minimized && !s.groupId) usedCells += cellsOf(sl.size)
+    if (sl && !s.minimized && !s.groupId) usedCells += cellsOf(sl.size)
   }
   const sizes = {}
   for (const r of present) {
@@ -340,8 +340,7 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null, layout = 
   const place = (role, at, size) => {
     const c = cards.get(role)
     c.slot = { col: at.col, row: at.row, size }
-    c.slotStage = 0
-    occupied.push({ id: 'plan:' + role, slot: c.slot, slotStage: 0 })
+    occupied.push({ id: 'plan:' + role, slot: c.slot })
   }
 
   // Pass 1 — fixed-layout (Branch A) cards claim their hand-tuned slots FIRST (only when the slot
@@ -354,12 +353,12 @@ export function buildBoardPlan(scan, { surfaces = [], viewport = null, layout = 
     else dynamic.push(role)
   }
   // Pass 2 — dynamic cards fill the remaining gaps in ORDER priority: shrink one step at a time to
-  // the role's floor before giving up, then PARK off-stage (alive, zoom-out visible, bring_to_stage-able).
+  // the role's floor before giving up, then PARK off-screen (alive, zoom-out visible, bring_home-able).
   let parked = 0
   for (const role of dynamic) {
     let size = sizes[role] || 'm', at = null
     while (size) {
-      at = findSlot(occupied, lat, size, NEAR_OF[role] || 'center', 0)
+      at = findSlot(occupied, lat, size, NEAR_OF[role] || 'center')
       if (at) break
       size = shrinkFrom(role, size)
     }

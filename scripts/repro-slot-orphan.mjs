@@ -22,8 +22,8 @@ const readNodes = () => JSON.parse(readFileSync(metaFile, 'utf8')).nodes
 
 try {
   // 1) SEED — a slotted board card (the onboarding seed path: osCreateSurface with a slot).
-  const card = { id: 'card-rhythm', kind: 'srcdoc', html: '<div>rhythm</div>', title: 'Working rhythm', x: 100, y: 100, w: 344, h: 344, slot: { col: 4, row: 0, size: 'l' }, slotStage: 0 }
-  writeWorkspace(dir, { surfaces: [card], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop', stageCount: 1 })
+  const card = { id: 'card-rhythm', kind: 'srcdoc', html: '<div>rhythm</div>', title: 'Working rhythm', x: 100, y: 100, w: 344, h: 344, slot: { col: 4, row: 0, size: 'l' } }
+  writeWorkspace(dir, { surfaces: [card], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' })
   let nodes = readNodes()
   const seeded = nodes.find((n) => n.id === 'card-rhythm')
   ok(!!seeded, 'seeded: node persisted')
@@ -34,7 +34,7 @@ try {
   // 2) GLITCH-DROP — a renderer push that DROPPED the card (crash reload / hydrate race / HMR), NOT a
   //    close. The host persists this shrunk osState. writeWorkspace does NOT delete content files, so
   //    the card's file is now an ORPHAN (file present, node gone).
-  writeWorkspace(dir, { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop', stageCount: 1 })
+  writeWorkspace(dir, { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' })
   nodes = readNodes()
   ok(!nodes.find((n) => n.id === 'card-rhythm'), 'after shrunk push: node REMOVED from workspace.json')
   ok(existsSync(contentPath), 'after shrunk push: content file STILL on disk (orphaned — close never ran)')

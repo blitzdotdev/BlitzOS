@@ -20,7 +20,6 @@ type TerminalMeta = {
   exitCode: number | null
   createdAt: number
   endedAt: number | null
-  stage?: number | null
 }
 type TerminalApi = {
   terminalList?: () => Promise<unknown[]>
@@ -57,7 +56,6 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
   const openTerminal = useDesktop((s) => s.openTerminal)
   const closeAgent = useDesktop((s) => s.closeAgent)
   const renameAgent = useDesktop((s) => s.renameAgent)
-  const goToStage = useDesktop((s) => s.goToStage)
   void surface
 
   const refresh = useCallback(() => {
@@ -97,7 +95,7 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
     const isAgent = s.kind === 'agent'
     const isPrimary = isAgent && s.id === '0'
     return (
-      <div key={s.id} className="run-row" onDoubleClick={() => openTerminal(s.id, s.title, s.stage)}>
+      <div key={s.id} className="run-row" onDoubleClick={() => openTerminal(s.id, s.title)}>
         <span className="run-dot" style={{ background: statusColor(s) }} title={s.status} />
         <span className="run-ico" title={isAgent ? 'Agent' : 'Terminal'}>
           {isAgent ? <IconChat size={13} /> : <IconCode size={13} />}
@@ -121,9 +119,6 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
           )}
           <div className="run-meta">
             <span className="run-kind">{isPrimary ? 'Agent · primary' : isAgent ? 'Agent' : 'Terminal'}</span>
-            {Number.isInteger(s.stage) && (
-              <button className="run-stage" title={`Go to stage ${s.stage}`} onClick={(e) => { e.stopPropagation(); goToStage(s.stage as number) }}> · Stage {s.stage}</button>
-            )}
             <span className="run-status">
               {' · '}
               {s.status}
@@ -136,7 +131,7 @@ export function RuntimePanel({ surface }: { surface: Surface }): JSX.Element {
         <div className="run-actions">
           {s.status === 'running' ? (
             <>
-              <button className="run-btn" title={isAgent ? "Show this agent's terminal" : "Show this terminal"} onClick={() => openTerminal(s.id, s.title, s.stage)}>
+              <button className="run-btn" title={isAgent ? "Show this agent's terminal" : "Show this terminal"} onClick={() => openTerminal(s.id, s.title)}>
                 Open
               </button>
               <button

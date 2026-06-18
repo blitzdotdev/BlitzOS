@@ -57,7 +57,7 @@ function now(): number {
 // one line blew the 8KB cap into a truncated string on every watcher blip (the VM diff showed
 // 456/465 acts mutilated). Replay needs their LAYOUT; content fidelity comes from the individual
 // create/update/chat acts, which stay verbatim.
-const LAYOUT_KEYS = ['id', 'kind', 'component', 'role', 'x', 'y', 'w', 'h', 'z', 'title', 'url', 'slot', 'slotStage', 'groupId', 'pinned', 'sessionId', 'focus'] as const
+const LAYOUT_KEYS = ['id', 'kind', 'component', 'role', 'x', 'y', 'w', 'h', 'z', 'title', 'url', 'slot', 'groupId', 'pinned', 'sessionId', 'focus'] as const
 function compactAct(d: unknown): unknown {
   const a = d as { type?: unknown; surfaces?: unknown[]; messages?: unknown[] }
   if (!a || typeof a !== 'object') return d

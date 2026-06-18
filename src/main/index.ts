@@ -1,19 +1,19 @@
-import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus } from './osActions'
 import { emitSystemMoment, setMomentTap } from './events'
-import { openBootJournal } from './workspace.mjs'
+import { openBootJournal, chatFileName } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
 import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, electronOps, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
 import { wireLauncher, registerLauncher } from './launcher'
-import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
-import { wireJobModel, readJob, dutyForJobStatus } from './job-model.mjs'
-import { wirePlanDoc } from './plan-doc.mjs'
+import { wireIsland, registerIsland, toggleIsland, pushIslandFullscreen } from './island'
+import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, orchestratorBootTask } from './agent-runtime.mjs'
+import { readTerminalMeta } from './terminal-manager.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -29,6 +29,12 @@ import { resolveTmuxBin } from './tmux-host.mjs'
 import { setWebContentsViewInputForwarder, setWebContentsViewDiagTap } from './webcontents-view-host'
 import { createSandwich, type Sandwich } from './sandwich'
 import { computerUseHelper } from './computer-use-helper'
+import { launchIslandHelper, setIslandDeps } from './island-bridge.mjs'
+import type { IslandHelperHandle } from './island-bridge.mjs'
+// The island isolation boundary (the ONE shared membership core, pure-node so a node test imports the REAL
+// filter): only ids the island itself spawned (recordIslandId) are ever listed/tailed (islandLiveIds), so the
+// HUD never mirrors the user's main canvas chat ('0') or a sibling peer agent. See island-membership.mjs.
+import { recordIslandId, islandLiveIds, pruneIslandIds } from './island-membership.mjs'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -76,12 +82,21 @@ let mainWindow: BrowserWindow | null = null
 // The window pair (sandwich compositor) — mainWindow above is its UI layer; sandwich.pages hosts
 // the browser WebContentsViews underneath it.
 let sandwich: Sandwich | null = null
+// Did the notch-spill island ITSELF put the sandwich into fullscreen on its last spill? If the user was already
+// fullscreen (green light / Ctrl+Cmd+F) when they spilled, this stays false and collapsing the island leaves
+// their fullscreen intact (the island only exits the fullscreen it entered). Cleared on any external leave.
+let islandEnteredFullscreen = false
 // The boot journal (crash dirty-bit + root lease) — opened once the workspace host exists, marked
 // clean as the LAST step of a graceful quit ("clean" = state was flushed first).
 let bootJournal: BootJournal | null = null
 // The session-tape spool (plans/blitzos-logging.md), hoisted so launchAgent (agent.spawn) and the
 // client-error IPC can reach it. Null until the BLITZ_TAPE init block runs.
 let sessionTape: ReturnType<typeof makeSessionTape> | null = null
+// The native dynamic-island helper (BlitzIsland.app) supervisor handle, hoisted so before-quit can stop its
+// relaunch supervision. Null until startControlServer + launchIslandHelper run. The island's ISOLATION
+// boundary (which agent ids the HUD may ever list/tail) lives in island-membership.mjs — realDeps records
+// island-spawned ids there and the tail/list gate every read through islandLiveIds.
+let islandHelper: IslandHelperHandle | null = null
 
 // Gather the user's small durable app state for a state.snapshot: workspace.json + content/memory files +
 // onboarding + the root journal's permissions/bookmarks. All small text; the tape content-addresses each so
@@ -465,6 +480,8 @@ app.whenReady().then(() => {
   ipcMain.on('os:agent-spawn', (_e, p?: { title?: string }) => { try { osSpawnAgent(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
   ipcMain.handle('os:close-agent', (_e, id: string) => { try { return osCloseAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   ipcMain.handle('os:rename-agent', (_e, p: { id: string; title: string }) => { try { return osRenameAgent(String(p?.id), String(p?.title ?? '')) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
+  // The orchestrators (dynamic-workflows) toggle: flip the durable per-agent flag + wake it live (delivery B).
+  ipcMain.handle('os:agent-orchestrators', (_e, p: { id: string; on?: boolean }) => { try { return osSetOrchestrators(String(p?.id), p?.on === undefined ? true : !!p.on) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   // blitz.chat (the shared chat hub control): 'new' -> spawn a fresh agent thread (returns its id);
   // 'rename' → retitle an agent. Routes to the SAME osSpawnAgent/osRenameAgent the toolbar uses — the
   // server mirrors this via the shim's chatControl → /api/os/agent-spawn|agent-rename (no divergence).
@@ -516,17 +533,17 @@ app.whenReady().then(() => {
     }
   })
 
-  // The standalone Job Launcher (Shell A, plans/blitzos-job-entrypoints.md): a global hotkey (default
-  // ⌥Space; BLITZ_LAUNCHER_HOTKEY overrides) toggles a small always-on-top NSPanel where the user types a
-  // prompt; Send → electronOps.startJob, which mints a Job whose planning agent authors the plan widget.
-  // ISOLATED — its own window + self-contained inline UI; nothing here touches the renderer (App.tsx/store).
-  // startJob is workspace-host-gated: a Send before a workspace host exists is caught (osSpawnAgent throws
-  // 'no workspace host'), the handler's try/catch surfaces { ok:false } and leaves the bar open.
+  // The standalone Launcher (Shell A): a global hotkey (default ⌥Space; BLITZ_LAUNCHER_HOTKEY overrides) toggles a
+  // small always-on-top NSPanel where the user types a prompt; Send → electronOps.startWorkflow, which spawns an
+  // orchestrator agent (ORCHESTRATORS on) seeded with the task. ISOLATED — its own window + self-contained inline UI;
+  // nothing here touches the renderer (App.tsx/store). Workspace-host-gated: a Send before a workspace host exists is
+  // caught (osSpawnAgent throws 'no workspace host'), the handler's try/catch surfaces { ok:false } + leaves the bar open.
   wireLauncher({
-    // electronOps is typed as a Record<string, (...args:never[])=>unknown> (so the shared registry can hold
-    // every tool uniformly); cast startJob to its real signature at this one call site (no runtime change).
-    startJob: (spec) =>
-      (electronOps.startJob as unknown as (s: { goal: string; contextRefs?: string[] }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string })({ goal: spec.goal, contextRefs: spec.contextRefs }),
+    // electronOps is typed as a Record<string, (...args:never[])=>unknown>; cast startWorkflow to its real
+    // signature at this one call site. The launcher hands us { task, contextRefs }; we forward to the shared
+    // start_workflow tool, which spawns an orchestrator agent seeded with the task.
+    startWorkflow: (spec) =>
+      (electronOps.startWorkflow as unknown as (s: { task: string; contextRefs?: string[] }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string })({ task: spec.task, contextRefs: spec.contextRefs }),
     focusMain: () => {
       const w = mainWindow
       if (!w || w.isDestroyed()) return
@@ -537,8 +554,391 @@ app.whenReady().then(() => {
   })
   registerLauncher()
 
+  // The Notch-spill Island (src/main/island.ts): a self-hosted dynamic island that lives in the macOS notch and
+  // SPILLS to fullscreen. Its OWN standalone window + inline UI (mirrors the launcher) — nothing here touches the
+  // renderer. CALLs the verified electronOps seams (Deep ON → startWorkflow; Deep OFF → spawnAgent + userMessage)
+  // and the sandwich's setFullScreen (the fill handoff). All-Spaces, so it serves both "anywhere over macOS" and
+  // "in BlitzOS". Toggle = ⌥Space (registered below). DISTINCT from the legacy native BlitzIsland.app / the WS
+  // island-bridge wired further down — different window, different IPC namespace (os:island-*).
+  wireIsland({
+    // Deep ON → an orchestrated workflow (electronOps.startWorkflow, ORCHESTRATORS on). Deep OFF → a conversational
+    // peer agent (electronOps.spawnAgent) seeded with the prompt (electronOps.userMessage WRITES chat.md + wakes).
+    // electronOps is typed Record<string,(...args:never[])=>unknown>; cast each to its real signature at this one
+    // call site (exactly how wireLauncher casts startWorkflow above + how realDeps casts spawnAgent/userMessage below).
+    send: ({ prompt, deep }) => {
+      try {
+        if (deep) {
+          const r = (electronOps.startWorkflow as unknown as (s: { task: string; contextRefs?: string[]; title?: string }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string })({ task: prompt, contextRefs: [], title: undefined })
+          return r && r.ok !== false ? { ok: true, id: r.agent?.id ?? null } : { ok: false, error: r?.error || 'startWorkflow failed' }
+        }
+        // Deep OFF: a PLAIN agent (no orchestrators) seeded with the prompt — mirrors the island-bridge realDeps
+        // non-orchestrator path. Do NOT route this through startWorkflow (that forces orchestrators ON).
+        const a = (electronOps.spawnAgent as unknown as (title?: string) => { id: string; title: string })(undefined)
+        try { (electronOps.userMessage as unknown as (text: string, agentId?: string) => void)(prompt, a.id) } catch { /* boots with its duty; the seed lands when chat.md is read */ }
+        return { ok: true, id: a.id }
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || 'send threw' }
+      }
+    },
+    // Fill handoff: on → fullscreen the PAIR (sandwich.setFullScreen fullscreens the parent pages window; the
+    // attached UI child rides into its Space) AND raise the real BlitzOS window to the front so the spilled island
+    // reveals the live canvas behind it. off → RESTORE the pre-spill fullscreen state, NOT an unconditional exit:
+    // if BlitzOS was ALREADY fullscreen when the island spilled, collapsing the island must leave it fullscreen
+    // (the island only exits the fullscreen IT entered, never the user's intentional green-light/Ctrl+Cmd+F one).
+    // Only setFullScreen on the parent is safe (the parented child must never be moved/resized directly — see the
+    // sandwich notes); mainWindow = sandwich.ui.
+    fill: (on: boolean) => {
+      const s = sandwich
+      if (!s || s.pages.isDestroyed()) return
+      if (on) {
+        // Capture whether the user was already fullscreen; only enter (and later exit) if WE turned it on.
+        islandEnteredFullscreen = !s.pages.isFullScreen()
+        if (islandEnteredFullscreen) s.setFullScreen(true)
+        const w = mainWindow
+        if (w && !w.isDestroyed()) {
+          if (w.isMinimized()) w.restore()
+          w.show()
+          w.focus()
+        }
+      } else {
+        // Suck back: exit fullscreen ONLY if the island was the one that entered it.
+        if (islandEnteredFullscreen && s.pages.isFullScreen()) s.setFullScreen(false)
+        islandEnteredFullscreen = false
+      }
+    }
+  })
+  registerIsland()
+
+  // FOLLOWER wiring: the sandwich's `pages` fullscreen is ALSO driven by the green traffic light, the Ctrl+Cmd+F
+  // accelerator, and macOS itself — paths the island doesn't initiate. Forward the REAL enter/leave to the island
+  // so it reconciles: an external LEAVE while spilled collapses the plate (it must not cover a non-fullscreen
+  // canvas); an external ENTER is left to the user's own pill (the island never commandeers a fullscreen it didn't
+  // start). An external exit also means our entry is no longer ours — clear the flag so a later suck-back is a
+  // no-op rather than yanking the user out of a fullscreen they re-entered. Listeners are additive on `pages`
+  // (exposed by the Sandwich interface); sandwich.ts is untouched.
+  if (sandwich && !sandwich.pages.isDestroyed()) {
+    sandwich.pages.on('enter-full-screen', () => pushIslandFullscreen(true))
+    sandwich.pages.on('leave-full-screen', () => {
+      islandEnteredFullscreen = false
+      pushIslandFullscreen(false)
+    })
+  }
+
+  // ⌥Space toggles EXACTLY ONE island. The new Electron notch-spill island (island.ts) SUPERSEDES the legacy
+  // native BlitzIsland.app (plans/blitzos-dynamic-island.md: pure-Electron overlay, retire the native helper + WS
+  // bridge), so it is canonical by default and owns ⌥Space here. BLITZ_NATIVE_ISLAND=1 keeps the legacy native
+  // helper instead — and in THAT mode the native helper owns the Carbon ⌥Space chord (main.swift
+  // RegisterEventHotKey), so we must NOT register it here too: Electron's globalShortcut and the native app's
+  // Carbon registration are independent OS mechanisms that would BOTH fire (register() can't even detect the
+  // native Carbon claim — its false return only signals a collision with another globalShortcut in THIS process),
+  // double-firing one keypress into two islands. So whichever island is active is the SOLE owner of ⌥Space.
+  const useNativeIsland = process.platform === 'darwin' && process.env.BLITZ_NATIVE_ISLAND === '1'
+  if (!useNativeIsland) {
+    // register() returns false only on a collision with another globalShortcut in THIS process (e.g. a leftover
+    // dev instance) — never against the native Carbon chord. Log + continue; never throw.
+    if (!globalShortcut.register('Alt+Space', () => toggleIsland())) {
+      console.error('[island] could not register ⌥Space (Alt+Space) — already held by another globalShortcut in this process')
+    }
+  }
+
+  // BlitzIsland ↔ control-server bridge (plans/blitzos-dynamic-island.md): wire the notch HUD's process tabs
+  // to the live agents. island-bridge.mjs stays pure-node + dependency-injected; ALL electron/osActions calls
+  // live HERE in realDeps. Set BEFORE startControlServer() — control-server's attachIslandWebSocket reads the
+  // injected deps lazily at connect time, so they must be in place first (a connect that races ahead degrades
+  // to the no-op default, never throws). Do NOT edit osActions.ts/electron-os-tools.ts (CALL the seams only).
+  //
+  // Status vocabulary: the host CHAT_STATUSES (idle|starting|working|watching|waiting|stopped|error) maps to
+  // the island contract (new|working|waiting|idle|stopped|error). Mapping is a runtime concern (keeps the
+  // bridge vocabulary-free): starting→new (just spawned, no first reply), watching→idle (the island has no
+  // "watching"), the rest pass through.
+  const islandStatusToState = (s: unknown): string =>
+    ({ starting: 'new', watching: 'idle', working: 'working', waiting: 'waiting', idle: 'idle', stopped: 'stopped', error: 'error' } as Record<string, string>)[String(s || 'idle')] || 'idle'
+  // The title for an agent id from the live state: the chat surface carries the agent's title; '0' is 'Main'.
+  // There is no automatic re-titling in the host today (titles are 'Chat'/'Chat N' or an explicit rename) —
+  // titleForAgent reflects the CURRENT title and the tail emits a process.upsert{title} only on an EDGE, so
+  // an auto-naming feature would flow through unchanged without inventing a transition the host never emits.
+  const titleForAgent = (id: string): string => {
+    if (String(id) === '0') return 'Main'
+    try {
+      const s = osGetState().surfaces || []
+      const hit = s.find((x) => String(x.agentId ?? '') === String(id) && (x.component === 'chat' || x.id === `chat-${id}`))
+      if (hit?.title) return String(hit.title)
+    } catch {
+      /* fall through */
+    }
+    return `Chat ${id}`
+  }
+  // Prepended ONCE to the SPAWN seed (NOT on every message — context bloat). Concise island persona.
+  const ISLAND_PREAMBLE = 'You are running in the BlitzOS notch island. Answer concisely — short status lines the user can read at a glance in a small HUD.'
+  const pathsFooter = (paths?: string[]): string =>
+    Array.isArray(paths) && paths.length ? `\n\nContext (dropped on the island):\n${paths.map((p) => `- ${p}`).join('\n')}` : ''
+  // The active workspace NAME — the key for island-membership's per-workspace set (Map<wsName,Set<id>>). NAME
+  // not path: A's '1' and B's '1' must hash to different sets, and the recorder + the read gate must agree on
+  // the same bucket. osWorkspaceContext() is already imported (L6); fall back to '' (the global bucket) if the
+  // context throws (a connect that races ahead of workspace init degrades to an empty island, never crashes).
+  const islandActiveWs = (): string => {
+    try {
+      return osWorkspaceContext().workspace || ''
+    } catch {
+      return ''
+    }
+  }
+
+  // The chat.md TAIL: a pure-node poller emitting reply LINES + status/auto-name UPSERTS. Chat files live in
+  // the WORKSPACE ROOT, named by chatFileName(id) ('0'→chat.md, N→chat-N.md), written by appendChatMessage
+  // (workspace.mjs). NOT under .blitzos/terminals/<id>/ (that's the raw TUI tape, a different stream). Poll
+  // (700ms) over fs.watch on purpose: a workspace switch changes the file set + paths wholesale, and the
+  // chat file is atomic-created then appendFileSync-grown — both break a single long-lived watch. seed()
+  // primes offsets to EOF so boot/reconnect does NOT replay history into the HUD.
+  const startChatTail = (cb: (ev: { id?: string; line?: { at: number; text: string }; upsert?: { title?: string; state?: string }; list?: Array<{ id: string; title: string; state: string }> }) => void): (() => void) => {
+    const offsets = new Map<string, number>() // file abs path -> bytes already consumed
+    const lastStatus = new Map<string, string>() // id -> island-state (emit upsert only on EDGE)
+    const lastTitle = new Map<string, string>() // id -> last seen title (auto-name edge)
+    let lastIds = '' // sorted, joined id set the island last knows about (membership delta -> {list} re-snapshot)
+    let lastWsPath = '' // active-workspace path the last tick observed (a switch must re-snapshot the new set)
+    let stopped = false
+
+    // Parse agent turns appended after the consumed offset; emit one HUD line per new agent turn (collapsed
+    // to its first non-empty line — the island click-expands the full text). The header regex mirrors
+    // readChatMessages (tolerates the optional ` · <ts>` and ` · a:<base64>` annotation). A half-written
+    // final block self-heals next poll because blocks are re-keyed by header byte offset >= the consumed one.
+    const drainFile = (abs: string, id: string): void => {
+      let raw = ''
+      try {
+        raw = readFileSync(abs, 'utf8')
+      } catch {
+        return
+      }
+      // FIRST SIGHT of a chat file = a seed point, NOT a replay: prime the offset to EOF and emit nothing.
+      // seed() only primes the files of agents present at subscribe time; a workspace switch points tick() at
+      // a DIFFERENT file set (paths include the now-active wsPath) whose offsets were never primed. Treating an
+      // unseen file's offset as 0 would parse every historical '### agent' mark and dump the whole history into
+      // the HUD on switch. `.has` distinguishes "never seen" (prime) from a real consumed-0 offset (drain).
+      if (!offsets.has(abs)) {
+        offsets.set(abs, raw.length)
+        return
+      }
+      const prev = offsets.get(abs) || 0
+      if (raw.length <= prev) {
+        offsets.set(abs, raw.length)
+        return
+      }
+      const re = /^### (user|agent)(?: · (\d+))?(?: · a:[A-Za-z0-9+/=]+)?[ \t]*$/gm
+      const marks: Array<{ role: string; ts: number; start: number; end: number }> = []
+      let m: RegExpExecArray | null
+      while ((m = re.exec(raw))) marks.push({ role: m[1], ts: Number(m[2]) || 0, start: m.index, end: re.lastIndex })
+      for (let i = 0; i < marks.length; i++) {
+        if (marks[i].start < prev) continue // already emitted on a prior tick
+        if (marks[i].role !== 'agent') continue // the island shows REPLIES only (user turns are the human's echoes)
+        const body = raw.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].start : raw.length).replace(/^\n+|\n+$/g, '')
+        if (!body) continue
+        const at = marks[i].ts || Date.now() // the runtime stamps time; island-bridge stays time-free
+        const firstLine = body.split('\n').find((l) => l.trim()) || body
+        cb({ id, line: { at, text: firstLine.trim() } })
+      }
+      offsets.set(abs, raw.length)
+    }
+
+    const tick = (): void => {
+      if (stopped) return
+      let wsPath = ''
+      let wsActive = ''
+      try {
+        const ctx = osWorkspaceContext()
+        wsPath = ctx.workspace_path || ''
+        wsActive = ctx.workspace || ''
+      } catch {
+        wsPath = ''
+        wsActive = ''
+      }
+      const statusMap = (() => {
+        try {
+          return osAgentStatus() || {}
+        } catch {
+          return {}
+        }
+      })()
+      // Prune island ids no longer live — but ONLY for the ACTIVE workspace (closeAgent operates on the active
+      // ws and deletes its agent dir first, so a same-ws close is observable here). This closes the same-ws
+      // id-reuse hole (a reissued id won't be falsely owned) WITHOUT dropping an island agent merely sitting in
+      // another workspace (intersect-not-prune for those — they reappear on switch-back). statusMap is the
+      // workspace-scoped osAgentStatus() (agentIds() = the active ws's terminals + '0').
+      pruneIslandIds(wsActive, statusMap)
+      // GATE the whole tick through the island set: ids = only island-spawned ids of the active ws that are
+      // currently live. Everything downstream — the membership-delta {list}, per-id status/title upserts, and
+      // drainFile(join(wsPath, chatFileName(id))) — iterates ONLY these, so the tail never opens '0's chat.md
+      // or a sibling's. This also HARDENS the Swift adoption: the {list} now contains ONLY island ids, so the
+      // first previously-unseen id main.swift adopts the local draft onto is always the just-spawned island id,
+      // never '0'/a sibling. (Honesty wart: a stray process.message/orchestrators for a pruned/closed id still
+      // reaches opUserMessage/opSetOrchestrators — a stray chat.md write / no-op on an unknown agent; NOT gated
+      // here because a per-message membership check would race a legit just-spawned id. Known, not claimed safe.)
+      const ids = islandLiveIds(wsActive, statusMap)
+      // MEMBERSHIP delta -> a FULL {list} re-snapshot. osAgentStatus() drops a closed agent's id (closeAgent
+      // does chatStatuses.delete) and a workspace switch swaps the whole set wholesale, but per-id upserts can
+      // only ADD/edit — they can never tell the island an id VANISHED. Without this, a closed agent's chip, and
+      // on a switch the entire previous workspace's agents, linger in the notch HUD forever (the island only GCs
+      // stale ids inside applyList, reached ONLY on a process.list frame). Re-snapshot on any add/remove OR a
+      // workspace change so the island's applyList prunes the dead chips. The {list} shape mirrors listProcesses.
+      const idsKey = ids.slice().sort().join(' ')
+      if (idsKey !== lastIds || wsPath !== lastWsPath) {
+        lastIds = idsKey
+        lastWsPath = wsPath
+        cb({ list: ids.map((id) => ({ id, title: titleForAgent(id), state: islandStatusToState(statusMap[id]) })) })
+      }
+      for (const id of ids) {
+        // status edge -> upsert
+        const stState = islandStatusToState(statusMap[id])
+        if (lastStatus.get(id) !== stState) {
+          lastStatus.set(id, stState)
+          cb({ id, upsert: { state: stState } })
+        }
+        // auto-name edge -> upsert
+        const tt = titleForAgent(id)
+        if (tt && lastTitle.get(id) !== tt) {
+          lastTitle.set(id, tt)
+          cb({ id, upsert: { title: tt } })
+        }
+        // reply lines
+        if (wsPath) drainFile(join(wsPath, chatFileName(id)), id)
+      }
+    }
+
+    // Seed offsets to current EOF + prime status/title WITHOUT emitting (the HUD starts from "now").
+    const seed = (): void => {
+      if (stopped) return
+      let wsPath = ''
+      let wsActive = ''
+      try {
+        const ctx = osWorkspaceContext()
+        wsPath = ctx.workspace_path || ''
+        wsActive = ctx.workspace || ''
+      } catch {
+        wsPath = ''
+        wsActive = ''
+      }
+      const statusMap = (() => {
+        try {
+          return osAgentStatus() || {}
+        } catch {
+          return {}
+        }
+      })()
+      // FILTERED baseline: only island-spawned ids of the active ws. This matches the connect-time
+      // listProcesses() snapshot (also islandLiveIds-gated) so the first tick after subscribe emits NO
+      // redundant {list}, AND it closes the boot-time half of the leak — no '0' chat.md offset is primed, so
+      // the primary conversation's history can never replay into the HUD on subscribe.
+      const ids = islandLiveIds(wsActive, statusMap)
+      lastIds = ids.slice().sort().join(' ')
+      lastWsPath = wsPath
+      for (const id of ids) {
+        lastStatus.set(id, islandStatusToState(statusMap[id]))
+        lastTitle.set(id, titleForAgent(id))
+        if (wsPath) {
+          try {
+            offsets.set(join(wsPath, chatFileName(id)), statSync(join(wsPath, chatFileName(id))).size)
+          } catch {
+            /* missing → primed lazily on drainFile's first-sight branch; seed primed status so no history replays */
+          }
+        }
+      }
+    }
+    seed()
+
+    const timer = setInterval(tick, 700)
+    timer.unref?.() // never hold the process / a test open
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }
+
+  // electronOps is typed as Record<string, (...args:never[])=>unknown> (the shared registry erases precise
+  // signatures), so cast each method to its real shape at the call site — exactly how wireLauncher casts
+  // startWorkflow above. These are the VERIFIED seams (job-model retired): spawnAgent(title)->{id,title};
+  // startWorkflow({task,contextRefs,title})->{ok,agent:{id,title}}; userMessage(text,id) WRITES chat.md AND
+  // wakes (NOT emitUserMessage); setOrchestrators(id,on) flips live.
+  const opSpawnAgent = electronOps.spawnAgent as unknown as (title?: string) => { id: string; title: string }
+  const opStartWorkflow = electronOps.startWorkflow as unknown as (s: { task: string; contextRefs?: string[]; title?: string }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string }
+  const opUserMessage = electronOps.userMessage as unknown as (text: string, agentId?: string) => void
+  const opSetOrchestrators = electronOps.setOrchestrators as unknown as (id: string, on: boolean) => unknown
+  const realDeps = {
+    // Send. orchestrators=false (DEFAULT): conversational spawn-OFF; true: heavy task spawn-ON (orchestrators
+    // capability). startWorkflow returns {ok, agent:{id,title}} — unwrap .agent; spawnAgent returns {id,title}.
+    spawn: ({ prompt, paths, orchestrators }: { prompt: string; paths: string[]; orchestrators: boolean }): { id: string; title: string } => {
+      if (orchestrators) {
+        const r = opStartWorkflow({ task: `${ISLAND_PREAMBLE}\n\n${prompt || ''}`, contextRefs: paths, title: undefined })
+        // RECORD the new id into the ACTIVE workspace's island set so the tail/list will list+tail it (and
+        // ONLY it + its island siblings). A failed spawn ({id:''}) is skipped by recordIslandId's own guard.
+        const a = r?.agent ? { id: String(r.agent.id), title: String(r.agent.title ?? '') } : { id: '', title: '' }
+        if (a.id) recordIslandId(islandActiveWs(), a.id)
+        return a
+      }
+      const a = opSpawnAgent(undefined) // {id, title}; auto-named later
+      try {
+        opUserMessage(`${ISLAND_PREAMBLE}\n\n${prompt || ''}${pathsFooter(paths)}`, a.id)
+      } catch {
+        /* boots with its duty; the seed lands when chat.md is read */
+      }
+      // Record AFTER the seed so ordering is unchanged; the bridge's optimistic upsert (id carried already)
+      // shows the chip instantly, and by the next 700ms tick this id is a member and converges via {list}.
+      if (a.id) recordIslandId(islandActiveWs(), a.id)
+      return a
+    },
+    // Continue a tab. NO preamble (once-only on spawn). userMessage WRITES chat.md AND wakes (NOT emitUserMessage).
+    message: ({ id, text, paths }: { id: string; text: string; paths: string[] }): void => {
+      opUserMessage(`${text || ''}${pathsFooter(paths)}`, id)
+    },
+    // Flip the toggle live (no restart).
+    setOrchestrators: (id: string, on: boolean): void => {
+      opSetOrchestrators(id, !!on)
+    },
+    // The list: agentStatus is the authority on WHICH agents exist + their status; titles from the chat surface.
+    // GATED through islandLiveIds so the connect-time snapshot lists ONLY island-spawned ids of the active
+    // workspace — never '0' (the user's main canvas chat) or a sibling peer. islandLiveIds ⊆ st keys, so
+    // st[id] is always defined.
+    listProcesses: (): Array<{ id: string; title: string; state: string }> => {
+      const st = osAgentStatus() || {}
+      return islandLiveIds(islandActiveWs(), st).map((id) => ({ id, title: titleForAgent(id), state: islandStatusToState(st[id]) }))
+    },
+    // REPLIES + status/auto-name. Tail each agent's chat.md for NEW agent turns; poll agentStatus for upserts.
+    subscribeEvents: (cb: (ev: { id?: string; line?: { at: number; text: string }; upsert?: { title?: string; state?: string }; list?: Array<{ id: string; title: string; state: string }> }) => void): (() => void) => startChatTail(cb)
+  }
+  setIslandDeps(realDeps)
+
   // Local agent path: a localhost HTTP control API.
   startControlServer()
+
+  // Legacy native dynamic island (BlitzIsland.app): the faceless ⌥Space notch HUD. SUPERSEDED by the new
+  // Electron notch-spill island (island.ts) per plans/blitzos-dynamic-island.md, so it is OFF by default and
+  // launched ONLY when BLITZ_NATIVE_ISLAND=1 (useNativeIsland) — never alongside the Electron island, because
+  // both register the SAME ⌥Space chord (this one via Carbon RegisterEventHotKey in main.swift, the Electron one
+  // via globalShortcut, independent OS mechanisms that would BOTH fire). Launching it unconditionally was the
+  // double-fire bug. When it IS launched, its /island WS is mounted on the control server above; it self-discovers
+  // our URL + bearer token FRESH from ~/.blitzos/session.json on every backoff attempt, so launching it right
+  // after startControlServer is safe even if the listen callback (which writes session.json) hasn't fired yet —
+  // the first connect simply retries. Path resolution lives HERE (electron) so island-bridge.mjs stays
+  // electron-free; the resolved string is passed to launchIslandHelper. macOS-only (a no-op handle elsewhere).
+  if (useNativeIsland) {
+    const islandAppPath = ((): string => {
+      const rel = ['native', 'island-helper', 'build', 'BlitzIsland.app']
+      const candidates = [
+        process.env.BLITZ_ISLAND_APP, // explicit override (mirrors BLITZ_COMPUTER_USE_APP)
+        app.isPackaged ? join(process.resourcesPath, 'BlitzIsland.app') : null, // packaged: electron-builder extraResources
+        join(app.getAppPath(), ...rel),
+        join(__dirname, '..', '..', ...rel), // out/main → repo root in dev
+        !app.isPackaged ? join(process.cwd(), ...rel) : null // electron-vite dev runs with cwd = repo root
+      ].filter((p): p is string => !!p)
+      for (const c of candidates) {
+        try {
+          if (existsSync(c)) return c
+        } catch {
+          /* skip */
+        }
+      }
+      return candidates[candidates.length - 1] ?? join(app.getAppPath(), ...rel)
+    })()
+    islandHelper = launchIslandHelper(islandAppPath)
+  }
 
   // Remote agent path: connect to the agent-socket relay (SHARED self-healing lifecycle in relay.mjs — same
   // module the server uses, so it can't diverge) and mint a paste-able URL so any AI chat can drive BlitzOS.
@@ -673,22 +1073,14 @@ app.whenReady().then(() => {
   }
   {
     const terminalsDirOf = (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'terminals') : null }
-    // job-model reads/writes the `job` on each agent's meta.json — tell it where the active workspace's
-    // terminals dir is (it must not import the IPC-bound osActions; same DI seam as setLaunchAgent).
-    wireJobModel({ getTerminalsDir: terminalsDirOf })
-    // plan-doc (E1) reads each job's `.blitzos/jobs/<id>/plan.md` for the continuation engine — point it at the
-    // active workspace's jobs dir (sibling of terminals; same DI seam).
-    wirePlanDoc({ getJobsDir: (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'jobs') : null } })
-    // The per-(re)launch standing-duty mapper (prepareAgentLaunch re-reads it + rewrites bootstrap.txt, so a
-    // duty changes as workspace state changes). Generalized to the JOB model: an agent with a JOB gets the duty
-    // for its job status (proposed/approved -> author + present a plan; running -> execute the approved plan;
-    // done/blocked -> no duty). An agent with NO job FALLS THROUGH UNCHANGED — agent '0' carries the onboarding
-    // standing duty (pending interview -> interview duty, finished -> resident initiative duty), every other
-    // bare peer gets null. (Single-Job model: start_job spawns a NEW agent, never '0', so '0' has no job and the
-    // onboarding interview path is byte-for-byte preserved.)
+    // The per-(re)launch standing-duty mapper (prepareAgentLaunch re-reads it + rewrites bootstrap.txt, so a duty
+    // changes as workspace state changes). An agent with the ORCHESTRATORS flag gets the duty to author + run
+    // blitzscript workflows; agent '0' carries the onboarding standing duty (pending interview -> interview duty,
+    // finished -> resident initiative duty); every other bare peer gets null. (The Job model is retired.)
     setBootTaskProvider((id: string) => {
-      const job = readJob(id)
-      if (job) return dutyForJobStatus(job.status)
+      // ORCHESTRATORS toggle (per-agent, stamped on meta.json): the flag means "author + run blitzscript workflows".
+      // Reads the same meta the flag was stamped on; a broken read just falls through to the interview/null path.
+      try { const td = terminalsDirOf(); if (td && readTerminalMeta(td, String(id))?.orchestrators) return orchestratorBootTask() } catch { /* fall through to interview */ }
       return String(id) === '0' ? interviewBootTask() : null
     })
     const launchAgent = (id: string, stage: number, title?: string): void => {
@@ -787,6 +1179,8 @@ app.on('before-quit', () => {
   osFlushWorkspace()
   try { electronTerminalOps.stopHosts() } catch { /* ignore */ } // flush terminal scrollback + close tmux control clients (terminals survive)
   try { computerUseHelper().shutdown() } catch { /* ignore */ } // quit the CU helper + close its socket
+  try { islandHelper?.stop() } catch { /* ignore */ } // stop relaunch-supervision only; the island is a separate LSUIElement that may keep running (it reconnects with backoff)
+  try { globalShortcut.unregister('Alt+Space') } catch { /* ignore */ } // release the notch-spill island's ⌥Space chord (scoped, so other consumers are untouched)
   bootJournal?.markClean() // LAST: "clean shutdown" means everything above flushed first
 })
 

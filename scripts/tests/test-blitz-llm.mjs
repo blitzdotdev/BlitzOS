@@ -10,8 +10,8 @@
 // Run: node scripts/tests/test-blitz-llm.mjs
 
 import os from 'node:os'
-import { llm, _setSpawn, _stats, leafMetadata } from '../../src/main/blitz/llm.mjs'
-import { harnesses } from '../../src/main/blitz/harnesses.mjs'
+import { llm, _setSpawn, _stats, leafMetadata } from '../../src/main/blitzscript/llm.mjs'
+import { harnesses } from '../../src/main/blitzscript/harnesses.mjs'
 
 let failed = 0
 const ok = (name, cond, detail = '') => {

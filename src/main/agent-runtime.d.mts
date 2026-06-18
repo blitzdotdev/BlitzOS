@@ -3,9 +3,15 @@ export function buildBootstrap(url: string, sessionId?: string, bootTask?: strin
 /** Register the per-agent standing-duty provider (e.g. the onboarding interview). Re-read on every
  *  (re)launch by prepareAgentLaunch; return null for no duty. Policy-free: the text is the caller's. */
 export function setBootTaskProvider(fn: ((sessionId: string) => string | null | undefined) | null): void
+/** Write the `blitz` workflow runner shim (-> blitzscript/run.mjs) + copy the orchestrator duty doc into a workspace's
+ *  `.blitzos` dir. Idempotent; called per (re)launch by prepareAgentLaunch so the runner is always current. */
+export function writeBlitzShim(blitzDir: string): void
+/** The standing duty STRING for an agent with the orchestrators toggle ON (author + run blitzscript workflows).
+ *  Carries the absolute blitzscript/llm.mjs import path so the agent's workflow.mjs can import `llm`. Policy-free. */
+export function orchestratorBootTask(): string
 export function shellQuote(s: string): string
 export type AgentRuntime = 'claude' | 'codex-serverless'
-/** A Claude Code `--settings` hooks object (e.g. the E1 continuation Stop hook). */
+/** A Claude Code `--settings` hooks object (a generic seam buildClaudeCommand merges into --settings). */
 export interface HookSettings {
   hooks: { [event: string]: Array<{ hooks: Array<{ type: string; command: string }> }> }
 }
@@ -26,12 +32,6 @@ export function prepareAgentLaunch(opts: { sessionsDir: string; id: string; url:
 export function ensureWorkspaceTrusted(wsPath: string): void
 export function writeRelayUrl(blitzDir: string, url: string | null | undefined): void
 export const RELAY_URL_FILE: string
-/** The self-contained POSIX-sh E1 continuation Stop hook template (`%PLAN%` baked in by writeContinueHook). */
-export const CONTINUE_HOOK_SCRIPT: string
-/** Write the per-agent continuation Stop hook to `<jobDir>/continue-hook.sh`; returns its absolute path or null. */
-export function writeContinueHook(planFilePath: string | null | undefined): string | null
-/** The `--settings` hooks object that installs the continuation Stop hook at hookScriptPath, or null. */
-export function continuationHookSettings(hookScriptPath: string | null | undefined): HookSettings | null
 export const INTERVIEW_FAST_MODEL: string
 export const INTERVIEW_FAST_SETTINGS: { model: string; effortLevel: string; env: Record<string, string> }
 export const INTERVIEW_EFFORT: string

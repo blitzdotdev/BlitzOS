@@ -39,15 +39,8 @@ export interface OsState {
   mode?: 'desktop' | 'canvas'
   /** Raw camera transform — persisted to workspace.json (Phase 1). */
   camera?: { x: number; y: number; scale: number }
-  /** #45 workspace stages: count of tiled desktops (persisted), the active one, and its world rect (so
-   *  the agent places surfaces in the stage the human is on). currentStage/currentStageRect are live-only. */
-  stageCount?: number
-  /** Reading order of stages on the splay lattice (stageOrder[orderIndex] = stage id); persisted. */
-  stageOrder?: number[]
-  /** Last bulk layout transaction (stage reorder) — perception treats the push as ONE gesture. */
+  /** Last bulk layout transaction (a folder-wide reconcile) — perception treats the push as ONE gesture. */
   bulkAt?: number
-  currentStage?: number
-  currentStageRect?: { x: number; y: number; w: number; h: number }
   /** Which workspace this state belongs to — lets the backend drop a stale push after a switch. */
   workspace?: string
 }
@@ -99,7 +92,7 @@ const api = {
   spawnAgent(title?: string): void {
     ipcRenderer.send('os:agent-spawn', { title })
   },
-  /** Close a non-primary agent: stop its terminal + remove its widget, files, and stage. */
+  /** Close a non-primary agent: stop its terminal + remove its widget and files. */
   closeAgent(agentId: string): Promise<{ ok: boolean; error?: string }> {
     return (ipcRenderer.invoke('os:close-agent', agentId) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
@@ -153,8 +146,8 @@ const api = {
     ipcRenderer.on('os:keybind', listener)
     return () => ipcRenderer.removeListener('os:keybind', listener)
   },
-  /** A bare ⇧ tap forwarded from a focused browser guest (drives the home gesture: single tap → splay
-   *  stages, double tap → workspace selector). */
+  /** A bare ⇧ tap forwarded from a focused browser guest (drives the home gesture: single tap → freeze
+   *  toggle, double tap → fly home + freeze). */
   onShiftTap(cb: () => void): () => void {
     const listener = (): void => cb()
     ipcRenderer.on('os:shifttap', listener)
@@ -465,12 +458,12 @@ const api = {
     }
   },
 
-  // Standalone Job Launcher bridge (src/main/launcher.ts) — ONLY the launcher NSPanel uses these (it
-  // shares this preload). startJob → start_job (mints a Job whose planning agent authors the plan widget);
-  // hide closes the bar; onShow lets the bar refocus its input each time main re-shows the panel.
+  // Standalone Launcher bridge (src/main/launcher.ts) — ONLY the launcher window uses these (it shares this
+  // preload). startWorkflow → start_workflow (spawns an orchestrator agent seeded with the prompt); hide
+  // closes the bar; onShow lets the bar refocus its input each time main re-shows the window.
   launcher: {
-    startJob(prompt: string, attachments?: string[]): Promise<{ ok: boolean; agentId?: string | null; error?: string }> {
-      return ipcRenderer.invoke('launcher:start-job', { prompt, attachments: attachments || [] }) as Promise<{ ok: boolean; agentId?: string | null; error?: string }>
+    startWorkflow(prompt: string, attachments?: string[]): Promise<{ ok: boolean; agentId?: string | null; error?: string }> {
+      return ipcRenderer.invoke('launcher:start-workflow', { prompt, attachments: attachments || [] }) as Promise<{ ok: boolean; agentId?: string | null; error?: string }>
     },
     hide(): void {
       ipcRenderer.send('launcher:hide')
@@ -478,10 +471,54 @@ const api = {
     autosize(height: number): void {
       ipcRenderer.send('launcher:autosize', height)
     },
+    // Resolve a dropped path to its real Finder icon (a PNG data URL) for the tray previews. Returns ''
+    // when the path has no icon (e.g. a URL, or a vanished file) so the UI can fall back to a glyph.
+    fileIcon(path: string): Promise<string> {
+      return ipcRenderer.invoke('launcher:file-icon', path) as Promise<string>
+    },
     onShow(cb: () => void): () => void {
       const listener = (): void => cb()
       ipcRenderer.on('launcher:show', listener)
       return () => ipcRenderer.removeListener('launcher:show', listener)
+    }
+  },
+
+  // Notch-spill Island bridge (src/main/island.ts) — ONLY the island window uses these (it shares this preload).
+  // send → Deep ON: start_workflow (orchestrated); Deep OFF: spawn a peer agent + seed the prompt. setInteractive
+  // toggles click-through (collapsed = notch/panel only; spilled = notch-pill-only passthrough). fill drives the
+  // spill handoff (→ sandwich.setFullScreen + raise the real BlitzOS window). onGeometry feeds the real screen /
+  // menu-bar size; onFullscreen lets the island FOLLOW the sandwich's real fullscreen state (collapse on an
+  // external exit so the plate never covers a non-fullscreen canvas); onHide runs the suck-back before the window
+  // hides (so ⌥Space-off while spilled never strands the sandwich in fullscreen with the pill gone). These are the
+  // legacy native BlitzIsland.app's SEPARATE concern's siblings only by name — distinct os:island-* / island:*
+  // channels.
+  island: {
+    send(prompt: string, deep: boolean): Promise<{ ok: boolean; id?: string | null; error?: string }> {
+      return ipcRenderer.invoke('os:island-send', { prompt, deep: !!deep }) as Promise<{ ok: boolean; id?: string | null; error?: string }>
+    },
+    setInteractive(on: boolean): void {
+      ipcRenderer.send('os:island-interactive', !!on)
+    },
+    fill(on: boolean): void {
+      ipcRenderer.send('os:island-fill', !!on)
+    },
+    onGeometry(cb: (g: { width: number; height: number; menuBarH: number; scaleFactor: number }) => void): () => void {
+      const listener = (_e: unknown, g: { width: number; height: number; menuBarH: number; scaleFactor: number }): void => cb(g)
+      ipcRenderer.on('island:geometry', listener)
+      return () => ipcRenderer.removeListener('island:geometry', listener)
+    },
+    /** The sandwich's REAL fullscreen state (green light / Ctrl+Cmd+F / macOS, not just our own fill) — the
+     *  island reconciles its spilled `open` to it. */
+    onFullscreen(cb: (on: boolean) => void): () => void {
+      const listener = (_e: unknown, m: { on: boolean }): void => cb(!!m?.on)
+      ipcRenderer.on('island:fullscreen', listener)
+      return () => ipcRenderer.removeListener('island:fullscreen', listener)
+    },
+    /** Main is about to hide the island — run the suck-back (shrink → restore fullscreen) first. */
+    onHide(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on('island:hide', listener)
+      return () => ipcRenderer.removeListener('island:hide', listener)
     }
   }
 }

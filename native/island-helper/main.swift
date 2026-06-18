@@ -146,8 +146,30 @@ final class IslandModel: ObservableObject {
         open = v
     }
     func toggle() {
-        if open { setChatEditing(false) }   // toggling CLOSED routes through the end-edit chokepoint
+        // On the CLOSED->OPEN edge, ensure we land on a FRESH chat bar so the first Send SPAWNS a new agent
+        // (BUG-1). Cold start / ⌥Space leaves currentTabId == nil, so without this sendCurrent's
+        // `guard let id = currentTabId` short-circuits and the first Send is a dead no-op. On the OPEN->CLOSED
+        // edge, route through the end-edit chokepoint (the canBecomeKey-flag invariant).
+        if open { setChatEditing(false) } else { ensureChatBarForOpen() }
         open.toggle()
+    }
+
+    // Open onto a FRESH local-draft chat bar UNLESS we're already on a usable one. Correct cold-start guard:
+    // a nil selection (cold start / ⌥Space, currentTabId == nil) MUST fall through to newTab() — otherwise the
+    // first Send is a dead no-op (sendCurrent's `guard let id = currentTabId` short-circuits, and
+    // draftForCurrent's nil-guarded setter silently drops keystrokes). So nil falls through FIRST. The ONLY
+    // "do nothing" cases are: we're already sitting on a usable fresh chat bar — the live local draft
+    // (currentTabId == localDraftTabId) OR a server 'new' tab (a chat bar whose first Send still spawns).
+    // OTHERWISE (sitting on a working / non-new tab) make a new local draft so currentIsChatBar becomes true
+    // (the ChatBar renders), currentTabId is set (sendCurrent's guard passes), and Send takes the
+    // socket?.spawn branch -> a NEW agent. (NOT the rejected `currentIsChatBar == false` guard: currentIsChatBar
+    // is TRUE on a nil selection, so that guard would SKIP newTab() exactly when it's needed; NOT `currentTabId
+    // == nil` as an early-RETURN either — that is the inverted polarity that left cold start a dead no-op.)
+    func ensureChatBarForOpen() {
+        guard currentTabId != nil else { newTab(); return }
+        if (localDraftTabId != nil && currentTabId == localDraftTabId)
+            || (currentProc?.state ?? "") == "new" { return }
+        newTab()
     }
 
     // --- keyboard focus seam (mechanism lives on IslandPanel; the model is the single chokepoint) ---

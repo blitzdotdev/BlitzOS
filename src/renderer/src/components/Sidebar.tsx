@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useDesktop, surfaceStage } from '../store'
+import { useDesktop } from '../store'
 import { KindIcon } from './Icons'
 import { SurfaceLauncherButton, type SurfaceLauncherKind } from './SurfaceLauncherButton'
 
@@ -23,30 +23,25 @@ function cleanFolderPath(path: unknown): string {
   return String(path ?? '').replace(/^[/\\]+|[/\\]+$/g, '').split('\\').join('/')
 }
 
-/** Left dock: an icon per surface ATTACHED TO THE CURRENT STAGE (the per-stage dock,
- *  plans/blitzos-stage-splay-lattice.md) — switching stages refreshes it to that stage's set.
- *  Membership is the SAME shared rule the splay drag moves by: slotStage, else the owning agent's
- *  stage (chat), else the lattice cell holding the surface's center (free/minimized/parked alike). */
+/** Left dock: an icon per surface in the CURRENT WORKSPACE (single-canvas/home model,
+ *  plans/blitzos-single-canvas-navigation.md) — no per-stage filter. The store already drops
+ *  runtime-only surfaces it doesn't dock; here we only de-dup a `files` tray against an open `dir`
+ *  tile of the same folder so the folder isn't listed twice. */
 export function Sidebar({ onRequestRestore, onCreateSurface, animating = {} }: Props): JSX.Element {
   const allSurfaces = useDesktop((s) => s.surfaces)
-  const currentStage = useDesktop((s) => s.currentStage)
-  const stageOrder = useDesktop((s) => s.stageOrder)
-  const stageCount = useDesktop((s) => s.stageCount)
-  const viewport = useDesktop((s) => s.viewport)
   const surfaces = useMemo(() => {
-    const stageSurfaces = allSurfaces.filter((s) => surfaceStage(s, viewport, stageOrder, stageCount) === currentStage)
     const folderPaths = new Set(
-      stageSurfaces
+      allSurfaces
         .filter((s) => s.kind === 'native' && s.component === 'dir')
         .map((s) => cleanFolderPath(s.props?.path))
         .filter(Boolean)
     )
-    return stageSurfaces.filter((s) => {
+    return allSurfaces.filter((s) => {
       if (!(s.kind === 'native' && s.component === 'files')) return true
       const rootPath = cleanFolderPath(s.props?.rootPath || s.props?.path)
       return !rootPath || !folderPaths.has(rootPath)
     })
-  }, [allSurfaces, viewport, stageOrder, stageCount, currentStage])
+  }, [allSurfaces])
   const focusAndZoom = useDesktop((s) => s.focusAndZoom)
   const setSelection = useDesktop((s) => s.setSelection)
   const closeSurface = useDesktop((s) => s.closeSurface)

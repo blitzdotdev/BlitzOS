@@ -26,27 +26,27 @@ _Drafted by the resident agent 2026-06-14, follows onboarding-dogfood-2026-06-14
 
 ```js
 if (!pinned && budgetUsed(surfaces, stage) + sp.c * sp.r > STAGE_BUDGET) {
-  return { full: { error: 'stage_full', reason: 'attention budget', ...stageSummary(...) } }
+  return { full: { error: 'home_full', reason: 'attention budget', ...stageSummary(...) } }
 }
 ```
 
 The comment says it returns occupants "so the agent can evict," but the fresh resident is never told to evict, so its first `place_widget` just fails. Two-part fix:
 
 ### B1 (systemic, preferred) — auto-evict the lowest-value tile instead of hard-failing
-In `os-tools.mjs`, when the budget check trips, pick the lowest-value evictable tile (non-pinned, board-seeded, smallest attention contribution / lowest z), park it off-stage via the existing `parkOffstage` path, and retry the placement once. Only return `stage_full` if nothing is evictable. Sketch at the budget-check site:
+In `os-tools.mjs`, when the budget check trips, pick the lowest-value evictable tile (non-pinned, board-seeded, smallest attention contribution / lowest z), park it off-stage via the existing `parkOffstage` path, and retry the placement once. Only return `home_full` if nothing is evictable. Sketch at the budget-check site:
 
 ```js
 if (!pinned && budgetUsed(surfaces, stage) + sp.c * sp.r > STAGE_BUDGET) {
   const victim = lowestValueEvictable(surfaces, stage) // non-pinned, has .slot, lowest z
   if (victim) { ops.sendBackstage?.(victim.id); return placeOnStage(sizeArg, near, agentId, dims, pinned) }
-  return { full: { error: 'stage_full', reason: 'attention budget', ...stageSummary(...) } }
+  return { full: { error: 'home_full', reason: 'attention budget', ...stageSummary(...) } }
 }
 ```
 
-This makes the resident's first act never hit a wall; the least important card yields and stays alive off-stage (zoom-out visible, `bring_to_stage`-able). Add a one-line `say` so the user sees which card was parked.
+This makes the resident's first act never hit a wall; the least important card yields and stays alive off-stage (zoom-out visible, `bring_home`-able). Add a one-line `say` so the user sees which card was parked.
 
 ### B2 (cheap mitigation) — leave headroom on handoff
-In `blitzos-interview.md` Finish, before step 3 (mark done): park the 2 lowest-value seeded cards off-stage (`send_backstage`) so the stage hands off at ~12/16. Preserves a rich first desktop during onboarding while giving the resident room to show its first work without reshuffling the user's view.
+In `blitzos-interview.md` Finish, before step 3 (mark done): park the 2 lowest-value seeded cards off-stage (`send_offscreen`) so the stage hands off at ~12/16. Preserves a rich first desktop during onboarding while giving the resident room to show its first work without reshuffling the user's view.
 
 **Recommendation:** ship B2 now (one prompt line, zero code risk) and B1 as the durable systemic fix. B1 also closes the standalone issue `onboarding-board-overflows-small-stage.md`.
 

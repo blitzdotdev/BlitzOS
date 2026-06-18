@@ -196,10 +196,20 @@ button {
   border-color: color-mix(in srgb, var(--text-muted) 34%, transparent);
   background: color-mix(in srgb, var(--surface) 28%, transparent);
 }
+/* The full-stage "tap to enter" hit targets live BELOW the windows: .world is z-index 1, .bg is z-index 0
+   and earlier in the DOM, so this (z-index 0, later in the DOM) sits ABOVE the canvas background but
+   UNDER every window. A window in the splay therefore catches its own drag, and only empty stage space
+   falls through to a hit button. The container is transparent to pointers; only .area-chrome-hit opts in. */
+.area-chrome-hits {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
 .area-chrome-overlay {
   position: absolute;
   inset: 0;
-  z-index: 900; /* above the transformed world/surfaces, below toolbar/sidebar/titlebar chrome */
+  z-index: 900; /* labels/close/create ABOVE the windows (small, at stage edges — never blanket a stage) */
   pointer-events: none;
 }
 .area-chrome-stage {
@@ -258,7 +268,7 @@ button {
 }
 /* Drag-to-reorder (splay lattice): while a stage label is dragged, OTHER stages animate to their
    insertion-reflowed cells — transitions scoped to .reflowing so camera pans never lag the chrome. */
-.area-chrome-overlay.reflowing .area-chrome-hit,
+.area-chrome-hits.reflowing .area-chrome-hit,
 .area-chrome-overlay.reflowing .area-chrome-label {
   transition:
     left 160ms var(--ease-out),
@@ -864,17 +874,6 @@ button {
   padding: 1px 5px;
   width: 100%;
   outline: none;
-}
-.run-stage {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  color: var(--accent, #4493f8);
-  cursor: pointer;
-}
-.run-stage:hover {
-  text-decoration: underline;
 }
 .run-meta {
   font-size: 11px;

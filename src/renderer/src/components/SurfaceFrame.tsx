@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
-import { useDesktop, snapTargetFor, primaryRect, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, webTabsOf, effectiveZ } from '../store'
+import { useDesktop, snapTargetFor, homeRect, homeTransform, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, webTabsOf, effectiveZ } from '../store'
 import { BrowserNav } from './BrowserNav'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
@@ -251,11 +251,11 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const isDropTarget = useDesktop((s) => s.dragTarget === surface.id)
   const isAbsorbing = useDesktop((s) => s.absorbing.includes(surface.id))
   const grabMode = useDesktop((s) => s.grabMode)
-  // Control view = the UNLOCKED canvas (pan/zoom/arrange: drag cards from anywhere, don't interact).
-  // The view lock (single-tap ⇧ / toolbar) flips to work mode: the overlay drops and clicks reach the
-  // surface content. `mode === 'canvas'` alone broke when canvas became the DEFAULT mode — it covered
-  // every widget with the drag overlay permanently ("can't even click the theme picker").
-  const isControl = useDesktop((s) => s.mode === 'canvas' && !s.locked)
+  // Arrange view = the UNFROZEN canvas (single-canvas model, plans/blitzos-single-canvas-navigation.md):
+  // a single-⇧ UNFREEZE (locked=false) drops the work overlay and lets the user drag cards from anywhere
+  // while they pan/zoom; the frozen desktop (locked=true) is work mode — the overlay is inert and clicks
+  // reach the surface content. The freeze lock, not a mode, is the sole interact gate now.
+  const isControl = useDesktop((s) => !s.locked)
   const osAccent = useDesktop((s) => s.osAccent)
   const [isDragging, setIsDragging] = useState(false)
   // The props a srcdoc widget receives: its OWN props, but the GLOBAL OS accent folded in when the
@@ -547,7 +547,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       } else if (m.type === 'blitz:wheel') {
         // A FOCUSED widget's iframe got a pinch (ctrl+wheel). Unfocused widgets never send this — the focus
         // catcher intercepts their pinch and it drives the CANVAS zoom. So this means "zoom THIS widget
-        // only": apply its own content zoom (iframeZoom via surface.zoom), nothing else on the stage moves.
+        // only": apply its own content zoom (iframeZoom via surface.zoom), nothing else on the desktop moves.
         const dy = Number((m as { dy?: number }).dy) || 0
         // Scale toward the CURSOR (its content-px point), and never below 100% (min 1 — no zoom-out).
         zoomOriginRef.current = { x: Number((m as { x?: number }).x) || 0, y: Number((m as { y?: number }).y) || 0 }
@@ -679,16 +679,15 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       st.setSnapPreview(null)
       return
     }
-    // Slotted tile drag (stage desktop, macOS widget feel): the tile floats under the cursor while an
+    // Slotted tile drag (home desktop, macOS widget feel): the tile floats under the cursor while an
     // OUTLINE previews the nearest free span of the lattice — other tiles NEVER move; only the file
     // layer parts fluidly around the outline. ⌘-drag skips snapping entirely (Apple's escape hatch:
     // release pops the tile off the lattice, free-form). Edge-tiling is suppressed for tiles.
     if (d.single && isSlotted && !e.metaKey) {
       const me = d.items[0]
       const sl = slotOf(surface)
-      const stage = surface.slotStage ?? 0
-      const lat = latticeFor(st.viewport, stage, st.stageOrder, st.stageCount)
-      const ghost = nearestFreeSlot(st.surfaces, lat, sl ? sl.size : 's', me.ox + dx + me.ow / 2, me.oy + dy + me.oh / 2, stage, surface.id)
+      const lat = latticeFor(st.viewport)
+      const ghost = nearestFreeSlot(st.surfaces, lat, sl ? sl.size : 's', me.ox + dx + me.ow / 2, me.oy + dy + me.oh / 2, surface.id)
       slotGhost.current = ghost
       const gr = ghost && sl ? slotRect(lat, ghost.col, ghost.row, sl.size) : null
       st.setSnapPreview(gr)
@@ -704,10 +703,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       return
     }
     st.setDragTarget(null)
-    // Snap preview (BOTH modes, #42): dragging a single window so the cursor reaches a primary-stage
-    // side/corner shows where it will tile on release (left|right half / quarter — never full-screen).
-    // Suppressed over a folder target and for file/dir tiles (they aren't windows).
-    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport, st.currentStage, st.mode, st.stageOrder, st.stageCount) : null)
+    // Snap preview (#42): dragging a single window so the cursor reaches a home-region side/corner shows
+    // where it will tile on release (left|right half / quarter — never full-screen). Suppressed over a
+    // folder target and for file/dir tiles (they aren't windows).
+    st.setSnapPreview(d.single && !folder && !isFolder && !isFileTile ? snapTargetFor(wx, wy, st.viewport) : null)
   }
   function onBarUp(e: React.PointerEvent): void {
     try {
@@ -768,9 +767,9 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   }
 
   // macOS-style resize from any side/corner. `dir` is a combination of n/s/e/w; a side handle
-  // resizes that edge and moves the opposite edge's position. Works in control mode too (the
+  // resizes that edge and moves the opposite edge's position. Works on the unfrozen canvas too (the
   // handles sit above the drag-overlay).
-  // Grid toggle (stage desktop): pop a slotted tile OUT to free-form (pre-slot size restored), or
+  // Grid toggle (home desktop): pop a slotted tile OUT to free-form (pre-slot size restored), or
   // snap a free window INTO the nearest free span sized to fit it. The discoverable counterpart of
   // ⌘-drag — this is how a note (or the chat) enters and leaves the lattice.
   function toggleSlot(): void {
@@ -817,13 +816,17 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       if (r.dir.includes('n')) ny = r.origY + r.origH - MINH // keep the bottom edge anchored
       nh = MINH
     }
-    // macOS-faithful resize: a window may extend freely BEYOND the stage (off the sides/bottom), just
-    // like free dragging — the ONLY constraint in normal mode is that a top-edge (n/nw/ne) resize can't
-    // push the title bar above the stage's top (so it stays grabbable — the #29 invariant). All stages
-    // share the same top, so it's stage-independent.
+    // macOS-faithful resize: a window may extend freely BEYOND the home region (off the sides/bottom),
+    // just like free dragging — the ONLY constraint, and only at the home frame, is that a top-edge
+    // (n/nw/ne) resize can't push the title bar above home's top (so it stays grabbable — the #29
+    // invariant). Once the human has zoomed/panned the canvas, all sides are reachable, so this lifts
+    // (matching the store's moveSurface top-clamp, keyed on being at the computed home frame).
     const st0 = useDesktop.getState()
-    if (st0.mode === 'desktop') {
-      const topY = primaryRect(st0.viewport).y
+    const home = homeTransform(st0.viewport)
+    const atHome =
+      Math.abs(st0.transform.x - home.x) < 0.75 && Math.abs(st0.transform.y - home.y) < 0.75 && Math.abs(st0.transform.scale - home.scale) < 0.006
+    if (atHome) {
+      const topY = homeRect(st0.viewport).y
       if (ny < topY) {
         nh -= topY - ny
         ny = topY
@@ -847,7 +850,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const isFolder = surface.kind === 'native' && surface.component === 'folder'
   const isDirTile = isRealFolderSurface(surface)
   const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
-  const isSlotted = !!slotOf(surface) // a stage tile: lattice-snapped, fixed-size, never edge-tiles
+  const isSlotted = !!slotOf(surface) // a home tile: lattice-snapped, fixed-size, never edge-tiles
   // Cut a higher browser's page hole out of this frame (string-equality selector: recomputes per
   // store change, re-renders only when the polygon actually changes; world coords, camera-free).
   const clipPath = useDesktop((s) => (serverMode ? undefined : pageHolesClip(surface, s.surfaces)))
@@ -1098,7 +1101,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
             {/* file/dir tiles are real files — "close"/"minimize" would just re-surface on the next
                 reconcile (the file still exists), so only offer zoom; delete the file to remove it.
                 A NON-primary chat widget's red light DELETES its agent (stop it + delete its chat +
-                files/stage); the PRIMARY chat ('0') is pinned + never deletable → no close button. */}
+                files); the PRIMARY chat ('0') is pinned + never deletable → no close button. */}
             {surface.role === 'chat'
               ? surface.agentId && String(surface.agentId) !== '0'
                 ? <button className="tl tl-close" title="Delete agent" onClick={() => closeAgent(String(surface.agentId))} />

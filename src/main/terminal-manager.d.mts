@@ -1,6 +1,5 @@
 // Types for the file-backed terminal manager (terminal-manager.mjs), backed by the tmux host.
 import type { TmuxHost } from './tmux-host.d.mts'
-import type { Job } from './job-model.d.mts'
 
 export type TerminalKind = 'terminal' | 'agent'
 export type TerminalStatus = 'running' | 'exited' | 'stopped'
@@ -30,8 +29,9 @@ export interface TerminalMeta {
   agentSessionId?: string | null
   claudeSessionId?: string
   claudeEstablished?: boolean
-  /** the agent's JOB record (job-model.mjs) when this is a job agent; null/absent = a normal-request peer. */
-  job?: Job | null
+  /** the dynamic-workflows ("orchestrators") capability toggle: when true the boot-task provider hands this
+   *  agent the orchestrator duty (author + run blitzscript workflows). Sticky across re-spawn (spawnTerminal). */
+  orchestrators?: boolean
 }
 
 export interface SpawnTerminalOpts {
@@ -52,8 +52,8 @@ export interface SpawnTerminalOpts {
   agentSessionId?: string | null
   claudeSessionId?: string
   claudeEstablished?: boolean
-  /** an explicit JOB to carry onto the spawned meta; absent ⇒ inherit any on-disk job (re-spawn preserves it). */
-  job?: Job | null
+  /** explicit orchestrators flag to carry onto the spawned meta; absent ⇒ inherit on-disk (re-spawn preserves it). */
+  orchestrators?: boolean
 }
 
 export interface TerminalEvent {
@@ -109,3 +109,5 @@ export function terminalMetaPath(terminalsDir: string, id: string): string
 export function readTerminalMeta(terminalsDir: string, id: string): TerminalMeta | null
 /** Write a terminal's meta.json (mkdir -p the dir). No markWrite — that seam is the manager's concern. */
 export function writeTerminalMeta(terminalsDir: string, id: string, meta: TerminalMeta): void
+/** Set/clear the orchestrators (dynamic-workflows) flag on an agent's meta.json. Pure + testable. */
+export function setTerminalOrchestrators(terminalsDir: string, id: string, on: boolean): { ok: boolean; error?: string; orchestrators?: boolean }
