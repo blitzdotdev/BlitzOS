@@ -21,16 +21,40 @@ const normalizeKind = (k) => (k === 'agent' || k === 'chat' ? 'agent' : 'termina
 const isManagedAgent = (m) => m && m.kind === 'agent' && (m.agentRuntime || m.claudeSessionId)
 const isClaudeAgent = (m) => m && m.kind === 'agent' && !!m.claudeSessionId && (!m.agentRuntime || m.agentRuntime === 'claude')
 
+// ---- the SINGLE meta.json serializer (module-level, shared) -----------------------------------
+// The per-manager closure helpers below delegate to these so there is exactly ONE place that reads/writes a
+// terminal's meta.json. job-model.mjs imports them too — a Job rides the SAME meta.json the terminal owns, so it
+// reuses this serializer instead of inventing a parallel store (the three-serializer footgun). `terminalsDir` is
+// `<workspace>/.blitzos/terminals`; `id` is the agent/terminal id (a uuid or a numeric agent id).
+export const terminalMetaDir = (terminalsDir, id) => join(terminalsDir, String(id))
+export const terminalMetaPath = (terminalsDir, id) => join(terminalMetaDir(terminalsDir, id), 'meta.json')
+/** Read + parse a terminal's meta.json, normalizing kind. Returns null when absent/corrupt. */
+export function readTerminalMeta(terminalsDir, id) {
+  try {
+    const m = JSON.parse(readFileSync(terminalMetaPath(terminalsDir, id), 'utf8'))
+    if (m) m.kind = normalizeKind(m.kind)
+    return m
+  } catch { return null }
+}
+/** Write a terminal's meta.json (mkdir -p the dir). NOTE: no markWrite here — that workspace-watcher seam is the
+ *  manager's concern (writeMeta below adds it); meta.json is not a surface content file, so a direct write (as
+ *  job-model and workspace-host's addAgent both do) is fine. */
+export function writeTerminalMeta(terminalsDir, id, meta) {
+  const dir = terminalMetaDir(terminalsDir, id)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(terminalMetaPath(terminalsDir, id), JSON.stringify(meta, null, 2))
+}
+
 export function createTerminalManager({ host, terminalsDir, emit = () => {}, markWrite = () => {}, rebuildAgentCommand = null }) {
   const live = new Map() // id -> { meta, buf, flushTimer, establishTimer, restartTimer, stopping, unsubData, unsubExit }
   const agentFails = new Map() // id -> consecutive fast-exit count (drives the auto-restart backoff)
   const stopRequested = new Set() // ids a close/stop requested — so a spawn that RACES the stop is aborted
   let shuttingDown = false // set on shutdown so onExit doesn't auto-restart agents as the app quits
 
-  const dirOf = (id) => join(terminalsDir, id)
-  const metaPath = (id) => join(dirOf(id), 'meta.json')
+  const dirOf = (id) => terminalMetaDir(terminalsDir, id)
+  const metaPath = (id) => terminalMetaPath(terminalsDir, id)
   const transcriptPath = (id) => join(dirOf(id), 'transcript.jsonl')
-  const readMeta = (id) => { try { const m = JSON.parse(readFileSync(metaPath(id), 'utf8')); if (m) m.kind = normalizeKind(m.kind); return m } catch { return null } }
+  const readMeta = (id) => readTerminalMeta(terminalsDir, id) // the single module-level serializer (kind-normalizing)
   const publicMeta = (m) => ({
     id: m.id, kind: m.kind, title: m.title, command: m.command, cwd: m.cwd, status: m.status,
     pid: m.pid, exitCode: m.exitCode, autonomy: m.autonomy, createdAt: m.createdAt, endedAt: m.endedAt || null, cols: m.cols, rows: m.rows,
@@ -39,13 +63,18 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     // The workspace stage this terminal belongs to (the spawning agent's stage). Persisted so a
     // restart restores an agent's terminal into its stage. null = unscoped (a human spawn) → the renderer
     // opens it in the current stage, today's behavior. Legacy `area` (pre-stage-rename meta) tolerated on read.
-    stage: Number.isInteger(m.stage) ? m.stage : Number.isInteger(m.area) ? m.area : null
+    stage: Number.isInteger(m.stage) ? m.stage : Number.isInteger(m.area) ? m.area : null,
+    // The agent's JOB record (job-model.mjs), when this is a job agent. Surfaced on the public meta per the
+    // three-serializer rule (writeMeta dumps it, readMeta parses it; this is the explicit-field serializer the
+    // tray/chat hub read) so consumers can see a terminal's job. null = a normal-request peer (no job).
+    job: m.job && typeof m.job === 'object' ? m.job : null
   })
 
   function writeMeta(meta) {
     const dir = dirOf(meta.id)
-    mkdirSync(dir, { recursive: true }); markWrite(dir)
-    writeFileSync(metaPath(meta.id), JSON.stringify(meta, null, 2)); markWrite(metaPath(meta.id))
+    markWrite(dir) // tell the workspace watcher this dir write is the OS's own (before the file write)
+    writeTerminalMeta(terminalsDir, meta.id, meta) // the single module-level serializer (mkdir + JSON dump)
+    markWrite(metaPath(meta.id))
   }
   function flushTranscript(id) {
     const rec = live.get(id)
@@ -135,6 +164,12 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
       ...(opts.claudeSessionId ? { claudeSessionId: opts.claudeSessionId } : {}),
       ...(opts.claudeEstablished ? { claudeEstablished: true } : {})
     }
+    // Carry forward a persisted JOB (job-model.mjs) across a re-spawn. spawnTerminal rebuilds meta from scratch,
+    // and restartTerminal / clearAgentContext re-spawn an existing id WITHOUT passing `job` (it's owned by the
+    // job tools, not the launch path) — so without this the approved→running re-exec (which restarts the agent)
+    // would CLOBBER the job, losing its status/plan. An explicit opts.job (none today) wins; else inherit on-disk.
+    const carriedJob = opts.job && typeof opts.job === 'object' ? opts.job : readMeta(id)?.job
+    if (carriedJob && typeof carriedJob === 'object') meta.job = carriedJob
     // Replace any existing window for this id first (idempotent for a fresh id) — so a re-spawn/re-exec
     // (boot resume of a survivor with a now-stale relay url) cleanly REPLACES it instead of leaving a
     // duplicate window (tmux allows same-named windows). A prior live rec is torn down by wireTerminal below.

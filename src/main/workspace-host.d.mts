@@ -60,10 +60,12 @@ export interface WorkspaceHost {
   systemUiInfo(name: string): { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null
   setChatStatus(agentId: string, status: 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error'): { ok: boolean }
   noteAgentActivity(agentId: string, source?: string): { ok: boolean; throttled?: boolean; error?: string }
+  /** Snapshot { agentId -> status } of every chat-bearing agent — the W2 supervisor tick's agent-state input. */
+  chatStatusSnapshot(): Record<string, 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error'>
   agentIds(): string[]
   restoreChatHub(): { ok: boolean; id?: string; error?: string }
   newAgentId(): string
-  addAgent(agentId: string, title?: string, opts?: { focus?: boolean }): Record<string, unknown>
+  addAgent(agentId: string, title?: string, opts?: { focus?: boolean; job?: import('./job-model.mjs').Job }): Record<string, unknown>
   closeAgent(agentId: string): { ok: boolean; error?: string }
   renameAgent(agentId: string, newTitle: string): { ok: boolean; error?: string; title?: string }
   resumeAgentsOnBoot(): void

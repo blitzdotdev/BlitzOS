@@ -13,7 +13,8 @@
 //   err    console.error/warn + uncaught exceptions/rejections
 //
 // Enabled ONLY when ~/.blitzos/telemetry.json exists ({url, key}); BLITZ_TELEMETRY=0 kills it.
-// Frames skipped while the window is hidden. Outbox capped at 300MB (oldest dropped, loudly).
+// Frames skipped while the window is hidden. Outbox capped by FILE COUNT (oldest dropped, loudly) —
+// a byte cap meant statSync-ing every file on the main thread each cycle, which froze the UI at scale.
 import { app, BrowserWindow } from 'electron'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { gzipSync } from 'zlib'
@@ -31,7 +32,12 @@ const MAX_LINE = 8 * 1024 // a single huge broadcast (chat thread, terminal burs
 const SEGMENT_MS = 30_000
 const SEGMENT_BYTES = 512 * 1024
 const FRAME_MS = 4_000
-const OUTBOX_CAP = 300 * 1024 * 1024
+// Outbox bound by FILE COUNT, not bytes: enforcing a byte cap meant statSync-ing EVERY file in the
+// outbox on the MAIN thread each ship cycle, which froze the UI once the spool grew to ~11k files
+// (300MB) while shipping was down — input forwarding stalls behind a blocked main in the sandwich.
+// readdir already gives the count for free. Frames are downscaled to ~30-45KB and segments are
+// <512KB, so ~4000 files keeps the spool well under a few hundred MB with no O(N) synchronous stat.
+const MAX_OUTBOX_FILES = 4000
 
 let cfg: Cfg | null = null
 let sid = ''
@@ -139,12 +145,14 @@ async function shipOutbox(): Promise<void> {
   } catch {
     return
   }
-  // cap: drop oldest beyond the budget so a long offline stretch can't fill the disk
-  let total = 0
-  for (const n of names) total += safeSize(join(ob, n))
-  while (total > OUTBOX_CAP && names.length) {
+  // cap: drop oldest beyond the budget so a long offline stretch can't fill the disk. names is
+  // sorted and every filename is seq/timestamp-prefixed, so shifting from the front drops oldest
+  // first. Count-only — NO per-file statSync (see MAX_OUTBOX_FILES). Bounded loop, runs only when
+  // over cap, so once trimmed each cycle does a single readdir and no stat at all.
+  // TODO: if a precise byte budget is ever needed, track outbox bytes incrementally (add on
+  // frame/segment write, subtract on ship/drop) rather than re-statting the directory.
+  while (names.length > MAX_OUTBOX_FILES) {
     const n = names.shift() as string
-    total -= safeSize(join(ob, n))
     try {
       rmSync(join(ob, n))
       console.error('[telemetry] outbox over cap — dropped', n)
@@ -186,13 +194,6 @@ async function shipOutbox(): Promise<void> {
   }
 }
 
-function safeSize(p: string): number {
-  try {
-    return statSync(p).size
-  } catch {
-    return 0
-  }
-}
 
 function deviceId(): string {
   try {

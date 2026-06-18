@@ -86,6 +86,15 @@ export const BRIDGE_SHIM = `<script>
     e.preventDefault();
     post({ type: 'blitz:contextmenu', x: e.clientX, y: e.clientY });
   }, true);
+  // A FOCUSED widget's iframe receives ctrl+wheel (pinch); the OS canvas can't see it across the iframe
+  // boundary. Unfocused widgets never get here — their focus-catcher overlay intercepts the pinch and it
+  // drives the CANVAS zoom. So a pinch reaching the widget means "zoom THIS widget only": forward the delta
+  // and the parent applies the widget's own content zoom. Plain scroll (no ctrl) stays the widget's own.
+  window.addEventListener('wheel', function (e) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    post({ type: 'blitz:wheel', dy: e.deltaY, x: e.clientX, y: e.clientY });
+  }, { passive: false });
   post({ type: 'blitz:hello' });   // the parent also pushes init on iframe load
 })();
 </script>

@@ -588,6 +588,22 @@ export function makeOsTools(ops) {
       }
     },
     {
+      path: '/steer',
+      description:
+        "STEER another agent: inject a short directive INTO agent N's chat that WAKES it (the W2 supervisor heartbeat). This is how a supervisor nudges a running Job mid-flight — e.g. after a trigger:'tick' moment shows the user edited the plan, or the job stalled/erred. Unlike `say` (which is agent->user and does NOT wake the target), `steer` lands in the target agent's chat as a fresh directive and triggers its `/events` loop, so it actually reacts. Use it to course-correct, hand over new context the user just produced, or unblock an agent — NOT for chatting with the user (that is `say`). Args: {agent, text}. `agent` is the target agent id (required; '0' is the primary). Returns { ok }.",
+      input_schema: { type: 'object', required: ['agent', 'text'], properties: { agent: { type: 'string' }, text: { type: 'string' } } },
+      handler: ({ body }) => {
+        const b = parse(body)
+        if (typeof ops.steer !== 'function') return { status: 501, body: { error: 'steer not available in this transport' } }
+        const agent = String(b.agent ?? '')
+        const text = String(b.text || '')
+        if (!agent) return { status: 400, body: { error: 'agent required (the target agent id to steer)' } }
+        if (!text.trim()) return { status: 400, body: { error: 'text required' } }
+        ops.steer(text, agent)
+        return { ok: true }
+      }
+    },
+    {
       path: '/user_say',
       description:
         "TEST/DEV syscall (localhost transport ONLY — rejected over the relay): enter a chat message AS THE USER through the exact same path as the human composer (appends '### user' to that agent's chat.md and wakes it with a message moment). Exists so a co-located test agent can drive BlitzOS like a real user; an external agent must never be able to forge user input. Args: {text, agent?}.",
@@ -635,6 +651,38 @@ export function makeOsTools(ops) {
         if (typeof ops.spawnAgent !== 'function') return { status: 501, body: { error: 'agents not supported on this transport' } }
         const agent = await ops.spawnAgent(a.title != null ? String(a.title) : undefined)
         return { agent }
+      }
+    },
+    {
+      path: '/start_job',
+      description:
+        "Start a JOB — the formalized unit of work in BlitzOS (it PLANS first, gets the user's approval, then EXECUTES the approved plan to completion). Use this (instead of spawn_agent) when the work is substantial enough to warrant a plan the user reviews: a multi-step task, something with an irreversible outward step, anything the user should approve before it runs. A normal one-off request you should just handle in chat — do NOT start a job for it. This spawns a fresh agent dedicated to the job, gives it the planning duty, and records the job (status 'proposed') on that agent. The job agent will author an editable plan and ask the user to approve; on approval, advance it with set_job_status status:'running'. Args: {title, goal, contextRefs?}. Returns { agent:{id,title}, job }.",
+      input_schema: { type: 'object', required: ['goal'], properties: { title: { type: 'string' }, goal: { type: 'string' }, contextRefs: { type: 'array', items: { type: 'string' } } } },
+      handler: async ({ body }) => {
+        const a = parse(body)
+        if (typeof ops.startJob !== 'function') return { status: 501, body: { error: 'jobs not supported on this transport' } }
+        const goal = String(a.goal || '')
+        if (!goal.trim()) return { status: 400, body: { error: 'goal required' } }
+        const contextRefs = Array.isArray(a.contextRefs) ? a.contextRefs.map(String) : undefined
+        const r = await ops.startJob({ title: a.title != null ? String(a.title) : undefined, goal, contextRefs })
+        if (!r || r.ok === false) return { status: 400, body: { error: (r && r.error) || 'could not start job' } }
+        return { agent: r.agent, job: r.job }
+      }
+    },
+    {
+      path: '/set_job_status',
+      description:
+        "Advance a JOB's lifecycle and/or bind its plan surface. STATUS: proposed -> approved -> running -> done | blocked. The agent owns its own job's status. The load-bearing edge is approved -> running: set status:'running' once the user APPROVES the plan, and BlitzOS re-launches the job agent into its EXECUTION phase (run the approved plan to completion under /goal). Mark 'done' when the whole plan is complete, or 'blocked' when stuck waiting on the user. BIND THE PLAN WIDGET: during planning, pass planSurfaceId:'<the editable plan widget's surface id>' to record it on the job (so the supervisor can find the plan); you may pass planSurfaceId WITHOUT a status (just binding), or together with a status. Args: {agent, status?, planSurfaceId?} — at least one of status/planSurfaceId. Returns { ok, job } or { ok:false, error }.",
+      input_schema: { type: 'object', required: ['agent'], properties: { agent: { type: 'string' }, status: { type: 'string', enum: ['proposed', 'approved', 'running', 'done', 'blocked'] }, planSurfaceId: { type: 'string', description: "the editable plan widget's surface id (binds the plan surface to the job)" } } },
+      handler: ({ body }) => {
+        const b = parse(body)
+        if (typeof ops.setJobStatus !== 'function') return { status: 501, body: { error: 'jobs not supported on this transport' } }
+        const agent = String(b.agent || '')
+        const status = b.status != null ? String(b.status) : ''
+        const fields = b.planSurfaceId != null ? { planSurfaceId: String(b.planSurfaceId) } : {}
+        if (!agent) return { status: 400, body: { error: 'agent required' } }
+        if (!status && !fields.planSurfaceId) return { status: 400, body: { error: 'pass status and/or planSurfaceId' } }
+        return ops.setJobStatus(agent, status, fields)
       }
     },
     {

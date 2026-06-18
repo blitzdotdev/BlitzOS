@@ -74,6 +74,52 @@ button {
   color: var(--text-tertiary);
 }
 
+/* Custom macOS traffic lights in the shell titlebar — the native ones are hidden (sandwich.ts) because
+   the green light drives the sandwich PAIR fullscreen, which a native child-window light can't. Absolute
+   so the centered title stays centered; placed where macOS draws the lights (top-left). They reuse the
+   surface-window .traffic / .tl styles; the `is-active` class keeps them colored (always our front app). */
+.titlebar-traffic {
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.titlebar .traffic.is-active .tl-close {
+  background: #ff5f57;
+}
+.titlebar .traffic.is-active .tl-min {
+  background: #febc2e;
+}
+.titlebar .traffic.is-active .tl-max {
+  background: #28c840;
+}
+/* The green light TOGGLES fullscreen, so its hover glyph is the macOS fullscreen mark (⤢), not zoom (+). */
+.titlebar-traffic .tl-max::before {
+  content: '\2922';
+  font-size: 9px;
+}
+
+/* HTML5 page fullscreen (a web surface's <video> went fullscreen): main raises that L0 page view to fill
+   the window (App.tsx geometry pass) and routes input to it, so EVERYTHING in L1 hides — the UI window
+   goes fully transparent and the live video shows through edge to edge. The page-fullscreen class is on
+   #root-canvas; the mouse is passed through to the video and the keyboard goes to the page, so the
+   player's own controls + Esc are the way out (the chrome, including the traffic lights, is gone). */
+#root-canvas.page-fullscreen > * {
+  display: none !important;
+}
+
+/* App (shell) fullscreen: the title bar slides OFF the top and returns on a top-edge hover, exactly like
+   a native macOS fullscreen window — so the traffic lights (incl. the green EXIT light) stay reachable.
+   Revealed, it sits just BELOW the macOS menu bar that overlays the top on hover, so the lights clear it.
+   (The drag is disabled in fullscreen; only the lights are interactive.) */
+.titlebar.fs {
+  transform: translateY(-100%);
+  transition: transform 0.16s var(--ease-out, ease);
+}
+.titlebar.fs.fs-revealed {
+  transform: translateY(28px);
+}
+
 /* Background captures pan gestures (canvas mode). A clean void — no grid. */
 .bg {
   position: absolute;
@@ -107,9 +153,11 @@ button {
   height: 0;
   transform-origin: 0 0;
   z-index: 1;
-  /* Promote to its own compositor layer so camera pan/zoom (and the ⌘⌘ zoom-out tween) only
-     re-composites this layer instead of repainting it — keeps the animation off the main thread. */
-  will-change: transform;
+  /* will-change:transform is applied DYNAMICALLY in App.tsx (keyed on the camera transform): held while
+     the camera moves (pan/zoom composite off the main thread, no repaint), then dropped ~200ms after it
+     settles so Chromium RE-RASTERIZES this layer at the new scale — sharp text/widgets instead of a
+     stretched 1x bitmap. Pinning it on permanently is exactly what loses resolution when you zoom in;
+     PDF viewers and Chrome's pinch avoid that by re-rendering at the target scale, and this matches them. */
 }
 
 /* Window-snap preview: where a dragged window will dock (full / half / quarter of the primary stage). */

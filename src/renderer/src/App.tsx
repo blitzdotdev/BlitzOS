@@ -377,6 +377,7 @@ function findChatHub(surfaces: Surface[]): Surface | undefined {
 
 export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
+  const worldRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
   const mode = useDesktop((s) => s.mode)
   const surfaces = useDesktop((s) => s.surfaces)
@@ -773,8 +774,11 @@ export default function App(): JSX.Element {
         w.panBy(-e.deltaX, -e.deltaY)
         return
       }
+      // Focus-aware zoom: a pinch over a NON-focused surface (or empty canvas) drives the Blitz CAMERA, so
+      // you can zoom into any point on the stage. Over the FOCUSED window the gesture stays INSIDE it — a
+      // focused browser zooms its own page, a focused widget zooms itself, nothing else moves.
       if (activeWindowTarget && e.ctrlKey) return
-      if (activeWindowTarget && isScrollableSurfaceTarget(e.target, e.deltaX, e.deltaY)) return
+      if (activeWindowTarget && !e.ctrlKey && isScrollableSurfaceTarget(e.target, e.deltaX, e.deltaY)) return
       if (!activeWindowTarget && !isCanvasGestureTarget(e.target)) return
       const w = useDesktop.getState()
       if (activeWindowTarget || isPanGesture) w.clearActiveSurface()
@@ -788,8 +792,13 @@ export default function App(): JSX.Element {
         else w.panBy(-e.deltaX, -e.deltaY)
         return
       }
+      // Desktop mode: cursor-anchored pinch-zoom into ANY point, and pan when zoomed in. Both clamp to
+      // the current stage in the store (zoomAt/panBy) — zoom in freely, never out past the stage (other
+      // stages live in Control mode). At home scale the pan clamp makes a stray two-finger scroll a no-op.
       e.preventDefault()
       e.stopPropagation()
+      if (e.ctrlKey) w.zoomAt(e.clientX, e.clientY, e.deltaY)
+      else w.panBy(-e.deltaX, -e.deltaY)
     }
     el.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => el.removeEventListener('wheel', onWheel, { capture: true })
@@ -2089,6 +2098,7 @@ export default function App(): JSX.Element {
       <Sidebar onRequestRestore={requestRestore} onCreateSurface={createFromLauncher} animating={dockAnimations} />
 
       <div
+        ref={worldRef}
         className="world"
         style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
       >

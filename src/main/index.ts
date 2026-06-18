@@ -3,14 +3,17 @@ import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, osRadialPhase } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase } from './osActions'
 import { emitSystemMoment, setMomentTap } from './events'
 import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
 import { installGuestSessionPolicy, resolvePermissionPrompt, attachGuestWindowPolicy } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
-import { electronTerminalOps, electronActionItems, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
+import { electronTerminalOps, electronActionItems, electronOps, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
+import { wireLauncher, registerLauncher } from './launcher'
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
+import { wireJobModel, readJob, dutyForJobStatus } from './job-model.mjs'
+import { wirePlanDoc } from './plan-doc.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -112,8 +115,9 @@ const FULLSCREEN = process.env.BLITZ_FULLSCREEN === '1'
 // attached UI child rides into its Space. The default menu's "Toggle Full Screen" role targets the
 // FOCUSED window — the UI child, which is deliberately fullscreenable:false (native fullscreen on a
 // macOS child window detaches it from the parent) — so the role item sits permanently disabled.
-// This menu keeps every standard role but wires that one item to the pair toggle. (The green
-// traffic light stays inert on the child for the same macOS constraint as its yellow sibling.)
+// This menu keeps every standard role but wires that one item to the pair toggle. The NATIVE traffic
+// lights are hidden (sandwich.ts) and the renderer draws its own (App.tsx); their green light drives
+// this same pair fullscreen via os:shell-fullscreen (handled below), so the button is live now.
 function installAppMenu(): void {
   const isMac = process.platform === 'darwin'
   const template: MenuItemConstructorOptions[] = [
@@ -491,6 +495,27 @@ app.whenReady().then(() => {
   ipcMain.on('os:action-resolve', (_e, p: { id: string; resolution?: string }) => { electronActionItems.resolveAction(String(p?.id), p?.resolution ? String(p.resolution) : 'done') })
   ipcMain.on('os:action-clear', (_e, id: string) => { electronActionItems.clearAction(String(id)) })
 
+  // The standalone Job Launcher (Shell A, plans/blitzos-job-entrypoints.md): a global hotkey (default
+  // ⌥Space; BLITZ_LAUNCHER_HOTKEY overrides) toggles a small always-on-top NSPanel where the user types a
+  // prompt; Send → electronOps.startJob, which mints a Job whose planning agent authors the plan widget.
+  // ISOLATED — its own window + self-contained inline UI; nothing here touches the renderer (App.tsx/store).
+  // startJob is workspace-host-gated: a Send before a workspace host exists is caught (osSpawnAgent throws
+  // 'no workspace host'), the handler's try/catch surfaces { ok:false } and leaves the bar open.
+  wireLauncher({
+    // electronOps is typed as a Record<string, (...args:never[])=>unknown> (so the shared registry can hold
+    // every tool uniformly); cast startJob to its real signature at this one call site (no runtime change).
+    startJob: (spec) =>
+      (electronOps.startJob as unknown as (s: { goal: string; contextRefs?: string[] }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string })({ goal: spec.goal, contextRefs: spec.contextRefs }),
+    focusMain: () => {
+      const w = mainWindow
+      if (!w || w.isDestroyed()) return
+      if (w.isMinimized()) w.restore()
+      w.show()
+      w.focus()
+    }
+  })
+  registerLauncher()
+
   // Local agent path: a localhost HTTP control API.
   startControlServer()
 
@@ -626,11 +651,25 @@ app.whenReady().then(() => {
     }
   }
   {
-    // Agent '0' carries the onboarding standing duty. The provider is re-read on EVERY (re)launch
-    // (prepareAgentLaunch rewrites bootstrap.txt): pending interview becomes the interview duty,
-    // then a finished interview becomes the resident initiative duty.
-    setBootTaskProvider((id: string) => (String(id) === '0' ? interviewBootTask() : null))
     const terminalsDirOf = (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'terminals') : null }
+    // job-model reads/writes the `job` on each agent's meta.json — tell it where the active workspace's
+    // terminals dir is (it must not import the IPC-bound osActions; same DI seam as setLaunchAgent).
+    wireJobModel({ getTerminalsDir: terminalsDirOf })
+    // plan-doc (E1) reads each job's `.blitzos/jobs/<id>/plan.md` for the continuation engine — point it at the
+    // active workspace's jobs dir (sibling of terminals; same DI seam).
+    wirePlanDoc({ getJobsDir: (): string | null => { const ws = osWorkspaceContext().workspace_path; return ws ? join(ws, '.blitzos', 'jobs') : null } })
+    // The per-(re)launch standing-duty mapper (prepareAgentLaunch re-reads it + rewrites bootstrap.txt, so a
+    // duty changes as workspace state changes). Generalized to the JOB model: an agent with a JOB gets the duty
+    // for its job status (proposed/approved -> author + present a plan; running -> execute the approved plan;
+    // done/blocked -> no duty). An agent with NO job FALLS THROUGH UNCHANGED — agent '0' carries the onboarding
+    // standing duty (pending interview -> interview duty, finished -> resident initiative duty), every other
+    // bare peer gets null. (Single-Job model: start_job spawns a NEW agent, never '0', so '0' has no job and the
+    // onboarding interview path is byte-for-byte preserved.)
+    setBootTaskProvider((id: string) => {
+      const job = readJob(id)
+      if (job) return dutyForJobStatus(job.status)
+      return String(id) === '0' ? interviewBootTask() : null
+    })
     const launchAgent = (id: string, stage: number, title?: string): void => {
       const ws = osWorkspaceContext().workspace_path
       const terminalsDir = terminalsDirOf()
@@ -676,6 +715,10 @@ app.whenReady().then(() => {
     setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
     setClearBrainContext((id) => { void electronTerminalOps.clearAgentContext(id) }) // interview→resident HANDOFF: rotate the session (fresh context) so the resident rebuilds from the .md files + chat.md at resident (xhigh) effort
     setActionItemsProvider(() => electronActionItems.listActions()) // host reconciles the inbox surface against the authoritative store
+    // W2 supervisor tick: feed it the live terminal list (id/status/exitCode) so the heartbeat can diff
+    // terminal exits + agent add/close. osActions can't import electronTerminalOps (terminal-ops lives here,
+    // and it imports osActions); this DI seam mirrors setActionItemsProvider / setLaunchAgent.
+    setTerminalStatusProvider(() => electronTerminalOps.listTerminals().map((t) => ({ id: String(t.id), status: t.status, exitCode: t.exitCode ?? null })))
     // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
     let resumed = false
     const resumeAll = async (): Promise<void> => {

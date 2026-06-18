@@ -79,11 +79,25 @@ export function dropContentShare(surfaceId) {
 }
 
 /** Strip page-derived content from a moment, leaving only metadata the relay may see
- *  (surface identity + activity counts; url/title are already exposed via list_state). */
+ *  (surface identity + activity counts; url/title are already exposed via list_state).
+ *  TODO(W2): redactMoment is currently UNCALLED repo-wide — no transport routes /events moments through it
+ *  (the tick is relay-safe BY CONSTRUCTION: emitTick carries no scraped content, only ids/change-kind/title/
+ *  status-edges/counts). Re-wiring this into the /events handler so EVERY relay-bound moment is redacted is a
+ *  separate, non-W2 task; the 'tick' branch below stays correct for when it is re-wired. */
 export function redactMoment(m) {
   // A 'message' (in-canvas chat) or 'connector' (the user wired/removed an integration) moment is
   // consent by construction, not scraped page content, so it crosses the relay intact.
   if (m.trigger === 'message' || m.trigger === 'connector') return m
+  // A 'tick' (W2 supervisor heartbeat) carries only OS METADATA — agent status edges, terminal exits, and
+  // "surface X edited" FLAGS (the changed surface ids + a short title label) + counts — never the scraped
+  // CONTENT of a surface (open/close are owned by the 'canvas' moment, not the tick). That metadata is
+  // consent-safe (the user can already see their own desktop's agents/widgets via list_state), so it crosses
+  // the relay intact, with the `user` labels kept and the structured `diff` (ids + change-kind + title only)
+  // carried. The supervisor pulls full surface CONTENT separately via get_surface — the props snapshot is
+  // deliberately NOT shipped in the tick. Mirrors the message/connector pass-through shape.
+  if (m.trigger === 'tick') {
+    return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: m.user || [], ...(m.diff ? { diff: m.diff } : {}), ...(m.workspace ? { workspace: m.workspace } : {}) }
+  }
   // keep the workspace stamp (v2 scoping): filtering is server-side, but the agent should still SEE
   // which workspace a moment belongs to (self-awareness + debugging), redacted or not.
   return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, url: m.url, title: m.title, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: [], ...(m.workspace ? { workspace: m.workspace } : {}) }
@@ -289,6 +303,203 @@ function flushCanvas() {
   })
 }
 
+// ---- the supervisor TICK (W2, plans/blitzos-tick-diff-steer.md): a host-side heartbeat that snapshots
+// the WHOLE desktop (every agent's status + every terminal's exit + every surface's geometry/props), diffs
+// it against the prior tick, and emits ONE trigger:'tick' moment carrying only what MATERIALLY changed — so
+// a supervisor agent ('0') is woken to decide whether to STEER a running Job. Option A is load-bearing:
+// BlitzOS only ticks/diffs/emits; the AGENT owns ALL steering judgment. ZERO per-task/stuck/threshold
+// heuristics live here — materiality is CONTENT-AGNOSTIC transition-shape only (a status edge, a terminal
+// exit, an agent added/closed, a widget's props changed). Surface PRESENCE (open/close) and GEOMETRY
+// (move/resize) are deliberately NOT material here — they already ride the trigger:'canvas' moment (which
+// also routes to '0'), so the tick would otherwise DOUBLE-WAKE the supervisor on a single open/close and
+// re-react to its own structural ops. A quiet desktop emits NOTHING (mirrors `if (!p.hasUser) return`): an
+// immaterial diff updates the baseline and returns with no emit, so the supervisor never wakes on churn.
+// The host snapshot comes from a transport-registered source (setTickSource), mirroring setWorkspaceProvider
+// — perception-core never imports the IPC-bound osActions.
+let tickSource = null
+/** Wire the host snapshot provider. The transport (osActions/index.ts for Electron, backend.mjs for the
+ *  server) calls this once at bootstrap; it returns, on demand, the world snapshot the tick diffs:
+ *  { agentStatus:{id->status}, terminals:[{id,status,exitCode?}], surfaces:[{id,kind,x,y,w,h,props?}], workspace? }. */
+export function setTickSource(fn) {
+  tickSource = typeof fn === 'function' ? fn : null
+}
+function tickSnapshot() {
+  try {
+    return tickSource ? tickSource() || null : null
+  } catch {
+    return null // a broken provider must never break perception
+  }
+}
+let lastTickSnapshot = null // the prior tick's snapshot — the diff baseline (module-level, like canvasBatch)
+
+// Statuses for which the agent is actively producing work. A transition OUT of one of these (working ->
+// waiting/stopped/error) is the steerable edge; staying in/within them (working->working, working->watching,
+// ramp-up starting->working) is NOT material. *->error is always material (a failure the supervisor must see).
+const TICK_WORKING = new Set(['working'])
+const TICK_TERMINAL_EDGE = new Set(['waiting', 'stopped', 'error'])
+
+/** Deep structural equality for surface `props` (a small JSON object). A changed-props surface = a widget
+ *  was edited (the user-action half), which IS material. Defensive: any throw → treat as UNequal (emit), so a
+ *  diff is never silently swallowed. Order-independent for objects; positional for arrays. */
+function propsEqual(a, b) {
+  if (a === b) return true
+  if (a == null || b == null) return a === b
+  if (typeof a !== 'object' || typeof b !== 'object') return a === b
+  const aArr = Array.isArray(a)
+  if (aArr !== Array.isArray(b)) return false
+  if (aArr) {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) if (!propsEqual(a[i], b[i])) return false
+    return true
+  }
+  const ak = Object.keys(a)
+  const bk = Object.keys(b)
+  if (ak.length !== bk.length) return false
+  for (const k of ak) {
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false
+    if (!propsEqual(a[k], b[k])) return false
+  }
+  return true
+}
+
+// ---- self-reaction echo absorb (the TIMING-ROBUST replacement for the old setTickSuppressed time window).
+// A tool op the AGENT performs (update_surface / customize_widget → a surface props-edit; spawn_agent /
+// close_agent → an agent-set change) IS a tick delta the kernel would otherwise read as a fresh user/agent
+// signal and self-wake the supervisor on. The transport registers the affected id here at the moment it
+// applies the op; the NEXT tick's diff SKIPS exactly that id (per-delta, never a whole-tick veto) so a
+// CONCURRENT genuine edge (e.g. another agent going working->stopped, a terminal exit, a USER's widget edit)
+// in the SAME tick still wakes. Each Set is ONE-SHOT: emitTick clears it after the diff, so the absorb is
+// consumed by exactly the next tick and a LATER non-absorbed change to the same id wakes normally. This is
+// timing-INDEPENDENT (it does not matter WHEN the next tick fires, vs. the old Date.now()-window which only
+// suppressed when the tick happened to fall inside CANVAS_BULK_WINDOW of the op). Workspace switches/bulk
+// reconciles use resetTickBaseline() (below) instead — the whole world is re-seeded, never diffed.
+const tickAbsorbSurfaces = new Set()
+const tickAbsorbAgents = new Set()
+/** The transport just applied a tool op of ITS OWN; absorb its surface/agent deltas in the NEXT tick only
+ *  (so it can't self-wake the supervisor). Per-delta + one-shot — see the block comment above. */
+export function absorbTickEcho({ surfaces = [], agents = [] } = {}) {
+  for (const id of surfaces) if (id != null) tickAbsorbSurfaces.add(String(id))
+  for (const id of agents) if (id != null) tickAbsorbAgents.add(String(id))
+}
+function clearTickAbsorb() {
+  tickAbsorbSurfaces.clear()
+  tickAbsorbAgents.clear()
+}
+/** Drop the diff baseline so the NEXT emitTick re-SEEDS instead of diffing — for a BULK transaction
+ *  (workspace switch / hydrate / reconcile) where the whole world changes at once and a diff would read as
+ *  a storm of phantom user/agent signals. Replaces the old canvasBulkAt time-window veto for the bulk case. */
+export function resetTickBaseline() {
+  lastTickSnapshot = null
+}
+
+/** Diff two host snapshots into the MATERIAL deltas (content-agnostic transition-shape). Returns
+ *  { material:boolean, agents:[…], terminals:[…], surfaces:[…], signals:{}, user:[…] }. An empty/immaterial
+ *  diff has material:false (no emit). Surface PRESENCE (open/close) and GEOMETRY (move/resize) are NOT
+ *  material here — both already ride the 'canvas' moment (which also routes to the supervisor '0'), so the
+ *  tick must not double-wake on them. The ONLY surface delta the tick owns is a props-EDIT (a widget edit),
+ *  which the canvas moment does not carry. A surface/agent id in the one-shot absorb Sets (a tool op the
+ *  agent just made) is SKIPPED per-delta — never counted material — so it can't self-wake the supervisor. */
+function diffTickSnapshot(prev, next) {
+  const signals = {}
+  const user = []
+  const agents = [] // [{id, from, to}]
+  const terminals = [] // [{id, exitCode}]
+  const surfaces = [] // [{id, change:'edited', kind?, title?}] — props-edit only (open/close own'd by 'canvas')
+  const bump = (k) => { signals[k] = (signals[k] || 0) + 1 }
+
+  // --- agent status edges (the agent-state half) ---
+  const prevStatus = (prev && prev.agentStatus) || {}
+  const nextStatus = (next && next.agentStatus) || {}
+  for (const id of new Set([...Object.keys(prevStatus), ...Object.keys(nextStatus)])) {
+    const from = prevStatus[id]
+    const to = nextStatus[id]
+    if (from === to) continue
+    // an agent APPEARING (no prior status) or DISAPPEARING is itself material (added/closed agent) — UNLESS
+    // it is the agent set-change of a tool op the agent just made (spawn_agent/close_agent), in which case
+    // the transport absorbed that id for this one tick (a status EDGE below is never absorbed, only add/close).
+    if (from == null) { if (!tickAbsorbAgents.has(id)) { agents.push({ id, from: null, to }); user.push(`agent ${id} started (${to})`); bump('agent_added') } continue }
+    if (to == null) { if (!tickAbsorbAgents.has(id)) { agents.push({ id, from, to: null }); user.push(`agent ${id} closed`); bump('agent_closed') } continue }
+    // a STATUS edge is material only for working -> {waiting,stopped,error} or *-> error. working->working,
+    // working->watching, and ramp-up (starting->working) are NOT material (no steerable transition).
+    const material = (TICK_WORKING.has(from) && TICK_TERMINAL_EDGE.has(to)) || to === 'error'
+    if (material) { agents.push({ id, from, to }); user.push(`agent ${id}: ${from} -> ${to}`); bump('agent_status') }
+  }
+
+  // --- terminal exits (a new exitCode = a process ended) ---
+  const prevTerm = new Map(((prev && prev.terminals) || []).map((t) => [String(t.id), t]))
+  const nextTerm = new Map(((next && next.terminals) || []).map((t) => [String(t.id), t]))
+  for (const [id, t] of nextTerm) {
+    const p = prevTerm.get(id)
+    const code = t && t.exitCode
+    const hadCode = p && p.exitCode != null
+    if (code != null && !hadCode) { terminals.push({ id, exitCode: code }); user.push(`terminal ${id} exited (code ${code})`); bump('terminal_exit') }
+  }
+
+  // --- surfaces: ONLY a props-EDIT (a widget was edited — the user-action half). Surface PRESENCE
+  // (open/close) and GEOMETRY (move/resize) are intentionally NOT diffed here: the trigger:'canvas'
+  // moment already owns ALL structural surface changes (open/close/move/resize) and already routes to
+  // the supervisor '0', so diffing presence here would DOUBLE-WAKE the supervisor on one open/close (and
+  // re-react to the supervisor's own open/close). The tick keeps only the props delta the canvas moment
+  // does NOT carry. A surface that appears/disappears between ticks therefore contributes no tick delta. */
+  const prevSurf = new Map(((prev && prev.surfaces) || []).map((s) => [String(s.id), s]))
+  const nextSurf = new Map(((next && next.surfaces) || []).map((s) => [String(s.id), s]))
+  for (const [id, s] of nextSurf) {
+    const p = prevSurf.get(id)
+    if (!p) continue // a surface OPEN is owned by the canvas moment — not a tick delta (no double-wake)
+    // Absorb the props-edit of a tool op the agent just made (update_surface / customize_widget): the
+    // transport registered this id for this one tick, so it does not self-wake the supervisor. A USER's
+    // widget edit arrives via the renderer push (NOT a tool op), is never absorbed, and STILL wakes.
+    if (tickAbsorbSurfaces.has(id)) continue
+    if (!propsEqual(p.props, s.props)) { surfaces.push({ id, change: 'edited', kind: s.kind, title: s.title }); user.push(`surface edited: ${s.title || id}`); bump('surface_edited') }
+  }
+  // a surface CLOSE is likewise owned by the canvas moment — not diffed here (no double-wake / self-react).
+
+  const material = agents.length > 0 || terminals.length > 0 || surfaces.length > 0
+  return { material, agents, terminals, surfaces, signals, user }
+}
+
+// (The old setTickSuppressed predicate — a Date.now()-vs-CANVAS_BULK_WINDOW veto on the WHOLE tick — was
+// removed: it only suppressed when the next tick happened to fall inside a few seconds of the op, so with a
+// ~10s tick cadence a lone tool op landed in the unsuppressed window most of the time and self-woke the
+// supervisor. The timing-robust replacement is the per-delta absorbTickEcho Sets (tool ops) +
+// resetTickBaseline (bulk transactions) above — both timing-INDEPENDENT.)
+
+/** Heartbeat: snapshot the host world, diff against the prior tick, and emit ONE trigger:'tick' moment IF
+ *  (and only if) the diff is MATERIAL. Driven from the sweepTimer at a TICK_MS sub-cadence — never its own
+ *  always-on interval. Funnels through emit() so it inherits the ring cap + waiter wake + workspace stamp;
+ *  surfaceId 'desktop' + no agentId ⇒ visibleTo() routes it to the primary supervisor '0'. The one-shot
+ *  absorb Sets (a tool op the agent just made) are CLEARED here after the diff — consumed by exactly this
+ *  one tick, never leaking to the next (a later non-absorbed change to the same id then wakes normally). */
+export function emitTick() {
+  const snap = tickSnapshot()
+  if (!snap) return // no provider wired yet (boot) — nothing to diff
+  // First tick after boot/switch (incl. after resetTickBaseline on a bulk transaction): seed the baseline,
+  // never emit (the whole world would read as "new"). A pending absorb is moot once re-seeded — clear it so
+  // it can never leak past this tick either.
+  if (!lastTickSnapshot) { lastTickSnapshot = snap; clearTickAbsorb(); return }
+  const diff = diffTickSnapshot(lastTickSnapshot, snap)
+  clearTickAbsorb() // one-shot: an absorb is consumed by exactly THIS tick's diff, whether material or not
+  // Advance the baseline regardless (a material AND an immaterial diff both settle the world), so the next
+  // tick diffs against now — exactly the `if (!p.hasUser) return` discipline (update + return, no wake).
+  lastTickSnapshot = snap
+  if (!diff.material) return // quiet desktop — never wake the supervisor
+  emit({
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId: 'desktop',
+    trigger: 'tick',
+    windowMs: 0,
+    signals: diff.signals,
+    user: diff.user,
+    diff: { agents: diff.agents, terminals: diff.terminals, surfaces: diff.surfaces },
+    ...(snap.workspace ? { workspace: String(snap.workspace) } : {})
+  })
+}
+
+// Drive the tick from the EXISTING sweepTimer at a coarser sub-cadence (no second always-on interval).
+const TICK_MS = Math.max(2000, Number(process.env.BLITZ_TICK_MS) || 10000)
+let lastTickAt = 0
+
 // Batch timer: emit a moment for any surface whose window has aged past BATCH_MS
 // (significant transitions flush sooner, via ingestSignals).
 const sweepTimer = setInterval(() => {
@@ -300,6 +511,12 @@ const sweepTimer = setInterval(() => {
   // at the routine batch age for pure move/resize churn.
   if (canvasBatch && now - canvasBatch.lastTs >= CANVAS_SETTLE_MS && (canvasBatch.structural || now - canvasBatch.startTs >= BATCH_MS)) {
     flushCanvas()
+  }
+  // supervisor tick: at the TICK_MS sub-cadence, snapshot+diff+(maybe)emit. Gated by elapsed time, not a
+  // separate interval, so it shares the sweeper's unref'd lifecycle (a quiet node test still exits cleanly).
+  if (now - lastTickAt >= TICK_MS) {
+    lastTickAt = now
+    emitTick()
   }
 }, 2000)
 // A background sweeper must never keep the PROCESS alive — node test scripts that import this

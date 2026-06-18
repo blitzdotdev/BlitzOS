@@ -123,6 +123,9 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const slotGhost = useRef<{ col: number; row: number } | null>(null)
   const frameRef = useRef<HTMLDivElement>(null)
   const webHostRef = useRef<HTMLDivElement>(null)
+  // Where a focused widget's pinch last centered (its cursor point, in content px) — the transformOrigin
+  // for iframeZoom, so the zoom magnifies toward the cursor instead of the top-left corner.
+  const zoomOriginRef = useRef<{ x: number; y: number } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const serverMode = !!window.agentOS?.serverMode
@@ -317,6 +320,15 @@ export const SurfaceFrame = memo(function SurfaceFrame({
             useDesktop.getState().openAnnotationMenu(surface.id, cx / cw, cy / ch, r.left + cx * z, r.top + cy * z)
           }
         }
+      } else if (m.type === 'blitz:wheel') {
+        // A FOCUSED widget's iframe got a pinch (ctrl+wheel). Unfocused widgets never send this — the focus
+        // catcher intercepts their pinch and it drives the CANVAS zoom. So this means "zoom THIS widget
+        // only": apply its own content zoom (iframeZoom via surface.zoom), nothing else on the stage moves.
+        const dy = Number((m as { dy?: number }).dy) || 0
+        // Scale toward the CURSOR (its content-px point), and never below 100% (min 1 — no zoom-out).
+        zoomOriginRef.current = { x: Number((m as { x?: number }).x) || 0, y: Number((m as { y?: number }).y) || 0 }
+        const cur = useDesktop.getState().surfaces.find((s) => s.id === surface.id)?.zoom ?? 1
+        useDesktop.getState().setZoom(surface.id, Math.min(4, Math.max(1, cur * Math.exp(-dy * 0.006))))
       } else if (m.type === 'blitz:annotation') {
         // Item 5b: a chat widget's grounded reference was clicked → recall the annotation bubble on its
         // surface (fire-and-forget; the ref carries the full annotation so it works after a reload).
@@ -650,11 +662,16 @@ export const SurfaceFrame = memo(function SurfaceFrame({
 
   function body(): JSX.Element {
     const fill = { width: '100%', height: '100%', border: 'none', display: 'block' } as const
-    // CSS content-zoom for iframes (web uses native setZoomFactor instead)
+    // Per-widget pinch zoom: a pure VISUAL scale — NO width/height change, so the iframe's layout viewport
+    // is unchanged and the content does NOT reflow; it just magnifies and the window clips it. (The old
+    // width-trick re-laid-out the content at 1/zoom width = a reflow, which isn't what "zoom" means.)
+    // transformOrigin 0 0 anchors the top of the content. Web surfaces use native page-scale instead (a
+    // WebContentsView can't be CSS-transformed). NOTE: a transform-scale is a bitmap magnify, so a heavily
+    // zoomed widget can look soft until it re-rasters — sharp+no-reflow for an arbitrary iframe wants its
+    // own page-scale (todo).
+    const zo = zoomOriginRef.current
     const iframeZoom =
-      zoom === 1
-        ? fill
-        : { ...fill, width: `${100 / zoom}%`, height: `${100 / zoom}%`, transform: `scale(${zoom})`, transformOrigin: '0 0' as const }
+      zoom === 1 ? fill : { ...fill, transform: `scale(${zoom})`, transformOrigin: zo ? `${zo.x}px ${zo.y}px` : ('0 0' as const) }
     switch (surface.kind) {
       case 'web':
         // Server mode: the site lives in a server-side headless browser, streamed as a <canvas>.

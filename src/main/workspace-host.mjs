@@ -477,6 +477,16 @@ export function createWorkspaceHost(a) {
     if (meta && meta.kind === 'agent' && meta.status === 'running') return 'watching'
     return 'idle'
   }
+  /** A snapshot { id -> status } of EVERY chat-bearing agent's current status, for the W2 supervisor tick
+   *  (plans/blitzos-tick-diff-steer.md). The transport (osActions/backend) feeds this to setTickSource so the
+   *  tick can diff agent-status EDGES across the desktop. Built from the same chatStatuses the existing
+   *  writers maintain, falling back through chatStatus() (so a running agent with no transient record still
+   *  reports 'watching', not absent). agentIds() is the authority on WHICH agents exist (primary + on-disk). */
+  function chatStatusSnapshot() {
+    const out = {}
+    for (const id of agentIds()) out[id] = chatStatus(id)
+    return out
+  }
   function noteAgentActivity(agentId, source = 'activity') {
     const id = String(agentId ?? '0')
     if (!agentIds().includes(id)) return { ok: false, error: 'unknown agent id' }
@@ -651,7 +661,10 @@ export function createWorkspaceHost(a) {
       const mp = join(dir, 'meta.json')
       let m = {}
       try { m = JSON.parse(readFileSync(mp, 'utf8')) } catch { /* fresh */ }
-      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, stage, createdAt: m.createdAt || Date.now() }, null, 2))
+      // A job (start_job -> osSpawnAgent -> opts.job) is stamped HERE, BEFORE launchAgent (below) builds the first
+      // bootstrap — so bootTaskProvider reads it and the agent's first launch carries the planning duty (no re-exec).
+      // `...m` already carries any on-disk job (idempotent re-add); opts.job overrides it when starting a new job.
+      writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, stage, createdAt: m.createdAt || Date.now(), ...(opts.job && typeof opts.job === 'object' ? { job: opts.job } : {}) }, null, 2))
     } catch { /* best-effort: the surface still works in-memory this run */ }
     setChatStatusLocal(id, 'starting')
     try {
@@ -776,6 +789,10 @@ export function createWorkspaceHost(a) {
         /* adapter without getState/setState */
       }
       a.broadcast({ type: 'update', id: sid, patch: { html: newHtml, lang: info?.lang || 'html' } })
+      // Report the affected surface id so the transport can absorb it from the W2 tick (a tool-origin edit
+      // must not self-wake the supervisor). doReconcile-path widgets (note) are a BULK transition the
+      // transport already covers via resetTickBaseline, so they need no per-surface absorb id here.
+      return { ...r, surfaceId: sid }
     } else if (name === 'note') {
       doReconcile({}) // re-materialize every note through the (now-present) blitz-note.html renderer
     }
@@ -1050,6 +1067,7 @@ export function createWorkspaceHost(a) {
     systemUiInfo,
     setChatStatus,
     noteAgentActivity,
+    chatStatusSnapshot,
     agentIds,
     restoreChatHub,
     newAgentId,
