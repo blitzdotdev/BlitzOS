@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
 import { useDesktop, snapTargetFor, primaryRect, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, webTabsOf, effectiveZ } from '../store'
 import { BrowserNav } from './BrowserNav'
+import { WebTabView } from './WebTabView'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
@@ -122,7 +123,6 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   // Slotted-tile drag: the candidate lattice span under the outline ghost (committed on drop).
   const slotGhost = useRef<{ col: number; row: number } | null>(null)
   const frameRef = useRef<HTMLDivElement>(null)
-  const webHostRef = useRef<HTMLDivElement>(null)
   // Where a focused widget's pinch last centered (its cursor point, in content px) — the transformOrigin
   // for iframeZoom, so the zoom magnifies toward the cursor instead of the top-left corner.
   const zoomOriginRef = useRef<{ x: number; y: number } | null>(null)
@@ -161,49 +161,13 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const activeWebTabIdx = webTabs ? Math.min(Math.max(surface.activeTab || 0, 0), webTabs.length - 1) : 0
   const activeWebTab = webTabs ? webTabs[activeWebTabIdx] : null
 
-  // Wire the in-DOM <webview> guest: report its WebContents id to main (so the agent's read/control/
-  // perception path can reach it), apply zoom, and mirror navigation (url/title) back into the store
-  // so the address bar + tab title track the live page. The element is the same DOM node as the frame,
-  // so there is no geometry sync — it just moves with the window.
-  useEffect(() => {
-    if (surface.kind !== 'web' || serverMode) return
-    const wv = webHostRef.current as unknown as (HTMLElement & {
-      getWebContentsId?: () => number
-      setZoomFactor?: (z: number) => void
-      getURL?: () => string
-    }) | null
-    if (!wv) return
-    const st = () => useDesktop.getState()
-    const onDomReady = (): void => {
-      try {
-        const wcid = wv.getWebContentsId?.()
-        if (wcid != null) window.agentOS?.registerWebview?.(surface.id, wcid)
-        wv.setZoomFactor?.(zoom)
-      } catch { /* not attached yet */ }
-    }
-    const onNav = (e: Event): void => {
-      const url = (e as unknown as { url?: string }).url || wv.getURL?.() || ''
-      if (url) st().updateSurface(surface.id, { url })
-    }
-    const onTitle = (e: Event): void => {
-      const title = (e as unknown as { title?: string }).title
-      if (title) st().updateSurface(surface.id, { title })
-    }
-    wv.addEventListener('dom-ready', onDomReady)
-    wv.addEventListener('did-navigate', onNav as EventListener)
-    wv.addEventListener('did-navigate-in-page', onNav as EventListener)
-    wv.addEventListener('page-title-updated', onTitle as EventListener)
-    return () => {
-      wv.removeEventListener('dom-ready', onDomReady)
-      wv.removeEventListener('did-navigate', onNav as EventListener)
-      wv.removeEventListener('did-navigate-in-page', onNav as EventListener)
-      wv.removeEventListener('page-title-updated', onTitle as EventListener)
-    }
-  }, [surface.kind, surface.id, serverMode, zoom])
-
-  // Navigation just rides the <webview src> binding: changing the active tab's url (address bar, agent
-  // update_surface{url}, bookmark) updates the store → re-renders the element with a new src → the
-  // webview navigates. No geometry/input plumbing — it is a normal DOM child.
+  // Per-tab <webview> liveness: a tab is MATERIALIZED (gets a live <webview>) once it has been active, and
+  // stays mounted after, so background tabs keep their page alive. Mark the active tab materialized during
+  // render (idempotent Set add); render only materialized tabs (WebTabView below). This is the lazy-then-
+  // live restore the old per-tab WebContentsView host did. Wiring (register-with-main, nav-state, fullscreen)
+  // lives in WebTabView per tab.
+  const materializedTabs = useRef<Set<string>>(new Set())
+  if (activeWebTab) materializedTabs.current.add(activeWebTab.id)
 
   // Keep the app/server address-bar draft in sync with the stored url (Electron web surfaces moved to
   // BrowserNav, which holds per-tab drafts with a focus clobber-guard).
@@ -676,18 +640,16 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       case 'web':
         // Server mode: the site lives in a server-side headless browser, streamed as a <canvas>.
         if (serverMode) return <canvas ref={canvasRef} style={fill} />
-        // Electron: a real in-DOM <webview> guest (a separate process, no iframe framing limits). It is
-        // an ordinary child of the frame, so it moves/stacks/clips with the window like any DOM — no
-        // compositor. The wiring effect reports its guest id to main (agent control) and mirrors nav.
+        // Electron: a real in-DOM <webview> guest PER TAB (separate processes, no iframe framing limits).
+        // Ordinary DOM children of the frame, so they move/stack/clip with the window — no compositor.
+        // Only materialized tabs (active + previously-active) get a live webview; inactive ones stay
+        // mounted-but-hidden so their page stays alive. WebTabView owns each guest's wiring.
         return (
-          <webview
-            ref={webHostRef as unknown as React.RefObject<HTMLElement>}
-            data-sid={surface.id}
-            src={activeWebTab?.url || surface.url || 'about:blank'}
-            partition="persist:agentos"
-            // @ts-expect-error allowpopups is a valid <webview> attribute, not in React's DOM types
-            allowpopups="true"
-          />
+          <>
+            {(webTabs ?? []).filter((t) => materializedTabs.current.has(t.id)).map((t) => (
+              <WebTabView key={t.id} surfaceId={surface.id} tab={t} active={t.id === activeWebTab?.id} zoom={zoom} />
+            ))}
+          </>
         )
       case 'app':
         if (!surface.url) return <AppEmptyState />

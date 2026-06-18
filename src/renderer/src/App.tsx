@@ -814,6 +814,21 @@ export default function App(): JSX.Element {
   // (Web surfaces are in-DOM <webview> elements now — they move/stack/clip with their frame as normal
   // DOM, so there is no page-geometry RAF and no clip-hole pass. The whole sandwich compositor is gone.)
 
+  // Sharp zoom: hold .world on the GPU WHILE the camera moves (pan/zoom composites off the main thread,
+  // no repaint), then drop will-change ~200ms after it settles so Chromium RE-RASTERIZES the layer at the
+  // new scale — crisp text/widgets instead of a stretched 1x bitmap. (Pinning will-change on permanently
+  // is exactly what blurs a zoomed-in canvas; this matches a PDF viewer / Chrome pinch. The .world CSS
+  // documents this contract — the effect was dropped in the webview merge and is restored here.)
+  useEffect(() => {
+    const el = worldRef.current
+    if (!el) return
+    el.style.willChange = 'transform'
+    const t = window.setTimeout(() => {
+      if (worldRef.current) worldRef.current.style.willChange = 'auto'
+    }, 200)
+    return () => window.clearTimeout(t)
+  }, [transform])
+
   // ⌘T / ⇧⌘T — tile toggle + size cycle on the window the user means: the single selection if there
   // is one, else the front-most. No editable guard (a ⌘-chord types nothing; a focused note textarea
   // must not eat it). Reached via os:keybind from main (any focus) or the DOM fallback (server mode).

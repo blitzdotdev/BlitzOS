@@ -457,6 +457,11 @@ button {
   width: 100%;
   height: 100%;
 }
+/* One <webview> per browser TAB, stacked; the inactive ones stay MOUNTED (live page/scroll/form/history)
+   but hidden — per-tab liveness without a process churn on every tab switch. */
+.window.browser webview.wt-inactive {
+  display: none;
+}
 .surface-empty {
   width: 100%;
   height: 100%;

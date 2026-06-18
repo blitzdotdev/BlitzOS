@@ -140,8 +140,12 @@ function launcherHtml(): string {
     sending = true; sync();
     var paths = attachments.map(function(a){ return a.path; });
     try {
-      window.agentOS.launcher.startJob(goal, paths).then(function(){ q.value=''; attachments=[]; renderAtts(); sending=false; sync(); hide(); })
-        .catch(function(){ sending=false; sync(); });
+      window.agentOS.launcher.startJob(goal, paths).then(function(r){
+        // The Send IPC RESOLVES { ok:false } on failure (it never rejects), so inspect the result:
+        // only clear the prompt + close the bar on a real success; on failure keep both so the user can retry.
+        if (!r || !r.ok) { sending=false; sync(); return; }
+        q.value=''; attachments=[]; renderAtts(); sending=false; sync(); hide();
+      }).catch(function(){ sending=false; sync(); });
     } catch(_) { sending=false; sync(); }
   }
   q.addEventListener('input', sync);

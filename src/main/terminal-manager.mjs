@@ -247,9 +247,19 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
   async function clearAgentContext(id) {
     const r = live.get(id)
     const meta = r ? r.meta : readMeta(id)
-    if (!meta || meta.kind !== 'agent' || !meta.claudeSessionId) return false
-    meta.claudeSessionId = randomUUID()
-    meta.claudeEstablished = false
+    if (!meta || meta.kind !== 'agent') return false
+    // Rotate whichever session handle this backend uses, then restart so rebuildAgentCommand re-derives a
+    // FRESH-context create command. Claude uses claudeSessionId; Codex-serverless uses agentSessionId. A
+    // plain shell / unmanaged agent has neither → no context to clear (no-op). Without the Codex branch the
+    // job duty-boundary re-exec (approved→running) was a no-op for Codex, landing the EXECUTE duty a launch late.
+    if (meta.claudeSessionId) {
+      meta.claudeSessionId = randomUUID()
+      meta.claudeEstablished = false
+    } else if (meta.agentSessionId) {
+      meta.agentSessionId = randomUUID()
+    } else {
+      return false
+    }
     writeMeta(meta) // persist the rotated id BEFORE restart so rebuildAgentCommand reads it from disk → create mode
     await restartTerminal(id)
     return true
