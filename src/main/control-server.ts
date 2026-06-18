@@ -5,6 +5,7 @@ import { OS_TOOLS_BY_PATH } from './electron-os-tools'
 import type { ControlAction } from './cdp'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './events'
 import { setLocal } from './sessionFile'
+import { attachIslandWebSocket } from './island-bridge.mjs'
 
 /**
  * Minimal localhost control API (the LOCAL agent path; agent-socket is the
@@ -159,6 +160,13 @@ export function startControlServer(): void {
     res.writeHead(404, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ error: 'not found' }))
   })
+
+  // Mount the native dynamic-island WS (BlitzIsland.app connects to ws://127.0.0.1:<port>/island?token=…;
+  // the SAME bearer token as the HTTP control API, which the island reads from session.json local.token via
+  // setLocal below). Armed BEFORE listen so the handler is ready before the port can accept the island's
+  // first connect (it reconnects with backoff regardless). Electron-free + tested in
+  // scripts/test-island-bridge.mjs (plans/blitzos-dynamic-island.md).
+  attachIslandWebSocket(server, token)
 
   server.listen(0, '127.0.0.1', () => {
     const addr = server.address()

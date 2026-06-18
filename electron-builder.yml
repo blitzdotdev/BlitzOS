@@ -29,6 +29,12 @@ extraResources:
   # helper.ts) installs it to ~/Library/Application Support/BlitzOS and launches it via LaunchServices.
   - from: native/computer-use-helper/build/BlitzComputerUse.app
     to: BlitzComputerUse.app
+  # The native dynamic-island HUD (faceless ⌥Space notch helper — plans/blitzos-dynamic-island.md).
+  # Built + signed by scripts/dist-mac.sh before packaging (same as the CU helper above); index.ts
+  # resolves it at process.resourcesPath/BlitzIsland.app and launchIslandHelper (island-bridge.mjs)
+  # `open`s it. Without this copy the packaged candidate never exists and the HUD never starts in prod.
+  - from: native/island-helper/build/BlitzIsland.app
+    to: BlitzIsland.app
 asarUnpack:
   - scripts/onboarding-scan.mjs
   - src/main/blitzos-onboarding.md

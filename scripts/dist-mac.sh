@@ -5,12 +5,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Build + sign the Computer Use helper FIRST so electron-builder bundles the signed bundle
-# (plans/blitzos-computer-use-helper.md). Its TCC identity needs a real Developer-ID signature, so
-# pass the dist identity through. NOTE: verify on a notarized build that electron-builder's deep
-# sign preserved the helper's apple-events entitlement (an afterSign re-sign is the fallback).
+# Build + sign the native helpers FIRST so electron-builder bundles the signed bundles
+# (plans/blitzos-computer-use-helper.md, plans/blitzos-dynamic-island.md). Their identities need a real
+# Developer-ID signature, so pass the dist identity through. Fail-soft: a helper build failure WARNs and
+# packages without it rather than aborting the whole dist. NOTE: verify on a notarized build that
+# electron-builder's deep sign preserved each helper's entitlements (an afterSign re-sign is the fallback).
 if [[ "$(uname)" == "Darwin" ]]; then
   BLITZ_HELPER_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:-}" bash native/computer-use-helper/build.sh || echo "[dist] WARN: CU helper build failed — packaging without it"
+  # The dynamic-island HUD: same Developer-ID-sign + fail-soft pattern (electron-builder.yml extraResources
+  # copies native/island-helper/build/BlitzIsland.app into Contents/Resources, which index.ts then resolves).
+  BLITZ_ISLAND_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:-}" bash native/island-helper/build.sh || echo "[dist] WARN: island helper build failed — packaging without it"
 fi
 
 npm run build
