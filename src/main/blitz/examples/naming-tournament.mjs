@@ -57,6 +57,12 @@ const CONTEXT = [
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────────
 const CHEAP = { harness: 'claude', model: 'haiku' } // cheap/fast leaf per the plan's strong-root/cheap-leaf split
 
+// Representative dry-run FALLBACKS (the llm() 3rd arg) so `blitz check` exercises the real parsing +
+// tournament for FREE (no spawns). Each mimics the exact leaf output format the parsers expect.
+const FB_BRAINSTORM = ['Cascade - work flows down through agent stages', 'Weave - interleaves parallel sub-agents', 'Conjure - summons a bespoke harness on demand', 'Forge - builds a program then runs it', 'Relay - passes data between leaf agents'].join('\n')
+const FB_JUDGE = ['Cascade: 8', 'Weave: 7', 'Conjure: 9', 'Forge: 6', 'Relay: 5'].join('\n')
+const FB_FINAL = ['Conjure - short and evocative, signals a bespoke harness', 'Cascade - staged flow without the workflow baggage', 'Weave - interlacing parallel agents, distinct from CI jobs', 'Forge - build then run in one word', 'Relay - passes data between leaves'].join('\n')
+
 // Pull bare candidate names out of a leaf's free-text. Leaves are told to emit one "Name — why" per
 // line; we parse the leading token before the dash. Robust to bullets/numbering/quotes/backticks.
 function parseCandidates(text) {
@@ -132,7 +138,7 @@ const brainstormPrompts = ANGLES.map((angle) => [
 
 console.error(`[naming-tournament] read ${DOC_PATH} (${doc.length} chars); fanning out ${brainstormPrompts.length} brainstorm leaves…`)
 
-const brainstormRaw = await Promise.all(brainstormPrompts.map((p) => llm(p, CHEAP)))
+const brainstormRaw = await Promise.all(brainstormPrompts.map((p) => llm(p, CHEAP, FB_BRAINSTORM)))
 const allNames = brainstormRaw.flatMap(parseCandidates)
 let candidates = dedup(allNames)
 
@@ -175,7 +181,7 @@ const judgePrompts = RUBRICS.map((r) => [
 
 console.error(`[naming-tournament] running ${judgePrompts.length} judge leaves over ${candidates.length} candidates…`)
 
-const judgeRaw = await Promise.all(judgePrompts.map((p) => llm(p, CHEAP)))
+const judgeRaw = await Promise.all(judgePrompts.map((p) => llm(p, CHEAP, FB_JUDGE)))
 const judgeScores = judgeRaw.map((t) => parseScores(t, candidates))
 
 // Tally in CODE: average each candidate's score across the judges that scored it.
@@ -213,7 +219,7 @@ const finalPrompt = [
 ].join('\n')
 
 try {
-  const finalText = await llm(finalPrompt, CHEAP)
+  const finalText = await llm(finalPrompt, CHEAP, FB_FINAL)
   for (const raw of finalText.split('\n')) {
     const line = raw.replace(/^[-*\d.)\]\s]+/, '').trim()
     if (!line) continue

@@ -15,8 +15,27 @@ import { mkdirSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 
 const [, , sub, ...rest] = process.argv
+
+// `blitz capabilities` — probe THIS machine for the harness/model/effort matrix the orchestrator
+// agent needs to author llm() calls (which CLIs are installed + their models/effort). See capabilities.mjs.
+if (sub === 'capabilities' || sub === 'caps') {
+  const { capabilities, formatCapabilities } = await import('./capabilities.mjs')
+  console.log(formatCapabilities(await capabilities()))
+  process.exit(0)
+}
+
+// `blitz check <workflow.mjs>` — tsc-style validation: syntax + a DRY RUN (llm() returns fallbacks,
+// no real spawns) catching runtime errors + infinite loops, BEFORE spending real llm calls. See check.mjs.
+if (sub === 'check') {
+  if (rest.length === 0) { console.error('usage: blitz check <workflow.mjs>'); process.exit(2) }
+  const { check, formatCheck } = await import('./check.mjs')
+  const report = await check(rest[0])
+  console.log(formatCheck(report))
+  process.exit(report.ok ? 0 : 1)
+}
+
 if (sub !== 'run' || rest.length === 0) {
-  console.error('usage: blitz run <workflow.mjs> [args…]')
+  console.error('usage: blitz run <workflow.mjs> [args…]\n       blitz check <workflow.mjs>\n       blitz capabilities')
   process.exit(2)
 }
 

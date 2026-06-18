@@ -71,10 +71,11 @@ function leafDepth() {
 // Resolves with the child's stdout string (rejects on spawn error / non-zero exit). Overridable so
 // tests can assert what WOULD be spawned without launching a real agent. stdin is 'ignore' so codex
 // (which appends piped stdin to the prompt) doesn't absorb the parent's stdin.
-async function _defaultSpawn(cmd, args, env) {
+async function _defaultSpawn(cmd, args, env, cwd) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       env: { ...process.env, ...env },
+      cwd: cwd || undefined,            // opts.cwd — run the leaf in a given dir (e.g. a git worktree)
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let out = '', err = ''
@@ -82,8 +83,13 @@ async function _defaultSpawn(cmd, args, env) {
     child.stderr.on('data', (d) => { err += d })
     child.on('error', (e) => reject(new Error(`blitz llm: failed to spawn ${cmd}: ${e.message}`)))
     child.on('close', (code) => {
-      if (code === 0) resolve(out)
-      else reject(new Error(`blitz llm: ${cmd} exited ${code}${err ? `\n${err.trim()}` : ''}`))
+      if (code === 0) return resolve(out)
+      // Surface BOTH streams on failure: claude prints its error JSON on stdout (--output-format json)
+      // and codex reports an inaccessible-model 400 as a JSONL error event on STDOUT, so stderr alone
+      // gives the uninformative "exited 1". Include a trimmed tail of each so callers get the real reason.
+      const tail = (s) => { s = String(s).trim(); return s.length > 1200 ? '…' + s.slice(-1200) : s }
+      const detail = [err && tail(err), out && tail(out)].filter(Boolean).join('\n')
+      reject(new Error(`blitz llm: ${cmd} exited ${code}${detail ? `\n${detail}` : ''}`))
     })
   })
 }
@@ -100,9 +106,11 @@ export function _setSpawn(fn) { _spawn = fn || _defaultSpawn }
  *        harness: 'claude' (default) | 'codex' | 'pi'(stub) | 'opencode'(stub).
  *        model:   harness model alias/name -> --model (claude) / -c model= (codex). FUTURE: maxTokens/schema/files.
  *        effort:  reasoning effort -> --effort (claude) / -c model_reasoning_effort= (codex).
+ * @param {*} [fallback]         The value returned INSTEAD of spawning under `blitz check` (BLITZ_DRY_RUN).
+ *        ALWAYS pass a representative one so the dry-run exercises real control flow + parsing.
  * @returns {Promise<string>}
  */
-export async function llm(prompt, opts = {}) {
+export async function llm(prompt, opts = {}, fallback = undefined) {
   if (typeof prompt !== 'string') throw new Error('blitz llm: prompt must be a string')
   const harnessName = opts.harness || 'claude'
   const harness = harnesses[harnessName]
@@ -113,14 +121,25 @@ export async function llm(prompt, opts = {}) {
   const depth = leafDepth()
   const fullPrompt = prompt + leafMetadata(depth)
 
-  // build() produces the spawn descriptor; merge the depth env so the child self-labels.
+  // build() produces the spawn descriptor; merge the depth env so the child self-labels. It also
+  // VALIDATES the flags (e.g. claude effort), so bad opts throw here — in dry-run too.
   const built = harness.build(fullPrompt, opts)
   const childEnv = { ...(built.env || {}), BLITZ_DEPTH: String(depth) }
 
   _calls++
+
+  // DRY RUN (`blitz check`): everything above still runs (harness + flag validation + metadata
+  // assembly), but we DO NOT spawn a real agent — return this call's `fallback` so the workflow's real
+  // control flow executes for free. A runaway loop trips the call cap (the loop detector for the check).
+  if (process.env.BLITZ_DRY_RUN) {
+    const cap = Number(process.env.BLITZ_DRY_MAX_CALLS || 5000)
+    if (_calls > cap) throw new Error(`blitz check: llm() called ${_calls} times (> ${cap}) — likely an unbounded loop`)
+    return fallback !== undefined ? fallback : '[blitz dry-run fallback: this llm() call had no 3rd-arg fallback]'
+  }
+
   await _acquire()
   try {
-    const stdout = await _spawn(built.cmd, built.args, childEnv)
+    const stdout = await _spawn(built.cmd, built.args, childEnv, opts.cwd)
     return harness.parse(stdout)
   } finally {
     _release()

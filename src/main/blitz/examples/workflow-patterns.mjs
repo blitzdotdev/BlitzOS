@@ -95,7 +95,7 @@ async function main() {
   console.error(`[workflow-patterns] fan-out: ${FAMILIES.length} parallel leaves (${LEAF.model})…`)
   const catalogs = await Promise.all(
     FAMILIES.map(async (fam) => {
-      const text = await llm(leafPrompt(fam), LEAF)
+      const text = await llm(leafPrompt(fam), LEAF, 'Pattern A (depth 1, breadth N, no loop): desc. Pattern B (iterative critic loop): desc. (dry-run fallback)')
       console.error(`[workflow-patterns]   ✓ ${fam.key} (${text.length} chars)`)
       return { title: fam.title, text }
     }),
@@ -109,7 +109,8 @@ async function main() {
 
   // ── FAN-IN: 1 synthesis leaf extracts the dimensions + proposes the knobs. ────────────
   console.error('[workflow-patterns] fan-in: synthesis leaf…')
-  const synthesis = await llm(synthesisPrompt(catalogs), LEAF)
+  const synthesis = await llm(synthesisPrompt(catalogs), LEAF,
+    'Dimensions: iteration-intensity, parallelism, breadth, verification, grounding. Knobs: max_cycles, parallel_mode, worker_count, external_verifier, knowledge_mode. (dry-run fallback)')
 
   console.log('\n\n================ SYNTHESIS — PRINCIPAL DIMENSIONS + CONTROL KNOBS ================\n')
   console.log(synthesis.trim())

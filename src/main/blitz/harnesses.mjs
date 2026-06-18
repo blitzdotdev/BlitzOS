@@ -20,7 +20,7 @@
 
 // claude's --effort accepts these levels (confirmed via `claude -p --help`). We pass the agent's
 // opts.effort straight through after validating it against this set.
-const CLAUDE_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
+export const CLAUDE_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 
 export const harnesses = {
   // ── claude: `claude -p <prompt> --output-format json [--model …] [--effort …]` ──────────────
