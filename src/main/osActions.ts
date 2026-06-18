@@ -936,8 +936,8 @@ export function osSetOrchestrators(agentId: string, on = true): { ok: boolean; e
   // Delivery B live-wake: the durable flag is already persisted; this message lands in the agent's chat and wakes
   // ONLY it (osUserMessage = the steer path). Keep it short — the full how-to is the on-disk .blitzos/orchestrator.md.
   const msg = on
-    ? 'Orchestrators ENABLED: you can now AUTHOR and RUN blitzscript workflows (plain-Node programs whose `llm()` spawns local agent leaves) for genuinely hard, large, massively parallel, or adversarial tasks. The runner is `.blitzos/blitz` — run `bash .blitzos/blitz capabilities` FIRST, then `bash .blitzos/blitz check <wf.mjs>`, then `bash .blitzos/blitz run <wf.mjs>`; the full how-to + built-ins (verify-job, supervise-tick) are described in `.blitzos/orchestrator.md`. For trivial/one-shot requests, just answer directly.'
-    : 'Orchestrators DISABLED: stop authoring/running blitzscript workflows; handle requests directly in chat.'
+    ? 'Orchestrators ENABLED: you can now AUTHOR and RUN workflows (Claude Code workflow style) for genuinely hard, large, massively parallel, or adversarial tasks. Write a `workflow.js` that starts with `export const meta = {…}`, uses the injected globals `agent()`/`parallel`/`pipeline`/`phase`/`log` (NO imports), and ends with `return`; `agent({schema})` returns a validated object. The runner is `.blitzos/blitz` — run `bash .blitzos/blitz capabilities` FIRST, then `bash .blitzos/blitz check <wf.js>`, then `bash .blitzos/blitz run <wf.js>`; the full how-to is in `.blitzos/orchestrator.md`. For trivial/one-shot requests, just answer directly.'
+    : 'Orchestrators DISABLED: stop authoring/running workflows; handle requests directly in chat.'
   try { osUserMessage(msg, String(agentId)) } catch { /* the flag still persisted; the duty lands on the next launch */ }
   return r
 }

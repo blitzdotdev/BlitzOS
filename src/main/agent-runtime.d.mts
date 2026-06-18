@@ -6,8 +6,9 @@ export function setBootTaskProvider(fn: ((sessionId: string) => string | null | 
 /** Write the `blitz` workflow runner shim (-> blitzscript/run.mjs) + copy the orchestrator duty doc into a workspace's
  *  `.blitzos` dir. Idempotent; called per (re)launch by prepareAgentLaunch so the runner is always current. */
 export function writeBlitzShim(blitzDir: string): void
-/** The standing duty STRING for an agent with the orchestrators toggle ON (author + run blitzscript workflows).
- *  Carries the absolute blitzscript/llm.mjs import path so the agent's workflow.mjs can import `llm`. Policy-free. */
+/** The standing duty STRING for an agent with the orchestrators toggle ON (author + run workflows, Claude Code
+ *  workflow style). Teaches the injected-globals interface (`export const meta` + `agent()`/`parallel`/`pipeline`/
+ *  `phase`/`log`, NO imports) and the `blitz` check/run commands; it carries no import path. Policy-free. */
 export function orchestratorBootTask(): string
 export function shellQuote(s: string): string
 export type AgentRuntime = 'claude' | 'codex-serverless'

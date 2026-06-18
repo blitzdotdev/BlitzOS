@@ -19,7 +19,6 @@ import { fileURLToPath } from 'node:url'
 // the agent's `node` runs/imports. PACKAGING TODO: asarUnpack src/main/blitzscript so a packaged build's
 // system node can reach them too.
 const BLITZ_RUN = fileURLToPath(new URL('./blitzscript/run.mjs', import.meta.url))
-const BLITZ_LLM = fileURLToPath(new URL('./blitzscript/llm.mjs', import.meta.url))
 const ORCHESTRATOR_DUTY_SRC = fileURLToPath(new URL('./blitzos-orchestrator.md', import.meta.url))
 
 /** Write `<blitzDir>/blitz` (the agent's runner shim -> `node <run.mjs> "$@"`) + copy the orchestrator duty
@@ -36,10 +35,9 @@ export function writeBlitzShim(blitzDir) {
 }
 
 /** The orchestrators-toggle boot-task duty (returned by the provider for an orchestrator agent). A short
- *  pointer; the full how-to is the copied `.blitzos/orchestrator.md`. Carries the machine-specific llm.mjs
- *  import path so the agent's authored workflow.mjs can import it. */
+ *  pointer; the full how-to is the copied `.blitzos/orchestrator.md`. */
 export function orchestratorBootTask() {
-  return `ORCHESTRATOR MODE (you can author + run blitzscript workflows). For a task that is genuinely hard, large, massively parallel, adversarial, or over-context-window, AUTHOR and RUN a blitzscript workflow instead of doing it all inline; for trivial / one-shot requests just answer directly. Read \`.blitzos/orchestrator.md\` for the full how-to. The runner is \`.blitzos/blitz\`: run \`bash .blitzos/blitz capabilities\` FIRST (your harness/model/effort options), then author a workflow.mjs that does \`import { llm } from ${JSON.stringify(BLITZ_LLM)}\` (plain Node + fs + Promise.all; llm() spawns a local agent leaf and returns its prose; ALWAYS pass a representative 3rd-arg fallback), run \`bash .blitzos/blitz check <workflow.mjs>\` until it PASSes, then \`bash .blitzos/blitz run [--resume] <workflow.mjs>\`. Stay within the act-vs-ask boundary (reversible work freely; ask before any irreversible outward act) and narrate progress with say.`
+  return `ORCHESTRATOR MODE (you author + run workflows, Claude Code workflow style). For a task that is genuinely hard, large, massively parallel, adversarial, or over-context-window, AUTHOR and RUN a workflow instead of doing it all inline; for trivial / one-shot requests just answer directly. Read \`.blitzos/orchestrator.md\` for the full how-to. The runner is \`.blitzos/blitz\`: run \`bash .blitzos/blitz capabilities\` FIRST (your harness/model/effort options), then author a workflow.js the SAME way you would a Claude Code workflow — start with \`export const meta = { name, description }\`, use the INJECTED GLOBALS (NO imports) \`agent(prompt, opts?, fallback?)\` (spawns a sub-agent leaf; with \`opts.schema\` it returns the validated object, else its text), \`parallel\`, \`pipeline\`, \`phase\`, \`log\`, plus \`args\`/\`budget\`/\`workflow()\`, and END the file with \`return <result>\`. Do mechanical work in code; let the agent leaves do file/tool work. Run \`bash .blitzos/blitz check <workflow.js>\` until it PASSes, then \`bash .blitzos/blitz run [--resume] <workflow.js>\`. Stay within the act-vs-ask boundary (reversible work freely; ask before any irreversible outward act) and narrate progress with say.`
 }
 
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
