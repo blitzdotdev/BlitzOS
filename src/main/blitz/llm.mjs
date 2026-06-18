@@ -14,12 +14,20 @@
 //   2. Concurrency is self-capped by an internal async semaphore, so even a 200-wide Promise.all of
 //      llm() calls never spawns more than ~cores-2 heavy agent processes at once.
 //
-// opts is THIN: { harness?, model?, effort? }. (maxTokens / schema / files / budget are FUTURE per
-// the plan, not implemented now.) The spawner is INJECTABLE via _spawn so unit tests never hit a
-// real LLM.
+// opts is THIN: { harness?, model?, effort?, cwd?, retries? }. (schema / files / budget are FUTURE per the
+// plan.) cwd runs the leaf in a dir (e.g. a git worktree); retries re-attempts a transient leaf failure.
+// The spawner is INJECTABLE via _spawn so unit tests never hit a real LLM.
+//
+// RESUME / memoization: under `blitz run` (BLITZ_MEM_DIR set), each llm() RESULT is journaled by its
+// invocation index + a hash of (harness,model,effort,prompt). A re-run over the same mem dir FAST-FORWARDS
+// the longest unchanged prefix (cached results, no spawn); a changed/absent call + everything after re-runs.
+// A FAILED call is never journaled, so it re-runs on resume.
 
 import { spawn } from 'node:child_process'
 import os from 'node:os'
+import { createHash } from 'node:crypto'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { harnesses } from './harnesses.mjs'
 
 // ── concurrency cap ───────────────────────────────────────────────────────────────────────────
@@ -45,6 +53,62 @@ function _release() {
 export function _stats() {
   return { active: _active, calls: _calls, waiting: _waiters.length, maxConcurrency: MAX_CONCURRENCY }
 }
+
+// ── journaling (edge-result memoization for resume) ─────────────────────────────────────────────
+// Under `blitz run`, BLITZ_MEM_DIR points at this run's memory dir. Each llm() call is keyed by its
+// INVOCATION INDEX (assigned synchronously at call entry, so Promise.all is deterministic) + a hash of
+// (harness, model, effort, prompt). On SUCCESS we record {i,hash,result} into <mem>/journal.jsonl. A
+// re-run over the SAME mem dir fast-forwards the longest unchanged PREFIX (returns the cached result, no
+// spawn); the first changed/absent call and everything after it re-run (positional-prefix invalidation,
+// the signed-off keying). A failed call is never recorded, so it re-runs on resume. OFF when no BLITZ_MEM_DIR.
+let _jIndex = 0                  // next invocation index this process (sync, deterministic in Promise.all)
+let _journal = null              // lazily-loaded: _journal[i] = { hash, result } | undefined
+let _divergedAt = Infinity       // first index that diverged from the journal -> it + everything after re-run
+
+const _memDir = () => process.env.BLITZ_MEM_DIR || null
+const _journalPath = () => { const d = _memDir(); return d ? join(d, 'journal.jsonl') : null }
+
+function _loadJournal() {
+  if (_journal !== null) return
+  _journal = []
+  const p = _journalPath()
+  if (!p || !existsSync(p)) return
+  try {
+    for (const line of readFileSync(p, 'utf8').split('\n')) {
+      const s = line.trim(); if (!s) continue
+      const e = JSON.parse(s)
+      if (e && Number.isInteger(e.i) && typeof e.hash === 'string') _journal[e.i] = { hash: e.hash, result: e.result }
+    }
+  } catch { /* a corrupt journal -> treat as empty (safe: everything re-runs) */ }
+}
+
+const _hashCall = (harness, opts, prompt) =>
+  createHash('sha256').update(`${harness}\0${opts.model || ''}\0${opts.effort || ''}\0${prompt}`).digest('hex')
+
+// Sync fast-forward decision (at call entry, before any spawn). Returns the cached entry or null; a
+// miss/mismatch marks the divergence point so this index + every later one re-run.
+function _journalHit(i, hash) {
+  if (!_memDir()) return null
+  _loadJournal()
+  if (i < _divergedAt && _journal[i] && _journal[i].hash === hash) return _journal[i]
+  if (i < _divergedAt) _divergedAt = i
+  return null
+}
+
+// Record a SUCCESSFUL result. Written SYNCHRONOUSLY so it is durable before llm() resolves (an interrupt
+// right after a leaf completes still has it journaled). TODO: append-only + compaction for huge fan-outs.
+function _journalRecord(i, hash, result) {
+  if (!_memDir()) return
+  _journal[i] = { hash, result }
+  try {
+    const lines = []
+    for (let k = 0; k < _journal.length; k++) { const e = _journal[k]; if (e) lines.push(JSON.stringify({ i: k, hash: e.hash, result: e.result })) }
+    writeFileSync(_journalPath(), lines.length ? lines.join('\n') + '\n' : '')
+  } catch { /* best-effort persistence */ }
+}
+
+/** Test hook: clear in-process journal/counter state to simulate a fresh process (the journal FILE persists). */
+export function _resetJournal() { _jIndex = 0; _journal = null; _divergedAt = Infinity; _calls = 0; _active = 0; _waiters.length = 0 }
 
 // ── the leaf-prompt metadata block (the plan's guardrail #1 + #5) ──────────────────────────────
 // Appended to EVERY leaf prompt. The leaf is a capable instruction-follower, so being told its
@@ -102,10 +166,12 @@ export function _setSpawn(fn) { _spawn = fn || _defaultSpawn }
  * Run one leaf agent and return its final assistant text.
  *
  * @param {string} prompt       The task for the leaf (metadata is appended automatically).
- * @param {{harness?:string, model?:string, effort?:string}} [opts]
+ * @param {{harness?:string, model?:string, effort?:string, cwd?:string, retries?:number}} [opts]
  *        harness: 'claude' (default) | 'codex' | 'pi'(stub) | 'opencode'(stub).
- *        model:   harness model alias/name -> --model (claude) / -c model= (codex). FUTURE: maxTokens/schema/files.
+ *        model:   harness model alias/name -> --model (claude) / -c model= (codex). FUTURE: schema/files.
  *        effort:  reasoning effort -> --effort (claude) / -c model_reasoning_effort= (codex).
+ *        cwd:     run the leaf in this dir (e.g. a git worktree, to isolate parallel mutating leaves).
+ *        retries: re-attempt a transient leaf failure this many times before throwing (default 0).
  * @param {*} [fallback]         The value returned INSTEAD of spawning under `blitz check` (BLITZ_DRY_RUN).
  *        ALWAYS pass a representative one so the dry-run exercises real control flow + parsing.
  * @returns {Promise<string>}
@@ -126,21 +192,37 @@ export async function llm(prompt, opts = {}, fallback = undefined) {
   const built = harness.build(fullPrompt, opts)
   const childEnv = { ...(built.env || {}), BLITZ_DEPTH: String(depth) }
 
+  // Stable invocation index (sync, so Promise.all is deterministic) — the positional half of the journal key.
+  const i = _jIndex++
   _calls++
 
-  // DRY RUN (`blitz check`): everything above still runs (harness + flag validation + metadata
-  // assembly), but we DO NOT spawn a real agent — return this call's `fallback` so the workflow's real
-  // control flow executes for free. A runaway loop trips the call cap (the loop detector for the check).
+  // DRY RUN (`blitz check`): return the fallback, no spawn, no journal.
   if (process.env.BLITZ_DRY_RUN) {
     const cap = Number(process.env.BLITZ_DRY_MAX_CALLS || 5000)
     if (_calls > cap) throw new Error(`blitz check: llm() called ${_calls} times (> ${cap}) — likely an unbounded loop`)
     return fallback !== undefined ? fallback : '[blitz dry-run fallback: this llm() call had no 3rd-arg fallback]'
   }
 
+  // RESUME fast-forward: a matching unchanged-prefix journal entry returns its cached result, no spawn.
+  const hash = _hashCall(harnessName, opts, fullPrompt)
+  const cached = _journalHit(i, hash)
+  if (cached) return cached.result
+
+  // SPAWN, retrying a transient failure up to opts.retries. Record ONLY on success, so a failed call is
+  // not memoized and re-runs on resume.
+  const retries = Math.max(0, Number(opts.retries) || 0)
   await _acquire()
   try {
-    const stdout = await _spawn(built.cmd, built.args, childEnv, opts.cwd)
-    return harness.parse(stdout)
+    let lastErr
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const stdout = await _spawn(built.cmd, built.args, childEnv, opts.cwd)
+        const result = harness.parse(stdout)
+        _journalRecord(i, hash, result)
+        return result
+      } catch (e) { lastErr = e } // retry until attempts exhausted, then rethrow the last error
+    }
+    throw lastErr
   } finally {
     _release()
   }

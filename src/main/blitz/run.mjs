@@ -34,20 +34,25 @@ if (sub === 'check') {
   process.exit(report.ok ? 0 : 1)
 }
 
-if (sub !== 'run' || rest.length === 0) {
-  console.error('usage: blitz run <workflow.mjs> [args…]\n       blitz check <workflow.mjs>\n       blitz capabilities')
+// `--resume` reuses a STABLE mem dir per workflow so the journal fast-forwards completed llm() calls;
+// without it each run gets a fresh timestamped dir. BLITZ_MEM_DIR (if set) overrides either.
+const resume = rest.includes('--resume')
+const wfArgs = rest.filter((a) => a !== '--resume')
+if (sub !== 'run' || wfArgs.length === 0) {
+  console.error('usage: blitz run [--resume] <workflow.mjs> [args…]\n       blitz check <workflow.mjs>\n       blitz capabilities')
   process.exit(2)
 }
 
-const workflow = resolve(rest[0])
+const workflow = resolve(wfArgs[0])
 const ws = process.env.BLITZ_WS || process.cwd()
-// One memory dir per run. The id is the workflow basename + a short timestamp so re-runs don't
-// collide; it stays greppable/resumable on disk under the workspace.
-const id = `${rest[0].split('/').pop().replace(/\.[^.]+$/, '')}-${Date.now().toString(36)}`
+// Mem dir id: --resume -> the stable basename (a re-run reuses the journal); else basename + a short
+// timestamp so independent runs don't collide. Greppable/resumable on disk under the workspace.
+const base = wfArgs[0].split('/').pop().replace(/\.[^.]+$/, '')
+const id = resume ? base : `${base}-${Date.now().toString(36)}`
 const memDir = process.env.BLITZ_MEM_DIR || join(ws, '.blitzos', 'workflows', id)
 mkdirSync(memDir, { recursive: true })
 
-const child = spawn(process.execPath, [workflow, ...rest.slice(1)], {
+const child = spawn(process.execPath, [workflow, ...wfArgs.slice(1)], {
   stdio: 'inherit', // stream the workflow's stdout/stderr through; its stdout is the result
   env: { ...process.env, BLITZ_WS: ws, BLITZ_MEM_DIR: memDir, BLITZ_DEPTH: '0' },
 })
