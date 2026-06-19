@@ -33,14 +33,27 @@ function safeSourceId(sourceId) {
 // Scope + cap a read so a connection can never flood the agent's context with a whole DOM/AX tree.
 function cap(value, max = READ_CAP) {
   if (value == null) return value
+  const note = `capped at ${max} bytes — narrow the selector/subtree or pass {max} to read more`
+  // A plain string (e.g. run_js returning text): return a clean text prefix.
+  if (typeof value === 'string') {
+    return value.length <= max ? value : { truncated: true, bytes: value.length, text: value.slice(0, max), note }
+  }
   let s
   try {
-    s = typeof value === 'string' ? value : JSON.stringify(value)
+    s = JSON.stringify(value)
   } catch {
     s = String(value)
   }
   if (s.length <= max) return value
-  return { truncated: true, bytes: s.length, head: s.slice(0, max), note: `capped at ${max} bytes — narrow the selector/subtree or pass {max} to read more` }
+  // A structured read ({url,title,text} or {...,text}) that's too big: truncate the TEXT field IN PLACE so the
+  // agent still gets clean structure (url/title/role intact), not a half-JSON blob.
+  if (value && typeof value === 'object' && typeof value.text === 'string') {
+    const keep = Math.max(0, value.text.length - (s.length - max))
+    return { ...value, text: value.text.slice(0, keep), truncated: true, bytes: s.length, note }
+  }
+  // Any other too-big object (e.g. a deep AX/DOM tree): a LABELED preview string — never a `head` that looks
+  // like it should be parsed as data. The agent narrows the read instead of trusting a truncated dump.
+  return { truncated: true, bytes: s.length, preview: s.slice(0, max), note }
 }
 
 /**

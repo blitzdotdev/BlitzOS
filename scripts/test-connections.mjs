@@ -79,6 +79,20 @@ async function main() {
   const { connId: bigConn } = ops.connectionBind({ type: 'tab', sourceId: 'big.example.com', adapter: big })
   const bigRead = await ops.connectionRead(bigConn, {})
   ok('read is capped (never dumps a whole tree)', bigRead.result && bigRead.result.truncated === true && bigRead.result.bytes === 20000)
+  ok('a capped STRING read returns a clean text prefix (not a head blob)', bigRead.result && typeof bigRead.result.text === 'string' && bigRead.result.head === undefined)
+
+  // a too-big STRUCTURED read ({url,title,text}) truncates the text field IN PLACE, keeping clean structure
+  const structAdapter = stubAdapter({ read: { result: { url: 'https://big.example.com/', title: 'Big', text: 'y'.repeat(20000) } } })
+  const { connId: structConn } = ops.connectionBind({ type: 'tab', sourceId: 'struct.example.com', adapter: structAdapter })
+  const structRead = await ops.connectionRead(structConn, {})
+  ok('a capped structured read keeps url/title intact', structRead.result && structRead.result.url === 'https://big.example.com/' && structRead.result.title === 'Big' && structRead.result.truncated === true)
+  ok('a capped structured read truncates the text field (not a JSON blob)', structRead.result && typeof structRead.result.text === 'string' && structRead.result.text.length < 20000 && structRead.result.preview === undefined)
+
+  // a too-big DEEP object (no text field — e.g. an AX/DOM tree) returns a LABELED preview, never a `head`
+  const treeAdapter = stubAdapter({ read: { result: { root: { children: Array.from({ length: 2000 }, (_, i) => ({ role: 'AXButton', i })) } } } })
+  const { connId: treeConn } = ops.connectionBind({ type: 'window', sourceId: 'tree.app', adapter: treeAdapter, capabilities: { act: true } })
+  const treeRead = await ops.connectionRead(treeConn, {})
+  ok('a capped deep tree returns a labeled preview (not head)', treeRead.result && treeRead.result.truncated === true && typeof treeRead.result.preview === 'string' && treeRead.result.head === undefined)
 
   // --- save a tool -> writes tools.json under the workspace, keyed on sourceId ---
   const saved = ops.connectionSaveTool(connId, { name: 'unread', description: 'unread count', kind: 'read', code: "return document.querySelectorAll('tr.zE').length" })
