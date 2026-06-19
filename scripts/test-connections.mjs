@@ -161,6 +161,13 @@ async function main() {
   ok('unbind marks the connection disconnected', ops.connectionList().connections.some((c) => c.connId === vb.connId && c.status === 'disconnected'))
   ok('unbind repaints the widget to a disconnected state (kept, not closed)', updated.some((u) => u.id === vb.surfaceId && /disconnected/i.test(JSON.stringify(u.patch))) && !closed.includes(vb.surfaceId))
 
+  // reconnecting a disconnected source ADOPTS its lingering widget — no orphan dead card, no duplicate connection
+  const reAdapter = stubAdapter()
+  const rebind = ops.connectionBind({ type: 'tab', sourceId: 'vanish.example.com', adapter: reAdapter })
+  ok('reconnecting a disconnected source reuses its widget (adoption)', rebind.surfaceId === vb.surfaceId)
+  ok('after adoption only ONE connection exists for the source', ops.connectionList().connections.filter((c) => c.sourceId === 'vanish.example.com').length === 1)
+  ok('the adopted connection is live', ops.connectionList().connections.some((c) => c.connId === rebind.connId && c.status === 'live'))
+
   // --- on (re)hydrate, a persisted connection widget whose connection isn't live is repainted to disconnected ---
   const liveBind = ops.connectionBind({ type: 'tab', sourceId: 'rehydrate.example.com', adapter: stubAdapter() })
   const liveProps = { connection: liveBind.connId, connType: 'tab', connSource: 'rehydrate.example.com' }

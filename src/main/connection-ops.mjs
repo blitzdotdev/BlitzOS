@@ -154,13 +154,39 @@ export function makeConnectionOps({
     const sid = String(sourceId || 'unknown')
     const kind = type === 'window' ? 'window' : 'tab'
     let surfaceId = null
+    // ADOPT a lingering DISCONNECTED widget for the same source instead of piling up dead cards on reconnect:
+    // reuse the most recent stale widget for this source, drop its stale registry entry, repaint it live, and
+    // close any other stale duplicates. (Live connections to the same source — e.g. two windows — are left
+    // alone; only non-live widgets are adopted/cleaned.)
+    const staleSame = [...registry.values()].filter((x) => x.sourceId === sid && x.status !== 'live' && x.surfaceId)
+    if (staleSame.length) {
+      surfaceId = staleSame[staleSame.length - 1].surfaceId
+      for (const x of staleSame) {
+        bySurface.delete(String(x.surfaceId))
+        registry.delete(x.connId)
+        if (x.surfaceId !== surfaceId) {
+          try {
+            closeSurface(String(x.surfaceId))
+          } catch {
+            /* already gone */
+          }
+        }
+      }
+      try {
+        updateSurface(String(surfaceId), { html: placeholderHtml(sid, kind, title), title: title || sid, props: { connection: connId, connType: kind, connSource: sid } })
+      } catch {
+        /* renderer gone */
+      }
+    }
     // Cascade each connection's representation widget so multiple connections don't stack at the same spot
     // (every widget landing at one fixed point is invisible-overlap; observed when connecting >1 source).
     const slot = registry.size % 6
-    try {
-      surfaceId = createSurface({ kind: 'srcdoc', html: placeholderHtml(sid, kind, title), title: title || sid, w: 380, h: 460, x: 90 + slot * 46, y: 90 + slot * 46, props: { connection: connId, connType: kind, connSource: sid } })
-    } catch {
-      surfaceId = null
+    if (!surfaceId) {
+      try {
+        surfaceId = createSurface({ kind: 'srcdoc', html: placeholderHtml(sid, kind, title), title: title || sid, w: 380, h: 460, x: 90 + slot * 46, y: 90 + slot * 46, props: { connection: connId, connType: kind, connSource: sid } })
+      } catch {
+        surfaceId = null
+      }
     }
     const record = {
       connId,
