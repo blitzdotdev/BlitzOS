@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { Surface } from '../types'
 import { useDesktop, snapTargetFor, homeRect, homeTransform, nextTerminalName, latticeFor, slotRect, slotOf, nearestFreeSlot, sizeForDims, webTabsOf, effectiveZ } from '../store'
 import { BrowserNav } from './BrowserNav'
+import { WebTabView } from './WebTabView'
 import { NoteWidget } from './NoteWidget'
 import { ActivityPanel } from './ActivityPanel'
 import { ChatPanel } from './ChatPanel'
@@ -20,18 +21,6 @@ import { NOTE_PAPER } from '../paper'
 
 type BridgeReply = { ok: boolean; data?: unknown; error?: string }
 
-// Electron cursor-changed types → CSS. Most pass through verbatim; the two that disagree are the
-// arrow ('pointer' in Chromium terms) and the link hand. Unknown values fall back to themselves
-// (invalid CSS cursor = default), so new Chromium cursor types degrade safely.
-const CURSOR_CSS: Record<string, string> = { pointer: 'default', hand: 'pointer', nodrop: 'no-drop', 'm-panning': 'move' }
-
-// A browser frame's chrome rows above the page hole: window bar (34) + tab strip (28) + navbar (36).
-// Slotted (widget-chrome) browsers drop the bar. Used by the clip-path pass to hole out EXACTLY the
-// page area of a higher browser from DOM that sits under it — the chrome itself is DOM and stacks
-// by z-index like everything else.
-const WEB_CHROME_H = 34 + 28 + 36
-const WEB_CHROME_H_SLOTTED = 28 + 36
-
 function isRealFolderSurface(s: Surface): boolean {
   return s.kind === 'native' && s.component === 'dir'
 }
@@ -49,158 +38,6 @@ function isFileBackedFolderMoveCandidate(s: Surface, targetPath: string): boolea
   return false
 }
 
-/** 'HIDE' = the holes fully cover the element: skip clipping and hide it outright (a degenerate
- *  clip leaves an antialiased ghost outline of the element — the "widget outline" artifact). */
-export type HolesClip = string | 'HIDE' | undefined
-
-// The window corner radius (tokens.css --radius-window), read once — hole masks must follow the
-// frame's rounded BOTTOM corners or the square native view pokes out past the curve.
-const WINDOW_RADIUS = typeof document !== 'undefined' ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--radius-window')) || 14 : 14
-
-/** Build a holes clip as `path(…)` with SEPARATE SUBPATHS — never `polygon()`: a single even-odd
- *  polygon needs connector edges between rings, and their retraced pixels (plus outer-ring pixels
- *  hugging the element edge) don't antialias to zero, drawing hairline ghosts of the clipped
- *  element (the "widget outline" artifact). Subpaths have no connectors; the outer ring is PADDED
- *  beyond the element so its antialiasing never touches content; and the holes are wound OPPOSITE
- *  the outer ring (outer clockwise, holes counter-clockwise) so they cut under the default nonzero
- *  fill-rule — the `evenodd` keyword inside path() isn't parsed by every Chromium. Hole BOTTOM
- *  corners are rounded by `radius` (the frame's rounded corners; the top edge sits under the
- *  square chrome rows), so what shows through always matches the window shape. */
-type Hole = { x1: number; y1: number; x2: number; y2: number }
-const holesOverlap = (a: Hole, b: Hole): boolean => a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2
-/** Decompose (possibly overlapping) hole rects into NON-OVERLAPPING tiles covering the SAME union, by
- *  a vertical-strip sweep: cut at every rect x-edge, and within each strip merge the covered
- *  y-intervals. Load-bearing: under the nonzero fill-rule, two OVERLAPPING holes wind their overlap
- *  TWICE (+1 outer, -1, -1 = -1 ≠ 0), which flips it back to OPAQUE — so the intersection of two
- *  overlapping browsers paints the lower DOM/page through it (the "shows the widget / flat color
- *  beneath both" bleed). Disjoint tiles wind every covered point exactly once → one clean hole. */
-function disjointHoles(holes: Hole[]): Hole[] {
-  const xs = Array.from(new Set(holes.flatMap((r) => [r.x1, r.x2]))).sort((a, b) => a - b)
-  const out: Hole[] = []
-  for (let i = 0; i < xs.length - 1; i++) {
-    const x1 = xs[i]
-    const x2 = xs[i + 1]
-    if (x2 - x1 < 0.01) continue
-    const mid = (x1 + x2) / 2
-    const ys = holes
-      .filter((r) => r.x1 <= mid && mid <= r.x2)
-      .map((r) => [r.y1, r.y2] as [number, number])
-      .sort((a, b) => a[0] - b[0])
-    if (!ys.length) continue
-    let cy1 = ys[0][0]
-    let cy2 = ys[0][1]
-    for (let k = 1; k < ys.length; k++) {
-      if (ys[k][0] <= cy2 + 0.01) cy2 = Math.max(cy2, ys[k][1])
-      else {
-        out.push({ x1, y1: cy1, x2, y2: cy2 })
-        cy1 = ys[k][0]
-        cy2 = ys[k][1]
-      }
-    }
-    out.push({ x1, y1: cy1, x2, y2: cy2 })
-  }
-  return out
-}
-export function holesPath(w: number, h: number, holes: Hole[], radius = 0): HolesClip {
-  if (!holes.length) return undefined
-  if (holes.some((r) => r.x1 <= 0 && r.y1 <= 0 && r.x2 >= w && r.y2 >= h)) return 'HIDE'
-  // Overlapping holes must become disjoint tiles first (see disjointHoles) or their intersection
-  // re-fills opaque. When we decompose, drop the per-tile bottom rounding (internal tile edges would
-  // notch); the common single / non-overlapping case keeps its rounded bottom corners unchanged.
-  const overlapping = holes.some((a, i) => holes.some((b, j) => j > i && holesOverlap(a, b)))
-  const cut = overlapping ? disjointHoles(holes) : holes
-  const rad = overlapping ? 0 : radius
-  // PAD pushes the outer ring's antialiasing off the element's content edge. The box-shadow no
-  // longer needs covering here: surfaces overlapping a browser drop their shadow entirely
-  // (SurfaceFrame overlapsWeb), so there is no shadow to hard-cut into a hairline.
-  const PAD = 8
-  const subs = cut
-    .map((r) => {
-      const rr = Math.max(0, Math.min(rad, (r.x2 - r.x1) / 2, (r.y2 - r.y1) / 2))
-      if (rr < 0.5) return `M${r.x1} ${r.y1} V${r.y2} H${r.x2} V${r.y1} Z`
-      // counter-clockwise: down the left, arc the bottom-left, along the bottom, arc the
-      // bottom-right, up the right, close along the top (sweep 0 = CCW corner turns)
-      return `M${r.x1} ${r.y1} V${r.y2 - rr} A${rr} ${rr} 0 0 0 ${r.x1 + rr} ${r.y2} H${r.x2 - rr} A${rr} ${rr} 0 0 0 ${r.x2} ${r.y2 - rr} V${r.y1} Z`
-    })
-    .join(' ')
-  return `path("M${-PAD} ${-PAD} H${w + PAD} V${h + PAD} H${-PAD} Z ${subs}")`
-}
-
-/** The desktop base (.bg) keeps its opaque canvas color and gets SCREEN-SPACE holes cut per page —
- *  going fully transparent instead made every window box-shadow composite against glass (dark
- *  fringes pooling between windows). Recomputed per camera change (it renders per pan frame anyway). */
-export function bgHolesClip(surfaces: Surface[], t: { x: number; y: number; scale: number }, vw: number, vh: number): HolesClip {
-  const holes: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
-  for (const w of surfaces) {
-    if (w.kind !== 'web' || w.minimized || (w.groupId && !w.peek)) continue
-    const inset = slotOf(w) ? WEB_CHROME_H_SLOTTED : WEB_CHROME_H
-    const x1 = Math.round(w.x * t.scale + t.x)
-    const y1 = Math.round((w.y + inset) * t.scale + t.y)
-    const x2 = Math.round((w.x + w.w) * t.scale + t.x)
-    const y2 = Math.round((w.y + w.h) * t.scale + t.y)
-    if (x2 <= 0 || y2 <= 0 || x1 >= vw || y1 >= vh || y2 <= y1) continue
-    holes.push({ x1, y1, x2, y2 })
-  }
-  if (!holes.length) return undefined // no page on screen → no clip on the full-viewport .bg
-  return holesPath(vw, vh, holes, WINDOW_RADIUS * t.scale)
-}
-
-/** The sandwich's page-over-DOM direction: pages live BELOW all DOM, so any DOM surface that should
- *  render UNDER a browser (lower effectiveZ, overlapping) gets its frame clipped around that
- *  browser's page hole — the live page shows through the cut. World coordinates, so camera pan/zoom
- *  never recomputes this; only layout/z changes do. */
-function pageHolesClip(me: Surface, all: Surface[]): HolesClip {
-  const meZ = effectiveZ(me)
-  const holes: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
-  for (const w of all) {
-    if (w.id === me.id || w.kind !== 'web' || w.minimized || (w.groupId && !w.peek)) continue
-    if (effectiveZ(w) <= meZ) continue
-    // If a higher-z browser's FULL window rect (chrome + page) entirely covers `me`, `me` is never
-    // visible — hide it outright. The hole below uses the page rect (chrome inset), so a widget
-    // straddling the chrome/page line would NOT trigger holesPath's HIDE and would get a degenerate
-    // partial clip that ghosts its outline onto the page (the "widget outline" artifact). The full
-    // window rect is the correct cover test (chrome is opaque DOM over the top; the page hole the rest).
-    if (w.x <= me.x && w.y <= me.y && w.x + w.w >= me.x + me.w && w.y + w.h >= me.y + me.h) return 'HIDE'
-    const inset = slotOf(w) ? WEB_CHROME_H_SLOTTED : WEB_CHROME_H
-    const x1 = w.x - me.x
-    const y1 = w.y + inset - me.y
-    const x2 = w.x + w.w - me.x
-    const y2 = w.y + w.h - me.y
-    if (x2 <= 0 || y2 <= 0 || x1 >= me.w || y1 >= me.h || y2 <= y1) continue
-    holes.push({ x1, y1, x2, y2 })
-  }
-  // No overlapping higher browser → no page hole → NO clip-path at all (the frame's own CSS
-  // border-radius still rounds it). Returning undefined keeps non-overlapping widgets off the clip
-  // layer entirely, so a browser over a field of widgets does not put every one on a repaint path.
-  if (!holes.length) return undefined
-  return holesPath(me.w, me.h, holes, WINDOW_RADIUS)
-}
-
-/** The tiling/snap PREVIEW is plain DOM in .world with no z (it is always desktop substrate below
- *  every browser), but in the sandwich z-index can't order DOM under a page — only a page-hole can.
- *  So mirror pageHolesClip for the preview rect `sp`, with NO z-test (it is unconditionally below all
- *  browsers), in the SAME world coords (preview and surfaces are both children of .world, which
- *  applies the camera via CSS transform) and the SAME un-scaled WINDOW_RADIUS. Returns 'HIDE' on full
- *  cover, undefined when there is no web surface to clip around. */
-export function snapPreviewClip(sp: { x: number; y: number; w: number; h: number }, all: Surface[]): HolesClip {
-  const holes: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
-  for (const w of all) {
-    if (w.kind !== 'web' || w.minimized || (w.groupId && !w.peek)) continue
-    // A browser's FULL window rect (chrome + page) entirely covering the preview means it is never
-    // visible — hide it outright (a degenerate partial clip ghosts the preview's outline onto the
-    // page). The hole below uses the page rect (chrome inset), matching pageHolesClip's cover test.
-    if (w.x <= sp.x && w.y <= sp.y && w.x + w.w >= sp.x + sp.w && w.y + w.h >= sp.y + sp.h) return 'HIDE'
-    const inset = slotOf(w) ? WEB_CHROME_H_SLOTTED : WEB_CHROME_H
-    const x1 = w.x - sp.x
-    const y1 = w.y + inset - sp.y
-    const x2 = w.x + w.w - sp.x
-    const y2 = w.y + w.h - sp.y
-    if (x2 <= 0 || y2 <= 0 || x1 >= sp.w || y1 >= sp.h || y2 <= y1) continue
-    holes.push({ x1, y1, x2, y2 })
-  }
-  if (!holes.length) return undefined
-  return holesPath(sp.w, sp.h, holes, WINDOW_RADIUS)
-}
 
 function AppEmptyState(): JSX.Element {
   return (
@@ -278,22 +115,20 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     grabFracY: number
     startPreSnap?: { w: number; h: number } // floating size if this window started the drag already tiled
     poppedOut: boolean // a tiled window has been dragged back out to floating this gesture
+    dx?: number // last applied drag delta (world units), folded into the store on drop
+    dy?: number
+    imperative?: boolean // moving the frame via a composited transform, committed to the store on drop
   } | null>(null)
   const resize = useRef<{ startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; dir: string } | null>(null)
   // Slotted-tile drag: the candidate lattice span under the outline ghost (committed on drop).
   const slotGhost = useRef<{ col: number; row: number } | null>(null)
   const frameRef = useRef<HTMLDivElement>(null)
-  const webHostRef = useRef<HTMLDivElement>(null)
   // Where a focused widget's pinch last centered (its cursor point, in content px) — the transformOrigin
   // for iframeZoom, so the zoom magnifies toward the cursor instead of the top-left corner.
   const zoomOriginRef = useRef<{ x: number; y: number } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const serverMode = !!window.agentOS?.serverMode
-  // SPIKE (plans/blitzos-native-input.md), default OFF: when on, the human's mouse reaches the page
-  // NATIVELY (App.tsx makes the UI click-through over a hole), so the synthetic hole-forwarding below
-  // is skipped — the real OS event goes straight to L0 (trusted), and keyboard focus is native too.
-  const nativeInput = !!window.agentOS?.nativeInput
   const [draft, setDraft] = useState(surface.url ?? '') // address-bar draft text (app / server-web)
   const zoom = surface.zoom ?? 1
   // jsx/tsx widgets compile at mount (inert {active:false} for everything else). The composed
@@ -303,131 +138,36 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   // puts ALL UI in the transparent top window, physically above the live pages below, so a dropdown
   // simply paints over the page. No capture, no freeze, no placeholder.
   const [bmOpen, setBmOpen] = useState(false)
-  // The page's cursor (text beam, link hand), mirrored from main — the UI window owns the OS cursor.
-  const [pageCursor, setPageCursor] = useState('default')
-  useEffect(() => {
-    if (surface.kind !== 'web' || serverMode) return
-    return window.agentOS?.onPageCursor?.((m) => {
-      if (m.surfaceId === surface.id) setPageCursor(CURSOR_CSS[m.cursor] ?? m.cursor)
-    })
-  }, [surface.kind, surface.id, serverMode])
 
   // If this surface unmounts mid-drag (the agent closes it, a reconcile removes its file, a folder
   // absorbs it), onBarUp never fires — so clear any ghost snap-preview / drop-target it left behind.
   useEffect(() => {
     return () => {
-      if (drag.current) {
+      const d = drag.current
+      if (d) {
         const st = useDesktop.getState()
         st.setSnapPreview(null)
         st.setDragTarget(null)
+        // An imperative drag never reached onBarUp — drop the transform + commit so the window stays put.
+        if (d.imperative) {
+          if (frameRef.current) frameRef.current.style.transform = ''
+          for (const it of d.items) st.moveSurface(it.id, it.ox + (d.dx ?? 0), it.oy + (d.dy ?? 0))
+        }
       }
     }
   }, [])
 
-  // Electron web surfaces are main-owned WebContentsViews — ONE PER BROWSER TAB. React owns the
-  // chrome/layout and DECLARES the tab list; main reconciles live views to it. The declaration is
-  // idempotent and the host defers teardown one beat, so StrictMode's mount→close→mount churn never
-  // orphans a view (the bug that left a page floating detached from its frame).
   const webTabs = surface.kind === 'web' && !serverMode ? webTabsOf(surface) : null
   const activeWebTabIdx = webTabs ? Math.min(Math.max(surface.activeTab || 0, 0), webTabs.length - 1) : 0
   const activeWebTab = webTabs ? webTabs[activeWebTabIdx] : null
-  const webTabsKey = webTabs ? webTabs.map((t) => t.id).join('\n') : ''
-  const webNavKey = webTabs ? webTabs.map((t) => `${t.id} ${t.url ?? ''}`).join('\n') : ''
-  useEffect(() => {
-    if (surface.kind !== 'web' || serverMode) return
-    const cur = useDesktop.getState().surfaces.find((s) => s.id === surface.id) ?? surface
-    window.agentOS?.webContentsViewSync?.({
-      id: surface.id,
-      tabs: webTabsOf(cur).map((t) => ({ id: t.id, url: t.url })),
-      active: activeWebTab?.id ?? null,
-      zoom
-    })
-    // Re-declare on tab-list/active/zoom changes only — a tab's URL changing is a NAVIGATION
-    // (the effect below), not a reason to re-sync the list.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [surface.kind, surface.id, serverMode, webTabsKey, activeWebTab?.id, zoom])
-  useEffect(() => {
-    if (surface.kind !== 'web' || serverMode) return
-    return () => window.agentOS?.webContentsViewClose?.(surface.id)
-  }, [surface.kind, surface.id, serverMode])
 
-  // The body rectangle is reported to main by a SINGLE coalesced RAF in App.tsx (pillar 2), which
-  // reads every browser hole by its `data-sid` and pushes one ordered geometry message. The old
-  // per-surface RAF (one forced-layout loop per browser, each reordering against stale cross-surface
-  // z) lived here; it was the multi-browser/multi-widget glitch. See blitzos-compositor-hardening.md.
-
-  // --- sandwich input forwarding: pointer/wheel events landing on the hole go to the page. The
-  // view sits at exactly the hole's screen rect, so view-local = client - rect origin (no descale).
-  const holePoint = (e: { clientX: number; clientY: number }): { x: number; y: number } | null => {
-    const el = webHostRef.current
-    if (!el) return null
-    const r = el.getBoundingClientRect()
-    if (r.width < 1 || r.height < 1) return null
-    return { x: e.clientX - r.left, y: e.clientY - r.top }
-  }
-  const holeMods = (e: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean }): string[] => {
-    const m: string[] = []
-    if (e.shiftKey) m.push('shift')
-    if (e.ctrlKey) m.push('control')
-    if (e.altKey) m.push('alt')
-    if (e.metaKey) m.push('meta')
-    return m
-  }
-  const holeMoveRaf = useRef(0)
-  function onHoleDown(e: React.PointerEvent): void {
-    if (nativeInput) return // native mode: the real OS click already fell through to the page
-    const p = holePoint(e)
-    if (!p) return
-    window.agentOS?.pageInput?.(surface.id, { type: 'down', ...p, button: e.button, clicks: e.detail || 1, modifiers: holeMods(e) })
-    // no stopPropagation: the bubble reaches focusHere on the frame and raises this window
-  }
-  function onHoleUp(e: React.PointerEvent): void {
-    if (nativeInput) return // native mode: native click handles input + key focus
-    const p = holePoint(e)
-    if (!p) return
-    window.agentOS?.pageInput?.(surface.id, { type: 'up', ...p, button: e.button, clicks: e.detail || 1, modifiers: holeMods(e) })
-    // Keyboard handoff is CONDITIONAL (main probes what the click focused): flipping the key window
-    // on every page click grayed the UI chrome — only an editable target needs native keys/IME.
-    window.agentOS?.pageFocus?.(surface.id)
-  }
-  function onHoleMove(e: React.PointerEvent): void {
-    if (nativeInput) return // native mode: real moves reach the page; App.tsx tracks the cursor
-    if (holeMoveRaf.current) return
-    const { clientX, clientY } = e
-    const m = holeMods(e)
-    holeMoveRaf.current = requestAnimationFrame(() => {
-      holeMoveRaf.current = 0
-      const p = holePoint({ clientX, clientY })
-      if (p) window.agentOS?.pageInput?.(surface.id, { type: 'move', ...p, modifiers: m })
-    })
-  }
-  // Wheel needs preventDefault (the canvas pan/zoom handlers live above) → native non-passive listener.
-  // In native-input mode the real wheel passes through to L0 (ignore:true forwards it), so skip this.
-  useEffect(() => {
-    if (surface.kind !== 'web' || serverMode || nativeInput) return
-    const el = webHostRef.current
-    if (!el) return
-    const onWheel = (e: WheelEvent): void => {
-      e.preventDefault()
-      e.stopPropagation()
-      const r = el.getBoundingClientRect()
-      window.agentOS?.pageInput?.(surface.id, { type: 'wheel', x: e.clientX - r.left, y: e.clientY - r.top, dx: e.deltaX, dy: e.deltaY, modifiers: holeMods(e) })
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [surface.kind, surface.id, serverMode])
-
-  // Any tab's url change navigates ITS view: the BrowserNav address bar and agent update_surface{url}
-  // both fold into the active tab's url (store), bookmark clicks too; popup tabs arrive with one. Main
-  // reports real navigations back per tab and the host no-ops an already-current url, so the
-  // push-echo never loops.
-  useEffect(() => {
-    if (surface.kind !== 'web' || serverMode) return
-    const cur = useDesktop.getState().surfaces.find((s) => s.id === surface.id) ?? surface
-    for (const t of webTabsOf(cur)) if (t.url) window.agentOS?.webContentsViewNavigate?.(surface.id, t.id, t.url)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [surface.kind, surface.id, serverMode, webNavKey])
+  // Per-tab <webview> liveness: a tab is MATERIALIZED (gets a live <webview>) once it has been active, and
+  // stays mounted after, so background tabs keep their page alive. Mark the active tab materialized during
+  // render (idempotent Set add); render only materialized tabs (WebTabView below). This is the lazy-then-
+  // live restore the old per-tab WebContentsView host did. Wiring (register-with-main, nav-state, fullscreen)
+  // lives in WebTabView per tab.
+  const materializedTabs = useRef<Set<string>>(new Set())
+  if (activeWebTab) materializedTabs.current.add(activeWebTab.id)
 
   // Keep the app/server address-bar draft in sync with the stored url (Electron web surfaces moved to
   // BrowserNav, which holds per-tab drafts with a focus clobber-guard).
@@ -694,7 +434,19 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     }
     const dx = (e.clientX - d.startX) / t.scale
     const dy = (e.clientY - d.startY) / t.scale
-    for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
+    d.dx = dx
+    d.dy = dy
+    // A single free window moves IMPERATIVELY — a composited transform offset on the frame, NO store
+    // write per move (that React round-trip is the lag). React still owns left/top (= the un-updated
+    // store position) and never touches transform, so this persists across renders. The L0 page view
+    // AND every occlusion clip (.bg, scenery, per-frame page-holes) track this move in the geometry RAF,
+    // which reads each frame's LIVE rect (it reflects the transform) — not the store. Committed on drop.
+    if (d.items.length === 1 && !isSlotted && !isFileTile && frameRef.current) {
+      d.imperative = true
+      frameRef.current.style.transform = `translate(${dx}px, ${dy}px)`
+    } else {
+      for (const it of d.items) moveSurface(it.id, it.ox + dx, it.oy + dy)
+    }
     // Highlight a visual Group folder OR a real filesystem folder under the cursor.
     // Real folders accept only file-backed items; visual Groups keep their old "any live surface" behavior.
     const dragged = new Set(d.items.map((it) => it.id))
@@ -754,6 +506,13 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     setIsDragging(false)
     const d = drag.current
     drag.current = null
+    // Fold an imperative drag's final position into the store ONCE, dropping the transform so React's
+    // left/top takes over at the same value (one synchronous pointerup render → no flash). Folder/snap
+    // branches below may override the position.
+    if (d?.imperative) {
+      if (frameRef.current) frameRef.current.style.transform = ''
+      for (const it of d.items) moveSurface(it.id, it.ox + (d.dx ?? 0), it.oy + (d.dy ?? 0))
+    }
     const st = useDesktop.getState()
     const target = st.dragTarget
     const snap = st.snapPreview
@@ -888,34 +647,6 @@ export const SurfaceFrame = memo(function SurfaceFrame({
   const isDirTile = isRealFolderSurface(surface)
   const isFileTile = surface.kind === 'native' && (surface.component === 'file' || surface.component === 'dir') // a real file/dir, not a window
   const isSlotted = !!slotOf(surface) // a home tile: lattice-snapped, fixed-size, never edge-tiles
-  // Cut a higher browser's page hole out of this frame (string-equality selector: recomputes per
-  // store change, re-renders only when the polygon actually changes; world coords, camera-free).
-  const clipPath = useDesktop((s) => (serverMode ? undefined : pageHolesClip(surface, s.surfaces)))
-  // A DOM box-shadow can't composite cleanly against a browser's page HOLE in EITHER direction:
-  // clipped UNDER a browser the clip hard-cuts it to a hairline; floating OVER a browser it pools
-  // dark over the transparent hole (the page shows through, darkened). So whenever this surface
-  // overlaps a live browser, drop its shadow — no shadow, no fringe. (web surfaces don't shadow
-  // each other this way; only DOM surfaces vs the page layer.)
-  // True when THIS surface overlaps any OTHER live browser, so it must drop its box-shadow (the
-  // --hairline inset border + the drop shadow) which would otherwise fringe/hairline against the page
-  // composite. Now includes browser-over-browser (the `kind === 'web'` exclusion is gone): a focused
-  // browser over another kept its drop shadow + border and cast the dark edge the user saw. The red
-  // focus ring is an OUTLINE (.window.is-active), NOT a box-shadow, so it survives this drop.
-  const overlapsWeb = useDesktop((s) =>
-    serverMode
-      ? false
-      : s.surfaces.some(
-          (w) =>
-            w.kind === 'web' &&
-            w.id !== surface.id &&
-            !w.minimized &&
-            !(w.groupId && !w.peek) &&
-            w.x < surface.x + surface.w &&
-            surface.x < w.x + w.w &&
-            w.y < surface.y + surface.h &&
-            surface.y < w.y + w.h
-        )
-  )
   // System panels (the pinned chat/activity hubs) keep the full window bar even when slotted —
   // hiding it would cost their close/minimize controls. Everything else slotted gets WIDGET chrome:
   // no bar at all, just an invisible top drag-grip + the pop-out toggle in the far right corner.
@@ -947,23 +678,18 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       zoom === 1 ? fill : { ...fill, transform: `scale(${zoom})`, transformOrigin: zo ? `${zo.x}px ${zo.y}px` : ('0 0' as const) }
     switch (surface.kind) {
       case 'web':
-        // Server mode: the site lives in a server-side headless browser, streamed
-        // here as a <canvas> (mountServerSurface draws frames + forwards input).
-        // Electron: THE HOLE — transparent; the live page (a WebContentsView in the sandwich's
-        // pages window) shows through from underneath. Pointer/wheel forward to it; keyboard rides
-        // the pageFocus handoff from onHoleDown.
+        // Server mode: the site lives in a server-side headless browser, streamed as a <canvas>.
         if (serverMode) return <canvas ref={canvasRef} style={fill} />
+        // Electron: a real in-DOM <webview> guest PER TAB (separate processes, no iframe framing limits).
+        // Ordinary DOM children of the frame, so they move/stack/clip with the window — no compositor.
+        // Only materialized tabs (active + previously-active) get a live webview; inactive ones stay
+        // mounted-but-hidden so their page stays alive. WebTabView owns each guest's wiring.
         return (
-          <div
-            ref={webHostRef}
-            className="webcontents-host"
-            data-sid={surface.id} // the App-level coalesced geometry pass (pillar 2) reads every hole's rect by id
-            // containment inside the focus ring comes from the frame's 1px padding (.window.browser)
-            style={{ ...fill, cursor: pageCursor }}
-            onPointerDown={onHoleDown}
-            onPointerMove={onHoleMove}
-            onPointerUp={onHoleUp}
-          />
+          <>
+            {(webTabs ?? []).filter((t) => materializedTabs.current.has(t.id)).map((t) => (
+              <WebTabView key={t.id} surfaceId={surface.id} tab={t} active={t.id === activeWebTab?.id} zoom={zoom} />
+            ))}
+          </>
         )
       case 'app':
         if (!surface.url) return <AppEmptyState />
@@ -1032,9 +758,6 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           width: surface.w,
           height: surface.h,
           zIndex: surface.z,
-          ...(clipPath && clipPath !== 'HIDE' ? { clipPath } : {}),
-          ...(overlapsWeb || (clipPath && clipPath !== 'HIDE') ? { boxShadow: 'none' } : {}),
-          ...(clipPath === 'HIDE' ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {})
         }}
         onPointerDown={focusHere}
       >
@@ -1057,8 +780,6 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           height: surface.h,
           zIndex: effectiveZ(surface),
           ...(surface.minimized ? { display: 'none' } : {}),
-          ...(clipPath && clipPath !== 'HIDE' ? { clipPath } : {}),
-          ...(clipPath === 'HIDE' ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {})
         }}
         onPointerDown={focusHere}
       >
@@ -1088,9 +809,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         // The sandwich's page-over-DOM direction: a higher browser's page hole is CUT out of this
         // frame so the live page (below all DOM) shows through where it should cover us. 'HIDE' =
         // fully covered: hide outright (a degenerate clip ghosts the element's outline).
-        ...(clipPath && clipPath !== 'HIDE' ? { clipPath } : {}),
         // Overlapping a browser: drop the box-shadow so it can't fringe against the page hole.
-        ...(overlapsWeb || (clipPath && clipPath !== 'HIDE') ? { boxShadow: 'none' } : {}),
         ...(surface.minimized ? { display: 'none' } : {}),
         // Slotted tiles spring-snap into their span (the macOS settle); suspended while dragging so
         // the tile tracks the cursor 1:1, and resumed on drop for the snap animation. File tiles get
@@ -1099,7 +818,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         ...(isFileTile && !isDragging ? { transition: 'left 0.4s cubic-bezier(0.22, 1, 0.36, 1), top 0.4s cubic-bezier(0.22, 1, 0.36, 1)' } : {}),
         // brandon-ui dock restore: the surface is mounted (for measurement) but hidden while the
         // genie animation plays a clone from the dock; unhidden when the phase ends.
-        ...(restoring || clipPath === 'HIDE' ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {}),
+        ...(restoring ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {}),
         ...(paper ? { background: paper.bg, color: paper.ink } : {}),
         // Layered desktop (macOS model) — bands live in store.effectiveZ (one source, shared with
         // the browser occlusion test): tiles/icons raw z → free windows +500k → focus +1.5M →

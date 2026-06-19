@@ -7,7 +7,7 @@ import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlu
 import { emitSystemMoment, setMomentTap } from './events'
 import { openBootJournal, chatFileName } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
-import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capabilities'
+import { installGuestSessionPolicy, resolvePermissionPrompt, attachGuestWindowPolicy } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, electronOps, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
 import { wireLauncher, registerLauncher } from './launcher'
@@ -30,8 +30,6 @@ import { registerWallpaperIpc } from './wallpaper'
 import { registerOnboarding, interviewBootTask, claudeCliPath, codexCliPath, setInterviewAgentAvailable } from './onboarding'
 import { initUpdater, openBuildPicker, isDevMachine } from './update'
 import { resolveTmuxBin } from './tmux-host.mjs'
-import { setWebContentsViewInputForwarder, setWebContentsViewDiagTap } from './webcontents-view-host'
-import { createSandwich, type Sandwich } from './sandwich'
 import { computerUseHelper } from './computer-use-helper'
 import { launchIslandHelper, setIslandDeps } from './island-bridge.mjs'
 import type { IslandHelperHandle } from './island-bridge.mjs'
@@ -39,6 +37,10 @@ import type { IslandHelperHandle } from './island-bridge.mjs'
 // filter): only ids the island itself spawned (recordIslandId) are ever listed/tailed (islandLiveIds), so the
 // HUD never mirrors the user's main canvas chat ('0') or a sibling peer agent. See island-membership.mjs.
 import { recordIslandId, islandLiveIds, pruneIslandIds } from './island-membership.mjs'
+// The notch (dynamic island) overlay — the notch-essential bits extracted from the retired sandwich compositor
+// (web surfaces are now in-DOM <webview>, so the two-window sandwich is gone): the single window is reconfigured
+// as a transparent, all-Spaces, full-display island, with a click-through toggle the renderer drives on hover.
+import { notchOverlayWindowOptions, applyNotchOverlay, setNotchInteractive } from './notch-overlay'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -83,9 +85,6 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
-// The window pair (sandwich compositor) — mainWindow above is its UI layer; sandwich.pages hosts
-// the browser WebContentsViews underneath it.
-let sandwich: Sandwich | null = null
 // The boot journal (crash dirty-bit + root lease) — opened once the workspace host exists, marked
 // clean as the LAST step of a graceful quit ("clean" = state was flushed first).
 let bootJournal: BootJournal | null = null
@@ -171,9 +170,7 @@ function installAppMenu(): void {
           label: 'Toggle Full Screen',
           accelerator: 'Ctrl+Cmd+F',
           click: () => {
-            const s = sandwich
-            if (!s || s.pages.isDestroyed()) return
-            s.setFullScreen(!s.pages.isFullScreen())
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setFullScreen(!mainWindow.isFullScreen())
           }
         }
       ]
@@ -184,18 +181,37 @@ function installAppMenu(): void {
 }
 
 function createWindow(): void {
-  // The sandwich compositor (plans/blitzos-sandwich-compositor.md): two congruent windows — L0
-  // hosts the page WebContentsViews, L1 (transparent) hosts the entire renderer with a hole per
-  // browser body. `mainWindow` stays the UI window: every renderer-facing reference is unchanged.
-  sandwich = createSandwich({
+  // ONE plain window. Web surfaces are in-DOM <webview> tags (a real guest WebContents embedded in the
+  // renderer), so they move/stack with their frame like any other DOM — no sandwich compositor, no clip
+  // holes, no geometry sync. webviewTag enables the <webview> element; the guest session/policy is wired
+  // per attach below (did-attach-webview) on the shared persist:agentos partition.
+  mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
-    fullscreen: FULLSCREEN,
-    overlay: notchGated, // notch-merge: ONE full-display transparent window IS the notch; the renderer clips it to
-    preload: join(__dirname, '../preload/index.js') //   the notch shape and grows the clip to reveal the real canvas
-
+    show: false,
+    // Notch (overlay) mode reconfigures this ONE window as a transparent, all-Spaces, full-display island
+    // (notch-overlay.ts) — the renderer clips #root-canvas to the notch shape and grows the clip to reveal the
+    // real canvas; otherwise it is the normal hiddenInset window. Web surfaces are in-DOM <webview> either way
+    // (the two-window sandwich is gone). An all-Spaces overlay must never native-fullscreen (it traps the user).
+    ...(notchGated
+      ? notchOverlayWindowOptions()
+      : { titleBarStyle: 'hiddenInset' as const, backgroundColor: '#e9e9e7' }),
+    fullscreen: notchGated ? false : FULLSCREEN,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+      webviewTag: true
+    }
   })
-  mainWindow = sandwich.ui
+  mainWindow.once('ready-to-show', () => {
+    if (notchGated && mainWindow) applyNotchOverlay(mainWindow)
+    else mainWindow?.show()
+  })
+  // Overlay mode draws its OWN traffic lights (App.tsx); re-assert the native ones hidden across dev reloads.
+  if (notchGated) mainWindow.webContents.on('did-finish-load', () => mainWindow?.setWindowButtonVisibility?.(false))
 
   // Stage keybinds must work no matter WHAT has keyboard focus — the host, a srcdoc iframe (the
   // chat hub!), or a WebContentsView guest. DOM keydown dies the moment a guest focuses, so main
@@ -214,10 +230,18 @@ function createWindow(): void {
     mainWindow?.webContents.send('os:keybind', { id: 'tile', shift: !!input.shift })
     return true
   }
-  setWebContentsViewInputForwarder(forwardTileKeybind)
+  // Each in-DOM <webview> guest is a separate process: hook its before-input-event so stage keybinds
+  // (⌘T etc.) still fire while a web surface holds focus, and attach the popup/download/beforeunload
+  // guest policy. (CDP + perception are wired renderer-side via os:register-webview on the guest's id.)
+  mainWindow.webContents.on('did-attach-webview', (_e, guest) => {
+    guest.on('before-input-event', (ev, input) => {
+      if (forwardTileKeybind(input)) ev.preventDefault()
+    })
+    attachGuestWindowPolicy(guest, { openSurface: () => {}, logPlan: () => {} })
+  })
   // Bare-Option hold → the radial create menu, same focus-proof route as the keybinds above: the
   // host webContents sees the key even when an app/srcdoc iframe holds focus (the renderer's own
-  // DOM keydown does not). Browser guests get the mirror tracker in webcontents-view-host.ts.
+  // DOM keydown does not).
   let altHeld = false
   mainWindow.webContents.on('before-input-event', (ev, input) => {
     if (forwardTileKeybind(input)) {
@@ -306,11 +330,7 @@ app.whenReady().then(() => {
   // the shared workspace host (hydrate/persist/switch/list/create/thumb) — the SAME module the server
   // backend uses, so workspaces are one feature across both modes.
   initOsActions({
-    getWindow: () => mainWindow,
-    getPagesWindow: () => sandwich?.pages ?? null,
-    focusPages: () => sandwich?.focusPages(),
-    focusUi: () => sandwich?.focusUi(),
-    dragShell: (op, dx, dy) => sandwich?.dragShell(op, dx, dy)
+    getWindow: () => mainWindow
   })
 
   // Session telemetry (plans/blitzos-telemetry.md): events + frames → the replay dashboard. Off unless
@@ -341,8 +361,6 @@ app.whenReady().then(() => {
       }
       process.on('uncaughtException', (e) => { try { sessionTape?.diagError({ source: 'main', via: 'uncaught', message: String((e as Error)?.stack || e) }) } catch { /* ignore */ } })
       process.on('unhandledRejection', (e) => { try { sessionTape?.diagError({ source: 'main', via: 'rejection', message: String((e as Error)?.stack || e) }) } catch { /* ignore */ } })
-      // Stream C diagnostics from the browser host: a web surface load failure, and a guest popup decision.
-      setWebContentsViewDiagTap((d) => { try { if (d.type === 'web.fail') sessionTape?.webFail(d); else sessionTape?.guestDecision(d) } catch { /* ignore */ } })
       // model.io: discover every agent's TUI transcript and collect new bytes (resumed agents never hit
       // agent.spawn, so we scan the active workspace's terminals each tick; registerTranscript no-ops on dupes).
       const registerWorkspaceTranscripts = (): void => {
@@ -526,38 +544,29 @@ app.whenReady().then(() => {
   ipcMain.on('os:action-resolve', (_e, p: { id: string; resolution?: string }) => { electronActionItems.resolveAction(String(p?.id), p?.resolution ? String(p.resolution) : 'done') })
   ipcMain.on('os:action-clear', (_e, id: string) => { electronActionItems.clearAction(String(id)) })
 
-  // Native-input passthrough (plans/features/blitzos-native-input.md): the renderer flips this as the
-  // cursor crosses a page hole so the human's mouse falls to the page as a REAL trusted OS event, which
-  // is what lets the Cloudflare Turnstile checkbox (and native drag/hover/pinch) work — synthetic
-  // sendInputEvent is isTrusted:false and Turnstile rejects it. ON by default; BLITZ_NATIVE_INPUT=0 opts out.
-  ipcMain.on('os:native-passthrough', (_e, on: boolean) => {
-    if (process.env.BLITZ_NATIVE_INPUT === '0') return
-    sandwich?.setPassthrough(!!on)
-  })
-
-  // Custom window controls (App.tsx renders its own macOS traffic lights — the native green light can't
-  // drive the pair's fullscreen, since a child window can't go native-fullscreen without detaching from
-  // its parent and blanking L0). Green toggles fullscreen on the PARENT (the child rides into its Space),
-  // yellow minimizes the pair, red closes (cascades to pages via ui's 'closed' handler in sandwich.ts).
+  // Custom window controls for NOTCH (overlay) mode: App.tsx draws its OWN macOS traffic lights because the
+  // native ones are hidden on the frameless overlay. In the normal hiddenInset window the native lights are used
+  // and these go unused. Wired to the single window (the two-window sandwich is gone). Fullscreen is a no-op in
+  // overlay (an all-Spaces overlay can't native-fullscreen — it would trap the user; the notch's "fullscreen" is
+  // the renderer clip-grow); in the normal window it toggles native fullscreen.
   ipcMain.on('os:shell-fullscreen', () => {
-    const s = sandwich
-    if (!s || s.pages.isDestroyed()) return
-    s.setFullScreen(!s.pages.isFullScreen())
+    if (!mainWindow || mainWindow.isDestroyed() || notchGated) return
+    mainWindow.setFullScreen(!mainWindow.isFullScreen())
   })
-  ipcMain.on('os:shell-minimize', () => sandwich?.minimize())
+  ipcMain.on('os:shell-minimize', () => { try { mainWindow?.minimize() } catch { /* mid-teardown */ } })
   ipcMain.on('os:shell-close', () => {
     try {
-      sandwich?.ui.close()
+      mainWindow?.close()
     } catch {
       /* already gone */
     }
   })
 
-  // The standalone Launcher (Shell A): a global hotkey (default ⌥Space; BLITZ_LAUNCHER_HOTKEY overrides) toggles a
-  // small always-on-top NSPanel where the user types a prompt; Send → electronOps.startWorkflow, which spawns an
-  // orchestrator agent (ORCHESTRATORS on) seeded with the task. ISOLATED — its own window + self-contained inline UI;
-  // nothing here touches the renderer (App.tsx/store). Workspace-host-gated: a Send before a workspace host exists is
-  // caught (osSpawnAgent throws 'no workspace host'), the handler's try/catch surfaces { ok:false } + leaves the bar open.
+  // The standalone Launcher (Shell A): an always-on-top NSPanel where the user types a prompt; Send →
+  // electronOps.startWorkflow, which spawns an orchestrator agent (ORCHESTRATORS on) seeded with the task.
+  // ISOLATED — its own window + self-contained inline UI; nothing here touches the renderer. It binds NO global
+  // hotkey (⌥Space belongs to the notch; registerLauncher only wires the Send IPC for a future in-app HUD).
+  // Workspace-host-gated: a Send before a host exists surfaces { ok:false } and leaves the bar open.
   wireLauncher({
     // electronOps is typed as a Record<string, (...args:never[])=>unknown>; cast startWorkflow to its real
     // signature at this one call site. The launcher hands us { task, contextRefs }; we forward to the shared
@@ -612,14 +621,14 @@ app.whenReady().then(() => {
   // The Notch (dynamic island) — THE MERGE: the real BlitzOS UI window IS the notch. The renderer clips
   // #root-canvas to the notch shape and GROWS the clip to fullscreen, so the LIVE canvas is what expands out of
   // the notch — no separate window, no plate, no handoff (createWindow passed overlay: notchGated). Main only:
-  //  - os:notch-interactive → sandwich.setInteractive (collapsed = click-through except the notch; expanded = full)
+  //  - os:notch-interactive → setNotchInteractive (collapsed = click-through except the notch; expanded = full)
   //  - os:notch-send → spawn (Deep ON → startWorkflow; Deep OFF → spawnAgent + userMessage)
   //  - os:notch-geometry → push the menu-bar height (the notch height) to the renderer
   //  - ⌥Space → os:notch-toggle (the renderer toggles expand/collapse)
   // The standalone island.ts window + the native BlitzIsland.app (BLITZ_NATIVE_ISLAND, wired below) are retired/legacy.
   if (notchGated) {
     ipcMain.on('os:notch-interactive', (_e, on: boolean) => {
-      try { sandwich?.setInteractive(!!on) } catch { /* mid-teardown */ }
+      try { setNotchInteractive(mainWindow, !!on) } catch { /* mid-teardown */ }
     })
     // Deep ON → an orchestrated workflow (electronOps.startWorkflow). Deep OFF → a conversational peer agent
     // (electronOps.spawnAgent) seeded with the prompt (electronOps.userMessage WRITES chat.md + wakes). electronOps

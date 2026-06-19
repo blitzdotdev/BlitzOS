@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
-const sandwichSrc = readFileSync(join(repoRoot, 'src/main/sandwich.ts'), 'utf8')
+const overlaySrc = readFileSync(join(repoRoot, 'src/main/notch-overlay.ts'), 'utf8')
 const indexSrc = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')
 const preloadSrc = readFileSync(join(repoRoot, 'src/preload/index.ts'), 'utf8')
 const appSrc = readFileSync(join(repoRoot, 'src/renderer/src/App.tsx'), 'utf8')
@@ -36,27 +36,26 @@ function ok(label, cond, detail) {
 
 console.log('Notch merge — the real canvas window IS the notch:')
 
-// ── sandwich.ts: OVERLAY mode (one transparent full-display window, no parenting, click-through toggle) ─────────
-ok('sandwich opts accept overlay; the overlay UI window is frameless + covers the notch (enableLargerThanScreen)',
-  /overlay\?: boolean/.test(sandwichSrc) &&
-    /opts\.overlay[\s\S]*?frame: false[\s\S]*?enableLargerThanScreen: true/.test(sandwichSrc))
-ok('overlay UI window is NOT parented (a standalone full-display overlay, not the L0-attached child)',
-  /if \(!opts\.overlay\) ui\.setParentWindow\(pages\)/.test(sandwichSrc))
-ok('overlay launch: showInactive (no focus steal) + screen-saver + all-Spaces + click-through (forward)',
-  /if \(opts\.overlay\)/.test(sandwichSrc) && /ui\.showInactive\(\)/.test(sandwichSrc) &&
-    /ui\.setAlwaysOnTop\(true, 'screen-saver'\)/.test(sandwichSrc) &&
-    /ui\.setVisibleOnAllWorkspaces\(true, \{ visibleOnFullScreen: true \}\)/.test(sandwichSrc) &&
-    /ui\.setIgnoreMouseEvents\(true, \{ forward: true \}\)/.test(sandwichSrc))
-ok('sandwich exposes setInteractive (toggle the overlay click-through) on the interface + the return',
-  /setInteractive\(on: boolean\): void/.test(sandwichSrc) &&
-    /const setInteractive = \(on: boolean\): void =>/.test(sandwichSrc) &&
-    /return \{[^}]*setInteractive[^}]*\}/.test(sandwichSrc))
+// ── notch-overlay.ts: the single window as a transparent full-display overlay + click-through toggle ────────────
+// (Extracted from the retired sandwich compositor — web is in-DOM <webview> now, so the notch is ONE window.)
+ok('notch-overlay window opts are frameless + transparent + cover the notch band (enableLargerThanScreen)',
+  /export function notchOverlayWindowOptions\(\)/.test(overlaySrc) &&
+    /frame: false[\s\S]*?transparent: true[\s\S]*?enableLargerThanScreen: true/.test(overlaySrc))
+ok('applyNotchOverlay: showInactive (no focus steal) + screen-saver + all-Spaces + click-through (forward)',
+  /export function applyNotchOverlay/.test(overlaySrc) && /win\.showInactive\(\)/.test(overlaySrc) &&
+    /win\.setAlwaysOnTop\(true, 'screen-saver'\)/.test(overlaySrc) &&
+    /win\.setVisibleOnAllWorkspaces\(true, \{ visibleOnFullScreen: true \}\)/.test(overlaySrc) &&
+    /win\.setIgnoreMouseEvents\(true, \{ forward: true \}\)/.test(overlaySrc))
+ok('setNotchInteractive toggles the overlay click-through (setIgnoreMouseEvents(!on, forward))',
+  /export function setNotchInteractive/.test(overlaySrc) &&
+    /win\.setIgnoreMouseEvents\(!on, \{ forward: true \}\)/.test(overlaySrc))
 
 // ── index.ts: notch-gated overlay + the notch IPC (interactive / send / geometry / ⌥Space) ─────────────────────
-ok('index.ts is notch-gated and creates the sandwich in OVERLAY mode',
-  /const notchGated\s*=/.test(indexSrc) && /overlay: notchGated/.test(indexSrc))
-ok('os:notch-interactive → sandwich.setInteractive (collapsed = click-through except the notch; expanded = full)',
-  /ipcMain\.on\(\s*'os:notch-interactive'[\s\S]*?sandwich\?\.setInteractive/.test(indexSrc))
+ok('index.ts is notch-gated and applies the overlay window opts + applyNotchOverlay when notch-gated',
+  /const notchGated\s*=/.test(indexSrc) && /notchGated[\s\S]*?notchOverlayWindowOptions\(\)/.test(indexSrc) &&
+    /applyNotchOverlay\(mainWindow\)/.test(indexSrc))
+ok('os:notch-interactive → setNotchInteractive(mainWindow) (collapsed = click-through except the notch; expanded = full)',
+  /ipcMain\.on\(\s*'os:notch-interactive'[\s\S]*?setNotchInteractive\(mainWindow/.test(indexSrc))
 ok('os:notch-send spawns: Deep ON → electronOps.startWorkflow; Deep OFF → spawnAgent + userMessage',
   /ipcMain\.handle\(\s*'os:notch-send'/.test(indexSrc) &&
     /if \(payload\?\.deep\)[\s\S]*?electronOps\.startWorkflow/.test(indexSrc) &&
@@ -106,9 +105,15 @@ ok('grow is butter via a GPU texture (translateZ(0), content rasterized once, co
 ok('low-power lever: widget motion is PAUSED (not hidden) during the clip transition (notch-anim → animation-play-state)',
   /#root-canvas\.notch-anim[\s\S]*?animation-play-state: paused/.test(cssSrc) &&
     /setNotchAnimating\(true\)/.test(appSrc) && /propertyName === 'clip-path'\) setNotchAnimating\(false\)/.test(appSrc))
-ok('the notch handle is in #root-canvas; the panel/process UI is the NotchHost rendered via a portal to document.body',
-  /className=\{`notch-handle/.test(appSrc) && /ref=\{notchHandleRef\}/.test(appSrc) &&
-    /createPortal\(<NotchHost menuBarH=\{notchMenuBarH\} \/>, document\.body\)/.test(appSrc))
+ok('the physical notch handle is PORTALED to document.body ABOVE the island chassis (z 2147483001) so it stays clickable',
+  /createPortal\(/.test(appSrc) && /className=\{`notch-handle/.test(appSrc) && /ref=\{notchHandleRef\}/.test(appSrc) &&
+    /\.notch-handle \{[\s\S]*?z-index: 2147483001/.test(cssSrc))
+ok('the panel/process UI is the NotchHost rendered via a portal to document.body',
+  /createPortal\(\s*<NotchHost[\s\S]*?menuBarH=\{notchMenuBarH\}[\s\S]*?document\.body\s*\)/.test(appSrc))
+ok('attach/peek RESIZE holds the island open (NotchHost.onChassisResize → host grace timer; a shrink never self-hides)',
+  /onChassisResize\?\.\(\)/.test(notchHostSrc) && /onChassisResize=\{/.test(appSrc) &&
+    /notchHoldUntilRef\.current = performance\.now\(\) \+ 1000/.test(appSrc) &&
+    /performance\.now\(\) < notchHoldUntilRef\.current/.test(appSrc))
 ok('the renderer flips window click-through on notch-hover (mousemove → agentOS.notch.setInteractive)',
   /addEventListener\('mousemove', onMove, true\)/.test(appSrc) &&
     /window\.agentOS\?\.notch\?\.setInteractive\(on\)/.test(appSrc))

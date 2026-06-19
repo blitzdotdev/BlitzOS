@@ -43,7 +43,7 @@ const mapThreads = (
   return out
 }
 
-export function NotchHost({ menuBarH }: { menuBarH: number }): JSX.Element {
+export function NotchHost({ menuBarH, onChassisResize }: { menuBarH: number; onChassisResize?: () => void }): JSX.Element {
   const [page, setPage] = useState(0) // 0 = new-session composer; 1..N = the agent at page-1
   const [attachOpen, setAttachOpen] = useState(false)
   const [sessions, setSessions] = useState<IslandSession[]>([])
@@ -54,6 +54,18 @@ export function NotchHost({ menuBarH }: { menuBarH: number }): JSX.Element {
   const pendingJump = useRef<string | null>(null) // after a spawn, jump to the new session once it appears
   const nRef = useRef(0)
   nRef.current = sessions.length
+
+  // Tell the host whenever the chassis SIZE changes (attach panel opens/closes, peek toggles) so its hover-close
+  // grace timer holds the island open: a shrink otherwise pulls the chassis out from under the cursor and the
+  // host's mousemove handler immediately hides the whole island. Skip the initial mount (no resize yet).
+  const firstResizeRef = useRef(true)
+  useEffect(() => {
+    if (firstResizeRef.current) {
+      firstResizeRef.current = false
+      return
+    }
+    onChassisResize?.()
+  }, [attachOpen, peek])
 
   // Apply a roster update; if we just spawned a session and it now exists, jump to its tab.
   const applySessions = (arr: IslandSession[]): void => {

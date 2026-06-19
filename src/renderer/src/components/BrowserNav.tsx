@@ -67,7 +67,15 @@ export function BrowserNav({
   }
 
   const act = (action: 'back' | 'forward' | 'reload' | 'stop'): void => {
-    window.agentOS?.webContentsViewNavAction?.(surface.id, action)
+    // Drive the in-DOM <webview> guest directly by its element methods (no IPC).
+    const wv = document.querySelector(`webview[data-sid="${surface.id}"]`) as unknown as
+      | { goBack(): void; goForward(): void; reload(): void; stop(): void }
+      | null
+    if (!wv) return
+    if (action === 'back') wv.goBack()
+    else if (action === 'forward') wv.goForward()
+    else if (action === 'reload') wv.reload()
+    else wv.stop()
   }
 
   const starred = !!liveUrl && bookmarks.some((b) => b.url === liveUrl)

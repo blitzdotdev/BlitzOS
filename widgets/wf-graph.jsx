@@ -150,7 +150,7 @@ export default function WfGraph() {
       onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}>
       <style>{'html,body{background:transparent!important}@keyframes wfgpulse{0%,100%{box-shadow:0 0 0 1px var(--blitz-accent),0 8px 22px -10px var(--blitz-accent)}50%{box-shadow:0 0 0 1px var(--blitz-accent),0 10px 30px -6px var(--blitz-accent)}}'}</style>
       {!runId ? <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--blitz-text-dim)', font: '600 11px ui-monospace,monospace', letterSpacing: '.1em', textTransform: 'uppercase' }}>waiting for a run…</div> : null}
-      <svg width="100%" height="100%" style={{ display: 'block', overflow: 'visible' }}>
+      <svg width="100%" height="100%" viewBox={`0 0 ${Math.max(g.width, 1)} ${Math.max(g.height, 1)}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block', overflow: 'visible' }}>
         <g transform={`translate(${view.tx},${view.ty}) scale(${view.k})`}>
           {g.edges.map((e, i) => {
             const a = g.nodes.find((n) => n.id === e.from), b = g.nodes.find((n) => n.id === e.to)
