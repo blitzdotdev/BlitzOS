@@ -2452,12 +2452,16 @@ export default function App(): JSX.Element {
         <span className="titlebar-label">BlitzOS</span>
       </div>
 
-      {/* THE NOTCH (dynamic island). The handle is the always-on-top black pill: closed it IS the notch; expanded
-          it stays at top-center as the click-to-collapse handle. The entry (Ask Blitz) is the black hover panel.
-          Both live INSIDE #root-canvas, so its clip reveals the LIVE canvas AROUND them as it grows out of the
-          notch — no separate window, no plate. Only mounted in overlay mode (notchOn). */}
-      {notchOn && (
-        <>
+      {/* THE NOTCH (dynamic island) handle — the always-on-top black pill: closed it IS the notch; expanded it
+          stays at top-center as the click-to-collapse handle (toggleNotch grows/shrinks the fullscreen canvas).
+          PORTALED to document.body so it lives in the SAME top layer as the island chassis (.nhost). Why this is
+          load-bearing: #root-canvas is GPU-promoted in notch mode (transform: translateZ(0)), which makes it a
+          stacking context that TRAPS a fixed child — so an in-canvas handle (z 100000) can never out-stack the
+          body-portal chassis (z 2147483000), and the instant the island opened on hover the chassis covered the
+          handle and ate every click (the "notch isn't clickable" regression). As a body portal at z ABOVE .nhost,
+          the handle is always the top hit-target. Only mounted in overlay mode (notchOn). */}
+      {notchOn &&
+        createPortal(
           <div
             ref={notchHandleRef}
             className={`notch-handle${notchState !== 'closed' || notchOpening ? ' is-open' : ''}`}
@@ -2477,14 +2481,15 @@ export default function App(): JSX.Element {
               <span className="notch-peek-dot" />
               {notchPeek.total > 0 && <span className="notch-peek-count">{notchPeek.total}</span>}
             </div>
-          </div>
-          {/* The panel / process UI is the NotchHost (the locked island design), rendered via a portal to
-              document.body so it ESCAPES the #root-canvas clip + the hide-canvas-at-rest rule, floating under the
-              notch. Shown while the island is in the panel/opening state. */}
-          {(notchState === 'panel' || notchOpening) &&
-            createPortal(<NotchHost menuBarH={notchMenuBarH} />, document.body)}
-        </>
-      )}
+          </div>,
+          document.body
+        )}
+      {/* The island chassis (the locked NotchHost design) — also a body portal so it ESCAPES the #root-canvas clip
+          + the hide-canvas-at-rest rule. Shown while the island is in the panel/opening state; the handle above
+          sits ON TOP of it (higher z) so the notch stays clickable while the chat is open. */}
+      {notchOn &&
+        (notchState === 'panel' || notchOpening) &&
+        createPortal(<NotchHost menuBarH={notchMenuBarH} />, document.body)}
 
       <div
         className="bg"

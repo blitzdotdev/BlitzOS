@@ -95,8 +95,10 @@ button {
 
 /* ── The Notch (dynamic island): the real canvas window IS the notch (sandwich overlay mode + App.tsx clips
    #root-canvas to a NotchShape and grows it). The handle is the black pill — closed it IS the notch, expanded
-   it stays at top-center as the click-to-collapse handle. The entry is the black hover panel (Ask Blitz). Both
-   are children of #root-canvas, so its clip-path reveals the LIVE canvas AROUND them as the clip grows. */
+   it stays at top-center as the click-to-collapse handle. The handle is PORTALED to document.body (App.tsx), NOT
+   a child of #root-canvas: the GPU-promoted notch-mode canvas (transform) traps a fixed child below the island
+   chassis, which would steal the handle's clicks. As a top-layer sibling it stays clickable through every state.
+   (.notch-entry is the legacy in-canvas hover panel, superseded by the NotchHost chassis.) */
 .notch-handle {
   position: fixed;
   top: 0;
@@ -104,7 +106,11 @@ button {
   transform: translateX(-50%);
   background: #000;
   border-radius: 0 0 14px 14px;
-  z-index: 100000;
+  /* ABOVE the island chassis (.nhost = 2147483000). The handle is PORTALED to document.body (App.tsx), so it is a
+     sibling of the chassis in the body stacking context; this z keeps the physical notch the top click-target even
+     while the island chat is open over it. (In-canvas it was z 100000 but TRAPPED below the chassis by the GPU
+     stacking context of #root-canvas.notch-mode — that was the "notch not clickable" regression.) */
+  z-index: 2147483001;
   cursor: pointer;
   display: grid;
   place-items: center;
