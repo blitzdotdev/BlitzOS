@@ -279,6 +279,8 @@ Example shape for a plan (adapt the field names to your task):
 // props = the single source of truth — seed from blitz.props(), re-render from onProps, write every edit back.
 {
   mode: 'edit',                                   // 'edit' while planning; the agent flips it to 'status' on approval
+  agentId: '7',                                   // the owning job/workflow agent; always pass to sendMessage
+  jobId: '7',                                     // optional external work-unit id, if your runtime has one
   stages: [ { id:'s1', title:'…', detail:'…', status:'todo' }, … ],  // editable, reorderable, removable rows
   decisions: { useStaging: true, notify: false }, // per-decision toggles (a map of named yes/no choices)
   comments: '',                                   // a free-text box the user can leave for you
@@ -304,6 +306,24 @@ The widget can talk to the agent two ways. The robust one for a large edited pay
 
 The agent then reads the full edited plan with \`get_surface {id}\` (which returns the widget's complete props,
 sidestepping the size cap below), reconciles it, and updates the widget back via \`update_surface {props}\`.
+
+**Agent-side plan binding and reconcile loop.** When this widget represents a job plan, the agent owns the durable
+work record and the \`plan.md\`; the widget is the user's editable view of that same plan. Use this protocol:
+
+1. Draft the staged plan, then spawn the widget with the full editable props:
+   \`spawn_widget { name:'plan', props:{ mode:'edit', agentId, jobId, stages, decisions, comments:'' } }\`.
+2. Capture the returned surface \`id\` and bind it to the work record as \`planSurfaceId\`. If the runtime exposes a
+   status/update tool, write that field there immediately. If no such work record/tool exists, do not fake one; leave
+   an explicit TODO in your task notes and keep using the returned surface id locally.
+3. Write the same staged plan to the job's \`plan.md\` using the parser's grammar: a machine-readable \`status:\`
+   line plus checklist-style stage rows with stable titles/statuses. Prefer the runtime's \`writePlan\` helper when
+   available, because E1/continuation reads that same file with \`readPlan\`.
+4. Ask the user to approve, edit, or reject in the widget. Do not start execution from your own draft.
+5. On a wake like \`plan approve\` or \`plan reject\`, look up the bound \`planSurfaceId\`, call \`get_surface {id}\`,
+   check \`surface.props.lastError\`, normalize \`stages\`/\`decisions\`/\`comments\`/\`decision\`, then write BOTH the
+   normalized widget props with \`update_surface {id, props}\` and the reconciled \`plan.md\`.
+6. Only after a user-originated approve should the job transition to execution (for runtimes with job status, that is
+   the \`set_job_status ... running\` edge). A reject or edited plan loops back through the same widget and \`plan.md\`.
 
 **The direct channel (\`__blitz:'action'\`) — small payloads only, it has a hard cap.** A sandboxed widget can also
 postMessage \`{ __blitz:'action', surfaceId, … }\` straight to the OS, which delivers it to the agent as a

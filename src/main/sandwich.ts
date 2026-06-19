@@ -1,4 +1,4 @@
-import { BrowserWindow, type Rectangle } from 'electron'
+import { BrowserWindow, screen, type Rectangle } from 'electron'
 
 // The sandwich compositor (plans/blitzos-sandwich-compositor.md): BlitzOS has exactly two visual
 // layers, so it runs as two congruent windows. L0 "pages" (bottom) hosts every page
@@ -33,6 +33,14 @@ export interface Sandwich {
   dragShell(op: 'start' | 'move', dx: number, dy: number): void
   /** Fullscreen rides the parent; the attached child joins its Space (bounds-synced on arrival). */
   setFullScreen(on: boolean): void
+  /** PoC-style "fake fullscreen": cover the WHOLE display on the CURRENT Space via setSimpleFullScreen — NO
+   *  native-fullscreen Space transition, so NO jarring macOS animation. Used by the notch-island spill so the
+   *  real canvas fills edge-to-edge as smoothly as the PoC. Reversible; never fights a real user fullscreen. */
+  setSpillCover(on: boolean): void
+  /** OVERLAY (notch-merge) mode: toggle the UI window click-through. on=false → click-through except where the
+   *  renderer re-enables it (the notch); on=true → fully interactive (expanded canvas). Forward keeps mousemove
+   *  flowing so the renderer can detect the notch-hover and flip it. The real "fill" is the renderer clip-grow. */
+  setInteractive(on: boolean): void
   /** Minimize the pair to the Dock (the parent miniaturizes; the attached child follows via AppKit). */
   minimize(): void
   /** Native-input passthrough (plans/blitzos-native-input.md, SPIKE): make the UI window
@@ -43,7 +51,7 @@ export interface Sandwich {
 
 const UI_BG = '#e9e9e7' // what a hole shows before its page paints (and the desktop's canvas color)
 
-export function createSandwich(opts: { width: number; height: number; fullscreen: boolean; preload: string }): Sandwich {
+export function createSandwich(opts: { width: number; height: number; fullscreen: boolean; preload: string; startHidden?: boolean; overlay?: boolean }): Sandwich {
   const pages = new BrowserWindow({
     width: opts.width,
     height: opts.height,
@@ -61,11 +69,8 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
     width: opts.width,
     height: opts.height,
     show: false,
-    // The UI layer composites over the live pages below it: transparent window, opaque DOM
-    // everywhere except browser holes. Native traffic lights render fine with titleBarStyle on a
-    // transparent window (verified live).
+    // Transparent window, opaque DOM everywhere except browser holes.
     transparent: true,
-    titleBarStyle: 'hiddenInset',
     // Native fullscreen/resize on the CHILD would detach it from the parent; both are handled at
     // the pair level (setFullScreen below; resize is a follow-up).
     fullscreenable: false,
@@ -74,6 +79,15 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
     // L1 (the other half of the "click twice" bug — e.g. after typing in a page, the first click on
     // the tab strip / chrome would otherwise be eaten). Standard AppKit first-mouse opt-in.
     acceptFirstMouse: true,
+    // OVERLAY (notch-merge): ONE frameless transparent window covering the FULL display incl. the menu-bar/notch
+    // band (enableLargerThanScreen), the real canvas clipping itself to the notch + growing — so the live canvas
+    // IS what expands, no separate window/plate. Else the normal sandwich child uses the hiddenInset title bar.
+    // backgroundColor fully TRANSPARENT in overlay mode: the GPU texture (translateZ(0) in the renderer, the lag
+    // fix) gives the window an opaque backing whose default is WHITE — it showed as square white corners poking out
+    // behind the notch's rounded clip. '#00000000' makes the backing transparent so only the rounded island paints.
+    ...(opts.overlay
+      ? { frame: false, hasShadow: false, enableLargerThanScreen: true, skipTaskbar: true, backgroundColor: '#00000000' }
+      : { titleBarStyle: 'hiddenInset' as const }),
     webPreferences: {
       preload: opts.preload,
       sandbox: false,
@@ -84,7 +98,11 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
   })
 
   // The load-bearing attachment (see header). Set before show so the group exists from first paint.
-  ui.setParentWindow(pages)
+  // OVERLAY (notch-merge): NOT parented — the UI window is a standalone full-display transparent overlay
+  // (screen-saver, all-Spaces; set on ready-to-show), and pages stays hidden (the renderer's opaque .bg paints
+  // the canvas color). Parenting would hide the UI when pages is hidden + cap its window level. (L0/browser is
+  // being retired, so its occlusion-culling reason no longer applies.)
+  if (!opts.overlay) ui.setParentWindow(pages)
 
   // The native traffic lights are REPLACED by custom DOM ones in the renderer titlebar (App.tsx). The
   // green/fullscreen light cannot be native: a macOS child window can't enter native fullscreen without
@@ -162,6 +180,47 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
   const setFullScreen = (on: boolean): void => {
     if (!pages.isDestroyed()) pages.setFullScreen(on)
   }
+  // PoC-style "fake fullscreen" (plans/blitzos-dynamic-island.md): cover the display on the CURRENT Space with
+  // NO native-fullscreen Space transition (so no macOS fullscreen animation — the notch island's clip-path
+  // spill is the only motion the user sees). setSimpleFullScreen resizes the PARENT to the whole screen incl.
+  // the menu-bar band; the attached child keeps stale bounds (same as native fullscreen) so we syncFs it.
+  // Reversible (setSimpleFullScreen(false) restores the prior bounds). We never fight a REAL native fullscreen
+  // the user started (green light / Ctrl+Cmd+F) — guarded by isFullScreen() / the spillCovering flag.
+  let spillCovering = false
+  const setSpillCover = (on: boolean): void => {
+    if (pages.isDestroyed() || ui.isDestroyed()) return
+    if (on) {
+      if (spillCovering || pages.isFullScreen()) return
+      spillCovering = true
+      // Show the pair (notch-gated → it was hidden on launch / sucked away). A freshly-shown hidden window
+      // appears on the user's CURRENT Space, so the island reveal shows the REAL canvas THERE — not on another
+      // Space, the bug behind "the fill is just a flat plate". Parent first, then the attached child above it;
+      // focus the child for keyboard.
+      pages.show()
+      ui.show()
+      ui.focus()
+      pages.setSimpleFullScreen(true)  // cover the CURRENT Space — no native-fullscreen Space transition
+      syncFs(); setTimeout(syncFs, 30) // child matches the now-full parent (immediately + after the resize settles)
+      setChromeFs(true)                // edge-to-edge: drop the titlebar strip like real fullscreen
+    } else {
+      if (!spillCovering) return
+      spillCovering = false
+      pages.setSimpleFullScreen(false) // restore the prior bounds
+      setChromeFs(false)
+      if (opts.startHidden) {
+        ui.hide()
+        pages.hide()                   // notch-gated: suck back to JUST the notch (the child hides with its parent)
+      } else {
+        syncFs(); setTimeout(syncFs, 30) // non-gated: stay shown; just re-sync the child to the restored bounds
+      }
+    }
+  }
+  // OVERLAY (notch-merge) click-through toggle: collapsed → click-through except where the renderer re-enables it
+  // (the notch); expanded → fully interactive. forward keeps mousemove flowing so the renderer detects the hover.
+  const setInteractive = (on: boolean): void => {
+    if (!ui.isDestroyed()) ui.setIgnoreMouseEvents(!on, { forward: true })
+  }
+
   // Minimize the pair: the parent miniaturizes to the Dock and its attached child follows (AppKit
   // removes ordered child windows from screen with their parent and restores them together).
   const minimize = (): void => {
@@ -170,10 +229,28 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
 
   // Show order: the parent first, then the attached child above it.
   ui.once('ready-to-show', () => {
+    if (opts.overlay) {
+      // Notch-merge: the UI window IS the canvas AND the notch. Show ONLY the UI (pages stays hidden — the
+      // renderer's opaque .bg paints the canvas color, and OUTSIDE the renderer's notch clip the transparent
+      // window shows the desktop). Cover the full display incl. the menu-bar/notch band, float over everything +
+      // all Spaces, and start click-through (collapsed = only the notch captures; the renderer flips it via
+      // setInteractive). The renderer clips #root-canvas to the notch shape and grows it to fullscreen.
+      const b = screen.getPrimaryDisplay().bounds
+      ui.setBounds(b)
+      ui.setAlwaysOnTop(true, 'screen-saver')
+      ui.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+      ui.setIgnoreMouseEvents(true, { forward: true })
+      ui.showInactive() // the notch must NOT steal focus from whatever app the user is over (it's an all-Spaces overlay)
+      ui.setBounds(b) // re-assert post-show (Electron clamps y into the workArea pre-show, below the menu bar)
+      setTimeout(() => { if (!ui.isDestroyed()) { ui.setBounds(b); ui.setAlwaysOnTop(true, 'screen-saver') } }, 700)
+      return
+    }
+    // Notch-gated (startHidden): stay HIDDEN on launch. Otherwise show normally.
+    if (opts.startHidden) return
     pages.show()
     ui.show()
     if (opts.fullscreen) setFullScreen(true)
   })
 
-  return { ui, pages, focusPages, focusUi, dragShell, setFullScreen, minimize, setPassthrough }
+  return { ui, pages, focusPages, focusUi, dragShell, setFullScreen, setSpillCover, setInteractive, minimize, setPassthrough }
 }

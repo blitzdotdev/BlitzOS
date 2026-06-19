@@ -1,57 +1,72 @@
-# BlitzOS — W2 (E2): Tick → Diff → Steer supervisor heartbeat (Option A)
+# BlitzOS — Tick Diff Steer Supervisor Heartbeat
 
-Status: SPEC FOR REVIEW. Companion to `plans/blitzos-user-journey.md` (E2); feasibility verified on `agent-runtime-moments-brandon-spatial-merge`. Scope: `srcdoc` / `app` / `native` widgets only. The `web`/browser/CDP path is OUT (browsers are being removed); plan perception for our own surfaces.
+Status: SPEC FOR REVIEW (no code written). W2, Phase 4 E2. This doc is the Option A contract for the tick -> diff -> steer supervisor heartbeat. Decisions already made: BlitzOS only ticks, diffs, and emits a perception moment; the agent owns every steering judgment, with zero per-task, stuck, or threshold heuristics in the OS. Also already decided: the A/B job entry points share one Raycast-like input component with two shells, the global non-activating NSPanel and the in-app HUD, both with prompt, dropped files/folders, add-browser-window, and Send. This spec builds on `plans/blitzos-job-task-model.md`, it does not redefine the Job/WorkUnit spine.
 
-## The model (plain)
-Every ~N seconds a host-side heartbeat ("tick") snapshots the whole desktop (every widget's content + every agent's state), diffs it against the prior tick, and emits only what CHANGED as a perception moment that wakes a supervisor agent. The supervisor decides whether to nudge ("steer") a running Job. Canonical example: the user edits a textbox in the `srcdoc` plan widget, its content changes, the tick's diff carries it, the supervisor steers the agent implementing the plan.
+## Current state (verified)
 
-## Option A boundary (load-bearing)
-BlitzOS only ticks, diffs, and emits the material diff as a `trigger:'tick'` moment. The AGENT owns ALL steering judgment. ZERO per-task/stuck/threshold heuristics in the OS.
+- The doctrine is Option A-shaped already. `CLAUDE.md:11` says BlitzOS has "zero per-task code" and that "the agent as swappable policy" decides action; `CLAUDE.md:59` says "keep BlitzOS perception content-agnostic" and "No per-task detection" belongs in BlitzOS. W2 must keep that boundary: the OS emits content-agnostic diff facts, the supervisor agent decides whether to steer.
+- The central dependency is still the Job object from the spine doc, not this doc. `plans/blitzos-job-task-model.md:3` says "there is NO first-class Job object today; agents are uniform peers" and "B3 / W1 / W2 / E1 all reference the Job object." `plans/blitzos-job-task-model.md:37` flags Job persistence as a core sign-off decision. W2 can wake on status diffs before W1 exists, but plan-aware steering needs the Job's `agentId`, `planPath`, and lifecycle from that spine.
+- The event stream and supervisor routing already exist. `os-tools.mjs:556-568` defines `/events`, calls `waitForEvents`, and returns `{ events, latest, reminder }`; `perception-core.mjs:622-638` long-polls visible moments. `perception-core.mjs:52-60` routes `message` and `action` privately, then returns `sid === '0'` for all other triggers. A `trigger:'tick'` moment with no `agentId` therefore wakes supervisor `'0'` without a new routing rule.
+- The registration pattern W2 should mirror is verified. `perception-core.mjs:41-43` exposes `setWorkspaceProvider(fn)`, and `perception-core.mjs:180-182` exposes `setMomentTap(fn)`. The W2 seam must follow this dependency inversion because `perception-core.mjs` is the shared perception kernel and must not import IPC-bound `osActions.ts`.
+- The coalescer cadence and anti-spam rule already exist. `perception-core.mjs:16` sets `BATCH_MS = 15000`; `perception-core.mjs:505-521` runs the 2s `sweepTimer`. `perception-core.mjs:225-227` states "Content-only churn" is not a wake reason and returns on `!p.hasUser`. The tick needs the same load-bearing empty-diff early return.
+- Canvas geometry diffing exists, but it is not W2. `osActions.ts:612-617` says tool-driven ops and human gestures become canvas perception, and bulk transitions suppress the differ. `osActions.ts:628-633` implements `consumeEcho`; `osActions.ts:678-702` defines `diffCanvasOps`, consuming open/move/resize/close echoes before `ingestCanvasOps`. This is surface geometry, reactive on `os:state`, not a periodic agent/job heartbeat.
+- Steering delivery is built end to end. `osActions.ts:832-836` appends a user message to an agent's chat and calls `emitUserMessage`; `perception-core.mjs:558-571` emits `trigger:'message'` with `agentId`, which `visibleTo` routes privately. `electron-os-tools.ts:70-73` already binds `steer` to `osUserMessage`, while `osActions.ts:816-825` shows `osSay` only appends an agent message and does not emit a wake.
+- The serializer footgun is real. `os-tools.mjs:95-99` says the agent-facing state omits `html` and `props`; `os-tools.mjs:111-120` projects surface fields without props. Therefore the tick payload must ride `/events` as `moment.diff`, not `list_state`. The current tick emitter uses `diff` at `perception-core.mjs:486-495`, and `redactMoment` preserves tick `diff` at `perception-core.mjs:98-99`.
+- Agent status is available host-side. `workspace-host.mjs:459-467` writes chat status records, `workspace-host.mjs:487-512` updates status from activity, and `workspace-host.mjs:518-545` folds the status map into chat hub props. In this checkout, the research has drift: `chatStatusSnapshot()` now exists at `workspace-host.mjs:482-485` and is exported at `workspace-host.mjs:1042-1044`.
+- W2 host seams are already visible in this checkout and should be reviewed against this spec. `perception-core.mjs:323-325` defines `setTickSource`; `perception-core.mjs:473-497` defines `emitTick`; `perception-core.mjs:500-521` gates ticks from the existing 2s sweeper with `TICK_MS`. `osActions.ts:181-186` registers a provider with `surfaces`, `agentStatus`, `terminals`, and `workspace`.
 
-## What the tick diffs (one unified world snapshot)
-The host (main) computes, each tick, a diff over:
-- WIDGET CONTENT (the user-action half): each `srcdoc`/`app`/`native` surface's content, captured as a snapshot in `props` (see P0). A user edit shows up as a `props` delta. No `web` surfaces.
-- AGENT STATE: per-agent status (`working/waiting/stopped/error`), terminal exit + `exitCode`, new/closed agents.
-- GEOMETRY: surface open/close/move (the existing `diffCanvasOps` shape, `osActions.ts:663`, today geometry-only).
-- CONTEXT: active workspace + focus (`activeSurfaceId`), **action-items** (pending human actions, `osActions.ts:864`), new chat messages.
-- SESSION POINTERS: per agent, the path to its full session JSON so the supervisor can drill in (see below).
-Materiality early-return: an empty or immaterial diff emits NOTHING (a quiet desktop never wakes the supervisor; mirrors `if (!p.hasUser) return`, `perception-core.mjs:213`), with a filter so animation / JS churn does not count.
+## What to build
 
-## P0: get content out of a sandboxed widget by SNAPSHOT, not input-recording
-A sandboxed `srcdoc` iframe cannot be read from outside (no same-origin; `iframe.contentDocument` throws), so a snapshot needs in-iframe code. Use a CONTENT SERIALIZER, not an event recorder:
-- Extend the existing widget bridge (`widget-bridge.ts`) with a snapshot reporter: on change (a debounced MutationObserver + `input`), serialize the widget's content (form values + innerText) and push it into the surface's `props` via the bridge `setprops` op (`SurfaceFrame.tsx:577`).
-- Cooperative widgets (the plan widget) already push content via `blitz.setProps`, so they are free.
-- `native` (notes/chat): read content from the renderer/store; no injection.
-- `app` iframes: the same bridge reporter (when same-origin/cooperative).
-All widget content thus lives in `props`. Snapshot beats recording here: it captures the RESULT (the new content the supervisor needs to steer on), is content-agnostic (matches the dumb-but-rich doctrine), and catches JS/async changes a keystroke listener misses. (Same idea as the moment `snapshot` field already uses for content.)
+Build or preserve W2 as one host-side heartbeat contract, not a second agent loop:
 
-## The diff is computed HOST-SIDE (load-bearing)
-`props` are in `cached` (host-readable) but STRIPPED from the agent's `list_state` (`os-tools.mjs:101`). So the differ MUST run in main; an agent polling `list_state` would be blind to exactly the widget content. The agent only RECEIVES the host-computed diff, it never computes it.
+1. `setTickSource(fn)` remains the only ingress from host state into perception. The provider returns `{ agentStatus, terminals, surfaces, workspace }`, matching the existing `osActions.ts:181-186` shape. This is a DECISION THAT NEEDS USER SIGN-OFF because it adds a perception primitive and a public host-to-kernel seam.
+2. `emitTick()` snapshots the provider, diffs against a module-level `lastTickSnapshot`, and emits exactly one `trigger:'tick'` moment only when the diff is material. `perception-core.mjs:479-485` already seeds baseline, advances baseline, and returns on `!diff.material`; keep that behavior as the W2 spam guard.
+3. The diff payload rides `moment.diff` on `/events`, never `list_state`. Minimum payload: `agents`, `terminals`, and `surfaces`, as in `perception-core.mjs:494`. The agent can pull full content later with targeted tools; relay-safe tick metadata should cross intact via the `redactMoment` branch at `perception-core.mjs:98-99`.
+4. Materiality stays content-agnostic. Agent status materiality should include `working -> waiting`, `working -> stopped`, `working -> error`, and any `* -> error`; it should exclude `working -> working`, `working -> watching`, and routine `starting -> working`. The current code states this rule at `perception-core.mjs:422-425`.
+5. Terminal materiality is exit-oriented. `perception-core.mjs:431-435` emits when an `exitCode` appears; `osActions.ts:574-583` maps terminal spawn, data, stop, and exit into chat status writers. That is enough to wake the supervisor on crash or completion without interpreting task semantics.
+6. Surface materiality needs sign-off. The prompt asks W2 to include surface open/close plus offstage/onstage deltas. The current implementation assigns open/close/move/resize to `trigger:'canvas'` and only diffs props edits in tick, see `perception-core.mjs:438-455`. DECISION THAT NEEDS USER SIGN-OFF: either keep canvas as owner of surface open/close/geometry and let tick own props/offstage plan-widget deltas, or move open/close/offstage/onstage into tick and add double-wake protection.
+7. Cadence should ride the existing sweeper unless rejected. `perception-core.mjs:500-521` uses `TICK_MS = max(2000, BLITZ_TICK_MS || 10000)` and runs from the unref'd sweep timer. A dedicated interval, like the unrelated 60s heartbeats, should be a sign-off decision because it adds another always-on scheduler.
+8. Steering should use `/steer {agent,text}` rather than `/say`. `os-tools.mjs:587-599` defines `/steer`; `electron-os-tools.ts:70-73` maps it to the waking `osUserMessage` path. `/say` at `os-tools.mjs:572-583` is agent-to-user chat and does not wake the target agent. If `/steer` is kept, this is the relay-safe sibling tool for supervisor policy.
+9. Echo and bulk suppression are mandatory. Canvas uses `consumeEcho` and `canvasBulkAt` at `osActions.ts:628-640`. W2 should keep the current stronger tick guards: `absorbTickEcho` one-shot sets at `perception-core.mjs:376-383`, `resetTickBaseline()` at `perception-core.mjs:391-393`, tool-origin surface absorption at `osActions.ts:772`, spawn absorption at `osActions.ts:920`, and close absorption at `osActions.ts:946`.
+10. W2 can ship decoupled from W1. Agent status and terminal exits already produce enough material diffs to wake supervisor `'0'`. Plan-awareness is an enrichment once the Job record and W1 plan widget bind a job's plan surface and executor agent, per `plans/blitzos-job-task-model.md:18-29` and `plans/blitzos-plan-widget.md`.
 
-## Delivery (DECISION)
-- (A, recommended) The OS emits a `trigger:'tick'` moment every N seconds (carrying the host diff) into `/events`; the EXISTING `wait.sh` delivers it. No new script; supervisor='0' routing is already free (`visibleTo`, `perception-core.mjs:52-60`).
-- (B) A new `/tick` endpoint returns a richer host-computed payload (full content diff + agent list + session diffs + JSON paths) that the agent pulls on a timer.
-- Monitor reference (to get it right): BlitzOS wakes the agent via Bash `run_in_background` (`wait.sh` exits-on-event, agent relaunches), NOT the Monitor tool (`agent-runtime.mjs:88`). For (B)'s fixed cadence the **Monitor tool** (a persistent `while …; sleep N; emit; done`, one stdout line per tick) is the cleaner primitive; a `run_in_background` `tick.sh` must `sleep N -> fetch -> print -> exit -> relaunch` each cycle. (A) needs neither.
+## Sequencing
 
-## Agent list + session pointers (verified locations)
-- Active agents + status: `/list_terminals` (id, title, status, `exitCode`, `agentRuntime`, stage) + per-agent `<ws>/.blitzos/terminals/<id>/meta.json` (`claudeSessionId`) + host `chatStatus`/`chatHubProps` (`sessions[]` with `lastMessagePreview`, `updatedAt`).
-- Full session JSON: `~/.claude/projects/<workspacePath with / and . turned to ->/<claudeSessionId>.jsonl`; exporter `scripts/export-agent-session.mjs <sessionId>` writes `tmp/agent-sessions/<id>.md`; human-readable `<ws>/chat-<id>.md`; richest is the session tape `<root>/.blitzos/tape/`.
-- Cheap per-tick session "diff": offset-tail `<ws>/.blitzos/terminals/<id>/transcript.jsonl` (the tape's `model.io` already reads by byte offset), or the `activity.mjs` feed (one line per meaningful action), or compare `chatHubProps` `updatedAt`/status between ticks. No full JSONL re-parse each tick.
+1. Confirm the Job/WorkUnit decision in `plans/blitzos-job-task-model.md`, especially persistence and `agentId` ownership. W2 needs the steering target but must not define the work-unit model.
+2. Approve the W2 perception primitive: `setTickSource`, `emitTick`, `trigger:'tick'`, and `moment.diff`. If the target branch lacks the current seams, add them near `flushCanvas`; if it has them, review for conformance.
+3. Approve surface delta ownership: canvas-only for open/close/geometry with tick props/offstage, or tick-owned open/close/offstage/onstage. This choice changes wake volume and self-reaction handling.
+4. Expose or keep a host status snapshot accessor. The current `chatStatusSnapshot()` is the right shape, and avoids scraping chat surface props that the agent serializer strips.
+5. Register the tick provider in every transport that serves `/events`, using dependency injection only.
+6. Add or keep the redact branch so pure-metadata ticks cross the relay intact while page-derived content still requires consent.
+7. Add or keep `/steer`, wired to the same `emitUserMessage` delivery path as human user input.
+8. Add headless tests around no-provider, first-tick seed, empty diff, material status edge, terminal exit, props/offstage surface delta, workspace scoping, redaction, and `/steer` visibility.
 
-## New pieces (the build)
-The bridge content-snapshot reporter (P0); `emitTick()` + a `setTickSource(fn)` seam (host-side; perception-core never imports osActions, mirror `setWorkspaceProvider`); the host-side prop+status+context differ with the empty-diff early-return + materiality filter; a `chatStatusSnapshot()` host accessor; a `redactMoment` tick branch; a `/steer {agent,text}` -> `emitUserMessage` call-site; an echo/bulk self-reaction guard (reuse `canvasBulkAt`).
+## Risks
 
-## Sign-off decisions
-1. P0 mechanism: bridge content-serializer -> `props` (srcdoc/app) + store read (native). No web/CDP. Recommend.
-2. Delivery: (A) OS-emit into `/events` (recommended) vs (B) a `/tick` endpoint + `tick.sh`/Monitor.
-3. NEW perception primitive `setTickSource`+`emitTick`+`trigger:'tick'`. Recommend add.
-4. Cadence `TICK_MS` (tunable; ~10s for steering, distinct from W3's 2-minute summary).
-5. Host `chatStatusSnapshot()` accessor. Recommend yes.
-6. `/steer {agent,text}` tool (`/say` does NOT wake the target; `/user_say` is relay-blocked). Recommend yes.
-7. Does a tick carry edited CONTENT over the relay (then `redactMoment` must redact it) or only "surface X changed" flags + `get_surface`/session paths? Lean: flags + pull (relay-safe, metadata-light).
+- Layering: `perception-core.mjs` cannot import `osActions.ts` or `workspace-host.mjs`; use `setTickSource` as the only dependency seam.
+- Spam: the empty-diff early return is load-bearing. A quiet desktop must emit zero tick moments.
+- Self-reaction: a supervisor steer, widget update, spawn, close, or workspace switch can cause the next snapshot to differ. Use one-shot per-delta absorption for tool-origin changes and baseline reset for bulk transitions.
+- Workspace scoping: `perception-core.mjs:195-198` stamps workspace in `emit`, and `visibleTo` filters workspace at `perception-core.mjs:52-60`. Keep tick moments in that funnel so background workspaces do not wake the active supervisor.
+- Serializer blindness: `props` are stripped from `list_state`, so the supervisor must read `moment.diff` from `/events` and pull any full surface content explicitly.
+- Policy leakage: materiality can classify transition shape, not task semantics. No "stuck", "off plan", or per-domain heuristics in the OS differ.
+- Source drift: the research maps cite older lines for `setMomentTap`, `emitUserMessage`, `diffCanvasOps`, and chat status export. This spec cites the current source lines verified in this checkout.
 
-Risks: layering (inject, never import); spam (empty-diff early-return + materiality filter); self-reaction (steer-echo + bulk suppression); attribution (a snapshot cannot tell user-vs-JS, add a light event signal only if needed); privacy (content over the relay, decision 7).
+## Open decisions
 
-Sequencing: P0 bridge snapshot reporter -> host status/content accessors -> `setTickSource`+`emitTick` -> the differ + materiality + early-return -> cadence -> redact branch -> echo guard -> `/steer`. Then pick delivery (A)/(B).
+1. DECISION THAT NEEDS USER SIGN-OFF: accept `setTickSource` plus `emitTick` plus `trigger:'tick'` as a new core perception primitive.
+2. DECISION THAT NEEDS USER SIGN-OFF: surface delta ownership. The prompt requested open/close plus offstage/onstage in tick; current source keeps open/close/move/resize in canvas and props edits in tick.
+3. DECISION THAT NEEDS USER SIGN-OFF: cadence. Default 10s via `BLITZ_TICK_MS` on the existing 2s sweep, or a dedicated interval.
+4. DECISION THAT NEEDS USER SIGN-OFF: keep `/steer` as the supervisor tool, or attempt to extend `/say`. Recommendation: keep `/steer`, because `/say` does not wake the target agent.
+5. DECISION THAT NEEDS USER SIGN-OFF: tick relay shape. Recommendation: pure metadata, ids, change kinds, titles, status edges, and counts only; full content is pulled separately.
+6. DECISION THAT NEEDS USER SIGN-OFF: supervisor identity. Today `visibleTo` makes `'0'` the only desktop watcher; a future supervisor distinct from primary chat needs a new visibility class or configured supervisor id.
+7. DECISION THAT NEEDS USER SIGN-OFF: WorkUnit target binding belongs in `plans/blitzos-job-task-model.md`, not here. W2 consumes `agentId` and plan/status paths once the spine lands.
 
-Cross-references: `plans/blitzos-user-journey.md` (E2) · `plans/blitzos-job-task-model.md` (the Job being steered) · `plans/blitzos-plan-widget.md` (the srcdoc plan widget whose edits drive steering) · `plans/blitzos-agent-autonomy-guardrails.md` (E1 self-drive) · `agent-os/CLAUDE.md` "Agent runtime" (its web-only perception is replaced here by the bridge snapshot over srcdoc/app/native).
+## Cross-references
+
+- `plans/blitzos-user-journey.md`: index and phase map.
+- `plans/blitzos-job-task-model.md`: the Job/WorkUnit spine and steering target.
+- `plans/blitzos-plan-widget.md`: W1 editable plan widget and E3 status widget, whose props/offstage edits can become tick material.
+- `plans/blitzos-job-entrypoints.md`: Phase 2 A/B shared input, A5 menubar, and notifications.
+- `plans/blitzos-agent-autonomy-guardrails.md`: E1 continuation engine and the agent's Phase 1 plan-authoring duty.
+- `plans/onboarding-case-file.md`: Phase 1 onboarding context.
+- `CLAUDE.md`: Option A doctrine for content-agnostic perception and swappable agent policy.

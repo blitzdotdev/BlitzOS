@@ -278,7 +278,10 @@ async function _withWorktree(ctx, tag, baseCwd, fn) {
 export async function agent(prompt, opts = {}, fallback = undefined) {
   if (typeof prompt !== 'string') throw new Error('blitz agent: prompt must be a string')
   const ctx = getRunContext()
-  const harnessName = opts.harness || 'claude'
+  // Operator override seam (env WINS over a script's own opts) so ANY workflow can be exercised against a
+  // chosen backend WITHOUT editing it — e.g. run the canonical Claude-authored corpus against codex with
+  // `BLITZ_HARNESS=codex BLITZ_MODEL=cheap`. All three unset = the script's opts (the normal path) decide.
+  const harnessName = process.env.BLITZ_HARNESS || opts.harness || 'claude'
   const harness = harnesses[harnessName]
   if (!harness) {
     throw new Error(`blitz agent: unknown harness ${JSON.stringify(harnessName)} (known: ${Object.keys(harnesses).join(', ')})`)
@@ -289,8 +292,13 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
   const fullPrompt = prompt + leafMetadata(depth)
 
   // Resolve a model ALIAS, falling back to the workflow's meta.model default when opts.model is absent.
-  const model = _resolveModel(harnessName, opts.model != null && opts.model !== '' ? opts.model : ctx.defaultModel)
-  const effort = opts.effort
+  // BLITZ_MODEL (when set) wins over the script's opts.model so a forced cross-harness run never feeds codex
+  // a claude-only id (haiku/sonnet/opus); BLITZ_EFFORT likewise clamps a script's claude-only effort (max).
+  const forcedModel = process.env.BLITZ_MODEL
+  const model = _resolveModel(harnessName, forcedModel != null && forcedModel !== ''
+    ? forcedModel
+    : (opts.model != null && opts.model !== '' ? opts.model : ctx.defaultModel))
+  const effort = process.env.BLITZ_EFFORT || opts.effort
   const agentType = opts.agentType
   const schema = opts.schema
 

@@ -483,42 +483,27 @@ const api = {
     }
   },
 
-  // Notch-spill Island bridge (src/main/island.ts) — ONLY the island window uses these (it shares this preload).
-  // send → Deep ON: start_workflow (orchestrated); Deep OFF: spawn a peer agent + seed the prompt. setInteractive
-  // toggles click-through (collapsed = notch/panel only; spilled = notch-pill-only passthrough). fill drives the
-  // spill handoff (→ sandwich.setFullScreen + raise the real BlitzOS window). onGeometry feeds the real screen /
-  // menu-bar size; onFullscreen lets the island FOLLOW the sandwich's real fullscreen state (collapse on an
-  // external exit so the plate never covers a non-fullscreen canvas); onHide runs the suck-back before the window
-  // hides (so ⌥Space-off while spilled never strands the sandwich in fullscreen with the pill gone). These are the
-  // legacy native BlitzIsland.app's SEPARATE concern's siblings only by name — distinct os:island-* / island:*
-  // channels.
-  island: {
-    send(prompt: string, deep: boolean): Promise<{ ok: boolean; id?: string | null; error?: string }> {
-      return ipcRenderer.invoke('os:island-send', { prompt, deep: !!deep }) as Promise<{ ok: boolean; id?: string | null; error?: string }>
-    },
+  // Notch (dynamic island) bridge — THE MERGE: the real UI window IS the notch (src/main/index.ts notch wiring +
+  // sandwich overlay mode). The renderer (App.tsx) clips #root-canvas to the notch shape and GROWS the clip to
+  // fullscreen, so the live canvas expands out of the notch. setInteractive toggles the window click-through
+  // (collapsed = only the notch captures; expanded = full canvas). send spawns (Deep ON → workflow, OFF → agent).
+  // onToggle = ⌥Space (expand/collapse). onGeometry feeds the menu-bar height (the notch height).
+  notch: {
     setInteractive(on: boolean): void {
-      ipcRenderer.send('os:island-interactive', !!on)
+      ipcRenderer.send('os:notch-interactive', !!on)
     },
-    fill(on: boolean): void {
-      ipcRenderer.send('os:island-fill', !!on)
+    send(prompt: string, deep: boolean): Promise<{ ok: boolean; id?: string | null; error?: string }> {
+      return ipcRenderer.invoke('os:notch-send', { prompt, deep: !!deep }) as Promise<{ ok: boolean; id?: string | null; error?: string }>
     },
-    onGeometry(cb: (g: { width: number; height: number; menuBarH: number; scaleFactor: number }) => void): () => void {
-      const listener = (_e: unknown, g: { width: number; height: number; menuBarH: number; scaleFactor: number }): void => cb(g)
-      ipcRenderer.on('island:geometry', listener)
-      return () => ipcRenderer.removeListener('island:geometry', listener)
-    },
-    /** The sandwich's REAL fullscreen state (green light / Ctrl+Cmd+F / macOS, not just our own fill) — the
-     *  island reconciles its spilled `open` to it. */
-    onFullscreen(cb: (on: boolean) => void): () => void {
-      const listener = (_e: unknown, m: { on: boolean }): void => cb(!!m?.on)
-      ipcRenderer.on('island:fullscreen', listener)
-      return () => ipcRenderer.removeListener('island:fullscreen', listener)
-    },
-    /** Main is about to hide the island — run the suck-back (shrink → restore fullscreen) first. */
-    onHide(cb: () => void): () => void {
+    onToggle(cb: () => void): () => void {
       const listener = (): void => cb()
-      ipcRenderer.on('island:hide', listener)
-      return () => ipcRenderer.removeListener('island:hide', listener)
+      ipcRenderer.on('os:notch-toggle', listener)
+      return () => ipcRenderer.removeListener('os:notch-toggle', listener)
+    },
+    onGeometry(cb: (g: { width: number; height: number; menuBarH: number }) => void): () => void {
+      const listener = (_e: unknown, g: { width: number; height: number; menuBarH: number }): void => cb(g)
+      ipcRenderer.on('os:notch-geometry', listener)
+      return () => ipcRenderer.removeListener('os:notch-geometry', listener)
     }
   }
 }

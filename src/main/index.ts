@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
@@ -11,7 +11,8 @@ import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capa
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, electronOps, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
 import { wireLauncher, registerLauncher } from './launcher'
-import { wireIsland, registerIsland, toggleIsland, pushIslandFullscreen } from './island'
+// The standalone island.ts window is RETIRED — the notch is now the real UI window itself (sandwich overlay mode);
+// the notch IPC is wired inline below. (island.ts stays on disk but is no longer imported.)
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, orchestratorBootTask } from './agent-runtime.mjs'
 import { readTerminalMeta } from './terminal-manager.mjs'
 import type { ActionStatus } from './action-items.mjs'
@@ -82,10 +83,6 @@ let mainWindow: BrowserWindow | null = null
 // The window pair (sandwich compositor) — mainWindow above is its UI layer; sandwich.pages hosts
 // the browser WebContentsViews underneath it.
 let sandwich: Sandwich | null = null
-// Did the notch-spill island ITSELF put the sandwich into fullscreen on its last spill? If the user was already
-// fullscreen (green light / Ctrl+Cmd+F) when they spilled, this stays false and collapsing the island leaves
-// their fullscreen intact (the island only exits the fullscreen it entered). Cleared on any external leave.
-let islandEnteredFullscreen = false
 // The boot journal (crash dirty-bit + root lease) — opened once the workspace host exists, marked
 // clean as the LAST step of a graceful quit ("clean" = state was flushed first).
 let bootJournal: BootJournal | null = null
@@ -130,6 +127,18 @@ function gatherDurableState(): { files: Record<string, string>; permissions?: un
 // real macOS desktops, plus four-finger swipe, ⌘Tab and ⌃⌘F all work. We deliberately do NOT use kiosk:
 // suppressing ⌘Tab is the same presentation lock that kills desktop-switching, which is what trapped you.
 const FULLSCREEN = process.env.BLITZ_FULLSCREEN === '1'
+
+// Notch-gated launch (the dynamic-island model): on macOS with the Electron notch island active (NOT the legacy
+// native helper) and not video-game fullscreen, BlitzOS starts HIDDEN and the notch is the entry — clicking it
+// brings the real canvas onto the user's CURRENT Space + fake-fullscreen covers it (sandwich.setSpillCover via the
+// island fill seam). The window still loads while hidden, so the first reveal paints the real canvas at once.
+// Escape hatch: BLITZ_NO_NOTCH_GATE=1 forces BlitzOS to show normally on launch (recover if hidden-on-launch
+// ever traps you), e.g. `BLITZ_NO_NOTCH_GATE=1 npm run dev`.
+const notchGated =
+  process.platform === 'darwin' &&
+  process.env.BLITZ_NATIVE_ISLAND !== '1' &&
+  process.env.BLITZ_NO_NOTCH_GATE !== '1' &&
+  !FULLSCREEN
 
 // App fullscreen is a PAIR operation (sandwich.ts): fullscreen the PARENT pages window and the
 // attached UI child rides into its Space. The default menu's "Toggle Full Screen" role targets the
@@ -179,7 +188,9 @@ function createWindow(): void {
     width: 1440,
     height: 900,
     fullscreen: FULLSCREEN,
-    preload: join(__dirname, '../preload/index.js')
+    overlay: notchGated, // notch-merge: ONE full-display transparent window IS the notch; the renderer clips it to
+    preload: join(__dirname, '../preload/index.js') //   the notch shape and grows the clip to reveal the real canvas
+
   })
   mainWindow = sandwich.ui
 
@@ -554,92 +565,60 @@ app.whenReady().then(() => {
   })
   registerLauncher()
 
-  // The Notch-spill Island (src/main/island.ts): a self-hosted dynamic island that lives in the macOS notch and
-  // SPILLS to fullscreen. Its OWN standalone window + inline UI (mirrors the launcher) — nothing here touches the
-  // renderer. CALLs the verified electronOps seams (Deep ON → startWorkflow; Deep OFF → spawnAgent + userMessage)
-  // and the sandwich's setFullScreen (the fill handoff). All-Spaces, so it serves both "anywhere over macOS" and
-  // "in BlitzOS". Toggle = ⌥Space (registered below). DISTINCT from the legacy native BlitzIsland.app / the WS
-  // island-bridge wired further down — different window, different IPC namespace (os:island-*).
-  wireIsland({
-    // Deep ON → an orchestrated workflow (electronOps.startWorkflow, ORCHESTRATORS on). Deep OFF → a conversational
-    // peer agent (electronOps.spawnAgent) seeded with the prompt (electronOps.userMessage WRITES chat.md + wakes).
-    // electronOps is typed Record<string,(...args:never[])=>unknown>; cast each to its real signature at this one
-    // call site (exactly how wireLauncher casts startWorkflow above + how realDeps casts spawnAgent/userMessage below).
-    send: ({ prompt, deep }) => {
+  // The Notch (dynamic island) — THE MERGE: the real BlitzOS UI window IS the notch. The renderer clips
+  // #root-canvas to the notch shape and GROWS the clip to fullscreen, so the LIVE canvas is what expands out of
+  // the notch — no separate window, no plate, no handoff (createWindow passed overlay: notchGated). Main only:
+  //  - os:notch-interactive → sandwich.setInteractive (collapsed = click-through except the notch; expanded = full)
+  //  - os:notch-send → spawn (Deep ON → startWorkflow; Deep OFF → spawnAgent + userMessage)
+  //  - os:notch-geometry → push the menu-bar height (the notch height) to the renderer
+  //  - ⌥Space → os:notch-toggle (the renderer toggles expand/collapse)
+  // The standalone island.ts window + the native BlitzIsland.app (BLITZ_NATIVE_ISLAND, wired below) are retired/legacy.
+  if (notchGated) {
+    ipcMain.on('os:notch-interactive', (_e, on: boolean) => {
+      try { sandwich?.setInteractive(!!on) } catch { /* mid-teardown */ }
+    })
+    // Deep ON → an orchestrated workflow (electronOps.startWorkflow). Deep OFF → a conversational peer agent
+    // (electronOps.spawnAgent) seeded with the prompt (electronOps.userMessage WRITES chat.md + wakes). electronOps
+    // is typed Record<string,(...args:never[])=>unknown>; cast each to its real signature at this one call site.
+    ipcMain.handle('os:notch-send', (_e, payload: { prompt?: unknown; deep?: unknown }) => {
+      const prompt = String(payload?.prompt ?? '').trim()
+      if (!prompt) return { ok: false, error: 'empty prompt' }
       try {
-        if (deep) {
+        if (payload?.deep) {
           const r = (electronOps.startWorkflow as unknown as (s: { task: string; contextRefs?: string[]; title?: string }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string })({ task: prompt, contextRefs: [], title: undefined })
           return r && r.ok !== false ? { ok: true, id: r.agent?.id ?? null } : { ok: false, error: r?.error || 'startWorkflow failed' }
         }
-        // Deep OFF: a PLAIN agent (no orchestrators) seeded with the prompt — mirrors the island-bridge realDeps
-        // non-orchestrator path. Do NOT route this through startWorkflow (that forces orchestrators ON).
         const a = (electronOps.spawnAgent as unknown as (title?: string) => { id: string; title: string })(undefined)
-        try { (electronOps.userMessage as unknown as (text: string, agentId?: string) => void)(prompt, a.id) } catch { /* boots with its duty; the seed lands when chat.md is read */ }
+        try { (electronOps.userMessage as unknown as (text: string, agentId?: string) => void)(prompt, a.id) } catch { /* seeds when chat.md is read */ }
         return { ok: true, id: a.id }
       } catch (e) {
         return { ok: false, error: (e as Error)?.message || 'send threw' }
       }
-    },
-    // Fill handoff: on → fullscreen the PAIR (sandwich.setFullScreen fullscreens the parent pages window; the
-    // attached UI child rides into its Space) AND raise the real BlitzOS window to the front so the spilled island
-    // reveals the live canvas behind it. off → RESTORE the pre-spill fullscreen state, NOT an unconditional exit:
-    // if BlitzOS was ALREADY fullscreen when the island spilled, collapsing the island must leave it fullscreen
-    // (the island only exits the fullscreen IT entered, never the user's intentional green-light/Ctrl+Cmd+F one).
-    // Only setFullScreen on the parent is safe (the parented child must never be moved/resized directly — see the
-    // sandwich notes); mainWindow = sandwich.ui.
-    fill: (on: boolean) => {
-      const s = sandwich
-      if (!s || s.pages.isDestroyed()) return
-      if (on) {
-        // Capture whether the user was already fullscreen; only enter (and later exit) if WE turned it on.
-        islandEnteredFullscreen = !s.pages.isFullScreen()
-        if (islandEnteredFullscreen) s.setFullScreen(true)
-        const w = mainWindow
-        if (w && !w.isDestroyed()) {
-          if (w.isMinimized()) w.restore()
-          w.show()
-          w.focus()
-        }
-      } else {
-        // Suck back: exit fullscreen ONLY if the island was the one that entered it.
-        if (islandEnteredFullscreen && s.pages.isFullScreen()) s.setFullScreen(false)
-        islandEnteredFullscreen = false
-      }
-    }
-  })
-  registerIsland()
-
-  // FOLLOWER wiring: the sandwich's `pages` fullscreen is ALSO driven by the green traffic light, the Ctrl+Cmd+F
-  // accelerator, and macOS itself — paths the island doesn't initiate. Forward the REAL enter/leave to the island
-  // so it reconciles: an external LEAVE while spilled collapses the plate (it must not cover a non-fullscreen
-  // canvas); an external ENTER is left to the user's own pill (the island never commandeers a fullscreen it didn't
-  // start). An external exit also means our entry is no longer ours — clear the flag so a later suck-back is a
-  // no-op rather than yanking the user out of a fullscreen they re-entered. Listeners are additive on `pages`
-  // (exposed by the Sandwich interface); sandwich.ts is untouched.
-  if (sandwich && !sandwich.pages.isDestroyed()) {
-    sandwich.pages.on('enter-full-screen', () => pushIslandFullscreen(true))
-    sandwich.pages.on('leave-full-screen', () => {
-      islandEnteredFullscreen = false
-      pushIslandFullscreen(false)
     })
-  }
-
-  // ⌥Space toggles EXACTLY ONE island. The new Electron notch-spill island (island.ts) SUPERSEDES the legacy
-  // native BlitzIsland.app (plans/blitzos-dynamic-island.md: pure-Electron overlay, retire the native helper + WS
-  // bridge), so it is canonical by default and owns ⌥Space here. BLITZ_NATIVE_ISLAND=1 keeps the legacy native
-  // helper instead — and in THAT mode the native helper owns the Carbon ⌥Space chord (main.swift
-  // RegisterEventHotKey), so we must NOT register it here too: Electron's globalShortcut and the native app's
-  // Carbon registration are independent OS mechanisms that would BOTH fire (register() can't even detect the
-  // native Carbon claim — its false return only signals a collision with another globalShortcut in THIS process),
-  // double-firing one keypress into two islands. So whichever island is active is the SOLE owner of ⌥Space.
-  const useNativeIsland = process.platform === 'darwin' && process.env.BLITZ_NATIVE_ISLAND === '1'
-  if (!useNativeIsland) {
-    // register() returns false only on a collision with another globalShortcut in THIS process (e.g. a leftover
-    // dev instance) — never against the native Carbon chord. Log + continue; never throw.
-    if (!globalShortcut.register('Alt+Space', () => toggleIsland())) {
-      console.error('[island] could not register ⌥Space (Alt+Space) — already held by another globalShortcut in this process')
+    // Push the notch geometry (the menu-bar height the renderer uses as the notch height) once the renderer is up
+    // and on display changes; the renderer already knows the screen size from its own full-display window.
+    const pushNotchGeometry = (): void => {
+      const w = mainWindow
+      if (!w || w.isDestroyed()) return
+      const d = screen.getPrimaryDisplay()
+      try { w.webContents.send('os:notch-geometry', { width: d.bounds.width, height: d.bounds.height, menuBarH: Math.max(0, d.workArea.y - d.bounds.y) }) } catch { /* mid-teardown */ }
+    }
+    if (mainWindow) {
+      if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', pushNotchGeometry)
+      else pushNotchGeometry()
+    }
+    screen.on('display-metrics-changed', pushNotchGeometry)
+    // ⌥Space toggles the notch (expand/collapse), sent to the renderer. register() returns false only on a
+    // collision with another globalShortcut in THIS process (e.g. a leftover dev instance); log + continue, never throw.
+    if (!globalShortcut.register('Alt+Space', () => { try { mainWindow?.webContents.send('os:notch-toggle') } catch { /* mid-teardown */ } })) {
+      console.error('[notch] could not register ⌥Space (Alt+Space) — already held by another globalShortcut in this process')
     }
   }
+
+  // The legacy native BlitzIsland.app (BLITZ_NATIVE_ISLAND=1) is a SEPARATE path with its OWN Carbon ⌥Space chord +
+  // WS bridge (wired below). useNativeIsland gates its launch; it is mutually exclusive with the notch above
+  // (notchGated already requires BLITZ_NATIVE_ISLAND !== '1'), so ⌥Space is never double-owned.
+  const useNativeIsland = process.platform === 'darwin' && process.env.BLITZ_NATIVE_ISLAND === '1'
 
   // BlitzIsland ↔ control-server bridge (plans/blitzos-dynamic-island.md): wire the notch HUD's process tabs
   // to the live agents. island-bridge.mjs stays pure-node + dependency-injected; ALL electron/osActions calls

@@ -48,8 +48,8 @@
   --edge-highlight:   rgba(255, 255, 255, 0.85); /* top-edge inner light        */
   --scrim:            rgba(18, 19, 21, 0.30); /* dim behind popovers/focus       */
 
-  --accent:           #e31c30;   /* Blitz red, picked 2026-06-11 (history: TEMP neutral, coral #f4673b) */
-  --accent-deep:      #ad1422;   /* deepened red for pressed/hover (history: TEMP neutral, terracotta #c14d27) */
+  --accent:           #38bdf8;   /* Blitz sky blue, 2026-06-18 (history: TEMP Blitz red #e31c30, coral #f4673b) */
+  --accent-deep:      #0ea5e9;   /* deepened sky blue for pressed/hover (history: TEMP #ad1422, terracotta #c14d27) */
   --marker:           #ffe92e;   /* text-highlight yellow (ink stays dark)      */
   --positive:         #2e9e6b;   /* sage, deepened for light                    */
   --danger:           #d8503f;   /* coral-red                                   */
@@ -147,8 +147,8 @@
   --edge-highlight:   rgba(255, 255, 255, 0.07);
   --scrim:            rgba(12, 13, 14, 0.55);
 
-  --accent:           #e31c30;   /* Blitz red, carries on dark (history: TEMP neutral, coral #ff8d61) */
-  --accent-deep:      #ff5a50;   /* lifted red, a darker deep goes muddy on dark surfaces (history: TEMP neutral, #924b2f) */
+  --accent:           #7dd3fc;   /* Blitz sky blue, lifted for dark surfaces (history: TEMP Blitz red #e31c30, coral #ff8d61) */
+  --accent-deep:      #38bdf8;   /* deepened sky blue (history: TEMP #ff5a50, #924b2f) */
   --positive:         #7fa98c;
   --danger:           #e0786e;
   --info:             #7fa0c8;

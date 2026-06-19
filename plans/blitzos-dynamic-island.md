@@ -60,9 +60,20 @@ Reuses the verified seams IN-PROCESS (no WebSocket): `startWorkflow` (on) / `spa
 4. **Confirm retiring** the native `BlitzIsland.app` + the WS bridge (in-process Electron makes them unnecessary).
 
 ## Phases
-1. **The dynamic island.** Overlay window (PoC config) + the exact closed↔hover-panel animation + a React surface host wired in-process. Default = the Blitz entry (chat + [Deep] toggle + spawn). One demo widget (chat).
-2. **Spill.** Click-to-fill to fullscreen + suck-back (the same grow continued).
+1. **The dynamic island.** Overlay window (PoC config) + the exact closed↔hover-panel animation + a React surface host wired in-process. Default = the Blitz entry (chat + [Deep] toggle + spawn). One demo widget (chat). **[BUILT]**
+2. **Spill.** Click-to-fill to fullscreen + suck-back (the same grow continued). **[BUILT]**
 3. **Arbitrary widgets + polish.** The island can become any BlitzOS widget on demand (timer / graph / dashboard / custom). Native notch-width read for exact alignment. Retire the native app + WS bridge.
+
+**Next phase (exploration spec): `plans/blitzos-dynamic-island-next.md`** — notch status rails, ⌥Space new-session vs ⌥Space-Space enter, a richer new-session widget, hover-overview-as-surface, swipe to switch agent-session tabs. Explore + prototype before building.
+
+### Build notes (2026-06-18) — THE MERGE: the real canvas window IS the notch
+The separate `island.ts` overlay window (and the native `BlitzIsland.app`) are RETIRED. Earlier attempts were all "fake": a second window painting a plate that grew, then handed off — a separate window can never clip the real canvas, so it covered (white/gray) then swapped at 100% (video note: "black screen expanding out and in, not the real canvas"). The fix is the merge, decided + built 2026-06-18 (user: "just build it", "fuck the sandwich, the browser will be nuked anyway").
+- **Sandwich OVERLAY mode** (`createSandwich({ overlay: notchGated })`): ONE frameless transparent full-display window (`frame:false` + `enableLargerThanScreen`, covers the menu-bar/notch band), NOT parented to `pages` (the L0 browser backdrop stays hidden — the renderer's opaque `.bg` paints the canvas color), `screen-saver` + all-Spaces + `showInactive` (no focus steal) + `setIgnoreMouseEvents(true,{forward})` at launch. New `sandwich.setInteractive(on)` toggles the click-through. (`pages`/web surfaces don't render in overlay mode — the browser is being retired.)
+- **The renderer clips the REAL canvas** (`App.tsx`): `#root-canvas` gets `clip-path: notchClip` (a `notchPath` NotchShape) with a `clip-path` transition, growing through 3 stops — closed (notch) → panel (hover entry) → open (fullscreen). Outside the clip the transparent window shows the desktop; the clip reveals the LIVE `.bg` + `.world` (real widgets) as it grows. The black notch HANDLE (the pill) + the black ENTRY panel (Ask Blitz + Deep + Send) live INSIDE `#root-canvas`, so the clip reveals the canvas AROUND them. This is the "edges become un-transparent" the user asked for — no second window, no plate, no handoff.
+- **Main↔renderer**: `os:notch-interactive` → `setInteractive`; `os:notch-send` → spawn (Deep ON `startWorkflow` / OFF `spawnAgent`+`userMessage`); `os:notch-geometry` → menu-bar height (the notch height); ⌥Space → `os:notch-toggle`. Bridge = `agentOS.notch` (preload). Renderer flips click-through on notch-hover (real-element hit-test) and `uiFocus()`es on expand (keyboard).
+- **Escape hatch**: `BLITZ_NO_NOTCH_GATE=1` (or `BLITZ_FULLSCREEN=1`) → normal sandwich (no overlay), recover if the overlay traps you.
+- **Known/【flag for GUI】**: web (`web`) surfaces don't show in overlay mode (browser retiring); onboarding now appears when you enter (canvas hidden until the notch is clicked); the titlebar traffic lights are odd in overlay mode (the window can't move/native-fullscreen) — a follow-up.
+- Verify: `npm run typecheck`, `node scripts/test-island-window.mjs` (23 source-asserts), `npm run build`.
 
 ## Appendix — windowing reference
 - **The PoC** (`/Users/minjunes/superapp/notch-spill-poc`, pure Electron): notch overlay + clip-path spill, proven `coversMenuBar=true`. The recipe to port. Knobs: `NOTCH_W` (hand-tuned until the native read lands), the ease curve.

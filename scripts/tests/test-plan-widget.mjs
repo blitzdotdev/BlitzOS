@@ -47,6 +47,11 @@ ok('kit exposes window.blitz.ui.toggle', /toggle:\s*function/.test(kit))
   try { new Function(m ? m[1] : 'throw 0'); parsed = true } catch (e) { parsed = false; var perr = e.message }
   ok('injected kit <script> parses (with blitz-edit/blitz-toggle)', parsed, perr)
 }
+{
+  const kitWidget = "export default function KitPlanBits(){ return <section><blitz-edit value='Draft title' placeholder='Step title' /><blitz-toggle label='Notify' on='' /></section> }"
+  const r = compileJsxSource(transform, kitWidget, 'jsx')
+  ok('a JSX widget using <blitz-edit>/<blitz-toggle> compiles', r.ok === true, r.ok ? '' : r.error)
+}
 
 // ── (B) the `plan` library template exists, is registered, and compiles+composes ───────────────────
 console.log('\n# (B) the `plan` library widget')

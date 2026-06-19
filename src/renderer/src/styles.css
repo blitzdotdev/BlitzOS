@@ -47,6 +47,191 @@ button {
   overflow: hidden;
 }
 
+/* Notch mode: promote #root-canvas to its OWN compositor layer so the clip-path GROW animates on the GPU
+   (butter-smooth) instead of a main-thread re-clip of the whole app every frame; and paint the canvas BLACK so
+   it is the SAME color as the dynamic island (the notch grows seamlessly into the black canvas, no color jump). */
+#root-canvas.notch-mode {
+  transition: clip-path 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+  /* THE LAG FIX (paint it quickly, never hide content): promote #root-canvas to its OWN full-viewport compositor
+     texture. Its content rasterizes ONCE at full size (the layer's interest rect is the whole viewport, NOT the
+     clip), so the clip-path GROW just reveals already-painted pixels at the compositor (GPU) instead of the
+     browser lazily rasterizing each widget on the main thread as the clip uncovers it (that was the last-mile
+     jank). #root-canvas is fixed + never scaled (the camera transform is on .world), so the 1x texture stays
+     sharp — no blur. The REAL canvas shows the whole way out of the notch. */
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+/* The notch backdrop is BLACK + NOT its own compositor layer (transform:none) so #root-canvas's rounded clip-path
+   rounds it cleanly (a composited child gets rect-clipped, leaking square corners). */
+#root-canvas.notch-mode .bg {
+  background-color: #000;
+  transform: none;
+}
+/* AT REST (before you "enter") the canvas does NOT exist — only the black notch/panel. The "white corners" were
+   real canvas WIDGETS (.world is z-index 1, ABOVE .bg z-index 0) peeking through the rounded-corner gaps. The fix
+   is not to fight the corners but to HIDE the whole canvas until open: closed/hover shows ONLY the black notch DOM
+   (.bg black + .notch-handle/.notch-entry). The canvas appears only when OPEN — the grow then reveals it. This is
+   the intended model: you enter the canvas by clicking the notch. (Not the same as faking the grow — during the
+   grow the state IS open, so the canvas is fully shown and genuinely revealed by the clip.) */
+#root-canvas.notch-mode:not(.notch-open) > *:not(.bg):not(.notch-handle):not(.notch-entry) {
+  display: none;
+}
+/* Notch mode: the top bar matches the black canvas (no frosted light bar) — same color as the dynamic island. */
+#root-canvas.notch-mode .titlebar {
+  background: transparent;
+  border-bottom-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+/* During the clip grow/shrink ONLY: PAUSE widget motion (NOT visibility — everything stays on screen). A static
+   subtree means #root-canvas's GPU texture is not re-rasterized each frame, so the clip reveal is pure compositing
+   = butter even in low-power mode (the residual jank was live animations re-painting the texture mid-grow). Motion
+   resumes the instant the clip settles (onTransitionEnd). This is NOT hiding — the real content is fully visible. */
+#root-canvas.notch-anim *,
+#root-canvas.notch-anim *::before,
+#root-canvas.notch-anim *::after {
+  animation-play-state: paused !important;
+}
+
+/* ── The Notch (dynamic island): the real canvas window IS the notch (sandwich overlay mode + App.tsx clips
+   #root-canvas to a NotchShape and grows it). The handle is the black pill — closed it IS the notch, expanded
+   it stays at top-center as the click-to-collapse handle. The entry is the black hover panel (Ask Blitz). Both
+   are children of #root-canvas, so its clip-path reveals the LIVE canvas AROUND them as the clip grows. */
+.notch-handle {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #000;
+  border-radius: 0 0 14px 14px;
+  z-index: 100000;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.notch-peek {
+  display: flex;
+  gap: 5px;
+  transition: opacity 0.2s;
+}
+.notch-peek i {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: #cfd0d2;
+}
+.notch-peek i.d1 {
+  background: #e31c30;
+}
+.notch-peek i.d2 {
+  background: #2e9e6b;
+}
+.notch-handle.is-open .notch-peek {
+  opacity: 0;
+}
+.notch-entry {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%) translateY(-6px);
+  width: 580px;
+  max-width: 84vw;
+  height: 160px;
+  background: #000;
+  border-radius: 0 0 28px 28px;
+  z-index: 99999;
+  padding: 0 22px 16px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.16s 0.03s,
+    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.notch-entry.show {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+.notch-pq {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  resize: none;
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 1.4;
+  max-height: 96px;
+  color: #f4f4f5;
+  caret-color: #e31c30;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.notch-pq::placeholder {
+  color: #86888b;
+}
+.notch-ctl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.notch-deep {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: #b7b9bc;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.notch-sw {
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background: #3a3a3d;
+  position: relative;
+  transition: background 0.15s;
+}
+.notch-sw::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: left 0.15s;
+}
+.notch-deep.on .notch-sw {
+  background: #e31c30;
+}
+.notch-deep.on .notch-sw::after {
+  left: 16px;
+}
+.notch-sp {
+  flex: 1 1 auto;
+}
+.notch-send {
+  height: 30px;
+  border: 0;
+  border-radius: 15px;
+  background: #e31c30;
+  color: #fff;
+  cursor: pointer;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.notch-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 /* Native-window drag bar (macOS): grab to move; window resizes from its edges. */
 .titlebar {
   position: fixed;

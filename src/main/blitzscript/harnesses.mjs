@@ -70,6 +70,54 @@ function codexSupportsOutputSchema() {
 /** Test hook: force the codex --output-schema support flag (true/false), or undefined to re-probe. */
 export function _setCodexOutputSchemaSupport(v) { _codexOutputSchema = v }
 
+// ── codex --output-schema needs an OpenAI-STRICT schema ──────────────────────────────────────────────
+// codex's `--output-schema` enforces OpenAI strict structured outputs: EVERY object must set
+// additionalProperties:false AND list EVERY property in `required`. Claude-authored corpus schemas are
+// LENIENT (optional fields), so codex 400s with `invalid_json_schema` (verified live, codex 0.139.0).
+// strictifyForCodex() recursively coerces ANY schema to the strict shape and makes originally-OPTIONAL
+// fields NULLABLE (the OpenAI-documented way to keep them optional under strict mode). The leaf may then
+// return null for an omitted optional; stripNulls() (below) drops those so the result still validates
+// against the author's ORIGINAL lenient schema. Claude's --json-schema is lenient, so this is codex-only.
+function _strictNullable(child) {
+  if (!child || typeof child !== 'object') return child
+  if (Array.isArray(child.type)) return child.type.includes('null') ? child : { ...child, type: [...child.type, 'null'] }
+  if (typeof child.type === 'string') return { ...child, type: [child.type, 'null'] }
+  return { anyOf: [child, { type: 'null' }] } // no explicit type ($ref/anyOf/etc.) -> union with null
+}
+export function strictifyForCodex(schema) {
+  if (!schema || typeof schema !== 'object') return schema
+  if (Array.isArray(schema)) return schema.map(strictifyForCodex)
+  const out = { ...schema }
+  if (out.type === 'object' || out.properties) {
+    out.additionalProperties = false
+    const props = out.properties || {}
+    const keys = Object.keys(props)
+    const origReq = new Set(Array.isArray(out.required) ? out.required : [])
+    out.required = keys
+    const np = {}
+    for (const k of keys) { let c = strictifyForCodex(props[k]); if (!origReq.has(k)) c = _strictNullable(c); np[k] = c }
+    out.properties = np
+  }
+  if (out.items) out.items = strictifyForCodex(out.items)
+  if (out.$defs) { const d = {}; for (const k of Object.keys(out.$defs)) d[k] = strictifyForCodex(out.$defs[k]); out.$defs = d }
+  if (Array.isArray(out.anyOf)) out.anyOf = out.anyOf.map(strictifyForCodex)
+  if (Array.isArray(out.oneOf)) out.oneOf = out.oneOf.map(strictifyForCodex)
+  return out
+}
+// Drop null-valued keys recursively so a strict-mode null for an originally-optional field reads as
+// "omitted" and the result validates against the ORIGINAL lenient schema.
+// TODO(blitz): a schema that EXPLICITLY makes a REQUIRED field nullable would lose a legitimate null here;
+// no corpus schema does this, so revisit only if one appears (then thread the original schema in to be precise).
+export function stripNulls(v) {
+  if (Array.isArray(v)) return v.map(stripNulls)
+  if (v && typeof v === 'object') {
+    const out = {}
+    for (const k of Object.keys(v)) { if (v[k] === null) continue; out[k] = stripNulls(v[k]) }
+    return out
+  }
+  return v
+}
+
 export const harnesses = {
   // ── claude: `claude -p <prompt> --output-format json [--model …] [--effort …]` ──────────────
   // print mode (-p) makes the run non-interactive and lands the final text on stdout. We use
@@ -162,7 +210,8 @@ export const harnesses = {
       if (native) {
         const tag = ctx && Number.isInteger(ctx.jIndex) ? ctx.jIndex : Date.now()
         const file = join(schemaDir(ctx), `${tag}.json`)
-        writeFileSync(file, JSON.stringify(schema, null, 2))
+        // STRICTIFY: codex's --output-schema rejects lenient (optional-field) schemas with a 400; coerce.
+        writeFileSync(file, JSON.stringify(strictifyForCodex(schema), null, 2))
         schemaArgs = ['--output-schema', file]
       } else {
         // FALLBACK: ask for ONLY a JSON object/value matching the schema, no prose/fences.
@@ -178,11 +227,13 @@ export const harnesses = {
     parseStructured(stdout) {
       const msg = codexAgentMessage(stdout)
       if (msg == null) return null
-      try { return JSON.parse(String(msg).trim()) } catch { /* coaxed text may wrap it -> scan below */ }
+      // stripNulls: an originally-optional field made nullable for strict mode may come back null -> drop it
+      // so the result validates against the author's ORIGINAL lenient schema.
+      try { return stripNulls(JSON.parse(String(msg).trim())) } catch { /* coaxed text may wrap it -> scan below */ }
       // Lenient: strip fences / find the first balanced JSON (agent() also has a coax scanner, but keep
       // parseStructured self-sufficient for the fallback path).
       const fenced = String(msg).match(/```(?:json)?\s*([\s\S]*?)```/)
-      if (fenced) { try { return JSON.parse(fenced[1].trim()) } catch { /* fall through */ } }
+      if (fenced) { try { return stripNulls(JSON.parse(fenced[1].trim())) } catch { /* fall through */ } }
       return null
     },
 

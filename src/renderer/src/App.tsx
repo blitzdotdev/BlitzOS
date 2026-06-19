@@ -373,6 +373,28 @@ function findChatHub(surfaces: Surface[]): Surface | undefined {
   )
 }
 
+// ── The Notch (dynamic island) — THE MERGE: the real canvas window IS the notch. #root-canvas is clipped to a
+// macOS-NotchShape and the clip GROWS to fullscreen, so the LIVE canvas expands out of the notch (no separate
+// window, no plate). notchPath + the three stops (closed notch → hover panel → open fullscreen) are ported from
+// the validated notch-spill PoC; the renderer's opaque .bg paints the canvas color the clip reveals.
+const NOTCH_W = 200
+const NOTCH_PANEL_W = 580
+const NOTCH_PANEL_H = 160
+// inset() (a rounded-rect reveal), NOT clip-path: path() with curves. inset interpolates as plain numbers, so the
+// GROW is cheap and GPU-composited (with will-change) = butter-smooth; a path() with quadratics re-clipped the
+// whole app on the MAIN THREAD every frame (the lag). The rounded-bottom rect IS the dynamic-island look (top
+// flush with the screen edge, bottom rounded). vw/vh/notchH in CSS px.
+function notchClipFor(state: 'closed' | 'panel' | 'open', vw: number, vh: number, notchH: number): string {
+  if (state === 'open') return 'inset(0px round 0px)'
+  if (state === 'panel') {
+    const sx = Math.max(0, (vw - NOTCH_PANEL_W) / 2)
+    return `inset(0px ${sx}px ${Math.max(0, vh - NOTCH_PANEL_H)}px ${sx}px round 0px 0px 28px 28px)`
+  }
+  const sx = Math.max(0, (vw - NOTCH_W) / 2)
+  const h = Math.max(28, notchH)
+  return `inset(0px ${sx}px ${Math.max(0, vh - h)}px ${sx}px round 0px 0px 16px 16px)`
+}
+
 export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const worldRef = useRef<HTMLDivElement>(null)
@@ -407,6 +429,165 @@ export default function App(): JSX.Element {
   const pageFullscreenId = useDesktop((s) => s.pageFullscreenId)
   const pageFsRef = useRef<string | null>(null)
   useEffect(() => window.agentOS?.onWebFullscreen?.((m) => useDesktop.getState().setPageFullscreen(m.on ? m.id : null)), [])
+
+  // ── The Notch (dynamic island). The real window IS the notch (sandwich overlay + main's notch wiring). We clip
+  // #root-canvas to the NotchShape and grow it; main toggles the window click-through via os:notch-interactive as
+  // we report the notch-hover. closed = black notch (the handle); panel = hover entry (Ask Blitz); open = the live
+  // canvas, revealed as the clip grows (the opaque .bg paints the color, the world paints the widgets).
+  const viewport = useDesktop((s) => s.viewport)
+  const [notchOn, setNotchOn] = useState(false) // true once main pushes geometry (overlay mode only)
+  const [notchState, setNotchState] = useState<'closed' | 'panel' | 'open'>('closed')
+  const [notchMenuBarH, setNotchMenuBarH] = useState(38)
+  const [notchDeep, setNotchDeep] = useState(false)
+  const [notchPrompt, setNotchPrompt] = useState('')
+  const [notchSending, setNotchSending] = useState(false)
+  const [notchOpening, setNotchOpening] = useState(false) // brief: the island contents fade to black before the grow
+  const [notchAnimating, setNotchAnimating] = useState(false) // during the clip grow/shrink: freeze widget MOTION (not visibility) so the texture is static
+  // PINNED panel (item 2): a KEYBOARD-opened panel (⌥Space) stays open regardless of mouse position — the hover
+  // mousemove handler must not auto-close it and must keep the window interactive while pinned. A HOVER-opened
+  // (un-pinned) panel keeps the original follow-the-mouse behaviour. Cleared on enter / close / retract.
+  const [notchPinned, setNotchPinned] = useState(false)
+  const notchPinnedRef = useRef(false)
+  const setNotchPinnedBoth = (on: boolean): void => {
+    notchPinnedRef.current = on
+    setNotchPinned(on)
+  }
+  const notchStateRef = useRef<'closed' | 'panel' | 'open'>('closed')
+  const notchHandleRef = useRef<HTMLDivElement>(null)
+  const notchLastIRef = useRef<boolean | null>(null)
+  const setNotchInteractive = (on: boolean): void => {
+    if (notchLastIRef.current === on) return
+    notchLastIRef.current = on
+    try {
+      window.agentOS?.notch?.setInteractive(on)
+    } catch {
+      /* no bridge (non-overlay) */
+    }
+  }
+  const applyNotchState = (s: 'closed' | 'panel' | 'open'): void => {
+    notchStateRef.current = s
+    setNotchState(s)
+  }
+  // Open = first FADE the island's own contents (peek dots + entry) so it goes SOLID BLACK, THEN grow the clip
+  // (black notch → black canvas, seamless — the canvas .bg is black in notch mode too). Close = shrink back.
+  const openNotch = (): void => {
+    if (notchStateRef.current === 'open') return
+    setNotchPinnedBoth(false) // entering: the panel-pin no longer applies (we leave the panel for fullscreen)
+    setNotchInteractive(true)
+    setNotchOpening(true) // fade peek + entry → solid black
+    window.setTimeout(() => {
+      setNotchAnimating(true) // freeze widget MOTION so the texture stays static while the clip grows (content stays visible)
+      applyNotchState('open') // grow the clip — #root-canvas is a pre-rasterized texture, so the reveal is butter + REAL content
+      setNotchOpening(false)
+      try {
+        window.agentOS?.uiFocus?.() // key the window so the expanded canvas takes keyboard (launch was showInactive)
+      } catch {
+        /* no bridge */
+      }
+    }, 170)
+  }
+  const closeNotch = (): void => {
+    if (notchStateRef.current !== 'open') return
+    setNotchPinnedBoth(false) // retracting clears the pin
+    setNotchAnimating(true) // freeze motion during the shrink too (cheap insurance for low-power)
+    applyNotchState('closed')
+    notchLastIRef.current = null
+    setNotchInteractive(false)
+  }
+  const toggleNotch = (): void => {
+    if (notchStateRef.current === 'open') closeNotch()
+    else openNotch()
+  }
+  // Focus the prompt textarea after the panel renders, so a keyboard-opened panel is type-ready immediately.
+  const focusNotchPrompt = (): void => {
+    window.setTimeout(() => {
+      const el = document.querySelector<HTMLTextAreaElement>('.notch-pq')
+      el?.focus()
+    }, 0)
+  }
+  // ⌥Space TOGGLE (item 2): ⌥Space simply shows/hides the dynamic island in the new-session state. It NEVER
+  // enters fullscreen (entering is the handle click / Send). closed → panel (new-session, PINNED open, prompt
+  // focused); anything shown (panel or open) → closed (hide). A pure toggle, no staircase.
+  const notchToggleAtRef = useRef(0)
+  const toggleNewSession = (): void => {
+    // Swallow OS key auto-repeat: holding ⌥Space machine-guns the globalShortcut (~30ms apart), which would
+    // flicker show/hide. A deliberate human re-tap is slower than this, so a 120ms floor keeps it.
+    const now = performance.now()
+    if (now - notchToggleAtRef.current < 120) return
+    notchToggleAtRef.current = now
+    if (notchStateRef.current === 'closed') {
+      setNotchPinnedBoth(true) // a keyboard-opened panel stays open regardless of the mouse
+      setNotchInteractive(true)
+      applyNotchState('panel')
+      focusNotchPrompt()
+    } else {
+      // hide (panel or open → closed)
+      setNotchPinnedBoth(false)
+      setNotchAnimating(true) // freeze widget motion during the collapse (smooth, esp. open → closed)
+      applyNotchState('closed')
+      notchLastIRef.current = null
+      setNotchInteractive(false)
+    }
+  }
+  // Geometry (the menu-bar height = the notch height) + enable the notch (overlay mode only).
+  useEffect(
+    () =>
+      window.agentOS?.notch?.onGeometry?.((g) => {
+        setNotchMenuBarH(g.menuBarH > 0 ? g.menuBarH : 38)
+        setNotchOn(true)
+      }),
+    []
+  )
+  // ⌥Space toggles the new-session widget show/hide (closed ↔ panel). Never enters fullscreen.
+  useEffect(() => window.agentOS?.notch?.onToggle?.(() => toggleNewSession()), [])
+  // Hover → interactive region: collapsed = only the notch handle (then expand to the panel); open = full canvas.
+  // The window is click-through (main set ignoreMouseEvents) so the renderer flips it via os:notch-interactive.
+  useEffect(() => {
+    if (!notchOn) return
+    const onMove = (e: MouseEvent): void => {
+      const st = notchStateRef.current
+      if (st === 'open') {
+        setNotchInteractive(true)
+        return
+      }
+      // A PINNED panel (opened via ⌥Space) stays open regardless of the mouse and keeps the window interactive,
+      // so the user can move the cursor away and still type. Only HOVER-opened panels follow the mouse below.
+      if (st === 'panel' && notchPinnedRef.current) {
+        setNotchInteractive(true)
+        return
+      }
+      const r = notchHandleRef.current?.getBoundingClientRect()
+      const overHandle = !!r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+      const cx = window.innerWidth / 2
+      const inPanel =
+        e.clientX >= cx - NOTCH_PANEL_W / 2 && e.clientX <= cx + NOTCH_PANEL_W / 2 && e.clientY >= 0 && e.clientY <= NOTCH_PANEL_H
+      const focused = (document.activeElement as HTMLElement | null)?.classList?.contains('notch-pq') ?? false
+      const want = overHandle || (st === 'panel' && (inPanel || focused))
+      if (overHandle && st === 'closed') applyNotchState('panel')
+      else if (st === 'panel' && !want) applyNotchState('closed')
+      setNotchInteractive(want)
+    }
+    window.addEventListener('mousemove', onMove, true)
+    return () => window.removeEventListener('mousemove', onMove, true)
+  }, [notchOn])
+  const onNotchSend = async (): Promise<void> => {
+    const p = notchPrompt.trim()
+    if (!p || notchSending) return
+    setNotchSending(true)
+    try {
+      const r = await window.agentOS?.notch?.send(p, notchDeep)
+      setNotchSending(false)
+      if (r?.ok) {
+        setNotchPrompt('')
+        openNotch()
+      }
+    } catch {
+      setNotchSending(false)
+    }
+  }
+  const notchClip = notchOn
+    ? notchClipFor(notchState, viewport.w || window.innerWidth, viewport.h || window.innerHeight, notchMenuBarH)
+    : undefined
   useEffect(() => {
     pageFsRef.current = pageFullscreenId
     // Native-input path (default): make the WHOLE UI window click-through while fullscreen so the mouse
@@ -2180,7 +2361,16 @@ export default function App(): JSX.Element {
     <div
       id="root-canvas"
       ref={rootRef}
-      className={[grabMode ? 'grab-mode' : null, pageFullscreenId ? 'page-fullscreen' : null].filter(Boolean).join(' ')}
+      className={[grabMode ? 'grab-mode' : null, pageFullscreenId ? 'page-fullscreen' : null, notchOn ? 'notch-mode' : null, notchAnimating ? 'notch-anim' : null, notchState === 'open' ? 'notch-open' : null].filter(Boolean).join(' ')}
+      // THE MERGE: clip the whole live canvas to the NotchShape and GROW the clip to fullscreen — the real
+      // content is revealed as the clip grows out of the notch. The transition + GPU promotion live in CSS
+      // (#root-canvas.notch-mode) so the grow animates on the compositor (butter-smooth, not a main-thread re-clip).
+      style={notchOn ? { clipPath: notchClip, WebkitClipPath: notchClip } : undefined}
+      // The clip transition is done → unfreeze widget motion (notch-anim pauses animations during the grow/shrink
+      // so the texture is static = pure GPU compositing). Only #root-canvas's OWN clip-path transition counts.
+      onTransitionEnd={(e) => {
+        if (notchOn && e.target === e.currentTarget && e.propertyName === 'clip-path') setNotchAnimating(false)
+      }}
       onDragOver={onDragOver}
       onDrop={onDrop}
       onPointerDownCapture={() => {
@@ -2231,6 +2421,70 @@ export default function App(): JSX.Element {
         </div>
         <span className="titlebar-label">BlitzOS</span>
       </div>
+
+      {/* THE NOTCH (dynamic island). The handle is the always-on-top black pill: closed it IS the notch; expanded
+          it stays at top-center as the click-to-collapse handle. The entry (Ask Blitz) is the black hover panel.
+          Both live INSIDE #root-canvas, so its clip reveals the LIVE canvas AROUND them as it grows out of the
+          notch — no separate window, no plate. Only mounted in overlay mode (notchOn). */}
+      {notchOn && (
+        <>
+          <div
+            ref={notchHandleRef}
+            className={`notch-handle${notchState !== 'closed' || notchOpening ? ' is-open' : ''}`}
+            style={{ width: NOTCH_W, height: Math.max(28, notchMenuBarH) }}
+            onClick={(e) => {
+              e.stopPropagation()
+              toggleNotch()
+            }}
+          >
+            <div className="notch-peek">
+              <i className="d1" />
+              <i />
+              <i />
+              <i className="d2" />
+            </div>
+          </div>
+          <div className={`notch-entry${notchState === 'panel' && !notchOpening ? ' show' : ''}${notchPinned ? ' pinned' : ''}`} style={{ paddingTop: Math.max(28, notchMenuBarH) + 12 }}>
+            <textarea
+              className="notch-pq"
+              rows={1}
+              placeholder="Ask Blitz, or describe a task"
+              value={notchPrompt}
+              onChange={(e) => setNotchPrompt(e.target.value)}
+              onFocus={() => {
+                if (notchStateRef.current !== 'open') applyNotchState('panel')
+                setNotchInteractive(true)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  void onNotchSend()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  ;(e.target as HTMLTextAreaElement).blur()
+                  setNotchPinnedBoth(false) // Esc dismisses a pinned (⌥Space) panel too
+                  applyNotchState('closed')
+                  setNotchInteractive(false)
+                }
+              }}
+            />
+            <div className="notch-ctl">
+              <button
+                className={`notch-deep${notchDeep ? ' on' : ''}`}
+                onClick={() => setNotchDeep((v) => !v)}
+                title="Deep = run as an orchestrated workflow"
+              >
+                <span className="notch-sw" />
+                <span>Deep</span>
+              </button>
+              <span className="notch-sp" />
+              <button className="notch-send" disabled={!notchPrompt.trim() || notchSending} onClick={() => void onNotchSend()}>
+                Send
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       <div
         className="bg"

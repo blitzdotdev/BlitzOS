@@ -183,7 +183,9 @@ function Mini({ label, onClick, disabled }) {
 const bindEdit = (cb) => (node) => {
   if (!node || node.__bound) return
   node.__bound = true
-  node.addEventListener('change', (e) => cb(e.detail && e.detail.value != null ? e.detail.value : ''))
+  const fire = (e) => cb(e.detail && e.detail.value != null ? e.detail.value : '')
+  node.addEventListener('input', fire)
+  node.addEventListener('change', fire)
 }
 const bindToggle = (cb) => (node) => {
   if (!node || node.__bound) return

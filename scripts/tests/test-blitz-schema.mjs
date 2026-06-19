@@ -13,7 +13,7 @@
 // Run: node scripts/tests/test-blitz-schema.mjs
 
 import { validate, stubFromSchema } from '../../src/main/blitzscript/schema.mjs'
-import { harnesses, _setCodexOutputSchemaSupport } from '../../src/main/blitzscript/harnesses.mjs'
+import { harnesses, _setCodexOutputSchemaSupport, strictifyForCodex } from '../../src/main/blitzscript/harnesses.mjs'
 import { agent, _setSpawn, _resetJournal, RunContext, withRunContext } from '../../src/main/blitzscript/agent.mjs'
 import { existsSync, readFileSync } from 'node:fs'
 
@@ -100,9 +100,15 @@ console.log('\nG2 (codex native --output-schema + coax fallback):')
   ok('codex buildStructured includes --output-schema', osIdx >= 0, built.args)
   const schemaFile = built.args[osIdx + 1]
   ok('codex --output-schema points at a written tmp schema file', !!schemaFile && existsSync(schemaFile), schemaFile)
-  ok('the tmp schema file contains the schema JSON', existsSync(schemaFile) && JSON.stringify(JSON.parse(readFileSync(schemaFile, 'utf8'))) === JSON.stringify(schema))
+  ok('the tmp schema file is the STRICT-coerced schema (codex --output-schema needs OpenAI-strict)', existsSync(schemaFile) && JSON.stringify(JSON.parse(readFileSync(schemaFile, 'utf8'))) === JSON.stringify(strictifyForCodex(schema)))
   ok('codex buildStructured keeps exec + --json', built.args[0] === 'exec' && built.args.includes('--json'))
   ok('native path does NOT coax the prompt (no schema text appended)', !built.args[1].includes('Respond with ONLY a JSON'))
+
+  // strictifyForCodex coerces a LENIENT schema (optional field) to OpenAI-strict so codex stops 400ing.
+  const lenient = { type: 'object', required: ['a'], properties: { a: { type: 'string' }, b: { type: 'number' } } }
+  const strict = strictifyForCodex(lenient)
+  ok('strictifyForCodex: required lists EVERY property + additionalProperties:false', strict.additionalProperties === false && JSON.stringify(strict.required) === JSON.stringify(['a', 'b']))
+  ok('strictifyForCodex: an originally-optional field is made nullable', Array.isArray(strict.properties.b.type) && strict.properties.b.type.includes('null'))
 
   // fallback path (force support OFF): prompt-coax appends the schema, no --output-schema.
   _setCodexOutputSchemaSupport(false)
