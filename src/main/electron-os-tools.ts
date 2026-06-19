@@ -11,6 +11,7 @@ import {
   osUpdateSurface,
   osCloseSurface,
   osCloseSurfaceFile,
+  onSurfaceClosed,
   osGoToPrimary,
   osGetState,
   osWorkspaceContext,
@@ -148,6 +149,8 @@ export const electronConnections = makeConnectionOps({
   createSurface: (desc: SurfaceDescriptor) => osCreateSurface(desc)
 })
 Object.assign(electronOps, electronConnections)
+// Closing a connection's representation widget drops the connection (no leaked adapter/socket).
+onSurfaceClosed((id) => void electronConnections.handleSurfaceClosed(id))
 
 export const OS_TOOLS: OsTool[] = makeOsTools(electronOps)
 export const OS_TOOLS_BY_PATH: Record<string, OsTool> = makeOsToolsByPath(electronOps)

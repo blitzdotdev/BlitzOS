@@ -862,9 +862,23 @@ export function osOpenFolderEntry(path: string, x?: number, y?: number): { ok: b
 export function osListDir(rel: string): { path: string; entries: unknown[]; total: number; truncated: boolean } | null {
   return wsHost ? wsHost.listDir(String(rel || '')) : null
 }
+/** Listeners notified when ANY surface closes — the single chokepoint (user X, agent, Delete key all call
+ *  osCloseSurfaceFile). The connection layer subscribes so closing a connection's representation widget
+ *  drops the connection (instead of leaking the live adapter). */
+const surfaceClosedListeners: Array<(id: string) => void> = []
+export function onSurfaceClosed(fn: (id: string) => void): void {
+  if (typeof fn === 'function') surfaceClosedListeners.push(fn)
+}
 /** CLOSE a surface = delete its backing content file (explicit by id) so it doesn't resurrect on the next
  *  reconcile. The renderer calls this from store.closeSurface for every close (user, agent, Delete key). */
 export function osCloseSurfaceFile(id: string): { ok: boolean; removed?: string } {
+  for (const fn of surfaceClosedListeners) {
+    try {
+      fn(String(id))
+    } catch {
+      /* a listener must never break a close */
+    }
+  }
   return wsHost ? wsHost.closeSurfaceFile(String(id)) : { ok: false }
 }
 /** Agent-facing workspace control (Mission-Control parity): list / create / switch the user's folder-backed

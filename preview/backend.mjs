@@ -489,6 +489,7 @@ const serverOps = {
     osState = { ...osState, surfaces: (osState.surfaces || []).filter((s) => s.id !== i) }
     broadcast({ type: 'close', id: i })
     if (SERVER_MODE && host) host.closeSurface(i).catch(() => {})
+    try { serverConnections?.handleSurfaceClosed(i) } catch { /* connection cleanup best-effort */ } // drop the connection if this was its widget
     wsHost.closeSurfaceFile(i) // delete the backing content file so it doesn't resurrect (no-renderer agent close)
     durableFlush()
     return { ok: true }
@@ -971,6 +972,7 @@ const server = createServer(async (req, res) => {
     })
     req.on('end', () => {
       const b = toolBody(xbody)
+      try { serverConnections?.handleSurfaceClosed(String(b.id || '')) } catch { /* best-effort */ } // user closed a widget → drop its connection
       const r = wsHost.closeSurfaceFile(String(b.id || ''))
       return json(res, 200, r || { ok: false })
     })

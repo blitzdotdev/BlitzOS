@@ -38,6 +38,8 @@ export interface ConnectionOps {
   connectionUnbind(connId: string, opts?: { status?: string }): void
   /** Resolve a representation widget's surface id → its connId (per-connId widget scoping). */
   connectionForSurface(surfaceId: string | null | undefined): string | null
+  /** Called when a surface closes; if it's a connection's widget, drop the connection (no leaked adapter). */
+  handleSurfaceClosed(surfaceId: string): Promise<void>
   /** The tab link registers itself so connection_list_tabs / connection_connect_tab work. */
   setTabLink(link: { listTabs: () => Promise<unknown>; connectTab: (tabId: number, opts?: any) => Promise<unknown> } | null): void
   /** The Safari link (Apple Events) registers itself; its tabs merge into connection_list_tabs (browser:'safari'). */

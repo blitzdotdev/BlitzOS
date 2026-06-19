@@ -101,12 +101,23 @@ export function ConnectPicker({ onClose }: { onClose: () => void }): JSX.Element
               App windows <button className="connect-picker-refresh" onClick={() => void refresh()} title="Refresh">↻</button>
             </h4>
             {windows.length === 0 && <div className="connect-picker-empty">No windows (needs the BlitzComputerUse helper + Accessibility on macOS).</div>}
-            {windows.map((w) => (
-              <button key={w.windowId} className="connect-picker-row" disabled={!!busy} onClick={() => void connectWindow(w.windowId)}>
-                <span className="connect-picker-badge">{w.app || 'app'}</span>
-                <span className="connect-picker-title">{w.title || w.app || String(w.windowId)}</span>
-              </button>
-            ))}
+            {(() => {
+              // A window's own title is often empty; falling back to the app name made multiple windows of
+              // one app indistinguishable ("Safari / Safari"). Number them per-app instead so each row is unique.
+              const seen: Record<string, number> = {}
+              return windows.map((w) => {
+                const app = w.app || 'app'
+                const n = (seen[app] = (seen[app] || 0) + 1)
+                const real = (w.title || '').trim()
+                const label = real && real !== app ? real : `window ${n}`
+                return (
+                  <button key={w.windowId} className="connect-picker-row" disabled={!!busy} onClick={() => void connectWindow(w.windowId)}>
+                    <span className="connect-picker-badge">{app}</span>
+                    <span className="connect-picker-title">{label}</span>
+                  </button>
+                )
+              })
+            })()}
           </section>
         </div>
       </div>

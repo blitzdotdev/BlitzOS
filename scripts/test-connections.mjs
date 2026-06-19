@@ -114,6 +114,15 @@ async function main() {
   // --- an op on a missing connection is a clear error ---
   ok('read on a missing connection errors', (await ops.connectionRead('conn_nope', {})).error)
 
+  // --- closing the representation widget drops the connection (no orphaned adapter) ---
+  const orphanAdapter = stubAdapter()
+  const ob = ops.connectionBind({ type: 'tab', sourceId: 'orphan.example.com', adapter: orphanAdapter })
+  ok('a fresh connection is registered', ops.connectionList().connections.some((c) => c.connId === ob.connId))
+  await ops.handleSurfaceClosed(ob.surfaceId)
+  ok('closing its widget surface drops the connection', !ops.connectionList().connections.some((c) => c.connId === ob.connId))
+  ok('closing the widget ran the adapter teardown', orphanAdapter.calls.some((c) => c.verb === 'drop'))
+  ok('handleSurfaceClosed on a non-connection surface is a no-op', (await ops.handleSurfaceClosed('sfc_not_a_connection')) === undefined)
+
   // --- drop tears down + removes from registry; the widget + saved tools persist on disk ---
   const dropped = await ops.connectionDrop(connId)
   ok('drop ok', dropped.ok === true)

@@ -330,6 +330,25 @@ export function makeConnectionOps({
     return bySurface.get(String(surfaceId)) || null
   }
 
+  // When the user CLOSES a connection's representation widget, the connection should go with it — otherwise
+  // the live adapter/socket leaks with no widget to manage it. Wired into the surface-close path (both
+  // transports). The surface is already closing, so this only tears down the adapter + deregisters (it does
+  // NOT re-close the surface). No-op for a normal (non-connection) surface.
+  async function handleSurfaceClosed(surfaceId) {
+    const connId = bySurface.get(String(surfaceId))
+    if (!connId) return
+    const r = rec(connId)
+    bySurface.delete(String(surfaceId))
+    if (!r) return
+    try {
+      if (r.adapter && typeof r.adapter.drop === 'function') await r.adapter.drop()
+    } catch {
+      /* best-effort teardown */
+    }
+    registry.delete(connId)
+    emitConnectionMoment('system', { connId, sourceId: r.sourceId, status: 'dropped', verb: 'disconnected (widget closed)' })
+  }
+
   // ---- the tab link (connection-tab-link.mjs) registers itself here so the agent tools can list +
   // connect the user's browser tabs transport-agnostically (Electron + server bind the link the same way). ----
   function setTabLink(link) {
@@ -402,6 +421,7 @@ export function makeConnectionOps({
     setInstaller,
     connectionInstallExtension,
     // adapter / registry API (used by the tab + window adapters and by tests)
+    handleSurfaceClosed,
     connectionBind,
     connectionNotify,
     connectionUnbind,
