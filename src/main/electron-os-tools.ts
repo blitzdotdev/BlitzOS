@@ -152,6 +152,15 @@ export const electronConnections = makeConnectionOps({
   closeSurface: (id: string) => {
     osCloseSurfaceFile(id)
     osCloseSurface(id)
+  },
+  // An agent is "available" to author a connection's view iff a managed agent terminal is running. Used to
+  // word the placeholder honestly (no "the agent is building a view" when none is running).
+  isAgentAvailable: () => {
+    try {
+      return electronTerminalOps.listTerminals().some((t) => t.kind === 'agent' && t.status === 'running')
+    } catch {
+      return false
+    }
   }
 })
 Object.assign(electronOps, electronConnections)

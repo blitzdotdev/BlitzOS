@@ -57,6 +57,7 @@ export function makeConnectionOps({
   createSurface = () => null,
   updateSurface = () => {},
   closeSurface = () => {},
+  isAgentAvailable = () => false,
   markWrite = defaultMarkWrite
 } = {}) {
   // connId -> { connId, type:'tab'|'window', sourceId, title, capabilities, status, surfaceId, adapter }
@@ -125,12 +126,23 @@ export function makeConnectionOps({
     const sid = esc(sourceId || 'source')
     const t = esc(title || sourceId || (type === 'window' ? 'window' : 'tab'))
     const kind = type === 'window' ? 'window' : 'tab'
+    let agent = false
+    try {
+      agent = !!isAgentAvailable()
+    } catch {
+      agent = false
+    }
+    // Honest about whether an agent is actually around to author the view — never imply something is
+    // "generating" when nothing is. With an agent: it will build the view. Without one: say so + how to fix.
+    const footer = agent
+      ? `The agent is building a live view of this ${kind} — ask it about this ${kind} in chat, or it will summarize on its own.`
+      : `<b style="color:#e0a23d">No AI agent is running</b>, so there's no live view yet. Connect an AI (the “Connect AI” button) or start a chat — the ${kind} is connected and its tools are ready the moment an agent is.`
     return `<!doctype html><meta charset=utf8><body style="margin:0;font:13px/1.55 -apple-system,system-ui,sans-serif;background:#0b0d12;color:#e6e9ef;padding:16px;box-sizing:border-box">
 <div style="display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8b93a7">
   <span style="width:7px;height:7px;border-radius:50%;background:#3ddc84;box-shadow:0 0 6px #3ddc84"></span>connected ${kind}</div>
 <div style="margin-top:12px;font-size:17px;font-weight:600">${t}</div>
 <div style="margin-top:3px;opacity:.55;word-break:break-all">${sid}</div>
-<div style="margin-top:16px;padding-top:12px;border-top:1px solid #1c2230;opacity:.6;font-size:12px">The agent will build a live view of this ${kind} here. Ask it about this ${kind} in chat, or it will summarize on its own.</div>
+<div style="margin-top:16px;padding-top:12px;border-top:1px solid #1c2230;opacity:.7;font-size:12px">${footer}</div>
 </body>`
   }
 
