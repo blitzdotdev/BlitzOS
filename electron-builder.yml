@@ -29,6 +29,12 @@ extraResources:
   # helper.ts) installs it to ~/Library/Application Support/BlitzOS and launches it via LaunchServices.
   - from: native/computer-use-helper/build/BlitzComputerUse.app
     to: BlitzComputerUse.app
+  # The BlitzOS Connector Chrome extension, pre-packed to a signed .crx (scripts/build-extension.mjs, run by
+  # dist-mac.sh). Self-hosted on localhost for the consented force-install (connection-install.ts). A 0-byte
+  # placeholder means force-install is disabled in this build (no Chrome/key at pack time); dev load-unpacked
+  # still works.
+  - from: extension.crx
+    to: extension.crx
 asarUnpack:
   - scripts/onboarding-scan.mjs
   - src/main/blitzos-onboarding.md

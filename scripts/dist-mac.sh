@@ -13,6 +13,14 @@ if [[ "$(uname)" == "Darwin" ]]; then
   BLITZ_HELPER_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:-}" bash native/computer-use-helper/build.sh || echo "[dist] WARN: CU helper build failed — packaging without it"
 fi
 
+# Pack the BlitzOS Connector extension into a signed .crx (extension/key.pem) for the consented force-install.
+# Best-effort: if Chrome or the key is missing, ship a 0-byte placeholder so packaging still succeeds (the
+# force-install is disabled in that build; load-unpacked still works in dev).
+if [[ -f extension/key.pem ]]; then
+  node scripts/build-extension.mjs || echo "[dist] WARN: connector .crx pack failed — force-install disabled in this build"
+fi
+[[ -f extension.crx ]] || { echo "[dist] no extension.crx — shipping placeholder (force-install disabled)"; : > extension.crx; }
+
 npm run build
 
 ARGS=(--mac zip --arm64 --publish never)

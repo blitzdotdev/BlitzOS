@@ -35,6 +35,7 @@ import {
 } from './osActions'
 import { makeTerminalOps } from './terminal-ops.mjs'
 import { makeActionItems } from './action-items.mjs'
+import { makeConnectionOps } from './connection-ops.mjs'
 import { emitSurfaceAction } from './events'
 import { makeJob, setJobStatus as jobSetStatus, readJob, dutyForJobStatus } from './job-model.mjs'
 
@@ -137,6 +138,16 @@ export const electronActionItems = makeActionItems({
   emitMoment: (action) => emitSurfaceAction('inbox', action)
 })
 Object.assign(electronOps, electronActionItems)
+
+// Connections (connection-ops.mjs) — the SHARED registry + per-source tool store + dispatch, bound to
+// Electron's surface primitives. The tab (Chrome extension) and window (BlitzComputerUse helper) adapters
+// bind through electronConnections.connectionBind / report changes via connectionNotify. Object.assign'd
+// BEFORE makeOsTools(electronOps) below so the connection_* tool handlers find these ops.
+export const electronConnections = makeConnectionOps({
+  getWorkspacePath: () => osWorkspaceContext().workspace_path,
+  createSurface: (desc: SurfaceDescriptor) => osCreateSurface(desc)
+})
+Object.assign(electronOps, electronConnections)
 
 export const OS_TOOLS: OsTool[] = makeOsTools(electronOps)
 export const OS_TOOLS_BY_PATH: Record<string, OsTool> = makeOsToolsByPath(electronOps)

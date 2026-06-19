@@ -56,6 +56,9 @@ import { withActivity } from '../src/main/activity.mjs'
 // Shared multi-agent terminal lifecycle (tmux-backed, workspace-keyed) — SAME module Electron binds.
 import { makeTerminalOps } from '../src/main/terminal-ops.mjs'
 import { makeActionItems } from '../src/main/action-items.mjs'
+import { makeConnectionOps } from '../src/main/connection-ops.mjs'
+import { makeTabLink } from '../src/main/connection-tab-link.mjs'
+import { makeSafariLink } from '../src/main/connection-safari-link.mjs'
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
 import { fileURLToPath } from 'node:url'
 
@@ -631,6 +634,26 @@ Object.assign(serverOps, serverTerminalOps)
 // broadcast for UI; emitMoment wakes the watching agent (perception 'action' moment) on resolve.
 const serverActionItems = makeActionItems({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast, emitMoment: (action) => emitSurfaceAction('inbox', action) })
 Object.assign(serverOps, serverActionItems)
+
+// Connections — the SAME shared registry + per-source tool store + dispatch Electron binds (connection-ops.mjs).
+// Server seam: active workspace folder + the server's createSurface (the representation widget). The tab
+// (remote-paired extension) and window adapters bind through serverConnections.connectionBind / connectionNotify.
+const serverConnections = makeConnectionOps({ getWorkspacePath: () => wsHost.activePath(), createSurface: (desc) => serverOps.createSurface(desc) })
+Object.assign(serverOps, serverConnections)
+
+// The BlitzOS Connector extension links here too (a self-hosted LOCAL server = localhost, same as Electron).
+// A connected tab becomes a per-source tool provider. (Remote-server tab pairing over an authenticated WSS is
+// a later refinement; the localhost path covers the co-located case the feature targets.)
+const serverTabLink = makeTabLink({ connectionOps: serverConnections, token: process.env.BLITZ_CONNECTOR_TOKEN || '' })
+serverConnections.setTabLink(serverTabLink)
+serverTabLink
+  .start()
+  .then((r) => {
+    if (r.ok) console.log('[agent-os backend] connector link on 127.0.0.1:' + r.port)
+  })
+  .catch(() => {})
+// Safari tabs via Apple Events (only works when the server is co-located on a Mac with Safari; harmless else).
+serverConnections.setSafariLink(makeSafariLink({ connectionOps: serverConnections }))
 
 // Start the agent-socket relay via the SHARED lifecycle module (relay.mjs) — connect + self-heal + watchdog +
 // status all live there now (one impl, Electron too). The server only supplies its tools + the adapter: how to

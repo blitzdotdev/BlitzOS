@@ -86,6 +86,7 @@ class HelperManager {
   private buf = ''
   private pending = new Map<number, (m: Record<string, unknown>) => void>()
   private scanProgress = new Map<number, (line: string) => void>()
+  private eventHandler: ((m: Record<string, unknown>) => void) | null = null // unsolicited helper events (e.g. ax_changed)
   private nextId = 1
   private hello: Record<string, unknown> | null = null
   private wantQuit = false // distinguishes a deliberate relaunch from a crash
@@ -155,6 +156,8 @@ class HelperManager {
           this.pending.delete(msg.id)
           cb(msg)
         }
+      } else if (msg.type === 'event' && this.eventHandler) {
+        this.eventHandler(msg)
       }
     }
   }
@@ -216,6 +219,36 @@ class HelperManager {
         resolve({ error: 'helper write failed' })
       }
     })
+  }
+
+  /** Send a command WITH args and await the reply — the window adapter's path to the AX/vision/CGEvent
+   *  verbs (the bare rpc() above carries no args). */
+  call(cmd: string, args: Record<string, unknown> = {}, ms = 10000): Promise<Record<string, unknown>> {
+    const s = this.sock
+    if (!s) return Promise.resolve({ error: 'helper not connected' })
+    const id = this.nextId++
+    return new Promise((resolve) => {
+      const t = setTimeout(() => {
+        this.pending.delete(id)
+        resolve({ error: 'helper timeout' })
+      }, ms)
+      this.pending.set(id, (m) => {
+        clearTimeout(t)
+        resolve(m)
+      })
+      try {
+        s.write(JSON.stringify({ id, cmd, ...args }) + '\n')
+      } catch {
+        clearTimeout(t)
+        this.pending.delete(id)
+        resolve({ error: 'helper write failed' })
+      }
+    })
+  }
+
+  /** Register a handler for unsolicited helper events (e.g. `ax_changed` from an AXObserver). */
+  onEvent(fn: ((m: Record<string, unknown>) => void) | null): void {
+    this.eventHandler = fn
   }
 
   /** Install (if needed) + launch + wait for the helper to connect. Idempotent, and SINGLE-FLIGHT:

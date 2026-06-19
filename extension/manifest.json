@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "BlitzOS Connector",
+  "version": "0.1.0",
+  "description": "Connects a Chrome tab to BlitzOS so your agent can read and act on the tabs you explicitly connect. Drives only connected tabs.",
+  "minimum_chrome_version": "116",
+  "background": { "service_worker": "sw.js", "type": "module" },
+  "permissions": ["scripting", "tabs", "alarms", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "storage": { "managed_schema": "managed_schema.json" },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwLMWNdBovqzHYaueotRYu224PhrJlCeFMvIqR1i3Aix7nxeIfl/ghHPutMBnI+ebyNdDcqFvfhPdwMe9iQZbyMeDhlvqldSaFw17b5CEjhCjG55jkYqLKI9nE+lA+F0vyg1bYGVTSzV/zl37DFqcPcmKS+xIBmLuJZJ5QeuZLqiuMiYmG0mX1XYRWozwBFR6jSNoFh31ExjhJvHaL8pisZ7NWgKordondj8UkcKpG9j7GGIOC1P9SPwMetfIdkJ9Y9MVXmodsB6xkJ4fifhxIx5SItTm17H72PIhXVqmnPoZYsNNVjPRxIEl9OfPaXLVDqUhQBE5k7/QN7REYwmjUQIDAQAB"
+}

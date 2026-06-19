@@ -9,7 +9,11 @@ import { openBootJournal } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
 import { installGuestSessionPolicy, resolvePermissionPrompt, attachGuestWindowPolicy } from './guest-capabilities'
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
-import { electronTerminalOps, electronActionItems, electronOps, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
+import { electronTerminalOps, electronActionItems, electronOps, electronConnections, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
+import { makeTabLink } from './connection-tab-link.mjs'
+import { makeWindowLink } from './connection-window-link'
+import { makeSafariLink } from './connection-safari-link.mjs'
+import { startConnectorServer, installConnector } from './connection-install'
 import { wireLauncher, registerLauncher } from './launcher'
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider } from './agent-runtime.mjs'
 import { wireJobModel, readJob, dutyForJobStatus } from './job-model.mjs'
@@ -486,6 +490,12 @@ app.whenReady().then(() => {
     } catch (e) { return { ok: false, error: (e as Error)?.message } }
   })
   ipcMain.handle('os:terminal-list', () => electronTerminalOps.listTerminals())
+  // Connections — the radial "Connect" picker lists + connects tabs/windows through the shared registry.
+  ipcMain.handle('os:conn-list-tabs', () => electronConnections.connectionListTabs())
+  ipcMain.handle('os:conn-list-windows', () => electronConnections.connectionListWindows())
+  ipcMain.handle('os:conn-connect-tab', (_e, id: number | string) => electronConnections.connectionConnectTab(id, {}))
+  ipcMain.handle('os:conn-connect-window', (_e, id: number) => electronConnections.connectionConnectWindow(Number(id), {}))
+  ipcMain.handle('os:conn-install', () => electronConnections.connectionInstallExtension())
   ipcMain.on('os:terminal-stop', (_e, id: string) => electronTerminalOps.stopTerminal(String(id)))
   ipcMain.on('os:terminal-remove', (_e, id: string) => electronTerminalOps.removeTerminal(String(id)))
   ipcMain.on('os:terminal-restart', (_e, id: string) => { void electronTerminalOps.restartTerminal(String(id)) })
@@ -525,6 +535,30 @@ app.whenReady().then(() => {
   // call) self-heal onto the fresh url — no privileged brain to restart.
   startAgentSocket(() => mainWindow, (url) => osSetRelayUrl(url))
   setTerminalGetUrl(() => getAgentSocketUrl()) // so a dead agent's re-exec rebuilds its command with the live url
+
+  // Connections — the BlitzOS Connector Chrome extension links to a localhost WS server here; a tab the user
+  // connects becomes a per-source tool provider (connection_* tools + a representation widget). The per-install
+  // token is delivered to the extension via managed storage at force-install (absent in unpacked dev, where the
+  // Origin: chrome-extension://<our id> check alone gates the localhost link).
+  const tabLink = makeTabLink({ connectionOps: electronConnections, token: process.env.BLITZ_CONNECTOR_TOKEN || '' })
+  electronConnections.setTabLink(tabLink)
+  tabLink
+    .start()
+    .then((r) => {
+      if (r.ok) console.log('[blitzos] connector link on 127.0.0.1:' + r.port)
+      else console.warn('[blitzos] connector link not started:', r.error)
+    })
+    .catch((e) => console.warn('[blitzos] connector link error:', e))
+
+  // Window connect (macOS-local only): the BlitzComputerUse helper IS the window adapter (AX + vision +
+  // CGEvent). It's ensured lazily on the first window op (it holds the Accessibility + Screen-Recording grants).
+  electronConnections.setWindowLink(makeWindowLink({ connectionOps: electronConnections, helper: computerUseHelper() }))
+  // Safari tabs via Apple Events `do JavaScript` (merged into connection_list_tabs as browser:'safari').
+  electronConnections.setSafariLink(makeSafariLink({ connectionOps: electronConnections }))
+  // Force-install of the connector extension: serve the .crx/updates.xml on localhost + expose the
+  // admin-prompt installer (connection_install_extension). Dev uses load-unpacked and skips this.
+  startConnectorServer()
+  electronConnections.setInstaller(installConnector)
 
   // Agents run as managed tmux terminals. The backend is pluggable: Claude Code (`claude`) is the default
   // when available (the visible TUI/resume path), while Codex serverless (`codex exec`) stays selectable.

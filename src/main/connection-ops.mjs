@@ -1,0 +1,405 @@
+// The CONNECTION layer — ONE shared module (like terminal-ops.mjs / action-items.mjs) so a connected
+// external source (a browser TAB or a macOS WINDOW) is driven IDENTICALLY in Electron and server mode.
+//
+// A "connection" is a per-source TOOL PROVIDER, agent-socket-shaped: the agent reads + acts on the source
+// through a small fixed verb set, saves reusable per-source scripts (a per-sourceId tools.json), and an
+// agent-authored srcdoc "representation widget" is kept fresh as the source changes. NO streaming/mirroring.
+//
+// This module owns the REGISTRY + the per-source STORE + the DISPATCH. The only per-type code is a thin
+// ADAPTER bound per connection: `{ call(verb, args) -> result, drop() }`, plus it reports "source changed"
+// by calling connectionNotify(). Two adapters live elsewhere and bind through connectionBind():
+//   - tab    = the Chrome extension link  (verbs: read / run_js / act)
+//   - window = the BlitzComputerUse helper (verbs: read (AX/screenshot) / act (AXPress/CGEvent))
+// Everything here is adapter-agnostic and unit-testable with a stub adapter (scripts/test-connections.mjs).
+//
+// Two ids (the doc's model): a `connId` per connection (this specific tab/window — the representation widget
+// binds here) and a `sourceId` = a stable site/app identity (a tab's origin host `mail.google.com`, a
+// window's bundle id `com.tinyspeck.slackmacgap`). The SAVED TOOLS key on sourceId (reused across instances
+// and sessions); the connection + its widget are per-connId.
+
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { markWrite as defaultMarkWrite } from './workspace.mjs'
+import { emitConnectionMoment, setContentShare, dropContentShare } from './perception-core.mjs'
+
+const READ_CAP = 8192 // default size cap on a read result — never dump a whole DOM/AX tree into context
+
+// sourceId -> a filesystem-safe directory name (origin host / app bundle id are already safe-ish; harden anyway)
+function safeSourceId(sourceId) {
+  return String(sourceId || 'unknown').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120) || 'unknown'
+}
+
+// Scope + cap a read so a connection can never flood the agent's context with a whole DOM/AX tree.
+function cap(value, max = READ_CAP) {
+  if (value == null) return value
+  let s
+  try {
+    s = typeof value === 'string' ? value : JSON.stringify(value)
+  } catch {
+    s = String(value)
+  }
+  if (s.length <= max) return value
+  return { truncated: true, bytes: s.length, head: s.slice(0, max), note: `capped at ${max} bytes — narrow the selector/subtree or pass {max} to read more` }
+}
+
+/**
+ * Build the connection ops bound to a runtime's surface primitives. Mirrors makeTerminalOps/makeActionItems:
+ * one shared core, a tiny per-transport seam. Returned methods are Object.assign'd onto the transport's `ops`
+ * (electronOps / serverOps) so the os-tools handlers + the widget bridge reach them identically.
+ * @param {object} seam
+ * @param {() => (string|null|undefined)} seam.getWorkspacePath  active workspace folder (store lives under it)
+ * @param {(desc:object) => string} seam.createSurface           create the representation widget
+ * @param {(p:string) => void} [seam.markWrite]                  workspace-watcher self-write suppression
+ */
+export function makeConnectionOps({
+  getWorkspacePath = () => null,
+  createSurface = () => null,
+  markWrite = defaultMarkWrite
+} = {}) {
+  // connId -> { connId, type:'tab'|'window', sourceId, title, capabilities, status, surfaceId, adapter }
+  const registry = new Map()
+  const bySurface = new Map() // surfaceId -> connId (for per-connId widget scoping)
+  const rec = (connId) => registry.get(String(connId)) || null
+  let tabLink = null // the tab link (connection-tab-link.mjs) registers itself via setTabLink
+  let windowLink = null // the window link (connection-window-link.ts, Electron-only) registers via setWindowLink
+  let safariLink = null // the Safari link (connection-safari-link.mjs, Apple Events) registers via setSafariLink
+  let installer = null // the extension force-install (connection-install.ts, Electron-only) registers via setInstaller
+
+  // ---- per-source tool store: <workspace>/.blitzos/connections/<sourceId>/{tools.json, description} ----
+  function storeDir(sourceId) {
+    const ws = getWorkspacePath()
+    if (!ws) return null
+    return join(ws, '.blitzos', 'connections', safeSourceId(sourceId))
+  }
+  function readTools(sourceId) {
+    const dir = storeDir(sourceId)
+    if (!dir) return []
+    try {
+      const f = join(dir, 'tools.json')
+      const arr = existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : []
+      return Array.isArray(arr) ? arr : []
+    } catch {
+      return []
+    }
+  }
+  function writeTools(sourceId, tools) {
+    const dir = storeDir(sourceId)
+    if (!dir) return false
+    mkdirSync(dir, { recursive: true })
+    markWrite(dir)
+    const f = join(dir, 'tools.json')
+    writeFileSync(f, JSON.stringify(tools, null, 2))
+    markWrite(f)
+    return true
+  }
+  function readDescription(sourceId) {
+    const dir = storeDir(sourceId)
+    if (!dir) return ''
+    try {
+      const f = join(dir, 'description')
+      return existsSync(f) ? readFileSync(f, 'utf8') : ''
+    } catch {
+      return ''
+    }
+  }
+  function writeDescription(sourceId, text) {
+    const dir = storeDir(sourceId)
+    if (!dir) return false
+    mkdirSync(dir, { recursive: true })
+    markWrite(dir)
+    const f = join(dir, 'description')
+    writeFileSync(f, String(text || ''))
+    markWrite(f)
+    return true
+  }
+
+  // ---- the representation widget: a placeholder srcdoc the agent then authors into ----
+  function placeholderHtml(sourceId, type) {
+    const label = String(sourceId || 'source').replace(/[<>&]/g, '')
+    return `<!doctype html><meta charset=utf8><body style="margin:0;font:13px/1.5 -apple-system,system-ui,sans-serif;background:#0b0d12;color:#e6e9ef;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;opacity:.9"><div style="font-size:26px">🔌</div><div style="margin-top:8px">connected ${type === 'window' ? 'window' : 'tab'}</div><div style="margin-top:2px;opacity:.6">${label}</div><div style="margin-top:12px;opacity:.5">representation loading…</div></div></body>`
+  }
+
+  // ---- adapter binding: an adapter calls this when the user/agent connects a source ----
+  // Returns { connId, surfaceId }. Auto-creates + binds the representation widget so the connId<->surfaceId
+  // link is AUTHORITATIVE (a widget can't spoof which connection it drives) and marks it content-shared.
+  function connectionBind({ type, sourceId, title, capabilities, adapter } = {}) {
+    const connId = 'conn_' + randomUUID().slice(0, 8)
+    const sid = String(sourceId || 'unknown')
+    const kind = type === 'window' ? 'window' : 'tab'
+    let surfaceId = null
+    try {
+      surfaceId = createSurface({ kind: 'srcdoc', html: placeholderHtml(sid, kind), title: title || sid, w: 380, h: 460, x: 80, y: 80, props: { connection: connId } })
+    } catch {
+      surfaceId = null
+    }
+    const record = {
+      connId,
+      type: kind,
+      sourceId: sid,
+      title: title || sid,
+      capabilities: capabilities && typeof capabilities === 'object' ? capabilities : kind === 'window' ? { act: true, vision: true } : { run_js: true, act: true },
+      status: 'live',
+      surfaceId,
+      adapter: adapter || null
+    }
+    registry.set(connId, record)
+    if (surfaceId) {
+      bySurface.set(String(surfaceId), connId)
+      try {
+        setContentShare(String(surfaceId), true)
+      } catch {
+        /* perception not wired (a bare test) */
+      }
+    }
+    emitConnectionMoment(surfaceId || 'system', { connId, sourceId: sid, status: 'live', verb: 'connected' })
+    return { connId, surfaceId }
+  }
+
+  // ---- adapter reports a source change: significant -> immediate agent wake; churn -> silent refresh ----
+  function connectionNotify(connId, { significant = true, summary = 'changed', status } = {}) {
+    const r = rec(connId)
+    if (!r) return
+    if (status) r.status = String(status)
+    if (significant) emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: r.status, verb: summary })
+  }
+
+  // ---- adapter (or the source) went away: mark the connection dead but keep the widget + saved tools ----
+  function connectionUnbind(connId, { status = 'disconnected' } = {}) {
+    const r = rec(connId)
+    if (!r) return
+    r.status = String(status)
+    r.adapter = null
+    emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: r.status, verb: r.status })
+  }
+
+  function capable(r, verb) {
+    if (!r) return false
+    const c = r.capabilities || {}
+    if (verb === 'run_js') return c.run_js !== false && r.type === 'tab'
+    return c[verb] !== false
+  }
+  async function dispatch(r, verb, args) {
+    if (!r.adapter || typeof r.adapter.call !== 'function') return { error: `connection ${r.connId} has no live adapter (status: ${r.status}) — reconnect the source`, status: r.status }
+    try {
+      return await r.adapter.call(verb, args || {})
+    } catch (e) {
+      return { error: String((e && e.message) || e) }
+    }
+  }
+
+  // ================= agent-facing ops (called by the os-tools handlers) =================
+
+  function connectionList() {
+    return {
+      connections: [...registry.values()].map((r) => ({
+        connId: r.connId,
+        type: r.type,
+        sourceId: r.sourceId,
+        title: r.title,
+        status: r.status,
+        capabilities: r.capabilities,
+        surfaceId: r.surfaceId,
+        // the per-connection briefing (agents.md analog): a fresh session learns what this source already knows
+        savedTools: readTools(r.sourceId).map((t) => ({ name: t.name, description: t.description, kind: t.kind })),
+        description: readDescription(r.sourceId) || undefined
+      }))
+    }
+  }
+
+  async function connectionRead(connId, args) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    const out = await dispatch(r, 'read', args || {})
+    if (out && out.error) return out
+    const raw = out && typeof out === 'object' && 'result' in out ? out.result : out
+    // a screenshot read (window vision) returns an image — surface it as {image} like surface_control, so an
+    // image-capable transport renders it to the model, never base64-as-text.
+    if (raw && typeof raw === 'object' && raw.png) return { image: raw.png, width: raw.width, height: raw.height, frame: raw.frame }
+    return { result: cap(raw, Number(args && args.max) || READ_CAP) }
+  }
+
+  async function connectionAct(connId, args) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    const out = await dispatch(r, 'act', args || {})
+    if (out && out.error) return out
+    // effect-verified: surface the observed change so the agent confirms the act landed in-band
+    return out && typeof out === 'object' && 'effect' in out ? { ok: true, effect: cap(out.effect) } : { ok: true, ...(out && typeof out === 'object' ? out : {}) }
+  }
+
+  async function connectionRunJs(connId, args) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    if (!capable(r, 'run_js')) return { error: 'capability_unavailable', capability: 'run_js', note: 'run_js is tab-only' }
+    const out = await dispatch(r, 'run_js', args || {})
+    if (out && out.error) return out
+    const raw = out && typeof out === 'object' && 'result' in out ? out.result : out
+    return { result: cap(raw, Number(args && args.max) || READ_CAP) }
+  }
+
+  function connectionSaveTool(connId, tool) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    if (!tool || !tool.name) return { error: 'tool.name required' }
+    const kind = tool.kind === 'act' ? 'act' : 'read'
+    const entry = {
+      name: String(tool.name),
+      description: String(tool.description || ''),
+      kind,
+      // a TAB tool is JS run in the page; a WINDOW tool is a recipe of AX/coordinate steps the helper runs
+      ...(r.type === 'window' ? { steps: tool.steps != null ? tool.steps : tool.code } : { code: String(tool.code || '') })
+    }
+    const tools = readTools(r.sourceId)
+    const i = tools.findIndex((t) => t.name === entry.name)
+    if (i >= 0) tools[i] = entry
+    else tools.push(entry)
+    if (!writeTools(r.sourceId, tools)) return { error: 'no active workspace to save the tool into' }
+    return { ok: true, name: entry.name, count: tools.length }
+  }
+
+  function connectionListTools(connId) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    return { sourceId: r.sourceId, tools: readTools(r.sourceId), description: readDescription(r.sourceId) || undefined }
+  }
+
+  async function connectionCallTool(connId, name, args) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    const tool = readTools(r.sourceId).find((t) => t.name === String(name))
+    if (!tool) return { error: `no saved tool "${name}" for ${r.sourceId} — list_tools to see what exists, or save_tool to add it` }
+    let out
+    if (r.type === 'tab') out = await dispatch(r, 'run_js', { code: tool.code, args: args || {} })
+    else out = await dispatch(r, 'act', { steps: tool.steps, args: args || {} })
+    // a failed/empty saved tool = STALE (a selector rotted): tell the agent to re-derive, never return wrong data silently
+    if (out && out.error) return { error: out.error, stale: true, note: 'saved tool failed — re-derive it (read the source) + connection_save_tool to replace it' }
+    const effect = out && typeof out === 'object' ? ('effect' in out ? out.effect : 'result' in out ? out.result : out) : out
+    if (tool.kind === 'act' && (effect == null || effect === '')) {
+      return { ok: false, stale: true, note: 'saved act tool produced no effect — likely a stale selector; re-derive + connection_save_tool' }
+    }
+    return { ok: true, name: tool.name, effect: cap(effect) }
+  }
+
+  async function connectionDrop(connId) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    try {
+      if (r.adapter && typeof r.adapter.drop === 'function') await r.adapter.drop()
+    } catch {
+      /* best-effort teardown */
+    }
+    if (r.surfaceId) {
+      bySurface.delete(String(r.surfaceId))
+      try {
+        dropContentShare(String(r.surfaceId))
+      } catch {
+        /* perception not wired */
+      }
+    }
+    registry.delete(connId)
+    emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: 'dropped', verb: 'disconnected' })
+    return { ok: true }
+  }
+
+  function connectionSetDescription(connId, text) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    return writeDescription(r.sourceId, text) ? { ok: true } : { error: 'no active workspace' }
+  }
+
+  // ---- per-connId widget scoping: a representation widget may ONLY call tools for ITS OWN connection.
+  // The widget bridge has no per-surface scoping, so we derive the connId from the CALLING surface and
+  // ignore any connId the (untrusted) widget passes (see widget-tools.mjs connection_call_tool handler).
+  function connectionForSurface(surfaceId) {
+    return bySurface.get(String(surfaceId)) || null
+  }
+
+  // ---- the tab link (connection-tab-link.mjs) registers itself here so the agent tools can list +
+  // connect the user's browser tabs transport-agnostically (Electron + server bind the link the same way). ----
+  function setTabLink(link) {
+    tabLink = link
+  }
+  function setSafariLink(link) {
+    safariLink = link
+  }
+  // Connectable tabs = Chrome (the extension) + Safari (Apple Events), tagged by `browser`.
+  async function connectionListTabs() {
+    const out = []
+    if (tabLink && typeof tabLink.listTabs === 'function') {
+      try {
+        for (const t of (await tabLink.listTabs()) || []) out.push({ ...t, browser: 'chrome' })
+      } catch {
+        /* extension offline */
+      }
+    }
+    if (safariLink && typeof safariLink.listTabs === 'function') {
+      try {
+        for (const t of (await safariLink.listTabs()) || []) out.push({ ...t, browser: 'safari' })
+      } catch {
+        /* Safari not scriptable yet */
+      }
+    }
+    if (!tabLink && !safariLink) return { error: 'no tab link — install + connect the BlitzOS Connector extension (Chrome), or enable Safari Apple Events' }
+    return { tabs: out }
+  }
+  async function connectionConnectTab(tabId, opts) {
+    const safari = (opts && opts.browser === 'safari') || String(tabId).startsWith('safari:')
+    if (safari) {
+      if (!safariLink || typeof safariLink.connectTab !== 'function') return { error: 'Safari link not available' }
+      return safariLink.connectTab(String(tabId), opts || {})
+    }
+    if (!tabLink || typeof tabLink.connectTab !== 'function') return { error: 'no tab link — install + connect the BlitzOS Connector extension first' }
+    if (tabId == null) return { error: 'tabId required' }
+    return tabLink.connectTab(Number(tabId), opts || {})
+  }
+  // ---- the window link (connection-window-link.ts) registers itself the same way; window connect is
+  // macOS-and-local-only (it needs the BlitzComputerUse helper's AX/CGEvent/ScreenCaptureKit). ----
+  function setWindowLink(link) {
+    windowLink = link
+  }
+  async function connectionListWindows() {
+    if (!windowLink || typeof windowLink.listWindows !== 'function') return { error: 'no window link — window connect needs the BlitzComputerUse helper (macOS, local only)' }
+    return windowLink.listWindows()
+  }
+  async function connectionConnectWindow(windowId, opts) {
+    if (!windowLink || typeof windowLink.connectWindow !== 'function') return { error: 'no window link — window connect needs the BlitzComputerUse helper (macOS, local only)' }
+    if (windowId == null) return { error: 'windowId required' }
+    return windowLink.connectWindow(Number(windowId), opts || {})
+  }
+  function setInstaller(fn) {
+    installer = fn
+  }
+  async function connectionInstallExtension() {
+    if (typeof installer !== 'function') return { error: 'extension install is available only in the BlitzOS app (macOS, local)' }
+    return installer()
+  }
+
+  return {
+    // tab + window link registration + the user/agent connect entries
+    setTabLink,
+    setSafariLink,
+    connectionListTabs,
+    connectionConnectTab,
+    setWindowLink,
+    connectionListWindows,
+    connectionConnectWindow,
+    setInstaller,
+    connectionInstallExtension,
+    // adapter / registry API (used by the tab + window adapters and by tests)
+    connectionBind,
+    connectionNotify,
+    connectionUnbind,
+    connectionForSurface,
+    // agent-facing ops (called by the os-tools.mjs handlers + the widget bridge)
+    connectionList,
+    connectionRead,
+    connectionAct,
+    connectionRunJs,
+    connectionSaveTool,
+    connectionListTools,
+    connectionCallTool,
+    connectionDrop,
+    connectionSetDescription
+  }
+}
