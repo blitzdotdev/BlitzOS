@@ -55,6 +55,8 @@ function cap(value, max = READ_CAP) {
 export function makeConnectionOps({
   getWorkspacePath = () => null,
   createSurface = () => null,
+  updateSurface = () => {},
+  closeSurface = () => {},
   markWrite = defaultMarkWrite
 } = {}) {
   // connId -> { connId, type:'tab'|'window', sourceId, title, capabilities, status, surfaceId, adapter }
@@ -179,12 +181,30 @@ export function makeConnectionOps({
     if (significant) emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: r.status, verb: summary })
   }
 
-  // ---- adapter (or the source) went away: mark the connection dead but keep the widget + saved tools ----
+  // ---- adapter (or the source) went away: mark the connection dead but KEEP the widget + saved tools, and
+  // repaint the widget to a clear "disconnected — reconnect" state so the user isn't left with a stale card ----
+  function disconnectedHtml(sourceId, type, status) {
+    const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))
+    const kind = type === 'window' ? 'window' : 'tab'
+    return `<!doctype html><meta charset=utf8><body style="margin:0;font:13px/1.55 -apple-system,system-ui,sans-serif;background:#0b0d12;color:#e6e9ef;padding:16px;box-sizing:border-box">
+<div style="display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8b93a7">
+  <span style="width:7px;height:7px;border-radius:50%;background:#e0a23d"></span>${esc(status || 'disconnected')}</div>
+<div style="margin-top:12px;font-size:15px;font-weight:600">${esc(sourceId)}</div>
+<div style="margin-top:14px;padding-top:12px;border-top:1px solid #1c2230;opacity:.6;font-size:12px">This ${kind} disconnected (closed or the link dropped). Its saved tools are kept — reconnect the ${kind} to resume; the agent re-attaches to everything it learned.</div>
+</body>`
+  }
   function connectionUnbind(connId, { status = 'disconnected' } = {}) {
     const r = rec(connId)
     if (!r) return
     r.status = String(status)
     r.adapter = null
+    if (r.surfaceId) {
+      try {
+        updateSurface(String(r.surfaceId), { html: disconnectedHtml(r.sourceId, r.type, r.status) })
+      } catch {
+        /* renderer may be gone */
+      }
+    }
     emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: r.status, verb: r.status })
   }
 
@@ -305,6 +325,8 @@ export function makeConnectionOps({
       /* best-effort teardown */
     }
     if (r.surfaceId) {
+      // delete from bySurface BEFORE closing the surface, so the surface-close hook (handleSurfaceClosed)
+      // finds nothing and is a no-op — no double-drop recursion.
       bySurface.delete(String(r.surfaceId))
       try {
         dropContentShare(String(r.surfaceId))
@@ -314,6 +336,14 @@ export function makeConnectionOps({
     }
     registry.delete(connId)
     emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: 'dropped', verb: 'disconnected' })
+    // an explicit drop tears down the representation widget too (no orphaned dead card on the canvas).
+    if (r.surfaceId) {
+      try {
+        closeSurface(String(r.surfaceId))
+      } catch {
+        /* already gone */
+      }
+    }
     return { ok: true }
   }
 

@@ -69,6 +69,10 @@ export interface ConnectionOpsDeps {
   getWorkspacePath: () => string | null | undefined
   /** Create the representation widget; returns its surface id. */
   createSurface: (desc: any) => string
+  /** Patch the representation widget (e.g. repaint to a disconnected state). */
+  updateSurface?: (id: string, patch: Record<string, unknown>) => unknown
+  /** Close the representation widget (clean teardown on an explicit drop). */
+  closeSurface?: (id: string) => unknown
   /** Workspace-watcher self-write suppression (defaults to workspace.mjs markWrite). */
   markWrite?: (p: string) => void
 }

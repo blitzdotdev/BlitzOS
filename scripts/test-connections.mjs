@@ -38,13 +38,17 @@ function stubAdapter(canned = {}) {
 async function main() {
   const ws = mkdtempSync(join(tmpdir(), 'blitz-conn-'))
   const created = []
+  const closed = []
+  const updated = []
   const ops = makeConnectionOps({
     getWorkspacePath: () => ws,
     createSurface: (desc) => {
       const id = 'sfc_' + created.length
       created.push({ id, desc })
       return id
-    }
+    },
+    closeSurface: (id) => closed.push(id),
+    updateSurface: (id, patch) => updated.push({ id, patch })
   })
 
   // --- empty registry ---
@@ -124,11 +128,20 @@ async function main() {
   ok('handleSurfaceClosed on a non-connection surface is a no-op', (await ops.handleSurfaceClosed('sfc_not_a_connection')) === undefined)
 
   // --- drop tears down + removes from registry; the widget + saved tools persist on disk ---
+  const dropSurface = surfaceId
   const dropped = await ops.connectionDrop(connId)
   ok('drop ok', dropped.ok === true)
   ok('drop ran the adapter teardown', adapter.calls.some((c) => c.verb === 'drop'))
   ok('drop removed it from the registry', ops.connectionList().connections.every((c) => c.connId !== connId))
+  ok('drop closed the representation widget (no orphan card)', closed.includes(dropSurface))
   ok('saved tools persist on disk after drop', existsSync(toolsFile))
+
+  // --- a source vanishing (unbind) keeps the widget but repaints it to a disconnected state ---
+  const va = stubAdapter()
+  const vb = ops.connectionBind({ type: 'tab', sourceId: 'vanish.example.com', adapter: va })
+  ops.connectionUnbind(vb.connId, { status: 'disconnected' })
+  ok('unbind marks the connection disconnected', ops.connectionList().connections.some((c) => c.connId === vb.connId && c.status === 'disconnected'))
+  ok('unbind repaints the widget to a disconnected state (kept, not closed)', updated.some((u) => u.id === vb.surfaceId && /disconnected/i.test(JSON.stringify(u.patch))) && !closed.includes(vb.surfaceId))
 
   rmSync(ws, { recursive: true, force: true })
   console.log('\n' + (fail ? '✗' : '✓') + ' connections: ' + pass + ' passed, ' + fail + ' failed')

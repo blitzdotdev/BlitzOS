@@ -146,7 +146,12 @@ Object.assign(electronOps, electronActionItems)
 // BEFORE makeOsTools(electronOps) below so the connection_* tool handlers find these ops.
 export const electronConnections = makeConnectionOps({
   getWorkspacePath: () => osWorkspaceContext().workspace_path,
-  createSurface: (desc: SurfaceDescriptor) => osCreateSurface(desc)
+  createSurface: (desc: SurfaceDescriptor) => osCreateSurface(desc),
+  updateSurface: (id: string, patch: Record<string, unknown>) => osUpdateSurface(id, patch),
+  closeSurface: (id: string) => {
+    osCloseSurfaceFile(id)
+    osCloseSurface(id)
+  }
 })
 Object.assign(electronOps, electronConnections)
 // Closing a connection's representation widget drops the connection (no leaked adapter/socket).

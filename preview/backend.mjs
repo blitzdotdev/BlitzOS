@@ -639,7 +639,7 @@ Object.assign(serverOps, serverActionItems)
 // Connections — the SAME shared registry + per-source tool store + dispatch Electron binds (connection-ops.mjs).
 // Server seam: active workspace folder + the server's createSurface (the representation widget). The tab
 // (remote-paired extension) and window adapters bind through serverConnections.connectionBind / connectionNotify.
-const serverConnections = makeConnectionOps({ getWorkspacePath: () => wsHost.activePath(), createSurface: (desc) => serverOps.createSurface(desc) })
+const serverConnections = makeConnectionOps({ getWorkspacePath: () => wsHost.activePath(), createSurface: (desc) => serverOps.createSurface(desc), updateSurface: (id, patch) => serverOps.updateSurface(id, patch), closeSurface: (id) => serverOps.closeSurface(id) })
 Object.assign(serverOps, serverConnections)
 
 // The BlitzOS Connector extension links here too (a self-hosted LOCAL server = localhost, same as Electron).
