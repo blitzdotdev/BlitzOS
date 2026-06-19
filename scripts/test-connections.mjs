@@ -180,6 +180,34 @@ async function main() {
   ok('after adoption only ONE connection exists for the source', ops.connectionList().connections.filter((c) => c.sourceId === 'vanish.example.com').length === 1)
   ok('the adopted connection is live', ops.connectionList().connections.some((c) => c.connId === rebind.connId && c.status === 'live'))
 
+  // the "Reconnect" affordance on a disconnected widget: connectionReconnectSource re-finds the source among
+  // connectable tabs (via the tab link) and connects it. Wire a stub tab link with one matching tab.
+  const reconnTabLink = {
+    listTabs: async () => [{ tabId: 99, url: 'https://reconnect.example.com/x', title: 'R' }],
+    connectTab: async (tabId) => ({ connId: 'conn_reconnected', surfaceId: 'sfc_re', tabId })
+  }
+  ops.setTabLink(reconnTabLink)
+  const rr = await ops.connectionReconnectSource('reconnect.example.com', 'tab')
+  ok('connectionReconnectSource finds + connects a matching open tab', rr && rr.connId === 'conn_reconnected')
+  const rrMiss = await ops.connectionReconnectSource('notopen.example.com', 'tab')
+  ok('connectionReconnectSource returns a navigable error when the source is not open', rrMiss && rrMiss.notFound === true)
+
+  // the Reconnect BUTTON path: window.blitz.tool('connection_reconnect') → widget handler derives the source
+  // from the CALLING (disconnected) surface's props and reconnects it. Exercise the exact handler the button runs.
+  const reconnHandlers = makeWidgetToolHandlers({
+    ...ops,
+    getState: () => ({ surfaces: [{ id: 'sfc_dead', props: { connection: 'conn_old', connType: 'tab', connSource: 'reconnect.example.com' } }] })
+  })
+  const btn = await reconnHandlers.connection_reconnect({}, { surfaceId: 'sfc_dead' })
+  ok('the Reconnect button reconnects the widget\'s own source', btn && btn.connId === 'conn_reconnected')
+  let rejected2 = false
+  try {
+    await reconnHandlers.connection_reconnect({}, { surfaceId: 'sfc_not_a_connection' })
+  } catch {
+    rejected2 = true
+  }
+  ok('Reconnect on a non-connection surface is rejected', rejected2)
+
   // across-restart adoption: a persisted connection widget (in getSurfaces, NOT in the registry) is adopted on
   // reconnect — covers the case where the app restarted and the disconnected widget survived but the
   // connection didn't.

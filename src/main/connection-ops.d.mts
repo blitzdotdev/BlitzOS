@@ -56,6 +56,8 @@ export interface ConnectionOps {
   setWindowLink(link: { listWindows: () => Promise<unknown>; connectWindow: (windowId: number, opts?: any) => Promise<unknown> } | null): void
   connectionListWindows(): Promise<Record<string, unknown>>
   connectionConnectWindow(windowId: number, opts?: { title?: string; sourceId?: string }): Promise<Record<string, unknown>>
+  /** Reconnect a source by sourceId (the Reconnect button on a disconnected widget): re-finds + connects the tab/window. */
+  connectionReconnectSource(sourceId: string, type?: 'tab' | 'window'): Promise<Record<string, unknown>>
   /** Force-install the connector extension (Electron + macOS only); registered via setInstaller. */
   setInstaller(fn: (() => Promise<{ ok: boolean; error?: string; note?: string }>) | null): void
   connectionInstallExtension(): Promise<Record<string, unknown>>

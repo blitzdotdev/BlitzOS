@@ -13,7 +13,8 @@ export const WIDGET_TOOLS = [
   'go_to_primary',
   'list_state',
   'set_theme',
-  'connection_call_tool'
+  'connection_call_tool',
+  'connection_reconnect'
 ]
 
 export function isWidgetTool(name) {
@@ -108,6 +109,19 @@ export function makeWidgetToolHandlers(ops) {
       const name = String((a && a.name) || '')
       if (!name) throw new Error('name required')
       return ops.connectionCallTool(connId, name, (a && a.args) || {})
+    },
+    // The "Reconnect" button on a DISCONNECTED connection widget. Derives the source from the CALLING surface's
+    // own props (connSource/connType — set when the widget was created), so it reconnects ITS source only and
+    // can't be pointed elsewhere. Works on a disconnected widget (no live connection needed — it reads the surface).
+    connection_reconnect: async (a, ctx = {}) => {
+      if (typeof ops.connectionReconnectSource !== 'function') throw new Error('connections not available here')
+      const sid = ctx && ctx.surfaceId
+      if (!sid) throw new Error('no calling surface')
+      const st = ops.getState ? ops.getState() : {}
+      const surf = ((st && st.surfaces) || []).find((s) => s && s.id === String(sid))
+      const p = (surf && surf.props) || {}
+      if (!p.connSource) throw new Error('this widget is not a connection widget')
+      return ops.connectionReconnectSource(String(p.connSource), p.connType === 'window' ? 'window' : 'tab')
     }
   }
 }

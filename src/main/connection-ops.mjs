@@ -235,7 +235,20 @@ export function makeConnectionOps({
 <div style="display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--blitz-text-dim,#797c7f)">
   <span style="width:7px;height:7px;border-radius:50%;background:#e0a23d"></span>${esc(status || 'disconnected')}</div>
 <div style="margin-top:12px;font-size:15px;font-weight:600">${esc(sourceId)}</div>
-<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--blitz-hairline,rgba(0,0,0,.1));color:var(--blitz-text-dim,#797c7f);font-size:12px">This ${kind} disconnected (closed or the link dropped). Its saved tools are kept — reconnect the ${kind} to resume; the agent re-attaches to everything it learned.</div>
+<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--blitz-hairline,rgba(0,0,0,.1));color:var(--blitz-text-dim,#797c7f);font-size:12px">This ${kind} disconnected (closed or the link dropped). Its saved tools are kept — the agent re-attaches to everything it learned once you reconnect.</div>
+<button id="blitz-reconnect" style="margin-top:14px;font:13px var(--blitz-font,system-ui);background:var(--blitz-accent,#e31c30);color:var(--blitz-accent-ink,#fff);border:0;border-radius:var(--blitz-radius-sm,7px);padding:8px 14px;cursor:pointer">Reconnect ${kind}</button>
+<div id="blitz-reconnect-msg" style="margin-top:8px;font-size:12px;color:var(--blitz-text-dim,#797c7f)"></div>
+<script>
+  document.getElementById('blitz-reconnect').onclick = async function () {
+    var b = this, m = document.getElementById('blitz-reconnect-msg');
+    b.disabled = true; b.textContent = 'Reconnecting…';
+    try {
+      var r = await window.blitz.tool('connection_reconnect', {});
+      if (r && r.error) { m.textContent = r.error; b.disabled = false; b.textContent = 'Reconnect ${kind}'; }
+      else { m.textContent = 'Reconnected — the agent will refresh this view.'; }
+    } catch (e) { m.textContent = String(e && e.message || e); b.disabled = false; b.textContent = 'Reconnect ${kind}'; }
+  };
+</script>
 </div>`
   }
   function connectionUnbind(connId, { status = 'disconnected' } = {}) {
@@ -526,6 +539,55 @@ export function makeConnectionOps({
     if (windowId == null) return { error: 'windowId required' }
     return windowLink.connectWindow(Number(windowId), opts || {})
   }
+  // Reconnect a source by its sourceId — the "Reconnect" affordance on a DISCONNECTED widget. Re-finds the
+  // matching tab/window (by origin host for a tab, bundle id for a window) among what's currently connectable
+  // and connects it (which adopts the disconnected widget). Returns a navigable error if the source isn't open.
+  async function connectionReconnectSource(sourceId, type) {
+    const sid = String(sourceId || '')
+    if (!sid) return { error: 'sourceId required' }
+    const wantWindow = type === 'window'
+    if (!wantWindow && tabLink) {
+      try {
+        const tabs = (await tabLink.listTabs()) || []
+        const match = tabs.find((t) => {
+          try {
+            return new URL(t.url).host === sid
+          } catch {
+            return false
+          }
+        })
+        if (match) return tabLink.connectTab(match.tabId, {})
+      } catch {
+        /* fall through */
+      }
+    }
+    if (!wantWindow && safariLink) {
+      try {
+        const stabs = (await safariLink.listTabs()) || []
+        const match = stabs.find((t) => {
+          try {
+            return new URL(t.url).host === sid
+          } catch {
+            return false
+          }
+        })
+        if (match) return safariLink.connectTab(match.tabId, {})
+      } catch {
+        /* fall through */
+      }
+    }
+    if (wantWindow && windowLink) {
+      try {
+        const r = await windowLink.listWindows()
+        const wins = (r && r.windows) || []
+        const match = wins.find((w) => String(w.bundleId) === sid || String(w.app) === sid)
+        if (match) return windowLink.connectWindow(match.windowId, {})
+      } catch {
+        /* fall through */
+      }
+    }
+    return { error: `couldn't find an open ${wantWindow ? 'window' : 'tab'} for ${sid} to reconnect — open it, then reconnect`, notFound: true }
+  }
   function setInstaller(fn) {
     installer = fn
   }
@@ -543,6 +605,7 @@ export function makeConnectionOps({
     setWindowLink,
     connectionListWindows,
     connectionConnectWindow,
+    connectionReconnectSource,
     setInstaller,
     connectionInstallExtension,
     // adapter / registry API (used by the tab + window adapters and by tests)
