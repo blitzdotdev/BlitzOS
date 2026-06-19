@@ -79,6 +79,8 @@ export interface ConnectionOpsDeps {
   updateSurface?: (id: string, patch: Record<string, unknown>) => unknown
   /** Close the representation widget (clean teardown on an explicit drop). */
   closeSurface?: (id: string) => unknown
+  /** Current surfaces (to find persisted connection widgets to adopt on reconnect across a restart). */
+  getSurfaces?: () => Array<Record<string, unknown>>
   /** Whether an agent is running to author the view — for an honest placeholder (default: false). */
   isAgentAvailable?: () => boolean
   /** Workspace-watcher self-write suppression (defaults to workspace.mjs markWrite). */

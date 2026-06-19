@@ -644,6 +644,7 @@ const serverConnections = makeConnectionOps({
   createSurface: (desc) => serverOps.createSurface(desc),
   updateSurface: (id, patch) => serverOps.updateSurface(id, patch),
   closeSurface: (id) => serverOps.closeSurface(id),
+  getSurfaces: () => osState.surfaces || [],
   isAgentAvailable: () => {
     try {
       return serverTerminalOps.listTerminals().some((t) => t.kind === 'agent' && t.status === 'running')

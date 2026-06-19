@@ -57,6 +57,7 @@ export function makeConnectionOps({
   createSurface = () => null,
   updateSurface = () => {},
   closeSurface = () => {},
+  getSurfaces = () => [],
   isAgentAvailable = () => false,
   markWrite = defaultMarkWrite
 } = {}) {
@@ -154,19 +155,22 @@ export function makeConnectionOps({
     const sid = String(sourceId || 'unknown')
     const kind = type === 'window' ? 'window' : 'tab'
     let surfaceId = null
-    // ADOPT a lingering DISCONNECTED widget for the same source instead of piling up dead cards on reconnect:
-    // reuse the most recent stale widget for this source, drop its stale registry entry, repaint it live, and
-    // close any other stale duplicates. (Live connections to the same source — e.g. two windows — are left
-    // alone; only non-live widgets are adopted/cleaned.)
-    const staleSame = [...registry.values()].filter((x) => x.sourceId === sid && x.status !== 'live' && x.surfaceId)
-    if (staleSame.length) {
-      surfaceId = staleSame[staleSame.length - 1].surfaceId
-      for (const x of staleSame) {
-        bySurface.delete(String(x.surfaceId))
-        registry.delete(x.connId)
-        if (x.surfaceId !== surfaceId) {
+    // ADOPT a lingering DEAD widget for the same source instead of piling up dead cards on reconnect: reuse
+    // the most recent one, repaint it live, drop any stale registry entry, and close extra duplicates. "Dead"
+    // = a connection widget for this source NOT currently backing a LIVE connection — covers both same-session
+    // (disconnected, still in the registry) AND across-restart (persisted surface, no registry entry). Live
+    // connections to the same source (e.g. two windows) are left untouched.
+    const dead = deadWidgetsForSource(sid)
+    if (dead.length) {
+      surfaceId = dead[dead.length - 1]
+      for (const [cid, x] of registry) {
+        if (x.surfaceId && dead.includes(String(x.surfaceId))) registry.delete(cid)
+      }
+      for (const ds of dead) {
+        bySurface.delete(ds)
+        if (ds !== surfaceId) {
           try {
-            closeSurface(String(x.surfaceId))
+            closeSurface(ds)
           } catch {
             /* already gone */
           }
@@ -396,6 +400,34 @@ export function makeConnectionOps({
   // ignore any connId the (untrusted) widget passes (see widget-tools.mjs connection_call_tool handler).
   function connectionForSurface(surfaceId) {
     return bySurface.get(String(surfaceId)) || null
+  }
+
+  // All "dead" connection widgets for a source: connection widgets (props.connection) for this sourceId that
+  // are NOT currently the surface of a LIVE connection. Unions same-session (a registry entry gone non-live)
+  // and across-restart (a persisted surface with no registry entry). connectionBind adopts one + cleans the rest.
+  function deadWidgetsForSource(sid) {
+    const live = new Set([...registry.values()].filter((x) => x.status === 'live' && x.surfaceId).map((x) => String(x.surfaceId)))
+    const found = []
+    const seen = new Set()
+    const add = (id) => {
+      const s = String(id || '')
+      if (s && !seen.has(s) && !live.has(s)) {
+        seen.add(s)
+        found.push(s)
+      }
+    }
+    for (const x of registry.values()) {
+      if (x.sourceId === sid && x.status !== 'live' && x.surfaceId) add(x.surfaceId)
+    }
+    try {
+      for (const s of getSurfaces() || []) {
+        const p = s && s.props
+        if (p && p.connection && String(p.connSource) === sid) add(s.id)
+      }
+    } catch {
+      /* getSurfaces not wired in this transport */
+    }
+    return found
   }
   // Is this connId a live connection? Adapters use this to DEDUP — connecting the same tab/window twice should
   // re-attach to the existing live connection, not spawn a duplicate (+ duplicate widget).

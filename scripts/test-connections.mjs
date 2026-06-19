@@ -41,6 +41,7 @@ async function main() {
   const created = []
   const closed = []
   const updated = []
+  const persistedSurfaces = [] // simulates surfaces that survived a restart (getSurfaces), for across-restart adoption
   const ops = makeConnectionOps({
     getWorkspacePath: () => ws,
     createSurface: (desc) => {
@@ -49,7 +50,8 @@ async function main() {
       return id
     },
     closeSurface: (id) => closed.push(id),
-    updateSurface: (id, patch) => updated.push({ id, patch })
+    updateSurface: (id, patch) => updated.push({ id, patch }),
+    getSurfaces: () => persistedSurfaces
   })
 
   // --- empty registry ---
@@ -167,6 +169,13 @@ async function main() {
   ok('reconnecting a disconnected source reuses its widget (adoption)', rebind.surfaceId === vb.surfaceId)
   ok('after adoption only ONE connection exists for the source', ops.connectionList().connections.filter((c) => c.sourceId === 'vanish.example.com').length === 1)
   ok('the adopted connection is live', ops.connectionList().connections.some((c) => c.connId === rebind.connId && c.status === 'live'))
+
+  // across-restart adoption: a persisted connection widget (in getSurfaces, NOT in the registry) is adopted on
+  // reconnect — covers the case where the app restarted and the disconnected widget survived but the
+  // connection didn't.
+  persistedSurfaces.push({ id: 'sfc_persisted_restart', kind: 'srcdoc', title: 'restart.example.com', props: { connection: 'conn_pre_restart', connType: 'tab', connSource: 'restart.example.com' } })
+  const afterRestart = ops.connectionBind({ type: 'tab', sourceId: 'restart.example.com', adapter: stubAdapter() })
+  ok('reconnect after restart adopts the PERSISTED widget (no new surface)', afterRestart.surfaceId === 'sfc_persisted_restart')
 
   // --- on (re)hydrate, a persisted connection widget whose connection isn't live is repainted to disconnected ---
   const liveBind = ops.connectionBind({ type: 'tab', sourceId: 'rehydrate.example.com', adapter: stubAdapter() })
