@@ -61,9 +61,29 @@ export function ConnectPicker({ onClose }: { onClose: () => void }): JSX.Element
   }
   async function install(): Promise<void> {
     setBusy('install')
-    const r = await conn?.installExtension()
+    const r = (await conn?.installExtension()) as { error?: string; note?: string; extensionDir?: string } | undefined
+    if (r?.error) {
+      setStatus(r.error + (r.extensionDir ? ` — or load it manually: chrome://extensions → Developer mode → Load unpacked → ${r.extensionDir}` : ''))
+      setBusy(null)
+      return
+    }
+    // Don't claim success on the optimistic note — POLL for the connector actually connecting, so the user is
+    // never stranded staring at "it'll appear soon" when a force-install silently didn't take.
+    setStatus('Installing the connector… waiting for Chrome to pick it up (relaunch Chrome if it stalls).')
+    for (let i = 0; i < 12; i++) {
+      await new Promise((res) => setTimeout(res, 2000))
+      const t = await conn?.listTabs()
+      if (Array.isArray(t?.tabs) && t.tabs.some((x) => (x as Tab).browser === 'chrome')) {
+        setBusy(null)
+        await refresh()
+        return
+      }
+    }
     setBusy(null)
-    setStatus(r?.error || r?.note || 'Installing… relaunch Chrome if needed, then ↻ Refresh.')
+    setStatus(
+      'The connector didn’t connect automatically. Relaunch Chrome and click ↻. Still nothing? Some Chrome setups block policy-installed extensions' +
+        (r?.extensionDir ? ` — load it manually: chrome://extensions → enable Developer mode → Load unpacked → ${r.extensionDir}` : '.')
+    )
   }
 
   return (

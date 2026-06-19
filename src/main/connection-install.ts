@@ -78,7 +78,7 @@ function adminRun(shell: string): Promise<{ ok: boolean; error?: string }> {
 
 /** Write the ExtensionInstallForcelist policy (admin prompt) so Chrome force-installs the connector from the
  *  self-hosted localhost .crx. Idempotent. */
-export async function installConnector(): Promise<{ ok: boolean; error?: string; note?: string }> {
+export async function installConnector(): Promise<{ ok: boolean; error?: string; note?: string; extensionDir?: string }> {
   if (process.platform !== 'darwin') return { ok: false, error: 'macOS only' }
   if (!existsSync(crxPath())) return { ok: false, error: 'the connector .crx is not built — run: node scripts/build-extension.mjs (needs Google Chrome to pack it)' }
   startConnectorServer()
@@ -89,9 +89,11 @@ export async function installConnector(): Promise<{ ok: boolean; error?: string;
     `/bin/chmod 644 '${CHROME_POLICY}'`
   ].join(' && ')
   const r = await adminRun(cmd)
+  // Always hand back the extension dir so the UI can offer the manual load-unpacked path if the policy install
+  // doesn't actually result in a connection (some Chrome setups don't honor a self-hosted force-install).
   return r.ok
-    ? { ok: true, note: 'Chrome will install the BlitzOS Connector within ~10s (relaunch Chrome if needed). It shows "Managed by your organization" while connected — expected.' }
-    : r
+    ? { ok: true, extensionDir: connectorDir(), note: 'Chrome will install the BlitzOS Connector within ~10s (relaunch Chrome if needed). It shows "Managed by your organization" while connected — expected.' }
+    : { ...r, extensionDir: connectorDir() }
 }
 
 /** Remove the force-install policy (admin prompt) → Chrome uninstalls the connector. */
