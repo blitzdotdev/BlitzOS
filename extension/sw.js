@@ -136,13 +136,27 @@ function fnAct(spec) {
   }
   return { error: 'unknown action ' + spec.action }
 }
-function fnRunJs(code, args) {
+// run_js executes ARBITRARY agent code. We do this via chrome.userScripts (NOT new Function / chrome.scripting
+// MAIN-world eval) — user scripts run in a world whose CSP we configure (configureWorld below), so they
+// are NOT blocked by the page's Content-Security-Policy the way page-context eval is (HN/GitHub/etc.). This is
+// the ONLY run_js path (no eval fallback). It needs the "userScripts" permission + Developer mode / the
+// per-extension "Allow user scripts" toggle (Chrome 138+); when unavailable we return a clear error.
+async function runUserScript(tabId, code, args) {
+  if (!chrome.userScripts || !chrome.userScripts.execute) {
+    return { error: 'userScripts_unavailable', note: 'run_js needs the userScripts API — enable Developer mode (or turn on "Allow user scripts" for this extension on Chrome 138+) and reload the extension.' }
+  }
   try {
-    // arbitrary page-context code (the escape hatch). Subject to the PAGE's CSP in MAIN world — a strict
-    // 'unsafe-eval'-free site blocks this; use read/act (or the native coordinate path) there instead.
-    // eslint-disable-next-line no-new-func
-    const r = new Function('args', code)(args)
-    return { result: r === undefined ? null : r }
+    // wrap so the agent's `return` works and `args` is in scope; the IIFE's value is the injection result.
+    const wrapped = '(function(args){\n' + String(code || '') + '\n})(' + JSON.stringify(args || {}) + ')'
+    const res = await chrome.userScripts.execute({
+      target: { tabId: Number(tabId) },
+      world: 'USER_SCRIPT', // DOM access + our configured (eval-allowing) CSP; isolated from page JS globals
+      injectImmediately: true,
+      js: [{ code: wrapped }]
+    })
+    const r = res && res[0]
+    if (r && r.error) return { error: String(r.error.message || r.error) }
+    return { result: r ? (r.result === undefined ? null : r.result) : null }
   } catch (e) {
     return { error: String((e && e.message) || e) }
   }
@@ -174,7 +188,7 @@ async function handle(data) {
     if (tabId == null) return reply({ error: 'tabId required' })
     if (cmd === 'read') return reply({ result: await exec(tabId, 'ISOLATED', fnRead, [msg.args || {}]) })
     if (cmd === 'act') return reply({ result: await exec(tabId, 'ISOLATED', fnAct, [msg.args || {}]) })
-    if (cmd === 'run_js') return reply({ result: await exec(tabId, 'MAIN', fnRunJs, [String(msg.code || ''), msg.args || {}]) })
+    if (cmd === 'run_js') return reply({ result: await runUserScript(tabId, msg.code, msg.args) })
     return reply({ error: 'unknown cmd ' + cmd })
   } catch (e) {
     reply({ error: String((e && e.message) || e) })
@@ -189,6 +203,25 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 })
 chrome.tabs.onRemoved.addListener((tabId) => send({ type: 'event', kind: 'tabClosed', tabId }))
 
-chrome.runtime.onStartup.addListener(connect)
-chrome.runtime.onInstalled.addListener(connect)
+// Make the USER_SCRIPT world's own CSP permissive so even run_js code that itself calls eval/Function works
+// (independent of the page CSP). Best-effort — throws until userScripts is enabled.
+function configureUserScriptWorld() {
+  try {
+    if (chrome.userScripts && chrome.userScripts.configureWorld) {
+      chrome.userScripts.configureWorld({ csp: "script-src 'self' 'unsafe-inline' 'unsafe-eval'", messaging: false })
+    }
+  } catch (e) {
+    /* userScripts not enabled yet — run_js returns a clear error until it is */
+  }
+}
+
+chrome.runtime.onStartup.addListener(() => {
+  configureUserScriptWorld()
+  connect()
+})
+chrome.runtime.onInstalled.addListener(() => {
+  configureUserScriptWorld()
+  connect()
+})
+configureUserScriptWorld()
 connect()
