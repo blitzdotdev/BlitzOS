@@ -146,7 +146,7 @@ export function makeConnectionOps({
     // (every widget landing at one fixed point is invisible-overlap; observed when connecting >1 source).
     const slot = registry.size % 6
     try {
-      surfaceId = createSurface({ kind: 'srcdoc', html: placeholderHtml(sid, kind, title), title: title || sid, w: 380, h: 460, x: 90 + slot * 46, y: 90 + slot * 46, props: { connection: connId } })
+      surfaceId = createSurface({ kind: 'srcdoc', html: placeholderHtml(sid, kind, title), title: title || sid, w: 380, h: 460, x: 90 + slot * 46, y: 90 + slot * 46, props: { connection: connId, connType: kind, connSource: sid } })
     } catch {
       surfaceId = null
     }
@@ -360,6 +360,17 @@ export function makeConnectionOps({
     return bySurface.get(String(surfaceId)) || null
   }
 
+  // On (re)hydrate — app restart or a workspace switch — a persisted connection widget whose connection is
+  // NOT live should show a "disconnected — reconnect" state instead of a stale/loading card. Returns a
+  // rewritten surface (new html) for such widgets, or null to leave the surface untouched. A connection that
+  // IS still live (e.g. switching back to a workspace without restarting) is left as-is.
+  function rewriteHydratedSurface(surface) {
+    const p = surface && surface.props
+    if (!p || !p.connection) return null
+    if (registry.has(String(p.connection))) return null // still live → keep the agent-authored view
+    return { ...surface, html: disconnectedHtml(p.connSource || surface.title || 'source', p.connType || 'tab', 'disconnected') }
+  }
+
   // When the user CLOSES a connection's representation widget, the connection should go with it — otherwise
   // the live adapter/socket leaks with no widget to manage it. Wired into the surface-close path (both
   // transports). The surface is already closing, so this only tears down the adapter + deregisters (it does
@@ -452,6 +463,7 @@ export function makeConnectionOps({
     connectionInstallExtension,
     // adapter / registry API (used by the tab + window adapters and by tests)
     handleSurfaceClosed,
+    rewriteHydratedSurface,
     connectionBind,
     connectionNotify,
     connectionUnbind,

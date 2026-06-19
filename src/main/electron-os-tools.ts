@@ -12,6 +12,7 @@ import {
   osCloseSurface,
   osCloseSurfaceFile,
   onSurfaceClosed,
+  setHydrateSurfaceRewriter,
   osGoToPrimary,
   osGetState,
   osWorkspaceContext,
@@ -156,6 +157,8 @@ export const electronConnections = makeConnectionOps({
 Object.assign(electronOps, electronConnections)
 // Closing a connection's representation widget drops the connection (no leaked adapter/socket).
 onSurfaceClosed((id) => void electronConnections.handleSurfaceClosed(id))
+// On (re)hydrate, repaint persisted connection widgets whose connection isn't live → "disconnected".
+setHydrateSurfaceRewriter((s) => electronConnections.rewriteHydratedSurface(s))
 
 export const OS_TOOLS: OsTool[] = makeOsTools(electronOps)
 export const OS_TOOLS_BY_PATH: Record<string, OsTool> = makeOsToolsByPath(electronOps)

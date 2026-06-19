@@ -40,6 +40,8 @@ export interface ConnectionOps {
   connectionForSurface(surfaceId: string | null | undefined): string | null
   /** Called when a surface closes; if it's a connection's widget, drop the connection (no leaked adapter). */
   handleSurfaceClosed(surfaceId: string): Promise<void>
+  /** On (re)hydrate: rewrite a persisted connection widget to a disconnected state if its connection isn't live; else null. */
+  rewriteHydratedSurface(surface: Record<string, unknown>): Record<string, unknown> | null
   /** The tab link registers itself so connection_list_tabs / connection_connect_tab work. */
   setTabLink(link: { listTabs: () => Promise<unknown>; connectTab: (tabId: number, opts?: any) => Promise<unknown> } | null): void
   /** The Safari link (Apple Events) registers itself; its tabs merge into connection_list_tabs (browser:'safari'). */

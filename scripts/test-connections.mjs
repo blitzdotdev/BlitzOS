@@ -143,6 +143,15 @@ async function main() {
   ok('unbind marks the connection disconnected', ops.connectionList().connections.some((c) => c.connId === vb.connId && c.status === 'disconnected'))
   ok('unbind repaints the widget to a disconnected state (kept, not closed)', updated.some((u) => u.id === vb.surfaceId && /disconnected/i.test(JSON.stringify(u.patch))) && !closed.includes(vb.surfaceId))
 
+  // --- on (re)hydrate, a persisted connection widget whose connection isn't live is repainted to disconnected ---
+  const liveBind = ops.connectionBind({ type: 'tab', sourceId: 'rehydrate.example.com', adapter: stubAdapter() })
+  const liveProps = { connection: liveBind.connId, connType: 'tab', connSource: 'rehydrate.example.com' }
+  ok('rehydrate leaves a STILL-LIVE connection widget untouched', ops.rewriteHydratedSurface({ id: liveBind.surfaceId, props: liveProps, html: 'x' }) === null)
+  const deadWidget = { id: 'sfc_persisted', title: 'mail.google.com', html: '<old/>', props: { connection: 'conn_gone_after_restart', connType: 'tab', connSource: 'mail.google.com' } }
+  const rew = ops.rewriteHydratedSurface(deadWidget)
+  ok('rehydrate repaints a DEAD connection widget to disconnected', rew && /disconnected/i.test(rew.html) && /mail\.google\.com/.test(rew.html))
+  ok('rehydrate ignores a non-connection surface', ops.rewriteHydratedSurface({ id: 'note1', props: { text: 'hi' }, html: 'note' }) === null)
+
   rmSync(ws, { recursive: true, force: true })
   console.log('\n' + (fail ? '✗' : '✓') + ' connections: ' + pass + ' passed, ' + fail + ' failed')
   process.exit(fail ? 1 : 0)

@@ -730,8 +730,16 @@ const server = createServer(async (req, res) => {
     res.write(`data: ${JSON.stringify({ type: 'agentStatus', online: !!(relay && relay.isOnline()), agentUrl, agent: !!process.env.BLITZ_AGENT })}\n\n`)
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
+    // Repaint persisted connection widgets whose connection isn't live → "disconnected" (parity with Electron).
+    const hydrateSurfaces = wsHost.hydrateSurfaces().map((s) => {
+      try {
+        return serverConnections.rewriteHydratedSurface(s) || s
+      } catch {
+        return s
+      }
+    })
     res.write(
-      `data: ${JSON.stringify({ type: 'hydrate', surfaces: wsHost.hydrateSurfaces(), camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', stageCount: osState.stageCount || 1, stageOrder: osState.stageOrder, workspace: wsHost.active() })}\n\n`
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: hydrateSurfaces, camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'canvas', stageCount: osState.stageCount || 1, stageOrder: osState.stageOrder, workspace: wsHost.active() })}\n\n`
     )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))

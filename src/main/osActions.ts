@@ -979,10 +979,26 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
   return controlWindow(id, action)
 }
 
+/** Optional rewriter applied to each surface in a hydrate payload — the connection layer uses it to repaint
+ *  a persisted connection widget to a "disconnected" state when its connection isn't live (boot / switch). */
+let hydrateSurfaceRewriter: ((s: Record<string, unknown>) => Record<string, unknown> | null) | null = null
+export function setHydrateSurfaceRewriter(fn: (s: Record<string, unknown>) => Record<string, unknown> | null): void {
+  hydrateSurfaceRewriter = typeof fn === 'function' ? fn : null
+}
 /** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
 export function osSendHydrate(): void {
   if (!wsHost) return
-  send('hydrate', { surfaces: wsHost.hydrateSurfaces(), camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, stageOrder: cached.stageOrder, workspace: wsHost.active() })
+  let surfaces = wsHost.hydrateSurfaces() as Array<Record<string, unknown>>
+  if (hydrateSurfaceRewriter) {
+    surfaces = surfaces.map((s) => {
+      try {
+        return hydrateSurfaceRewriter!(s) || s
+      } catch {
+        return s
+      }
+    })
+  }
+  send('hydrate', { surfaces, camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'canvas', stageCount: cached.stageCount || 1, stageOrder: cached.stageOrder, workspace: wsHost.active() })
 }
 export function osRestoreChatHub(): { ok: boolean; id?: string; error?: string } {
   try {
