@@ -115,9 +115,21 @@ export function makeConnectionOps({
   }
 
   // ---- the representation widget: a placeholder srcdoc the agent then authors into ----
-  function placeholderHtml(sourceId, type) {
-    const label = String(sourceId || 'source').replace(/[<>&]/g, '')
-    return `<!doctype html><meta charset=utf8><body style="margin:0;font:13px/1.5 -apple-system,system-ui,sans-serif;background:#0b0d12;color:#e6e9ef;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;opacity:.9"><div style="font-size:26px">🔌</div><div style="margin-top:8px">connected ${type === 'window' ? 'window' : 'tab'}</div><div style="margin-top:2px;opacity:.6">${label}</div><div style="margin-top:12px;opacity:.5">representation loading…</div></div></body>`
+  // Shows the source's REAL identity immediately (title + sourceId + a live badge) so it's useful the moment
+  // it spawns — not a dead "loading…" card. The agent replaces this with a real summary on the connection
+  // moment; until then this states plainly that it's connected and waiting for the agent (no fake spinner).
+  function placeholderHtml(sourceId, type, title) {
+    const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))
+    const sid = esc(sourceId || 'source')
+    const t = esc(title || sourceId || (type === 'window' ? 'window' : 'tab'))
+    const kind = type === 'window' ? 'window' : 'tab'
+    return `<!doctype html><meta charset=utf8><body style="margin:0;font:13px/1.55 -apple-system,system-ui,sans-serif;background:#0b0d12;color:#e6e9ef;padding:16px;box-sizing:border-box">
+<div style="display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8b93a7">
+  <span style="width:7px;height:7px;border-radius:50%;background:#3ddc84;box-shadow:0 0 6px #3ddc84"></span>connected ${kind}</div>
+<div style="margin-top:12px;font-size:17px;font-weight:600">${t}</div>
+<div style="margin-top:3px;opacity:.55;word-break:break-all">${sid}</div>
+<div style="margin-top:16px;padding-top:12px;border-top:1px solid #1c2230;opacity:.6;font-size:12px">The agent will build a live view of this ${kind} here. Ask it about this ${kind} in chat, or it will summarize on its own.</div>
+</body>`
   }
 
   // ---- adapter binding: an adapter calls this when the user/agent connects a source ----
@@ -128,8 +140,11 @@ export function makeConnectionOps({
     const sid = String(sourceId || 'unknown')
     const kind = type === 'window' ? 'window' : 'tab'
     let surfaceId = null
+    // Cascade each connection's representation widget so multiple connections don't stack at the same spot
+    // (every widget landing at one fixed point is invisible-overlap; observed when connecting >1 source).
+    const slot = registry.size % 6
     try {
-      surfaceId = createSurface({ kind: 'srcdoc', html: placeholderHtml(sid, kind), title: title || sid, w: 380, h: 460, x: 80, y: 80, props: { connection: connId } })
+      surfaceId = createSurface({ kind: 'srcdoc', html: placeholderHtml(sid, kind, title), title: title || sid, w: 380, h: 460, x: 90 + slot * 46, y: 90 + slot * 46, props: { connection: connId } })
     } catch {
       surfaceId = null
     }
