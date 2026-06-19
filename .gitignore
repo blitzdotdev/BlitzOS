@@ -39,3 +39,12 @@ onboarding-context*.md
 onboarding-session*.md
 plans/mirror-*.md
 release/
+
+# runtime layout / journal state (per-machine workspace + boot journal) — never commit
+.blitzos/
+# local Claude Code state (settings.local.json, locks, locally generated workflows) — never commit
+.claude/
+# session-local scratch + agent comm folders — never commit
+/tmp/
+# electron-vite TEMP build configs (the canonical config is electron.vite.config.ts) — never commit
+electron.vite.config.*.mjs
