@@ -42,6 +42,8 @@ export interface ConnectionOps {
   connectionIsLive(connId: string): boolean
   /** Public shape of a connection (for an adapter's dedup return), or null. */
   connectionInfo(connId: string): Record<string, unknown> | null
+  /** Re-key a connection to a new sourceId after a cross-origin nav (same connId+widget, new per-source tools). */
+  connectionRekey(connId: string, newSourceId: string): Record<string, unknown>
   /** Called when a surface closes; if it's a connection's widget, drop the connection (no leaked adapter). */
   handleSurfaceClosed(surfaceId: string): Promise<void>
   /** On (re)hydrate: rewrite a persisted connection widget to a disconnected state if its connection isn't live; else null. */

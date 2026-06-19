@@ -217,6 +217,29 @@ export function makeConnectionOps({
     return { connId, surfaceId }
   }
 
+  // ---- a connected tab navigated CROSS-ORIGIN: re-key the connection to the new source identity, so the
+  // agent's per-source tools (tools.json) track the page the tab is actually on — never run mail.google.com's
+  // tools against the OAuth page it redirected to. Same connId + widget; different sourceId. Emits a moment so
+  // the agent re-briefs to the new source. No-op if the host didn't change. ----
+  function connectionRekey(connId, newSourceId) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    const sid = String(newSourceId || '')
+    if (!sid || sid === r.sourceId) return { ok: true, changed: false }
+    const from = r.sourceId
+    r.sourceId = sid
+    // the widget's stored connSource must follow (so adoption/rehydrate match the new source) — deep-merged.
+    if (r.surfaceId) {
+      try {
+        updateSurface(String(r.surfaceId), { props: { connSource: sid } })
+      } catch {
+        /* renderer gone */
+      }
+    }
+    emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: sid, status: r.status, verb: `navigated: ${from} → ${sid}` })
+    return { ok: true, changed: true, from, to: sid }
+  }
+
   // ---- adapter reports a source change: significant -> immediate agent wake; churn -> silent refresh ----
   function connectionNotify(connId, { significant = true, summary = 'changed', status } = {}) {
     const r = rec(connId)
@@ -611,6 +634,7 @@ export function makeConnectionOps({
     // adapter / registry API (used by the tab + window adapters and by tests)
     connectionIsLive,
     connectionInfo,
+    connectionRekey,
     handleSurfaceClosed,
     rewriteHydratedSurface,
     connectionBind,

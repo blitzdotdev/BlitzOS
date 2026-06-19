@@ -121,6 +121,20 @@ async function main() {
   const { connId: conn2 } = ops.connectionBind({ type: 'tab', sourceId: 'mail.google.com', title: 'Gmail 2', adapter: stubAdapter() })
   ok('a second connection to the same source inherits the saved tools', ops.connectionListTools(conn2).tools.length === 1)
 
+  // --- cross-origin nav re-keys the connection's sourceId (same connId+widget; per-source tools follow) ---
+  const navAdapter = stubAdapter()
+  const navConn = ops.connectionBind({ type: 'tab', sourceId: 'mail.google.com', title: 'Gmail', adapter: navAdapter })
+  ops.connectionSaveTool(navConn.connId, { name: 'gmail_only', kind: 'read', code: 'return 1' })
+  const rk = ops.connectionRekey(navConn.connId, 'accounts.google.com')
+  ok('rekey reports the change', rk && rk.changed === true && rk.from === 'mail.google.com' && rk.to === 'accounts.google.com')
+  ok('connection_list shows the NEW sourceId after cross-origin nav', ops.connectionList().connections.some((c) => c.connId === navConn.connId && c.sourceId === 'accounts.google.com'))
+  ok("the connection no longer sees the old source's tools (re-keyed tools.json)", !ops.connectionListTools(navConn.connId).tools.some((t) => t.name === 'gmail_only'))
+  ok('same connId + widget survive the re-key', ops.connectionList().connections.some((c) => c.connId === navConn.connId && c.surfaceId === navConn.surfaceId))
+  ok('re-key to the SAME host is a no-op', ops.connectionRekey(navConn.connId, 'accounts.google.com').changed === false)
+  // navigating BACK re-keys back and the original tools reappear
+  ops.connectionRekey(navConn.connId, 'mail.google.com')
+  ok("navigating back restores the original source's tools", ops.connectionListTools(navConn.connId).tools.some((t) => t.name === 'gmail_only'))
+
   // --- two LIVE connections to the same source (same site in two tabs): distinct connId+widget, shared tools.
   // verified live with two example.com Chrome tabs; locking the invariant here. ---
   const twA = ops.connectionBind({ type: 'tab', sourceId: 'twosite.example.com', adapter: stubAdapter() })

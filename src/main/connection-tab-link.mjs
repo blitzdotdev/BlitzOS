@@ -142,6 +142,21 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
     }
     const connId = tabToConn.get(ev.tabId)
     if (!connId) return
+    // CROSS-ORIGIN nav → re-key the connection's sourceId so its per-source tools track the page the tab is
+    // actually on (the design contract: never run example.com's tools against the site it navigated to). The
+    // re-key emits its own moment, so we're done if the host changed.
+    if (ev.url && (ev.kind === 'navigationCommitted' || ev.kind === 'urlChanged') && typeof connectionOps.connectionRekey === 'function') {
+      let host = ''
+      try {
+        host = new URL(ev.url).host
+      } catch {
+        host = ''
+      }
+      if (host) {
+        const r = connectionOps.connectionRekey(connId, host)
+        if (r && r.changed) return
+      }
+    }
     // a nav / cross-origin url change is a SIGNIFICANT source change (immediate wake); a title-only
     // change is minor (still notify, but not significant). BlitzOS-side significance, per the doc.
     const significant = ev.kind === 'navigationCommitted' || ev.kind === 'urlChanged'
