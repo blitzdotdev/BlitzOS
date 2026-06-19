@@ -101,6 +101,233 @@
   overflow: hidden;
   min-height: 0;
 }
+
+/* ── live status line (the active agent's current state) + the empty-transcript state ────────────────────────── */
+.nh-island .isl-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  font-size: 13px;
+  color: var(--isl-muted);
+  padding: 4px 2px 2px;
+}
+.nh-island .isl-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--isl-dim);
+}
+/* working = a compact "live activity" pill (a faint accent wash that hugs its content), so the expanded island's
+   running state visually rhymes with the collapsed notch's pulsing blue dot — one language across both states. */
+.nh-island .isl-status[data-status='working'] {
+  color: var(--isl-text);
+  align-self: flex-start;
+  background: rgba(10, 132, 255, 0.12);
+  border-radius: 9999px;
+  padding: 4px 12px 4px 10px;
+  margin: 2px 0;
+}
+.nh-island .isl-status[data-status='working'] .isl-status-dot {
+  background: var(--isl-accent);
+  animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-empty {
+  margin: auto;
+  color: var(--isl-dim);
+  font-size: 13px;
+}
+
+/* ── a narrator milestone STEP in the timeline (a plain past-tense line) + the per-session Details expand ─────── */
+.nh-island .isl-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 18px;
+  color: #ffffffe6;
+  padding: 1px 2px;
+}
+.nh-island .isl-step-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  align-self: center;
+  border-radius: 50%;
+  background: var(--isl-accent);
+}
+.nh-island .isl-step-text {
+  min-width: 0;
+}
+.nh-island .isl-details {
+  flex: none;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--isl-dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.nh-island .isl-details:hover {
+  color: var(--isl-muted);
+}
+.nh-island .isl-details-caret {
+  font-size: 9px;
+}
+.nh-island .isl-detail-rows {
+  flex: none;
+  max-height: 116px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 2px 6px;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+.nh-island .isl-detail-row,
+.nh-island .isl-detail-empty {
+  font-family: var(--isl-round);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--isl-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nh-island .isl-detail-empty {
+  color: var(--isl-dim);
+}
+
+/* ── the PEEK view: a "now playing" card per session (the toggle itself is .nh-peek-toggle in notch.css) ───────── */
+.nh-island.isl-peek-mode {
+  min-height: 200px;
+  max-height: 74vh;
+}
+.nh-island .isl-peek-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+.nh-island .isl-peek-list::-webkit-scrollbar {
+  width: 6px;
+}
+.nh-island .isl-peek-list::-webkit-scrollbar-thumb {
+  background: #ffffff26;
+  border-radius: 9999px;
+}
+.nh-island .isl-peek-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 16px;
+  transition: background 0.14s ease-out;
+}
+.nh-island .isl-peek-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.nh-island .isl-peek-album {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  flex: none;
+  border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+.nh-island .isl-peek-eq {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  padding-bottom: 5px;
+}
+.nh-island .isl-peek-eq i {
+  width: 2px;
+  border-radius: 2px;
+  background: #fff;
+  height: 4px;
+  animation: isl-peek-bars 0.9s ease-in-out infinite;
+}
+.nh-island .isl-peek-eq i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.nh-island .isl-peek-eq i:nth-child(3) {
+  animation-delay: 0.36s;
+}
+@keyframes isl-peek-bars {
+  0%,
+  100% {
+    height: 3px;
+  }
+  50% {
+    height: 10px;
+  }
+}
+.nh-island .isl-peek-cardtext {
+  min-width: 0;
+  flex: 1;
+}
+.nh-island .isl-peek-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--isl-muted);
+  margin-bottom: 3px;
+}
+.nh-island .isl-peek-livedot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--isl-accent);
+  animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-peek-cardtitle {
+  font-size: 19px;
+  line-height: 1.18;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--isl-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nh-island .isl-peek-cardly {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--isl-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* ── tab chip strip (the process header — carries agent identity + status; swipe scrolls it, never pages) ─────── */
 .nh-island .isl-tabs {
   display: flex;

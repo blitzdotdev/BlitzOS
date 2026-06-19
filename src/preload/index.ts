@@ -296,6 +296,20 @@ const api = {
   sendMessage(text: string, agentId = '0'): void {
     ipcRenderer.send('os:user-message', { text, agentId })
   },
+  /** One-shot snapshot of all agent sessions for the dynamic island: roster + per-session transcripts +
+   *  status. The island calls this on open, then rides the live `os:action {type:'chat'}` broadcast. */
+  agents(): Promise<{
+    sessions: Array<{ id: string; title: string; status: string; updatedAt?: number; lastMessagePreview?: string }>
+    threads: Record<string, Array<{ role: string; text: string; ts?: number }>>
+    status: Record<string, string>
+    milestones: Record<string, Array<{ id: string; ts: number; kind: string; text: string }>>
+  }> {
+    return ipcRenderer.invoke('os:agents-snapshot')
+  },
+  /** The island's per-session Details expand: the agent's recent raw tool calls (Grep/Edit/Run …). */
+  agentDetails(id: string): Promise<{ rows: Array<{ label: string }> }> {
+    return ipcRenderer.invoke('os:agent-details', { id })
+  },
   /** Forward an uncaught renderer error to main (the session tape's diagnostics stream). */
   reportError(payload: { via?: string; message?: string; stack?: string; surface?: string }): void {
     ipcRenderer.send('os:client-error', payload)

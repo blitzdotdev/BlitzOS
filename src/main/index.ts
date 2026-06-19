@@ -3,7 +3,7 @@ import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast } from './osActions'
 import { emitSystemMoment, setMomentTap } from './events'
 import { openBootJournal, chatFileName } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -16,6 +16,7 @@ import { wireEnrichment, spawnWorkflowEnrichment } from './workflow-enrichment.m
 // The standalone island.ts window is RETIRED — the notch is now the real UI window itself (sandwich overlay mode);
 // the notch IPC is wired inline below. (island.ts stays on disk but is no longer imported.)
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, orchestratorBootTask } from './agent-runtime.mjs'
+import { startNarrator } from './agent-narrator.mjs'
 import { readTerminalMeta } from './terminal-manager.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
@@ -495,6 +496,12 @@ app.whenReady().then(() => {
   ipcMain.handle('os:rename-agent', (_e, p: { id: string; title: string }) => { try { return osRenameAgent(String(p?.id), String(p?.title ?? '')) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   // The orchestrators (dynamic-workflows) toggle: flip the durable per-agent flag + wake it live (delivery B).
   ipcMain.handle('os:agent-orchestrators', (_e, p: { id: string; on?: boolean }) => { try { return osSetOrchestrators(String(p?.id), p?.on === undefined ? true : !!p.on) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
+  // One-shot snapshot for the dynamic island on open: the session roster + transcripts + status. The island
+  // then rides the live `os:action {type:'chat'}` broadcast for updates.
+  ipcMain.handle('os:agents-snapshot', () => { try { return osAgentsSnapshot() } catch { return { sessions: [], threads: {}, status: {}, milestones: {} } } })
+  // The island's per-session "Details" expand: the agent's recent raw tool calls (Grep/Edit/Run …), read from
+  // its canonical transcript. Deterministic, no LLM.
+  ipcMain.handle('os:agent-details', (_e, p: { id?: string }) => { try { return osAgentDetails(String(p?.id ?? '0')) } catch { return { rows: [] } } })
   // blitz.chat (the shared chat hub control): 'new' -> spawn a fresh agent thread (returns its id);
   // 'rename' → retitle an agent. Routes to the SAME osSpawnAgent/osRenameAgent the toolbar uses — the
   // server mirrors this via the shim's chatControl → /api/os/agent-spawn|agent-rename (no divergence).
@@ -1160,6 +1167,18 @@ app.whenReady().then(() => {
     let tries = 0
     const t = setInterval(() => { if (getAgentSocketUrl()) { clearInterval(t); void resumeAll() } else if (++tries > 150) clearInterval(t) }, 800)
     app.on('before-quit', () => clearInterval(t))
+    // The milestone NARRATOR: every ~60s, summarize each agent's NEW transcript activity into one plain step
+    // (Haiku, strict JSON) and broadcast it (os:action {type:'milestone'}). Idle agents make no call. The island
+    // reads the timeline from osAgentsSnapshot + these live broadcasts.
+    const narrator = startNarrator({
+      listAgents: () => Object.keys(osAgentStatus() || {}),
+      wsRoot: () => osActiveWorkspaceDir(),
+      claudeSidFor: (id: string) => osAgentClaudeSid(String(id)),
+      broadcast: (ev: Record<string, unknown>) => osBroadcast(ev),
+      intervalMs: 60000
+    })
+    setMilestonesProvider((id: string) => narrator.milestones(id))
+    app.on('before-quit', () => { try { narrator.stop() } catch { /* ignore */ } })
   }
 
   // Kernel fault model: tell BOTH inhabitants when the previous run died without a clean shutdown.

@@ -21,6 +21,7 @@ const notchHostSrc = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHo
 const islandSrc = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandPanel.tsx'), 'utf8')
 const attachSrc = readFileSync(join(repoRoot, 'src/renderer/src/notch/AttachPanel.tsx'), 'utf8')
 const attachCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/attach.css'), 'utf8')
+const narratorSrc = readFileSync(join(repoRoot, 'src/main/agent-narrator.mjs'), 'utf8')
 
 let failures = 0
 function ok(label, cond, detail) {
@@ -177,6 +178,47 @@ ok('attach panel = a skills strip (Deep is one) + TWO rounded DASHED boxes (left
     /border: 1\.5px dashed/.test(attachCss) && !/Done/.test(attachSrc))
 ok('right box: click an app row selects ALL its tabs; the ▸/▾ twisty expands to per-tab tri-state selection',
   /att-twisty/.test(attachSrc) && /toggleApp/.test(attachSrc) && /selectedTabs/.test(attachSrc) && /att-check/.test(attachSrc))
+
+// ── Piece 1: the island is wired to REAL agent data (sessions/status/transcripts + steer/spawn), no mock ────────
+ok('agents snapshot channel exists end to end: preload agents() → os:agents-snapshot → osAgentsSnapshot (main)',
+  /agents\(\): Promise/.test(preloadSrc) && /os:agents-snapshot/.test(preloadSrc) &&
+    /ipcMain\.handle\('os:agents-snapshot'/.test(indexSrc) && /osAgentsSnapshot/.test(indexSrc))
+ok('NotchHost subscribes to the live chat broadcast (onAction, type chat) + pulls the snapshot (agents()); no mock sessions',
+  /onAction/.test(notchHostSrc) && /'chat'/.test(notchHostSrc) && /agents\?\.\(\)/.test(notchHostSrc) &&
+    !/MOCK_SESSIONS/.test(notchHostSrc) && !/MOCK_MESSAGES/.test(notchHostSrc))
+ok('steer + spawn are real: the pen tab spawns (notch.send), an agent tab steers (sendMessage(text, id))',
+  /notch\?\.send/.test(notchHostSrc) && /sendMessage\?\.\(text/.test(notchHostSrc))
+ok('IslandPanel renders the real transcript (isl-msg bubbles, messages.map) + a live status line (isl-status); no mock import',
+  /isl-msg/.test(islandSrc) && /isl-status/.test(islandSrc) && /messages\.map/.test(islandSrc) && !/MOCK_/.test(islandSrc))
+
+// ── Pieces 2 + 3: the canonical transcript reader (details) + the Haiku narrator (milestone timeline) ──────────
+ok('the modules exist: the canonical transcript reader + the Haiku narrator',
+  existsSync(join(repoRoot, 'src/main/agent-transcript.mjs')) && existsSync(join(repoRoot, 'src/main/agent-narrator.mjs')))
+ok('the narrator is started at boot (startNarrator) + feeds the island (setMilestonesProvider)',
+  /import \{ startNarrator \}/.test(indexSrc) && /startNarrator\(\{/.test(indexSrc) && /setMilestonesProvider\(/.test(indexSrc))
+ok('the narrator summarizes via Haiku with a strict JSON schema (char-capped milestone, skip flag), model haiku',
+  /claude/.test(narratorSrc) && /--json-schema/.test(narratorSrc) && /--model', 'haiku'/.test(narratorSrc) &&
+    /milestone/.test(narratorSrc) && /skip/.test(narratorSrc))
+ok('the details channel exists end to end: preload agentDetails() → os:agent-details → osAgentDetails (raw tool rows)',
+  /agentDetails\(id: string\): Promise/.test(preloadSrc) && /os:agent-details/.test(preloadSrc) &&
+    /ipcMain\.handle\('os:agent-details'/.test(indexSrc) && /osAgentDetails/.test(indexSrc))
+ok('NotchHost merges the live milestone broadcast (type milestone) into a per-session timeline',
+  /'milestone'/.test(notchHostSrc) && /setMilestones/.test(notchHostSrc))
+ok('IslandPanel renders the merged timeline (milestone STEPS + bubbles) + a per-session Details expand (agentDetails)',
+  /isl-step/.test(islandSrc) && /isl-details/.test(islandSrc) && /agentDetails/.test(islandSrc) && /milestones\.map/.test(islandSrc) &&
+    /\.isl-step \{/.test(islandCss) && /\.isl-detail-rows \{/.test(islandCss))
+
+// ── The PEEK view: a Spotify "now playing" collapse of ALL sessions; toggle in the notch band ──────────────────
+ok('the PEEK toggle lives in the NOTCH BAND (NotchHost .nh-peek-toggle, absolute top-right), always visible',
+  /nh-peek-toggle/.test(notchHostSrc) && /const \[peek, setPeek\]/.test(notchHostSrc) && /attachOpen \|\| peek/.test(notchHostSrc) &&
+    /\.nh-peek-toggle \{[\s\S]*?position: absolute/.test(notchCss))
+ok('PEEK is an ALL-SESSIONS transform: a card per agent (gradient album + latest summary + live), tap to open it',
+  /if \(peek\)/.test(islandSrc) && /isl-peek-list/.test(islandSrc) && /isl-peek-card/.test(islandSrc) &&
+    /isl-peek-album/.test(islandSrc) && /isl-peek-cardtitle/.test(islandSrc) && /allMilestones\[s\.id\]/.test(islandSrc) &&
+    /agentGradient/.test(islandSrc) && /onSelectPage\(i \+ 1\)/.test(islandSrc))
+ok('peek styles: per-agent album + the now-playing equalizer, Apple-native widget look',
+  /\.isl-peek-album \{/.test(islandCss) && /\.isl-peek-cardtitle \{/.test(islandCss) && /\.isl-peek-card \{/.test(islandCss) &&
+    /@keyframes isl-peek-bars/.test(islandCss))
 ok('island.css paints ONLY the interior — the .nh-island root sets NO chassis bg/shape (the chassis is the only black/shape)',
   /\.nh-island \{/.test(islandCss) &&
     (() => {

@@ -178,6 +178,12 @@ export function createSandwich(opts: { width: number; height: number; fullscreen
     if (!pages.isDestroyed() && pages.isFullScreen()) setChromeFs(true)
   })
   const setFullScreen = (on: boolean): void => {
+    // OVERLAY (notch-merge): the UI window is ALREADY a full-display, all-Spaces overlay and `pages` is a hidden
+    // backdrop, so native-fullscreening it is incoherent and TRAPS the user — it covers every desktop with no
+    // native fullscreen-exit chrome (the top-left traffic lights never reveal), and key/Cmd+Q misroute. The
+    // overlay's only "fullscreen" is the renderer's notch clip-grow; native fullscreen is disabled here. (The
+    // green light / Ctrl+Cmd+F still drive real native fullscreen in the non-overlay sandwich + BLITZ_FULLSCREEN.)
+    if (opts.overlay) return
     if (!pages.isDestroyed()) pages.setFullScreen(on)
   }
   // PoC-style "fake fullscreen" (plans/blitzos-dynamic-island.md): cover the display on the CURRENT Space with

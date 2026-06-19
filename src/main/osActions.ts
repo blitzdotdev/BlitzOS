@@ -5,6 +5,8 @@ import { controlWindow, pinchSurface, registerCdpSurface, unregisterCdpSurface, 
 import { ingestSignals, ingestCanvasOps, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, setTickSource, resetTickBaseline, absorbTickEcho, INJECT, DRAIN } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
+import { readFileSync } from 'node:fs'
+import { sessionJsonlPath, readSessionEvents, toolLabel } from './agent-transcript.mjs'
 import { tel } from './telemetry'
 import {
   closeWebContentsView,
@@ -253,12 +255,15 @@ export function initOsActions(opts: {
     onContextMenu: (surfaceId, x, y) => sendToRenderer('os:action', { type: 'surface-contextmenu', surfaceId, x, y }),
     onShiftTap: () => sendToRenderer('os:shifttap', undefined),
     onAltHold: (phase) => osRadialPhase(phase),
-    // A page entered/left HTML5 fullscreen (video requestFullscreen / YouTube button / agent `f`). Route
-    // the keyboard to the L0 pages window so Esc/space/f reach the video (Chromium exits fullscreen on
-    // Esc), and tell the renderer to raise this view to fill the window + drop the chrome. Leave reverses.
+    // A page entered/left HTML5 fullscreen (video requestFullscreen / YouTube button / agent `f`). The page's
+    // view is hosted IN the UI window (getWindow → mainWindow = sandwich.ui), and the view host has ALREADY
+    // focused the page's OWN webContents — so Esc reaches the video (Chromium exits on Esc) and BlitzOS is the
+    // active app (Cmd+Q quits it). We must NOT steal macOS key to the hidden, empty `pages` window on enter: that
+    // was the trap — a chrome-less, all-Spaces video fullscreen where Esc/Cmd+Q never reached the video and the
+    // user was stuck on every desktop. On LEAVE, hand the keyboard back to the UI canvas. Then tell the renderer
+    // to raise/drop the view + chrome.
     onPageFullscreen: (surfaceId, on) => {
-      if (on) sandwichFocus.focusPages()
-      else sandwichFocus.focusUi()
+      if (!on) sandwichFocus.focusUi()
       sendToRenderer('os:web-fullscreen', { id: surfaceId, on })
     }
   })
@@ -905,6 +910,76 @@ export function osAgentStatus(): Record<string, string> {
 }
 export function osClearBrainContext(agentId = '0'): void {
   clearBrainContextHook?.(String(agentId))
+}
+/** The dynamic island's milestone provider (set by the narrator at boot). id -> [{id,ts,kind,text}]. */
+type IslandMilestone = { id: string; ts: number; kind: string; text: string }
+let milestonesProvider: ((id: string) => IslandMilestone[]) | null = null
+export function setMilestonesProvider(fn: ((id: string) => IslandMilestone[]) | null): void {
+  milestonesProvider = fn
+}
+
+/** Resolve an agent's canonical Claude session id (for locating its transcript jsonl). It lives in the
+ *  terminal-manager's per-agent meta (`<ws>/.blitzos/terminals/<id>/meta.json`), the SAME file it owns. */
+export function osAgentClaudeSid(id: string): string | null {
+  try {
+    const root = osActiveWorkspaceDir()
+    if (!root) return null
+    const meta = JSON.parse(readFileSync(join(root, '.blitzos', 'terminals', String(id), 'meta.json'), 'utf8'))
+    return (meta && typeof meta.claudeSessionId === 'string' && meta.claudeSessionId) || null
+  } catch {
+    return null
+  }
+}
+
+/** One-shot snapshot for the dynamic island on open: the full session roster + per-session transcripts +
+ *  status + the narrator's milestone timelines, mirroring the live `{type:'chat'}`/`{type:'milestone'}`
+ *  broadcasts. The island calls this once, then rides the broadcasts for live updates. */
+export function osAgentsSnapshot(): {
+  sessions: Array<Record<string, unknown>>
+  threads: Record<string, Array<Record<string, unknown>>>
+  status: Record<string, string>
+  milestones: Record<string, IslandMilestone[]>
+} {
+  const empty = { sessions: [], threads: {}, status: {}, milestones: {} }
+  if (!wsHost) return empty
+  try {
+    const p = wsHost.chatHubProps() as {
+      sessions?: Array<Record<string, unknown>>
+      threads?: Record<string, Array<Record<string, unknown>>>
+      status?: Record<string, string>
+    }
+    const sessions = p.sessions || []
+    const milestones: Record<string, IslandMilestone[]> = {}
+    if (milestonesProvider) {
+      for (const s of sessions) {
+        try {
+          milestones[String(s.id)] = milestonesProvider(String(s.id)) || []
+        } catch {
+          /* per-agent best-effort */
+        }
+      }
+    }
+    return { sessions, threads: p.threads || {}, status: p.status || {}, milestones }
+  } catch {
+    return empty
+  }
+}
+
+/** The raw "what it did" rows for the island's per-session Details expand: the agent's recent tool calls
+ *  (Grep/Edit/Run …), read deterministically from its canonical transcript. No LLM. */
+export function osAgentDetails(id: string): { rows: Array<{ label: string }> } {
+  try {
+    const root = osActiveWorkspaceDir()
+    const jsonl = sessionJsonlPath(root, osAgentClaudeSid(id))
+    const { events } = readSessionEvents(jsonl, 0)
+    const rows = events
+      .filter((e) => e.kind === 'tool')
+      .slice(-40)
+      .map((e) => ({ label: toolLabel((e as { row: Parameters<typeof toolLabel>[0] }).row) }))
+    return { rows }
+  } catch {
+    return { rows: [] }
+  }
 }
 /** Ensure an agent is up WITHOUT a chat message — the onboarding director uses this to start the
  *  resident interviewer at board-ready (its standing duty rides the bootstrap). Re-execs via the tmux

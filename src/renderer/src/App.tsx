@@ -444,6 +444,8 @@ export default function App(): JSX.Element {
   // (un-pinned) panel keeps the original follow-the-mouse behaviour. Cleared on enter / close / retract.
   const [notchPinned, setNotchPinned] = useState(false)
   const notchPinnedRef = useRef(false)
+  // Aggregate agent activity for the COLLAPSED notch's live compact presentation (working / needs-you / total).
+  const [notchPeek, setNotchPeek] = useState({ working: 0, attn: 0, total: 0 })
   const setNotchPinnedBoth = (on: boolean): void => {
     notchPinnedRef.current = on
     setNotchPinned(on)
@@ -1507,6 +1509,22 @@ export default function App(): JSX.Element {
         // The OS owns every agent transcript and sends the hub props to the ONE primary Chat surface.
         // Legacy messages-only payloads are still accepted for older transports.
         const sid = a.agentId != null ? String(a.agentId) : '0'
+        // Keep the collapsed notch's live compact glance current: tally working / needs-you across the roster.
+        // Computed BEFORE the chat-surface guard so the closed-notch dot stays live even with no Chat surface open.
+        {
+          const statuses =
+            a.status && typeof a.status === 'object'
+              ? Object.values(a.status as Record<string, string>).map(String)
+              : Array.isArray(a.sessions)
+                ? (a.sessions as Array<{ status?: unknown }>).map((s) => String(s?.status ?? 'idle'))
+                : []
+          if (statuses.length || Array.isArray(a.sessions)) {
+            const working = statuses.filter((s) => s === 'working' || s === 'starting').length
+            const attn = statuses.filter((s) => s === 'waiting').length
+            const total = Array.isArray(a.sessions) ? a.sessions.length : statuses.length
+            setNotchPeek({ working, attn, total })
+          }
+        }
         const chat = st.surfaces.find((s) => s.id === 'chat') || st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
         if (!chat) return
         if (a.sessions || a.threads || a.status) {
@@ -2449,11 +2467,15 @@ export default function App(): JSX.Element {
               toggleNotch()
             }}
           >
-            <div className="notch-peek">
-              <i className="d1" />
-              <i />
-              <i />
-              <i className="d2" />
+            <div
+              className="notch-peek"
+              data-state={
+                notchPeek.working > 0 ? 'working' : notchPeek.attn > 0 ? 'attn' : notchPeek.total > 0 ? 'idle' : 'empty'
+              }
+              aria-hidden
+            >
+              <span className="notch-peek-dot" />
+              {notchPeek.total > 0 && <span className="notch-peek-count">{notchPeek.total}</span>}
             </div>
           </div>
           {/* The panel / process UI is the NotchHost (the locked island design), rendered via a portal to

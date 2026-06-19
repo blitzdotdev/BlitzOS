@@ -62,6 +62,17 @@ export interface WorkspaceHost {
   noteAgentActivity(agentId: string, source?: string): { ok: boolean; throttled?: boolean; error?: string }
   /** Snapshot { agentId -> status } of every chat-bearing agent — the W2 supervisor tick's agent-state input. */
   chatStatusSnapshot(): Record<string, 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error'>
+  /** Full chat-hub props for one active agent: the session roster + per-session transcripts + status. Used by
+   *  the dynamic island's one-shot snapshot (osAgentsSnapshot) and the live `{type:'chat'}` broadcast. */
+  chatHubProps(activeAgentId?: string): {
+    sessions: Array<{ id: string; title: string; status: string; updatedAt: number; lastMessagePreview: string; unread: boolean }>
+    threads: Record<string, Array<{ role: string; text: string; ts?: number }>>
+    status: Record<string, string>
+    activeAgentId: string
+    messages: Array<{ role: string; text: string; ts?: number }>
+    agentId: string
+    sessionId: string
+  }
   agentIds(): string[]
   restoreChatHub(): { ok: boolean; id?: string; error?: string }
   newAgentId(): string

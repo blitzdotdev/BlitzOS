@@ -1042,6 +1042,7 @@ export function createWorkspaceHost(a) {
     setChatStatus,
     noteAgentActivity,
     chatStatusSnapshot,
+    chatHubProps,
     agentIds,
     restoreChatHub,
     newAgentId,

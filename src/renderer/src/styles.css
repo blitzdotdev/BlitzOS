@@ -109,22 +109,72 @@ button {
   display: grid;
   place-items: center;
 }
+/* The COLLAPSED compact presentation (2026 Dynamic-Island behavior): the closed notch is a LIVE glance of agent
+   activity, not static decoration. One status dot whose color + motion track the aggregate roster state, plus a
+   count of live agents. App.tsx feeds data-state + the count from the chat broadcast. Mirrors the expanded
+   island's accent language (Apple system blue = working) so collapsed → expanded reads as one fluid surface. */
 .notch-peek {
   display: flex;
-  gap: 5px;
+  align-items: center;
+  gap: 6px;
   transition: opacity 0.2s;
 }
-.notch-peek i {
+.notch-peek-dot {
   width: 7px;
   height: 7px;
-  border-radius: 2px;
+  flex: none;
+  border-radius: 50%;
+  background: #5a5a5e; /* empty: a quiet idle-OS dot */
+  transition: background 0.2s ease-out;
+}
+.notch-peek-count {
+  font: 600 11px/1 ui-rounded, 'SF Pro Rounded', -apple-system, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+  color: #e6e6e6;
+}
+/* working = the signature pulsing Apple-blue dot (matches the expanded island's running state). */
+.notch-peek[data-state='working'] .notch-peek-dot {
+  background: #0a84ff;
+  animation: notch-peek-pulse 1.5s ease-in-out infinite;
+}
+.notch-peek[data-state='working'] .notch-peek-count {
+  color: #fff;
+}
+/* needs-you = a steady amber dot that softly breathes (actionable, never alarming). */
+.notch-peek[data-state='attn'] .notch-peek-dot {
+  background: #ff9f0a;
+  animation: notch-peek-breathe 2.4s ease-in-out infinite;
+}
+/* live-but-idle = agents exist, nothing running: a calm neutral dot. */
+.notch-peek[data-state='idle'] .notch-peek-dot {
   background: #cfd0d2;
 }
-.notch-peek i.d1 {
-  background: #e31c30;
+@keyframes notch-peek-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgba(10, 132, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(10, 132, 255, 0);
+  }
 }
-.notch-peek i.d2 {
-  background: #2e9e6b;
+@keyframes notch-peek-breathe {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notch-peek[data-state='working'] .notch-peek-dot,
+  .notch-peek[data-state='attn'] .notch-peek-dot {
+    animation: none;
+  }
 }
 .notch-handle.is-open .notch-peek {
   opacity: 0;

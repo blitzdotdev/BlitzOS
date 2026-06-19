@@ -24,6 +24,7 @@
   color: #ededed;
   border-radius: 0 0 28px 28px;
   overflow: hidden;
+  position: relative; /* positioning context for the peek toggle in the notch band */
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
   animation: nhost-in 0.28s cubic-bezier(0.32, 0.72, 0, 1);
   /* the island EXPANDS sideways when the attachment panel opens (NotchHost adds .nh-wide). */
@@ -31,6 +32,36 @@
 }
 .nh-chassis.nh-wide {
   width: 740px;
+}
+
+/* the PEEK toggle: a macOS-menu-bar-style control pinned to the very top (the notch band), top-right, ALWAYS
+   visible across every view. The physical notch is centered, so the right side is clear (like the status cluster). */
+.nh-peek-toggle {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px;
+  transition: color 0.15s ease-out;
+}
+.nh-peek-toggle:hover,
+.nh-peek-toggle.on {
+  color: #fff;
+}
+.nh-peek-toggle svg {
+  width: 15px;
+  height: 15px;
+  display: block;
 }
 @keyframes nhost-in {
   from {

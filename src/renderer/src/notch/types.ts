@@ -1,18 +1,43 @@
-// The contract the island panel implements. IslandPanel is PURE PRESENTATIONAL: NotchHost owns all state (current
-// page, swipe-scroll, draft, whether the connectors view is open) and hands the panel data + callbacks. The tab
-// strip is shared across every view: tab 0 is the new-session "+" tab, tabs 1..N are the agents. The body below the
-// strip is the composer when page===0, the activity feed + steer bar otherwise. Each composer has an attach button
-// (a circle "+") that opens the connectors view (a full-island takeover). It imports ChatInput for the composer.
-import type { MockSession, MockMessage, MockActivity } from './mock'
+// The contract IslandPanel implements. NotchHost owns all state (current page, attach-open, and the REAL agent
+// sessions/threads/status it pulls from the chat channel) and hands the panel data + callbacks. The tab strip is
+// shared: tab 0 is the new-session tab, tabs 1..N are the live agents. The body is the new-session composer when
+// page===0, else the active agent's transcript + steer bar.
+
+// One agent session as the island needs it. `status` is the raw host status (working/starting/watching/waiting/
+// idle/stopped/error); IslandPanel maps it to the dot + a label.
+export interface IslandSession {
+  id: string
+  title: string
+  status: string
+}
+
+export interface IslandMessage {
+  role: 'user' | 'agent'
+  text: string
+  ts?: number
+}
+
+// A summarized step from the narrator (Haiku): one plain past-tense line of what the agent did.
+export interface IslandMilestone {
+  id: string
+  ts: number
+  kind: 'step' | 'ask' | 'result'
+  text: string
+}
 
 export interface IslandPanelProps {
-  sessions: MockSession[]
-  page: number // 0 = the new-session ("+") tab; 1..N = the agent at page-1
-  onSelectPage: (p: number) => void // select a tab (0 = new session, i = agent i-1)
-  messages: MockMessage[] // transcript for the active agent (process view)
-  activity: MockActivity[] // activity feed for the active agent (process view)
-  onSend: (text: string) => void // visual-only: NotchHost appends a mock message
+  sessions: IslandSession[]
+  page: number // 0 = the new-session (pen) tab; 1..N = the agent at page-1
+  onSelectPage: (p: number) => void
+  messages: IslandMessage[] // the active session's transcript (process view)
+  milestones: IslandMilestone[] // the active session's summarized step timeline (narrator)
+  allMilestones: Record<string, IslandMilestone[]> // every session's summaries (for the all-sessions peek view)
+  status: string // the active session's raw host status (process view)
+  activeId?: string // the active session id (for the Details expand to fetch raw rows)
+  peek: boolean // the peek (Spotify "now playing") view: collapse ALL sessions to summaries only
+  onTogglePeek: () => void
+  onSend: (text: string) => void // page 0 = spawn a new session; an agent tab = steer it
   menuBarH: number // notch height in px, for top alignment under the physical notch
-  attachOpen: boolean // the attach "+" toggles the attachment panel INLINE above the message bar (island grows)
+  attachOpen: boolean // the attach "+" toggles the attachment panel INLINE (island grows)
   onToggleAttach: () => void
 }
