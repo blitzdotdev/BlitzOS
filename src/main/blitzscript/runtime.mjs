@@ -15,6 +15,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { basename, join, dirname } from 'node:path'
 import { agent, RunContext, withRunContext, getRunContext, WorkflowBudgetExceededError } from './agent.mjs'
+import { emitProgress, withGroup, previewOf, setProgressSink } from './progress.mjs'
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 
@@ -138,14 +139,10 @@ export function makeWrappedFn(body) {
 }
 
 // ── 4) the orchestration globals, bound to a RunContext ───────────────────────────────────────────
-// A progress sink: phase/log/agent markers. Default mirrors `log` lines to stderr so `blitz run` in a
-// terminal stays readable; BlitzOS can override via setProgressSink to forward to chat/say.
-let _progressSink = (ev) => {
-  if (ev && ev.kind === 'log') process.stderr.write(`[blitz] ${ev.message}\n`)
-  else if (ev && ev.kind === 'phase') process.stderr.write(`[blitz] === ${ev.title} ===\n`)
-}
-export function setProgressSink(fn) { _progressSink = typeof fn === 'function' ? fn : _progressSink }
-function emit(ev) { try { _progressSink(ev) } catch { /* a sink must never break a workflow */ } }
+// The progress sink + the WfEvent shapes live in progress.mjs (shared with agent.mjs, no circular dep).
+// A host installs one setProgressSink that routes every event by runId into the per-run bus; the default
+// mirrors phase/log to stderr so `blitz run` in a terminal stays readable. Re-exported for back-compat.
+export { setProgressSink }
 
 // parallel(thunks) — BARRIER over an array of FUNCTIONS (not promises). Each runs under the same ambient
 // RunContext (AsyncLocalStorage), so a deeply-nested parallel-of-parallel sees the right run. A throwing
@@ -156,14 +153,20 @@ function parallel(thunks) {
   for (const t of thunks) {
     if (typeof t !== 'function') throw new TypeError('parallel() expects an array of functions, not promises. Wrap each call: () => agent(...)')
   }
+  const ctx = getRunContext()
+  const groupId = `g${ctx.groupSeq++}`
+  emitProgress(ctx, { type: 'group:start', groupId, kind: 'parallel', phaseId: ctx.phase, size: thunks.length })
   let droppedBudget = 0
-  const ps = thunks.map((t) => Promise.resolve().then(t).catch((e) => {
+  // withGroup scopes each thunk under the fan-out id, so agent() leaves inside report this groupId.
+  const ps = thunks.map((t) => Promise.resolve().then(() => withGroup(groupId, t)).catch((e) => {
     if (e instanceof WorkflowBudgetExceededError) { droppedBudget++; return null }
     logThrow(e)
     return null
   }))
   return Promise.all(ps).then((res) => {
-    if (droppedBudget) emit({ kind: 'log', message: `parallel: ${droppedBudget} slot(s) dropped — token budget exceeded` })
+    const failed = res.filter((r) => r === null).length
+    emitProgress(ctx, { type: 'group:done', groupId, ok: res.length - failed, failed })
+    if (droppedBudget) emitProgress(ctx, { type: 'log', phaseId: ctx.phase, message: `parallel: ${droppedBudget} slot(s) dropped — token budget exceeded` })
     return res
   })
 }
@@ -175,7 +178,11 @@ function pipeline(items, ...stages) {
   if (!Array.isArray(items)) throw new TypeError('pipeline() expects (items[], ...stageFns)')
   if (items.length > MAX_FANOUT) throw new Error(`blitz pipeline: ${items.length} items exceeds the cap (${MAX_FANOUT})`)
   for (const s of stages) if (typeof s !== 'function') throw new TypeError('pipeline() stages must be functions: pipeline(items, (item)=>…, (prev,item,i)=>…)')
-  const runItem = async (item, index) => {
+  const ctx = getRunContext()
+  const groupId = `g${ctx.groupSeq++}`
+  emitProgress(ctx, { type: 'group:start', groupId, kind: 'pipeline', phaseId: ctx.phase, size: items.length })
+  // Each item's whole stage-chain runs under the group id, so every agent() leaf in it reports this group.
+  const runItem = (item, index) => withGroup(groupId, async () => {
     let prev
     for (let s = 0; s < stages.length; s++) {
       try {
@@ -186,12 +193,16 @@ function pipeline(items, ...stages) {
       }
     }
     return prev
-  }
-  return Promise.all(items.map((item, i) => runItem(item, i)))
+  })
+  return Promise.all(items.map((item, i) => runItem(item, i))).then((res) => {
+    const failed = res.filter((r) => r === null).length
+    emitProgress(ctx, { type: 'group:done', groupId, ok: res.length - failed, failed })
+    return res
+  })
 }
 
 function logThrow(e) {
-  emit({ kind: 'error', message: e && e.message ? e.message : String(e) })
+  emitProgress(getRunContext(), { type: 'error', message: e && e.message ? e.message : String(e) })
   process.stderr.write(`[blitz] slot failed: ${e && e.message ? e.message : e}\n`)
 }
 
@@ -209,14 +220,11 @@ export function makeBudget(total, ctx) {
 // agent is passed through but the workflow body sees ITS phase via ctx (agent() reads ctx.phase when
 // opts.phase is absent). workflow() runs another workflow ONE level deep with its OWN fresh context.
 function bindGlobals(ctx) {
-  const phase = (title) => { ctx.phase = title == null ? null : String(title); emit({ kind: 'phase', title: ctx.phase }) }
-  const log = (message) => emit({ kind: 'log', message: String(message), phase: ctx.phase })
-  // agent wrapper: default opts.phase to the ambient ctx.phase so progress markers group correctly.
-  const agentG = (prompt, opts = {}, fallback) => {
-    const merged = (opts && opts.phase == null && ctx.phase != null) ? { ...opts, phase: ctx.phase } : opts
-    emit({ kind: 'agent', label: merged && merged.label, phase: (merged && merged.phase) || ctx.phase, status: 'start' })
-    return agent(prompt, merged, fallback)
-  }
+  const phase = (title) => { ctx.phase = title == null ? null : String(title); emitProgress(ctx, { type: 'phase', phaseId: ctx.phase, title: ctx.phase }) }
+  const log = (message) => emitProgress(ctx, { type: 'log', phaseId: ctx.phase, message: String(message) })
+  // agent:start/done are emitted INSIDE agent() (where the node id + group live), so the wrapper that the
+  // body sees is a plain pass-through; agent() reads the ambient ctx.phase itself.
+  const agentG = (prompt, opts = {}, fallback) => agent(prompt, opts, fallback)
   const budget = makeBudget(ctx.budget && typeof ctx.budget === 'object' ? ctx.budget.total : ctx.budget, ctx)
   const workflowG = (nameOrRef, wfArgs) => runNestedWorkflow(ctx, nameOrRef, wfArgs)
   // order MUST match GLOBAL_NAMES
@@ -224,7 +232,7 @@ function bindGlobals(ctx) {
 }
 
 // ── 5) runWorkflow: fresh per-run RunContext (G4/G6) ──────────────────────────────────────────────
-export async function runWorkflow(file, { args, memDir, budget, depth = 0 } = {}) {
+export async function runWorkflow(file, { args, memDir, budget, depth = 0, runId = null } = {}) {
   const { meta, body } = loadWorkflow(file)
   // Ensure the mem dir exists up front so the journal (written DURING agent() calls, before result.json)
   // and a nested workflow()'s SUBDIR can be created. The CLI also mkdir's it; this makes runWorkflow
@@ -236,10 +244,20 @@ export async function runWorkflow(file, { args, memDir, budget, depth = 0 } = {}
     args,
     budget: budget != null ? makeBudget(budget) : null, // a raw number -> a budget object; null = unbounded
     defaultModel: meta && typeof meta.model === 'string' ? meta.model : undefined,
+    runId, // the externalization run id — stamped onto every WfEvent so a host sink can route by run.
   })
   return withRunContext(runCtx, async () => {
-    const fn = makeWrappedFn(body)
-    const result = await fn(...bindGlobals(runCtx), ...shadowValues())
+    const startedAt = Date.now()
+    emitProgress(runCtx, { type: 'run:start', name: meta && meta.name, description: meta && meta.description })
+    let result
+    try {
+      const fn = makeWrappedFn(body)
+      result = await fn(...bindGlobals(runCtx), ...shadowValues())
+    } catch (e) {
+      emitProgress(runCtx, { type: 'run:done', ok: false, ms: Date.now() - startedAt, calls: runCtx.calls, tokens: runCtx.tokensSpent, preview: previewOf(e && e.message ? e.message : e) })
+      throw e
+    }
+    emitProgress(runCtx, { type: 'run:done', ok: true, ms: Date.now() - startedAt, calls: runCtx.calls, tokens: runCtx.tokensSpent, preview: previewOf(result) })
     if (memDir) {
       try {
         mkdirSync(memDir, { recursive: true })

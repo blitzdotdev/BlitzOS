@@ -1,5 +1,8 @@
 // Type declarations for blitzscript/runtime.mjs — the Claude Code Workflow loader + injected globals.
 
+import { setProgressSink } from './progress.mjs'
+export { setProgressSink }
+
 export interface WorkflowMeta {
   name: string
   description?: string
@@ -31,6 +34,8 @@ export interface RunWorkflowOpts {
   budget?: number | null
   /** Nesting depth (0 at the root run). */
   depth?: number
+  /** The externalization run id — stamped on every WfEvent so a host sink can route by run. */
+  runId?: string | null
 }
 
 export interface RunWorkflowResult {
@@ -50,9 +55,6 @@ export function pipeline(items: unknown[], ...stages: Array<(...a: unknown[]) =>
 
 /** A frozen { total, spent(), remaining() } over the run's tokensSpent. total:null = unbounded. */
 export function makeBudget(total: number | null | undefined, ctx?: unknown): Readonly<{ total: number | null; spent: () => number; remaining: () => number }>
-
-/** Override the progress sink (phase/log/agent markers). Default mirrors log lines to stderr. */
-export function setProgressSink(fn: ((ev: { kind: string; [k: string]: unknown }) => void) | null): void
 
 /** The injected global names, in the fixed order the wrapped function expects. */
 export const GLOBAL_NAMES: string[]

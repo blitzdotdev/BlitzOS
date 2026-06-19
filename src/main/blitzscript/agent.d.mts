@@ -37,13 +37,15 @@ export const MAX_CONCURRENCY: number
 
 /** Per-run state. runtime.runWorkflow creates a fresh one per run; nested workflow() gets its own. */
 export class RunContext {
-  constructor(init?: { memDir?: string | null; depth?: number; args?: unknown; budget?: unknown; phase?: string | null; defaultModel?: string })
+  constructor(init?: { memDir?: string | null; depth?: number; args?: unknown; budget?: unknown; phase?: string | null; defaultModel?: string; runId?: string | null })
   memDir: string | null
   depth: number
   args: unknown
   budget: unknown
   defaultModel?: string
   phase: string | null
+  runId: string | null
+  groupSeq: number
   jIndex: number
   journal: Array<{ hash: string; result: unknown }> | null
   divergedAt: number

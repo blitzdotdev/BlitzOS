@@ -119,8 +119,8 @@ console.log('\nphase / log emit:')
   setProgressSink((ev) => events.push(ev))
   await runWorkflow(wfFile('emit.js', `export const meta={name:'e'}\nphase('P1')\nlog('hello')\nreturn 1`), {})
   setProgressSink(null)
-  ok('phase emits a phase marker', events.some((e) => e.kind === 'phase' && e.title === 'P1'), events)
-  ok('log emits a log marker', events.some((e) => e.kind === 'log' && e.message === 'hello'), events)
+  ok('phase emits a phase marker', events.some((e) => e.type === 'phase' && e.title === 'P1'), events)
+  ok('log emits a log marker', events.some((e) => e.type === 'log' && e.message === 'hello'), events)
 }
 
 // ── injected agent is callable (stub spawner), under the run context ─────────────────────────────

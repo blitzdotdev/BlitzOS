@@ -42,6 +42,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync } from 
 import { join } from 'node:path'
 import { harnesses } from './harnesses.mjs'
 import { validate as validateSchema, stubFromSchema } from './schema.mjs'
+import { emitProgress, currentGroup, previewOf } from './progress.mjs'
 
 // ── concurrency cap (PROCESS-GLOBAL — bounds the resource across ALL runs) ───────────────────────
 // Each leaf is a heavy PROCESS (model/config startup costs seconds), not an API call, so a wide
@@ -66,13 +67,15 @@ function _release() {
 const PER_RUN_CALL_CAP = 1000        // agent() calls per RUN (G6); the dry-run path has its OWN cap.
 
 export class RunContext {
-  constructor({ memDir = null, depth = 0, args = undefined, budget = null, phase = null, defaultModel = undefined } = {}) {
+  constructor({ memDir = null, depth = 0, args = undefined, budget = null, phase = null, defaultModel = undefined, runId = null } = {}) {
     this.memDir = memDir || null
     this.depth = Number.isFinite(Number(depth)) ? Number(depth) : 0
     this.args = args
     this.budget = budget                 // a frozen budget object (runtime.makeBudget) or null
     this.defaultModel = defaultModel     // meta.model — the per-workflow model default
     this.phase = phase                   // current phase title (set by phase())
+    this.runId = runId != null ? String(runId) : null  // the externalization run id (telemetry routing); null off-host
+    this.groupSeq = 0                    // monotonic fan-out group counter (parallel/pipeline emit g0,g1,…)
 
     // journaling (edge-result memoization for resume) — was _jIndex/_journal/_divergedAt
     this.jIndex = 0                      // next invocation index (assigned at the deterministic start of each agent() body)
@@ -328,8 +331,15 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
 
   // RESUME fast-forward: a matching unchanged-prefix journal entry returns its cached result, no spawn.
   const hash = _hashCall(harnessName, model, effort, agentType, schema, fullPrompt)
+  // The externalization start event for this node (emitted on the real path AND on a resume fast-forward,
+  // so the live viz stays complete across a resume). phaseId honors an explicit opts.phase, else the ambient.
+  const startEv = { type: 'agent:start', nodeId: i, label: opts.label != null ? String(opts.label) : null, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), model: model || undefined, harness: harnessName }
   const cached = ctx.journalHit(i, hash)
-  if (cached) return cached.result
+  if (cached) {
+    emitProgress(ctx, startEv)
+    emitProgress(ctx, { type: 'agent:done', nodeId: i, status: 'ok', ms: 0, tokens: 0, preview: previewOf(cached.result) })
+    return cached.result
+  }
 
   // Build the spawn descriptor. build()/buildStructured() VALIDATE flags (e.g. claude effort), so bad
   // opts throw here. The structured path is DISTINCT (G1/G2): it forces the schema via the native flag.
@@ -341,6 +351,7 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
   const retries = Math.max(0, Number(opts.retries) || 0)
   const schemaRetries = schema ? Math.max(1, Math.min(3, Number(opts.schemaRetries) || 1)) : 0
 
+  let leafTokens = 0  // tokens parsed for THIS leaf (best-effort), surfaced on its agent:done event
   const runOnce = async (cwd, extraNote) => {
     const built = usingStructured
       ? harness.buildStructured(extraNote ? fullPrompt + extraNote : fullPrompt, buildOpts, schema, ctx)
@@ -349,11 +360,13 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
     const stdout = await _spawn(built.cmd, built.args, childEnv, cwd)
     // Accumulate token usage for budget (best-effort; harnesses expose usage() when they can parse it).
     if (typeof harness.usage === 'function') {
-      try { const u = harness.usage(stdout); if (Number.isFinite(u)) ctx.tokensSpent += u } catch { /* best-effort */ }
+      try { const u = harness.usage(stdout); if (Number.isFinite(u)) { ctx.tokensSpent += u; leafTokens += u } } catch { /* best-effort */ }
     }
     return stdout
   }
 
+  emitProgress(ctx, startEv)
+  const startedAt = Date.now()
   await _acquire()
   try {
     const exec = async (cwd) => {
@@ -383,8 +396,14 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
       if (schema) return null
       throw lastErr
     }
-    if (opts.isolation === 'worktree') return await _withWorktree(ctx, opts.label || `i${i}`, opts.cwd, exec)
-    return await exec(opts.cwd)
+    const out = opts.isolation === 'worktree'
+      ? await _withWorktree(ctx, opts.label || `i${i}`, opts.cwd, exec)
+      : await exec(opts.cwd)
+    emitProgress(ctx, { type: 'agent:done', nodeId: i, status: (out === null && schema) ? 'null' : 'ok', ms: Date.now() - startedAt, tokens: leafTokens, preview: previewOf(out) })
+    return out
+  } catch (e) {
+    emitProgress(ctx, { type: 'agent:done', nodeId: i, status: 'error', ms: Date.now() - startedAt, tokens: leafTokens, message: e && e.message ? e.message : String(e) })
+    throw e
   } finally {
     _release()
   }
