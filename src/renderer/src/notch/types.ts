@@ -31,11 +31,9 @@ export interface IslandPanelProps {
   onSelectPage: (p: number) => void
   messages: IslandMessage[] // the active session's transcript (process view)
   milestones: IslandMilestone[] // the active session's summarized step timeline (narrator)
-  allMilestones: Record<string, IslandMilestone[]> // every session's summaries (for the all-sessions peek view)
   status: string // the active session's raw host status (process view)
-  activeId?: string // the active session id (for the Details expand to fetch raw rows)
-  peek: boolean // the peek (Spotify "now playing") view: collapse ALL sessions to summaries only
-  onTogglePeek: () => void
+  activeId?: string // the active session id (the Details expand + the peek now-playing)
+  peek: boolean // peek: keep the tab bar, but the area BELOW becomes the active agent's "now playing"
   onSend: (text: string) => void // page 0 = spawn a new session; an agent tab = steer it
   menuBarH: number // notch height in px, for top alignment under the physical notch
   attachOpen: boolean // the attach "+" toggles the attachment panel INLINE (island grows)

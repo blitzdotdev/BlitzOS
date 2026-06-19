@@ -139,27 +139,7 @@
   font-size: 13px;
 }
 
-/* ── a narrator milestone STEP in the timeline (a plain past-tense line) + the per-session Details expand ─────── */
-.nh-island .isl-step {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 13px;
-  line-height: 18px;
-  color: #ffffffe6;
-  padding: 1px 2px;
-}
-.nh-island .isl-step-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  align-self: center;
-  border-radius: 50%;
-  background: var(--isl-accent);
-}
-.nh-island .isl-step-text {
-  min-width: 0;
-}
+/* ── the per-session Details expand (raw tool rows; the chat itself is PURE messages, no summaries) ──────────── */
 .nh-island .isl-details {
   flex: none;
   align-self: flex-start;
@@ -206,70 +186,88 @@
   color: var(--isl-dim);
 }
 
-/* ── the PEEK view: a "now playing" card per session (the toggle itself is .nh-peek-toggle in notch.css) ───────── */
+/* ── the PEEK view: the active agent's "now playing" BELOW the kept tab bar (the toggle is .nh-peek-toggle) ─────── */
 .nh-island.isl-peek-mode {
-  min-height: 200px;
+  min-height: 240px;
   max-height: 74vh;
 }
-.nh-island .isl-peek-list {
+/* the now-playing group (lyrics + album/title/status) pinned FLUSH to the island bottom. */
+.nh-island .isl-peek-body {
+  margin-top: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  overflow-y: auto;
-  padding: 2px;
-  scrollbar-width: thin;
-  scrollbar-color: #ffffff26 transparent;
+  min-height: 0;
 }
-.nh-island .isl-peek-list::-webkit-scrollbar {
-  width: 6px;
-}
-.nh-island .isl-peek-list::-webkit-scrollbar-thumb {
-  background: #ffffff26;
-  border-radius: 9999px;
-}
-.nh-island .isl-peek-card {
+/* past summaries = "lyrics": smaller, white-on-black, dim → bright, fading out at the top. Shows ~3 lines and
+   SCROLLS for older (scroll pinned to the newest). The fade mask hints there is more above. */
+.nh-island .isl-peek-lyrics {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  padding: 8px;
-  border-radius: 16px;
-  transition: background 0.14s ease-out;
+  flex-direction: column;
+  gap: 13px;
+  padding: 8px 2px 4px;
+  max-height: 104px; /* ~3 lyric lines */
+  overflow-y: auto;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 100%);
 }
-.nh-island .isl-peek-card:hover {
-  background: rgba(255, 255, 255, 0.05);
+.nh-island .isl-peek-lyrics::-webkit-scrollbar {
+  display: none;
+}
+.nh-island .isl-peek-ly {
+  font-size: 17px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--isl-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the "now playing": the big gradient agent album + the latest summary as the bold title. */
+.nh-island .isl-peek-now {
+  display: flex;
+  align-items: flex-start; /* the title's top is flush with the album's top */
+  gap: 18px;
+  margin-top: 16px; /* breathing room between the lyrics and the album */
 }
 .nh-island .isl-peek-album {
   position: relative;
-  width: 58px;
-  height: 58px;
+  width: 92px;
+  height: 92px;
   flex: none;
-  border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 18px rgba(0, 0, 0, 0.4);
+  border-radius: 24px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 10px 28px rgba(0, 0, 0, 0.45);
+  animation: isl-peek-breathe 4s ease-in-out infinite;
+}
+@keyframes isl-peek-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.025);
+  }
 }
 .nh-island .isl-peek-eq {
   position: absolute;
-  right: 5px;
-  bottom: 5px;
-  width: 18px;
-  height: 18px;
+  right: 8px;
+  bottom: 8px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.55);
   display: inline-flex;
   align-items: flex-end;
   justify-content: center;
   gap: 2px;
-  padding-bottom: 5px;
+  padding-bottom: 7px;
 }
 .nh-island .isl-peek-eq i {
-  width: 2px;
+  width: 2.5px;
   border-radius: 2px;
   background: #fff;
-  height: 4px;
+  height: 5px;
   animation: isl-peek-bars 0.9s ease-in-out infinite;
 }
 .nh-island .isl-peek-eq i:nth-child(2) {
@@ -281,52 +279,51 @@
 @keyframes isl-peek-bars {
   0%,
   100% {
-    height: 3px;
+    height: 4px;
   }
   50% {
-    height: 10px;
+    height: 13px;
   }
 }
-.nh-island .isl-peek-cardtext {
+.nh-island .isl-peek-nowtext {
   min-width: 0;
   flex: 1;
 }
-.nh-island .isl-peek-name {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--isl-muted);
-  margin-bottom: 3px;
-}
-.nh-island .isl-peek-livedot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--isl-accent);
-  animation: isl-dot-pulse 1.5s ease-in-out infinite;
-}
-.nh-island .isl-peek-cardtitle {
-  font-size: 19px;
-  line-height: 1.18;
+/* clamp the title to 2 lines so the status tag below ALWAYS fits within the album's height (top-aligned). */
+.nh-island .isl-peek-title {
+  font-size: 27px;
+  line-height: 1.12;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--isl-text);
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
-.nh-island .isl-peek-cardly {
-  margin-top: 2px;
+/* the status tag, always shown directly below the title. */
+.nh-island .isl-peek-status {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 13px;
-  line-height: 1.3;
-  color: var(--isl-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--isl-muted);
+}
+.nh-island .isl-peek-status[data-status='working'] {
+  color: var(--isl-text);
+}
+.nh-island .isl-peek-statusdot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--isl-dim);
+}
+.nh-island .isl-peek-status[data-status='working'] .isl-peek-statusdot {
+  background: var(--isl-accent);
+  animation: isl-dot-pulse 1.5s ease-in-out infinite;
 }
 /* ── tab chip strip (the process header — carries agent identity + status; swipe scrolls it, never pages) ─────── */
 .nh-island .isl-tabs {
@@ -383,6 +380,19 @@
 .nh-island .isl-chip-dot[data-status='working'] {
   background: var(--isl-accent);
   animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+
+/* Album-pill tabs: each agent chip carries a mini gradient "album", then its name, then the status dot. */
+.nh-island .isl-chip-agent {
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+}
+.nh-island .isl-chip-album {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
 }
 
 /* the new-session "+" tab — a circle, always the FIRST tab (it is just a tab, not a special view). */

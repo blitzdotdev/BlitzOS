@@ -121,7 +121,7 @@ export function NotchHost({ menuBarH }: { menuBarH: number }): JSX.Element {
   // Disabled while the attachment panel is open. (Swipe just scrolls the strip; it never pages.)
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (attachOpen || peek) return // while the attach panel / peek view is open, don't shuffle tabs underneath
+      if (attachOpen) return // while the attach panel is open, don't shuffle tabs underneath it (peek keeps tabs live)
       if (e.ctrlKey && e.key === 'Tab') {
         e.preventDefault()
         const total = nRef.current + 1
@@ -130,7 +130,7 @@ export function NotchHost({ menuBarH }: { menuBarH: number }): JSX.Element {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [attachOpen, peek])
+  }, [attachOpen])
 
   const N = sessions.length
   const safePage = clamp(page, 0, N)
@@ -191,11 +191,9 @@ export function NotchHost({ menuBarH }: { menuBarH: number }): JSX.Element {
           onSelectPage={goPage}
           messages={messages}
           milestones={activeMilestones}
-          allMilestones={milestones}
           status={activeStatus}
           activeId={activeId}
           peek={peek}
-          onTogglePeek={togglePeek}
           onSend={onSend}
           menuBarH={menuBarH}
           attachOpen={attachOpen}

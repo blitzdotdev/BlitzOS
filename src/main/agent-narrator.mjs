@@ -15,16 +15,21 @@ const MILESTONE_SCHEMA = {
   additionalProperties: false,
   required: ['milestone', 'skip'],
   properties: {
-    milestone: { type: 'string', description: 'ONE plain past-tense step in <=80 chars, human words, no tool names or file paths unless meaningful' },
+    milestone: {
+      type: 'string',
+      maxLength: 38,
+      description: 'ONE terse "now playing" title: 2 to 5 words, AT MOST 36 characters, past tense, plain words, no "Agent" prefix, no trailing period, no tool names or file paths'
+    },
     skip: { type: 'boolean', description: 'true if the actions are pure noise / no real progress worth showing' }
   }
 }
 
 const SYS =
-  "You narrate an AI agent's work for a NON-TECHNICAL user, one short step at a time. Given the agent's latest " +
-  'raw actions, output ONE plain past-tense line (<=80 chars) describing what it just accomplished, in everyday ' +
-  'words. No tool names, no jargon, no file paths unless they matter. If the actions are just noise or no real ' +
-  'progress, set skip=true.'
+  "You narrate an AI agent's work for a NON-TECHNICAL user as SHORT now-playing titles (like song titles). Given " +
+  'the agent\'s latest raw actions, output ONE terse title: 2 to 5 words, AT MOST 36 characters — it must fit on ' +
+  'ONE short line. Past tense, plain everyday words. Do NOT start with "Agent", do NOT write a sentence, no ' +
+  'trailing period, no tool names or file paths. If the actions are just noise or no real progress, set skip=true. ' +
+  'Good: "Reading your docs", "Drafted the email", "Found the failing test", "Analyzing the design".'
 
 // Spawn `claude -p` in print mode with a JSON schema → the validated object lands in `structured_output`.
 function callHaiku(prompt, cwd, timeoutMs = 30000) {
@@ -117,7 +122,12 @@ export function startNarrator(deps) {
     const prompt = `${SYS}\n\nThe agent's latest actions:\n${digest}\n\nPrevious step shown: ${s.lastMilestone || '(none)'}\n\nReturn JSON {"milestone","skip"}.`
     const res = await callHaiku(prompt, root)
     if (!res || res.skip) return
-    const text = String(res.milestone || '').trim().slice(0, 80)
+    // Backstop the model: strip a stray "Agent " prefix + trailing period/ellipsis, cap length (keep it a short title).
+    const text = String(res.milestone || '')
+      .trim()
+      .replace(/^agent\s+/i, '')
+      .replace(/[.…]+$/, '')
+      .slice(0, 40)
     if (!text || text === s.lastMilestone) return
     s.lastMilestone = text
     const m = { id: `m${Date.now()}-${id}`, ts: Date.now(), kind: 'step', text }

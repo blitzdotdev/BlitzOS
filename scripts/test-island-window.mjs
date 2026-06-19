@@ -204,21 +204,26 @@ ok('the details channel exists end to end: preload agentDetails() → os:agent-d
     /ipcMain\.handle\('os:agent-details'/.test(indexSrc) && /osAgentDetails/.test(indexSrc))
 ok('NotchHost merges the live milestone broadcast (type milestone) into a per-session timeline',
   /'milestone'/.test(notchHostSrc) && /setMilestones/.test(notchHostSrc))
-ok('IslandPanel renders the merged timeline (milestone STEPS + bubbles) + a per-session Details expand (agentDetails)',
-  /isl-step/.test(islandSrc) && /isl-details/.test(islandSrc) && /agentDetails/.test(islandSrc) && /milestones\.map/.test(islandSrc) &&
-    /\.isl-step \{/.test(islandCss) && /\.isl-detail-rows \{/.test(islandCss))
+ok('the CHAT is PURE messages (bubbles only, NO milestone steps) + a Details expand; summaries live in the peek view',
+  /isl-msg/.test(islandSrc) && /messages\.map/.test(islandSrc) && !/isl-step/.test(islandSrc) && !/\.isl-step \{/.test(islandCss) &&
+    /isl-details/.test(islandSrc) && /agentDetails/.test(islandSrc) && /isl-peek-ly/.test(islandSrc))
 
-// ── The PEEK view: a Spotify "now playing" collapse of ALL sessions; toggle in the notch band ──────────────────
+// ── The PEEK view: keep the tab bar; the area BELOW becomes the active agent's "now playing" ───────────────────
 ok('the PEEK toggle lives in the NOTCH BAND (NotchHost .nh-peek-toggle, absolute top-right), always visible',
-  /nh-peek-toggle/.test(notchHostSrc) && /const \[peek, setPeek\]/.test(notchHostSrc) && /attachOpen \|\| peek/.test(notchHostSrc) &&
+  /nh-peek-toggle/.test(notchHostSrc) && /const \[peek, setPeek\]/.test(notchHostSrc) &&
     /\.nh-peek-toggle \{[\s\S]*?position: absolute/.test(notchCss))
-ok('PEEK is an ALL-SESSIONS transform: a card per agent (gradient album + latest summary + live), tap to open it',
-  /if \(peek\)/.test(islandSrc) && /isl-peek-list/.test(islandSrc) && /isl-peek-card/.test(islandSrc) &&
-    /isl-peek-album/.test(islandSrc) && /isl-peek-cardtitle/.test(islandSrc) && /allMilestones\[s\.id\]/.test(islandSrc) &&
-    /agentGradient/.test(islandSrc) && /onSelectPage\(i \+ 1\)/.test(islandSrc))
-ok('peek styles: per-agent album + the now-playing equalizer, Apple-native widget look',
-  /\.isl-peek-album \{/.test(islandCss) && /\.isl-peek-cardtitle \{/.test(islandCss) && /\.isl-peek-card \{/.test(islandCss) &&
-    /@keyframes isl-peek-bars/.test(islandCss))
+ok('PEEK keeps the tab bar (shared tabStrip in both views); the area below = the active agent now-playing (album + big title + lyrics)',
+  /if \(peek\)/.test(islandSrc) && /const tabStrip =/.test(islandSrc) && /\{tabStrip\}/.test(islandSrc) &&
+    /isl-peek-album/.test(islandSrc) && /isl-peek-title/.test(islandSrc) && /isl-peek-lyrics/.test(islandSrc) &&
+    /agentGradient\(activeId\)/.test(islandSrc))
+ok('peek styles match the mockup (big album 92px / radius 24, big title 27px, lyrics + equalizer)',
+  /\.isl-peek-album \{[\s\S]*?border-radius: 24px/.test(islandCss) && /\.isl-peek-title \{[\s\S]*?font-size: 27px/.test(islandCss) &&
+    /\.isl-peek-lyrics \{/.test(islandCss) && /@keyframes isl-peek-bars/.test(islandCss))
+ok('agent tabs are ALBUM PILLS: each = a mini gradient album + name + status dot',
+  /isl-chip-agent/.test(islandSrc) && /isl-chip-album/.test(islandSrc) && /agentGradient\(s\.id\)/.test(islandSrc) &&
+    /\.isl-chip-album \{/.test(islandCss))
+ok('the narrator emits SHORT now-playing titles (schema maxLength 38 + terse "AT MOST 36 characters" prompt + 40-char cap)',
+  /maxLength: 38/.test(narratorSrc) && /AT MOST 36 characters/.test(narratorSrc) && /slice\(0, 40\)/.test(narratorSrc))
 ok('island.css paints ONLY the interior — the .nh-island root sets NO chassis bg/shape (the chassis is the only black/shape)',
   /\.nh-island \{/.test(islandCss) &&
     (() => {
