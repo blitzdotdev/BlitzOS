@@ -146,8 +146,17 @@ async function runUserScript(tabId, code, args) {
     return { error: 'userScripts_unavailable', note: 'run_js needs the userScripts API — enable Developer mode (or turn on "Allow user scripts" for this extension on Chrome 138+) and reload the extension.' }
   }
   try {
-    // wrap so the agent's `return` works and `args` is in scope; the IIFE's value is the injection result.
-    const wrapped = '(function(args){\n' + String(code || '') + '\n})(' + JSON.stringify(args || {}) + ')'
+    // chrome.userScripts.execute does NOT reject or populate .error when the injected code THROWS or has a
+    // SYNTAX error — it just returns result:undefined, indistinguishable from code that legitimately returns
+    // undefined. So we make errors detectable: wrap the agent's code in an in-page try/catch that returns a
+    // TAGGED marker ({__b:'ok'|'err'}). A runtime throw → {__b:'err'}; a parse/syntax error breaks the whole
+    // wrapper so NO marker comes back → we report a syntax error. The agent's `return` still works (inner fn).
+    const wrapped =
+      '(function(){try{return {__b:"ok",v:(function(args){\n' +
+      String(code || '') +
+      '\n})(' +
+      JSON.stringify(args || {}) +
+      ')};}catch(e){return {__b:"err",m:String((e&&e.stack)||(e&&e.message)||e)};}})()'
     const res = await chrome.userScripts.execute({
       target: { tabId: Number(tabId) },
       world: 'USER_SCRIPT', // DOM access + our configured (eval-allowing) CSP; isolated from page JS globals
@@ -156,7 +165,12 @@ async function runUserScript(tabId, code, args) {
     })
     const r = res && res[0]
     if (r && r.error) return { error: String(r.error.message || r.error) }
-    return { result: r ? (r.result === undefined ? null : r.result) : null }
+    const v = r ? r.result : undefined
+    if (v && typeof v === 'object' && v.__b === 'ok') return { result: v.v === undefined ? null : v.v }
+    if (v && typeof v === 'object' && v.__b === 'err') return { error: v.m }
+    // No tagged marker came back: the wrapper itself failed to parse → a syntax error in the code (or the
+    // page refused injection). Either way it did NOT run — never report this as result:null.
+    return { error: 'run_js did not execute — likely a syntax error in the code (it could not be parsed), or this page blocked injection' }
   } catch (e) {
     return { error: String((e && e.message) || e) }
   }
