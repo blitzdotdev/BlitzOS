@@ -4,6 +4,7 @@
 // so NO Chrome extension and NO BlitzComputerUse helper are needed. The real adapters are tested separately.
 
 import { makeConnectionOps } from '../src/main/connection-ops.mjs'
+import { makeWidgetToolHandlers } from '../src/main/widget-tools.mjs'
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -96,6 +97,23 @@ async function main() {
   // --- per-connId widget scoping ---
   ok('connectionForSurface resolves the bound widget -> connId', ops.connectionForSurface(surfaceId) === connId)
   ok('connectionForSurface rejects an unknown surface', ops.connectionForSurface('sfc_does_not_exist') === null)
+
+  // --- the widget bridge: a representation widget runs ITS OWN connection's saved tools (per-connId scoping)
+  // exactly as verified live (a button -> window.blitz.tool('connection_call_tool')). The handler derives the
+  // connId from the CALLING surface (ctx.surfaceId) and ignores any connection id the widget passes. ---
+  const widgetHandlers = makeWidgetToolHandlers(ops)
+  const fromWidget = await widgetHandlers.connection_call_tool({ name: 'unread' }, { surfaceId })
+  ok('a widget button runs its own connection\'s saved tool', fromWidget && fromWidget.ok === true)
+  // even if the widget tries to name ANOTHER connection, the call is scoped to the CALLING surface's connection
+  const spoof = await widgetHandlers.connection_call_tool({ name: 'unread', connection: 'conn_some_other_connection' }, { surfaceId })
+  ok('a widget cannot target another connection (the passed id is ignored, scoped to its own surface)', spoof && spoof.ok === true)
+  let blocked = false
+  try {
+    await widgetHandlers.connection_call_tool({ name: 'unread' }, { surfaceId: 'sfc_not_a_connection' })
+  } catch {
+    blocked = true
+  }
+  ok('a widget not bound to a connection is rejected', blocked)
 
   // --- reconnecting the SAME source inherits its saved tools (keyed on sourceId) ---
   const { connId: conn2 } = ops.connectionBind({ type: 'tab', sourceId: 'mail.google.com', title: 'Gmail 2', adapter: stubAdapter() })
