@@ -81,20 +81,20 @@ export function ConnectPicker({ onClose }: { onClose: () => void }): JSX.Element
             <h4>
               Browser tabs <button className="connect-picker-refresh" onClick={() => void refresh()} title="Refresh">↻</button>
             </h4>
-            {tabs.length === 0 && (
-              <div className="connect-picker-empty">
-                No connectable tabs. Chrome needs the BlitzOS Connector.
-                <button className="connect-picker-install" disabled={busy === 'install'} onClick={() => void install()}>
-                  {busy === 'install' ? 'Installing…' : 'Install Connector'}
-                </button>
-              </div>
-            )}
+            {tabs.length === 0 && <div className="connect-picker-empty">No connectable tabs yet — connect Chrome below, or open a tab in Safari.</div>}
             {tabs.map((t) => (
               <button key={String(t.tabId)} className="connect-picker-row" disabled={!!busy} onClick={() => void connectTab(t.tabId)}>
                 <span className="connect-picker-badge">{t.browser || 'tab'}</span>
                 <span className="connect-picker-title">{t.title || t.url || String(t.tabId)}</span>
               </button>
             ))}
+            {/* Chrome path is ALWAYS available (not hidden when Safari/other tabs exist): if no Chrome tab is
+                connected, offer to install the connector extension. */}
+            {!tabs.some((t) => t.browser === 'chrome') && (
+              <button className="connect-picker-install" disabled={busy === 'install'} onClick={() => void install()}>
+                {busy === 'install' ? 'Installing…' : '+ Connect Chrome (install the connector)'}
+              </button>
+            )}
           </section>
           <section className="connect-picker-col">
             <h4>
