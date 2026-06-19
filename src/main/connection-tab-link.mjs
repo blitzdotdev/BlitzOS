@@ -186,6 +186,12 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
 
   async function connectTab(tabId, opts = {}) {
     const id = Number(tabId)
+    // DEDUP: this exact tab is already connected (and live) → re-attach, don't spawn a duplicate connection+widget.
+    const existing = tabToConn.get(id)
+    if (existing && typeof connectionOps.connectionIsLive === 'function' && connectionOps.connectionIsLive(existing)) {
+      const info = connectionOps.connectionInfo(existing)
+      if (info) return { ...info, tab: { tabId: id } }
+    }
     let tab = knownTabs.find((t) => t.tabId === id)
     if (!tab) tab = (await listTabs()).find((t) => t.tabId === id)
     if (!tab) return { error: `tab ${tabId} not found (is it still open?)` }

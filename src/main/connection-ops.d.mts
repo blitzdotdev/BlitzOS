@@ -38,6 +38,10 @@ export interface ConnectionOps {
   connectionUnbind(connId: string, opts?: { status?: string }): void
   /** Resolve a representation widget's surface id → its connId (per-connId widget scoping). */
   connectionForSurface(surfaceId: string | null | undefined): string | null
+  /** Is this connId a live connection? Adapters use it to dedup re-connects of the same tab/window. */
+  connectionIsLive(connId: string): boolean
+  /** Public shape of a connection (for an adapter's dedup return), or null. */
+  connectionInfo(connId: string): Record<string, unknown> | null
   /** Called when a surface closes; if it's a connection's widget, drop the connection (no leaked adapter). */
   handleSurfaceClosed(surfaceId: string): Promise<void>
   /** On (re)hydrate: rewrite a persisted connection widget to a disconnected state if its connection isn't live; else null. */

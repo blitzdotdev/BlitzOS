@@ -25,6 +25,7 @@ export interface WindowLink {
 
 export function makeWindowLink({ connectionOps, helper }: { connectionOps: ConnectionOps; helper: HelperLike }): WindowLink {
   const pidToConns = new Map<number, Set<string>>()
+  const windowToConn = new Map<number, string>() // dedup: this exact window → its connection
 
   // an AXObserver fired for an app (pid) → wake every connection bound to that app's windows
   helper.onEvent((m) => {
@@ -47,6 +48,12 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
   }
 
   async function connectWindow(windowId: number, opts: { title?: string; sourceId?: string } = {}): Promise<Record<string, unknown>> {
+    // DEDUP: this exact window is already connected (and live) → re-attach, don't spawn a duplicate.
+    const existing = windowToConn.get(Number(windowId))
+    if (existing && typeof connectionOps.connectionIsLive === 'function' && connectionOps.connectionIsLive(existing)) {
+      const info = (connectionOps as unknown as { connectionInfo: (id: string) => Record<string, unknown> | null }).connectionInfo(existing)
+      if (info) return { ...info, window: { windowId: Number(windowId) } }
+    }
     const e = await ready()
     if (!e.ok) return { error: e.error || 'the BlitzComputerUse helper is not available' }
     const list = await helper.call('list_windows')
@@ -81,12 +88,14 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
     const bound = connectionOps.connectionBind({ type: 'window', sourceId, title, capabilities: { act: true, vision: true }, adapter })
     if (!pidToConns.has(pid)) pidToConns.set(pid, new Set())
     pidToConns.get(pid)!.add(bound.connId)
+    windowToConn.set(Number(windowId), bound.connId)
     adapter.drop = () => {
       const set = pidToConns.get(pid)
       if (set) {
         set.delete(bound.connId)
         if (!set.size) pidToConns.delete(pid)
       }
+      if (windowToConn.get(Number(windowId)) === bound.connId) windowToConn.delete(Number(windowId))
     }
     // start watching for changes (the helper's AXObserver → ax_changed events → connectionNotify)
     void helper.call('ax_observe', { pid }).catch(() => {})

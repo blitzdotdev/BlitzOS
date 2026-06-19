@@ -359,6 +359,17 @@ export function makeConnectionOps({
   function connectionForSurface(surfaceId) {
     return bySurface.get(String(surfaceId)) || null
   }
+  // Is this connId a live connection? Adapters use this to DEDUP — connecting the same tab/window twice should
+  // re-attach to the existing live connection, not spawn a duplicate (+ duplicate widget).
+  function connectionIsLive(connId) {
+    const r = rec(connId)
+    return !!(r && r.status === 'live' && r.adapter)
+  }
+  // The public shape of a connection (for an adapter's dedup return — re-attach to an existing connection).
+  function connectionInfo(connId) {
+    const r = rec(connId)
+    return r ? { connId: r.connId, surfaceId: r.surfaceId, sourceId: r.sourceId, type: r.type, status: r.status, reused: true } : null
+  }
 
   // On (re)hydrate — app restart or a workspace switch — a persisted connection widget whose connection is
   // NOT live should show a "disconnected — reconnect" state instead of a stale/loading card. Returns a
@@ -462,6 +473,8 @@ export function makeConnectionOps({
     setInstaller,
     connectionInstallExtension,
     // adapter / registry API (used by the tab + window adapters and by tests)
+    connectionIsLive,
+    connectionInfo,
     handleSurfaceClosed,
     rewriteHydratedSurface,
     connectionBind,

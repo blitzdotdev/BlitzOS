@@ -23,6 +23,7 @@ const ACT_JS =
   "(function(a){var el=a.selector?document.querySelector(a.selector):document.activeElement;if(a.action==='click'){if(!el)return JSON.stringify({error:'no match for '+a.selector});el.click();return JSON.stringify({effect:{clicked:a.selector||true,url:location.href}})}if(a.action==='set'||a.action==='type'){if(!el)return JSON.stringify({error:'no match for '+a.selector});if('value' in el){el.value=a.text==null?'':''+a.text;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return JSON.stringify({effect:{value:el.value}})}el.textContent=a.text==null?'':''+a.text;return JSON.stringify({effect:{value:el.textContent}})}if(a.action==='key'){var t=el||document.activeElement||document.body;t.dispatchEvent(new KeyboardEvent('keydown',{key:a.key,bubbles:true}));t.dispatchEvent(new KeyboardEvent('keyup',{key:a.key,bubbles:true}));return JSON.stringify({effect:{key:a.key}})}return JSON.stringify({error:'unknown action '+a.action})})"
 
 export function makeSafariLink({ connectionOps } = {}) {
+  const refToConn = new Map() // dedup: this exact Safari tab (safari:w:t) → its connection
   async function doJS(code, w, t) {
     const r = await osa([
       '-e', 'on run argv',
@@ -81,6 +82,12 @@ export function makeSafariLink({ connectionOps } = {}) {
   async function connectTab(tabId, opts = {}) {
     const ref = parseRef(tabId)
     if (!ref) return { error: 'bad Safari tab id (expected safari:<window>:<tab>)' }
+    // DEDUP: this exact Safari tab is already connected (and live) → re-attach, don't spawn a duplicate.
+    const existing = refToConn.get(String(tabId))
+    if (existing && typeof connectionOps.connectionIsLive === 'function' && connectionOps.connectionIsLive(existing)) {
+      const info = connectionOps.connectionInfo(existing)
+      if (info) return { ...info, tab: { tabId } }
+    }
     const got = await doJS('(function(){return JSON.stringify({url:location.href,title:document.title})})()', ref.w, ref.t)
     if (got.error) return got
     let info = {}
@@ -126,6 +133,10 @@ export function makeSafariLink({ connectionOps } = {}) {
       drop: () => {}
     }
     const bound = connectionOps.connectionBind({ type: 'tab', sourceId, title: opts.title || info.title || sourceId, capabilities: { run_js: true, act: true }, adapter })
+    refToConn.set(String(tabId), bound.connId)
+    adapter.drop = () => {
+      if (refToConn.get(String(tabId)) === bound.connId) refToConn.delete(String(tabId))
+    }
     return { connId: bound.connId, surfaceId: bound.surfaceId, sourceId, tab: { tabId, url: info.url, title: info.title } }
   }
 
