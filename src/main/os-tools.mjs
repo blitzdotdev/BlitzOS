@@ -38,6 +38,8 @@ function parse(body) {
   }
 }
 
+let _wfRunSeq = 0 // monotonic suffix so two run_workflow calls in the same ms never collide on runId
+
 const NATIVE_COMPONENTS = new Set(['note', 'chat', 'activity', 'terminal', 'runtime', 'inbox', 'file', 'dir', 'files', 'unlock', 'folder'])
 
 function nativeCatalogWidgetError(component) {
@@ -663,6 +665,36 @@ export function makeOsTools(ops) {
         const r = ops.startWorkflow({ title: a.title != null ? String(a.title) : undefined, task, contextRefs })
         if (!r || r.ok === false) return { status: 400, body: { error: (r && r.error) || 'could not start workflow' } }
         return { agent: r.agent }
+      }
+    },
+    {
+      path: '/run_workflow',
+      description:
+        "Run a blitzscript workflow with a LIVE VISUAL on the canvas. Use this INSTEAD of `bash .blitzos/blitz run` whenever you want the user to WATCH a workflow execute. It places a live graph (or kanban) widget bound to this run on home and streams every phase / agent-leaf / fan-out event into it in real time; a fresh agent also enriches the view as it runs. Returns IMMEDIATELY with { runId, surfaceId } — the run continues in the background and writes its result to <workspace>/.blitzos/workflows/<runId>/result.json on completion (read it when you need the result). Args: {file (path to a Claude-shaped workflow .js you authored + `blitz check`ed), view?:'graph'|'kanban', args? (the workflow's `args` input), title?}.",
+      input_schema: { type: 'object', required: ['file'], properties: { file: { type: 'string' }, view: { type: 'string', enum: ['graph', 'kanban'] }, args: {}, title: { type: 'string' }, agent: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.runWorkflow !== 'function') return { status: 501, body: { error: 'run_workflow not supported on this transport' } }
+        const a = parse(body)
+        const file = String(a.file || '')
+        if (!file) return { status: 400, body: { error: 'file required (path to a Claude-shaped workflow .js)' } }
+        const view = a.view === 'kanban' ? 'kanban' : 'graph'
+        const runId = 'wf_' + Date.now().toString(36) + (_wfRunSeq++).toString(36)
+        // Place the GENERIC live widget on home, bound to runId, BEFORE the run starts so it is live from t=0.
+        // The widget subscribes to the bus by runId; the bus buffers + replays, so there is no start race.
+        let surfaceId = null
+        try {
+          const w = getWidgetSource(view === 'kanban' ? 'wf-kanban' : 'wf-graph')
+          if (w) {
+            const desc = { kind: 'srcdoc', html: w.html, lang: w.lang && w.lang !== 'html' ? w.lang : 'jsx', props: { ...(w.props || {}), runId, transparent: true }, title: typeof a.title === 'string' ? a.title : 'Workflow' }
+            const p = placeOnStage('xl', a.near, {}, false)
+            if (p.slot) { desc.slot = p.slot; desc.x = p.rect.x; desc.y = p.rect.y; desc.w = p.rect.w; desc.h = p.rect.h }
+            else Object.assign(desc, parkOffstage())
+            surfaceId = ops.createSurface(desc)
+          }
+        } catch { /* the live view is best-effort; the run still proceeds even if the widget can't mount */ }
+        const r = await ops.runWorkflow({ file, args: a.args, runId, surfaceId, view, agentId: a.agent != null ? String(a.agent) : '0' })
+        if (!r || r.ok === false) return { status: 500, body: { error: (r && r.error) || 'run failed to start', runId, surfaceId } }
+        return { ok: true, runId, surfaceId, note: `Live view is on the canvas. The result lands at .blitzos/workflows/${runId}/result.json on run:done.` }
       }
     },
     {

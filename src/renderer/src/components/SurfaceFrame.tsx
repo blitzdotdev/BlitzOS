@@ -519,6 +519,28 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       )
   }
 
+  // Live workflow externalization: the runIds this widget subscribed to (blitz.workflow.subscribe). The OS
+  // broadcasts os:wf-event to the whole webContents; we forward only this widget's runs into ITS iframe, and
+  // drop every subscription on unmount so main releases the bus listener.
+  const wfRunsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (surface.kind !== 'srcdoc') return
+    const api = window.agentOS
+    if (!api?.onWfEvent) return
+    const off = api.onWfEvent((payload) => {
+      const rid = payload && payload.runId
+      if (rid && wfRunsRef.current.has(rid)) {
+        iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:wf-event', runId: rid, ev: payload.ev }, '*')
+      }
+    })
+    const runs = wfRunsRef.current
+    return () => {
+      off()
+      for (const rid of runs) { try { api.wfUnsubscribe?.(rid) } catch { /* ignore */ } }
+      runs.clear()
+    }
+  }, [surface.kind, surface.id])
+
   useEffect(() => {
     if (surface.kind !== 'srcdoc') return
     const onMessage = (e: MessageEvent): void => {
@@ -579,6 +601,21 @@ export const SurfaceFrame = memo(function SurfaceFrame({
           const patch = (m as { patch?: unknown }).patch
           useDesktop.getState().updateSurfaceProps(surface.id, (patch && typeof patch === 'object' ? patch : {}) as Record<string, unknown>)
           postRes(win, m.reqId, { ok: true })
+        } else if (m.op === 'wf-subscribe') {
+          // Live workflow externalization: start streaming this run's events (backlog + live) into the widget.
+          const rid = String((m as { runId?: string }).runId || '')
+          if (rid) { wfRunsRef.current.add(rid); try { void window.agentOS?.wfSubscribe?.(rid) } catch { /* bridge absent */ } }
+          postRes(win, m.reqId, { ok: true })
+        } else if (m.op === 'wf-unsubscribe') {
+          const rid = String((m as { runId?: string }).runId || '')
+          if (rid) { wfRunsRef.current.delete(rid); try { window.agentOS?.wfUnsubscribe?.(rid) } catch { /* ignore */ } }
+          postRes(win, m.reqId, { ok: true })
+        } else if (m.op === 'wf-snapshot') {
+          const rid = String((m as { runId?: string }).runId || '')
+          const reqId = m.reqId
+          const snap = window.agentOS?.wfSnapshot
+          if (snap) snap(rid).then((evs) => postRes(win, reqId, { ok: true, data: evs }), (e) => postRes(win, reqId, { ok: false, error: e instanceof Error ? e.message : String(e) }))
+          else postRes(win, reqId, { ok: false, error: 'workflow bridge unavailable here' })
         } else postRes(win, m.reqId, { ok: false, error: `unsupported op: ${String(m.op)}` })
       }
     }
@@ -947,12 +984,16 @@ export const SurfaceFrame = memo(function SurfaceFrame({
         // (NOT an iframe) so the widget document loads exactly once.
         if (jsxWidget.active && jsxWidget.srcdoc === null) return <div className="jsx-compiling" style={fill} />
         const srcdocBody = jsxWidget.active ? jsxWidget.srcdoc! : surface.html ?? ''
+        // Transparent (wfviz) widgets: make the bare-canvas background authoritative at DOCUMENT level —
+        // AFTER UI_KIT (which sets an opaque body) and BEFORE React mounts — so a slow first jsx compile
+        // never flashes an opaque card on the canvas (the in-widget <style> is belt-and-suspenders).
+        const transparentStyle = surface.props?.transparent ? '<style>html,body{background:transparent!important}</style>' : ''
         return (
           <iframe
             ref={iframeRef}
             title={surface.title}
             sandbox="allow-scripts"
-            srcDoc={BRIDGE_SHIM + UI_KIT + srcdocBody}
+            srcDoc={BRIDGE_SHIM + UI_KIT + transparentStyle + srcdocBody}
             style={iframeZoom}
             onLoad={() =>
               iframeRef.current?.contentWindow?.postMessage({ type: 'blitz:init', props: widgetProps() }, '*')
@@ -1038,7 +1079,7 @@ export const SurfaceFrame = memo(function SurfaceFrame({
     <div
       ref={frameRef}
       data-sid={surface.id}
-      className={`window${isNote ? ' note' : ''}${surface.kind === 'web' && !serverMode ? ' browser' : ''}${isActive ? ' is-active' : ''}${isSelected ? ' is-selected' : ''}${isAbsorbing ? ' absorbing' : ''}`}
+      className={`window${isNote ? ' note' : ''}${surface.kind === 'web' && !serverMode ? ' browser' : ''}${surface.props?.transparent ? ' wfviz' : ''}${isActive ? ' is-active' : ''}${isSelected ? ' is-selected' : ''}${isAbsorbing ? ' absorbing' : ''}`}
       style={{
         left: surface.x,
         top: surface.y,

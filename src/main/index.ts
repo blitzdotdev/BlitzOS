@@ -11,6 +11,8 @@ import { installGuestSessionPolicy, resolvePermissionPrompt } from './guest-capa
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, electronOps, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
 import { wireLauncher, registerLauncher } from './launcher'
+import { wireWorkflowHost, subscribe as wfSubscribe, snapshot as wfSnapshot } from './workflow-host.mjs'
+import { wireEnrichment, spawnWorkflowEnrichment } from './workflow-enrichment.mjs'
 // The standalone island.ts window is RETIRED — the notch is now the real UI window itself (sandwich overlay mode);
 // the notch IPC is wired inline below. (island.ts stays on disk but is no longer imported.)
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, orchestratorBootTask } from './agent-runtime.mjs'
@@ -564,6 +566,41 @@ app.whenReady().then(() => {
     }
   })
   registerLauncher()
+
+  // Live workflow externalization (plans/blitzos-workflow-externalization.md): run_workflow runs a blitzscript
+  // IN-PROCESS so its WfEvents stream to the per-run bus and into the live widget. The host needs the active
+  // workspace path (each run's memory dir) + the enrichment spawner (a fresh claude -p that rewrites the
+  // generic widget into a bespoke live view, compile-gated). repoRoot = cwd in dev (where widgets/ + scripts/
+  // live); disable enrichment with BLITZ_WF_ENRICH=0.
+  wireEnrichment({ repoRoot: process.cwd(), claudeCmd: process.env.BLITZ_CLAUDE_CMD || 'claude', getWorkspacePath: () => osWorkspaceContext().workspace_path || null })
+  wireWorkflowHost({
+    getWorkspacePath: () => osWorkspaceContext().workspace_path || null,
+    spawnEnrichment: (info) => { try { spawnWorkflowEnrichment(info) } catch { /* enrichment is best-effort; the generic widget stands */ } }
+  })
+
+  // The widget-bridge subscribe path: a srcdoc widget calls blitz.workflow.subscribe(runId) -> SurfaceFrame
+  // invokes os:wf-subscribe -> main streams the run's backlog + live events back as os:wf-event to that
+  // webContents (SurfaceFrame routes each to the right iframe). os:wf-unsubscribe drops it on unmount.
+  {
+    const wfSubs = new Map<string, () => void>() // key: `${webContentsId}:${runId}` -> unsubscribe
+    ipcMain.handle('os:wf-subscribe', (e, runId: string) => {
+      const id = String(runId || '')
+      if (!id) return { ok: false }
+      const wc = e.sender
+      const key = `${wc.id}:${id}`
+      if (wfSubs.has(key)) return { ok: true } // already streaming to this webContents for this run
+      const off = wfSubscribe(id, (ev) => { try { if (!wc.isDestroyed()) wc.send('os:wf-event', { runId: id, ev }) } catch { /* renderer gone */ } })
+      wfSubs.set(key, off)
+      wc.once('destroyed', () => { try { off() } catch { /* ignore */ }; wfSubs.delete(key) })
+      return { ok: true }
+    })
+    ipcMain.on('os:wf-unsubscribe', (e, runId: string) => {
+      const key = `${e.sender.id}:${String(runId || '')}`
+      const off = wfSubs.get(key)
+      if (off) { try { off() } catch { /* ignore */ }; wfSubs.delete(key) }
+    })
+    ipcMain.handle('os:wf-snapshot', (_e, runId: string) => wfSnapshot(String(runId || '')))
+  }
 
   // The Notch (dynamic island) — THE MERGE: the real BlitzOS UI window IS the notch. The renderer clips
   // #root-canvas to the notch shape and GROWS the clip to fullscreen, so the LIVE canvas is what expands out of

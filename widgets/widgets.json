@@ -122,5 +122,21 @@
     "lang": "jsx",
     "props": { "title": "Plan" },
     "version": 1
+  },
+  {
+    "name": "wf-graph",
+    "description": "Live workflow externalization as a NODE GRAPH (lang:jsx). The OS drives it, not the agent: run_workflow places it bound to a runId and it subscribes to the live WfEvent stream — a run root, a phase spine, and the agent() leaves fanning out below each phase, glowing while running and settling to ok/error. Transparent (frameless, reads as nodes on the canvas); pan + wheel-zoom. Default live view for run_workflow.",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Workflow", "transparent": true },
+    "version": 1
+  },
+  {
+    "name": "wf-kanban",
+    "description": "Live workflow externalization as a KANBAN post-it board (lang:jsx). The OS drives it, not the agent: run_workflow places it bound to a runId and it subscribes to the live WfEvent stream — each agent() leaf is a post-it that moves Queued -> Running (glowing) -> Done (a summary note with duration + tokens). Transparent (frameless). The alternate live view for run_workflow (view:'kanban').",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Workflow", "transparent": true },
+    "version": 1
   }
 ]

@@ -26,7 +26,7 @@ export const BRIDGE_SHIM = `<script>
   // collide with another's after an html reload (the parent also checks the
   // issuing window, so a stale reply can't be cross-delivered).
   var inst = Math.random().toString(36).slice(2);
-  var seq = 0, pending = {}, props = {}, ready = false, queue = [], readyCbs = [], propCbs = [], lastFired = null;
+  var seq = 0, pending = {}, props = {}, ready = false, queue = [], readyCbs = [], propCbs = [], lastFired = null, wfCbs = {};
   function post(m) { try { window.parent.postMessage(m, '*'); } catch (e) {} }
   function flush() { var q = queue; queue = []; for (var i = 0; i < q.length; i++) q[i](); }
   // onProps fires on CHANGE, not on every delivery: the OS re-posts props whenever a surface's props
@@ -58,6 +58,9 @@ export const BRIDGE_SHIM = `<script>
     } else if (m.type === 'blitz:res' && m.reqId && pending[m.reqId]) {
       var p = pending[m.reqId]; delete pending[m.reqId];
       if (m.ok) p.resolve(m.data); else p.reject(new Error(m.error || 'request failed'));
+    } else if (m.type === 'blitz:wf-event' && m.runId != null) {
+      // a live workflow event (the OS streams the run's backlog then live events for a subscribed runId).
+      var wcbs = wfCbs[m.runId]; if (wcbs) for (var w = 0; w < wcbs.length; w++) try { wcbs[w](m.ev); } catch (x) {}
     }
   });
   function request(op, payload) {
@@ -68,6 +71,9 @@ export const BRIDGE_SHIM = `<script>
       if (ready) send(); else queue.push(send);
     });
   }
+  // fire-and-forget notify (no reply consumed), ready-gated like request. Carries a throwaway reqId so the
+  // parent's blitz:req guard (which requires a string reqId) accepts it; any reply is ignored (not in pending).
+  function notify(op, payload) { var rid = inst + '-n' + (++seq); var send = function () { post(Object.assign({ type: 'blitz:req', reqId: rid, op: op }, payload)); }; if (ready) send(); else queue.push(send); }
   window.blitz = {
     tool: function (tool, args) { return request('tool', { tool: tool, args: args || {} }); },
     sendMessage: function (text, sessionId) { return request('msg', { text: String(text == null ? '' : text), sessionId: sessionId == null ? undefined : String(sessionId) }); },
@@ -77,7 +83,23 @@ export const BRIDGE_SHIM = `<script>
     setProps: function (patch) { return request('setprops', { patch: patch || {} }); },
     props: function () { return props; },
     onProps: function (cb) { propCbs.push(cb); if (ready) try { cb(props); } catch (x) {} },
-    ready: function (cb) { if (ready) { try { cb(props); } catch (x) {} } else readyCbs.push(cb); }
+    ready: function (cb) { if (ready) { try { cb(props); } catch (x) {} } else readyCbs.push(cb); },
+    // Live workflow externalization: subscribe to a run's WfEvent stream (the OS replays the backlog FIRST,
+    // then live events). cb(ev) per event; returns an unsubscribe. snapshot(runId) -> Promise<WfEvent[]>.
+    workflow: {
+      subscribe: function (runId, cb) {
+        runId = String(runId == null ? '' : runId);
+        if (!runId || typeof cb !== 'function') return function () {};
+        (wfCbs[runId] = wfCbs[runId] || []).push(cb);
+        notify('wf-subscribe', { runId: runId });
+        return function () {
+          var a = wfCbs[runId]; if (!a) return;
+          var ix = a.indexOf(cb); if (ix >= 0) a.splice(ix, 1);
+          if (!a.length) { delete wfCbs[runId]; notify('wf-unsubscribe', { runId: runId }); }
+        };
+      },
+      snapshot: function (runId) { return request('wf-snapshot', { runId: String(runId == null ? '' : runId) }); }
+    }
   };
   // Item 5b: a srcdoc widget's sandboxed iframe swallows right-clicks, so the OS never sees them. Forward
   // the point to the parent (in CONTENT px) so it can open the "Ask the agent about this" annotation menu —

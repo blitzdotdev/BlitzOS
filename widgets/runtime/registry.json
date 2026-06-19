@@ -9,5 +9,7 @@
   "date-fns": "https://esm.sh/date-fns@4.4.0",
   "framer-motion": "https://esm.sh/framer-motion@12.40.0?external=react,react-dom",
   "react-markdown": "https://esm.sh/react-markdown@10.1.0?external=react",
-  "remark-gfm": "https://esm.sh/remark-gfm@4.0.1"
+  "remark-gfm": "https://esm.sh/remark-gfm@4.0.1",
+  "@xyflow/react": "https://esm.sh/@xyflow/react@12.3.5?external=react,react-dom",
+  "@dagrejs/dagre": "https://esm.sh/@dagrejs/dagre@1.1.4"
 }

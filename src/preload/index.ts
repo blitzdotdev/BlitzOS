@@ -322,6 +322,23 @@ const api = {
   widgetTool(surfaceId: string, name: string, args: unknown): Promise<{ ok: boolean; result?: unknown; error?: string }> {
     return ipcRenderer.invoke('widget:tool', { surfaceId, name, args })
   },
+  /** Live workflow externalization: a srcdoc widget's blitz.workflow.* bridges to the per-run event bus.
+   *  subscribe -> main streams the run's backlog + live events back as os:wf-event (SurfaceFrame routes them
+   *  to the right iframe). snapshot pulls the current backlog. */
+  wfSubscribe(runId: string): Promise<{ ok: boolean }> {
+    return (ipcRenderer.invoke('os:wf-subscribe', runId) as Promise<{ ok: boolean }>).catch(() => ({ ok: false }))
+  },
+  wfUnsubscribe(runId: string): void {
+    ipcRenderer.send('os:wf-unsubscribe', runId)
+  },
+  wfSnapshot(runId: string): Promise<unknown[]> {
+    return (ipcRenderer.invoke('os:wf-snapshot', runId) as Promise<unknown[]>).catch(() => [])
+  },
+  onWfEvent(cb: (payload: { runId: string; ev: unknown }) => void): () => void {
+    const listener = (_e: unknown, payload: { runId: string; ev: unknown }): void => { try { cb(payload) } catch { /* ignore */ } }
+    ipcRenderer.on('os:wf-event', listener as never)
+    return () => ipcRenderer.removeListener('os:wf-event', listener as never)
+  },
   // Item 3: the human answered a web guest's Allow/Block permission prompt (geolocation, camera, …).
   decidePermission(id: string, allow: boolean, remember: boolean): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('os:permission-decide', id, allow, remember)

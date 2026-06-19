@@ -36,6 +36,7 @@ import {
 import { makeTerminalOps } from './terminal-ops.mjs'
 import { makeActionItems } from './action-items.mjs'
 import { emitSurfaceAction } from './events'
+import { runWorkflowHosted } from './workflow-host.mjs'
 
 // Exported so the widget-tool runner (src/main/widgets.ts) can build its handler map from the SAME ops —
 // see makeWidgetToolHandlers in widget-tools.mjs. One ops object → both the agent registry and the widget
@@ -88,6 +89,9 @@ export const electronOps = {
     try { osUserMessage(`${spec.task || ''}${refs}`, agent.id) } catch { /* the agent still boots with the duty; the task lands when chat.md is read */ }
     return { ok: true, agent }
   },
+  // run_workflow (live externalization): run a blitzscript workflow IN-PROCESS so its WfEvents stream to the
+  // bus and into the live widget the tool just placed. Returns immediately (the run continues in background).
+  runWorkflow: (spec: { file: string; args?: unknown; runId?: string; surfaceId?: string | null; view?: string; agentId?: string }) => runWorkflowHosted(spec),
   systemUi: (name: string) => osSystemUi(name),
   systemUiInfo: (name: string) => osSystemUiInfo(name),
   groupIntoFolder: (name: string, ids: string[], x: number | undefined, y: number | undefined, kind: 'board' | 'folder') => osGroupIntoFolder(name, ids, x, y, kind),
