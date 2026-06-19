@@ -35,6 +35,7 @@ type AgentRuntimeDebugStatus = {
   available: { codex: boolean; claude: boolean }
   error?: string
 }
+type TerminalListEntry = { id?: string; title?: string; status?: string; kind?: string; stage?: number | null; area?: number | null }
 const THEME_STORAGE_KEY = 'blitzos.theme'
 const HOME_TRANSFORM_EPS = 0.75
 const HOME_SCALE_EPS = 0.006
@@ -719,6 +720,8 @@ export default function App(): JSX.Element {
   // ! DEBUG: runtime switch state is intentionally UI-only; the selected value is persisted in main.
   const [agentRuntimeDebug, setAgentRuntimeDebug] = useState<AgentRuntimeDebugStatus | null>(null)
   const [agentRuntimePending, setAgentRuntimePending] = useState<AgentRuntimeChoice | null>(null)
+  const [showAgentTerminals, setShowAgentTerminals] = useState(false)
+  const showAgentTerminalsRef = useRef(showAgentTerminals)
   const pan = useRef<{ x: number; y: number } | null>(null)
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
   const dockAnimationIds = useRef<Set<string>>(new Set())
@@ -735,6 +738,10 @@ export default function App(): JSX.Element {
   const advancedButtonRef = useRef<HTMLButtonElement>(null)
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [toolbarTooltip, setToolbarTooltip] = useState<ToolbarTooltip | null>(null)
+
+  useEffect(() => {
+    showAgentTerminalsRef.current = showAgentTerminals
+  }, [showAgentTerminals])
 
   useEffect(() => {
     if (isServer) return
@@ -1557,14 +1564,16 @@ export default function App(): JSX.Element {
       } else if (a.type === 'terminal-spawn') {
         // A terminal was created (by an agent or the user), or re-adopted on restore. Terminals live as
         // TABS in a terminal window — add this one as a tab (idempotent). Covers both live spawns and the
-        // restore() replay that brings back tmux survivors after a restart. Agents auto-show too (an agent
-        // IS a terminal you watch claude work in); plain terminals additionally animate from their launcher.
-        const term = (a.terminal ?? {}) as { title?: string; stage?: number | null; area?: number | null; kind?: string }
+        // restore() replay that brings back tmux survivors after a restart. Plain terminals animate from
+        // their launcher; agent terminals are hidden unless the DEBUG toggle is on.
+        const term = (a.terminal ?? {}) as TerminalListEntry
         // Agents run HEADLESS in tmux; their visible interface is the chat widget, not the raw terminal,
-        // so an agent's terminal NEVER auto-opens (it would clutter the stage — user, 2026-06-12). It's
-        // opt-in via the Runtime tray. Only a PLAIN terminal the user spawned from a control opens, and
-        // it animates from that control's rect.
-        if (term.kind !== 'agent') {
+        // so an agent's terminal stays hidden by default (it would clutter the stage — user,
+        // 2026-06-12). The bottom-right DEBUG toggle is the global maintainer opt-in; the Runtime tray
+        // remains the per-agent explicit open path.
+        if (term.kind === 'agent') {
+          if (showAgentTerminalsRef.current) ensureTerminalTab(String(a.id), term.title || 'Agent', term.stage ?? term.area)
+        } else {
           const pending = pendingTerminalSource.current
           const source = pending && performance.now() - pending.at < 5000 ? pending.rect : null
           if (source) pendingTerminalSource.current = null
@@ -1618,8 +1627,8 @@ export default function App(): JSX.Element {
   }, [])
 
   // Resume terminals: terminal surfaces aren't serialized (they're runtime-only), so on load — and on
-  // every workspace switch — we reconstruct a terminal tab for each terminal still ALIVE in this
-  // workspace, INCLUDING agents (an agent is a terminal you watch claude work in). tmux keeps the process
+  // every workspace switch — we reconstruct a terminal tab for each plain terminal still ALIVE in this
+  // workspace. Agent terminals stay hidden unless the DEBUG toggle is on. tmux keeps the process
   // across a BlitzOS/page restart; calling terminalList() also drives the backend's lazy restore()
   // (re-adopting survivors). ensureTerminalTab is idempotent, so this converges with the restore()
   // terminal-spawn replay rather than double-creating, and pruneEmptyTerminals drops any window a removed
@@ -1632,13 +1641,16 @@ export default function App(): JSX.Element {
       .then((list) => {
         if (cancelled || !Array.isArray(list)) return
         const st = useDesktop.getState()
-        for (const s of list as Array<{ id?: string; title?: string; status?: string; kind?: string; stage?: number | null; area?: number | null }>) {
+        const agentIds = new Set<string>()
+        for (const s of list as TerminalListEntry[]) {
           if (!s || !s.id || s.status !== 'running') continue
-          // Reconstruct a terminal tab for EVERY live terminal — plain shells AND agents. An agent IS a
-          // terminal you watch claude work in, so its terminal is shown in ITS stage (find-or-create);
-          // tabs are renderer-only (not serialized), so this is how they come back after a reload.
+          if (s.kind === 'agent') agentIds.add(String(s.id))
+          // Reconstruct terminal tabs for live plain shells. Agent terminals stay hidden unless the DEBUG
+          // toggle is on; their chat widget is the user-facing interface, and tabs are renderer-only.
+          if (s.kind === 'agent' && !showAgentTerminalsRef.current) continue
           ensureTerminalTab(String(s.id), s.title || (s.kind === 'agent' ? 'Agent' : 'Terminal'), s.stage ?? s.area)
         }
+        if (!showAgentTerminalsRef.current) closeAgentTerminalTabs(agentIds)
         st.pruneEmptyTerminals() // a terminal window left with no live tab only renders blank — drop it
       })
       .catch(() => {})
@@ -1657,7 +1669,7 @@ export default function App(): JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [activeWs])
+  }, [activeWs, showAgentTerminals])
 
   // srcdoc surfaces (agent-authored UI) can fire actions back to the agent: a
   // sandboxed iframe postMessages {__blitz:'action', surfaceId, ...} to us and we
@@ -1929,7 +1941,7 @@ export default function App(): JSX.Element {
     } catch {
       /* no pointer capture (e.g. synthetic events) — fine */
     }
-  }
+  } 
   function onBgMove(e: React.PointerEvent): void {
     if (pan.current) {
       useDesktop.getState().panBy(e.clientX - pan.current.x, e.clientY - pan.current.y)
@@ -1980,6 +1992,19 @@ export default function App(): JSX.Element {
   // three callers stay in sync.
   function ensureTerminalTab(tid: string, title: string, stage?: number | null): void {
     useDesktop.getState().openTerminal(tid, title || 'Terminal', stage)
+  }
+
+  // Hiding an agent terminal is only a renderer/tab concern. It must never stop tmux, kill the agent,
+  // or remove the terminal record; the chat widget remains the normal agent interface.
+  function closeAgentTerminalTabs(agentIds: Set<string>): void {
+    if (!agentIds.size) return
+    const st = useDesktop.getState()
+    for (const w of [...st.surfaces]) {
+      if (w.kind !== 'native' || w.component !== 'terminal' || !w.tabs?.length) continue
+      for (const tab of w.tabs) {
+        if (tab.terminalId && agentIds.has(tab.terminalId)) st.closeTab(w.id, tab.id)
+      }
+    }
   }
 
   // The Action-items inbox docks TOP-RIGHT of the current view (out of the way of chat/activity which
