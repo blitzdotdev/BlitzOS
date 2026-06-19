@@ -137,14 +137,16 @@ export function makeConnectionOps({
     // "generating" when nothing is. With an agent: it will build the view. Without one: say so + how to fix.
     const footer = agent
       ? `The agent is building a live view of this ${kind} — ask it about this ${kind} in chat, or it will summarize on its own.`
-      : `<b style="color:#e0a23d">No AI agent is running</b>, so there's no live view yet. Connect an AI (the “Connect AI” button) or start a chat — the ${kind} is connected and its tools are ready the moment an agent is.`
-    return `<!doctype html><meta charset=utf8><body style="margin:0;font:13px/1.55 -apple-system,system-ui,sans-serif;background:#0b0d12;color:#e6e9ef;padding:16px;box-sizing:border-box">
-<div style="display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8b93a7">
-  <span style="width:7px;height:7px;border-radius:50%;background:#3ddc84;box-shadow:0 0 6px #3ddc84"></span>connected ${kind}</div>
+      : `<b style="color:var(--blitz-accent,#e31c30)">No AI agent is running</b>, so there's no live view yet. Connect an AI (the “Connect AI” button) or start a chat — the ${kind} is connected and its tools are ready the moment an agent is.`
+    // Uses the injected design-kit tokens (the OS canvas is LIGHT) so it sits among the other widgets instead
+    // of being a hardcoded-dark outlier; the agent then re-authors with the same kit. No <body bg> override.
+    return `<div style="font:13px/1.55 var(--blitz-font,-apple-system,system-ui,sans-serif);color:var(--blitz-text,#1a1b1d);background:var(--blitz-surface,#fff);padding:18px;box-sizing:border-box;height:100%">
+<div style="display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--blitz-text-dim,#797c7f)">
+  <span style="width:7px;height:7px;border-radius:50%;background:#16a34a"></span>connected ${kind}</div>
 <div style="margin-top:12px;font-size:17px;font-weight:600">${t}</div>
-<div style="margin-top:3px;opacity:.55;word-break:break-all">${sid}</div>
-<div style="margin-top:16px;padding-top:12px;border-top:1px solid #1c2230;opacity:.7;font-size:12px">${footer}</div>
-</body>`
+<div style="margin-top:3px;color:var(--blitz-text-dim,#797c7f);word-break:break-all">${sid}</div>
+<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--blitz-hairline,rgba(0,0,0,.1));color:var(--blitz-text-dim,#797c7f);font-size:12px">${footer}</div>
+</div>`
   }
 
   // ---- adapter binding: an adapter calls this when the user/agent connects a source ----
@@ -228,12 +230,13 @@ export function makeConnectionOps({
   function disconnectedHtml(sourceId, type, status) {
     const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))
     const kind = type === 'window' ? 'window' : 'tab'
-    return `<!doctype html><meta charset=utf8><body style="margin:0;font:13px/1.55 -apple-system,system-ui,sans-serif;background:#0b0d12;color:#e6e9ef;padding:16px;box-sizing:border-box">
-<div style="display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8b93a7">
+    // Same light design-kit tokens as the placeholder (the OS canvas is light) — never a hardcoded-dark outlier.
+    return `<div style="font:13px/1.55 var(--blitz-font,-apple-system,system-ui,sans-serif);color:var(--blitz-text,#1a1b1d);background:var(--blitz-surface,#fff);padding:18px;box-sizing:border-box;height:100%">
+<div style="display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--blitz-text-dim,#797c7f)">
   <span style="width:7px;height:7px;border-radius:50%;background:#e0a23d"></span>${esc(status || 'disconnected')}</div>
 <div style="margin-top:12px;font-size:15px;font-weight:600">${esc(sourceId)}</div>
-<div style="margin-top:14px;padding-top:12px;border-top:1px solid #1c2230;opacity:.6;font-size:12px">This ${kind} disconnected (closed or the link dropped). Its saved tools are kept — reconnect the ${kind} to resume; the agent re-attaches to everything it learned.</div>
-</body>`
+<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--blitz-hairline,rgba(0,0,0,.1));color:var(--blitz-text-dim,#797c7f);font-size:12px">This ${kind} disconnected (closed or the link dropped). Its saved tools are kept — reconnect the ${kind} to resume; the agent re-attaches to everything it learned.</div>
+</div>`
   }
   function connectionUnbind(connId, { status = 'disconnected' } = {}) {
     const r = rec(connId)
