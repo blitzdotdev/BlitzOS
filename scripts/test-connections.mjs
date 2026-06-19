@@ -121,6 +121,16 @@ async function main() {
   const { connId: conn2 } = ops.connectionBind({ type: 'tab', sourceId: 'mail.google.com', title: 'Gmail 2', adapter: stubAdapter() })
   ok('a second connection to the same source inherits the saved tools', ops.connectionListTools(conn2).tools.length === 1)
 
+  // --- two LIVE connections to the same source (same site in two tabs): distinct connId+widget, shared tools.
+  // verified live with two example.com Chrome tabs; locking the invariant here. ---
+  const twA = ops.connectionBind({ type: 'tab', sourceId: 'twosite.example.com', adapter: stubAdapter() })
+  const twB = ops.connectionBind({ type: 'tab', sourceId: 'twosite.example.com', adapter: stubAdapter() })
+  ok('two live same-source connections are distinct (connId)', twA.connId !== twB.connId)
+  ok('two live same-source connections have distinct widgets', twA.surfaceId !== twB.surfaceId && twA.surfaceId && twB.surfaceId)
+  ok('both same-source connections are live (no incorrect dedup/adoption)', ops.connectionList().connections.filter((c) => c.sourceId === 'twosite.example.com' && c.status === 'live').length === 2)
+  ops.connectionSaveTool(twA.connId, { name: 'shared_x', kind: 'read', code: 'return 1' })
+  ok("the second live connection sees the first's saved tool (shared per-source)", ops.connectionListTools(twB.connId).tools.some((t) => t.name === 'shared_x'))
+
   // --- capability gate: a WINDOW has no run_js ---
   const win = stubAdapter({ act: { effect: null } })
   const { connId: winConn } = ops.connectionBind({ type: 'window', sourceId: 'com.tinyspeck.slackmacgap', title: 'Slack', adapter: win })
