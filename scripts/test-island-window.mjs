@@ -4,7 +4,7 @@
 // and GROWS the clip to fullscreen — so the LIVE canvas expands out of the notch (no second window, no plate, no
 // handoff). This test reads the source off disk and asserts the load-bearing lines so a future edit that breaks
 // the merge fails loudly. Run: node scripts/test-island-window.mjs
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -14,6 +14,13 @@ const indexSrc = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')
 const preloadSrc = readFileSync(join(repoRoot, 'src/preload/index.ts'), 'utf8')
 const appSrc = readFileSync(join(repoRoot, 'src/renderer/src/App.tsx'), 'utf8')
 const cssSrc = readFileSync(join(repoRoot, 'src/renderer/src/styles.css'), 'utf8')
+const notchCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/notch.css'), 'utf8')
+const islandCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/island.css'), 'utf8')
+const chatInputSrc = readFileSync(join(repoRoot, 'src/renderer/src/notch/ChatInput.tsx'), 'utf8')
+const notchHostSrc = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHost.tsx'), 'utf8')
+const islandSrc = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandPanel.tsx'), 'utf8')
+const attachSrc = readFileSync(join(repoRoot, 'src/renderer/src/notch/AttachPanel.tsx'), 'utf8')
+const attachCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/attach.css'), 'utf8')
 
 let failures = 0
 function ok(label, cond, detail) {
@@ -70,10 +77,10 @@ ok('the old island bridge is gone from preload (no os:island-* channels)',
   !/os:island-/.test(preloadSrc) && !/\bisland:\s*\{/.test(preloadSrc))
 
 // ── App.tsx: the renderer clips the REAL canvas (#root-canvas) to the notch and grows it ───────────────────────
-ok('App.tsx notchClipFor returns inset() reveals (butter, not path() curves) with three stops (open / panel / closed)',
+ok('App.tsx notchClipFor: open = fullscreen inset; closed/panel = the bare notch pill (panel UI is the NotchHost portal)',
   /function notchClipFor\(/.test(appSrc) &&
     /state === 'open'[\s\S]*?inset\(0px round/.test(appSrc) &&
-    /state === 'panel'[\s\S]*?NOTCH_PANEL_W/.test(appSrc) && /inset\(0px \$\{sx\}px/.test(appSrc))
+    /inset\(0px \$\{sx\}px/.test(appSrc) && !/NOTCH_PANEL_W/.test(appSrc))
 ok('#root-canvas is clipped to the notch (clipPath: notchClip); transition + GPU texture promotion in CSS (.notch-mode)',
   /clipPath: notchClip/.test(appSrc) && /const notchClip = notchOn[\s\S]*?notchClipFor\(/.test(appSrc) &&
     /#root-canvas\.notch-mode[\s\S]*?transition: clip-path/.test(cssSrc) && /#root-canvas\.notch-mode[\s\S]*?transform: translateZ\(0\)/.test(cssSrc))
@@ -98,9 +105,9 @@ ok('grow is butter via a GPU texture (translateZ(0), content rasterized once, co
 ok('low-power lever: widget motion is PAUSED (not hidden) during the clip transition (notch-anim → animation-play-state)',
   /#root-canvas\.notch-anim[\s\S]*?animation-play-state: paused/.test(cssSrc) &&
     /setNotchAnimating\(true\)/.test(appSrc) && /propertyName === 'clip-path'\) setNotchAnimating\(false\)/.test(appSrc))
-ok('the notch handle + entry are rendered INSIDE #root-canvas (so the clip reveals the live canvas around them)',
+ok('the notch handle is in #root-canvas; the panel/process UI is the NotchHost rendered via a portal to document.body',
   /className=\{`notch-handle/.test(appSrc) && /ref=\{notchHandleRef\}/.test(appSrc) &&
-    /className=\{`notch-entry/.test(appSrc) && /className="notch-pq"/.test(appSrc))
+    /createPortal\(<NotchHost menuBarH=\{notchMenuBarH\} \/>, document\.body\)/.test(appSrc))
 ok('the renderer flips window click-through on notch-hover (mousemove → agentOS.notch.setInteractive)',
   /addEventListener\('mousemove', onMove, true\)/.test(appSrc) &&
     /window\.agentOS\?\.notch\?\.setInteractive\(on\)/.test(appSrc))
@@ -109,9 +116,9 @@ ok('the renderer follows main: onGeometry enables the notch, onToggle (⌥Space)
     /notch\?\.onToggle\?\.\(\(\) => toggleNewSession\(\)\)/.test(appSrc))
 
 // ── Item 2: ⌥Space is a pure TOGGLE of the new-session widget (closed ↔ panel); it NEVER enters fullscreen ───────
-ok('item 2: toggleNewSession shows the panel from closed (pinned, focused) and hides from anything shown',
+ok('item 2: toggleNewSession shows the panel from closed (pinned) and hides from anything shown',
   /const toggleNewSession = \(\): void =>/.test(appSrc) &&
-    /if \(notchStateRef\.current === 'closed'\)[\s\S]*?setNotchPinnedBoth\(true\)[\s\S]*?applyNotchState\('panel'\)[\s\S]*?focusNotchPrompt\(\)/.test(appSrc) &&
+    /if \(notchStateRef\.current === 'closed'\)[\s\S]*?setNotchPinnedBoth\(true\)[\s\S]*?applyNotchState\('panel'\)/.test(appSrc) &&
     /else \{[\s\S]*?applyNotchState\('closed'\)[\s\S]*?setNotchInteractive\(false\)/.test(appSrc))
 ok('item 2: ⌥Space NEVER enters fullscreen — toggleNewSession does not call openNotch (entering is click/Send only)',
   /const toggleNewSession = \(\): void => \{(?:(?!openNotch)[\s\S])*?\n  \}/.test(appSrc))
@@ -125,16 +132,70 @@ ok('item 2: pin is CLEARED on enter (openNotch), on hide/retract (closeNotch + t
   /const openNotch = \(\): void => \{[\s\S]*?setNotchPinnedBoth\(false\)/.test(appSrc) &&
     /const closeNotch = \(\): void => \{[\s\S]*?setNotchPinnedBoth\(false\)/.test(appSrc) &&
     /e\.key === 'Escape'[\s\S]*?setNotchPinnedBoth\(false\)[\s\S]*?applyNotchState\('closed'\)/.test(appSrc))
-ok('item 2: ⌥Space opens the prompt type-ready — focusNotchPrompt focuses the .notch-pq textarea after render',
-  /const focusNotchPrompt = \(\): void =>[\s\S]*?querySelector<HTMLTextAreaElement>\('\.notch-pq'\)[\s\S]*?\.focus\(\)/.test(appSrc))
+ok('item 2: the session composer is type-ready — ChatInput supports autoFocus and the session view passes it',
+  /autoFocus\?: boolean/.test(chatInputSrc) && /if \(autoFocus\) ref\.current\?\.focus\(\)/.test(chatInputSrc))
 ok('item 2: OS key auto-repeat is swallowed — a <120ms re-fire of the toggle is ignored (deliberate re-tap is slower)',
   /performance\.now\(\)[\s\S]*?now - notchToggleAtRef\.current < 120\) return/.test(appSrc))
-ok('Send spawns via the notch bridge (Deep toggle), then expands to the live canvas',
-  /window\.agentOS\?\.notch\?\.send\(p, notchDeep\)/.test(appSrc) && /applyNotchState\('open'\)/.test(appSrc))
 
-// ── styles.css: the notch handle + entry ──────────────────────────────────────────────────────────────────────
-ok('styles.css styles the notch handle (black pill) + the black entry panel + the prompt',
-  /\.notch-handle \{/.test(cssSrc) && /\.notch-entry \{/.test(cssSrc) && /\.notch-pq \{/.test(cssSrc))
+// ── The LOCKED design: ONE island (the macOS/iOS Dynamic Island), the prototype switcher is RETIRED ─────────────
+ok('styles.css notch handle (black pill) still present',
+  /\.notch-handle \{/.test(cssSrc))
+ok('the CHASSIS is INVARIANT: BLACK + the original NotchShape (square top, 28px rounded bottom), owned by .nh-chassis',
+  /\.nh-chassis \{[\s\S]*?background: #000;[\s\S]*?border-radius: 0 0 28px 28px;/.test(notchCss) &&
+    /nh-chassis/.test(notchHostSrc))
+ok('NotchHost renders the single IslandPanel INSIDE the chassis; the swipe PAGER is removed (no onWheel)',
+  /import IslandPanel from '\.\/IslandPanel'/.test(notchHostSrc) && /<IslandPanel\b/.test(notchHostSrc) &&
+    !/onWheel/.test(notchHostSrc))
+ok('tab nav = Ctrl+Tab / Ctrl+Shift+Tab (wrap) + click; the tab strip scrolls horizontally on swipe (overflow-x:auto)',
+  /e\.ctrlKey && e\.key === 'Tab'/.test(notchHostSrc) && /e\.shiftKey \? total - 1 : 1/.test(notchHostSrc) &&
+    /\.isl-tabs \{[\s\S]*?overflow-x: auto/.test(islandCss))
+ok('IslandPanel is MINIMAL (user constraint): NO header/title/icons — one shared tab strip + a composer/feed body',
+  /isl-tabs/.test(islandSrc) && /className="isl-bar"/.test(islandSrc) &&
+    !/isl-icon/.test(islandSrc) && !/isl-title/.test(islandSrc) && !/isl-lead/.test(islandSrc))
+ok('the new-session tab is JUST a tab: the FIRST chip (isl-chip-new) selects page 0; agents select page i+1; strip is shared',
+  /isl-chip-new/.test(islandSrc) && /onSelectPage\(0\)/.test(islandSrc) &&
+    /onSelectPage\(i \+ 1\)/.test(islandSrc) && /\.isl-chip-new \{[\s\S]*?border-radius: 50%/.test(islandCss))
+ok('status is BINARY: running = a pulsing BLUE dot (isl-dot-pulse on working), everything else gray — no yellow/red',
+  /isl-chip-dot\[data-status='working'\][\s\S]{0,90}animation: isl-dot-pulse/.test(islandCss) &&
+    !/--isl-warn/.test(islandCss) && !/--isl-error/.test(islandCss) &&
+    !/data-status='waiting'/.test(islandCss) && !/data-status='error'/.test(islandCss))
+
+// ── Attach panel: standalone Deep gone; the attach toggle injects the panel INLINE above the bar; island grows ───
+ok('the standalone Deep button is GONE; every composer has an attach toggle (isl-attach: + ↔ ×) at the left of the pill',
+  !/isl-deep/.test(islandSrc) && /isl-attach/.test(islandSrc) && /onToggleAttach/.test(islandSrc) && /'×'/.test(islandSrc) &&
+    /\.isl-attach \{[\s\S]*?border-radius: 50%/.test(islandCss))
+ok('the attachment panel is INJECTED INLINE above the message bar (isl-attach-wrap → <AttachPanel/>), not a separate view',
+  /import \{ AttachPanel \}/.test(islandSrc) && /<AttachPanel \/>/.test(islandSrc) && /isl-attach-wrap/.test(islandSrc) &&
+    /\.isl-attach-wrap \{[\s\S]*?grid-template-rows: 0fr/.test(islandCss))
+ok('the island EXPANDS when attachments open: NotchHost adds .nh-wide; notch.css widens + transitions the chassis',
+  /attachOpen \? ' nh-wide'/.test(notchHostSrc) && /\.nh-chassis\.nh-wide \{[\s\S]*?width:/.test(notchCss) &&
+    /\.nh-chassis \{[\s\S]*?transition: width/.test(notchCss))
+ok('the new-session tab icon is a PEN (compose), not a "+" (avoids two identical + circles)',
+  /isl-pen/.test(islandSrc) && /<svg className="isl-pen"/.test(islandSrc) && !/isl-plus/.test(islandSrc))
+ok('attach panel = a skills strip (Deep is one) + TWO rounded DASHED boxes (left drop, right open-apps), NO Done button',
+  /att-skills/.test(attachSrc) && /MOCK_SKILLS/.test(attachSrc) && /att-drop/.test(attachSrc) && /att-apps/.test(attachSrc) &&
+    /border: 1\.5px dashed/.test(attachCss) && !/Done/.test(attachSrc))
+ok('right box: click an app row selects ALL its tabs; the ▸/▾ twisty expands to per-tab tri-state selection',
+  /att-twisty/.test(attachSrc) && /toggleApp/.test(attachSrc) && /selectedTabs/.test(attachSrc) && /att-check/.test(attachSrc))
+ok('island.css paints ONLY the interior — the .nh-island root sets NO chassis bg/shape (the chassis is the only black/shape)',
+  /\.nh-island \{/.test(islandCss) &&
+    (() => {
+      const m = islandCss.match(/\.nh-island \{[^}]*\}/)
+      return !!m && !/background:\s*#/.test(m[0]) && !/border-radius/.test(m[0])
+    })())
+ok('the prototype switcher is RETIRED from App.tsx: no NOTCH_PROTOS / setNotchProtoBoth / ⌥←→ proto cycling',
+  !/NOTCH_PROTOS/.test(appSrc) && !/setNotchProtoBoth/.test(appSrc) &&
+    !/ArrowRight' \|\| e\.key === 'ArrowLeft'/.test(appSrc))
+ok('the retired prototype files are gone (protos/ dir + notch/index.ts registry deleted)',
+  !existsSync(join(repoRoot, 'src/renderer/src/notch/protos')) &&
+    !existsSync(join(repoRoot, 'src/renderer/src/notch/index.ts')))
+ok('ChatInput is a properly built composer: autogrow (reset to auto), max-height scroll, Enter sends, IME guard, uncontrolled',
+  /el\.style\.height = 'auto'/.test(chatInputSrc) && /Math\.min\(el\.scrollHeight, maxHeight\)/.test(chatInputSrc) &&
+    /e\.key === 'Enter' && !e\.shiftKey/.test(chatInputSrc) && /isComposing \|\| e\.keyCode === 229/.test(chatInputSrc) &&
+    /defaultValue=""/.test(chatInputSrc))
+ok('the shared shell lives in notch.css (.nhost fixed, .nh-chassis pointer-events auto, .ci composer baseline)',
+  /\.nhost \{[\s\S]*?position: fixed/.test(notchCss) && /\.nh-chassis \{[\s\S]*?pointer-events: auto/.test(notchCss) &&
+    /\.ci \{[\s\S]*?display: flex/.test(notchCss))
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)
 process.exit(failures === 0 ? 0 : 1)

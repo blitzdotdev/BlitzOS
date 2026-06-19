@@ -1,0 +1,381 @@
+/* island.css — THE BlitzOS dynamic-island interior (LOCKED design: the macOS/iOS Dynamic Island direction from the
+   design pass; the other prototypes + the ⌥←/→ switcher are retired). Deliberately MINIMAL — no header row, no
+   icons, no agent title/subtitle. The BLACK chassis + the original NotchShape are owned by `.nh-chassis`
+   (notch.css) and are INVARIANT; this file paints ONLY the interior, white-on-black, and never sets a background
+   or border-radius on the panel root. Session view = the composer + a slim footer; process view = the tab strip
+   (agent identity + status) over the activity feed, both above the bottom STEER bar. SF Pro for body, SF Pro
+   Rounded for numerals/timestamps. */
+.nh-island {
+  /* palette (white-on-black, Apple system colors) */
+  --isl-text: #ffffff;
+  --isl-muted: #ffffff99;
+  --isl-dim: #ffffff66;
+  --isl-faint: #ffffff14;
+  --isl-surface: #0a0a0a;
+  --isl-surface2: #161616;
+  --isl-accent: #0a84ff; /* Apple system blue (dark mode) — the ONLY accent (send, active state, running) */
+  --isl-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial,
+    sans-serif;
+  --isl-round: ui-rounded, 'SF Pro Rounded', system-ui, var(--isl-font);
+
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--isl-text);
+  font-family: var(--isl-font);
+  padding: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+}
+.nh-island.isl-session {
+  min-height: 108px;
+}
+.nh-island.isl-process {
+  min-height: 288px;
+  max-height: 72vh;
+}
+
+/* content rises in under the chassis reveal (opacity only — the chassis owns the shape + the slide). */
+@keyframes isl-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── the composer ROW: an attach "+" (opens the connectors view) to the left of the iMessage pill ─────────────── */
+.nh-island .isl-composer {
+  display: flex;
+  align-items: center; /* the attach button is vertically centered against the message bar */
+  gap: 8px;
+  margin-top: auto; /* process view: pinned to the bottom (the feed flex:1 fills above it) */
+  animation: isl-rise 0.26s ease-out 0.05s both;
+}
+.nh-island.isl-session .isl-composer {
+  margin-top: 12px; /* new-session view: sits right under the tab strip (no feed to push it down) */
+}
+.nh-island .isl-attach {
+  flex: none;
+  align-self: center; /* centered against the pill (not bottom-aligned, which read low) */
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: transparent;
+  color: var(--isl-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.14s ease-out, border-color 0.14s ease-out, background 0.14s ease-out;
+}
+.nh-island .isl-attach:hover {
+  color: var(--isl-text);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.nh-island .isl-attach.on {
+  color: var(--isl-text);
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.06);
+}
+.nh-island .isl-attach-glyph {
+  font-size: 19px;
+  font-weight: 300;
+  line-height: 1;
+  margin-top: -1px;
+}
+/* the inline attachment panel: a grid-rows height animation (0fr → 1fr) so it grows/springs smoothly above the
+   message bar (paired with the chassis width grow in notch.css). */
+.nh-island .isl-attach-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nh-island .isl-attach-wrap.open {
+  grid-template-rows: 1fr;
+}
+.nh-island .isl-attach-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+/* ── tab chip strip (the process header — carries agent identity + status; swipe scrolls it, never pages) ─────── */
+.nh-island .isl-tabs {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  animation: isl-rise 0.26s ease-out 0.03s both;
+}
+.nh-island .isl-tabs::-webkit-scrollbar {
+  display: none;
+}
+.nh-island .isl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 400;
+  color: var(--isl-muted);
+  background: var(--isl-surface);
+  border: 1px solid var(--isl-faint);
+  border-radius: 9999px;
+  padding: 7px 12px 7px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 168px;
+  transition: color 0.14s ease-out, background 0.14s ease-out, border-color 0.14s ease-out;
+}
+.nh-island .isl-chip:hover {
+  color: var(--isl-text);
+}
+.nh-island .isl-chip.active {
+  color: var(--isl-text);
+  font-weight: 600;
+  background: var(--isl-surface2);
+  border-color: #ffffff1f;
+}
+.nh-island .isl-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nh-island .isl-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--isl-dim); /* gray = not running */
+}
+/* running = a pulsing BLUE dot; anything else stays gray (no yellow, no red, no other color). */
+.nh-island .isl-chip-dot[data-status='working'] {
+  background: var(--isl-accent);
+  animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+
+/* the new-session "+" tab — a circle, always the FIRST tab (it is just a tab, not a special view). */
+.nh-island .isl-chip-new {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  justify-content: center;
+}
+/* the pen (compose) glyph — follows the chip's currentColor (muted → text on hover/active). */
+.nh-island .isl-pen {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+/* ── activity feed (scrolls above the pinned steer bar) ──────────────────────────────────────────────────────── */
+.nh-island .isl-feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+  animation: isl-rise 0.3s ease-out 0.07s both;
+}
+.nh-island .isl-feed::-webkit-scrollbar {
+  width: 6px;
+}
+.nh-island .isl-feed::-webkit-scrollbar-thumb {
+  background: #ffffff26;
+  border-radius: 9999px;
+}
+.nh-island .isl-act {
+  display: grid;
+  grid-template-columns: 6px auto 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.nh-island .isl-act-glyph {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  align-self: center;
+  background: var(--isl-dim);
+}
+.nh-island .isl-act-label {
+  font-weight: 600;
+  color: #ffffffe6;
+  white-space: nowrap;
+}
+.nh-island .isl-act-detail {
+  color: var(--isl-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-act-ts {
+  justify-self: end;
+  font-family: var(--isl-round);
+  font-size: 12px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--isl-dim);
+  white-space: nowrap;
+}
+.nh-island .isl-act[data-status='running'] .isl-act-label {
+  color: var(--isl-accent);
+}
+.nh-island .isl-act[data-status='running'] .isl-act-glyph {
+  background: var(--isl-accent);
+  animation: isl-pulse 1.4s ease-in-out infinite;
+}
+/* the blue "live" ping for running status dots (a soft expanding accent ring). */
+@keyframes isl-dot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgba(10, 132, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(10, 132, 255, 0);
+  }
+}
+@keyframes isl-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* iMessage-style bubbles: incoming (agent) = grey, left + tail; outgoing (user) = Apple blue, right + tail. The
+   tail is the classic two-pseudo trick — a same-color ::before juts past the bottom corner, a chassis-black ::after
+   carves it to a point (the ::after MUST match the chassis #000 the feed sits on). */
+.nh-island .isl-msg {
+  position: relative;
+  font-size: 14px;
+  line-height: 19px;
+  padding: 7px 13px;
+  border-radius: 18px;
+  max-width: 76%;
+  width: fit-content;
+  overflow-wrap: anywhere;
+}
+.nh-island .isl-msg.user {
+  align-self: flex-end;
+  background: var(--isl-accent);
+  color: #fff;
+}
+.nh-island .isl-msg.agent {
+  align-self: flex-start;
+  background: #3b3b3d; /* iOS dark-mode incoming grey */
+  color: #fff;
+}
+.nh-island .isl-msg::before,
+.nh-island .isl-msg::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  height: 17px;
+}
+.nh-island .isl-msg.user::before {
+  right: -7px;
+  width: 18px;
+  background: var(--isl-accent);
+  border-bottom-left-radius: 16px 14px;
+}
+.nh-island .isl-msg.user::after {
+  right: -15px;
+  width: 15px;
+  background: #000;
+  border-bottom-left-radius: 10px;
+}
+.nh-island .isl-msg.agent::before {
+  left: -7px;
+  width: 18px;
+  background: #3b3b3d;
+  border-bottom-right-radius: 16px 14px;
+}
+.nh-island .isl-msg.agent::after {
+  left: -15px;
+  width: 15px;
+  background: #000;
+  border-bottom-right-radius: 10px;
+}
+
+/* ── the STEER / new-session composer = the iMessage input pill. Transparent fill, a hairline grey capsule; the
+   blue send circle appears ONLY when there is text (empty = a bare pill, like iMessage with the attach/voice/emoji
+   icons removed). The .ci base layout is in notch.css; theme it here. */
+.nh-island .isl-bar.ci {
+  flex: 1;
+  min-width: 0;
+  align-items: flex-end;
+  gap: 6px;
+  min-height: 36px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 18px;
+  padding: 3px 4px 3px 14px;
+  transition: border-color 0.14s ease-out;
+}
+.nh-island .isl-bar.ci:focus-within {
+  border-color: rgba(255, 255, 255, 0.34);
+}
+.nh-island .isl-bar .ci-field {
+  color: var(--isl-text);
+  font-family: var(--isl-font);
+  font-size: 16px; /* iMessage-comfortable */
+  line-height: 21px;
+  padding: 5px 0;
+}
+.nh-island .isl-bar .ci-field::placeholder {
+  color: var(--isl-muted);
+}
+.nh-island .isl-bar .ci-send {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  align-self: flex-end;
+  border: 0;
+  border-radius: 50%;
+  background: var(--isl-accent); /* Apple blue send circle */
+  color: #fff;
+  font-size: 17px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.12s ease-out, opacity 0.12s ease-out;
+}
+.nh-island .isl-bar .ci-send:active {
+  transform: scale(0.9);
+}
+/* empty draft = no send button (iMessage shows the waveform/emoji here, which we removed). */
+.nh-island .isl-bar .ci-send:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* reduced motion: cut the pulse/rise to quiet swaps. */
+@media (prefers-reduced-motion: reduce) {
+  .nh-island .isl-composer,
+  .nh-island .isl-tabs,
+  .nh-island .isl-feed {
+    animation: isl-rise 0.12s ease-out both;
+  }
+  .nh-island .isl-act[data-status='running'] .isl-act-glyph {
+    animation: none;
+  }
+}

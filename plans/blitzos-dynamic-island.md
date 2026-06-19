@@ -2,6 +2,13 @@
 
 Status: SPEC (2026-06-18). Supersedes the native-helper direction: the PoC (`/Users/minjunes/superapp/notch-spill-poc`) proved a pure-Electron window covers the notch + spills to fullscreen (`coversMenuBar=true`, zero native code). So the island becomes an in-BlitzOS Electron overlay, not a separate Swift app. This doc is the port plan + the product vision; the windowing reference is in the Appendix.
 
+## Design: LOCKED (2026-06-18)
+The 5-prototype design pass is over. We shipped ONE island and retired the rest.
+- **Chassis is invariant.** Black `#000` + the original NotchShape (square top, 28px rounded bottom), owned by `.nh-chassis` (`notch/notch.css`). The interior never changes the bg color or shape. Ported verbatim from the old `.notch-entry`.
+- **The one design** is `notch/IslandPanel.tsx` + `island.css` (the macOS Dynamic Island direction). Deliberately MINIMAL: no header row, no icons, no agent title/subtitle. Session view = the composer + a slim foot (Deep + recency). Process view = the tab strip (carries agent identity + status) over the activity feed, above the steer bar. White-on-black, SF Pro.
+- **Retired:** the other 4 prototypes (rams / alcove / modern / expressive), the `_baseline` stub, the `notch/index.ts` registry, and the ⌥←/→ proto switcher in App.tsx. Research history stays in `island-proto-briefs.md`.
+- Still visual-only (mock data in `notch/mock.ts`); live agent wiring is the next step. Test: `node scripts/test-island-window.mjs`.
+
 ## Naming (settle this)
 - **Blitz** = the BRAIN. The main agent (what we were loosely calling "blitzos" the agent). ⌥Space "opens Blitz."
 - **BlitzOS** = the OS / desktop: the infinite canvas, surfaces/widgets, the agent runtime. Blitz runs on BlitzOS.

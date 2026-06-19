@@ -1878,6 +1878,21 @@ button {
   color: currentColor;
   opacity: 0.45;
 }
+/* Workflow-viz widgets (props.transparent): frameless + transparent so the live graph/kanban reads as
+   nodes placed directly on the canvas. No window bg/border/shadow, no body fill, no pop-out toggle; the
+   widget's own html/body must also be transparent (the wf-graph/wf-kanban sources set that). */
+.window.wfviz {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+.window.wfviz .window-body {
+  background: transparent;
+  border: none;
+}
+.window.wfviz .tile-toggle {
+  display: none;
+}
 .native-fallback {
   display: flex;
   align-items: center;

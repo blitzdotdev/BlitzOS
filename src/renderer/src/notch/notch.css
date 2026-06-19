@@ -1,0 +1,87 @@
+/* notch.css — the design-agnostic shell for the island: the host overlay, the INVARIANT chassis, and the shared
+   ChatInput baseline. IslandPanel (island.css) paints the interior. The host is a top-level portal overlay
+   (escapes the #root-canvas clip): a full-width fixed strip under the notch; only the chassis takes pointer events. */
+.nhost {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 2147483000;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* ── THE CHASSIS (invariant) ──────────────────────────────────────────────────────────────────────────────────
+   The original dynamic-island shell, ported verbatim from the pre-design-pass `.notch-entry`: pure BLACK + the
+   exact NotchShape (square top corners flush to the bezel, 28px rounded bottom). User constraint: the island's
+   background color + shape NEVER change — IslandPanel paints NO chassis (transparent root, no bg/border/radius/
+   shadow). overflow:hidden masks interior content to the rounded bottom, so nothing can leak the black shape. */
+.nh-chassis {
+  pointer-events: auto;
+  box-sizing: border-box;
+  width: 580px;
+  max-width: 84vw;
+  background: #000;
+  color: #ededed;
+  border-radius: 0 0 28px 28px;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  animation: nhost-in 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  /* the island EXPANDS sideways when the attachment panel opens (NotchHost adds .nh-wide). */
+  transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nh-chassis.nh-wide {
+  width: 740px;
+}
+@keyframes nhost-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Shared ChatInput baseline (themed per view via the .isl-bar class in island.css). ───────────────────────── */
+.ci {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: #1e1e1e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 8px 8px 8px 12px;
+}
+.ci-field {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  resize: none;
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+  max-height: 140px;
+}
+.ci-field::placeholder {
+  color: #777;
+}
+.ci-send {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  align-self: flex-end;
+  border: 0;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+.ci-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
