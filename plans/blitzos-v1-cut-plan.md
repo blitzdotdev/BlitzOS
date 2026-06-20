@@ -2,7 +2,7 @@
 
 **TL;DR.** V1 is the dynamic island, nothing else. Rip out the entire infinite canvas (camera, slot lattice, stages, workspaces, surfaces-as-canvas-nodes) and every canvas word an agent can see. The island becomes: a home grid of widgets (Chat + agent-made), full-markdown chat per agent session, tool attachments (browser/computer use) added pre-spawn, and blitzscript workflows the agent triggers itself. Older branches preserve everything we cut, so cut hard.
 
-**Source.** Synthesized from the 12-subsystem cut analysis (ultracode workflow, branch `blitz-v1`). The widgets-pipeline reader + the 3 adversarial critics were rate-limited, so treat the widget-host details and this synthesis as **review-pending** (re-run the critic pass to harden).
+**Source.** Synthesized from the 12-subsystem cut analysis (ultracode workflow, branch `blitz-v1`). The widgets-pipeline reader + the 3 adversarial critics were rate-limited, so the review below was done by hand (grounded in the 12 inventories + targeted code checks), not by the critic agents.
 
 ---
 
@@ -10,7 +10,17 @@
 
 Browser-use in V1 = the user's **real Chrome** via the connector extension (out-of-process). Computer-use = the native helper. **Neither needs a BlitzOS-owned `web` surface.** The only thing that does is the agent opening its *own* pages (`open_window`/`read_window`/`surface_control` over CDP on an in-DOM `<webview>`).
 
-**Recommendation:** BlitzOS owns **no `web` surface** in V1. Agent web research is routed through the connection or deferred. This unblocks cutting `SurfaceFrame` + `WebTabView` + `BrowserNav` (~6 files). **Confirm before anyone touches the surface layer** — it gates the biggest cut.
+**Recommendation:** BlitzOS owns **no `web` surface** in V1. Agent web research is routed through the connection or deferred. This unblocks cutting `WebTabView` + `BrowserNav` and the web renderer. **Confirm before anyone touches the surface layer** — it gates the biggest cut.
+
+---
+
+## Adversarial review (done by hand — replaces the rate-limited critics)
+
+1. **`SurfaceFrame` is the widget HOST, not just a canvas renderer — do NOT just delete it.** It carries the srcdoc widget bridge (`serveTool`/`serveChat`/the `blitz.tool` allowlist + `useJsxWidget`) that the widgets tab depends on. **Extract that host (with `widget-jsx.ts` / `widget-bridge.ts` / `widget-ui-kit.ts`, all KEEP) into an island widget host BEFORE deleting `SurfaceFrame`.** This is B's foundational task; deleting SurfaceFrame first kills the entire widget pipeline.
+2. **Lattice cut-order (dangling deps, verified):** `stage-core`/`stages-core` are imported by `store.ts`, `types.ts`, `os-tools.mjs`, `osActions.ts`, `island-membership.mjs`, `workspace-host.mjs`, `onboarding-board.mjs`. Gut/cut every one of those before deleting the lattice files (adds `types.ts` + `island-membership.mjs` to SIMPLIFY).
+3. **The island core is canvas-independent** (verified: `notch/` imports nothing from `store`/canvas). The KEEP island stands alone; all the risk lives in the SIMPLIFY bridge files.
+4. **`os-tools.mjs` is the doctrine epicenter** (~109 canvas-ish lines) — both the heaviest SIMPLIFY and the heaviest agent-visible doctrine. Do it early, carefully, and re-read it as an agent would.
+5. **Completeness gap filled:** the one reader that didn't run was widgets-pipeline; finding 1 covers it (the host = `widget-jsx`/`widget-bridge`/`widget-ui-kit`, KEEP-and-extract).
 
 ---
 
@@ -25,7 +35,7 @@ Browser-use in V1 = the user's **real Chrome** via the connector extension (out-
 ## CUT (delete — recover from older branches if ever needed)
 
 - **Canvas/nav:** `cameraController.ts`, `stage-core.mjs`(+`.d.mts`), `stages-core.mjs`(+`.d.mts`), `PrimarySpace.tsx`, `Sidebar.tsx`, `capture.ts`, `Overview.tsx`, `RadialSurfaceMenu.tsx`, `AnnotationLayer.tsx`, `FolderOverlay.tsx`, `FolderWidget.tsx`, `SurfaceLauncherButton.tsx`, `SurfacePreview.tsx`
-- **Surfaces (pending the web decision):** `SurfaceFrame.tsx`, `BrowserNav.tsx`, `WebTabView.tsx`
+- **Surfaces (pending the web decision):** `BrowserNav.tsx`, `WebTabView.tsx`. `SurfaceFrame.tsx` is **extract-then-cut** (it holds the widget host — see review finding 1), not a plain delete.
 - **Onboarding board:** `onboarding-board.mjs`(+`.d.mts`), `onboarding-layouts/`, `UnlockWidget.tsx`, `test-onboarding-seed.mjs`
 - **Legacy island:** `notch/mock.ts`, `main/island.ts`, `island-bridge.mjs`, `launcher.ts`
 - **Docs/tests:** `plans/blitzos-single-canvas-navigation.md`, `test-canvas-perception.mjs`, `test-tick-diff.mjs`
@@ -57,7 +67,7 @@ These reach an agent's eyes. Delete or rewrite every spatial word (canvas / home
 1. **Doctrine sweep** — zero compile risk, unblocks agents immediately.
 2. **Sever notch→canvas expand** (`App.tsx` `'open'` clip-grow → panel/peek only).
 3. **Delete leaf canvas components** (only `App.tsx` imports them).
-4. **Resolve the web decision**, then cut `SurfaceFrame` + `WebTabView`/`BrowserNav`.
+4. **Resolve the web decision**; **extract the widget host from `SurfaceFrame`** (finding 1), then cut `WebTabView`/`BrowserNav` + `SurfaceFrame`.
 5. **Gut `store.ts`** → flat island store; fix `App.tsx` consumers.
 6. **Delete `stage-core`/`stages-core` + `onboarding-board`** (the lattice).
 7. **`os-tools`:** cut placement/workspace tools, add `pin_widget`.
