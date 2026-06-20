@@ -1,31 +1,21 @@
 import './island.css'
-import '@xterm/xterm/css/xterm.css'
-import { FitAddon } from '@xterm/addon-fit'
-import { Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
 import { subscribeTerminal } from '../terminalStream'
 
-const terminalTheme = {
-  background: '#050505',
-  foreground: '#f4f4f5',
-  cursor: '#ffd84d',
-  selectionBackground: '#ffffff26',
-  black: '#0a0a0a',
-  red: '#ff6b6b',
-  green: '#7ddf7a',
-  yellow: '#ffd84d',
-  blue: '#58a6ff',
-  magenta: '#f778ba',
-  cyan: '#76e4f7',
-  white: '#f4f4f5',
-  brightBlack: '#737373',
-  brightRed: '#ff8787',
-  brightGreen: '#9af59b',
-  brightYellow: '#ffe680',
-  brightBlue: '#7dbbff',
-  brightMagenta: '#ff99cc',
-  brightCyan: '#9bf2ff',
-  brightWhite: '#ffffff'
+const MAX_LOG_CHARS = 220_000
+const ANSI_PATTERN =
+  // eslint-disable-next-line no-control-regex
+  /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[PX^_][\s\S]*?(?:\x1B\\|\x07))/g
+
+function toVisibleTerminalText(chunk: string): string {
+  return chunk
+    .replace(ANSI_PATTERN, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+}
+
+function trimLog(text: string): string {
+  return text.length > MAX_LOG_CHARS ? text.slice(text.length - MAX_LOG_CHARS) : text
 }
 
 export function IslandTerminalPane({
@@ -37,56 +27,41 @@ export function IslandTerminalPane({
   title: string
   status: string
 }): JSX.Element {
-  const mountRef = useRef<HTMLDivElement>(null)
+  const logRef = useRef<HTMLPreElement>(null)
+  const [logText, setLogText] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exitCode, setExitCode] = useState<number | null>(null)
 
   useEffect(() => {
-    const mount = mountRef.current
-    if (!mount) return
+    let disposed = false
+
+    const scrollToBottom = (): void => {
+      requestAnimationFrame(() => {
+        const el = logRef.current
+        if (el) el.scrollTop = el.scrollHeight
+      })
+    }
+    const appendLog = (raw: string): void => {
+      const el = logRef.current
+      const stickToBottom = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 28
+      const visible = toVisibleTerminalText(raw)
+      if (!visible) return
+      setLogText((prev) => trimLog(prev + visible))
+      if (stickToBottom) scrollToBottom()
+    }
 
     setLoading(true)
     setError(null)
     setExitCode(null)
-
-    const term = new Terminal({
-      allowProposedApi: false,
-      convertEol: true,
-      cursorBlink: false,
-      disableStdin: true,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-      fontSize: 10,
-      lineHeight: 1.18,
-      rows: 10,
-      scrollback: 5000,
-      theme: terminalTheme
-    })
-    const fit = new FitAddon()
-    let disposed = false
-    term.loadAddon(fit)
-    term.open(mount)
-
-    const fitTerminal = (): void => {
-      try {
-        fit.fit()
-      } catch {
-        /* fit can fail while the island is animating; the next observer tick fixes it */
-      }
-    }
-    requestAnimationFrame(fitTerminal)
-
-    const resizeObserver = new ResizeObserver(() => fitTerminal())
-    resizeObserver.observe(mount)
+    setLogText('')
 
     let unsubscribe: (() => void) | null = null
     const startSubscription = (): void => {
       if (disposed || unsubscribe) return
       unsubscribe = subscribeTerminal(
         terminalId,
-        (data) => {
-          term.write(data)
-        },
+        appendLog,
         ({ exitCode: code }) => {
           setExitCode(code)
         }
@@ -96,9 +71,9 @@ export function IslandTerminalPane({
     Promise.resolve(window.agentOS?.terminalRead?.(terminalId) ?? '')
       .then((scrollback) => {
         if (disposed) return
-        if (scrollback) term.write(scrollback)
+        setLogText(trimLog(toVisibleTerminalText(scrollback || '')))
         setLoading(false)
-        requestAnimationFrame(fitTerminal)
+        scrollToBottom()
         startSubscription()
       })
       .catch(() => {
@@ -110,9 +85,7 @@ export function IslandTerminalPane({
 
     return () => {
       disposed = true
-      resizeObserver.disconnect()
       unsubscribe?.()
-      term.dispose()
     }
   }, [terminalId])
 
@@ -125,7 +98,16 @@ export function IslandTerminalPane({
         <span className="isl-terminal-title">{title}</span>
         <span className="isl-terminal-status">{shownStatus || 'unknown'}</span>
       </div>
-      <div className="isl-terminal-mount" ref={mountRef} aria-label={`Terminal ${terminalId}`} />
+      <pre
+        className="isl-terminal-log"
+        ref={logRef}
+        aria-label={`Terminal ${terminalId} scrollback`}
+        role="region"
+        tabIndex={0}
+        onWheel={(e) => e.stopPropagation()}
+      >
+        {logText || (loading ? '' : 'No terminal output yet')}
+      </pre>
       {(loading || error) && <div className="isl-terminal-overlay">{error || 'Loading terminal'}</div>}
     </div>
   )

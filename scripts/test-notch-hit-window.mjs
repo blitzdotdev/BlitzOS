@@ -84,10 +84,13 @@ ok('notch settings persists the active-agent terminal debug toggle in localStora
 ok('active agent terminal pane is gated by the debug setting and uses activeId as the terminal id',
   /debugTerminalEnabled && activeId/.test(islandPanel) && /terminalId=\{activeId\}/.test(islandPanel) &&
     /activeTerminal=\{activeId \? terminals\[activeId\] : undefined\}/.test(notchHost))
-ok('island terminal pane is read-only xterm backed by terminalRead + subscribeTerminal, not terminal input/resize',
-  /new Terminal/.test(islandTerminal) && /disableStdin: true/.test(islandTerminal) &&
-    /terminalRead\?\.\(terminalId\)/.test(islandTerminal) && /subscribeTerminal\(/.test(islandTerminal) &&
+ok('island terminal pane is a read-only scrollback log backed by terminalRead + subscribeTerminal, not terminal input/resize',
+  /terminalRead\?\.\(terminalId\)/.test(islandTerminal) && /subscribeTerminal\(/.test(islandTerminal) &&
+    /toVisibleTerminalText/.test(islandTerminal) && /MAX_LOG_CHARS/.test(islandTerminal) &&
     !/terminalInput/.test(islandTerminal) && !/terminalResize/.test(islandTerminal))
+ok('island terminal pane uses a real scrollable DOM log inside the island',
+  /className="isl-terminal-log"/.test(islandTerminal) && /onWheel=\{\(e\) => e\.stopPropagation\(\)\}/.test(islandTerminal) &&
+    /\.isl-terminal-log \{[\s\S]*?overflow-y: auto/.test(islandCss) && /overscroll-behavior: contain/.test(islandCss))
 ok('App no longer exposes the old agent-terminal surface toggle or opens agent terminals with openTerminal',
   !/showAgentTerminals/.test(app) && !/Agent terminal visibility/.test(app) && /term\.kind !== 'agent'/.test(app) &&
     /Managed agent terminals stay hidden here/.test(app))
