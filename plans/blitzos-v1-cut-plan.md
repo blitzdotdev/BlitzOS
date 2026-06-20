@@ -56,7 +56,7 @@ This is *why BlitzOS exists* (the agent is woken by coalesced "moments" and acts
 - **KEEP — steering:** `/steer` (and the island's chat/steer bar) injects a *waking* message into an agent (`osUserMessage(text, agentId)`). It's how you redirect a running agent. The mechanism stays; in the UI it's just "message this agent."
 - **KEEP — signal sources (V1):** `message` (chat), `connection` (the user's real browser/app via the extension + helper — now the **primary** world signal), `tick` (status-only — wakes the supervisor, see below), `system` (crash). (`action` = a widget-button click wakes the agent — **deferred with widgets**.)
 - **CUT — the canvas eyes:** `trigger:'canvas'` (surface geometry), `trigger:'annotation'` (spatial xPct/yPct), and the **`INJECT`/`DRAIN` in-page DOM sensors** (web surfaces axed → no page to inject into).
-- **RESOLVED — the supervisor tick (`emitTick` / `trigger:'tick'`): KEEP it, STATUS-ONLY.** The BlitzOS supervisor agent (`'0'`)'s **only** job is to watch the other agents' status and keep them on-track. So the tick keeps the **agent-status edges + terminal-exit** diff and wakes `'0'` to `/steer` a stalled / erred / diverged worker; the **surface-geometry/props diff is cut** (no surfaces). `getTickSnapshot` drops everything but agent status + terminal state. `/steer` stays.
+- **RESOLVED — the supervisor tick (`emitTick` / `trigger:'tick'`): KEEP it, STATUS-ONLY.** The BlitzOS supervisor agent (`'0'`)'s **only** job is to keep the other agents on-track. **V1:** the tick keeps the **agent-status edges + terminal-exit** diff and wakes `'0'` to `/steer` a stalled / erred / diverged worker; the **surface-geometry/props diff is cut** (`getTickSnapshot` drops everything but agent status + terminal state). `/steer` stays. **Deferred (experimental, todo-last, same bucket as widgets):** on each wake `'0'` also **reads the woken worker's session `.jsonl`** (its transcript via `agent-transcript`) and judges whether it's actually doing its job, not just whether its status changed.
 
 ## Doctrine sweep — erase canvas from the agent world-model
 
@@ -78,6 +78,7 @@ Explicitly NOT V1. The "notion of surfaces" V1 removes (canvas surfaces) returns
 - **Widgets** — the agent generating widgets, pinning, a queue/gallery, sizing. **No widget tool, no widgets tab in V1.**
 - **Agent-generated icons + app-transform** — the agent creating a new island **icon** that transforms the dynamic island into a complete app UI (the way the built-in **Chat** icon transforms it into the chat UI today). V1 ships only the Chat icon.
 - **Island-native surfaces** — the surface concept comes back here, distinct from the canvas surfaces V1 deletes. The `SurfaceFrame` srcdoc widget host + `widget-*` modules feed this (kept in branch history).
+- **Deep supervision** — on wake, the supervisor (`'0'`) reads the woken worker's session `.jsonl` and judges whether it's actually on-task, beyond the status-edge wake. V1 is status-only.
 
 **V1's island is:** a **1×3 icon bar** (just **Chat** → the chat/session app), full-markdown chat, tool attachments (browser/computer use), and workflows that report progress **in chat**.
 
