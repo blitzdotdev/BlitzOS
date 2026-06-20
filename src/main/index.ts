@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen, nativeImage } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen, nativeImage, shell } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
@@ -107,6 +107,17 @@ let sessionTape: ReturnType<typeof makeSessionTape> | null = null
 // boundary (which agent ids the HUD may ever list/tail) lives in island-membership.mjs — realDeps records
 // island-spawned ids there and the tail/list gate every read through islandLiveIds.
 let islandHelper: IslandHelperHandle | null = null
+
+function safeExternalUrl(raw: unknown): string | null {
+  const value = String(raw || '').trim()
+  if (!value || /[\u0000-\u001f\u007f]/.test(value)) return null
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:' ? url.href : null
+  } catch {
+    return null
+  }
+}
 
 // Gather the user's small durable app state for a state.snapshot: workspace.json + content/memory files +
 // onboarding + the root journal's permissions/bookmarks. All small text; the tape content-addresses each so
@@ -526,6 +537,16 @@ app.whenReady().then(() => {
     osMoveOutOfFolder(Array.isArray(paths) ? paths : [], Number(x) || 0, Number(y) || 0)
   )
   ipcMain.handle('os:open-folder-entry', (_e, path: string, x: number, y: number) => osOpenFolderEntry(String(path || ''), Number(x) || 0, Number(y) || 0))
+  ipcMain.handle('os:open-external-url', async (_e, raw: string) => {
+    const url = safeExternalUrl(raw)
+    if (!url) return { ok: false, error: 'unsupported url' }
+    try {
+      await shell.openExternal(url)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message || 'open failed' }
+    }
+  })
   // File-manager listing for a normal folder tile (the Electron counterpart of server /api/os/dir).
   ipcMain.handle('os:dir', (_e, rel: string) => osListDir(String(rel || '')))
   // Close = delete the closed window's backing content file (so it doesn't pop back up on reconcile).
