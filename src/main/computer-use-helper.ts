@@ -86,7 +86,7 @@ class HelperManager {
   private buf = ''
   private pending = new Map<number, (m: Record<string, unknown>) => void>()
   private scanProgress = new Map<number, (line: string) => void>()
-  private eventHandler: ((m: Record<string, unknown>) => void) | null = null // unsolicited helper events (e.g. ax_changed)
+  private eventHandlers = new Set<(m: Record<string, unknown>) => void>() // unsolicited helper events (ax_changed, pick_*) — MULTIPLE listeners
   private nextId = 1
   private hello: Record<string, unknown> | null = null
   private wantQuit = false // distinguishes a deliberate relaunch from a crash
@@ -156,8 +156,14 @@ class HelperManager {
           this.pending.delete(msg.id)
           cb(msg)
         }
-      } else if (msg.type === 'event' && this.eventHandler) {
-        this.eventHandler(msg)
+      } else if (msg.type === 'event') {
+        for (const h of this.eventHandlers) {
+          try {
+            h(msg)
+          } catch {
+            /* one bad listener never blocks the others */
+          }
+        }
       }
     }
   }
@@ -246,9 +252,12 @@ class HelperManager {
     })
   }
 
-  /** Register a handler for unsolicited helper events (e.g. `ax_changed` from an AXObserver). */
+  /** Register a handler for unsolicited helper events (e.g. `ax_changed` from an AXObserver, or `pick_*`
+   *  from the window picker). MULTIPLE listeners are supported — the window-link watches ax_changed while
+   *  the picker watches pick_*; pass null to clear all. */
   onEvent(fn: ((m: Record<string, unknown>) => void) | null): void {
-    this.eventHandler = fn
+    if (fn === null) this.eventHandlers.clear()
+    else this.eventHandlers.add(fn)
   }
 
   /** Install (if needed) + launch + wait for the helper to connect. Idempotent, and SINGLE-FLIGHT:

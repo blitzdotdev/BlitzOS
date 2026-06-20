@@ -293,6 +293,305 @@ func axObserve(pid: Int) -> Bool {
     return true
 }
 
+// ===== Window picker: hover-highlight ANY macOS window + drag its app icon into a BlitzOS drop-zone =====
+// BlitzOS arms this (`pick_start`) when the attach drop-zone is visible. We watch the cursor via a CGEventTap
+// (Accessibility), hit-test the front window under it (CGWindowList, top-left global coords), and draw a glowing
+// borderless overlay + the owner app's icon over it. Grabbing the icon starts a SELF-TRACKED drag (we own the whole
+// gesture; nothing fragile crosses into Electron): a follow-the-cursor icon panel, and on release we test the cursor
+// against the drop-zone rect BlitzOS gave us and emit `pick_drop {windowId,...}` (BlitzOS then connects that window).
+// The overlays are non-activating + .accessory policy, so they never steal focus from the app you're aiming at.
+
+func pickPrimaryHeight() -> CGFloat { NSScreen.screens.first?.frame.height ?? 0 }
+// CG rect (top-left origin, what CGWindowList + CGEvent use) -> AppKit rect (bottom-left), flipped about the primary display.
+func pickAppKitRect(fromCG cg: CGRect) -> NSRect {
+    NSRect(x: cg.origin.x, y: pickPrimaryHeight() - cg.origin.y - cg.height, width: cg.width, height: cg.height)
+}
+func pickNum(_ a: Any?) -> CGFloat? {
+    if let d = a as? Double { return CGFloat(d) }
+    if let i = a as? Int { return CGFloat(i) }
+    if let n = a as? NSNumber { return CGFloat(n.doubleValue) }
+    return nil
+}
+func pickAppIcon(_ pid: Int) -> NSImage? { NSRunningApplication(processIdentifier: pid_t(pid))?.icon }
+
+struct PickWin {
+    let windowId: Int, pid: Int, app: String, bundleId: String, title: String
+    let frameCG: CGRect // global, top-left origin
+}
+
+// A transparent, borderless, NON-activating, all-Spaces overlay we own. Purely visual: ignoresMouseEvents, so the
+// CGEventTap (not the panel) handles every gesture, and the panel never eats clicks meant for the app underneath.
+final class PickPanel: NSPanel {
+    init(_ frame: NSRect, level: NSWindow.Level) {
+        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        ignoresMouseEvents = true
+        self.level = level
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        sharingType = .none // never appear in any screen capture (incl. our own window_screenshot)
+    }
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+// The glow ring (a stroked rounded-rect with a colored shadow) over the window border + the app icon at top-center.
+final class PickHighlightView: NSView {
+    private let ring = CAShapeLayer()
+    private let iconHolder = NSView()
+    private let iconView = NSImageView()
+    let pad: CGFloat = 6 // the panel is inset OUT this much around the window, so the glow has room outside the border
+    private let accent = NSColor(srgbRed: 0.39, green: 0.65, blue: 1.0, alpha: 1.0)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        ring.fillColor = NSColor.clear.cgColor
+        ring.strokeColor = accent.cgColor
+        ring.lineWidth = 3
+        ring.shadowColor = accent.cgColor
+        ring.shadowRadius = 14
+        ring.shadowOpacity = 0.95
+        ring.shadowOffset = .zero
+        ring.masksToBounds = false
+        layer?.addSublayer(ring)
+        iconHolder.wantsLayer = true
+        iconHolder.layer?.backgroundColor = NSColor(white: 0.10, alpha: 0.92).cgColor
+        iconHolder.layer?.cornerRadius = 13
+        iconHolder.layer?.shadowColor = NSColor.black.cgColor
+        iconHolder.layer?.shadowOpacity = 0.45
+        iconHolder.layer?.shadowRadius = 9
+        iconHolder.layer?.shadowOffset = CGSize(width: 0, height: -2)
+        iconHolder.layer?.masksToBounds = false
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconHolder.addSubview(iconView)
+        addSubview(iconHolder)
+    }
+    required init?(coder: NSCoder) { fatalError("no coder") }
+
+    func setIcon(_ img: NSImage?) { iconView.image = img }
+
+    override func layout() {
+        super.layout()
+        let r = bounds.insetBy(dx: pad, dy: pad) // the ring sits on the window's border
+        ring.frame = bounds
+        ring.path = CGPath(roundedRect: r, cornerWidth: 11, cornerHeight: 11, transform: nil)
+        // icon at TOP-CENTER (non-flipped NSView: top = maxY)
+        let box: CGFloat = 56, icon: CGFloat = 44
+        let cx = bounds.midX
+        let topY = bounds.maxY - pad - box / 2 - 4
+        iconHolder.frame = CGRect(x: cx - box / 2, y: topY - box / 2, width: box, height: box)
+        iconView.frame = CGRect(x: (box - icon) / 2, y: (box - icon) / 2, width: icon, height: icon)
+    }
+}
+
+// The small icon that follows the cursor during a drag.
+final class PickDragView: NSView {
+    private let iconView = NSImageView()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.wantsLayer = true
+        iconView.layer?.shadowColor = NSColor.black.cgColor
+        iconView.layer?.shadowOpacity = 0.5
+        iconView.layer?.shadowRadius = 8
+        iconView.layer?.shadowOffset = CGSize(width: 0, height: -2)
+        iconView.layer?.masksToBounds = false
+        addSubview(iconView)
+    }
+    required init?(coder: NSCoder) { fatalError("no coder") }
+    override func layout() { super.layout(); iconView.frame = bounds.insetBy(dx: 5, dy: 5) }
+    func setIcon(_ img: NSImage?) { iconView.image = img }
+}
+
+var pickController: PickController?
+
+// The C event-tap callback can't capture Swift context, so it routes through the userInfo pointer to the controller.
+let pickTapCallback: CGEventTapCallBack = { _, type, event, refcon in
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        if let rc = refcon { Unmanaged<PickController>.fromOpaque(rc).takeUnretainedValue().reenable() }
+        return Unmanaged.passUnretained(event)
+    }
+    guard let rc = refcon else { return Unmanaged.passUnretained(event) }
+    return Unmanaged<PickController>.fromOpaque(rc).takeUnretainedValue().handle(type: type, event: event)
+}
+
+final class PickController {
+    private var tap: CFMachPort?
+    private var src: CFRunLoopSource?
+    private var dropZone = CGRect.zero // global, top-left
+    private var excludePids = Set<Int>()
+    private let ownPid = Int(ProcessInfo.processInfo.processIdentifier)
+
+    private var highlightPanel: PickPanel?
+    private var highlightView: PickHighlightView?
+    private var dragPanel: PickPanel?
+    private var dragView: PickDragView?
+
+    private var hovered: PickWin?
+    private var dragging = false
+    private var dragWin: PickWin?
+    private var lastHoverWid = -1
+    private var lastInside = false
+
+    // Arm (or re-arm) the picker. Re-callable to just update the drop-zone rect (the tap is created once).
+    func start(dropZone: CGRect, excludePids: [Int]) -> Bool {
+        self.dropZone = dropZone
+        self.excludePids = Set(excludePids)
+        if tap == nil {
+            var m: CGEventMask = 0
+            for t: CGEventType in [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp] {
+                m |= (CGEventMask(1) << CGEventMask(t.rawValue))
+            }
+            guard let t = CGEvent.tapCreate(tap: .cghidEventTap, place: .headInsertEventTap, options: .defaultTap,
+                                            eventsOfInterest: m, callback: pickTapCallback,
+                                            userInfo: Unmanaged.passUnretained(self).toOpaque()) else { return false }
+            let s = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, t, 0)
+            CFRunLoopAddSource(CFRunLoopGetMain(), s, .commonModes)
+            CGEvent.tapEnable(tap: t, enable: true)
+            tap = t; src = s
+        }
+        return true
+    }
+
+    func updateDropZone(_ z: CGRect) { dropZone = z }
+    func reenable() { if let t = tap { CGEvent.tapEnable(tap: t, enable: true) } }
+
+    func stop() {
+        if let t = tap { CGEvent.tapEnable(tap: t, enable: false) }
+        if let s = src { CFRunLoopRemoveSource(CFRunLoopGetMain(), s, .commonModes) }
+        tap = nil; src = nil
+        teardownDrag()
+        highlightPanel?.orderOut(nil); highlightPanel = nil; highlightView = nil
+        hovered = nil; lastHoverWid = -1; dragging = false; dragWin = nil; lastInside = false
+    }
+
+    // The tap callback (on the main run loop). Returning nil SWALLOWS the event; passUnretained passes it on.
+    func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        let p = event.location // global, top-left
+        switch type {
+        case .mouseMoved:
+            if !dragging { updateHover(p) }
+        case .leftMouseDown:
+            // Grab the icon → start our drag. Swallow ONLY this click so the OS never starts a titlebar
+            // window-drag or shifts focus to the app we're aiming at. Everything else passes through (so the
+            // real cursor keeps moving and other apps are untouched).
+            if !dragging, let h = hovered, iconHitRect(h).contains(p) {
+                beginDrag(h, at: p)
+                return nil
+            }
+        case .leftMouseDragged:
+            if dragging { moveDrag(p) }
+        case .leftMouseUp:
+            if dragging { endDrag(p) }
+        default: break
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
+    // The grab zone: a generous box at the window's top-center (where the icon is drawn).
+    private func iconHitRect(_ h: PickWin) -> CGRect {
+        let s: CGFloat = 78
+        return CGRect(x: h.frameCG.midX - s / 2, y: h.frameCG.minY + 30 - s / 2, width: s, height: s)
+    }
+
+    // Front-most normal window (layer 0) under the cursor, skipping BlitzOS + our own overlays.
+    private func frontWindowAt(_ p: CGPoint) -> PickWin? {
+        let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let infos = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else { return nil }
+        for info in infos { // front-to-back order
+            if (info[kCGWindowLayer as String] as? Int) ?? 0 != 0 { continue }
+            let pid = (info[kCGWindowOwnerPID as String] as? Int) ?? 0
+            if pid == ownPid || excludePids.contains(pid) { continue }
+            guard let b = info[kCGWindowBounds as String] as? [String: Any],
+                  let x = pickNum(b["X"]), let y = pickNum(b["Y"]),
+                  let w = pickNum(b["Width"]), let hh = pickNum(b["Height"]),
+                  w > 40, hh > 40 else { continue }
+            let rect = CGRect(x: x, y: y, width: w, height: hh)
+            if rect.contains(p) {
+                let app = (info[kCGWindowOwnerName as String] as? String) ?? ""
+                return PickWin(windowId: (info[kCGWindowNumber as String] as? Int) ?? 0, pid: pid, app: app,
+                               bundleId: NSRunningApplication(processIdentifier: pid_t(pid))?.bundleIdentifier ?? "",
+                               title: (info[kCGWindowName as String] as? String) ?? "", frameCG: rect)
+            }
+        }
+        return nil
+    }
+
+    private func updateHover(_ p: CGPoint) {
+        let hit = frontWindowAt(p)
+        hovered = hit
+        let wid = hit?.windowId ?? -1
+        if wid == lastHoverWid { return }
+        lastHoverWid = wid
+        if let h = hit { showHighlight(h); emit(["kind": "pick_hover", "windowId": h.windowId, "pid": h.pid, "app": h.app, "bundleId": h.bundleId, "title": h.title]) }
+        else { highlightPanel?.orderOut(nil) }
+    }
+
+    private func showHighlight(_ h: PickWin) {
+        let ns = pickAppKitRect(fromCG: h.frameCG.insetBy(dx: -6, dy: -6))
+        if highlightPanel == nil {
+            let v = PickHighlightView(frame: NSRect(origin: .zero, size: ns.size))
+            let panel = PickPanel(NSRect(origin: .zero, size: ns.size), level: .floating)
+            panel.contentView = v
+            highlightPanel = panel; highlightView = v
+        }
+        highlightView?.setIcon(pickAppIcon(h.pid))
+        highlightPanel?.setFrame(ns, display: true)
+        highlightView?.needsLayout = true
+        highlightPanel?.orderFront(nil)
+    }
+
+    private func beginDrag(_ h: PickWin, at p: CGPoint) {
+        dragging = true; dragWin = h; lastInside = false
+        let v = PickDragView(frame: NSRect(x: 0, y: 0, width: 54, height: 54))
+        v.setIcon(pickAppIcon(h.pid))
+        // ABOVE the BlitzOS island (which sits at .screenSaver) so the dragged icon stays visible as it travels
+        // into the drop-zone on the island, instead of vanishing behind it.
+        let panel = PickPanel(NSRect(x: 0, y: 0, width: 54, height: 54), level: NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1))
+        panel.contentView = v
+        dragPanel = panel; dragView = v
+        centerDrag(p)
+        panel.orderFront(nil)
+    }
+
+    private func centerDrag(_ p: CGPoint) {
+        guard let panel = dragPanel else { return }
+        let y = pickPrimaryHeight() - p.y // top-left → bottom-left
+        panel.setFrameOrigin(NSPoint(x: p.x - panel.frame.width / 2, y: y - panel.frame.height / 2))
+    }
+
+    private func moveDrag(_ p: CGPoint) {
+        centerDrag(p)
+        let inside = dropZone.contains(p)
+        if inside != lastInside { lastInside = inside; emit(["kind": "pick_over", "inside": inside]) }
+    }
+
+    private func endDrag(_ p: CGPoint) {
+        let inside = dropZone.contains(p)
+        let h = dragWin
+        teardownDrag()
+        if inside, let h = h {
+            emit(["kind": "pick_drop", "windowId": h.windowId, "pid": h.pid, "app": h.app, "bundleId": h.bundleId, "title": h.title])
+        } else {
+            emit(["kind": "pick_cancel"])
+        }
+        lastHoverWid = -1 // force a fresh hover hit-test on the next move
+    }
+
+    private func teardownDrag() {
+        dragging = false; dragWin = nil; lastInside = false
+        dragPanel?.orderOut(nil); dragPanel = nil; dragView = nil
+    }
+
+    private func emit(_ obj: [String: Any]) {
+        var o = obj; o["type"] = "event"; conn.send(o)
+    }
+}
+
 // ---- the connection to BlitzOS (a Unix domain socket BlitzOS owns; we connect on launch) ----
 final class HelperConnection {
     private let fd: Int32
@@ -416,6 +715,18 @@ conn.run { msg in
         case "ax_observe":
             let pid = msg["pid"] as? Int ?? -1
             if pid < 0 { reply(["error": "pid required"]) } else { reply(["ok": axObserve(pid: pid)]) }
+        case "pick_start":
+            // Arm the window picker. dropZone {x,y,w,h} in global top-left points; excludePids skips BlitzOS's own window.
+            if pickController == nil { pickController = PickController() }
+            let dz = msg["dropZone"] as? [String: Any] ?? [:]
+            let rect = CGRect(x: pickNum(dz["x"]) ?? 0, y: pickNum(dz["y"]) ?? 0, width: pickNum(dz["w"]) ?? 0, height: pickNum(dz["h"]) ?? 0)
+            let ok = pickController!.start(dropZone: rect, excludePids: (msg["excludePids"] as? [Int]) ?? [])
+            reply(ok ? ["ok": true] : ["ok": false, "error": "could not create event tap (is Accessibility granted to BlitzComputerUse?)"])
+        case "pick_update":
+            let dz = msg["dropZone"] as? [String: Any] ?? [:]
+            pickController?.updateDropZone(CGRect(x: pickNum(dz["x"]) ?? 0, y: pickNum(dz["y"]) ?? 0, width: pickNum(dz["w"]) ?? 0, height: pickNum(dz["h"]) ?? 0))
+            reply(["ok": true])
+        case "pick_stop": pickController?.stop(); reply(["ok": true])
         case "ping": reply(["pong": true])
         case "quit": reply(["ok": true]); NSApp.terminate(nil)
         default: reply(["ok": false, "error": "unknown cmd: \(cmd)"])

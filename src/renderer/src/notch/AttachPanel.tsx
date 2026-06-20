@@ -5,7 +5,7 @@
 // dashed boxes — LEFT = the drop zone (files/apps/tabs), RIGHT = the open-apps list (click a row selects ALL its
 // tabs, ▸/▾ expands it to pick individual tabs). Selection state is local + ephemeral here.
 import './attach.css'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MOCK_SKILLS, MOCK_OPEN_APPS, type MockApp } from './mock'
 
 const toggle = (set: Set<string>, id: string): Set<string> => {
@@ -19,6 +19,36 @@ export function AttachPanel(): JSX.Element {
   const [enabled, setEnabled] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selectedTabs, setSelectedTabs] = useState<Set<string>>(new Set())
+  // Live feedback from the macOS window picker (NotchHost arms it while this panel is open): the cursor is
+  // dragging a window OVER the drop-zone, and a transient notice when one is added (or the picker errors).
+  const [dragOver, setDragOver] = useState(false)
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    const off = window.agentOS?.pick?.onEvent?.((m) => {
+      if (m.kind === 'pick_over') setDragOver(!!m.inside)
+      else if (m.kind === 'pick_cancel') setDragOver(false)
+      else if (m.kind === 'connected') {
+        setDragOver(false)
+        const app = String(m.app || m.title || 'window')
+        setNotice(m.ok ? { ok: true, text: `Added ${app}` } : { ok: false, text: `Couldn't add ${app}` })
+      } else if (m.kind === 'error') setNotice({ ok: false, text: String(m.error || 'window picker unavailable') })
+    })
+    return () => {
+      try {
+        off?.()
+      } catch {
+        /* best-effort */
+      }
+    }
+  }, [])
+
+  // Auto-dismiss the transient notice.
+  useEffect(() => {
+    if (!notice) return
+    const t = window.setTimeout(() => setNotice(null), 2800)
+    return () => clearTimeout(t)
+  }, [notice])
 
   // An app's checkbox state is derived from how many of its tabs are selected.
   const appState = (app: MockApp): 'all' | 'some' | 'none' => {
@@ -54,13 +84,18 @@ export function AttachPanel(): JSX.Element {
 
       {/* two equal rounded dashed boxes at the BOTTOM. */}
       <div className="att-boxes">
-        {/* LEFT: the real drop zone (files / apps / tabs). */}
-        <div className="att-drop" role="button" tabIndex={0} aria-label="Drop files, apps, or tabs here">
-          <div className="att-drop-hint">
+        {/* LEFT: the real drop zone. Hover any macOS window (it glows + shows its icon) and drag the icon here. */}
+        <div
+          className={`att-drop${dragOver ? ' dragover' : ''}${notice ? (notice.ok ? ' added' : ' failed') : ''}`}
+          role="button"
+          tabIndex={0}
+          aria-label="Drag a macOS window, file, or tab here"
+        >
+          <div className="att-drop-hint" data-notice={notice ? (notice.ok ? 'ok' : 'err') : undefined}>
             <span className="att-drop-plus" aria-hidden>
-              +
+              {notice ? (notice.ok ? '✓' : '!') : '+'}
             </span>
-            <span>Drag files, apps, or tabs here</span>
+            <span>{notice ? notice.text : dragOver ? 'Release to add' : 'Drag a macOS window here'}</span>
           </div>
         </div>
 
