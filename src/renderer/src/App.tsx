@@ -386,11 +386,10 @@ const NOTCH_W = 200
 // GROW is cheap and GPU-composited (with will-change) = butter-smooth; a path() with quadratics re-clipped the
 // whole app on the MAIN THREAD every frame (the lag). The rounded-bottom rect IS the dynamic-island look (top
 // flush with the screen edge, bottom rounded). vw/vh/notchH in CSS px.
-function notchClipFor(state: 'closed' | 'panel' | 'open', vw: number, vh: number, notchH: number, notchW: number = NOTCH_W): string {
-  // 'open' = fullscreen (the real-canvas grow). closed AND panel both clip to the bare notch pill: the panel /
-  // process UI is the NotchHost portal (the island), rendered OUTSIDE #root-canvas, so the clip only ever shows
-  // the pill or fullscreen. The island chassis sizes itself.
-  if (state === 'open') return 'inset(0px round 0px)'
+function notchClipFor(state: 'closed' | 'panel', vw: number, vh: number, notchH: number, notchW: number = NOTCH_W): string {
+  // V1 (island-only, no canvas): closed AND panel both clip #root-canvas to the bare notch pill. The island UI is
+  // the NotchHost body-portal, rendered OUTSIDE #root-canvas, so the clip only ever shows the pill. (The old 'open'
+  // state grew the clip to reveal the infinite canvas — cut with the canvas.)
   const sx = Math.max(0, (vw - notchW) / 2)
   const h = Math.max(28, notchH)
   return `inset(0px ${sx}px ${Math.max(0, vh - h)}px ${sx}px round 0px 0px 16px 16px)`
@@ -441,7 +440,7 @@ export default function App(): JSX.Element {
   // canvas, revealed as the clip grows (the opaque .bg paints the color, the world paints the widgets).
   const viewport = useDesktop((s) => s.viewport)
   const [notchOn, setNotchOn] = useState(false) // true once main pushes geometry (overlay mode only)
-  const [notchState, setNotchState] = useState<'closed' | 'panel' | 'open'>('closed')
+  const [notchState, setNotchState] = useState<'closed' | 'panel'>('closed')
   const [notchMenuBarH, setNotchMenuBarH] = useState(38)
   // The EXACT physical notch (from the native CLI via os:notch-geometry): width drives the visual pill + the clip;
   // hasNotch gates the pill (no notch → no click band, ⌥Space only). The toggle CLICK + hover come from the always-
@@ -454,8 +453,7 @@ export default function App(): JSX.Element {
   const overChassisRef = useRef(false) // cursor over the chat chassis (overlay mousemove) — keeps the panel open
   const notchOverRef = useRef(false) // cursor over the physical notch (reported by the hit-window's hover)
   const notchHoverGraceRef = useRef(0) // close grace so a notch→chassis transit does not flicker the panel shut
-  const [notchOpening, setNotchOpening] = useState(false) // brief: the island contents fade to black before the grow
-  const [notchAnimating, setNotchAnimating] = useState(false) // during the clip grow/shrink: freeze widget MOTION (not visibility) so the texture is static
+  const [notchAnimating, setNotchAnimating] = useState(false) // during the panel collapse: freeze widget MOTION (not visibility) so the texture is static
   // PINNED panel (item 2): a KEYBOARD-opened panel (⌥Space) stays open regardless of mouse position — the hover
   // mousemove handler must not auto-close it and must keep the window interactive while pinned. A HOVER-opened
   // (un-pinned) panel keeps the original follow-the-mouse behaviour. Cleared on enter / close / retract.
@@ -467,7 +465,7 @@ export default function App(): JSX.Element {
     notchPinnedRef.current = on
     setNotchPinned(on)
   }
-  const notchStateRef = useRef<'closed' | 'panel' | 'open'>('closed')
+  const notchStateRef = useRef<'closed' | 'panel'>('closed')
   const notchHandleRef = useRef<HTMLDivElement>(null)
   const notchLastIRef = useRef<boolean | null>(null)
   // Grace timestamp: hold the island open (skip the hover auto-close) until this time. Set when the chassis
@@ -483,36 +481,9 @@ export default function App(): JSX.Element {
       /* no bridge (non-overlay) */
     }
   }
-  const applyNotchState = (s: 'closed' | 'panel' | 'open'): void => {
+  const applyNotchState = (s: 'closed' | 'panel'): void => {
     notchStateRef.current = s
     setNotchState(s)
-  }
-  // Open = first FADE the island's own contents (peek dots + entry) so it goes SOLID BLACK, THEN grow the clip
-  // (black notch → black canvas, seamless — the canvas .bg is black in notch mode too). Close = shrink back.
-  const openNotch = (): void => {
-    if (notchStateRef.current === 'open') return
-    setNotchPinnedBoth(false) // entering: the panel-pin no longer applies (we leave the panel for fullscreen)
-    setNotchInteractive(true)
-    setNotchOpening(true) // fade peek + entry → solid black
-    window.setTimeout(() => {
-      setNotchAnimating(true) // freeze widget MOTION so the texture stays static while the clip grows (content stays visible)
-      applyNotchState('open') // grow the clip — #root-canvas is a pre-rasterized texture, so the reveal is butter + REAL content
-      setNotchOpening(false)
-      // The overlay keys itself when the user clicks the notch (acceptFirstMouse), so no uiFocus handoff is
-      // needed now that there is a single window (the two-window sandwich's focus bridge is gone).
-    }, 170)
-  }
-  const closeNotch = (): void => {
-    if (notchStateRef.current !== 'open') return
-    setNotchPinnedBoth(false) // retracting clears the pin
-    setNotchAnimating(true) // freeze motion during the shrink too (cheap insurance for low-power)
-    applyNotchState('closed')
-    notchLastIRef.current = null
-    setNotchInteractive(false)
-  }
-  const toggleNotch = (): void => {
-    if (notchStateRef.current === 'open') closeNotch()
-    else openNotch()
   }
   // ⌥Space TOGGLE (item 2): ⌥Space simply shows/hides the dynamic island in the new-session state. It NEVER
   // enters fullscreen (entering is the handle click / Send). closed → panel (new-session, PINNED open, prompt
@@ -552,8 +523,8 @@ export default function App(): JSX.Element {
   // ⌥Space toggles the new-session widget show/hide (closed ↔ panel). Never enters fullscreen.
   useEffect(() => window.agentOS?.notch?.onToggle?.(() => toggleNewSession()), [])
   // The notch HIT-WINDOW (the always-interactive transparent window over the physical notch) drives the toggle +
-  // hover, so the notch is clickable in EVERY state with no click-through→arm race. CLICK → toggle fullscreen.
-  useEffect(() => window.agentOS?.notch?.onHandleClick?.(() => toggleNotch()), [])
+  // hover, so the notch is clickable in EVERY state with no click-through→arm race. CLICK → toggle the island panel.
+  useEffect(() => window.agentOS?.notch?.onHandleClick?.(() => toggleNewSession()), [])
   // HOVER → open the chat panel (peek), like the old hover-the-notch behavior, but reported by the hit-window since
   // it sits on top of the notch. The overlay mousemove keeps it open while over the chassis; a grace covers the
   // notch→chassis transit so it does not flicker shut.
@@ -605,10 +576,6 @@ export default function App(): JSX.Element {
     if (!notchOn) return
     const onMove = (e: MouseEvent): void => {
       const st = notchStateRef.current
-      if (st === 'open') {
-        setNotchInteractive(true)
-        return
-      }
       // A PINNED panel (opened via ⌥Space) stays open regardless of the mouse and keeps the window interactive,
       // so the user can move the cursor away and still type. Only HOVER-opened panels follow the mouse below.
       if (st === 'panel' && notchPinnedRef.current) {
@@ -2315,7 +2282,7 @@ export default function App(): JSX.Element {
     <div
       id="root-canvas"
       ref={rootRef}
-      className={[grabMode ? 'grab-mode' : null, pageFullscreenId ? 'page-fullscreen' : null, notchOn ? 'notch-mode' : null, notchAnimating ? 'notch-anim' : null, notchState === 'open' ? 'notch-open' : null].filter(Boolean).join(' ')}
+      className={[grabMode ? 'grab-mode' : null, pageFullscreenId ? 'page-fullscreen' : null, notchOn ? 'notch-mode' : null, notchAnimating ? 'notch-anim' : null].filter(Boolean).join(' ')}
       // THE MERGE: clip the whole live canvas to the NotchShape and GROW the clip to fullscreen — the real
       // content is revealed as the clip grows out of the notch. The transition + GPU promotion live in CSS
       // (#root-canvas.notch-mode) so the grow animates on the compositor (butter-smooth, not a main-thread re-clip).
@@ -2343,7 +2310,7 @@ export default function App(): JSX.Element {
       )}
 
       {/* THE NOTCH (dynamic island) handle — the always-on-top black pill: closed it IS the notch; expanded it
-          stays at top-center as the click-to-collapse handle (toggleNotch grows/shrinks the fullscreen canvas).
+          stays at top-center as the click-to-toggle handle (a click opens/closes the island panel).
           PORTALED to document.body so it lives in the SAME top layer as the island chassis (.nhost). Why this is
           load-bearing: #root-canvas is GPU-promoted in notch mode (transform: translateZ(0)), which makes it a
           stacking context that TRAPS a fixed child — so an in-canvas handle (z 100000) can never out-stack the
@@ -2354,7 +2321,7 @@ export default function App(): JSX.Element {
         createPortal(
           <div
             ref={notchHandleRef}
-            className={`notch-handle${notchState !== 'closed' || notchOpening ? ' is-open' : ''}`}
+            className={`notch-handle${notchState !== 'closed' ? ' is-open' : ''}`}
             style={{ width: notchWidth, height: Math.max(28, notchMenuBarH) }}
           >
             <div
@@ -2374,7 +2341,7 @@ export default function App(): JSX.Element {
           + the hide-canvas-at-rest rule. Shown while the island is in the panel/opening state; the handle above
           sits ON TOP of it (higher z) so the notch stays clickable while the chat is open. */}
       {notchOn &&
-        (notchState === 'panel' || notchOpening) &&
+        notchState === 'panel' &&
         createPortal(
           <NotchHost
             menuBarH={notchMenuBarH}

@@ -1,0 +1,14 @@
+# Island dogfood audit — items 1 & 4 vs current code (2026-06-19)
+
+Spec: `plans/blitzos-dynamic-island-next.md`. Code read: `notch-overlay.ts`, `index.ts`, `App.tsx`, `notch/island.css` (+ `notch/NotchHost.tsx`).
+State machine today is `'closed' | 'panel' | 'open'` (App.tsx:434); retracted = `closed`, hover = `panel`, entered = `open`.
+
+## Item 1 — Notch status rails (retracted state)
+- **Exists:** The `closed` handle already renders a live glance: one `.notch-peek` badge = a `.notch-peek-dot` + count, data-state `working/attn/idle/empty` (App.tsx:2300-2313). It is fed by `notchPeek = {working, attn, total}`, tallied LIVE from the agent roster `status` map (working/starting→working, waiting→attn) at App.tsx:1364-1373. Overlay spans the full menu-bar band (notch-overlay.ts); `os:notch-geometry` pushes `menuBarH` (index.ts:657).
+- **Gap:** It is ONE centered badge ON the notch, not macOS-menu-bar-style L/R rails FLANKING the physical notch — no leading/trailing split, no icon vocabulary, no per-icon click. And the notch GEOMETRY is faked: `NOTCH_W = 200` is hand-tuned (App.tsx:382); `os:notch-geometry` pushes only height, never a native `safeAreaInsets`/`auxiliaryTopLeftArea` width read, so rails can't align to the true notch edges.
+- **Next step (smallest):** Split the single `.notch-peek` into two rail slots flanking the `NOTCH_W` handle, reusing the existing `notchPeek` signal (working count leading, total/attn trailing). Render at the tuned width per the spec prototype; defer the native-width read as the follow-on alignment fix.
+
+## Item 4 — Hover = overview surface (arbitrary widgets)
+- **Exists:** Hover → `applyNotchState('panel')` (App.tsx:575) mounts the `NotchHost` chassis portal (App.tsx:2321-2326). NotchHost is a fixed agent UI: page 0 = new-session composer, pages 1..N = per-agent chat, plus a `peek` "now-playing" summary across sessions (NotchHost.tsx:46-208). The running-session DATA already flows — `agentOS.agents()` / `os:agents-snapshot` (index.ts:519) seeds the roster and the peek view summarizes all sessions.
+- **Gap:** Hover lands on the bespoke chat composer, NOT an "island as SURFACE host" of arbitrary `srcdoc/native/app` widgets. There is no default overview distinct from the composer; the closest live glance (`peek`) is a toggle INSIDE the process page, not the hover default. NOTE: the `overview`/`showOverview` symbols in App.tsx (lines 692-2032) are the workspace/board exposé gallery, a DIFFERENT feature — not the island.
+- **Next step (smallest):** Add an `overview` default view to NotchHost (a new `data-view`) that renders ONE live widget — the running-agents summary from the existing snapshot/`notchPeek` — and make hover open THAT instead of page 0. Judge the surface-host direction off that single widget before generalizing to arbitrary surfaces.
