@@ -15,6 +15,8 @@ import type { IslandPanelProps } from './types'
 // A compose / pen glyph for the new-session tab (kept distinct from the attach "+").
 const PEN_PATH =
   'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z'
+const ARCHIVE_PATH =
+  'M4 7h16M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 11h6M5 3h14a1 1 0 0 1 1 1v3H4V4a1 1 0 0 1 1-1Z'
 // A stable, vibrant per-agent gradient (the peek "album art") derived from the agent id.
 function agentGradient(id: string): string {
   // Spread hues by the GOLDEN ANGLE so sequential agent ids ('0','1','2'…) get maximally DIFFERENT, diverse colors
@@ -60,7 +62,8 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     attachOpen,
     onToggleAttach,
     debugTerminalEnabled,
-    activeTerminal
+    activeTerminal,
+    onArchiveAgent
   } = props
   const top = Math.max(28, menuBarH) + 8
   const isNew = page === 0 // the pen tab
@@ -248,12 +251,28 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               status={activeTerminal?.status || 'unknown'}
             />
           )}
-          <button type="button" className={`isl-details${detailsOpen ? ' open' : ''}`} onClick={toggleDetails}>
-            <span className="isl-details-caret" aria-hidden>
-              {detailsOpen ? '▾' : '▸'}
-            </span>
-            Details
-          </button>
+          <div className="isl-actions">
+            <button type="button" className={`isl-details${detailsOpen ? ' open' : ''}`} onClick={toggleDetails}>
+              <span className="isl-details-caret" aria-hidden>
+                {detailsOpen ? '▾' : '▸'}
+              </span>
+              Details
+            </button>
+            {activeId && activeId !== '0' && (
+              <button
+                type="button"
+                className="isl-archive"
+                onClick={() => onArchiveAgent(activeId)}
+                title="Archive agent"
+                aria-label="Archive agent"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+                  <path d={ARCHIVE_PATH} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span>Archive</span>
+              </button>
+            )}
+          </div>
           {detailsOpen && (
             <div className="isl-detail-rows">
               {detailRows.length === 0 ? (

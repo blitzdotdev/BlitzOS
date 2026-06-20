@@ -3,7 +3,7 @@ import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast } from './osActions'
 import { emitSystemMoment, setMomentTap } from './events'
 import { openBootJournal, chatFileName } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -515,12 +515,14 @@ app.whenReady().then(() => {
   ipcMain.on('os:terminal-spawn', (_e, opts: { command?: string; title?: string }) => { void electronTerminalOps.spawnTerminal(opts || {}) })
   ipcMain.on('os:agent-spawn', (_e, p?: { title?: string }) => { try { osSpawnAgent(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
   ipcMain.handle('os:close-agent', (_e, id: string) => { try { return osCloseAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
+  ipcMain.handle('os:archive-agent', (_e, id: string) => { try { return osArchiveAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
+  ipcMain.handle('os:unarchive-agent', (_e, id: string) => { try { return osUnarchiveAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   ipcMain.handle('os:rename-agent', (_e, p: { id: string; title: string }) => { try { return osRenameAgent(String(p?.id), String(p?.title ?? '')) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   // The orchestrators (dynamic-workflows) toggle: flip the durable per-agent flag + wake it live (delivery B).
   ipcMain.handle('os:agent-orchestrators', (_e, p: { id: string; on?: boolean }) => { try { return osSetOrchestrators(String(p?.id), p?.on === undefined ? true : !!p.on) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   // One-shot snapshot for the dynamic island on open: the session roster + transcripts + status. The island
   // then rides the live `os:action {type:'chat'}` broadcast for updates.
-  ipcMain.handle('os:agents-snapshot', () => { try { return osAgentsSnapshot() } catch { return { sessions: [], threads: {}, status: {}, milestones: {} } } })
+  ipcMain.handle('os:agents-snapshot', () => { try { return osAgentsSnapshot() } catch { return { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {} } } })
   // The island's per-session "Details" expand: the agent's recent raw tool calls (Grep/Edit/Run …), read from
   // its canonical transcript. Deterministic, no LLM.
   ipcMain.handle('os:agent-details', (_e, p: { id?: string }) => { try { return osAgentDetails(String(p?.id ?? '0')) } catch { return { rows: [] } } })
@@ -532,6 +534,8 @@ app.whenReady().then(() => {
       const op = String(p?.op || ''); const a = p?.args || {}
       if (op === 'new') return osSpawnAgent(a.title != null ? String(a.title) : undefined, !!a.focus)
       if (op === 'rename') return osRenameAgent(String(a.id ?? ''), String(a.title ?? ''))
+      if (op === 'archive') return osArchiveAgent(String(a.id ?? ''))
+      if (op === 'unarchive') return osUnarchiveAgent(String(a.id ?? ''))
       // 'clear' → start a FRESH context for this agent (rotate its claude session id + restart). Uniform for
       // every agent incl '0'; the server mirrors it via the shim → /api/os/agent-clear (no divergence).
       if (op === 'clear') return Promise.resolve(electronTerminalOps.clearAgentContext(String(a.id ?? '0'))).then((okv) => ({ ok: !!okv }))
@@ -1240,6 +1244,8 @@ app.whenReady().then(() => {
       }
     }
     setLaunchAgent(launchAgent)
+    setPauseAgent((id) => { electronTerminalOps.stopTerminal(id) }) // archive parks the agent but keeps meta/transcript for restore
+    setRestartAgent((id) => { void electronTerminalOps.restartTerminal(id) }) // restore wakes the parked agent from its preserved terminal record
     setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
     setClearBrainContext((id) => { void electronTerminalOps.clearAgentContext(id) }) // interview→resident HANDOFF: rotate the session (fresh context) so the resident rebuilds from the .md files + chat.md at resident (xhigh) effort
     setActionItemsProvider(() => electronActionItems.listActions()) // host reconciles the inbox surface against the authoritative store

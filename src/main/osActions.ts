@@ -202,6 +202,9 @@ export function initOsActions(opts: {
     // An agent backend runs in a VISIBLE terminal; index.ts wires this from the shared agent-runtime
     // core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
     launchAgent: (id, home, title) => launchAgentHook?.(id, home, title),
+    // Archive parks an agent without deleting its terminal record; restore restarts that preserved record.
+    pauseAgent: (id) => pauseAgentHook?.(id),
+    restartAgent: (id) => restartAgentHook?.(id),
     // Stop an agent (when closing it) — index.ts wires this to terminal-ops.stopTerminal.
     stopAgent: (id) => stopAgentHook?.(id)
   })
@@ -578,6 +581,14 @@ let stopAgentHook: ((agentId: string) => void) | null = null
 export function setStopAgent(fn: (agentId: string) => void): void {
   stopAgentHook = fn
 }
+let pauseAgentHook: ((agentId: string) => void) | null = null
+export function setPauseAgent(fn: (agentId: string) => void): void {
+  pauseAgentHook = fn
+}
+let restartAgentHook: ((agentId: string) => void) | null = null
+export function setRestartAgent(fn: (agentId: string) => void): void {
+  restartAgentHook = fn
+}
 // Re-exec a running agent with a FRESH context. The onboarding director calls this at the
 // interview→resident HANDOFF; the transport wires it to a session-id rotation + restart, so the resident
 // boots a clean conversation and rebuilds state from profile.md + board.json + initiative.md + chat.md
@@ -633,15 +644,17 @@ export function osAgentClaudeSid(id: string): string | null {
  *  broadcasts. The island calls this once, then rides the broadcasts for live updates. */
 export function osAgentsSnapshot(): {
   sessions: Array<Record<string, unknown>>
+  archivedSessions: Array<Record<string, unknown>>
   threads: Record<string, Array<Record<string, unknown>>>
   status: Record<string, string>
   milestones: Record<string, IslandMilestone[]>
 } {
-  const empty = { sessions: [], threads: {}, status: {}, milestones: {} }
+  const empty = { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {} }
   if (!wsHost) return empty
   try {
     const p = wsHost.chatHubProps() as {
       sessions?: Array<Record<string, unknown>>
+      archivedSessions?: Array<Record<string, unknown>>
       threads?: Record<string, Array<Record<string, unknown>>>
       status?: Record<string, string>
     }
@@ -656,7 +669,7 @@ export function osAgentsSnapshot(): {
         }
       }
     }
-    return { sessions, threads: p.threads || {}, status: p.status || {}, milestones }
+    return { sessions, archivedSessions: p.archivedSessions || [], threads: p.threads || {}, status: p.status || {}, milestones }
   } catch {
     return empty
   }
@@ -717,6 +730,16 @@ export function osSetOrchestrators(agentId: string, on = true): { ok: boolean; e
 export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
   absorbTickEcho({ agents: [String(agentId)] }) // W2: a tool-origin close changes the agent SET — the next tick skips this close (one-shot, per-delta)
   return wsHost ? wsHost.closeAgent(agentId) : { ok: false, error: 'no workspace host' }
+}
+/** Archive a non-primary agent: hide it from active tabs but keep files and terminal metadata. */
+export function osArchiveAgent(agentId: string): { ok: boolean; error?: string; archived?: boolean } {
+  absorbTickEcho({ agents: [String(agentId)] })
+  return wsHost ? wsHost.archiveAgent(agentId) : { ok: false, error: 'no workspace host' }
+}
+/** Restore a non-primary archived agent to the active tab list. */
+export function osUnarchiveAgent(agentId: string): { ok: boolean; error?: string; archived?: boolean } {
+  absorbTickEcho({ agents: [String(agentId)] })
+  return wsHost ? wsHost.unarchiveAgent(agentId) : { ok: false, error: 'no workspace host' }
 }
 /** Rename an agent (cosmetic title). */
 export function osRenameAgent(agentId: string, newTitle: string): { ok: boolean; error?: string; title?: string } {

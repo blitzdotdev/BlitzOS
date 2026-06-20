@@ -96,6 +96,14 @@ const api = {
   closeAgent(agentId: string): Promise<{ ok: boolean; error?: string }> {
     return (ipcRenderer.invoke('os:close-agent', agentId) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
+  /** Archive a non-primary agent: hide it from active chat tabs while keeping its files/terminal record. */
+  archiveAgent(agentId: string): Promise<{ ok: boolean; error?: string; archived?: boolean }> {
+    return (ipcRenderer.invoke('os:archive-agent', agentId) as Promise<{ ok: boolean; error?: string; archived?: boolean }>).catch(() => ({ ok: false }))
+  },
+  /** Restore a non-primary archived agent to the active chat tabs. */
+  unarchiveAgent(agentId: string): Promise<{ ok: boolean; error?: string; archived?: boolean }> {
+    return (ipcRenderer.invoke('os:unarchive-agent', agentId) as Promise<{ ok: boolean; error?: string; archived?: boolean }>).catch(() => ({ ok: false }))
+  },
   /** Rename an agent (cosmetic title). */
   renameAgent(agentId: string, newTitle: string): Promise<{ ok: boolean; error?: string }> {
     return (ipcRenderer.invoke('os:rename-agent', { id: agentId, title: newTitle }) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
@@ -232,6 +240,7 @@ const api = {
    *  status. The island calls this on open, then rides the live `os:action {type:'chat'}` broadcast. */
   agents(): Promise<{
     sessions: Array<{ id: string; title: string; status: string; updatedAt?: number; lastMessagePreview?: string }>
+    archivedSessions: Array<{ id: string; title: string; status: string; updatedAt?: number; lastMessagePreview?: string; archivedAt?: number }>
     threads: Record<string, Array<{ role: string; text: string; ts?: number }>>
     status: Record<string, string>
     milestones: Record<string, Array<{ id: string; ts: number; kind: string; text: string }>>

@@ -78,6 +78,14 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
   })
 
   function writeMeta(meta) {
+    const disk = readMeta(meta.id)
+    if (disk?.archived) {
+      meta.archived = true
+      meta.archivedAt = disk.archivedAt || meta.archivedAt || Date.now()
+    } else {
+      delete meta.archived
+      delete meta.archivedAt
+    }
     const dir = dirOf(meta.id)
     markWrite(dir) // tell the workspace watcher this dir write is the OS's own (before the file write)
     writeTerminalMeta(terminalsDir, meta.id, meta) // the single module-level serializer (mkdir + JSON dump)
@@ -176,6 +184,11 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     // its orchestrator duty after the first launch. An explicit opts.orchestrators wins; else inherit on-disk.
     const carriedOrchestrators = opts.orchestrators != null ? opts.orchestrators : readMeta(id)?.orchestrators
     if (carriedOrchestrators) meta.orchestrators = true
+    const archivedMeta = readMeta(id)
+    if (archivedMeta?.archived) {
+      meta.archived = true
+      meta.archivedAt = archivedMeta.archivedAt || Date.now()
+    }
     // Replace any existing window for this id first (idempotent for a fresh id) — so a re-spawn/re-exec
     // (boot resume of a survivor with a now-stale relay url) cleanly REPLACES it instead of leaving a
     // duplicate window (tmux allows same-named windows). A prior live rec is torn down by wireTerminal below.

@@ -14,8 +14,11 @@ export interface WorkspaceHostAdapter {
   /** Launch (or resume) the managed terminal for an agent in its stage. Wired by each transport
    *  from the shared agent-runtime core + its terminal-ops; absent ⇒ no agent auto-launch. */
   launchAgent?: (agentId: string, stage: number, title?: string) => void
-  /** Stop an agent's terminal (terminal-ops.stopTerminal — sets the stopping flag so it won't auto-restart).
-   *  Wired by each transport; used when closing an agent. */
+  /** Park an agent's terminal without deleting its persisted record; used when archiving. */
+  pauseAgent?: (agentId: string) => void
+  /** Restart a parked/exited managed agent terminal from its persisted record; used when restoring. */
+  restartAgent?: (agentId: string) => void
+  /** Permanently stop/remove an agent terminal record. Wired by each transport; used when closing an agent. */
   stopAgent?: (agentId: string) => void
   /** The authoritative action-items list (listActions()); the inbox surface's items are reconciled to it. */
   getActionItems?: () => unknown[]
@@ -66,6 +69,7 @@ export interface WorkspaceHost {
    *  the dynamic island's one-shot snapshot (osAgentsSnapshot) and the live `{type:'chat'}` broadcast. */
   chatHubProps(activeAgentId?: string): {
     sessions: Array<{ id: string; title: string; status: string; updatedAt: number; lastMessagePreview: string; unread: boolean }>
+    archivedSessions: Array<{ id: string; title: string; status: string; updatedAt: number; lastMessagePreview: string; unread: boolean; archivedAt?: number }>
     threads: Record<string, Array<{ role: string; text: string; ts?: number }>>
     status: Record<string, string>
     activeAgentId: string
@@ -78,6 +82,8 @@ export interface WorkspaceHost {
   newAgentId(): string
   addAgent(agentId: string, title?: string, opts?: { focus?: boolean; orchestrators?: boolean }): Record<string, unknown>
   setAgentOrchestrators(agentId: string, on: boolean): { ok: boolean; error?: string; orchestrators?: boolean }
+  archiveAgent(agentId: string): { ok: boolean; error?: string; archived?: boolean }
+  unarchiveAgent(agentId: string): { ok: boolean; error?: string; archived?: boolean }
   closeAgent(agentId: string): { ok: boolean; error?: string }
   renameAgent(agentId: string, newTitle: string): { ok: boolean; error?: string; title?: string }
   resumeAgentsOnBoot(): void
