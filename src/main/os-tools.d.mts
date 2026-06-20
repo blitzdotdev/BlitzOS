@@ -23,6 +23,3 @@ export function makeOsToolsByPath(ops: Record<string, (...args: never[]) => unkn
 /** The agent-facing view of desktop state: layout fields only (drops srcdoc html + native props/transcript).
  *  Used by the shared list_state handler AND the widget list_state tool so every transport returns one shape. */
 export function serializeStateForAgent(state: unknown): Record<string, unknown>
-/** ONE surface in full (props included, html omitted) — the targeted verification read behind get_surface.
- *  Transcript surfaces (chat/activity) return { error }. */
-export function serializeSurfaceForAgent(state: unknown, id: string): Record<string, unknown>

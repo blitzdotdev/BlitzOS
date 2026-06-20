@@ -9,7 +9,6 @@
 // `transport` ('relay' | 'localhost' | 'server') is threaded into each handler so the few security-relevant
 // branches (raw eval / reading a logged-in surface across an untrusted path) behave the same everywhere:
 // localhost is trusted; relay + server are untrusted (gate page content to surfaces the user shared).
-import { listWidgets, getWidgetSource, saveWidget, widgetAuthoringMd } from './widget-catalog.mjs'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
 
 function parse(body) {
@@ -30,20 +29,6 @@ function mapConnResult(out) {
     return { status: /^no connection/.test(out.error) ? 404 : 400, body: out }
   }
   return out
-}
-
-const NATIVE_COMPONENTS = new Set(['note', 'chat', 'activity', 'terminal', 'runtime', 'inbox', 'file', 'dir', 'files', 'unlock', 'folder'])
-
-function nativeCatalogWidgetError(component) {
-  const name = String(component || '').trim()
-  if (!name || NATIVE_COMPONENTS.has(name)) return null
-  if (!getWidgetSource(name)) return null
-  return {
-    status: 400,
-    body: {
-      error: `${name} is a library widget, not a native component. Use spawn_widget {"name":"${name}","props":{...}} instead of create_surface with kind:"native".`
-    }
-  }
 }
 
 // Telemetry/tape seam: observers see every tool call across every transport. MULTI-subscriber (telemetry
@@ -87,9 +72,8 @@ function instrument(t) {
 }
 
 // The agent-facing view of state — surface essentials ONLY: an INDEX, not the content. srcdoc `html`
-// and `props` are omitted (bloat; chat/activity props hold the full transcript). To VERIFY a specific
-// widget's data landed (a srcdoc iframe can't be read_window'd), use the targeted `get_surface {id}`
-// tool. ONE definition so every transport (and the widget list_state tool) returns the IDENTICAL shape.
+// and `props` are omitted (bloat; chat/activity props hold the full transcript). ONE definition so every
+// transport (and the widget list_state tool) returns the IDENTICAL shape.
 export function serializeStateForAgent(state) {
   const s = state || {}
   // WHITELIST (never spread `...s`): live state carries internal bookkeeping the agent must not see.
@@ -117,24 +101,6 @@ export function serializeStateForAgent(state) {
   }
 }
 
-// The targeted verification read: ONE surface, props included — the pull complement to the lean
-// list_state. Transcript-bearing surfaces (chat/activity) are refused: their props ARE the conversation.
-export function serializeSurfaceForAgent(state, id) {
-  const s = state || {}
-  const x = (s.surfaces || []).find((w) => w && w.id === String(id))
-  if (!x) return { error: `no surface ${id}` }
-  if (x.role === 'chat' || x.role === 'activity' || x.component === 'chat' || x.component === 'activity') {
-    return { error: 'transcript surfaces are not readable here — the chat history is yours already' }
-  }
-  return {
-    surface: {
-      id: x.id, kind: x.kind, title: x.title, url: x.url, component: x.component,
-      ...(x.kind === 'web' && Array.isArray(x.tabs) && x.tabs.length ? { tabs: x.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url })), activeTab: x.activeTab || 0 } : {}),
-      ...(x.props ? { props: x.props } : {})
-    }
-  }
-}
-
 // blitz.dev: provision a real backend in ONE unauthenticated POST (SQLite + R2 + auth + admin UI, edge-
 // deployed, no signup). Returns the live preview URL + a per-project agents.md. Pure fetch — runtime-agnostic.
 async function provisionBlitzApp(slug) {
@@ -156,71 +122,13 @@ async function provisionBlitzApp(slug) {
 
 /**
  * Build the tool registry bound to a runtime's primitive operations.
- * @param {object} ops — { createSurface(desc)->id, openWindow(a)->id, moveSurface(id,x,y), updateSurface(id,patch),
- *   closeSurface(id), goToPrimary(), getState()->state, workspaceContext()->{workspace,workspace_path,siblings},
- *   listWorkspaces()->{...}, createWorkspace(name)->{ok,name}, switchWorkspace(name)->{ok,active},
- *   readWindow(id,script?)->result, controlSurface(id,action)->{ok,result}, say(text),
- *   customizeWidget(name,html,agentId?,lang?)->{ok,rel}, systemUi(name)->html|null, systemUiInfo(name)->{source,lang}|null, groupIntoFolder(name,ids,x,y,kind)->{ok,...} }
+ * @param {object} ops — { getState()->state, workspaceContext()->{workspace,workspace_path,siblings}, say(text),
+ *   steer(text,agentId), userMessage(text,agentId), runWorkflow(spec)->{ok,runId}, setTheme({accent,accentDeep})->{ok},
+ *   spawnAgent/closeAgent/renameAgent, startWorkflow, setOrchestrators, spawnTerminal/listTerminals/sendToTerminal/
+ *   readTerminal/stopTerminal/removeTerminal, requestAction/listActions/resolveAction, and the connection_* ops }
  */
 export function makeOsTools(ops) {
   return [
-    {
-      path: '/create_surface',
-      description:
-        'Create a surface (web|app|srcdoc|native): web/app take url, srcdoc takes html (+ lang:"jsx"|"tsx" for a React widget — see get_widget_authoring), native takes component+props. Before passing authored srcdoc/JSX/TSX source, self-review it against get_widget_authoring, fix obvious issues, then verify after mount. SHAPED thinking/output — a set you rank or profile, a comparison/decision, a sequence, a multi-step process, relationships → use `spawn_widget` instead; a `note`/`.md` is for plain prose ONLY. Returns { id, workspace_path, siblings }. LOCAL agents: prefer writing a file into workspace_path (`.html`=panel, `.jsx`=React widget, `.md`=note, `.weblink`=web) — surfaces in ~250ms, no /tmp; use this api when remote or for exact x/y/w/h. siblings = what is already here (unrelated → consider create_workspace).',
-      input_schema: {
-        type: 'object',
-        required: ['kind'],
-        properties: { kind: { type: 'string', enum: ['web', 'app', 'srcdoc', 'native'] }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, url: { type: 'string' }, html: { type: 'string' }, component: { type: 'string' }, props: { type: 'object' } }
-      },
-      handler: ({ body }) => {
-        const a = parse(body)
-        if (!a.kind) return { status: 400, body: { error: 'kind required' } }
-        if (a.kind === 'native') {
-          const widgetError = nativeCatalogWidgetError(a.component)
-          if (widgetError) return widgetError
-        }
-        const id = ops.createSurface(a)
-        const ctx = ops.workspaceContext()
-        return {
-          id,
-          workspace: ctx.workspace,
-          workspace_path: ctx.workspace_path,
-          siblings: (ctx.siblings || []).filter((s) => s.id !== id).map((s) => s.title)
-        }
-      }
-    },
-    {
-      path: '/open_window',
-      description:
-        'Open a web surface (a third-party website). For real public/current web research, prefer the user\'s connected browser (connection_read / connection_act) so the evidence is in a tool the user already drives; internal web search is allowed only as a discovery index for candidate URLs/query angles. Returns { id }.',
-      input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, title: { type: 'string' } } },
-      handler: ({ body }) => {
-        const a = parse(body)
-        if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
-        return { id: ops.openWindow(a) }
-      }
-    },
-    {
-      path: '/update_surface',
-      description: 'Patch a surface in place: set html (srcdoc; pass lang too when switching a widget between html and jsx/tsx), props (native, e.g. note text), url, title, or geometry. For task-progress widgets, call this as steps start/finish/block; do not wait until the final answer to update the visible plan. Before replacing widget source, self-review against get_widget_authoring; after JSX/TSX updates, check list_state/get_surface for lastError and fix before calling it done.',
-      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, url: { type: 'string' }, title: { type: 'string' }, props: { type: 'object' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } } },
-      handler: ({ body }) => {
-        const { id, ...patch } = parse(body)
-        if (!id) return { status: 400, body: { error: 'id required' } }
-        const r = ops.updateSurface(String(id), patch)
-        return r && r.ok === false ? { status: 404, body: { error: r.error } } : { ok: true }
-      }
-    },
-    {
-      path: '/close_surface',
-      description: 'Close a surface by id. From inside a widget via window.blitz.tool, omitting id closes that calling widget itself; task-start progress widgets use this to disappear after completion.',
-      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
-      handler: ({ body }) => {
-        const r = ops.closeSurface(String(parse(body).id))
-        return r && r.ok === false ? { status: 404, body: { error: r.error } } : { ok: true }
-      }
-    },
     {
       path: '/set_theme',
       description: 'Set the OS accent color live. `accent` must be a #rrggbb hex. `accentDeep` (optional) is the pressed/hover variant; if omitted it is derived automatically. The change applies instantly to all chrome and persists across restarts.',
@@ -239,18 +147,6 @@ export function makeOsTools(ops) {
       handler: () => serializeStateForAgent(ops.getState())
     },
     {
-      path: '/get_surface',
-      description:
-        'Fetch ONE surface in full (layout + props; html still omitted) — the targeted verification read after an update_surface, and the only way to read a srcdoc widget\'s data (its iframe can\'t be read_window\'d). Transcript surfaces (chat/activity) are refused. Args: {id}.',
-      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
-      handler: ({ body }) => {
-        const a = parse(body)
-        if (!a.id) return { status: 400, body: { error: 'id required' } }
-        const r = serializeSurfaceForAgent(ops.getState(), String(a.id))
-        return r.error ? { status: 404, body: r } : r
-      }
-    },
-    {
       path: '/new_app',
       description:
         "Provision a real blitz.dev app (SQLite+R2+auth, edge-deployed) for a DELIVERABLE the user will keep/ship (landing page, site, app, dashboard — even if v1 looks static). Returns { preview_url, claim_url, agents_md, slug }. Then author files and tell the user the claim URL. For N variations to compare, spawn one sub-agent per variation, each with its OWN app (never one app with N routes, never an in-app chooser). Speed-first: build what's asked, offer backends. Working rules in the doctrine's 'Build deliverables on blitz.dev'. Args { slug } (a-z 0-9 -).",
@@ -264,109 +160,6 @@ export function makeOsTools(ops) {
         if (!r.ok) return { status: r.status || 400, body: { error: r.error } }
         return { ok: true, slug, preview_url: r.preview_url, claim_url: r.claim_url, agents_md: r.agents_md, next: "IS THIS ONE OF SEVERAL VARIATIONS/PARTS? Then STOP — do NOT author here. You are the orchestrator: provision the rest, put up a placeholder surface per part, and spawn ONE sub-agent per part (build NONE yourself — not even the 'reference'/canonical one, and don't 'prove the deploy on this one first'). SINGLE deliverable only: author files (relative imports auto-bundle, every save deploys — no bundler), open as one `app` surface, offer backends, tell the user the preview + claim URLs." }
       }
-    },
-    {
-      path: '/read_window',
-      description: 'Read what is INSIDE a web surface (its live DOM): url, title, the focused element (where the user is typing), and visible text. On the trusted localhost path you may pass a JS expression as `script` to extract anything.',
-      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, script: { type: 'string' } } },
-      handler: async ({ body, transport }) => {
-        const a = parse(body)
-        const id = String(a.id)
-        try {
-          const script = transport === 'localhost' && typeof a.script === 'string' ? a.script : undefined
-          // D (incremental-drive nudge woven into the work loop): reading a window is how the agent
-          // gathers info — which is exactly the moment to reflect it on its live surface before moving on.
-          return {
-            result: await ops.readWindow(id, script),
-            reminder:
-              'If you gathered anything here worth showing (a finding, a candidate, a status), reflect it in your live surface NOW (update_surface{id,props}) before the next read — don’t batch updates to the end.'
-          }
-        } catch (e) {
-          return { status: 400, body: { error: e instanceof Error ? e.message : String(e) } }
-        }
-      }
-    },
-    {
-      path: '/surface_control',
-      description: 'Act INSIDE a web surface (third-party site): click, type, press a key, read text, or screenshot. Only kind "web". Put the surface id in the body. Use read/screenshot first to see the page. A screenshot returns base64 PNG — to SHOW it to the user, inline it in `say` as ![](data:image/png;base64,…) (the reliable way; never hotlink the site\'s own image URLs, they 403/blank). Frame first (scroll so the thing fills the surface), then shoot.',
-      input_schema: {
-        type: 'object',
-        required: ['id', 'action'],
-        properties: { id: { type: 'string' }, action: { type: 'object', required: ['action'], properties: { action: { type: 'string', enum: ['click', 'type', 'key', 'read', 'screenshot'] }, selector: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, text: { type: 'string' }, perKey: { type: 'boolean' }, key: { type: 'string' } } } }
-      },
-      handler: async ({ body, transport }) => {
-        const b = parse(body)
-        const id = typeof b.id === 'string' ? b.id : ''
-        const action = b.action || {}
-        if (!id || !action.action) return { status: 400, body: { error: 'id and action.action required' } }
-        if (action.action === 'eval' && transport !== 'localhost') return { status: 403, body: { error: 'eval is not available over the relay' } }
-        const r = await ops.controlSurface(id, action)
-        if (!r.ok) return { status: 400, body: { error: r.error } }
-        if (action.action === 'screenshot') return { image: r.result }
-        if (action.action === 'read' || action.action === 'eval') return { text: r.result }
-        // 2B: surface the action's observed effect (field value after type, url/dom change after
-        // click/key) so the agent can verify in-band that the act actually landed.
-        return r.effect ? { ok: true, effect: r.effect } : { ok: true }
-      }
-    },
-    {
-      path: '/list_widgets',
-      description:
-        'Browse the widget library: reusable, forkable mini-apps (sandboxed HTML or React via lang:"jsx"/"tsx"). Returns each widget’s name, description, and lang. Use get_widget_source to read one, spawn_widget to open it.',
-      handler: () => ({ widgets: listWidgets() })
-    },
-    {
-      path: '/get_widget_source',
-      description: 'Read the exact, forkable source of a library widget by name: HTML, or JSX/TSX when lang says so. Use this to understand or fork it. Returns { name, html, lang?, needs, props, version, origin }.',
-      input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-      handler: ({ body }) => {
-        const name = String(parse(body).name || '')
-        const w = getWidgetSource(name)
-        if (!w) return { status: 404, body: { error: `no widget named "${name}"` } }
-        return w
-      }
-    },
-    {
-      path: '/spawn_widget',
-      description:
-        'Open a library widget in the workspace as a live sandboxed surface. For a task with progress to track, `pipeline` is a handy live progress surface: spawn it with props.items exactly like {items:[{label,sub?,status:"active"|"queued"|"done"}]}; do not use props.steps. Then drive it with update_surface{id,props:{items}} as items move. The default task-start pipeline auto-closes after every item is done; keep final output in a separate note/widget/surface, or pass props.autoClose=false only when the pipeline itself is the durable artifact. A thinking-widget is an INSTRUMENT you DRIVE, not a final render: update it after EACH step of progress, never once at the end. Prefer widgets with useful interaction (filter/sort/expand/open source/chat action) unless the content is truly atomic. Returns { id, drive? }. Use list_widgets for names.',
-      input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, props: { type: 'object' } } },
-      handler: ({ body }) => {
-        const a = parse(body)
-        const w = getWidgetSource(String(a.name || ''))
-        if (!w) return { status: 404, body: { error: `no widget named "${String(a.name)}"` } }
-        const desc = { kind: 'srcdoc', html: w.html, ...(w.lang && w.lang !== 'html' ? { lang: w.lang } : {}), props: { ...w.props, ...(a.props || {}) }, title: typeof a.title === 'string' ? a.title : w.name }
-        if (typeof a.x === 'number') desc.x = a.x
-        if (typeof a.y === 'number') desc.y = a.y
-        if (typeof a.w === 'number') desc.w = a.w
-        if (typeof a.h === 'number') desc.h = a.h
-        const id = ops.createSurface(desc)
-        // A (live-driving contract): a thinking-widget is an INSTRUMENT, not a final render. The #1
-        // failure is spawning one with a skeleton then populating it once at the end, so it sits frozen
-        // through the whole task. Return the contract at spawn time, mid-flow.
-        return {
-          id,
-          drive:
-            'This is a LIVE surface, not a final render. If this is your task-start pipeline, its progress rows must be in props.items, not props.steps: update_surface{id,props:{items:[{label,sub?,status:"active"|"queued"|"done"}]}}. Update it before and during the work, not after the fact. A completed task-start pipeline auto-closes, so put final results somewhere else before finishing.'
-        }
-      }
-    },
-    {
-      path: '/save_widget',
-      description: 'Save a NEW or forked widget (sandboxed HTML, or React via lang:"jsx"/"tsx", using the window.blitz bridge) into the library so it can be browsed and reused. Call get_widget_authoring FIRST, then self-review the source with its checklist and fix obvious issues before saving; most saved widgets should expose a useful action, not just static content. Returns { name, version }.',
-      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string', description: 'a-z 0-9 -, 2-49 chars' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, description: { type: 'string' }, needs: { type: 'array', items: { type: 'string' } }, props: { type: 'object' }, forkedFrom: { type: 'string' } } },
-      handler: ({ body }) => {
-        try {
-          return saveWidget(parse(body))
-        } catch (e) {
-          return { status: 400, body: { error: e instanceof Error ? e.message : String(e) } }
-        }
-      }
-    },
-    {
-      path: '/get_widget_authoring',
-      description: 'Get the widget-authoring guide: how to write HTML or JSX/TSX widgets that expose useful actions via the sandboxed window.blitz bridge, including the required pre-create review checklist. Read this BEFORE authoring a new widget with save_widget.',
-      handler: () => ({ markdown: widgetAuthoringMd() })
     },
     {
       path: '/events',
@@ -431,18 +224,6 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/get_system_ui',
-      description: "Read a built-in widget's current UI source before editing it (the fork pattern). Args: {name:'chat'}. Returns {html, source, lang, file}; html is kept for backward compatibility.",
-      input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-      handler: ({ body }) => {
-        const name = String(parse(body).name || '')
-        const info = typeof ops.systemUiInfo === 'function' ? ops.systemUiInfo(name) : null
-        if (info) return { html: info.source, source: info.source, lang: info.lang, file: info.rel }
-        const html = ops.systemUi(name)
-        return html == null ? { status: 404, body: { error: 'unknown widget' } } : { html, source: html, lang: 'html', file: null }
-      }
-    },
-    {
       path: '/spawn_agent',
       description:
         "Spawn a NEW agent — a fresh peer agent with its own chat thread in the shared Chat hub (`chat-<id>.md`) and its own visible terminal, reachable over this same relay. The new agent is independent: messages sent to its thread go only to it, and its `say`s land only in that thread (no cross-talk with you or other agents). Use this to spin up a parallel agent for a separate task/conversation. Args: {title?}. Returns { agent:{id,title} }.",
@@ -474,27 +255,16 @@ export function makeOsTools(ops) {
       path: '/run_workflow',
       description:
         "Run a blitzscript workflow you authored, reporting its progress in chat as it runs. Use this INSTEAD of `bash .blitzos/blitz run` when you want the run managed for you. Returns IMMEDIATELY with { runId } — the run continues in the background, and writes its result to <workspace>/.blitzos/workflows/<runId>/result.json on completion (read it when you need the result), so `say` progress and the final synthesis to the user as it lands. Args: {file (path to a Claude-shaped workflow .js you authored + `blitz check`ed), args? (the workflow's `args` input), title?}.",
-      input_schema: { type: 'object', required: ['file'], properties: { file: { type: 'string' }, view: { type: 'string', enum: ['graph', 'kanban'] }, args: {}, title: { type: 'string' }, agent: { type: 'string' } } },
+      input_schema: { type: 'object', required: ['file'], properties: { file: { type: 'string' }, args: {}, title: { type: 'string' }, agent: { type: 'string' } } },
       handler: async ({ body }) => {
         if (typeof ops.runWorkflow !== 'function') return { status: 501, body: { error: 'run_workflow not supported on this transport' } }
         const a = parse(body)
         const file = String(a.file || '')
         if (!file) return { status: 400, body: { error: 'file required (path to a Claude-shaped workflow .js)' } }
-        const view = a.view === 'kanban' ? 'kanban' : 'graph'
         const runId = 'wf_' + Date.now().toString(36) + (_wfRunSeq++).toString(36)
-        // Place the GENERIC live widget on home, bound to runId, BEFORE the run starts so it is live from t=0.
-        // The widget subscribes to the bus by runId; the bus buffers + replays, so there is no start race.
-        let surfaceId = null
-        try {
-          const w = getWidgetSource(view === 'kanban' ? 'wf-kanban' : 'wf-graph')
-          if (w) {
-            const desc = { kind: 'srcdoc', html: w.html, lang: w.lang && w.lang !== 'html' ? w.lang : 'jsx', props: { ...(w.props || {}), runId, transparent: true }, title: typeof a.title === 'string' ? a.title : 'Workflow' }
-            surfaceId = ops.createSurface(desc)
-          }
-        } catch { /* the live view is best-effort; the run still proceeds even if the widget can't mount */ }
-        const r = await ops.runWorkflow({ file, args: a.args, runId, surfaceId, view, agentId: a.agent != null ? String(a.agent) : '0' })
-        if (!r || r.ok === false) return { status: 500, body: { error: (r && r.error) || 'run failed to start', runId, surfaceId } }
-        return { ok: true, runId, surfaceId, note: `The result lands at .blitzos/workflows/${runId}/result.json on run:done.` }
+        const r = await ops.runWorkflow({ file, args: a.args, runId, agentId: a.agent != null ? String(a.agent) : '0' })
+        if (!r || r.ok === false) return { status: 500, body: { error: (r && r.error) || 'run failed to start', runId } }
+        return { ok: true, runId, note: `Progress reports in chat; the result lands at .blitzos/workflows/${runId}/result.json on run:done.` }
       }
     },
     {
