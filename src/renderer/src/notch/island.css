@@ -431,7 +431,17 @@ button.isl-app-chat:active .isl-app-icon {
   min-height: 0;
 }
 
-/* ── live status line (the active agent's current state) + the empty-transcript state ────────────────────────── */
+/* ── active-agent meta row below tabs: current state + compact archive action ───────────────────────────────── */
+.nh-island .isl-agent-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  min-height: 34px;
+  box-sizing: border-box;
+  padding: 8px 2px 4px;
+}
 .nh-island .isl-status {
   display: flex;
   align-items: center;
@@ -439,7 +449,8 @@ button.isl-app-chat:active .isl-app-icon {
   flex: none;
   font-size: 13px;
   color: var(--isl-muted);
-  padding: 4px 2px 2px;
+  min-width: 0;
+  padding: 4px 0;
 }
 .nh-island .isl-status-dot {
   width: 8px;
@@ -456,11 +467,43 @@ button.isl-app-chat:active .isl-app-icon {
   background: rgba(10, 132, 255, 0.12);
   border-radius: 9999px;
   padding: 4px 12px 4px 10px;
-  margin: 2px 0;
 }
 .nh-island .isl-status[data-status='working'] .isl-status-dot {
   background: var(--isl-accent);
   animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-archive {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.nh-island .isl-archive:hover {
+  color: var(--isl-text);
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+}
+.nh-island .isl-archive:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.nh-island .isl-archive.placeholder {
+  visibility: hidden;
+  pointer-events: none;
+}
+.nh-island .isl-archive svg {
+  width: 13px;
+  height: 13px;
+  display: block;
 }
 .nh-island .isl-empty {
   margin: auto;
@@ -472,10 +515,10 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
   flex: none;
-  margin-top: 2px;
+  min-height: 20px;
+  margin-top: 1px;
 }
 .nh-island .isl-details {
   flex: none;
@@ -497,35 +540,6 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-details-caret {
   font-size: 9px;
-}
-.nh-island .isl-archive {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--isl-dim);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.nh-island .isl-archive:hover {
-  color: var(--isl-text);
-  border-color: rgba(255, 255, 255, 0.24);
-  background: rgba(255, 255, 255, 0.08);
-}
-.nh-island .isl-archive:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-.nh-island .isl-archive svg {
-  width: 13px;
-  height: 13px;
-  display: block;
 }
 .nh-island .isl-detail-rows {
   flex: none;
@@ -715,7 +729,7 @@ button.isl-app-chat:active .isl-app-icon {
   flex: none;
   font-family: inherit;
   font-size: 13px;
-  line-height: 1;
+  line-height: 18px;
   font-weight: 400;
   color: var(--isl-muted);
   background: var(--isl-surface);
@@ -739,6 +753,8 @@ button.isl-app-chat:active .isl-app-icon {
   border-color: #ffffff1f;
 }
 .nh-island .isl-chip-label {
+  min-height: 18px;
+  line-height: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -821,7 +837,7 @@ button.isl-app-chat:active .isl-app-icon {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 8px 16px 12px;
   scrollbar-width: thin;
   scrollbar-color: #ffffff26 transparent;
   animation: isl-rise 0.3s ease-out 0.07s both;

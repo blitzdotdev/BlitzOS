@@ -88,8 +88,11 @@ ok('session tab strip has a real blank-space hit area and clear hover affordance
     /e\.target === e\.currentTarget/.test(islandPanel) && /e\.stopPropagation\(\)/.test(islandPanel) &&
     /\.nh-island \.isl-chip:hover \{[\s\S]*?background: rgba\(255, 255, 255, 0\.1\)/.test(islandCss) &&
     /\.nh-island \.isl-chip:hover \{[\s\S]*?border-color: rgba\(255, 255, 255, 0\.24\)/.test(islandCss))
+ok('agent tab labels have enough line box for descenders like g/y',
+  /\.nh-island \.isl-chip \{[\s\S]*?line-height: 18px/.test(islandCss) &&
+    /\.nh-island \.isl-chip-label \{[\s\S]*?min-height: 18px[\s\S]*?line-height: 18px/.test(islandCss))
 ok('island feed hides horizontal overflow and keeps chat bubbles inset from the panel edge',
-  /\.nh-island \.isl-feed \{[\s\S]*?box-sizing: border-box[\s\S]*?overflow-x: hidden[\s\S]*?overflow-y: auto[\s\S]*?padding: 12px 16px/.test(islandCss))
+  /\.nh-island \.isl-feed \{[\s\S]*?box-sizing: border-box[\s\S]*?overflow-x: hidden[\s\S]*?overflow-y: auto[\s\S]*?padding: 8px 16px 12px/.test(islandCss))
 ok('opening Chat from Home resets to the new-session composer instead of the last agent tab',
   /const openChat = \(\): void => \{[\s\S]*?setPage\(0\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
     /onOpenChat=\{openChat\}/.test(notchHost))
@@ -140,9 +143,16 @@ ok('archive metadata is durable and archive parks the agent without deleting its
     /readTerminalMeta/.test(workspaceHost) && /writeTerminalMeta/.test(workspaceHost) &&
     /disk\?\.archived/.test(terminalManager) && /delete meta\.archived/.test(terminalManager) &&
     !/removeAgentFiles/.test(archiveBlock))
-ok('active chat view offers archive only for non-primary agents',
-  /onArchiveAgent/.test(islandPanel) && /activeId !== '0'/.test(islandPanel) && /Archive agent/.test(islandPanel) &&
-    /className="isl-archive"/.test(islandPanel))
+ok('active chat view offers archive only for non-primary agents while reserving the slot for Main',
+  /onArchiveAgent/.test(islandPanel) &&
+    /className=\{`isl-archive\$\{activeId === '0' \? ' placeholder' : ''\}`\}/.test(islandPanel) &&
+    /disabled=\{activeId === '0'\}/.test(islandPanel) &&
+    /if \(activeId !== '0'\) onArchiveAgent\(activeId\)/.test(islandPanel) &&
+    /\.nh-island \.isl-archive\.placeholder \{[\s\S]*?visibility: hidden[\s\S]*?pointer-events: none/.test(islandCss))
+ok('active chat view shows status and archive in a padded meta row below the tabs',
+  /className="isl-agent-meta"[\s\S]*?className="isl-status"[\s\S]*?className=\{`isl-archive/.test(islandPanel) &&
+    /\.nh-island \.isl-agent-meta \{[\s\S]*?justify-content: space-between[\s\S]*?padding: 8px 2px 4px/.test(islandCss) &&
+    /\.nh-island \.isl-actions \{[\s\S]*?justify-content: flex-start/.test(islandCss))
 ok('agent tabs can be renamed inline from right-click with a 24-character cap',
   /renameAgent\(agentId: string, newTitle: string\)[\s\S]*?'os:rename-agent'/.test(preload) &&
     /ipcMain\.handle\('os:rename-agent'/.test(index) &&

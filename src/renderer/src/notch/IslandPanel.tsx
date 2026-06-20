@@ -408,6 +408,31 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       {!isNew && (
         // Agent tab: a PURE chat (the agent's real messages only) + Details + a live status line — KEPT in attach mode.
         <>
+          <div className="isl-agent-meta">
+            <div className="isl-status" data-status={dotStatus(status)}>
+              <span className="isl-status-dot" aria-hidden />
+              {statusLabel(status)}
+            </div>
+            {activeId && (
+              <button
+                type="button"
+                className={`isl-archive${activeId === '0' ? ' placeholder' : ''}`}
+                disabled={activeId === '0'}
+                aria-hidden={activeId === '0'}
+                tabIndex={activeId === '0' ? -1 : undefined}
+                onClick={() => {
+                  if (activeId !== '0') onArchiveAgent(activeId)
+                }}
+                title={activeId === '0' ? undefined : 'Archive agent'}
+                aria-label={activeId === '0' ? undefined : 'Archive agent'}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+                  <path d={ARCHIVE_PATH} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span>Archive</span>
+              </button>
+            )}
+          </div>
           <div className="isl-feed" ref={feedRef}>
             {messages.length === 0 ? (
               <div className="isl-empty">No messages yet</div>
@@ -452,20 +477,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               </span>
               Details
             </button>
-            {activeId && activeId !== '0' && (
-              <button
-                type="button"
-                className="isl-archive"
-                onClick={() => onArchiveAgent(activeId)}
-                title="Archive agent"
-                aria-label="Archive agent"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden focusable="false">
-                  <path d={ARCHIVE_PATH} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span>Archive</span>
-              </button>
-            )}
           </div>
           {detailsOpen && (
             <div className="isl-detail-rows">
@@ -480,10 +491,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               )}
             </div>
           )}
-          <div className="isl-status" data-status={dotStatus(status)}>
-            <span className="isl-status-dot" aria-hidden />
-            {statusLabel(status)}
-          </div>
         </>
       )}
       {/* the composer + attachment panel are ALWAYS visible. */}
