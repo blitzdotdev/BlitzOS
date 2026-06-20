@@ -40,7 +40,7 @@ import { recordIslandId, islandLiveIds, pruneIslandIds } from './island-membersh
 // The notch (dynamic island) overlay — the notch-essential bits extracted from the retired sandwich compositor
 // (web surfaces are now in-DOM <webview>, so the two-window sandwich is gone): the single window is reconfigured
 // as a transparent, all-Spaces, full-display island, with a click-through toggle the renderer drives on hover.
-import { notchOverlayWindowOptions, applyNotchOverlay, setNotchInteractive } from './notch-overlay'
+import { notchOverlayWindowOptions, applyNotchOverlay, setNotchInteractive, readNotchGeometry, notchHitRect, notchHitWindowOptions, NOTCH_HIT_HTML, type NotchGeometry } from './notch-overlay'
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
@@ -650,17 +650,66 @@ app.whenReady().then(() => {
     })
     // Push the notch geometry (the menu-bar height the renderer uses as the notch height) once the renderer is up
     // and on display changes; the renderer already knows the screen size from its own full-display window.
+    // The BULLETPROOF notch toggle: a tiny always-interactive transparent window placed EXACTLY over the physical
+    // notch (geometry from the native CLI). It owns the click (→ toggle fullscreen) + hover (→ open the panel), so
+    // the toggle is constant in every state and has no click-through→arm race. No physical notch → no window
+    // (⌥Space only). The overlay still paints the black pill + peek dots UNDER this transparent catcher.
+    let notchGeom: NotchGeometry | null = null
+    let notchHitWin: BrowserWindow | null = null
+    const notchPreload = join(__dirname, '../preload/index.js')
     const pushNotchGeometry = (): void => {
       const w = mainWindow
       if (!w || w.isDestroyed()) return
       const d = screen.getPrimaryDisplay()
-      try { w.webContents.send('os:notch-geometry', { width: d.bounds.width, height: d.bounds.height, menuBarH: Math.max(0, d.workArea.y - d.bounds.y) }) } catch { /* mid-teardown */ }
+      try {
+        w.webContents.send('os:notch-geometry', {
+          width: d.bounds.width,
+          height: d.bounds.height,
+          menuBarH: Math.max(0, d.workArea.y - d.bounds.y),
+          notchWidth: notchGeom?.hasNotch ? Math.round(notchGeom.notchWidth) : 0,
+          hasNotch: !!notchGeom?.hasNotch
+        })
+      } catch { /* mid-teardown */ }
     }
+    const updateNotchHitWindow = (): void => {
+      const rect = notchHitRect(notchGeom)
+      if (!rect) {
+        if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.destroy()
+        notchHitWin = null
+        return
+      }
+      if (!notchHitWin || notchHitWin.isDestroyed()) {
+        notchHitWin = new BrowserWindow(notchHitWindowOptions(rect, notchPreload))
+        // relativeLevel +1 keeps it STRICTLY above the overlay (also 'screen-saver'), so in fullscreen the notch
+        // click hits this window and not the interactive canvas beneath — survives the overlay's 700ms re-assert.
+        notchHitWin.setAlwaysOnTop(true, 'screen-saver', 1)
+        notchHitWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+        notchHitWin.webContents.on('will-navigate', (e) => e.preventDefault()) // fixed inline page only
+        notchHitWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+        notchHitWin.on('closed', () => { notchHitWin = null })
+        notchHitWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(NOTCH_HIT_HTML))
+        notchHitWin.showInactive() // never steal focus from the app the user is over
+      } else {
+        notchHitWin.setBounds(rect)
+        notchHitWin.setAlwaysOnTop(true, 'screen-saver', 1)
+        notchHitWin.showInactive()
+      }
+    }
+    const refreshNotch = async (): Promise<void> => {
+      notchGeom = await readNotchGeometry()
+      updateNotchHitWindow()
+      pushNotchGeometry()
+    }
+    // Forward the hit-window's click/hover to the overlay renderer (click → toggle fullscreen, hover → panel).
+    ipcMain.on('os:notch-click', () => { try { mainWindow?.webContents.send('os:notch-handle-click') } catch { /* mid-teardown */ } })
+    ipcMain.on('os:notch-hover', (_e, on: boolean) => { try { mainWindow?.webContents.send('os:notch-handle-hover', !!on) } catch { /* mid-teardown */ } })
     if (mainWindow) {
-      if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', pushNotchGeometry)
-      else pushNotchGeometry()
+      if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', () => void refreshNotch())
+      else void refreshNotch()
+      mainWindow.on('closed', () => { if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.destroy() })
     }
-    screen.on('display-metrics-changed', pushNotchGeometry)
+    app.on('before-quit', () => { if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.destroy() })
+    screen.on('display-metrics-changed', () => void refreshNotch())
     // ⌥Space toggles the notch (expand/collapse), sent to the renderer. register() returns false only on a
     // collision with another globalShortcut in THIS process (e.g. a leftover dev instance); log + continue, never throw.
     if (!globalShortcut.register('Alt+Space', () => { try { mainWindow?.webContents.send('os:notch-toggle') } catch { /* mid-teardown */ } })) {

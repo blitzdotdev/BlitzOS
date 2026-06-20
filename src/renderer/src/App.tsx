@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { FocusEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useDesktop, homeRect, homeTransform, nextTerminalName, latticeFor, nearestFreeSlot, effectiveZ, type CreateSurfaceInput } from './store'
+import { useCameraController } from './cameraController'
 import { applyTheme, saveTheme, type Theme } from './theme'
 import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface, CanvasTransform } from './types'
@@ -384,12 +385,12 @@ const NOTCH_W = 200
 // GROW is cheap and GPU-composited (with will-change) = butter-smooth; a path() with quadratics re-clipped the
 // whole app on the MAIN THREAD every frame (the lag). The rounded-bottom rect IS the dynamic-island look (top
 // flush with the screen edge, bottom rounded). vw/vh/notchH in CSS px.
-function notchClipFor(state: 'closed' | 'panel' | 'open', vw: number, vh: number, notchH: number): string {
+function notchClipFor(state: 'closed' | 'panel' | 'open', vw: number, vh: number, notchH: number, notchW: number = NOTCH_W): string {
   // 'open' = fullscreen (the real-canvas grow). closed AND panel both clip to the bare notch pill: the panel /
   // process UI is the NotchHost portal (the island), rendered OUTSIDE #root-canvas, so the clip only ever shows
   // the pill or fullscreen. The island chassis sizes itself.
   if (state === 'open') return 'inset(0px round 0px)'
-  const sx = Math.max(0, (vw - NOTCH_W) / 2)
+  const sx = Math.max(0, (vw - notchW) / 2)
   const h = Math.max(28, notchH)
   return `inset(0px ${sx}px ${Math.max(0, vh - h)}px ${sx}px round 0px 0px 16px 16px)`
 }
@@ -398,6 +399,14 @@ export default function App(): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const worldRef = useRef<HTMLDivElement>(null)
   const transform = useDesktop((s) => s.transform)
+  // Imperative camera: pan/zoom move the .world transform via rAF WITHOUT re-rendering App (the store commits only
+  // when the gesture settles). See cameraController.ts. `transform` stays subscribed (the .world JSX + persistence
+  // use it); the no-dep layout effect below re-imposes the live transform if any UNRELATED re-render lands
+  // mid-gesture, so it can never clobber the imperative transform (zero-frame dual-writer fix).
+  const cam = useCameraController(worldRef)
+  useLayoutEffect(() => {
+    if (cam.isGesturing()) cam.reassert()
+  })
   const locked = useDesktop((s) => s.locked)
   const surfaces = useDesktop((s) => s.surfaces)
   const grabMode = useDesktop((s) => s.grabMode)
@@ -433,6 +442,14 @@ export default function App(): JSX.Element {
   const [notchOn, setNotchOn] = useState(false) // true once main pushes geometry (overlay mode only)
   const [notchState, setNotchState] = useState<'closed' | 'panel' | 'open'>('closed')
   const [notchMenuBarH, setNotchMenuBarH] = useState(38)
+  // The EXACT physical notch (from the native CLI via os:notch-geometry): width drives the visual pill + the clip;
+  // hasNotch gates the pill (no notch → no click band, ⌥Space only). The toggle CLICK + hover come from the always-
+  // interactive notch hit-window (main), so they are bulletproof + constant in every state (no click-through race).
+  const [notchWidth, setNotchWidth] = useState(NOTCH_W)
+  const [hasNotch, setHasNotch] = useState(false)
+  const overChassisRef = useRef(false) // cursor over the chat chassis (overlay mousemove) — keeps the panel open
+  const notchOverRef = useRef(false) // cursor over the physical notch (reported by the hit-window's hover)
+  const notchHoverGraceRef = useRef(0) // close grace so a notch→chassis transit does not flicker the panel shut
   const [notchOpening, setNotchOpening] = useState(false) // brief: the island contents fade to black before the grow
   const [notchAnimating, setNotchAnimating] = useState(false) // during the clip grow/shrink: freeze widget MOTION (not visibility) so the texture is static
   // PINNED panel (item 2): a KEYBOARD-opened panel (⌥Space) stays open regardless of mouse position — the hover
@@ -521,12 +538,44 @@ export default function App(): JSX.Element {
     () =>
       window.agentOS?.notch?.onGeometry?.((g) => {
         setNotchMenuBarH(g.menuBarH > 0 ? g.menuBarH : 38)
+        setNotchWidth(g.hasNotch ? (g.notchWidth && g.notchWidth > 0 ? g.notchWidth : NOTCH_W) : 0)
+        setHasNotch(!!g.hasNotch)
         setNotchOn(true)
       }),
     []
   )
   // ⌥Space toggles the new-session widget show/hide (closed ↔ panel). Never enters fullscreen.
   useEffect(() => window.agentOS?.notch?.onToggle?.(() => toggleNewSession()), [])
+  // The notch HIT-WINDOW (the always-interactive transparent window over the physical notch) drives the toggle +
+  // hover, so the notch is clickable in EVERY state with no click-through→arm race. CLICK → toggle fullscreen.
+  useEffect(() => window.agentOS?.notch?.onHandleClick?.(() => toggleNotch()), [])
+  // HOVER → open the chat panel (peek), like the old hover-the-notch behavior, but reported by the hit-window since
+  // it sits on top of the notch. The overlay mousemove keeps it open while over the chassis; a grace covers the
+  // notch→chassis transit so it does not flicker shut.
+  useEffect(
+    () =>
+      window.agentOS?.notch?.onHandleHover?.((on) => {
+        notchOverRef.current = on
+        if (on) {
+          if (notchHoverGraceRef.current) {
+            clearTimeout(notchHoverGraceRef.current)
+            notchHoverGraceRef.current = 0
+          }
+          if (notchStateRef.current === 'closed') applyNotchState('panel')
+          setNotchInteractive(true)
+        } else {
+          if (notchHoverGraceRef.current) clearTimeout(notchHoverGraceRef.current)
+          notchHoverGraceRef.current = window.setTimeout(() => {
+            notchHoverGraceRef.current = 0
+            if (!notchOverRef.current && !overChassisRef.current && !notchPinnedRef.current && notchStateRef.current === 'panel') {
+              applyNotchState('closed')
+              setNotchInteractive(false)
+            }
+          }, 200)
+        }
+      }),
+    []
+  )
   // While the island is shown, Esc closes it (capture phase, preventDefault) so it never falls through to a surface.
   useEffect(() => {
     if (!notchOn) return
@@ -571,8 +620,9 @@ export default function App(): JSX.Element {
       // panel stays open while the cursor is anywhere over it (its size varies per view).
       const pr = document.querySelector('.nh-chassis')?.getBoundingClientRect()
       const inPanel = !!pr && e.clientX >= pr.left && e.clientX <= pr.right && e.clientY >= pr.top && e.clientY <= pr.bottom
-      const want = overHandle || (st === 'panel' && inPanel)
-      if (overHandle && st === 'closed') applyNotchState('panel')
+      overChassisRef.current = inPanel
+      const want = overHandle || notchOverRef.current || (st === 'panel' && inPanel)
+      if ((overHandle || notchOverRef.current) && st === 'closed') applyNotchState('panel')
       else if (st === 'panel' && !want) applyNotchState('closed')
       setNotchInteractive(want)
     }
@@ -580,7 +630,7 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener('mousemove', onMove, true)
   }, [notchOn])
   const notchClip = notchOn
-    ? notchClipFor(notchState, viewport.w || window.innerWidth, viewport.h || window.innerHeight, notchMenuBarH)
+    ? notchClipFor(notchState, viewport.w || window.innerWidth, viewport.h || window.innerHeight, notchMenuBarH, notchWidth)
     : undefined
   // Native-fullscreen chrome reveal: in APP (shell) fullscreen the title bar slides off the top and
   // returns when the pointer hits the very top edge — exactly like a native macOS fullscreen window, so
@@ -949,7 +999,7 @@ export default function App(): JSX.Element {
         const w = useDesktop.getState()
         w.clearActiveSurface()
         canvasWheelGestureUntil.current = performance.now() + CANVAS_WHEEL_GESTURE_MS
-        w.panBy(-e.deltaX, -e.deltaY)
+        cam.panBy(-e.deltaX, -e.deltaY)
         return
       }
       // Focus-aware zoom: a pinch over a NON-focused surface (or empty canvas) drives the Blitz CAMERA, so
@@ -967,8 +1017,8 @@ export default function App(): JSX.Element {
       e.preventDefault()
       e.stopPropagation()
       if (isPanGesture && unfrozen) canvasWheelGestureUntil.current = performance.now() + CANVAS_WHEEL_GESTURE_MS
-      if (e.ctrlKey) w.zoomAt(e.clientX, e.clientY, e.deltaY)
-      else w.panBy(-e.deltaX, -e.deltaY)
+      if (e.ctrlKey) cam.zoomAt(e.clientX, e.clientY, e.deltaY)
+      else cam.panBy(-e.deltaX, -e.deltaY)
     }
     el.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => el.removeEventListener('wheel', onWheel, { capture: true })
@@ -977,20 +1027,10 @@ export default function App(): JSX.Element {
   // (Web surfaces are in-DOM <webview> elements now — they move/stack/clip with their frame as normal
   // DOM, so there is no page-geometry RAF and no clip-hole pass. The whole sandwich compositor is gone.)
 
-  // Sharp zoom: hold .world on the GPU WHILE the camera moves (pan/zoom composites off the main thread,
-  // no repaint), then drop will-change ~200ms after it settles so Chromium RE-RASTERIZES the layer at the
-  // new scale — crisp text/widgets instead of a stretched 1x bitmap. (Pinning will-change on permanently
-  // is exactly what blurs a zoomed-in canvas; this matches a PDF viewer / Chrome pinch. The .world CSS
-  // documents this contract — the effect was dropped in the webview merge and is restored here.)
-  useEffect(() => {
-    const el = worldRef.current
-    if (!el) return
-    el.style.willChange = 'transform'
-    const t = window.setTimeout(() => {
-      if (worldRef.current) worldRef.current.style.willChange = 'auto'
-    }, 200)
-    return () => window.clearTimeout(t)
-  }, [transform])
+  // Sharp-zoom will-change (GPU-promote .world during motion, then drop ~200ms after settle so Chromium
+  // re-rasterizes crisp at the new scale) now lives in cameraController.ts, which owns it across BOTH live
+  // gestures and one-shot flies. The old [transform]-keyed effect could not fire during an imperative gesture
+  // (there is no per-event setState anymore), so its job moved into the controller.
 
   // ⌘T / ⇧⌘T — tile toggle + size cycle on the window the user means: the single selection if there
   // is one, else the front-most. No editable guard (a ⌘-chord types nothing; a focused note textarea
@@ -1690,6 +1730,7 @@ export default function App(): JSX.Element {
     const items = Array.from(e.dataTransfer?.items ?? [])
     if (!hasFolderEntry && !files.length && !items.length) return
     e.preventDefault()
+    cam.flush() // settle a pending wheel gesture so the drop lands at the CURRENT camera, not a ≤120ms-stale one
     const t = useDesktop.getState().transform
     const wx = Math.round((e.clientX - t.x) / t.scale)
     const wy = Math.round((e.clientY - t.y) / t.scale)
@@ -1750,6 +1791,7 @@ export default function App(): JSX.Element {
   // Right-click empty canvas → New Folder menu (the discoverable counterpart of Cmd+G).
   function onBgContextMenu(e: React.MouseEvent): void {
     e.preventDefault()
+    cam.flush() // fresh camera so "New Folder here" lands at the cursor even right after a wheel pan/zoom
     const t = useDesktop.getState().transform
     setFolderMenu(null)
     setMenu({ x: e.clientX, y: e.clientY, wx: Math.round((e.clientX - t.x) / t.scale), wy: Math.round((e.clientY - t.y) / t.scale) })
@@ -1783,6 +1825,7 @@ export default function App(): JSX.Element {
     if (!st.locked) {
       // UNFROZEN infinite canvas (single-⇧): drag the background void to pan (single-canvas model).
       pan.current = { x: e.clientX, y: e.clientY }
+      cam.sync() // re-seed liveCam from the committed store so the first move pans from the right value
     } else {
       // Frozen desktop: rubber-band (marquee) selection. Shift adds to the selection.
       if (!e.shiftKey) st.clearSelection()
@@ -1797,7 +1840,7 @@ export default function App(): JSX.Element {
   } 
   function onBgMove(e: React.PointerEvent): void {
     if (pan.current) {
-      useDesktop.getState().panBy(e.clientX - pan.current.x, e.clientY - pan.current.y)
+      cam.panBy(e.clientX - pan.current.x, e.clientY - pan.current.y)
       pan.current = { x: e.clientX, y: e.clientY }
       return
     }
@@ -1823,6 +1866,7 @@ export default function App(): JSX.Element {
     } catch {
       /* ignore */
     }
+    if (pan.current) cam.endPointerGesture() // deterministic pointerup commit (a grab-pan has a real end)
     pan.current = null
     marquee.current = null
     setMarqueeRect(null)
@@ -1906,6 +1950,7 @@ export default function App(): JSX.Element {
   // keeps the home cascade.
   function radialWorldPos(): { x: number; y: number } | null {
     if (!radialMenu) return null
+    cam.flush() // fresh camera so a radial "create at cursor" lands where pointed, even right after a wheel gesture
     const t = useDesktop.getState().transform
     return { x: Math.round((radialMenu.x - t.x) / t.scale), y: Math.round((radialMenu.y - t.y) / t.scale) }
   }
@@ -2290,16 +2335,12 @@ export default function App(): JSX.Element {
           body-portal chassis (z 2147483000), and the instant the island opened on hover the chassis covered the
           handle and ate every click (the "notch isn't clickable" regression). As a body portal at z ABOVE .nhost,
           the handle is always the top hit-target. Only mounted in overlay mode (notchOn). */}
-      {notchOn &&
+      {notchOn && hasNotch &&
         createPortal(
           <div
             ref={notchHandleRef}
             className={`notch-handle${notchState !== 'closed' || notchOpening ? ' is-open' : ''}`}
-            style={{ width: NOTCH_W, height: Math.max(28, notchMenuBarH) }}
-            onClick={(e) => {
-              e.stopPropagation()
-              toggleNotch()
-            }}
+            style={{ width: notchWidth, height: Math.max(28, notchMenuBarH) }}
           >
             <div
               className="notch-peek"

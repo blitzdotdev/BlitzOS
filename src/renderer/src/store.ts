@@ -558,6 +558,10 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   // The FREEZE gate is the single navigation rail (plans/blitzos-single-canvas-navigation.md): a
   // frozen desktop (locked) ignores empty-canvas pans entirely — the static home screen — while a
   // single-⇧ UNFREEZE (locked=false) pans the infinite canvas freely with no clamp.
+  // NOTE: live pan/zoom GESTURES no longer call panBy/zoomAt — they go through cameraController.ts (an imperative
+  // rAF transform committed once on settle, to avoid a full App re-render per wheel/pointer event). The controller
+  // PORTS this exact freeze no-op + the zoomAt math/clamp verbatim; these stay as the canonical reference and the
+  // store-level camera API. One-shot flies (goToPrimary/zoomOutFromHome/splayWindows) still set transform directly.
   panBy: (dx, dy) =>
     set((s) => {
       if (s.locked) return {}

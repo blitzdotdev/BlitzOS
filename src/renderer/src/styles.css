@@ -106,12 +106,12 @@ button {
   transform: translateX(-50%);
   background: #000;
   border-radius: 0 0 14px 14px;
-  /* ABOVE the island chassis (.nhost = 2147483000). The handle is PORTALED to document.body (App.tsx), so it is a
-     sibling of the chassis in the body stacking context; this z keeps the physical notch the top click-target even
-     while the island chat is open over it. (In-canvas it was z 100000 but TRAPPED below the chassis by the GPU
-     stacking context of #root-canvas.notch-mode — that was the "notch not clickable" regression.) */
+  /* ABOVE the island chassis (.nhost = 2147483000) so the pill + peek dots show over the open chat. The handle is
+     PORTALED to document.body (App.tsx); this z keeps it visually on top. CLICKS are NOT handled here anymore — a
+     separate always-interactive notch hit-window (a real OS window sized to the physical notch, src/main) owns the
+     click + hover, which is bulletproof in every state (no click-through→arm race). So this is the VISUAL pill only. */
   z-index: 2147483001;
-  cursor: pointer;
+  pointer-events: none;
   display: grid;
   place-items: center;
 }
@@ -394,10 +394,10 @@ button {
   height: 0;
   transform-origin: 0 0;
   z-index: 1;
-  /* will-change:transform is applied DYNAMICALLY in App.tsx (keyed on the camera transform): held while
-     the camera moves (pan/zoom composite off the main thread, no repaint), then dropped ~200ms after it
-     settles so Chromium RE-RASTERIZES this layer at the new scale — sharp text/widgets instead of a
-     stretched 1x bitmap. Pinning it on permanently is exactly what loses resolution when you zoom in;
+  /* will-change:transform is applied DYNAMICALLY by cameraController.ts (across live gestures AND one-shot
+     flies): held while the camera moves (pan/zoom composite off the main thread, no repaint), then dropped
+     ~200ms after it settles so Chromium RE-RASTERIZES this layer at the new scale — sharp text/widgets instead
+     of a stretched 1x bitmap. Pinning it on permanently is exactly what loses resolution when you zoom in;
      PDF viewers and Chrome's pinch avoid that by re-rendering at the target scale, and this matches them. */
 }
 

@@ -399,6 +399,10 @@ export const SurfaceFrame = memo(function SurfaceFrame({
       .map((w) => ({ id: w.id, ox: w.x, oy: w.y, ow: w.w, oh: w.h }))
     const single = items.length === 1
     // Grab fraction along THIS window (so a tiled window pops out under the cursor at the same spot).
+    // TODO(camera-staleness): a window drag/resize started within ~120ms of a WHEEL pan/zoom reads a store
+    // transform that lags the live camera by up to the cameraController SETTLE_MS, so tracking is briefly off
+    // then self-corrects (onBarMove/onResizeMove re-read scale each move). One-shot placements (drop/create/menu)
+    // already cam.flush() in App.tsx; threading cam into SurfaceFrame for these self-correcting paths is deferred.
     const t = st.transform
     const wx = (e.clientX - t.x) / t.scale
     const wy = (e.clientY - t.y) / t.scale

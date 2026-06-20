@@ -1,4 +1,6 @@
-import { BrowserWindow, screen } from 'electron'
+import { app, BrowserWindow, screen } from 'electron'
+import { execFile } from 'node:child_process'
+import { join } from 'node:path'
 
 // notch-overlay — the dynamic-island window mode, extracted from the retired sandwich compositor. Master nuked
 // sandwich.ts + the per-tab WebContentsView host (web surfaces are now in-DOM <webview>), which removed the ONLY
@@ -58,3 +60,93 @@ export function applyNotchOverlay(win: BrowserWindow): void {
 export function setNotchInteractive(win: BrowserWindow | null, on: boolean): void {
   if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(!on, { forward: true })
 }
+
+// ── The notch HIT-WINDOW: a tiny, always-interactive, transparent window placed EXACTLY over the physical notch so
+// the toggle is bulletproof (no click-through→arm race) and constant in every state. Its geometry comes from the
+// native CLI (native/notch-geometry) which reads the real notch from NSScreen (the gap between the menu-bar ears +
+// the safe-area top inset); on a display with no notch there is no window (⌥Space only). The overlay still paints
+// the black pill + peek dots UNDER this transparent catcher; the catcher only owns the click + hover. ────────────
+
+export interface NotchGeometry {
+  hasNotch: boolean
+  notchLeft: number // points from the display's left edge to the notch's left edge
+  notchWidth: number // physical notch width (points)
+  notchHeight: number // physical notch height = safe-area top inset (points)
+}
+
+/** Read the active display's physical notch via the bundled native CLI. hasNotch:false on non-notched displays.
+ *  Best-effort: any failure → null and the caller skips the hit-window. No TCC/permission needed (NSScreen read). */
+export function readNotchGeometry(): Promise<NotchGeometry | null> {
+  // Dist: scripts/dist-mac.sh builds native/notch-geometry and electron-builder.yml extraResources copies the
+  // binary into Contents/Resources; dev builds it via scripts/ensure-helper.sh (predev) and runs it from there.
+  const bin = app.isPackaged
+    ? join(process.resourcesPath, 'notch-geometry')
+    : join(__dirname, '..', '..', 'native', 'notch-geometry', 'notch-geometry')
+  return new Promise((resolve) => {
+    execFile(bin, { timeout: 4000 }, (err, stdout) => {
+      if (err) {
+        resolve(null)
+        return
+      }
+      try {
+        const g = JSON.parse(String(stdout).trim())
+        resolve({
+          hasNotch: !!g.hasNotch,
+          notchLeft: Number(g.notchLeft) || 0,
+          notchWidth: Number(g.notchWidth) || 0,
+          notchHeight: Number(g.notchHeight) || 0
+        })
+      } catch {
+        resolve(null)
+      }
+    })
+  })
+}
+
+/** The on-screen rect (Electron top-left coords) of the physical notch on the primary display, or null if none. */
+export function notchHitRect(
+  g: NotchGeometry | null
+): { x: number; y: number; width: number; height: number } | null {
+  if (!g || !g.hasNotch || g.notchWidth <= 0) return null
+  const b = screen.getPrimaryDisplay().bounds
+  return {
+    x: Math.round(b.x + g.notchLeft),
+    y: Math.round(b.y),
+    width: Math.round(g.notchWidth),
+    height: Math.max(1, Math.round(g.notchHeight))
+  }
+}
+
+/** Options for the notch hit-window: frameless, transparent, NOT click-through (it owns the click). The preload is
+ *  the MAIN preload (it only exposes APIs at load, no side effects) so the inline page can use window.agentOS.notch. */
+export function notchHitWindowOptions(
+  rect: { x: number; y: number; width: number; height: number },
+  preloadPath: string
+): Electron.BrowserWindowConstructorOptions {
+  return {
+    ...rect,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    backgroundColor: '#00000000',
+    acceptFirstMouse: true,
+    webPreferences: { preload: preloadPath, contextIsolation: true, sandbox: false, backgroundThrottling: false }
+  }
+}
+
+/** The fixed, trusted inline page the hit-window loads (no remote content, no navigation): a full-bleed transparent
+ *  catcher that forwards click + hover to main through the existing notch preload bridge (window.agentOS.notch). */
+export const NOTCH_HIT_HTML =
+  '<!doctype html><meta charset="utf-8"><style>html,body{margin:0;width:100vw;height:100vh;background:transparent;cursor:pointer;-webkit-user-select:none;overflow:hidden}</style><body><script>' +
+  'var n=window.agentOS&&window.agentOS.notch;' +
+  'if(n){' +
+  'document.body.addEventListener("click",function(){n.click()});' +
+  'document.body.addEventListener("mouseenter",function(){n.hover(true)});' +
+  'document.body.addEventListener("mouseleave",function(){n.hover(false)});' +
+  '}</script></body>'

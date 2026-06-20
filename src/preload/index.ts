@@ -440,13 +440,37 @@ const api = {
     send(prompt: string, deep: boolean): Promise<{ ok: boolean; id?: string | null; error?: string }> {
       return ipcRenderer.invoke('os:notch-send', { prompt, deep: !!deep }) as Promise<{ ok: boolean; id?: string | null; error?: string }>
     },
+    // Sent BY the notch hit-window (the tiny always-interactive transparent window placed exactly over the physical
+    // notch). Main forwards them to the overlay renderer as os:notch-handle-click / os:notch-handle-hover.
+    click(): void {
+      ipcRenderer.send('os:notch-click')
+    },
+    hover(on: boolean): void {
+      ipcRenderer.send('os:notch-hover', !!on)
+    },
     onToggle(cb: () => void): () => void {
       const listener = (): void => cb()
       ipcRenderer.on('os:notch-toggle', listener)
       return () => ipcRenderer.removeListener('os:notch-toggle', listener)
     },
-    onGeometry(cb: (g: { width: number; height: number; menuBarH: number }) => void): () => void {
-      const listener = (_e: unknown, g: { width: number; height: number; menuBarH: number }): void => cb(g)
+    // Listened to BY the overlay renderer: the hit-window's click toggles fullscreen, its hover opens/closes the panel.
+    onHandleClick(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on('os:notch-handle-click', listener)
+      return () => ipcRenderer.removeListener('os:notch-handle-click', listener)
+    },
+    onHandleHover(cb: (on: boolean) => void): () => void {
+      const listener = (_e: unknown, on: boolean): void => cb(!!on)
+      ipcRenderer.on('os:notch-handle-hover', listener)
+      return () => ipcRenderer.removeListener('os:notch-handle-hover', listener)
+    },
+    onGeometry(
+      cb: (g: { width: number; height: number; menuBarH: number; notchWidth?: number; hasNotch?: boolean }) => void
+    ): () => void {
+      const listener = (
+        _e: unknown,
+        g: { width: number; height: number; menuBarH: number; notchWidth?: number; hasNotch?: boolean }
+      ): void => cb(g)
       ipcRenderer.on('os:notch-geometry', listener)
       return () => ipcRenderer.removeListener('os:notch-geometry', listener)
     }
