@@ -85,7 +85,7 @@
   gap: 8px;
   flex: 1;
   min-height: 0;
-  padding: 10px; /* clearance so the corner item-badges (-5px) + the group badge (top-left -6px) never clip */
+  padding: 10px; /* clearance so the corner item-badges (-5px) + the group badge (top-right -6px) never clip */
   overflow-y: auto;
   scrollbar-width: none;
 }
@@ -200,7 +200,7 @@
   text-transform: uppercase;
 }
 /* hover X badges — a frosted-glass circle (the agent-pill hairline + white-overlay hover, full circle). Used for a
-   single chip (its corner), a group ITEM tile (its corner), and a whole GROUP (the pill's top-left). */
+   single chip (its corner), a group ITEM tile (its corner), and a whole GROUP (the pill's top-right). */
 .nh-island .att-added-remove,
 .nh-island .att-pill-remove {
   position: absolute;
@@ -229,7 +229,7 @@
 }
 .nh-island .att-pill-remove {
   top: -6px;
-  left: -6px;
+  right: -6px;
   z-index: 5; /* the group X sits above the pill + its item tiles */
 }
 .nh-island .att-added-chip:hover .att-added-remove,

@@ -244,7 +244,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     if (!conn) return
     void conn.disconnect(connId).catch(() => {}).then(() => refreshConnections())
   }
-  // Remove a WHOLE group via its top-left X: disconnect every item in it (same optimistic path as removeConn).
+  // Remove a WHOLE group via its top-right X: disconnect every item in it (same optimistic path as removeConn).
   function removeGroup(g: AttachGroup): void {
     setHover(null)
     const ids = new Set(g.items.map((it) => it.connId))
@@ -378,7 +378,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
             <div className="att-added-stack">
               {pillGroups.map((g) => (
                 <div className="att-pill" key={g.key}>
-                  {/* group remove (top-left) — drops the WHOLE group at once; same glass X as a single chip */}
+                  {/* group remove (top-right) — drops the WHOLE group at once; same glass X as a single chip */}
                   <button type="button" className="att-pill-remove" aria-label={`Remove all ${g.label}`} title={`Remove all ${g.label}`} onClick={() => removeGroup(g)}>
                     <RemoveX />
                   </button>
