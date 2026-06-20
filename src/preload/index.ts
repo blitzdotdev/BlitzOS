@@ -69,6 +69,10 @@ const api = {
   sendState(state: OsState): void {
     ipcRenderer.send('os:state', state)
   },
+  /** Open a safe external markdown link from the island transcript. */
+  openExternalUrl(url: string): Promise<{ ok: boolean; error?: string }> {
+    return (ipcRenderer.invoke('os:open-external-url', url) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
+  },
   /** Legacy webview path: renderer reports a guest WebContents id so main can read its DOM. */
   reportWebview(surfaceId: string, wcid: number): void {
     ipcRenderer.send('os:webview', { surfaceId, wcid })

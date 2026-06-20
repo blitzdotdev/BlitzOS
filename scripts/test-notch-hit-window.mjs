@@ -12,10 +12,14 @@ const swift = readFileSync(join(repoRoot, 'native/notch-geometry/main.swift'), '
 const overlay = readFileSync(join(repoRoot, 'src/main/notch-overlay.ts'), 'utf8')
 const index = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')
 const preload = readFileSync(join(repoRoot, 'src/preload/index.ts'), 'utf8')
+const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'))
 const app = readFileSync(join(repoRoot, 'src/renderer/src/App.tsx'), 'utf8')
 const notchHost = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHost.tsx'), 'utf8')
 const islandHome = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandHome.tsx'), 'utf8')
 const islandPanel = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandPanel.tsx'), 'utf8')
+const markdownMessage = readFileSync(join(repoRoot, 'src/renderer/src/notch/MarkdownMessage.tsx'), 'utf8')
+const messageParts = readFileSync(join(repoRoot, 'src/renderer/src/notch/messageParts.ts'), 'utf8')
+const markdownSafety = readFileSync(join(repoRoot, 'src/renderer/src/notch/markdownSafety.ts'), 'utf8')
 const islandSettings = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandSettings.tsx'), 'utf8')
 const islandTerminal = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandTerminalPane.tsx'), 'utf8')
 const notchTypes = readFileSync(join(repoRoot, 'src/renderer/src/notch/types.ts'), 'utf8')
@@ -68,8 +72,8 @@ ok('main forwards the hit-window click/hover to the overlay renderer + pushes th
 ok('preload exposes the bridge: notch.click/hover (hit-window → main) + onHandleClick/onHandleHover (→ overlay)',
   /click\(\): void \{[\s\S]*?'os:notch-click'/.test(preload) && /hover\(on: boolean\): void \{[\s\S]*?'os:notch-hover'/.test(preload) &&
     /onHandleClick/.test(preload) && /onHandleHover/.test(preload))
-ok('renderer: hit-window CLICK → toggleNewSession (island panel; V1 has no canvas fullscreen), HOVER → open/close the panel',
-  /onHandleClick\?\.\(\(\) => \{[\s\S]*?notchStateRef\.current === 'closed'[\s\S]*?toggleNewSession\(\)/.test(app) &&
+ok('renderer: hit-window CLICK opens the island panel when closed, HOVER → open/close the panel',
+  /onHandleClick\?\.\(\(\) => \{[\s\S]*?notchStateRef\.current === 'closed'[\s\S]*?toggleIsland\(\)/.test(app) &&
     /onHandleHover\?\.\(\(on\) =>/.test(app))
 ok('renderer: hover-opened island has close hysteresis and the chassis keeps the overlay interactive for clicks',
   /NOTCH_HOVER_OPEN_GRACE_MS/.test(app) && /scheduleNotchHoverClose/.test(app) && /onChassisHoverChange=\{setChassisHover\}/.test(app) &&
@@ -84,6 +88,8 @@ ok('session tab strip has a real blank-space hit area and clear hover affordance
     /e\.target === e\.currentTarget/.test(islandPanel) && /e\.stopPropagation\(\)/.test(islandPanel) &&
     /\.nh-island \.isl-chip:hover \{[\s\S]*?background: rgba\(255, 255, 255, 0\.1\)/.test(islandCss) &&
     /\.nh-island \.isl-chip:hover \{[\s\S]*?border-color: rgba\(255, 255, 255, 0\.24\)/.test(islandCss))
+ok('island feed hides horizontal overflow and keeps chat bubbles inset from the panel edge',
+  /\.nh-island \.isl-feed \{[\s\S]*?box-sizing: border-box[\s\S]*?overflow-x: hidden[\s\S]*?overflow-y: auto[\s\S]*?padding: 12px 16px/.test(islandCss))
 ok('opening Chat from Home resets to the new-session composer instead of the last agent tab',
   /const openChat = \(\): void => \{[\s\S]*?setPage\(0\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
     /onOpenChat=\{openChat\}/.test(notchHost))
@@ -173,6 +179,57 @@ ok('archived agents show a clipped last-message preview instead of current statu
 ok('permanent archived-agent delete goes through closeAgent only after settings confirmation',
   /deleteArchivedAgent[\s\S]*?closeAgent\?\.\(id\)/.test(notchHost) &&
     /onDeleteAgent\(session\.id\)/.test(islandSettings) && !/stopAgent/.test(islandSettings) && !/openTerminal/.test(islandSettings))
+ok('island chat renders markdown with react-markdown + GFM and no raw HTML path',
+  pkg.dependencies?.['react-markdown'] && pkg.dependencies?.['remark-gfm'] &&
+    /import MarkdownMessage from '.\/MarkdownMessage'/.test(islandPanel) &&
+    /import \{ matchingChoiceAnswer \} from '.\/messageParts'/.test(islandPanel) &&
+    /<MarkdownMessage[\s\S]*?role=\{m\.role\}[\s\S]*?text=\{m\.text\}/.test(islandPanel) &&
+    /from 'react-markdown'/.test(markdownMessage) &&
+    /from 'remark-gfm'/.test(markdownMessage) &&
+    /remarkPlugins=\{remarkPlugins\}/.test(markdownMessage) &&
+    /skipHtml/.test(markdownMessage) &&
+    !/dangerouslySetInnerHTML/.test(markdownMessage) &&
+    !/rehypeRaw/.test(markdownMessage))
+ok('markdown links use the safe external-url bridge and unsafe schemes become inert',
+  /openExternalUrl\(url: string\)/.test(preload) &&
+    /ipcRenderer\.invoke\('os:open-external-url'/.test(preload) &&
+    /ipcMain\.handle\('os:open-external-url'/.test(index) &&
+    /shell\.openExternal\(url\)/.test(index) &&
+    /url\.protocol === 'http:' \|\| url\.protocol === 'https:' \|\| url\.protocol === 'mailto:'/.test(index) &&
+    /DATA_IMAGE_RE/.test(markdownSafety) &&
+    /markdownUrlTransform/.test(markdownMessage) &&
+    /className="isl-md-link inert"/.test(markdownMessage) &&
+    /\.isl-md-table-wrap/.test(islandCss) &&
+    /user-select: text/.test(islandCss))
+ok('island chat has a typed message-parts adapter before rendering markdown or prompts',
+  /IslandMessagePart/.test(notchTypes) &&
+    /type: 'text'/.test(notchTypes) &&
+    /type: 'choice'/.test(notchTypes) &&
+    /type: 'tool'/.test(notchTypes) &&
+    /parts\?: IslandMessagePart\[\]/.test(notchTypes) &&
+    /messagePartsFor/.test(messageParts) &&
+    /parseBlitzUiChoicePart/.test(messageParts) &&
+    /matchingChoiceAnswer/.test(messageParts) &&
+    /messagePartsFor\(\{ role, text, parts: providedParts \}\)/.test(markdownMessage))
+ok('blitz-ui choice prompts render as typed tappable island parts instead of raw JSON',
+  /```blitz-ui/.test(messageParts) &&
+    /JSON\.parse/.test(messageParts) &&
+    /rawKind === 'choice' \|\| rawKind === 'grid'/.test(messageParts) &&
+    /className=\{`isl-ask-card \$\{part\.layout\}/.test(markdownMessage) &&
+    /case 'choice':/.test(markdownMessage) &&
+    /onChoose\?\.\(option\.label\)/.test(markdownMessage) &&
+    /onChoose=\{\(choice\) => onSend\(choice\)\}/.test(islandPanel) &&
+    /\.isl-ask-card/.test(islandCss) &&
+    /\.isl-ask-option/.test(islandCss))
+ok('submitted blitz-ui prompts collapse to prompt plus selected answer in history',
+  /selectedAnswer/.test(markdownMessage) &&
+    /isl-ask-selected/.test(markdownMessage) &&
+    /className=\{`isl-ask-card \$\{part\.layout\}\$\{answered \? ' answered' : ''\}`\}/.test(markdownMessage) &&
+    /matchingChoiceAnswer/.test(islandPanel) &&
+    /isSubmittedAskAnswer/.test(islandPanel) &&
+    /if \(isSubmittedAskAnswer\) return null/.test(islandPanel) &&
+    /\.isl-ask-card\.answered/.test(islandCss) &&
+    /\.isl-ask-selected-answer/.test(islandCss))
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)
 process.exit(failures === 0 ? 0 : 1)

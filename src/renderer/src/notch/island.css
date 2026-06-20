@@ -811,13 +811,17 @@ button.isl-app-chat:active .isl-app-icon {
 
 /* ── activity feed (scrolls above the pinned steer bar) ──────────────────────────────────────────────────────── */
 .nh-island .isl-feed {
+  box-sizing: border-box;
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  user-select: text;
+  -webkit-user-select: text;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 0;
+  padding: 12px 16px;
   scrollbar-width: thin;
   scrollbar-color: #ffffff26 transparent;
   animation: isl-rise 0.3s ease-out 0.07s both;
@@ -982,6 +986,9 @@ button.isl-app-chat:active .isl-app-icon {
   width: fit-content;
   overflow-wrap: anywhere;
 }
+.nh-island .isl-msg.isl-md-msg {
+  min-width: 0;
+}
 .nh-island .isl-msg.user {
   align-self: flex-end;
   background: var(--isl-accent);
@@ -992,12 +999,25 @@ button.isl-app-chat:active .isl-app-icon {
   background: #3b3b3d; /* iOS dark-mode incoming grey */
   color: #fff;
 }
+.nh-island .isl-msg.agent.isl-md-msg {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 2px 2px 4px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--isl-text);
+}
 .nh-island .isl-msg::before,
 .nh-island .isl-msg::after {
   content: '';
   position: absolute;
   bottom: 0;
   height: 17px;
+}
+.nh-island .isl-msg.agent.isl-md-msg::before,
+.nh-island .isl-msg.agent.isl-md-msg::after {
+  display: none;
 }
 .nh-island .isl-msg.user::before {
   right: -7px;
@@ -1022,6 +1042,285 @@ button.isl-app-chat:active .isl-app-icon {
   width: 15px;
   background: #000;
   border-bottom-right-radius: 10px;
+}
+
+/* Markdown transcript: compact, selectable, and safe inside the small island. */
+.nh-island .isl-md-msg :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, .isl-md-table-wrap) {
+  margin: 0;
+}
+.nh-island .isl-md-msg > :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, .isl-md-table-wrap, img) + :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, .isl-md-table-wrap, img) {
+  margin-top: 8px;
+}
+.nh-island .isl-md-msg :where(h1, h2, h3, h4, h5, h6) {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 20px;
+  letter-spacing: 0;
+}
+.nh-island .isl-md-msg :where(ul, ol) {
+  padding-left: 18px;
+}
+.nh-island .isl-md-msg li {
+  margin: 2px 0;
+  padding-left: 2px;
+}
+.nh-island .isl-md-msg li::marker {
+  color: currentColor;
+}
+.nh-island .isl-md-msg .contains-task-list {
+  list-style: none;
+  padding-left: 2px;
+}
+.nh-island .isl-md-msg .task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.nh-island .isl-md-msg .task-list-item input {
+  flex: none;
+  margin: 3px 0 0;
+}
+.nh-island .isl-md-msg blockquote {
+  padding-left: 10px;
+  border-left: 2px solid rgba(255, 255, 255, 0.24);
+  color: var(--isl-muted);
+}
+.nh-island .isl-md-msg a,
+.nh-island .isl-md-link {
+  color: #8ec5ff;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.nh-island .isl-msg.user a {
+  color: #fff;
+}
+.nh-island .isl-md-link.inert {
+  color: currentColor;
+  text-decoration: none;
+  opacity: 0.78;
+}
+.nh-island .isl-md-msg :not(pre) > code {
+  border-radius: 5px;
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.12);
+  font: 0.92em/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.nh-island .isl-md-msg pre {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff30 transparent;
+}
+.nh-island .isl-md-msg pre code {
+  display: block;
+  min-width: max-content;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre;
+}
+.nh-island .isl-md-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff30 transparent;
+}
+.nh-island .isl-md-msg table {
+  width: max-content;
+  min-width: min(100%, 360px);
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 16px;
+}
+.nh-island .isl-md-msg th,
+.nh-island .isl-md-msg td {
+  padding: 5px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  text-align: left;
+  vertical-align: top;
+}
+.nh-island .isl-md-msg th {
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 700;
+}
+.nh-island .isl-md-msg img {
+  display: block;
+  max-width: 100%;
+  max-height: min(260px, 38vh);
+  border-radius: 8px;
+  object-fit: contain;
+}
+.nh-island .isl-md-image-blocked {
+  color: var(--isl-muted);
+  font-size: 12px;
+}
+.nh-island .isl-msg-part + .isl-msg-part {
+  margin-top: 8px;
+}
+.nh-island .isl-msg-part.status,
+.nh-island .isl-msg-part.error,
+.nh-island .isl-msg-part.tool,
+.nh-island .isl-msg-part.attachment {
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--isl-muted);
+  font-size: 12px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+.nh-island .isl-msg-part.error,
+.nh-island .isl-msg-part.status.error {
+  border-color: rgba(255, 99, 99, 0.24);
+  background: rgba(255, 99, 99, 0.09);
+  color: #ffd1d1;
+}
+.nh-island .isl-msg-part.tool {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.nh-island .isl-msg-part.tool code {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  color: var(--isl-text);
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.nh-island .isl-ask-msg {
+  width: 100%;
+}
+.nh-island .isl-ask-card {
+  box-sizing: border-box;
+  width: min(100%, 520px);
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.065);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.nh-island .isl-ask-card.answered {
+  border-color: rgba(46, 147, 255, 0.24);
+  background: rgba(46, 147, 255, 0.08);
+}
+.nh-island .isl-ask-prompt {
+  color: var(--isl-text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.nh-island .isl-ask-selected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(46, 147, 255, 0.28);
+  border-radius: 10px;
+  background: rgba(46, 147, 255, 0.12);
+}
+.nh-island .isl-ask-selected-kicker {
+  flex: none;
+  color: #8ec5ff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 13px;
+  text-transform: uppercase;
+}
+.nh-island .isl-ask-selected-answer {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--isl-text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 10px;
+}
+.nh-island .isl-ask-card.confirm .isl-ask-options {
+  flex-flow: row wrap;
+}
+.nh-island .isl-ask-card.grid .isl-ask-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+}
+.nh-island .isl-ask-option {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--isl-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+}
+.nh-island .isl-ask-card.confirm .isl-ask-option {
+  flex: 1 1 120px;
+  text-align: center;
+}
+.nh-island .isl-ask-option:hover {
+  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+}
+.nh-island .isl-ask-option:active {
+  transform: translateY(0);
+}
+.nh-island .isl-ask-option:focus-visible {
+  outline: 2px solid rgba(46, 147, 255, 0.72);
+  outline-offset: 2px;
+}
+.nh-island .isl-ask-option:disabled {
+  cursor: default;
+  opacity: 0.52;
+  transform: none;
+}
+.nh-island .isl-ask-option img {
+  width: 100%;
+  max-height: 88px;
+  margin-bottom: 7px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+.nh-island .isl-ask-label,
+.nh-island .isl-ask-sub {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nh-island .isl-ask-label {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 17px;
+  white-space: nowrap;
+}
+.nh-island .isl-ask-sub {
+  margin-top: 2px;
+  color: var(--isl-muted);
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
 }
 
 /* attachment chips that ride the user's message — the sources connected to this chat (tab/window), right-aligned
