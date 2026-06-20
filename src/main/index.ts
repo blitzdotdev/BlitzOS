@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen, nativeImage } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
@@ -13,7 +13,7 @@ import { electronTerminalOps, electronActionItems, electronOps, electronConnecti
 import { makeTabLink } from './connection-tab-link.mjs'
 import { makeWindowLink } from './connection-window-link'
 import { makeSafariLink } from './connection-safari-link.mjs'
-import { startConnectorServer, installConnector } from './connection-install'
+import { startConnectorServer, installConnector, isConnectorPolicyInstalled } from './connection-install'
 import { wireLauncher, registerLauncher } from './launcher'
 import { wireWorkflowHost, subscribe as wfSubscribe, snapshot as wfSnapshot } from './workflow-host.mjs'
 import { wireEnrichment, spawnWorkflowEnrichment } from './workflow-enrichment.mjs'
@@ -46,6 +46,13 @@ import { recordIslandId, islandLiveIds, pruneIslandIds } from './island-membersh
 // as a transparent, all-Spaces, full-display island, with a click-through toggle the renderer drives on hover.
 import { notchOverlayWindowOptions, applyNotchOverlay, setNotchInteractive, readNotchGeometry, notchHitRect, notchHitWindowOptions, NOTCH_HIT_HTML, type NotchGeometry } from './notch-overlay'
 
+// Harden the log pipes FIRST: if the launching terminal or parent is severed (e.g. a killed duplicate instance),
+// the next console write throws `write EIO` on stdout/stderr, which — unhandled — crashes the main process with
+// the "A JavaScript error occurred in the main process" dialog. Swallow stream errors so a dead log pipe can't
+// crash BlitzOS.
+process.stdout.on('error', () => {})
+process.stderr.on('error', () => {})
+
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
 process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getAppPath(), 'widgets')
@@ -57,7 +64,7 @@ process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getApp
 if (!app.requestSingleInstanceLock()) app.exit(0)
 app.on('second-instance', () => {
   const w = mainWindow
-  if (!w) return
+  if (!w || w.isDestroyed()) return // a closed-but-not-nulled window would throw "Object has been destroyed"
   if (w.isMinimized()) w.restore()
   w.show()
   w.focus()
@@ -326,6 +333,22 @@ app.whenReady().then(() => {
   installAppMenu() // restores ⌃⌘F / View → Toggle Full Screen (pair-level; see installAppMenu)
   createWindow()
 
+  // macOS QOL: in notch mode the window is a faceless overlay (showInactive, never a normal window), so without
+  // this there's no Dock icon to right-click → Quit — you'd have to hunt the pid + kill. Force a Dock icon, branded
+  // with the BlitzOS bubble so it's recognizable. Best-effort (any failure keeps the default icon).
+  if (process.platform === 'darwin' && notchGated && app.dock) {
+    void app.dock.show().catch(() => {})
+    try {
+      const iconPath = app.isPackaged
+        ? join(process.resourcesPath, 'aqua-bubble.png')
+        : join(__dirname, '..', '..', 'src', 'renderer', 'src', 'assets', 'aqua-bubble.png')
+      const icon = nativeImage.createFromPath(iconPath)
+      if (!icon.isEmpty()) app.dock.setIcon(icon)
+    } catch {
+      /* keep the default Dock icon */
+    }
+  }
+
   // Durably flush cookies + localStorage to disk (web surfaces persist their logins;
   // otherwise the freshest auth token is lost on quit and sites log you back out).
   startSessionPersistence()
@@ -539,23 +562,30 @@ app.whenReady().then(() => {
     } catch (e) { return { ok: false, error: (e as Error)?.message } }
   })
   ipcMain.handle('os:terminal-list', () => electronTerminalOps.listTerminals())
-  // Connections — the radial "Connect" picker lists + connects tabs/windows through the shared registry.
+  // Connections — the attach panel lists + connects tabs/windows through the shared registry. `agentId` (the active
+  // chat session, '' = the new-session composer) OWNS the connection: it scopes connection_list per chat + targets
+  // the attach wake to that agent. The drop path can't see the renderer's active session, so the renderer reports it
+  // when it arms the picker (os:pick-start) and we stash it here.
+  let pickActiveSession = ''
   ipcMain.handle('os:conn-list-tabs', () => electronConnections.connectionListTabs())
   ipcMain.handle('os:conn-list-windows', () => electronConnections.connectionListWindows())
-  ipcMain.handle('os:conn-connect-tab', (_e, id: number | string) => electronConnections.connectionConnectTab(id, {}))
-  ipcMain.handle('os:conn-connect-window', (_e, id: number) => electronConnections.connectionConnectWindow(Number(id), {}))
+  ipcMain.handle('os:conn-connect-tab', (_e, id: number | string, agentId?: string) => electronConnections.connectionConnectTab(id, { agentId: agentId != null ? String(agentId) : '' }))
+  ipcMain.handle('os:conn-connect-window', (_e, id: number, agentId?: string) => electronConnections.connectionConnectWindow(Number(id), { agentId: agentId != null ? String(agentId) : '' }))
   ipcMain.handle('os:conn-install', () => electronConnections.connectionInstallExtension())
+  ipcMain.handle('os:conn-list', (_e, agentId?: string) => electronConnections.connectionList(agentId != null ? String(agentId) : undefined))
+  ipcMain.handle('os:conn-drop', (_e, connId: string) => electronConnections.connectionDrop(String(connId)))
   // Window picker: arm the CU helper's hover-highlight-and-drag overlay over the user's REAL macOS windows.
   // dropZone is the attach drop-zone's on-screen rect (global, top-left points); dropping a window there connects
   // it (handled by the helper's pick_drop event below). excludePids skips BlitzOS's own window (no self-highlight).
-  ipcMain.handle('os:pick-start', async (_e, dropZone: { x: number; y: number; w: number; h: number }) => {
+  ipcMain.handle('os:pick-start', async (_e, dropZone: { x: number; y: number; w: number; h: number }, selfRect: { x: number; y: number; w: number; h: number }, activeSessionId?: string) => {
+    pickActiveSession = activeSessionId != null ? String(activeSessionId) : '' // the chat that owns whatever gets dropped
     const helper = computerUseHelper()
     const e = await helper.ensure()
     if (!e.ok) {
       mainWindow?.webContents.send('os:pick-event', { kind: 'error', error: e.error || 'computer-use helper unavailable' })
       return { ok: false, error: e.error }
     }
-    const r = await helper.call('pick_start', { dropZone, excludePids: [process.pid] })
+    const r = await helper.call('pick_start', { dropZone, selfRect, excludePids: [process.pid] })
     if (r.error || r.ok === false) {
       void helper.request('accessibility').catch(() => {}) // most likely the tap needs Accessibility — raise the prompt
       const error = String(r.error || 'enable Accessibility for BlitzComputerUse, then reopen the attach panel')
@@ -666,12 +696,17 @@ app.whenReady().then(() => {
     ipcMain.handle('os:notch-send', (_e, payload: { prompt?: unknown; deep?: unknown }) => {
       const prompt = String(payload?.prompt ?? '').trim()
       if (!prompt) return { ok: false, error: 'empty prompt' }
+      // Sources attached on the new-session composer are owned by '' (the pre-spawn bucket). When the agent spawns,
+      // reassign them to it: it now OWNS them (connection_list scopes per chat) and is WOKEN about each (the moments
+      // connectionReassign emits) — no need to dump connIds into the user's message; the UI shows them as chips.
       try {
         if (payload?.deep) {
           const r = (electronOps.startWorkflow as unknown as (s: { task: string; contextRefs?: string[]; title?: string }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string })({ task: prompt, contextRefs: [], title: undefined })
+          if (r?.agent?.id) electronConnections.connectionReassign(String(r.agent.id), '')
           return r && r.ok !== false ? { ok: true, id: r.agent?.id ?? null } : { ok: false, error: r?.error || 'startWorkflow failed' }
         }
         const a = (electronOps.spawnAgent as unknown as (title?: string) => { id: string; title: string })(undefined)
+        electronConnections.connectionReassign(String(a.id), '')
         try { (electronOps.userMessage as unknown as (text: string, agentId?: string) => void)(prompt, a.id) } catch { /* seeds when chat.md is read */ }
         return { ok: true, id: a.id }
       } catch (e) {
@@ -736,7 +771,7 @@ app.whenReady().then(() => {
     if (mainWindow) {
       if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', () => void refreshNotch())
       else void refreshNotch()
-      mainWindow.on('closed', () => { if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.destroy() })
+      mainWindow.on('closed', () => { mainWindow = null; if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.destroy() })
     }
     app.on('before-quit', () => { if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.destroy() })
     screen.on('display-metrics-changed', () => void refreshNotch())
@@ -1075,16 +1110,43 @@ app.whenReady().then(() => {
   // Window connect (macOS-local only): the BlitzComputerUse helper IS the window adapter (AX + vision +
   // CGEvent). It's ensured lazily on the first window op (it holds the Accessibility + Screen-Recording grants).
   electronConnections.setWindowLink(makeWindowLink({ connectionOps: electronConnections, helper: computerUseHelper() }))
-  // Window-picker drops: when the helper reports a window dragged into the attach drop-zone, connect THAT window
-  // (the same path as the Connect picker), then tell the renderer the outcome. hover/over/cancel just drive UI feedback.
+  // Window-picker drops: route by what landed. A browser window the extension knows (matched by on-screen BOUNDS)
+  // connects its ACTIVE TAB through the Chrome extension — real DOM/run_js at TAB resolution. Anything else (a
+  // non-browser app, or no extension running) connects as a native WINDOW through the computer-use helper (AX tree +
+  // screenshot + coordinate clicks). The dropped CGWindow bounds and the extension's chrome.windows bounds are the
+  // same physical window, so a small-tolerance match is the whole bridge (CGWindowID and Chrome's tabId never meet).
+  const matchBrowserTab = async (b: { x: number; y: number; w: number; h: number }): Promise<number | null> => {
+    if (!tabLink.isConnected()) return null
+    const wins = (await tabLink.listWindows().catch(() => null)) as Array<{
+      activeTabId?: number | null
+      bounds?: { left: number; top: number; width: number; height: number }
+    }> | null
+    if (!Array.isArray(wins)) return null
+    let best: { tabId: number; score: number } | null = null
+    for (const w of wins) {
+      if (w?.activeTabId == null || !w.bounds) continue
+      const score =
+        Math.abs(w.bounds.left - b.x) + Math.abs(w.bounds.top - b.y) + Math.abs(w.bounds.width - b.w) + Math.abs(w.bounds.height - b.h)
+      if (!best || score < best.score) best = { tabId: Number(w.activeTabId), score }
+    }
+    return best && best.score <= 120 ? best.tabId : null // ~120pt total slack covers the title bar + rounding
+  }
   computerUseHelper().onEvent((m) => {
     const kind = m?.kind
     if (kind === 'pick_drop' && typeof m.windowId === 'number') {
-      void electronConnections
-        .connectionConnectWindow(Number(m.windowId), {})
+      const bounds = { x: Number(m.x) || 0, y: Number(m.y) || 0, w: Number(m.w) || 0, h: Number(m.h) || 0 }
+      void matchBrowserTab(bounds)
+        .then((tabId) =>
+          tabId != null
+            ? electronConnections.connectionConnectTab(tabId, { agentId: pickActiveSession })
+            : electronConnections.connectionConnectWindow(Number(m.windowId), { agentId: pickActiveSession })
+        )
         .then((res) => {
           const ok = !!res && !res.error
-          mainWindow?.webContents.send('os:pick-event', { kind: 'connected', ok, windowId: m.windowId, app: m.app, bundleId: m.bundleId, title: m.title, error: res?.error })
+          const connId = typeof res?.connId === 'string' ? res.connId : ''
+          mainWindow?.webContents.send('os:pick-event', {
+            kind: 'connected', ok, connId, windowId: m.windowId, pid: m.pid, app: m.app, bundleId: String(m.bundleId || ''), title: String(m.title || ''), icon: m.icon, error: res?.error
+          })
         })
         .catch((err) => mainWindow?.webContents.send('os:pick-event', { kind: 'connected', ok: false, error: String(err) }))
     } else if (kind === 'pick_over' || kind === 'pick_hover' || kind === 'pick_cancel') {
@@ -1097,6 +1159,19 @@ app.whenReady().then(() => {
   // admin-prompt installer (connection_install_extension). Dev uses load-unpacked and skips this.
   startConnectorServer()
   electronConnections.setInstaller(installConnector)
+  // Auto-run the force-install on boot (one admin prompt) so the user's Chrome tabs are connectable with NO manual
+  // "Connect Chrome" step. Gated to macOS + only when the policy for the CURRENT extension id isn't already written
+  // and the connector isn't connected — so it prompts until installed, then never again (a cancel just retries next
+  // boot). Gated to MDM-managed Macs (the managed-prefs dir exists): an unmanaged Mac can't honor the policy, so
+  // skip the useless admin prompt — there installConnector returns the manual load-unpacked path instead.
+  if (process.platform === 'darwin' && existsSync('/Library/Managed Preferences')) {
+    setTimeout(() => {
+      if (isConnectorPolicyInstalled() || tabLink.isConnected()) return
+      void installConnector()
+        .then((r) => console.log('[blitzos] connector auto-install:', r.ok ? 'policy written — Chrome installs in ~10s' : r.error))
+        .catch(() => {})
+    }, 4000)
+  }
 
   // Agents run as managed tmux terminals. The backend is pluggable: Claude Code (`claude`) is the default
   // when available (the visible TUI/resume path), while Codex serverless (`codex exec`) stays selectable.

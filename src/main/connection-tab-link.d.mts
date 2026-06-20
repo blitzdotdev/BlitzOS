@@ -12,12 +12,21 @@ export interface TabInfo {
   active?: boolean
 }
 
+export interface WindowInfo {
+  windowId: number
+  bounds: { left: number; top: number; width: number; height: number }
+  activeTabId: number | null
+  activeUrl: string
+}
+
 export interface TabLink {
   /** Start the localhost WS server (probes a small port range if taken). */
   start(bindPort?: number): Promise<{ ok: boolean; port?: number | null; error?: string }>
   stop(): void
   /** Connectable browser tabs reported by the extension. */
   listTabs(): Promise<TabInfo[]>
+  /** Browser windows + on-screen bounds + active tab (the picker's bounds bridge to a precise tab). */
+  listWindows(): Promise<WindowInfo[]>
   /** Connect a tab → bind a connection with a WS-backed adapter. */
   connectTab(tabId: number, opts?: { sourceId?: string; title?: string }): Promise<{ connId: string; surfaceId: string | null; sourceId: string; tab: TabInfo } | { error: string }>
   isConnected(): boolean

@@ -165,7 +165,7 @@ export function makeConnectionOps({
   // ---- adapter binding: an adapter calls this when the user/agent connects a source ----
   // Returns { connId, surfaceId }. Auto-creates + binds the representation widget so the connId<->surfaceId
   // link is AUTHORITATIVE (a widget can't spoof which connection it drives) and marks it content-shared.
-  function connectionBind({ type, sourceId, title, capabilities, adapter } = {}) {
+  function connectionBind({ type, sourceId, title, capabilities, adapter, ref, agentId } = {}) {
     const connId = 'conn_' + randomUUID().slice(0, 8)
     const sid = String(sourceId || 'unknown')
     const kind = type === 'window' ? 'window' : 'tab'
@@ -215,7 +215,12 @@ export function makeConnectionOps({
       capabilities: capabilities && typeof capabilities === 'object' ? capabilities : kind === 'window' ? { act: true, vision: true } : { run_js: true, act: true },
       status: 'live',
       surfaceId,
-      adapter: adapter || null
+      adapter: adapter || null,
+      // the connectable's id (chrome tab id / safari tabId / window id) — lets the renderer mark the EXACT source connected
+      ref: ref ?? null,
+      // the chat session that attached this source ('' = attached on the new-session composer, reassigned on spawn).
+      // The owner scopes connection_list per chat + targets the attach moment (self-reported, like /events + /say).
+      agentId: agentId != null ? String(agentId) : ''
     }
     registry.set(connId, record)
     if (surfaceId) {
@@ -226,7 +231,7 @@ export function makeConnectionOps({
         /* perception not wired (a bare test) */
       }
     }
-    emitConnectionMoment(surfaceId || 'system', { connId, sourceId: sid, status: 'live', verb: 'connected' })
+    emitConnectionMoment(surfaceId || 'system', { connId, sourceId: sid, status: 'live', verb: 'connected', agentId: record.agentId || '0' })
     return { connId, surfaceId }
   }
 
@@ -249,7 +254,7 @@ export function makeConnectionOps({
         /* renderer gone */
       }
     }
-    emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: sid, status: r.status, verb: `navigated: ${from} → ${sid}` })
+    emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: sid, status: r.status, verb: `navigated: ${from} → ${sid}`, agentId: r.agentId || '0' })
     return { ok: true, changed: true, from, to: sid }
   }
 
@@ -258,7 +263,7 @@ export function makeConnectionOps({
     const r = rec(connId)
     if (!r) return
     if (status) r.status = String(status)
-    if (significant) emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: r.status, verb: summary })
+    if (significant) emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: r.status, verb: summary, agentId: r.agentId || '0' })
   }
 
   // ---- adapter (or the source) went away: mark the connection dead but KEEP the widget + saved tools, and
@@ -299,7 +304,7 @@ export function makeConnectionOps({
         /* renderer may be gone */
       }
     }
-    emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: r.status, verb: r.status })
+    emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: r.status, verb: r.status, agentId: r.agentId || '0' })
   }
 
   function capable(r, verb) {
@@ -319,21 +324,44 @@ export function makeConnectionOps({
 
   // ================= agent-facing ops (called by the os-tools handlers) =================
 
-  function connectionList() {
+  // Self-reported scoping (like /events + /say): pass `forAgent` to see only THAT chat's sources. undefined = all
+  // (back-compat — the primary/'0' watcher + any caller that omits an id). '' = the pre-spawn (new-session) bucket.
+  function connectionList(forAgent) {
+    const owner = forAgent === undefined ? null : String(forAgent)
     return {
-      connections: [...registry.values()].map((r) => ({
-        connId: r.connId,
-        type: r.type,
-        sourceId: r.sourceId,
-        title: r.title,
-        status: r.status,
-        capabilities: r.capabilities,
-        surfaceId: r.surfaceId,
-        // the per-connection briefing (agents.md analog): a fresh session learns what this source already knows
-        savedTools: readTools(r.sourceId).map((t) => ({ name: t.name, description: t.description, kind: t.kind })),
-        description: readDescription(r.sourceId) || undefined
-      }))
+      connections: [...registry.values()]
+        .filter((r) => owner == null || String(r.agentId || '') === owner)
+        .map((r) => ({
+          connId: r.connId,
+          type: r.type,
+          sourceId: r.sourceId,
+          title: r.title,
+          status: r.status,
+          capabilities: r.capabilities,
+          surfaceId: r.surfaceId,
+          ref: r.ref ?? null,
+          agentId: r.agentId || '',
+          // the per-connection briefing (agents.md analog): a fresh session learns what this source already knows
+          savedTools: readTools(r.sourceId).map((t) => ({ name: t.name, description: t.description, kind: t.kind })),
+          description: readDescription(r.sourceId) || undefined
+        }))
     }
+  }
+
+  // Reassign sources to a chat — used when a NEW agent spawns and inherits the windows the user attached on the
+  // new-session composer (owner ''). Returns the reassigned [{connId, type, sourceId, title}] so the spawn can tell
+  // the agent what it now has. fromAgent defaults to '' (the pre-spawn bucket).
+  function connectionReassign(toAgent, fromAgent = '') {
+    const moved = []
+    for (const r of registry.values()) {
+      if (String(r.agentId || '') === String(fromAgent)) {
+        r.agentId = String(toAgent)
+        moved.push({ connId: r.connId, type: r.type, sourceId: r.sourceId, title: r.title })
+        // wake the inheriting agent about each source it now owns (its first /events poll picks these up)
+        emitConnectionMoment(r.surfaceId || 'system', { connId: r.connId, sourceId: r.sourceId, status: r.status, verb: 'attached', agentId: String(toAgent) })
+      }
+    }
+    return moved
   }
 
   async function connectionRead(connId, args) {
@@ -429,7 +457,7 @@ export function makeConnectionOps({
       }
     }
     registry.delete(connId)
-    emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: 'dropped', verb: 'disconnected' })
+    emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: 'dropped', verb: 'disconnected', agentId: r.agentId || '0' })
     // an explicit drop tears down the representation widget too (no orphaned dead card on the canvas).
     if (r.surfaceId) {
       try {
@@ -520,7 +548,7 @@ export function makeConnectionOps({
       /* best-effort teardown */
     }
     registry.delete(connId)
-    emitConnectionMoment('system', { connId, sourceId: r.sourceId, status: 'dropped', verb: 'disconnected (widget closed)' })
+    emitConnectionMoment('system', { connId, sourceId: r.sourceId, status: 'dropped', verb: 'disconnected (widget closed)', agentId: r.agentId || '0' })
   }
 
   // ---- the tab link (connection-tab-link.mjs) registers itself here so the agent tools can list +
@@ -656,6 +684,7 @@ export function makeConnectionOps({
     connectionForSurface,
     // agent-facing ops (called by the os-tools.mjs handlers + the widget bridge)
     connectionList,
+    connectionReassign,
     connectionRead,
     connectionAct,
     connectionRunJs,

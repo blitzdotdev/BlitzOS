@@ -141,14 +141,22 @@ const api = {
     listWindows(): Promise<{ windows?: unknown[]; error?: string }> {
       return (ipcRenderer.invoke('os:conn-list-windows') as Promise<{ windows?: unknown[]; error?: string }>).catch(() => ({ error: 'unavailable' }))
     },
-    connectTab(tabId: number | string): Promise<Record<string, unknown>> {
-      return (ipcRenderer.invoke('os:conn-connect-tab', tabId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
+    // agentId = the active chat that OWNS the connection ('' = the new-session composer, reassigned on spawn).
+    connectTab(tabId: number | string, agentId?: string): Promise<Record<string, unknown>> {
+      return (ipcRenderer.invoke('os:conn-connect-tab', tabId, agentId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
     },
-    connectWindow(windowId: number): Promise<Record<string, unknown>> {
-      return (ipcRenderer.invoke('os:conn-connect-window', windowId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
+    connectWindow(windowId: number, agentId?: string): Promise<Record<string, unknown>> {
+      return (ipcRenderer.invoke('os:conn-connect-window', windowId, agentId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
     },
     installExtension(): Promise<Record<string, unknown>> {
       return (ipcRenderer.invoke('os:conn-install') as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
+    },
+    // The live connections OWNED by `agentId` (this chat) so the picker can mark + un-mark per source. Omit = all.
+    list(agentId?: string): Promise<{ connections?: unknown[]; error?: string }> {
+      return (ipcRenderer.invoke('os:conn-list', agentId) as Promise<{ connections?: unknown[]; error?: string }>).catch(() => ({ error: 'unavailable' }))
+    },
+    disconnect(connId: string): Promise<Record<string, unknown>> {
+      return (ipcRenderer.invoke('os:conn-drop', connId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
     }
   },
   /** Window picker — while the attach drop-zone is visible, the computer-use helper highlights ANY macOS
@@ -156,8 +164,12 @@ const api = {
    *  connect it. `start` arms it with the drop-zone's on-screen rect (global, top-left CSS px ≈ macOS points);
    *  `onEvent` streams hover/over/connected/error so the UI can react. */
   pick: {
-    start(dropZone: { x: number; y: number; w: number; h: number }): Promise<{ ok: boolean; error?: string }> {
-      return (ipcRenderer.invoke('os:pick-start', dropZone) as Promise<{ ok: boolean; error?: string }>).catch((e) => ({ ok: false, error: String(e) }))
+    start(
+      dropZone: { x: number; y: number; w: number; h: number },
+      selfRect: { x: number; y: number; w: number; h: number },
+      activeSessionId?: string // the chat that owns whatever gets dropped ('' = the new-session composer)
+    ): Promise<{ ok: boolean; error?: string }> {
+      return (ipcRenderer.invoke('os:pick-start', dropZone, selfRect, activeSessionId) as Promise<{ ok: boolean; error?: string }>).catch((e) => ({ ok: false, error: String(e) }))
     },
     stop(): void {
       void ipcRenderer.invoke('os:pick-stop').catch(() => {})

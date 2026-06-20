@@ -15,9 +15,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleVersion</key>
-  <string>5</string>
+  <string>8</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.4</string>
+  <string>1.7</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <!-- Faceless background agent: no Dock icon, no menu bar (matches Codex's CUAService). -->

@@ -66,14 +66,18 @@ function readDebugActiveTerminal(): boolean {
   }
 }
 type MilestoneAction = { type: 'milestone'; agentId?: string; id?: unknown; ts?: unknown; kind?: string; text?: unknown }
+// Strip the legacy "Attached before you started …" brief that older builds appended to the user's message text
+// (it persisted in chat.md). New sends never inject it; this keeps already-persisted messages clean at display.
+const stripAttachBrief = (text: string): string => text.replace(/\n+Attached before you started \(drive these with[\s\S]*$/, '').trim()
+
 const mapThreads = (
   raw?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown }>>
 ): Record<string, IslandMessage[]> => {
   const out: Record<string, IslandMessage[]> = {}
   for (const id of Object.keys(raw || {})) {
     out[id] = (raw![id] || [])
-      .filter((m) => m && String(m.text || '').trim())
-      .map((m) => ({ role: m.role === 'user' ? 'user' : 'agent', text: String(m.text), ts: Number(m.ts) || undefined }))
+      .map((m) => ({ role: m.role === 'user' ? ('user' as const) : ('agent' as const), text: m.role === 'user' ? stripAttachBrief(String(m.text)) : String(m.text), ts: Number(m.ts) || undefined }))
+      .filter((m) => m.text.trim())
   }
   return out
 }
@@ -83,17 +87,21 @@ export function NotchHost({
   onChassisResize,
   onChassisHoverChange,
   onAttachChange,
-  initialView = 'home'
+  onStateChange,
+  initialView = 'home',
+  initialPage = 0
 }: {
   menuBarH: number
   onChassisResize?: () => void
   onChassisHoverChange?: (on: boolean) => void
   onAttachChange?: (open: boolean) => void // attach panel (the macOS window picker) opened/closed → App pins the island open
-  initialView?: 'home' | 'session' // the view to open into: 'home' (hover) or 'session' (⌥Space). Remounts per open.
+  onStateChange?: (view: 'home' | 'settings' | 'session', page: number) => void // report view+page so App restores it on the next open
+  initialView?: 'home' | 'settings' | 'session' // the view to open into — RESTORED from the last open (NotchHost remounts per open)
+  initialPage?: number // the tab to open into (0 = composer, 1..N = agent) — also restored from the last open
 }): JSX.Element {
   // 'home' = the icon grid; 'settings' = debug settings; 'session' = today's agent chat/session UI.
   const [view, setView] = useState<'home' | 'settings' | 'session'>(initialView)
-  const [page, setPage] = useState(0) // 0 = new-session composer; 1..N = the agent at page-1
+  const [page, setPage] = useState(initialPage) // 0 = new-session composer; 1..N = the agent at page-1
   const [attachOpen, setAttachOpen] = useState(false)
   const [sessions, setSessions] = useState<IslandSession[]>([])
   const [threads, setThreads] = useState<Record<string, IslandMessage[]>>({})
@@ -103,8 +111,16 @@ export function NotchHost({
   const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
   const pendingJump = useRef<string | null>(null) // after a spawn, jump to the new session once it appears
+  const activeIdRef = useRef('') // the active chat id, mirrored for the picker arm (computed below the effect)
   const nRef = useRef(0)
   nRef.current = sessions.length
+
+  // Report the island's view + tab up to App so reopening it (hover OR ⌥Space) restores where the user left off,
+  // instead of resetting to Home. App stashes these and feeds them back as initialView/initialPage on the next open.
+  useEffect(() => {
+    onStateChange?.(view, page)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, page])
 
   // Tell the host whenever the chassis SIZE changes (attach panel opens/closes, peek toggles) so its hover-close
   // grace timer holds the island open: a shrink otherwise pulls the chassis out from under the cursor and the
@@ -206,18 +222,19 @@ export function NotchHost({
     const pick = window.agentOS?.pick
     if (!pick) return
     let stopped = false
-    const measure = (): { x: number; y: number; w: number; h: number } | null => {
-      const el = document.querySelector('.att-drop') as HTMLElement | null
+    // viewport rect → on-screen rect (top-left global points; the overlay window's origin + the element offset).
+    const measure = (sel: string): { x: number; y: number; w: number; h: number } | null => {
+      const el = document.querySelector(sel) as HTMLElement | null
       if (!el) return null
       const r = el.getBoundingClientRect()
       if (r.width < 4 || r.height < 4) return null
-      // viewport rect → on-screen rect (top-left global points; the overlay window's origin + the element offset).
       return { x: window.screenX + r.left, y: window.screenY + r.top, w: r.width, h: r.height }
     }
     const arm = (): void => {
       if (stopped) return
-      const z = measure()
-      if (z) void pick.start(z)
+      const drop = measure('.att-drop') // releasing a drag here = drop
+      const self = measure('.nh-chassis') // the whole island chrome — never grab a window behind it
+      if (drop && self) void pick.start(drop, self, activeIdRef.current) // the dropped window is owned by the active chat
     }
     // re-measure across the 0.32s chassis-grow transition (+ settle margin) so the on-screen rect is final.
     const raf = requestAnimationFrame(arm)
@@ -311,6 +328,7 @@ export function NotchHost({
   const activeIndex = safePage === 0 ? -1 : safePage - 1
   const activeSession = activeIndex >= 0 ? sessions[activeIndex] : null
   const activeId = activeSession?.id
+  activeIdRef.current = activeId ?? '' // '' = the new-session composer; sources dropped there are reassigned on spawn
   const messages = activeId ? threads[activeId] || [] : []
   const activeMilestones = activeId ? milestones[activeId] || [] : []
   const activeStatus = activeId ? status[activeId] || activeSession?.status || 'idle' : 'idle'
@@ -319,6 +337,10 @@ export function NotchHost({
 
   // page 0 (pen) = spawn a NEW session; an agent tab = steer that session. Both are real (no mock append).
   const onSend = (text: string): void => {
+    // Attachments ride the message now (shown as chips on the sent bubble), so close the staging IMMEDIATELY. This
+    // also fixes the new-session break: leaving attach open across the page-switch to the spawned agent collided
+    // with the agent-chat attach layout (the height-lock) and broke the island.
+    setAttachOpen(false)
     if (safePage === 0) {
       window.agentOS
         ?.notch?.send?.(text, false)

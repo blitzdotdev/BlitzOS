@@ -95,7 +95,30 @@ async function listTabs() {
   const tabs = await chrome.tabs.query({})
   return tabs
     .filter((t) => t.id != null && /^https?:/i.test(t.url || ''))
-    .map((t) => ({ tabId: t.id, title: t.title || t.url, url: t.url, windowId: t.windowId, active: !!t.active }))
+    .map((t) => ({ tabId: t.id, title: t.title || t.url, url: t.url, windowId: t.windowId, active: !!t.active, favIconUrl: t.favIconUrl || '' }))
+}
+
+// Normal browser windows with their on-screen BOUNDS + ACTIVE tab. BlitzOS matches a dropped macOS window to one of
+// these by bounds (a CGWindowID can't be mapped to Chrome's tabId any other way), then connects the active tab.
+// Bounds are in DIPs/points (top-left origin), the same space macOS CGWindowList reports.
+async function listWindows() {
+  let wins = []
+  try {
+    wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] })
+  } catch {
+    return []
+  }
+  return wins
+    .map((w) => {
+      const active = (w.tabs || []).find((t) => t.active)
+      return {
+        windowId: w.id,
+        bounds: { left: w.left, top: w.top, width: w.width, height: w.height },
+        activeTabId: active && active.id != null ? active.id : null,
+        activeUrl: (active && active.url) || ''
+      }
+    })
+    .filter((w) => w.activeTabId != null && /^https?:/i.test(w.activeUrl))
 }
 
 // ---- in-page functions (serialized into the tab by chrome.scripting; no closures over SW state) ----
@@ -197,6 +220,7 @@ async function handle(data) {
   const reply = (payload) => send({ type: 'reply', id, ...payload })
   try {
     if (cmd === 'listTabs') return reply({ result: await listTabs() })
+    if (cmd === 'listWindows') return reply({ result: await listWindows() })
     if (cmd === 'ping') return reply({ result: { pong: true } })
     const tabId = msg.tabId
     if (tabId == null) return reply({ error: 'tabId required' })

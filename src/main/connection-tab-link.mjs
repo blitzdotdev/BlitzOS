@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto'
 
 // Stable id of the self-hosted extension (derived from extension/manifest.json `key`). The force-install
 // policy, the Origin check, and the managed-storage config all key on this.
-export const CONNECTOR_EXTENSION_ID = 'mchgbmigblhfajnbgpmkpjnnnfbmlneo'
+export const CONNECTOR_EXTENSION_ID = 'paknignciplamgbppaejghpbpikdekdc'
 export const DEFAULT_TAB_LINK_PORT = 7682
 
 /**
@@ -191,6 +191,13 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
     return knownTabs // fall back to the last hello/cache when the live query fails
   }
 
+  // Browser windows + their on-screen bounds + active tab (for the picker's bounds bridge: drop a Chrome window →
+  // its active tab). Returns [] when the extension isn't connected / the query fails.
+  async function listWindows() {
+    const r = await cmd({ cmd: 'listWindows' })
+    return Array.isArray(r) ? r : []
+  }
+
   function sourceIdForUrl(url) {
     try {
       return new URL(url).host || 'tab'
@@ -226,7 +233,7 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
         tabToConn.delete(id)
       }
     }
-    const bound = connectionOps.connectionBind({ type: 'tab', sourceId, title: opts.title || tab.title, capabilities: { run_js: true, act: true }, adapter })
+    const bound = connectionOps.connectionBind({ type: 'tab', sourceId, title: opts.title || tab.title, capabilities: { run_js: true, act: true }, adapter, ref: id, agentId: opts.agentId })
     tabToConn.set(id, bound.connId)
     return { connId: bound.connId, surfaceId: bound.surfaceId, sourceId, tab: { tabId: id, title: tab.title, url: tab.url } }
   }
@@ -245,6 +252,7 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
     start,
     stop,
     listTabs,
+    listWindows,
     connectTab,
     isConnected: isUp,
     get extensionId() {

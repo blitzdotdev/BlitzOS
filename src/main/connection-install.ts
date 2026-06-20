@@ -11,7 +11,8 @@ import { join } from 'node:path'
 import { CONNECTOR_EXTENSION_ID } from './connection-tab-link.mjs'
 
 const CRX_PORT = 7679 // below the tab-link range (7682+) so they never collide
-const CHROME_DOMAIN = '/Library/Managed Preferences/com.google.Chrome'
+const MANAGED_PREFS_DIR = '/Library/Managed Preferences'
+const CHROME_DOMAIN = `${MANAGED_PREFS_DIR}/com.google.Chrome`
 const CHROME_POLICY = `${CHROME_DOMAIN}.plist`
 
 function connectorDir(): string {
@@ -78,12 +79,24 @@ function adminRun(shell: string): Promise<{ ok: boolean; error?: string }> {
 
 /** Write the ExtensionInstallForcelist policy (admin prompt) so Chrome force-installs the connector from the
  *  self-hosted localhost .crx. Idempotent. */
-export async function installConnector(): Promise<{ ok: boolean; error?: string; note?: string; extensionDir?: string }> {
+export async function installConnector(): Promise<{ ok: boolean; error?: string; note?: string; extensionDir?: string; manual?: boolean }> {
   if (process.platform !== 'darwin') return { ok: false, error: 'macOS only' }
-  if (!existsSync(crxPath())) return { ok: false, error: 'the connector .crx is not built — run: node scripts/build-extension.mjs (needs Google Chrome to pack it)' }
+  if (!existsSync(crxPath())) return { ok: false, error: 'the connector .crx is not built — run: node scripts/build-extension.mjs (needs Google Chrome to pack it)', extensionDir: connectorDir() }
+  // Force-install is a MANAGED policy under /Library/Managed Preferences. That directory only exists on an
+  // MDM-managed Mac, and without a managed-preferences provider Chrome IGNORES a hand-written policy file there.
+  // So on an unmanaged Mac, skip the useless admin prompt and hand back the reliable manual path (load-unpacked).
+  if (!existsSync(MANAGED_PREFS_DIR)) {
+    return {
+      ok: false,
+      manual: true,
+      error: 'This Mac is not MDM-managed, so Chrome ignores force-install policies. To connect Chrome: open chrome://extensions, turn on Developer mode (top-right), click "Load unpacked", and select the folder below.',
+      extensionDir: connectorDir()
+    }
+  }
   startConnectorServer()
   const value = `${CONNECTOR_EXTENSION_ID};http://127.0.0.1:${CRX_PORT}/updates.xml`
   const cmd = [
+    `/bin/mkdir -p '${MANAGED_PREFS_DIR}'`,
     `/usr/bin/defaults write '${CHROME_DOMAIN}' ExtensionInstallForcelist -array '${value}'`,
     `/usr/sbin/chown root:wheel '${CHROME_POLICY}'`,
     `/bin/chmod 644 '${CHROME_POLICY}'`

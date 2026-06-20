@@ -5,6 +5,7 @@
 // TCC grants. Window connect is intentionally Electron+local only (a remote server would need a local
 // companion on the user's Mac — deferred per the design).
 import type { ConnectionOps } from './connection-ops.mjs'
+import { attachAppIcons } from './app-icons'
 
 interface HelperLike {
   ensure(): Promise<{ ok: boolean; error?: string }>
@@ -20,7 +21,7 @@ type WindowAdapter = {
 
 export interface WindowLink {
   listWindows(): Promise<Record<string, unknown>>
-  connectWindow(windowId: number, opts?: { title?: string; sourceId?: string }): Promise<Record<string, unknown>>
+  connectWindow(windowId: number, opts?: { title?: string; sourceId?: string; agentId?: string }): Promise<Record<string, unknown>>
 }
 
 export function makeWindowLink({ connectionOps, helper }: { connectionOps: ConnectionOps; helper: HelperLike }): WindowLink {
@@ -44,10 +45,12 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
     const e = await ready()
     if (!e.ok) return { error: e.error || 'the BlitzComputerUse helper is not available' }
     const r = await helper.call('list_windows')
-    return r.error ? { error: String(r.error) } : { windows: r.windows }
+    if (r.error) return { error: String(r.error) }
+    const wins = Array.isArray(r.windows) ? (r.windows as Array<{ pid?: number }>) : []
+    return { windows: await attachAppIcons(wins) }
   }
 
-  async function connectWindow(windowId: number, opts: { title?: string; sourceId?: string } = {}): Promise<Record<string, unknown>> {
+  async function connectWindow(windowId: number, opts: { title?: string; sourceId?: string; agentId?: string } = {}): Promise<Record<string, unknown>> {
     // DEDUP: this exact window is already connected (and live) → re-attach, don't spawn a duplicate.
     const existing = windowToConn.get(Number(windowId))
     if (existing && typeof connectionOps.connectionIsLive === 'function' && connectionOps.connectionIsLive(existing)) {
@@ -85,7 +88,7 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
       }
     }
 
-    const bound = connectionOps.connectionBind({ type: 'window', sourceId, title, capabilities: { act: true, vision: true }, adapter })
+    const bound = connectionOps.connectionBind({ type: 'window', sourceId, title, capabilities: { act: true, vision: true }, adapter, ref: windowId, agentId: opts.agentId })
     if (!pidToConns.has(pid)) pidToConns.set(pid, new Set())
     pidToConns.get(pid)!.add(bound.connId)
     windowToConn.set(Number(windowId), bound.connId)

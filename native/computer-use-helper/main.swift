@@ -314,6 +314,19 @@ func pickNum(_ a: Any?) -> CGFloat? {
 }
 func pickAppIcon(_ pid: Int) -> NSImage? { NSRunningApplication(processIdentifier: pid_t(pid))?.icon }
 
+// The app icon as a 64x64 base64 PNG — sent with pick_drop so the dropbox can render the REAL macOS app icon.
+func pickIconBase64(_ pid: Int) -> String {
+    guard let img = NSRunningApplication(processIdentifier: pid_t(pid))?.icon else { return "" }
+    let size = NSSize(width: 64, height: 64)
+    let out = NSImage(size: size)
+    out.lockFocus()
+    img.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .copy, fraction: 1.0)
+    out.unlockFocus()
+    guard let tiff = out.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+          let png = rep.representation(using: .png, properties: [:]) else { return "" }
+    return png.base64EncodedString()
+}
+
 struct PickWin {
     let windowId: Int, pid: Int, app: String, bundleId: String, title: String
     let frameCG: CGRect // global, top-left origin
@@ -422,7 +435,8 @@ let pickTapCallback: CGEventTapCallBack = { _, type, event, refcon in
 final class PickController {
     private var tap: CFMachPort?
     private var src: CFRunLoopSource?
-    private var dropZone = CGRect.zero // global, top-left
+    private var dropZone = CGRect.zero // global, top-left — releasing a drag here = drop
+    private var selfRect = CGRect.zero // the BlitzOS island chassis: cursor over it = its OWN UI (don't look through it)
     private var excludePids = Set<Int>()
     private let ownPid = Int(ProcessInfo.processInfo.processIdentifier)
 
@@ -437,9 +451,10 @@ final class PickController {
     private var lastHoverWid = -1
     private var lastInside = false
 
-    // Arm (or re-arm) the picker. Re-callable to just update the drop-zone rect (the tap is created once).
-    func start(dropZone: CGRect, excludePids: [Int]) -> Bool {
+    // Arm (or re-arm) the picker. Re-callable to just update the rects (the tap is created once).
+    func start(dropZone: CGRect, selfRect: CGRect, excludePids: [Int]) -> Bool {
         self.dropZone = dropZone
+        self.selfRect = selfRect
         self.excludePids = Set(excludePids)
         if tap == nil {
             var m: CGEventMask = 0
@@ -499,6 +514,9 @@ final class PickController {
     // the cursor over them returns nil → no glow/grab and the click passes straight through (Dock + menu bar stay
     // clickable while picking). mousedown anywhere INSIDE a returned window grabs the whole thing.
     private func frontWindowAt(_ p: CGPoint) -> PickWin? {
+        // Over the BlitzOS island chrome (the chassis: X button, msg bar, dropbox, tabs) → don't look THROUGH the
+        // transparent island to the window behind it. The island is always "on top", so its own UI wins the click.
+        if selfRect.contains(p) { return nil }
         let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let infos = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else { return nil }
         for info in infos { // front-to-back order
@@ -574,7 +592,10 @@ final class PickController {
         let h = dragWin
         teardownDrag()
         if inside, let h = h {
-            emit(["kind": "pick_drop", "windowId": h.windowId, "pid": h.pid, "app": h.app, "bundleId": h.bundleId, "title": h.title])
+            // bounds (CG global, top-left points) ride along so BlitzOS can match this window to the Chrome
+            // extension's window list (the bridge from a CGWindow to a precise browser tab).
+            emit(["kind": "pick_drop", "windowId": h.windowId, "pid": h.pid, "app": h.app, "bundleId": h.bundleId, "title": h.title, "icon": pickIconBase64(h.pid),
+                  "x": Double(h.frameCG.origin.x), "y": Double(h.frameCG.origin.y), "w": Double(h.frameCG.width), "h": Double(h.frameCG.height)])
         } else {
             emit(["kind": "pick_cancel"])
         }
@@ -719,7 +740,9 @@ conn.run { msg in
             if pickController == nil { pickController = PickController() }
             let dz = msg["dropZone"] as? [String: Any] ?? [:]
             let rect = CGRect(x: pickNum(dz["x"]) ?? 0, y: pickNum(dz["y"]) ?? 0, width: pickNum(dz["w"]) ?? 0, height: pickNum(dz["h"]) ?? 0)
-            let ok = pickController!.start(dropZone: rect, excludePids: (msg["excludePids"] as? [Int]) ?? [])
+            let sr = msg["selfRect"] as? [String: Any] ?? [:]
+            let selfR = CGRect(x: pickNum(sr["x"]) ?? 0, y: pickNum(sr["y"]) ?? 0, width: pickNum(sr["w"]) ?? 0, height: pickNum(sr["h"]) ?? 0)
+            let ok = pickController!.start(dropZone: rect, selfRect: selfR, excludePids: (msg["excludePids"] as? [Int]) ?? [])
             reply(ok ? ["ok": true] : ["ok": false, "error": "could not create event tap (is Accessibility granted to BlitzComputerUse?)"])
         case "pick_update":
             let dz = msg["dropZone"] as? [String: Any] ?? [:]

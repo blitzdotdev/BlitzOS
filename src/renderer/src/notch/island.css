@@ -281,6 +281,23 @@ button.isl-app-chat:active .isl-app-icon {
   min-height: 0;
 }
 
+/* ── attach mode: ONLY the tab strip collapses (grid-rows pop, same motion the attach panel opens with). In an agent
+   chat the chat itself is kept; the island height is locked in JS so the attach panel rises only to its own content
+   and the feed (flex:1, min-height:0) shrinks to fit. ──────────────────────────────────────────────────────────── */
+.nh-island .isl-tabwrap {
+  flex: none;
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nh-island .isl-tabwrap.collapsed {
+  grid-template-rows: 0fr;
+}
+.nh-island .isl-tabwrap-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
 /* ── live status line (the active agent's current state) + the empty-transcript state ────────────────────────── */
 .nh-island .isl-status {
   display: flex;
@@ -802,6 +819,43 @@ button.isl-app-chat:active .isl-app-icon {
   width: 15px;
   background: #000;
   border-bottom-right-radius: 10px;
+}
+
+/* attachment chips that ride the user's message — the sources connected to this chat (tab/window), right-aligned
+   above the bubble like a standard chat's file attachments. */
+.nh-island .isl-msg-attach {
+  align-self: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+  max-width: 80%;
+  margin-bottom: 1px;
+}
+.nh-island .isl-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 168px;
+  padding: 3px 9px 3px 7px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--isl-muted);
+  font-size: 11.5px;
+}
+.nh-island .isl-attach-chip-glyph {
+  flex: none;
+  font-size: 10px;
+  color: var(--isl-accent);
+}
+.nh-island .isl-attach-chip[data-type='window'] .isl-attach-chip-glyph {
+  color: #30d158;
+}
+.nh-island .isl-attach-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── the STEER / new-session composer = the iMessage input pill. Transparent fill, a hairline grey capsule; the

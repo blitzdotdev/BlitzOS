@@ -76,9 +76,15 @@ export default function App(): JSX.Element {
   // interactive notch hit-window (main), so they are bulletproof + constant in every state (no click-through race).
   const [notchWidth, setNotchWidth] = useState(NOTCH_W)
   const [hasNotch, setHasNotch] = useState(false)
-  // The island opens into a VIEW: 'home' (the widget home grid — HOVER only, no keybind) or 'session' (a new agent
-  // session — ⌥Space). App sets this before opening; NotchHost remounts per open so it always honors the latest.
-  const [islandInitialView, setIslandInitialView] = useState<'home' | 'session'>('home')
+  // The island RESTORES its last view + tab on EVERY open (hover OR ⌥Space), instead of resetting to Home. NotchHost
+  // reports its view+page via onStateChange; we stash them in refs and feed them back as initialView/initialPage on
+  // the next open (NotchHost remounts per open). Refs, not state, so updating them never re-renders App.
+  const islandViewRef = useRef<'home' | 'settings' | 'session'>('home')
+  const islandPageRef = useRef(0)
+  const onIslandStateChange = (view: 'home' | 'settings' | 'session', page: number): void => {
+    islandViewRef.current = view
+    islandPageRef.current = page
+  }
   const overChassisRef = useRef(false) // cursor over the chat chassis (overlay mousemove) — keeps the panel open
   const notchOverRef = useRef(false) // cursor over the physical notch (reported by the hit-window's hover)
   const notchHoverGraceRef = useRef(0) // close grace so a notch→chassis transit does not flicker the panel shut
@@ -161,10 +167,10 @@ export default function App(): JSX.Element {
       scheduleNotchHoverClose()
     }
   }
-  // ⌥Space TOGGLE (item 2): ⌥Space simply shows/hides the dynamic island in the new-session state. closed → panel
-  // (new-session, PINNED open, prompt focused); anything shown → closed (hide). A pure toggle, no staircase.
+  // ⌥Space TOGGLE: the generic "show/hide the dynamic island" keybind. closed → panel (PINNED open, RESTORED to the
+  // last view+tab — not forced to a new session); anything shown → closed (hide). A pure toggle, no staircase.
   const notchToggleAtRef = useRef(0)
-  const toggleNewSession = (): void => {
+  const toggleIsland = (): void => {
     // Swallow OS key auto-repeat: holding ⌥Space machine-guns the globalShortcut (~30ms apart), which would
     // flicker show/hide. A deliberate human re-tap is slower than this, so a 120ms floor keeps it.
     const now = performance.now()
@@ -173,8 +179,7 @@ export default function App(): JSX.Element {
     if (notchStateRef.current === 'closed') {
       setNotchPinnedBoth(true) // a keyboard-opened panel stays open regardless of the mouse
       setNotchInteractive(true)
-      setIslandInitialView('session') // ⌥Space opens STRAIGHT to a new agent session (the home grid is hover-only, no keybind)
-      applyNotchState('panel')
+      applyNotchState('panel') // opens to the LAST view+tab (islandViewRef/islandPageRef), not a forced new session
     } else {
       // hide (panel → closed)
       setNotchPinnedBoth(false)
@@ -195,11 +200,11 @@ export default function App(): JSX.Element {
       }),
     []
   )
-  // ⌥Space toggles the new-session widget show/hide (closed ↔ panel).
-  useEffect(() => window.agentOS?.notch?.onToggle?.(() => toggleNewSession()), [])
+  // ⌥Space toggles the island show/hide (closed ↔ panel), restoring the last view+tab.
+  useEffect(() => window.agentOS?.notch?.onToggle?.(() => toggleIsland()), [])
   // The notch HIT-WINDOW (the always-interactive transparent window over the physical notch) drives the toggle +
   // hover, so the notch is clickable in EVERY state with no click-through→arm race. CLICK → toggle the island panel.
-  useEffect(() => window.agentOS?.notch?.onHandleClick?.(() => toggleNewSession()), [])
+  useEffect(() => window.agentOS?.notch?.onHandleClick?.(() => toggleIsland()), [])
   // HOVER → open the chat panel (peek), like the old hover-the-notch behavior, but reported by the hit-window since
   // it sits on top of the notch. The overlay mousemove keeps it open while over the chassis; a grace covers the
   // notch→chassis transit so it does not flicker shut.
@@ -214,8 +219,7 @@ export default function App(): JSX.Element {
           }
           notchHoldUntilRef.current = performance.now() + NOTCH_HOVER_OPEN_GRACE_MS
           if (notchStateRef.current === 'closed') {
-            setIslandInitialView('home') // hover always shows the widget home grid (no keybind opens home)
-            applyNotchState('panel')
+            applyNotchState('panel') // restores the LAST view+tab (islandViewRef/islandPageRef), not always Home
           }
           setNotchInteractive(true)
         } else {
@@ -273,8 +277,7 @@ export default function App(): JSX.Element {
         notchHoverGraceRef.current = 0
       }
       if ((overHandle || notchOverRef.current) && st === 'closed') {
-        setIslandInitialView('home') // hover always shows the widget home grid (no keybind opens home)
-        applyNotchState('panel')
+        applyNotchState('panel') // restores the LAST view+tab, not always Home
       } else if (st === 'panel' && !want) {
         // Attach panel (the window picker) open: NEVER retract, and go CLICK-THROUGH so clicks reach the Dock /
         // menu bar / other apps. The glow + drag run on the helper's HID event tap, independent of this overlay's
@@ -792,7 +795,9 @@ export default function App(): JSX.Element {
         createPortal(
           <NotchHost
             menuBarH={notchMenuBarH}
-            initialView={islandInitialView}
+            initialView={islandViewRef.current}
+            initialPage={islandPageRef.current}
+            onStateChange={onIslandStateChange}
             onChassisHoverChange={setChassisHover}
             onChassisResize={() => {
               notchHoldUntilRef.current = performance.now() + NOTCH_HOVER_OPEN_GRACE_MS

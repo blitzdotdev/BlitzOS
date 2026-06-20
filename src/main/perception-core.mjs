@@ -57,10 +57,11 @@ function visibleTo(moment, agentId, workspace) {
   // A moment belongs to ONE workspace; an agent pinned to a workspace never sees another's moments.
   if (workspace && moment.workspace && String(moment.workspace) !== String(workspace)) return false
   const sid = String(agentId || '0')
-  // A chat 'message' and an 'action' (e.g. an action-item the human resolved) are PRIVATE to the agent
-  // they target — only that agent is woken. So a non-primary agent that called request_action
-  // is woken when ITS item is resolved (the moment carries agentId; generic surface actions default to '0').
-  if (moment.trigger === 'message' || moment.trigger === 'action') return String(moment.agentId || '0') === sid
+  // A chat 'message', an 'action' (an action-item the human resolved), and a 'connection' (the human attached a
+  // source while chatting with THIS agent) are PRIVATE to the agent they target — only that agent is woken. So a
+  // non-primary agent is woken when ITS item resolves / ITS source attaches (the moment carries agentId; an
+  // untargeted one defaults to '0', so the primary watcher keeps its old behavior).
+  if (moment.trigger === 'message' || moment.trigger === 'action' || moment.trigger === 'connection') return String(moment.agentId || '0') === sid
   return sid === '0'
 }
 
@@ -480,6 +481,7 @@ export function emitConnectionMoment(surfaceId, info = {}) {
     seq: ++seq,
     ts: Date.now(),
     surfaceId: String(surfaceId || 'system'),
+    agentId: String(info.agentId || '0'), // the chat that owns this source → visibleTo wakes ONLY that agent (default '0')
     trigger: 'connection',
     windowMs: 0,
     signals: { connection: 1 },

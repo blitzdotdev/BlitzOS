@@ -407,10 +407,12 @@ export function makeOsTools(ops) {
     {
       path: '/connection_list',
       description:
-        "List CONNECTED external sources (the browser tabs / macOS windows the user connected into BlitzOS). Each: { connId, type:'tab'|'window', sourceId (a tab's origin host or a window's app bundle id), title, status:'live'|'disconnected'|'reconnecting', capabilities, surfaceId (its representation widget), savedTools, description }. A connection is a per-source TOOL PROVIDER — read/act on it with the other connection_* tools, passing its connId as `connection`. Empty until something is connected.",
-      handler: () => {
+        "List CONNECTED external sources (the browser tabs / macOS windows the user connected into BlitzOS). Pass {agent: YOUR agent id} to see only YOUR chat's sources (the user attaches into the chat they're in); omit it to see all. Each: { connId, type:'tab'|'window', sourceId (a tab's origin host or a window's app bundle id), title, status, capabilities, surfaceId, agentId (the owning chat), savedTools, description }. A connection is a per-source TOOL PROVIDER — read/act on it with the other connection_* tools, passing its connId as `connection`. Empty until something is connected.",
+      input_schema: { type: 'object', properties: { agent: { type: 'string', description: 'your agent/session id — scopes the list to your chat' } } },
+      handler: ({ body }) => {
         if (typeof ops.connectionList !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
-        return ops.connectionList()
+        const a = parse(body)
+        return ops.connectionList(a.agent != null ? String(a.agent) : undefined)
       }
     },
     {
@@ -426,12 +428,12 @@ export function makeOsTools(ops) {
       path: '/connection_connect_tab',
       description:
         "Connect a browser tab (a tabId from connection_list_tabs) into BlitzOS as a per-source tool provider, and spawn its representation widget. This is the agent-initiated 'connect the user's Gmail tab' path. Args: {tabId, title?}. Returns { connId, surfaceId, sourceId }.",
-      input_schema: { type: 'object', required: ['tabId'], properties: { tabId: { type: ['number', 'string'] }, title: { type: 'string' } } },
+      input_schema: { type: 'object', required: ['tabId'], properties: { tabId: { type: ['number', 'string'] }, title: { type: 'string' }, agent: { type: 'string', description: 'your agent/session id — owns this connection (for connection_list scoping)' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionConnectTab !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
         const a = parse(body)
         if (a.tabId == null) return { status: 400, body: { error: 'tabId required' } }
-        return mapConnResult(await ops.connectionConnectTab(a.tabId, { title: a.title }))
+        return mapConnResult(await ops.connectionConnectTab(a.tabId, { title: a.title, agentId: a.agent != null ? String(a.agent) : '' }))
       }
     },
     {
@@ -447,12 +449,12 @@ export function makeOsTools(ops) {
       path: '/connection_connect_window',
       description:
         "Connect a macOS app window (a windowId from connection_list_windows) into BlitzOS as a per-source tool provider, and spawn its representation widget. Read via its accessibility tree (or a screenshot when AX is thin); act via AXPress/set (background) or coordinate CGEvent (needs the window raised). Args: {windowId, title?}. Returns { connId, surfaceId, sourceId }.",
-      input_schema: { type: 'object', required: ['windowId'], properties: { windowId: { type: 'number' }, title: { type: 'string' } } },
+      input_schema: { type: 'object', required: ['windowId'], properties: { windowId: { type: 'number' }, title: { type: 'string' }, agent: { type: 'string', description: 'your agent/session id — owns this connection (for connection_list scoping)' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionConnectWindow !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
         const a = parse(body)
         if (a.windowId == null) return { status: 400, body: { error: 'windowId required' } }
-        return mapConnResult(await ops.connectionConnectWindow(a.windowId, { title: a.title }))
+        return mapConnResult(await ops.connectionConnectWindow(a.windowId, { title: a.title, agentId: a.agent != null ? String(a.agent) : '' }))
       }
     },
     {

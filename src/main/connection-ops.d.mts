@@ -14,6 +14,12 @@ export interface ConnectionBindSpec {
   title?: string
   capabilities?: Record<string, boolean>
   adapter: ConnectionAdapter
+  /** The connectable's own id (chrome tab id / safari tabId / window id) — surfaced in connectionList so the
+   *  renderer picker can mark the EXACT source as connected. */
+  ref?: number | string
+  /** The chat session that attached this source ('' = the new-session composer, reassigned on spawn). Owner-scopes
+   *  connection_list per chat + targets the attach moment. */
+  agentId?: string
 }
 
 export interface ConnectionInfo {
@@ -24,6 +30,8 @@ export interface ConnectionInfo {
   status: string
   capabilities: Record<string, boolean>
   surfaceId: string | null
+  ref?: number | string | null
+  agentId?: string
   savedTools: Array<{ name: string; description: string; kind: string }>
   description?: string
 }
@@ -53,17 +61,20 @@ export interface ConnectionOps {
   /** The Safari link (Apple Events) registers itself; its tabs merge into connection_list_tabs (browser:'safari'). */
   setSafariLink(link: { listTabs: () => Promise<unknown>; connectTab: (tabId: string, opts?: any) => Promise<unknown> } | null): void
   connectionListTabs(): Promise<Record<string, unknown>>
-  connectionConnectTab(tabId: number | string, opts?: { title?: string; sourceId?: string }): Promise<Record<string, unknown>>
+  connectionConnectTab(tabId: number | string, opts?: { title?: string; sourceId?: string; agentId?: string; browser?: string }): Promise<Record<string, unknown>>
   /** The window link (Electron-only) registers itself so connection_list_windows / connection_connect_window work. */
   setWindowLink(link: { listWindows: () => Promise<unknown>; connectWindow: (windowId: number, opts?: any) => Promise<unknown> } | null): void
   connectionListWindows(): Promise<Record<string, unknown>>
-  connectionConnectWindow(windowId: number, opts?: { title?: string; sourceId?: string }): Promise<Record<string, unknown>>
+  connectionConnectWindow(windowId: number, opts?: { title?: string; sourceId?: string; agentId?: string }): Promise<Record<string, unknown>>
   /** Reconnect a source by sourceId (the Reconnect button on a disconnected widget): re-finds + connects the tab/window. */
   connectionReconnectSource(sourceId: string, type?: 'tab' | 'window'): Promise<Record<string, unknown>>
   /** Force-install the connector extension (Electron + macOS only); registered via setInstaller. */
   setInstaller(fn: (() => Promise<{ ok: boolean; error?: string; note?: string }>) | null): void
   connectionInstallExtension(): Promise<Record<string, unknown>>
-  connectionList(): { connections: ConnectionInfo[] }
+  /** All connections, or only `forAgent`'s (self-reported scoping; undefined = all, '' = the new-session bucket). */
+  connectionList(forAgent?: string): { connections: ConnectionInfo[] }
+  /** Reassign every source owned by `fromAgent` (default '') to `toAgent`; returns what moved (for the spawn brief). */
+  connectionReassign(toAgent: string, fromAgent?: string): Array<{ connId: string; type: string; sourceId: string; title: string }>
   connectionRead(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>
   connectionAct(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>
   connectionRunJs(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>

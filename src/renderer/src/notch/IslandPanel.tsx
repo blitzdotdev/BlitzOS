@@ -6,7 +6,7 @@
 // Every composer has an attach "+" that toggles the AttachPanel inline (the island grows). The BLACK chassis +
 // the original NotchShape are owned by NotchHost and are INVARIANT; this paints ONLY the interior.
 import './island.css'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
 import { IslandTerminalPane } from './IslandTerminalPane'
@@ -66,15 +66,56 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const isNew = page === 0 // the pen tab
   const feedRef = useRef<HTMLDivElement>(null)
   const lyricsRef = useRef<HTMLDivElement>(null)
+  // Attach mode in an AGENT chat: lock the island to the height it had BEFORE attach opened, so the attachment panel
+  // rises only as tall as its own content and the chat feed shrinks to fit (instead of the island growing). We keep
+  // the last closed-state height in a ref (recorded after every closed render) and apply it while attach is open.
+  const panelRef = useRef<HTMLDivElement>(null)
+  const closedHeightRef = useRef<number | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [detailRows, setDetailRows] = useState<Array<{ label: string }>>([])
+  // The sources attached to THIS chat (its owned connections) → chips on the latest user message, like a standard
+  // chat where what you attached rides the message. Derived from the chat's live connections (re-fetched after a
+  // send / attach toggle), not a frozen per-message snapshot — the connections persist; the agent has them.
+  const [attachments, setAttachments] = useState<Array<{ connId: string; type: string; title: string }>>([])
+  useEffect(() => {
+    if (!activeId) {
+      setAttachments([])
+      return
+    }
+    let live = true
+    window.agentOS?.connections
+      ?.list?.(activeId)
+      .then((r) => {
+        if (!live) return
+        const list = Array.isArray(r?.connections) ? (r.connections as Array<Record<string, unknown>>) : []
+        setAttachments(list.map((c) => ({ connId: String(c.connId), type: String(c.type || 'tab'), title: String(c.title || c.sourceId || 'source') })))
+      })
+      .catch(() => {
+        /* best-effort */
+      })
+    return () => {
+      live = false
+    }
+  }, [activeId, messages.length, attachOpen])
+  const lastUserIdx = messages.map((m) => m.role).lastIndexOf('user') // chips ride the most recent user message
 
   // The chat is PURE messages (the agent's real say() + your steers). The narrator's summaries do NOT appear here
-  // — they live in the peek "now playing" view. Keep the chat pinned to the latest message.
+  // — they live in the peek "now playing" view. Keep the chat pinned to the latest message — also when attach
+  // opens/closes (the feed resizes), re-pinning after the 0.3s grow so the newest message stays at the new bottom.
   useEffect(() => {
     const el = feedRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length])
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    const t = window.setTimeout(() => {
+      if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight
+    }, 340)
+    return () => clearTimeout(t)
+  }, [messages.length, attachOpen])
+
+  // Record the island's height whenever attach is CLOSED, so opening attach can lock to that height (above).
+  useLayoutEffect(() => {
+    if (!attachOpen && panelRef.current) closedHeightRef.current = panelRef.current.offsetHeight
+  })
 
   // Keep the peek lyrics scrolled to the newest (you scroll up for older).
   useEffect(() => {
@@ -128,7 +169,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       </div>
       <div className={`isl-attach-wrap${attachOpen ? ' open' : ''}`} aria-hidden={!attachOpen}>
         <div className="isl-attach-inner">
-          <AttachPanel />
+          <AttachPanel activeSessionId={activeId ?? ''} />
         </div>
       </div>
     </>
@@ -220,24 +261,42 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     )
   }
 
+  // ATTACH MODE: the tab strip always collapses (grid-rows pop). In an AGENT chat the chat STAYS — the island height
+  // is locked to what it was, so the attachment panel rises only as tall as its own content and the feed shrinks to
+  // fit (still scrollable + bottom-pinned). The new-session tab has no chat, so it just sizes to the composer + attach.
+  const lockHeight = attachOpen && !isNew ? closedHeightRef.current ?? undefined : undefined
   return (
-    <div className={`nh-island ${isNew ? 'isl-session' : 'isl-process'}`} style={{ paddingTop: top }}>
-      {tabStrip}
-
-      {isNew ? (
-        // New-session tab: just the composer (spawns a session on send).
-        composerBlock('Ask Blitz, or describe a task', 132, true)
-      ) : (
-        // Agent tab: a PURE chat (the agent's real messages only) + Details + a live status line + the steer bar.
+    <div
+      ref={panelRef}
+      className={`nh-island ${isNew ? 'isl-session' : 'isl-process'}${attachOpen ? ' isl-attaching' : ''}`}
+      style={lockHeight ? { paddingTop: top, height: lockHeight } : { paddingTop: top }}
+    >
+      <div className={`isl-tabwrap${attachOpen ? ' collapsed' : ''}`}>
+        <div className="isl-tabwrap-inner">{tabStrip}</div>
+      </div>
+      {!isNew && (
+        // Agent tab: a PURE chat (the agent's real messages only) + Details + a live status line — KEPT in attach mode.
         <>
           <div className="isl-feed" ref={feedRef}>
             {messages.length === 0 ? (
               <div className="isl-empty">No messages yet</div>
             ) : (
               messages.map((m, i) => (
-                <div key={i} className={`isl-msg ${m.role}`}>
-                  {m.text}
-                </div>
+                <Fragment key={i}>
+                  {i === lastUserIdx && attachments.length > 0 && (
+                    <div className="isl-msg-attach">
+                      {attachments.map((a) => (
+                        <span key={a.connId} className="isl-attach-chip" data-type={a.type} title={a.title}>
+                          <span className="isl-attach-chip-glyph" aria-hidden>
+                            {a.type === 'window' ? '▢' : '◐'}
+                          </span>
+                          <span className="isl-attach-chip-label">{a.title}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className={`isl-msg ${m.role}`}>{m.text}</div>
+                </Fragment>
               ))
             )}
           </div>
@@ -271,9 +330,10 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
             <span className="isl-status-dot" aria-hidden />
             {statusLabel(status)}
           </div>
-          {composerBlock('Steer this agent…', 108, false)}
         </>
       )}
+      {/* the composer + attachment panel are ALWAYS visible. */}
+      {composerBlock(isNew ? 'Ask Blitz, or describe a task' : 'Steer this agent…', isNew ? 132 : 108, isNew)}
     </div>
   )
 }
