@@ -2,16 +2,20 @@
 //
 // SHARED, transport-agnostic perception kernel — imported by BOTH the Electron main
 // (via events.ts, which re-exports this) and the server-mode backend (preview/
-// backend.mjs), so the coalescer + sensors are ONE implementation, never duplicated.
+// backend.mjs), so the coalescer is ONE implementation, never duplicated.
 // (Mirrors the control-core.mjs pattern.)
 //
-// BlitzOS is the PRODUCER: in-page sensors (INJECT below) feed raw signals here via
-// ingestSignals(); this module coalesces them into framed snapshots ("moments") and a
-// long-poll (waitForEvents) wakes a watching agent. Why moments, not a keystroke
-// firehose: an autonomous agent should be WOKEN on meaningful change with enough
-// context to act — so we batch routine activity (~15s) and flush immediately on a
-// significant transition (navigation, or idle-after-activity). Perception is
-// content-agnostic (dumb but rich); the AGENT decides significance + action.
+// The agent is WOKEN by coalesced "moments": every emitter funnels through emit(); a
+// long-poll (waitForEvents) wakes a watching agent. Why moments, not a firehose: an
+// autonomous agent should be woken on meaningful change with enough context to act, so
+// routine activity batches (~15s) and a significant transition flushes immediately.
+// Perception is content-agnostic (dumb but rich); the AGENT decides significance + action.
+//
+// V1 wake sources: trigger:'message' (island chat), 'connection'/'connector' (the user's
+// real browser/app via the extension + helper), 'tick' (status-only supervisor heartbeat),
+// 'system' (crash). The in-page web DOM sensors (INJECT/DRAIN → ingestSignals) survive ONLY
+// for the server-mode backend's headless Chromium; island V1 has no `web` surface to inject
+// into (the Electron canvas eyes — geometry, annotation, and the DOM-sensor wiring — are gone).
 
 const BATCH_MS = 15000
 
@@ -21,9 +25,9 @@ const USER_TYPES = new Set(['key', 'click', 'input', 'pointer', 'select', 'nav',
 
 // A short standing nudge BlitzOS ships on EVERY /events response (like a system
 // reminder). The watcher surfaces it with each moment so the agent honors it on each
-// wake: think about what the user should see next, and arrange the desktop for it.
+// wake: you live in the island chat — respond to the user there. There is no canvas.
 export const EVENTS_REMINDER =
-  'Reminder: after you act on this, manage the layout. Re-arrange or close surfaces so the user sees only what is relevant to their next step; you own the desktop.'
+  'Reminder: respond to the user in the island chat. You have no canvas — act on what they asked and reply in chat.'
 
 const pending = new Map()
 const lastCtx = new Map()
@@ -88,13 +92,10 @@ export function redactMoment(m) {
   // A 'message' (in-canvas chat) or 'connector' (the user wired/removed an integration) moment is
   // consent by construction, not scraped page content, so it crosses the relay intact.
   if (m.trigger === 'message' || m.trigger === 'connector' || m.trigger === 'connection') return m
-  // A 'tick' (W2 supervisor heartbeat) carries only OS METADATA — agent status edges, terminal exits, and
-  // "surface X edited" FLAGS (the changed surface ids + a short title label) + counts — never the scraped
-  // CONTENT of a surface (open/close are owned by the 'canvas' moment, not the tick). That metadata is
-  // consent-safe (the user can already see their own desktop's agents/widgets via list_state), so it crosses
-  // the relay intact, with the `user` labels kept and the structured `diff` (ids + change-kind + title only)
-  // carried. The supervisor pulls full surface CONTENT separately via get_surface — the props snapshot is
-  // deliberately NOT shipped in the tick. Mirrors the message/connector pass-through shape.
+  // A 'tick' (supervisor heartbeat) carries only OS METADATA — agent status edges + terminal exits + counts —
+  // never any scraped surface content. That metadata is consent-safe (the user can already see their own
+  // agents/terminals), so it crosses the relay intact, with the `user` labels kept and the structured `diff`
+  // (agents + terminals only) carried. Mirrors the message/connector pass-through shape.
   if (m.trigger === 'tick') {
     return { seq: m.seq, ts: m.ts, surfaceId: m.surfaceId, trigger: m.trigger, windowMs: m.windowMs, signals: m.signals, user: m.user || [], ...(m.diff ? { diff: m.diff } : {}), ...(m.workspace ? { workspace: m.workspace } : {}) }
   }
@@ -241,85 +242,22 @@ function flush(surfaceId, trigger) {
   })
 }
 
-// ---- canvas ops: the desktop's own geometry as perception (issues/open → the human's call:
-// the brain SHOULD see window movement). Ops are COALESCED, never per-gesture: structural
-// changes (open/close) settle ~2s then flush; pure move/resize rides the same ~15s batch as
-// routine page input. Every op carries origin 'human' (a gesture) or 'tool' (a syscall) — the
-// moment is delivered either way (accountability: the agent sees exactly what its syscalls did),
-// and the operating doc tells the policy to ABSORB tool-origin ops, never re-react to itself.
-// Canvas moments ride the default visibility (primary watcher only) + workspace stamping.
-let canvasBatch = null
-const CANVAS_SETTLE_MS = 2000
-const CANVAS_MAX_OPS = 30
-
-/** Ingest desktop-geometry ops: [{op:'open'|'close'|'move'|'resize', id, title?, kind?, x?,y?,w?,h?, origin:'human'|'tool'}] */
-export function ingestCanvasOps(ops) {
-  const list = Array.isArray(ops) ? ops.filter((o) => o && o.op && o.id) : []
-  if (!list.length) return
-  const now = Date.now()
-  if (!canvasBatch) canvasBatch = { startTs: now, lastTs: now, ops: [], structural: false, dropped: 0 }
-  const b = canvasBatch
-  b.lastTs = now
-  for (const o of list) {
-    if (o.op === 'open' || o.op === 'close') b.structural = true
-    if (o.op === 'move' || o.op === 'resize') {
-      // a drag is ONE op: repeated geometry for the same surface keeps only the latest
-      const prev = b.ops.find((p) => p.id === o.id && p.op === o.op && p.origin === o.origin)
-      if (prev) {
-        Object.assign(prev, o)
-        continue
-      }
-    }
-    if (b.ops.length < CANVAS_MAX_OPS) b.ops.push({ ...o })
-    else b.dropped++
-  }
-}
-
-function flushCanvas() {
-  const b = canvasBatch
-  canvasBatch = null
-  if (!b || !b.ops.length) return
-  const signals = {}
-  const user = []
-  for (const o of b.ops) {
-    signals[o.op] = (signals[o.op] || 0) + 1
-    const name = o.title ? `'${o.title}'` : String(o.id).slice(0, 8)
-    const by = o.origin === 'tool' ? ' [agent tool]' : ''
-    if (o.op === 'move') user.push(`moved ${name} to ${Math.round(o.x)},${Math.round(o.y)}${by}`)
-    else if (o.op === 'resize') user.push(`resized ${name} to ${Math.round(o.w)}×${Math.round(o.h)}${by}`)
-    else if (o.op === 'open') user.push(`opened ${o.kind ? o.kind + ' ' : ''}${name}${by}`)
-    else user.push(`${o.op}d ${name}${by}`)
-  }
-  if (b.dropped) user.push(`(+${b.dropped} more ops)`)
-  emit({
-    seq: ++seq,
-    ts: Date.now(),
-    surfaceId: 'desktop',
-    trigger: 'canvas',
-    windowMs: Date.now() - b.startTs,
-    signals,
-    user,
-    ops: b.ops
-  })
-}
-
-// ---- the supervisor TICK (W2, plans/blitzos-tick-diff-steer.md): a host-side heartbeat that snapshots
-// the WHOLE desktop (every agent's status + every terminal's exit + every surface's geometry/props), diffs
-// it against the prior tick, and emits ONE trigger:'tick' moment carrying only what MATERIALLY changed — so
-// a supervisor agent ('0') is woken to decide whether to STEER a running Job. Option A is load-bearing:
-// BlitzOS only ticks/diffs/emits; the AGENT owns ALL steering judgment. ZERO per-task/stuck/threshold
-// heuristics live here — materiality is CONTENT-AGNOSTIC transition-shape only (a status edge, a terminal
-// exit, an agent added/closed, a widget's props changed). Surface PRESENCE (open/close) and GEOMETRY
-// (move/resize) are deliberately NOT material here — they already ride the trigger:'canvas' moment (which
-// also routes to '0'), so the tick would otherwise DOUBLE-WAKE the supervisor on a single open/close and
-// re-react to its own structural ops. A quiet desktop emits NOTHING (mirrors `if (!p.hasUser) return`): an
-// immaterial diff updates the baseline and returns with no emit, so the supervisor never wakes on churn.
-// The host snapshot comes from a transport-registered source (setTickSource), mirroring setWorkspaceProvider
-// — perception-core never imports the IPC-bound osActions.
+// ---- the supervisor TICK (plans/blitzos-tick-diff-steer.md, status-only in V1): a host-side heartbeat that
+// snapshots the agents (every agent's status + every terminal's exit), diffs it against the prior tick, and
+// emits ONE trigger:'tick' moment carrying only what MATERIALLY changed — so the supervisor agent ('0') is
+// woken to decide whether to STEER a stalled/erred worker. Option A is load-bearing: BlitzOS only ticks/diffs/
+// emits; the AGENT owns ALL steering judgment. ZERO per-task/stuck/threshold heuristics live here — materiality
+// is CONTENT-AGNOSTIC transition-shape only (a status edge, a terminal exit, an agent added/closed). The tick
+// is STATUS-ONLY: it diffs agents + terminals, never surface geometry/props/open-close (island V1 has no
+// canvas). A quiet desktop emits NOTHING (mirrors `if (!p.hasUser) return`): an immaterial diff updates the
+// baseline and returns with no emit, so the supervisor never wakes on churn. The host snapshot comes from a
+// transport-registered source (setTickSource), mirroring setWorkspaceProvider — perception-core never imports
+// the IPC-bound osActions.
 let tickSource = null
 /** Wire the host snapshot provider. The transport (osActions/index.ts for Electron, backend.mjs for the
- *  server) calls this once at bootstrap; it returns, on demand, the world snapshot the tick diffs:
- *  { agentStatus:{id->status}, terminals:[{id,status,exitCode?}], surfaces:[{id,kind,x,y,w,h,props?}], workspace? }. */
+ *  server) calls this once at bootstrap; it returns, on demand, the agent snapshot the tick diffs:
+ *  { agentStatus:{id->status}, terminals:[{id,status,exitCode?}], workspace? }. (A transport may still pass
+ *  extra fields like `surfaces` — the status-only tick ignores them; island V1 has no canvas to diff.) */
 export function setTickSource(fn) {
   tickSource = typeof fn === 'function' ? fn : null
 }
@@ -330,7 +268,7 @@ function tickSnapshot() {
     return null // a broken provider must never break perception
   }
 }
-let lastTickSnapshot = null // the prior tick's snapshot — the diff baseline (module-level, like canvasBatch)
+let lastTickSnapshot = null // the prior tick's snapshot — the diff baseline (module-level)
 
 // Statuses for which the agent is actively producing work. A transition OUT of one of these (working ->
 // waiting/stopped/error) is the steerable edge; staying in/within them (working->working, working->watching,
@@ -338,45 +276,21 @@ let lastTickSnapshot = null // the prior tick's snapshot — the diff baseline (
 const TICK_WORKING = new Set(['working'])
 const TICK_TERMINAL_EDGE = new Set(['waiting', 'stopped', 'error'])
 
-/** Deep structural equality for surface `props` (a small JSON object). A changed-props surface = a widget
- *  was edited (the user-action half), which IS material. Defensive: any throw → treat as UNequal (emit), so a
- *  diff is never silently swallowed. Order-independent for objects; positional for arrays. */
-function propsEqual(a, b) {
-  if (a === b) return true
-  if (a == null || b == null) return a === b
-  if (typeof a !== 'object' || typeof b !== 'object') return a === b
-  const aArr = Array.isArray(a)
-  if (aArr !== Array.isArray(b)) return false
-  if (aArr) {
-    if (a.length !== b.length) return false
-    for (let i = 0; i < a.length; i++) if (!propsEqual(a[i], b[i])) return false
-    return true
-  }
-  const ak = Object.keys(a)
-  const bk = Object.keys(b)
-  if (ak.length !== bk.length) return false
-  for (const k of ak) {
-    if (!Object.prototype.hasOwnProperty.call(b, k)) return false
-    if (!propsEqual(a[k], b[k])) return false
-  }
-  return true
-}
-
 // ---- self-reaction echo absorb (the TIMING-ROBUST replacement for the old setTickSuppressed time window).
-// A tool op the AGENT performs (update_surface / customize_widget → a surface props-edit; spawn_agent /
-// close_agent → an agent-set change) IS a tick delta the kernel would otherwise read as a fresh user/agent
-// signal and self-wake the supervisor on. The transport registers the affected id here at the moment it
-// applies the op; the NEXT tick's diff SKIPS exactly that id (per-delta, never a whole-tick veto) so a
-// CONCURRENT genuine edge (e.g. another agent going working->stopped, a terminal exit, a USER's widget edit)
-// in the SAME tick still wakes. Each Set is ONE-SHOT: emitTick clears it after the diff, so the absorb is
-// consumed by exactly the next tick and a LATER non-absorbed change to the same id wakes normally. This is
-// timing-INDEPENDENT (it does not matter WHEN the next tick fires, vs. the old Date.now()-window which only
-// suppressed when the tick happened to fall inside CANVAS_BULK_WINDOW of the op). Workspace switches/bulk
-// reconciles use resetTickBaseline() (below) instead — the whole world is re-seeded, never diffed.
+// A tool op the AGENT performs (spawn_agent / close_agent → an agent-set change) IS a tick delta the kernel
+// would otherwise read as a fresh agent signal and self-wake the supervisor on. The transport registers the
+// affected id here at the moment it applies the op; the NEXT tick's diff SKIPS exactly that id (per-delta,
+// never a whole-tick veto) so a CONCURRENT genuine edge (another agent going working->stopped, a terminal
+// exit) in the SAME tick still wakes. Each Set is ONE-SHOT: emitTick clears it after the diff, so the absorb
+// is consumed by exactly the next tick and a LATER non-absorbed change to the same id wakes normally. This is
+// timing-INDEPENDENT (it does not matter WHEN the next tick fires). Workspace switches/bulk reconciles use
+// resetTickBaseline() (below) instead — the whole world is re-seeded, never diffed. (The `surfaces` field is
+// vestigial in island V1 — the status-only tick never reads it — but the seam is kept for the transports that
+// still call absorbTickEcho({surfaces}) so a future surface notion can re-arm it without a signature change.)
 const tickAbsorbSurfaces = new Set()
 const tickAbsorbAgents = new Set()
-/** The transport just applied a tool op of ITS OWN; absorb its surface/agent deltas in the NEXT tick only
- *  (so it can't self-wake the supervisor). Per-delta + one-shot — see the block comment above. */
+/** The transport just applied a tool op of ITS OWN; absorb its agent deltas in the NEXT tick only (so it
+ *  can't self-wake the supervisor). Per-delta + one-shot — see the block comment above. */
 export function absorbTickEcho({ surfaces = [], agents = [] } = {}) {
   for (const id of surfaces) if (id != null) tickAbsorbSurfaces.add(String(id))
   for (const id of agents) if (id != null) tickAbsorbAgents.add(String(id))
@@ -394,17 +308,15 @@ export function resetTickBaseline() {
 
 /** Diff two host snapshots into the MATERIAL deltas (content-agnostic transition-shape). Returns
  *  { material:boolean, agents:[…], terminals:[…], surfaces:[…], signals:{}, user:[…] }. An empty/immaterial
- *  diff has material:false (no emit). Surface PRESENCE (open/close) and GEOMETRY (move/resize) are NOT
- *  material here — both already ride the 'canvas' moment (which also routes to the supervisor '0'), so the
- *  tick must not double-wake on them. The ONLY surface delta the tick owns is a props-EDIT (a widget edit),
- *  which the canvas moment does not carry. A surface/agent id in the one-shot absorb Sets (a tool op the
- *  agent just made) is SKIPPED per-delta — never counted material — so it can't self-wake the supervisor. */
+ *  diff has material:false (no emit). STATUS-ONLY (island V1): the tick diffs agent status edges + terminal
+ *  exits, never surface geometry/props/open-close — there is no canvas. An agent id in the one-shot absorb
+ *  Set (a tool op the agent just made — spawn/close) is SKIPPED per-delta, never counted material, so it
+ *  can't self-wake the supervisor. */
 function diffTickSnapshot(prev, next) {
   const signals = {}
   const user = []
   const agents = [] // [{id, from, to}]
   const terminals = [] // [{id, exitCode}]
-  const surfaces = [] // [{id, change:'edited', kind?, title?}] — props-edit only (open/close own'd by 'canvas')
   const bump = (k) => { signals[k] = (signals[k] || 0) + 1 }
 
   // --- agent status edges (the agent-state half) ---
@@ -435,27 +347,8 @@ function diffTickSnapshot(prev, next) {
     if (code != null && !hadCode) { terminals.push({ id, exitCode: code }); user.push(`terminal ${id} exited (code ${code})`); bump('terminal_exit') }
   }
 
-  // --- surfaces: ONLY a props-EDIT (a widget was edited — the user-action half). Surface PRESENCE
-  // (open/close) and GEOMETRY (move/resize) are intentionally NOT diffed here: the trigger:'canvas'
-  // moment already owns ALL structural surface changes (open/close/move/resize) and already routes to
-  // the supervisor '0', so diffing presence here would DOUBLE-WAKE the supervisor on one open/close (and
-  // re-react to the supervisor's own open/close). The tick keeps only the props delta the canvas moment
-  // does NOT carry. A surface that appears/disappears between ticks therefore contributes no tick delta. */
-  const prevSurf = new Map(((prev && prev.surfaces) || []).map((s) => [String(s.id), s]))
-  const nextSurf = new Map(((next && next.surfaces) || []).map((s) => [String(s.id), s]))
-  for (const [id, s] of nextSurf) {
-    const p = prevSurf.get(id)
-    if (!p) continue // a surface OPEN is owned by the canvas moment — not a tick delta (no double-wake)
-    // Absorb the props-edit of a tool op the agent just made (update_surface / customize_widget): the
-    // transport registered this id for this one tick, so it does not self-wake the supervisor. A USER's
-    // widget edit arrives via the renderer push (NOT a tool op), is never absorbed, and STILL wakes.
-    if (tickAbsorbSurfaces.has(id)) continue
-    if (!propsEqual(p.props, s.props)) { surfaces.push({ id, change: 'edited', kind: s.kind, title: s.title }); user.push(`surface edited: ${s.title || id}`); bump('surface_edited') }
-  }
-  // a surface CLOSE is likewise owned by the canvas moment — not diffed here (no double-wake / self-react).
-
-  const material = agents.length > 0 || terminals.length > 0 || surfaces.length > 0
-  return { material, agents, terminals, surfaces, signals, user }
+  const material = agents.length > 0 || terminals.length > 0
+  return { material, agents, terminals, signals, user }
 }
 
 // (The old setTickSuppressed predicate — a Date.now()-vs-CANVAS_BULK_WINDOW veto on the WHOLE tick — was
@@ -491,7 +384,7 @@ export function emitTick() {
     windowMs: 0,
     signals: diff.signals,
     user: diff.user,
-    diff: { agents: diff.agents, terminals: diff.terminals, surfaces: diff.surfaces },
+    diff: { agents: diff.agents, terminals: diff.terminals },
     ...(snap.workspace ? { workspace: String(snap.workspace) } : {})
   })
 }
@@ -506,11 +399,6 @@ const sweepTimer = setInterval(() => {
   const now = Date.now()
   for (const [surfaceId, p] of pending) {
     if (now - p.startTs >= BATCH_MS) flush(surfaceId, 'batch')
-  }
-  // canvas: flush once ops stop arriving (settle) — immediately for structural batches,
-  // at the routine batch age for pure move/resize churn.
-  if (canvasBatch && now - canvasBatch.lastTs >= CANVAS_SETTLE_MS && (canvasBatch.structural || now - canvasBatch.startTs >= BATCH_MS)) {
-    flushCanvas()
   }
   // supervisor tick: at the TICK_MS sub-cadence, snapshot+diff+(maybe)emit. Gated by elapsed time, not a
   // separate interval, so it shares the sweeper's unref'd lifecycle (a quiet node test still exits cleanly).
@@ -600,26 +488,6 @@ export function emitConnectionMoment(surfaceId, info = {}) {
   })
 }
 
-/** The human placed a spatial ANNOTATION on a surface and asked the agent about that exact spot (item
- *  5b). A direct, surface-anchored question — ALWAYS warrants a response (like a chat message), carrying
- *  the surface id + the point (xPct/yPct) + a snapshot, so the agent can answer about precisely what the
- *  human pointed at. Consent-by-construction (the human authored it for the agent) → crosses the relay. */
-export function emitAnnotation(surfaceId, text, anchor, snapshot) {
-  const msg = String(text || '').slice(0, 2000)
-  emit({
-    seq: ++seq,
-    ts: Date.now(),
-    surfaceId: String(surfaceId || ''),
-    trigger: 'annotation',
-    windowMs: 0,
-    signals: { annotation: 1 },
-    user: [`annotated this surface: "${msg.slice(0, 200)}"`],
-    message: msg,
-    anchor: anchor && typeof anchor === 'object' ? { xPct: Number(anchor.xPct) || 0, yPct: Number(anchor.yPct) || 0 } : undefined,
-    snapshot: snapshot ? String(snapshot).slice(0, 600) : undefined
-  })
-}
-
 /** An OS-level event both inhabitants should know about — today a crash recovery; later an update,
  *  a restore, a relay re-mint. Content-agnostic: BlitzOS reports WHAT happened, the agent decides
  *  significance. Routed like connector moments (the primary watcher); `say`/chat.md carries it to
@@ -659,20 +527,19 @@ export function waitForEvents(since, maxMs, agentId = '0', workspace = null) {
   })
 }
 
-// ---- in-page SENSORS, injected into every web surface (Electron via
-// webContents.executeJavaScript; server via CDP Runtime.evaluate). Beyond input
-// (key/click/input/pointerdown — pointerdown so DRAG interactions like chess moves
-// count as activity even with no click) we sense navigation, content change (a
-// MutationObserver: async loads + DOM updates), and idle-after-activity. Each signal
-// carries a `digest` (text snapshot) where useful. Idempotent per page (re-injectable
-// after navigation); self-cleans when drained by a gone surface.
+// ---- in-page SENSORS, injected into a web surface (SERVER-MODE ONLY now: the server backend's
+// headless Chromium via CDP Runtime.evaluate; the Electron canvas had `web` surfaces but island V1
+// removed them, so nothing injects this in Electron — see osActions.ts). Beyond input (key/click/
+// input/pointerdown — pointerdown so DRAG interactions like chess moves count as activity even with
+// no click) we sense navigation, content change (a MutationObserver: async loads + DOM updates), and
+// idle-after-activity. Each signal carries a `digest` (text snapshot) where useful. Idempotent per
+// page (re-injectable after navigation); self-cleans when drained by a gone surface.
 //
-// NOTE on navigation: the in-page href poll below only ever catches SAME-document (SPA)
-// route changes — a CROSS-document navigation destroys the page (and its undrained signal
-// buffer) before the poll/drain can run, and the sensor re-injected on the new page boots
-// with lastHref already at the new URL. Hard navs are therefore emitted HOST-side into the
-// same coalescer by each runtime: Electron from `did-navigate` (osActions.ts
-// ensureNavEmitter), server from `Page.frameNavigated` (browser-host.mjs onNavigated).
+// NOTE on navigation: the in-page href poll below only ever catches SAME-document (SPA) route changes
+// — a CROSS-document navigation destroys the page (and its undrained signal buffer) before the poll/
+// drain can run, and the sensor re-injected on the new page boots with lastHref already at the new URL.
+// Hard navs are therefore emitted HOST-side into the same coalescer by the server runtime, from
+// `Page.frameNavigated` (browser-host.mjs onNavigated).
 export const INJECT = `(() => {
   if (window.__blitzCap) return 'present';
   window.__blitzCap = true;

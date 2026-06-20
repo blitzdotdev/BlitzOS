@@ -2,7 +2,7 @@ import { BrowserWindow, ipcMain, webContents, app, screen } from 'electron'
 import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, pinchSurface, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
-import { ingestSignals, ingestCanvasOps, emitSurfaceAction, emitUserMessage, emitAnnotation, setContentShare, dropContentShare, setWorkspaceProvider, setTickSource, resetTickBaseline, absorbTickEcho, INJECT, DRAIN } from './events'
+import { emitSurfaceAction, emitUserMessage, setContentShare, dropContentShare, setWorkspaceProvider, setTickSource, resetTickBaseline, absorbTickEcho } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
 import { readFileSync } from 'node:fs'
@@ -120,15 +120,11 @@ const lifecycleWired = new Set<number>()
 function registerLiveWebContent(surfaceId: string, wcid: number): void {
   browserContentIds.set(surfaceId, wcid)
   registerCdpSurface(surfaceId, wcid)
-  ensureCapture(surfaceId)
-  ensureNavEmitter(surfaceId, wcid)
-  // The <webview> guest's lifecycle (re-inject perception sensors after each navigation destroys them;
-  // drop the registration when the guest dies). Wired once per guest webContents.
+  // The <webview> guest's lifecycle: drop the registration when the guest dies. Wired once per guest.
   if (lifecycleWired.has(wcid)) return
   const wc = webContents.fromId(wcid)
   if (!wc || wc.isDestroyed()) return
   lifecycleWired.add(wcid)
-  wc.on('dom-ready', () => { void osReadWindow(surfaceId, INJECT).catch(() => {}) })
   wc.once('destroyed', () => { lifecycleWired.delete(wcid); unregisterLiveWebContent(surfaceId, wcid) })
 }
 
@@ -136,9 +132,6 @@ function unregisterLiveWebContent(surfaceId: string, wcid?: number): void {
   const existing = browserContentIds.get(surfaceId)
   if (wcid == null || existing === wcid) browserContentIds.delete(surfaceId)
   unregisterCdpSurface(surfaceId)
-  const iv = captureIntervals.get(surfaceId)
-  if (iv) clearInterval(iv)
-  captureIntervals.delete(surfaceId)
 }
 
 function osWebContentNavigated(id: string, url: string, title?: string): void {
@@ -168,26 +161,24 @@ export function initOsActions(opts: {
   // v2 bleed fix: every perception moment is stamped with the workspace that was active when it
   // happened, so workspace-pinned agents (/events {workspace}) never see another desktop's activity.
   setWorkspaceProvider(() => wsHost?.active() || null)
-  // W2 supervisor tick (plans/blitzos-tick-diff-steer.md): feed the perception kernel the host world snapshot
-  // it diffs each tick — surfaces (incl. props, host-readable in `cached`) + per-agent status + terminals.
-  // wsHost is a module-level let; this closure reads it lazily (it's set just below), parity with the
-  // setWorkspaceProvider closure above. The snapshot is content-AGNOSTIC structure; the agent owns judgment.
+  // Supervisor tick (plans/blitzos-tick-diff-steer.md, status-only in V1): feed the perception kernel the
+  // agent snapshot it diffs each tick — per-agent status + terminals (no surface geometry/props; island V1
+  // has no canvas). wsHost is a module-level let; this closure reads it lazily (it's set just below), parity
+  // with the setWorkspaceProvider closure above. Content-AGNOSTIC; the agent owns judgment.
   setTickSource(() => ({
-    surfaces: osGetState().surfaces,
     agentStatus: wsHost ? wsHost.chatStatusSnapshot() : {},
     terminals: terminalStatusProvider ? terminalStatusProvider() : [],
     workspace: wsHost ? wsHost.active() : undefined
   }))
-  // Self-reaction guard (TIMING-ROBUST — replaces the old setTickSuppressed Date.now() window): a tick must
-  // not read tool-origin churn (a just-applied syscall) or a workspace switch as a spurious user/agent change.
-  //  - A LONE tool op the tick still diffs (update_surface/customize_widget → a props-edit; spawn/close → the
-  //    agent set) calls absorbTickEcho({surfaces|agents}) at the op site, so the NEXT tick SKIPS exactly that
-  //    delta (per-delta, no whole-tick veto → a concurrent genuine agent-status edge in the same tick still
-  //    wakes), one-shot (consumed by that one tick). No dependency on WHEN the next tick fires.
-  //  - A BULK transition (hydrate/switch/reconcile, also stamped into canvasBulkAt for the canvas differ)
-  //    calls resetTickBaseline() so the next tick RE-SEEDS instead of diffing a world that changed wholesale.
-  // A USER's widget edit (renderer push, not a tool op) is never absorbed → it STILL wakes '0' (the desired
-  // plan-edit -> steer signal); a crash (terminal exit) is likewise never absorbed → it STILL wakes.
+  // Self-reaction guard (TIMING-ROBUST — replaces the old setTickSuppressed Date.now() window): the status-
+  // only tick must not read a tool-origin agent-set change (a just-applied syscall) or a workspace switch as
+  // a spurious agent change.
+  //  - A LONE tool op (spawn_agent/close_agent changes the agent set) calls absorbTickEcho({agents}) at the
+  //    op site, so the NEXT tick SKIPS exactly that delta (per-delta, no whole-tick veto → a concurrent
+  //    genuine agent-status edge in the same tick still wakes), one-shot. No dependency on WHEN the tick fires.
+  //  - A BULK transition (hydrate/switch/reconcile) calls resetTickBaseline() so the next tick RE-SEEDS
+  //    instead of diffing a world that changed wholesale.
+  // A crash (terminal exit) is never absorbed → it STILL wakes '0'.
   wsHost = createWorkspaceHost({
     root,
     initialName,
@@ -200,13 +191,10 @@ export function initOsActions(opts: {
     },
     broadcast: (obj) => {
       tel('act', obj) // telemetry: the renderer's entire feed = the replayable content stream
-      // bulk transitions flow over THIS seam (workspace-host reconcile/switch) — suppress the
-      // canvas-gesture differ for a beat so a folder-wide change never reads as human gestures
+      // A bulk transition (workspace-host reconcile/switch/hydrate) changes the world wholesale —
+      // re-seed the status-only tick baseline so it never diffs it as a storm of phantom agent edges.
       const bt = (obj as { type?: unknown })?.type
-      if (bt === 'reconcile' || bt === 'hydrate' || bt === 'switch') {
-        canvasBulkAt = Date.now()
-        resetTickBaseline() // W2: a bulk transaction changes the world wholesale — re-seed the tick baseline, never diff it
-      }
+      if (bt === 'reconcile' || bt === 'hydrate' || bt === 'switch') resetTickBaseline()
       sendToRenderer('os:action', obj)
     },
     onSurfaces: () => {}, // Electron web surfaces are in-DOM <webview> guests (renderer-owned)
@@ -259,16 +247,13 @@ export function initOsActions(opts: {
 
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) {
-      const prev = cached // BEFORE the host replaces it — the diff baseline for human canvas ops
       // A bulk layout transaction (a folder-wide reconcile) translates MANY windows at once; the renderer
-      // stamps the push with bulkAt so the differ reports nothing (else: a storm of phantom "human moved" ops).
+      // stamps the push with bulkAt → re-seed the status-only tick baseline (never diff it as phantom edges).
       if (typeof state.bulkAt === 'number' && state.bulkAt !== lastRendererBulkAt) {
         lastRendererBulkAt = state.bulkAt
-        canvasBulkAt = Date.now()
-        resetTickBaseline() // W2: a bulk transaction translates many windows at once — re-seed the tick baseline, never diff it
+        resetTickBaseline()
       }
       wsHost?.onStatePush(state)
-      diffCanvasOps(prev, state)
       // telemetry: a compact layout keyframe (~every 20s, not every push) — replay resyncs from these;
       // content fidelity comes from the 'act' stream, so heavy props are deliberately dropped here.
       if (Date.now() - lastStateKeyframe > 20_000) {
@@ -311,20 +296,6 @@ export function initOsActions(opts: {
     const aid = payload && typeof payload === 'object' && (payload as { agentId?: unknown }).agentId != null ? String((payload as { agentId?: unknown }).agentId) : '0'
     osUserMessage(text, aid)
   })
-  // The human placed a spatial annotation on a surface + asked about that point (item 5b). The question
-  // lands in chat (so it reads as a normal turn the agent answers) AND wakes the agent with a surface-
-  // anchored 'annotation' moment carrying the point. Routes to the primary watcher ('0').
-  ipcMain.on('os:annotate', (_e, p: { id?: unknown; surfaceId?: unknown; text?: unknown; xPct?: unknown; yPct?: unknown }) => {
-    const surfaceId = String(p?.surfaceId ?? '')
-    const text = String(p?.text ?? '').trim()
-    if (!surfaceId || !text) return
-    const xPct = Number(p?.xPct) || 0
-    const yPct = Number(p?.yPct) || 0
-    // The chat message carries the full annotation ref (id + surface + point) so a click recalls the
-    // bubble even after a reload; the agent gets the surface-anchored moment.
-    wsHost?.appendChat('user', text, '0', { id: String(p?.id ?? ''), surfaceId, xPct, yPct })
-    emitAnnotation(surfaceId, text, { xPct, yPct })
-  })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
   ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {
     const wcid = browserContentIds.get(surfaceId)
@@ -337,57 +308,6 @@ export function initOsActions(opts: {
       return null
     }
   })
-}
-
-// ---- perception (Electron): inject the shared in-page SENSORS (INJECT, from
-// perception-core via events.ts) into each WebContentsView guest and drain them on a loop
-// into the shared moment coalescer (ingestSignals). The sensor scripts + coalescer are
-// the SAME ones server mode uses (preview/backend.mjs), so there is no drift.
-// Re-injects on each guest dom-ready; self-cleans when the guest is gone.
-
-const captureIntervals = new Map<string, ReturnType<typeof setInterval>>()
-
-// Host-side hard-navigation sensor. A real CROSS-DOCUMENT navigation destroys the page — and
-// with it the in-page sensor and its undrained signal buffer — before the 600ms href poll can
-// report it; the sensor re-injected on the new page initializes lastHref to the NEW url, so
-// in-page detection only ever catches SAME-document (SPA) route changes. Main is the authority
-// for cross-document navs: emit the nav signal from did-navigate so "flush immediately on
-// navigation" holds for ordinary link clicks too. Registration arrives on dom-ready — after the
-// initial load's did-navigate — so every event seen here is a real subsequent navigation (link,
-// redirect, reload), never the boot load. The pre-nav buffer (e.g. the causing click) dies with
-// the page: accepted — the nav moment records the transition, and the re-injected sensor's
-// baseline `content` push refreshes the snapshot on the next drain.
-const navWired = new Set<number>()
-function ensureNavEmitter(surfaceId: string, wcid: number): void {
-  if (navWired.has(wcid)) return
-  const wc = webContents.fromId(wcid)
-  if (!wc || wc.isDestroyed()) return
-  navWired.add(wcid)
-  wc.on('did-navigate', (_e, url) => ingestSignals(surfaceId, [{ type: 'nav', url, t: Date.now() }]))
-  wc.once('destroyed', () => navWired.delete(wcid))
-}
-
-function ensureCapture(surfaceId: string): void {
-  // (re)install the listener; idempotent within a page, fresh after a navigation
-  osReadWindow(surfaceId, INJECT).catch(() => {})
-  if (captureIntervals.has(surfaceId)) return
-  const iv = setInterval(async () => {
-    try {
-      // Skip the tick while the main frame is mid-load: executeJavaScript on a loading document just
-      // QUEUES on an internal did-stop-loading once-listener, and a 350ms poll against a slow page
-      // piles those up (the MaxListenersExceeded warning). The document is being replaced anyway;
-      // dom-ready re-injects and the next tick reads the new page.
-      const wcid = browserContentIds.get(surfaceId)
-      const wc = wcid == null ? null : webContents.fromId(wcid)
-      if (wc && !wc.isDestroyed() && wc.isLoadingMainFrame()) return
-      const raw = (await osReadWindow(surfaceId, DRAIN)) as Array<Record<string, unknown>>
-      ingestSignals(surfaceId, raw)
-    } catch {
-      clearInterval(iv)
-      captureIntervals.delete(surfaceId)
-    }
-  }, 350)
-  captureIntervals.set(surfaceId, iv)
 }
 
 const DEFAULT_READ = `(() => {
@@ -441,7 +361,6 @@ function sendToRenderer(channel: string, payload: unknown): void {
 
 function send(type: string, payload: Record<string, unknown> = {}): void {
   tel('act', { type, ...payload }) // telemetry: surface ops (create/update/move/close…) emit HERE, not via the adapter broadcast
-  noteCanvasOpFromMain(type, payload) // perception: tool-driven desktop changes become 'canvas' moments
   sendToRenderer('os:action', { type, ...payload })
 }
 
@@ -486,101 +405,9 @@ export function osRadialPhase(phase: 'down' | 'up' | 'cancel'): void {
   }
 }
 
-// ---- canvas perception (the brain sees window movement — issues/open/perception-blind-spot…):
-// TOOL-driven ops ingest at the send() seam with origin 'tool'; HUMAN gestures are derived by
-// diffing successive renderer os:state pushes. The renderer ECHOES applied tool ops back in its
-// next state push, so each tool op arms a short-lived echo key the differ consumes instead of
-// double-reporting it as human. Bulk transitions (hydrate/switch/reconcile) change everything at
-// once and are perception-noise — they suppress the differ for a beat instead of spamming ops.
-const canvasEcho = new Map<string, number>() // `${op}:${id}` -> armed-at
-const CANVAS_ECHO_TTL = 5000
-let canvasBulkAt = 0
-let lastRendererBulkAt = 0 // last bulk stamp seen on an os:state push (a folder-wide reconcile)
-const CANVAS_BULK_WINDOW = 3000
-const CANVAS_MOVE_MIN = 8 // px; below this a "move" is layout jitter, not a gesture
-
-function armEcho(op: string, id: unknown): void {
-  if (typeof id === 'string' && id) canvasEcho.set(`${op}:${id}`, Date.now())
-}
-function consumeEcho(op: string, id: string): boolean {
-  const k = `${op}:${id}`
-  const t = canvasEcho.get(k)
-  if (t == null) return false
-  canvasEcho.delete(k)
-  return Date.now() - t <= CANVAS_ECHO_TTL
-}
-
-function noteCanvasOpFromMain(type: string, payload: Record<string, unknown>): void {
-  try {
-    if (type === 'hydrate' || type === 'switch' || type === 'reconcile') {
-      canvasBulkAt = Date.now()
-      resetTickBaseline() // W2: a bulk transaction changes the world wholesale — re-seed the tick baseline, never diff it
-      return
-    }
-    if (type === 'create') {
-      const s = payload.surface as { id?: string; title?: string; kind?: string } | undefined
-      if (!s?.id) return
-      armEcho('open', s.id)
-      ingestCanvasOps([{ op: 'open', id: s.id, title: s.title, kind: s.kind, origin: 'tool' }])
-    } else if (type === 'close') {
-      const id = payload.id
-      if (typeof id !== 'string') return
-      armEcho('close', id)
-      const t = (cached.surfaces || []).find((x) => x.id === id)
-      ingestCanvasOps([{ op: 'close', id, title: t?.title, origin: 'tool' }])
-    } else if (type === 'move') {
-      const { id, x, y } = payload as { id?: string; x?: number; y?: number }
-      if (typeof id !== 'string') return
-      armEcho('move', id)
-      const t = (cached.surfaces || []).find((s) => s.id === id)
-      ingestCanvasOps([{ op: 'move', id, title: t?.title, x: Number(x) || 0, y: Number(y) || 0, origin: 'tool' }])
-    } else if (type === 'update') {
-      const { id, patch } = payload as { id?: string; patch?: Record<string, unknown> }
-      if (typeof id !== 'string' || !patch) return
-      const t = (cached.surfaces || []).find((s) => s.id === id)
-      if (patch.x != null || patch.y != null) {
-        armEcho('move', id)
-        ingestCanvasOps([{ op: 'move', id, title: t?.title, x: Number(patch.x ?? t?.x) || 0, y: Number(patch.y ?? t?.y) || 0, origin: 'tool' }])
-      }
-      if (patch.w != null || patch.h != null) {
-        armEcho('resize', id)
-        ingestCanvasOps([{ op: 'resize', id, title: t?.title, w: Number(patch.w ?? t?.w) || 0, h: Number(patch.h ?? t?.h) || 0, origin: 'tool' }])
-      }
-    }
-  } catch {
-    /* perception must never break the control plane */
-  }
-}
-
-/** Human gestures: diff the renderer's authoritative state pushes. Runs on every os:state. */
-function diffCanvasOps(prev: OsState, next: OsState): void {
-  try {
-    if (Date.now() - canvasBulkAt < CANVAS_BULK_WINDOW) return
-    const a = new Map((prev.surfaces || []).map((s) => [s.id, s]))
-    const b = new Map((next.surfaces || []).map((s) => [s.id, s]))
-    if (!a.size && b.size > 1) return // first real push after boot — hydration, not gestures
-    const ops: Array<{ op: 'open' | 'close' | 'move' | 'resize'; id: string; title?: string; kind?: string; x?: number; y?: number; w?: number; h?: number; origin: 'human' }> = []
-    for (const [id, s] of b) {
-      const p = a.get(id)
-      if (!p) {
-        if (!consumeEcho('open', id)) ops.push({ op: 'open', id, title: s.title, kind: s.kind, origin: 'human' })
-        continue
-      }
-      if (Math.abs(s.x - p.x) >= CANVAS_MOVE_MIN || Math.abs(s.y - p.y) >= CANVAS_MOVE_MIN) {
-        if (!consumeEcho('move', id)) ops.push({ op: 'move', id, title: s.title, x: s.x, y: s.y, origin: 'human' })
-      }
-      if (Math.abs(s.w - p.w) >= CANVAS_MOVE_MIN || Math.abs(s.h - p.h) >= CANVAS_MOVE_MIN) {
-        if (!consumeEcho('resize', id)) ops.push({ op: 'resize', id, title: s.title, w: s.w, h: s.h, origin: 'human' })
-      }
-    }
-    for (const [id, p] of a) {
-      if (!b.has(id) && !consumeEcho('close', id)) ops.push({ op: 'close', id, title: p.title, origin: 'human' })
-    }
-    if (ops.length) ingestCanvasOps(ops)
-  } catch {
-    /* perception must never break the state pipeline */
-  }
-}
+// Last bulk stamp seen on an os:state push (a folder-wide reconcile) — gates the status-only tick's
+// baseline re-seed in the os:state handler (a bulk layout transaction must not read as phantom agent edges).
+let lastRendererBulkAt = 0
 
 /** Create any surface kind. Returns its id. */
 export function osCreateSurface(desc: SurfaceDescriptor): string {
