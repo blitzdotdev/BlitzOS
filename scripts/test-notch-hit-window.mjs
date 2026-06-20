@@ -14,6 +14,12 @@ const index = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')
 const preload = readFileSync(join(repoRoot, 'src/preload/index.ts'), 'utf8')
 const app = readFileSync(join(repoRoot, 'src/renderer/src/App.tsx'), 'utf8')
 const notchHost = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHost.tsx'), 'utf8')
+const islandHome = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandHome.tsx'), 'utf8')
+const islandPanel = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandPanel.tsx'), 'utf8')
+const islandSettings = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandSettings.tsx'), 'utf8')
+const islandTerminal = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandTerminalPane.tsx'), 'utf8')
+const islandCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/island.css'), 'utf8')
+const notchCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/notch.css'), 'utf8')
 const css = readFileSync(join(repoRoot, 'src/renderer/src/styles.css'), 'utf8')
 
 let failures = 0
@@ -66,6 +72,25 @@ ok('renderer: the visual pill uses the REAL notch width + is gated on a real not
     /notchClipFor\(notchState[\s\S]*?notchWidth\)/.test(app))
 ok('the pill is VISUAL ONLY — clicks belong to the hit-window (.notch-handle is pointer-events:none)',
   /\.notch-handle \{[\s\S]*?pointer-events: none/.test(css))
+
+// ── notch-owned debug terminal setting ───────────────────────────────────────────────────────────────────────
+ok('notch home exposes Settings as top-right shell chrome, not as a widget tile',
+  /nh-settings-btn/.test(notchHost) && /setView\('settings'\)/.test(notchHost) && /nh-settings-dot/.test(notchHost) &&
+    /right: 16px/.test(notchCss) && !/isl-app-settings/.test(islandHome) && !/isl-app-debug-badge/.test(islandHome))
+ok('notch settings persists the active-agent terminal debug toggle in localStorage and labels it DEBUG',
+  /DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos\.debug\.showActiveAgentTerminal'/.test(notchHost) &&
+    /localStorage\.setItem\(DEBUG_ACTIVE_TERMINAL_KEY/.test(notchHost) &&
+    /Show active agent terminal/.test(islandSettings) && /isl-debug-flag/.test(islandSettings) && /#ffd84d/.test(islandCss))
+ok('active agent terminal pane is gated by the debug setting and uses activeId as the terminal id',
+  /debugTerminalEnabled && activeId/.test(islandPanel) && /terminalId=\{activeId\}/.test(islandPanel) &&
+    /activeTerminal=\{activeId \? terminals\[activeId\] : undefined\}/.test(notchHost))
+ok('island terminal pane is read-only xterm backed by terminalRead + subscribeTerminal, not terminal input/resize',
+  /new Terminal/.test(islandTerminal) && /disableStdin: true/.test(islandTerminal) &&
+    /terminalRead\?\.\(terminalId\)/.test(islandTerminal) && /subscribeTerminal\(/.test(islandTerminal) &&
+    !/terminalInput/.test(islandTerminal) && !/terminalResize/.test(islandTerminal))
+ok('App no longer exposes the old agent-terminal surface toggle or opens agent terminals with openTerminal',
+  !/showAgentTerminals/.test(app) && !/Agent terminal visibility/.test(app) && /term\.kind !== 'agent'/.test(app) &&
+    /Managed agent terminals stay hidden here/.test(app))
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)
 process.exit(failures === 0 ? 0 : 1)

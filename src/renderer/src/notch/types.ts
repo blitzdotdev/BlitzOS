@@ -25,6 +25,13 @@ export interface IslandMilestone {
   text: string
 }
 
+export interface IslandTerminalMeta {
+  id: string
+  title: string
+  status: string
+  kind: string
+}
+
 export interface IslandPanelProps {
   sessions: IslandSession[]
   page: number // 0 = the new-session (pen) tab; 1..N = the agent at page-1
@@ -38,4 +45,6 @@ export interface IslandPanelProps {
   menuBarH: number // notch height in px, for top alignment under the physical notch
   attachOpen: boolean // the attach "+" toggles the attachment panel INLINE (island grows)
   onToggleAttach: () => void
+  debugTerminalEnabled: boolean // debug-only: show the active agent's tmux terminal inside the chat app
+  activeTerminal?: IslandTerminalMeta // metadata for activeId's managed terminal; activeId remains the terminal id
 }

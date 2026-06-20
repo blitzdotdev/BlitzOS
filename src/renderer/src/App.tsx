@@ -351,12 +351,6 @@ export default function App(): JSX.Element {
   // ! DEBUG: runtime switch state is intentionally UI-only; the selected value is persisted in main.
   const [agentRuntimeDebug, setAgentRuntimeDebug] = useState<AgentRuntimeDebugStatus | null>(null)
   const [agentRuntimePending, setAgentRuntimePending] = useState<AgentRuntimeChoice | null>(null)
-  const [showAgentTerminals, setShowAgentTerminals] = useState(false)
-  const showAgentTerminalsRef = useRef(showAgentTerminals)
-
-  useEffect(() => {
-    showAgentTerminalsRef.current = showAgentTerminals
-  }, [showAgentTerminals])
 
   useEffect(() => {
     if (isServer) return
@@ -557,13 +551,10 @@ export default function App(): JSX.Element {
       } else if (a.type === 'terminal-exit') {
         pushTerminalExit(String(a.id), a.exitCode == null ? null : Number(a.exitCode))
       } else if (a.type === 'terminal-spawn') {
-        // A terminal was created (by an agent or the user), or re-adopted on restore. Terminals live as
-        // TABS in a terminal window — add this one as a tab (idempotent). Plain terminals show; agent
-        // terminals are hidden unless the DEBUG toggle is on (their chat widget is the user-facing interface).
+        // Plain terminals still open as tabs. Managed agent terminals stay in the native chat/notch debug path;
+        // do not resurrect the canvas-era terminal surface for them.
         const term = (a.terminal ?? {}) as TerminalListEntry
-        if (term.kind === 'agent') {
-          if (showAgentTerminalsRef.current) ensureTerminalTab(String(a.id), term.title || 'Agent', term.stage ?? term.area)
-        } else {
+        if (term.kind !== 'agent') {
           ensureTerminalTab(String(a.id), term.title || 'Terminal', term.stage ?? term.area)
         }
       } else if (a.type === 'action-item') {
@@ -600,8 +591,8 @@ export default function App(): JSX.Element {
 
   // Resume terminals: terminal surfaces aren't serialized (they're runtime-only), so on load — and on
   // every workspace switch — we reconstruct a terminal tab for each plain terminal still ALIVE in this
-  // workspace. Agent terminals stay hidden unless the DEBUG toggle is on. tmux keeps the process
-  // across a BlitzOS/page restart; calling terminalList() also drives the backend's lazy restore()
+  // workspace. Managed agent terminals stay hidden here; the notch owns the read-only debug view. tmux keeps
+  // the process across a BlitzOS/page restart; calling terminalList() also drives the backend's lazy restore()
   // (re-adopting survivors). ensureTerminalTab is idempotent, so this converges with the restore()
   // terminal-spawn replay rather than double-creating, and pruneEmptyTerminals drops any window a removed
   // terminal left blank. Keyed on the active workspace (a switch wholesale-replaces the canvas first).
@@ -617,12 +608,11 @@ export default function App(): JSX.Element {
         for (const s of list as TerminalListEntry[]) {
           if (!s || !s.id || s.status !== 'running') continue
           if (s.kind === 'agent') agentIds.add(String(s.id))
-          // Reconstruct terminal tabs for live plain shells. Agent terminals stay hidden unless the DEBUG
-          // toggle is on; their chat widget is the user-facing interface, and tabs are renderer-only.
-          if (s.kind === 'agent' && !showAgentTerminalsRef.current) continue
+          // Reconstruct terminal tabs for live plain shells only. Agent terminals are the chat/notch debug pane.
+          if (s.kind === 'agent') continue
           ensureTerminalTab(String(s.id), s.title || (s.kind === 'agent' ? 'Agent' : 'Terminal'), s.stage ?? s.area)
         }
-        if (!showAgentTerminalsRef.current) closeAgentTerminalTabs(agentIds)
+        closeAgentTerminalTabs(agentIds)
         st.pruneEmptyTerminals() // a terminal window left with no live tab only renders blank — drop it
       })
       .catch(() => {})
@@ -641,7 +631,7 @@ export default function App(): JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [activeWs, showAgentTerminals])
+  }, [activeWs])
 
   // Push desktop state to main (so list_state works). Surface changes push immediately; viewport churn is
   // coalesced so a resize doesn't flood the channel.
@@ -858,17 +848,6 @@ export default function App(): JSX.Element {
               onClick={() => { void chooseAgentRuntime('claude') }}
             >
               Claude
-            </button>
-          </div>
-          <span className="agent-runtime-switch-sep" aria-hidden="true" />
-          <div className="agent-runtime-switch-group" aria-label="Agent terminal visibility">
-            <span className="agent-runtime-switch-label">Terminal</span>
-            <button
-              className={showAgentTerminals ? 'active' : ''}
-              title={showAgentTerminals ? 'Hide agent terminals' : 'Show agent terminals'}
-              onClick={() => setShowAgentTerminals((v) => !v)}
-            >
-              {showAgentTerminals ? 'Shown' : 'Hidden'}
             </button>
           </div>
         </div>
