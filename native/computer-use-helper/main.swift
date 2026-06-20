@@ -476,10 +476,11 @@ final class PickController {
         case .mouseMoved:
             if !dragging { updateHover(p) }
         case .leftMouseDown:
-            // Grab the icon → start our drag. Swallow ONLY this click so the OS never starts a titlebar
-            // window-drag or shifts focus to the app we're aiming at. Everything else passes through (so the
-            // real cursor keeps moving and other apps are untouched).
-            if !dragging, let h = hovered, iconHitRect(h).contains(p) {
+            // mousedown ANYWHERE on a highlighted window grabs it (the whole window is the handle) — the icon snaps
+            // to the cursor. Swallow ONLY this grab click so the OS never starts a window-drag / shifts focus. If the
+            // cursor is NOT over a grabbable window (Dock, menu bar, desktop, the island) `hovered` is nil, so we pass
+            // the click through and normal macOS interactions keep working.
+            if !dragging, let h = hovered {
                 beginDrag(h, at: p)
                 return nil
             }
@@ -492,20 +493,18 @@ final class PickController {
         return Unmanaged.passUnretained(event)
     }
 
-    // The grab zone: a generous box at the window's top-center (where the icon is drawn).
-    private func iconHitRect(_ h: PickWin) -> CGRect {
-        let s: CGFloat = 78
-        return CGRect(x: h.frameCG.midX - s / 2, y: h.frameCG.minY + 30 - s / 2, width: s, height: s)
-    }
-
-    // Front-most normal window (layer 0) under the cursor, skipping BlitzOS + our own overlays.
+    // The frontmost NORMAL app window (layer 0) under the cursor, skipping BlitzOS + our own overlays. We filter to
+    // layer 0 so the Dock / menu bar / desktop (higher- or lower-layer system windows, several of them FULL-SCREEN —
+    // e.g. the Dock keeps a 1512x982 backing window at layer 20) never count: those strips have no layer-0 window, so
+    // the cursor over them returns nil → no glow/grab and the click passes straight through (Dock + menu bar stay
+    // clickable while picking). mousedown anywhere INSIDE a returned window grabs the whole thing.
     private func frontWindowAt(_ p: CGPoint) -> PickWin? {
         let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let infos = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else { return nil }
         for info in infos { // front-to-back order
-            if (info[kCGWindowLayer as String] as? Int) ?? 0 != 0 { continue }
+            if (info[kCGWindowLayer as String] as? Int) ?? 0 != 0 { continue } // normal app windows only
             let pid = (info[kCGWindowOwnerPID as String] as? Int) ?? 0
-            if pid == ownPid || excludePids.contains(pid) { continue }
+            if pid == ownPid || excludePids.contains(pid) { continue } // our overlays + BlitzOS's island window
             guard let b = info[kCGWindowBounds as String] as? [String: Any],
                   let x = pickNum(b["X"]), let y = pickNum(b["Y"]),
                   let w = pickNum(b["Width"]), let hh = pickNum(b["Height"]),

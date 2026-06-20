@@ -247,14 +247,16 @@ export default function App(): JSX.Element {
       const st = notchStateRef.current
       // A PINNED panel (opened via ⌥Space) stays open regardless of the mouse and keeps the window interactive,
       // so the user can move the cursor away and still type. Only HOVER-opened panels follow the mouse below.
-      if (st === 'panel' && (notchPinnedRef.current || notchAttachOpenRef.current)) {
+      if (st === 'panel' && notchPinnedRef.current) {
         setNotchInteractive(true)
         return
       }
       // Grace after a chassis RESIZE (attach panel / peek toggled): the island just changed size and may have
       // shrunk out from under the cursor, so a plain hover test would read "not over it" and hide the whole
       // island. Hold it open + interactive during the grace window (NotchHost stamps notchHoldUntilRef on resize).
-      if (st === 'panel' && performance.now() < notchHoldUntilRef.current) {
+      // Skip while the attach picker is open — there the want-based logic governs interactivity (click-through off
+      // the chassis so the Dock/other apps stay clickable), and the island never retracts anyway.
+      if (st === 'panel' && !notchAttachOpenRef.current && performance.now() < notchHoldUntilRef.current) {
         setNotchInteractive(true)
         return
       }
@@ -274,6 +276,13 @@ export default function App(): JSX.Element {
         setIslandInitialView('home') // hover always shows the widget home grid (no keybind opens home)
         applyNotchState('panel')
       } else if (st === 'panel' && !want) {
+        // Attach panel (the window picker) open: NEVER retract, and go CLICK-THROUGH so clicks reach the Dock /
+        // menu bar / other apps. The glow + drag run on the helper's HID event tap, independent of this overlay's
+        // click-through, so picking keeps working while the island stays open.
+        if (notchAttachOpenRef.current) {
+          setNotchInteractive(false)
+          return
+        }
         scheduleNotchHoverClose(120)
         setNotchInteractive(true)
         return
