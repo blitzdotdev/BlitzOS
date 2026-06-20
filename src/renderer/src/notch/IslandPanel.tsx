@@ -139,7 +139,19 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
 
   // The shared horizontal tab strip (pen + one chip per agent), kept in BOTH the chat and the peek view.
   const tabStrip = (
-    <div className="isl-tabs" role="tablist">
+    <div
+      className="isl-tabs"
+      role="tablist"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) e.preventDefault()
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }}
+    >
       <button
         type="button"
         role="tab"

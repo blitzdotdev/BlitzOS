@@ -48,13 +48,17 @@ ok('the notch-geometry build.sh exists (built to a binary; dist-mac.sh bundles i
 // ── main: the always-interactive hit-window placed over the physical notch, ABOVE the overlay ────────────────
 ok('notch-overlay exports the geometry read + hit rect + hit-window opts + the inline catcher page',
   /export function readNotchGeometry/.test(overlay) && /export function notchHitRect/.test(overlay) &&
+    /menuBarH = 0/.test(overlay) && /Math\.min\(safeTop, visibleBand\)/.test(overlay) &&
     /export function notchHitWindowOptions/.test(overlay) && /export const NOTCH_HIT_HTML/.test(overlay))
 ok('the hit-window is INTERACTIVE (transparent, acceptFirstMouse, the main preload) — not the click-through overlay',
   /notchHitWindowOptions/.test(overlay) && /transparent: true/.test(overlay) && /acceptFirstMouse: true/.test(overlay) &&
     /preload: preloadPath/.test(overlay))
 ok('main creates the hit-window STRICTLY ABOVE the overlay (screen-saver relativeLevel 1) + only when a real notch exists',
   /new BrowserWindow\(notchHitWindowOptions/.test(index) && /setAlwaysOnTop\(true, 'screen-saver', 1\)/.test(index) &&
-    /const rect = notchHitRect\(notchGeom\)/.test(index) && /if \(!rect\)/.test(index))
+    /const rect = notchHitRect\(notchGeom, menuBarH\)/.test(index) && /if \(!rect\)/.test(index))
+ok('open island makes the notch hit-window click-through so it cannot steal tab hover or blank-strip clicks',
+  /let notchOverlayInteractive = false/.test(index) && /notchOverlayInteractive = !!on/.test(index) &&
+    /notchHitWin\.setIgnoreMouseEvents\(notchOverlayInteractive, \{ forward: true \}\)/.test(index))
 ok('main forwards the hit-window click/hover to the overlay renderer + pushes the REAL notch width + hasNotch',
   /ipcMain\.on\('os:notch-click'[\s\S]*?'os:notch-handle-click'/.test(index) &&
     /ipcMain\.on\('os:notch-hover'[\s\S]*?'os:notch-handle-hover'/.test(index) &&
@@ -65,13 +69,24 @@ ok('preload exposes the bridge: notch.click/hover (hit-window → main) + onHand
   /click\(\): void \{[\s\S]*?'os:notch-click'/.test(preload) && /hover\(on: boolean\): void \{[\s\S]*?'os:notch-hover'/.test(preload) &&
     /onHandleClick/.test(preload) && /onHandleHover/.test(preload))
 ok('renderer: hit-window CLICK → toggleNewSession (island panel; V1 has no canvas fullscreen), HOVER → open/close the panel',
-  /onHandleClick\?\.\(\(\) => toggleNewSession\(\)\)/.test(app) && /onHandleHover\?\.\(\(on\) =>/.test(app))
+  /onHandleClick\?\.\(\(\) => \{[\s\S]*?notchStateRef\.current === 'closed'[\s\S]*?toggleNewSession\(\)/.test(app) &&
+    /onHandleHover\?\.\(\(on\) =>/.test(app))
 ok('renderer: hover-opened island has close hysteresis and the chassis keeps the overlay interactive for clicks',
   /NOTCH_HOVER_OPEN_GRACE_MS/.test(app) && /scheduleNotchHoverClose/.test(app) && /onChassisHoverChange=\{setChassisHover\}/.test(app) &&
-    /onChassisResize=\{\(\) => \{[\s\S]*?notchHoldUntilRef\.current = performance\.now\(\) \+ NOTCH_HOVER_OPEN_GRACE_MS/.test(app) &&
-    /onPointerEnter=\{\(\) => onChassisHoverChange\?\.\(true\)\}/.test(notchHost) &&
-    /onPointerMove=\{\(\) => onChassisHoverChange\?\.\(true\)\}/.test(notchHost) &&
+    /onChassisResize=\{\(\) => \{[\s\S]*?notchHoldUntilRef\.current = performance\.now\(\) \+ NOTCH_HOVER_OPEN_GRACE_MS[\s\S]*?setNotchInteractive\(true\)/.test(app) &&
+    /panelHitSlop/.test(app) && /document\.elementFromPoint/.test(app) && /closest\?\.\('\.nh-chassis'\)/.test(app) &&
+    /onPointerEnter=\{holdChassisHover\}/.test(notchHost) &&
+    /onPointerMove=\{holdChassisHover\}/.test(notchHost) &&
+    /onPointerDownCapture=\{holdChassisHover\}/.test(notchHost) &&
     /onPointerLeave=\{\(\) => onChassisHoverChange\?\.\(false\)\}/.test(notchHost))
+ok('session tab strip has a real blank-space hit area and clear hover affordance',
+  /min-height: 40px/.test(islandCss) && /width: 100%/.test(islandCss) &&
+    /e\.target === e\.currentTarget/.test(islandPanel) && /e\.stopPropagation\(\)/.test(islandPanel) &&
+    /\.nh-island \.isl-chip:hover \{[\s\S]*?background: rgba\(255, 255, 255, 0\.1\)/.test(islandCss) &&
+    /\.nh-island \.isl-chip:hover \{[\s\S]*?border-color: rgba\(255, 255, 255, 0\.24\)/.test(islandCss))
+ok('opening Chat from Home resets to the new-session composer instead of the last agent tab',
+  /const openChat = \(\): void => \{[\s\S]*?setPage\(0\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
+    /onOpenChat=\{openChat\}/.test(notchHost))
 ok('renderer: the visual pill uses the REAL notch width + is gated on a real notch (no notch → no band, ⌥Space only)',
   /style=\{\{ width: notchWidth/.test(app) && /notchOn && hasNotch &&/.test(app) &&
     /notchClipFor\(notchState[\s\S]*?notchWidth\)/.test(app))

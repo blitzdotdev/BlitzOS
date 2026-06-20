@@ -661,8 +661,18 @@ app.whenReady().then(() => {
   //  - ⌥Space → os:notch-toggle (the renderer toggles expand/collapse)
   // The standalone island.ts window + the native BlitzIsland.app (BLITZ_NATIVE_ISLAND, wired below) are retired/legacy.
   if (notchGated) {
+    let notchGeom: NotchGeometry | null = null
+    let notchHitWin: BrowserWindow | null = null
+    let notchOverlayInteractive = false
+    const notchPreload = join(__dirname, '../preload/index.js')
     ipcMain.on('os:notch-interactive', (_e, on: boolean) => {
-      try { setNotchInteractive(mainWindow, !!on) } catch { /* mid-teardown */ }
+      notchOverlayInteractive = !!on
+      try { setNotchInteractive(mainWindow, notchOverlayInteractive) } catch { /* mid-teardown */ }
+      try {
+        // When the panel is open the full overlay owns interaction; the tiny notch catcher must become
+        // click-through or it can steal hover/clicks from tabs rendered underneath the hardware notch column.
+        if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.setIgnoreMouseEvents(notchOverlayInteractive, { forward: true })
+      } catch { /* mid-teardown */ }
     })
     // Deep ON → an orchestrated workflow (electronOps.startWorkflow). Deep OFF → a conversational peer agent
     // (electronOps.spawnAgent) seeded with the prompt (electronOps.userMessage WRITES chat.md + wakes). electronOps
@@ -688,9 +698,6 @@ app.whenReady().then(() => {
     // notch (geometry from the native CLI). It owns the click (→ toggle fullscreen) + hover (→ open the panel), so
     // the toggle is constant in every state and has no click-through→arm race. No physical notch → no window
     // (⌥Space only). The overlay still paints the black pill + peek dots UNDER this transparent catcher.
-    let notchGeom: NotchGeometry | null = null
-    let notchHitWin: BrowserWindow | null = null
-    const notchPreload = join(__dirname, '../preload/index.js')
     const pushNotchGeometry = (): void => {
       const w = mainWindow
       if (!w || w.isDestroyed()) return
@@ -706,7 +713,9 @@ app.whenReady().then(() => {
       } catch { /* mid-teardown */ }
     }
     const updateNotchHitWindow = (): void => {
-      const rect = notchHitRect(notchGeom)
+      const d = screen.getPrimaryDisplay()
+      const menuBarH = Math.max(0, d.workArea.y - d.bounds.y)
+      const rect = notchHitRect(notchGeom, menuBarH)
       if (!rect) {
         if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.destroy()
         notchHitWin = null
@@ -723,10 +732,12 @@ app.whenReady().then(() => {
         notchHitWin.on('closed', () => { notchHitWin = null })
         notchHitWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(NOTCH_HIT_HTML))
         notchHitWin.showInactive() // never steal focus from the app the user is over
+        notchHitWin.setIgnoreMouseEvents(notchOverlayInteractive, { forward: true })
       } else {
         notchHitWin.setBounds(rect)
         notchHitWin.setAlwaysOnTop(true, 'screen-saver', 1)
         notchHitWin.showInactive()
+        notchHitWin.setIgnoreMouseEvents(notchOverlayInteractive, { forward: true })
       }
     }
     const refreshNotch = async (): Promise<void> => {

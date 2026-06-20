@@ -103,17 +103,22 @@ export function readNotchGeometry(): Promise<NotchGeometry | null> {
   })
 }
 
-/** The on-screen rect (Electron top-left coords) of the physical notch on the primary display, or null if none. */
+/** The on-screen rect (Electron top-left coords) of the physical notch on the primary display, or null if none.
+ *  NSScreen.safeAreaInsets.top can be taller than the visible menu-bar band; the catcher must stay in that band
+ *  or it steals hover/clicks from the island content rendered directly below the notch. */
 export function notchHitRect(
-  g: NotchGeometry | null
+  g: NotchGeometry | null,
+  menuBarH = 0
 ): { x: number; y: number; width: number; height: number } | null {
   if (!g || !g.hasNotch || g.notchWidth <= 0) return null
   const b = screen.getPrimaryDisplay().bounds
+  const safeTop = Math.max(1, Math.round(g.notchHeight))
+  const visibleBand = Math.max(28, Math.round(menuBarH || 0))
   return {
     x: Math.round(b.x + g.notchLeft),
     y: Math.round(b.y),
     width: Math.round(g.notchWidth),
-    height: Math.max(1, Math.round(g.notchHeight))
+    height: Math.min(safeTop, visibleBand)
   }
 }
 

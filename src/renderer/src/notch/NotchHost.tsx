@@ -441,13 +441,22 @@ export function NotchHost({
   const onHome = view === 'home'
   const inSession = view === 'session'
   const dataView = onHome ? 'home' : view === 'settings' ? 'settings' : safePage === 0 ? 'session' : 'process'
+  const holdChassisHover = (): void => onChassisHoverChange?.(true)
+  const openChat = (): void => {
+    holdChassisHover()
+    setPage(0)
+    setPeek(false)
+    setAttachOpen(false)
+    setView('session')
+  }
   return (
     <div className="nhost" data-view={dataView}>
       <div
         className={`nh-chassis${attachOpen && !onHome ? ' nh-wide' : ''}`}
         data-view={dataView}
-        onPointerEnter={() => onChassisHoverChange?.(true)}
-        onPointerMove={() => onChassisHoverChange?.(true)}
+        onPointerEnter={holdChassisHover}
+        onPointerMove={holdChassisHover}
+        onPointerDownCapture={holdChassisHover}
         onPointerLeave={() => onChassisHoverChange?.(false)}
       >
         {/* Settings is notch chrome, not a widget tile. It expands the home view into a settings list. */}
@@ -499,7 +508,7 @@ export function NotchHost({
             menuBarH={menuBarH}
             sessions={sessions}
             status={status}
-            onOpenChat={() => setView('session')}
+            onOpenChat={openChat}
           />
         ) : view === 'settings' ? (
           <IslandSettings

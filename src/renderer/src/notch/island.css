@@ -679,6 +679,11 @@ button.isl-app-chat:active .isl-app-icon {
   display: flex;
   flex: none;
   gap: 6px;
+  min-height: 40px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 0;
+  margin: -4px 0;
   overflow-x: auto;
   scrollbar-width: none;
   animation: isl-rise 0.26s ease-out 0.03s both;
@@ -707,6 +712,8 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-chip:hover {
   color: var(--isl-text);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.24);
 }
 .nh-island .isl-chip.active {
   color: var(--isl-text);

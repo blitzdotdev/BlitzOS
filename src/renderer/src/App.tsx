@@ -199,7 +199,13 @@ export default function App(): JSX.Element {
   useEffect(() => window.agentOS?.notch?.onToggle?.(() => toggleNewSession()), [])
   // The notch HIT-WINDOW (the always-interactive transparent window over the physical notch) drives the toggle +
   // hover, so the notch is clickable in EVERY state with no click-through→arm race. CLICK → toggle the island panel.
-  useEffect(() => window.agentOS?.notch?.onHandleClick?.(() => toggleNewSession()), [])
+  useEffect(
+    () =>
+      window.agentOS?.notch?.onHandleClick?.(() => {
+        if (notchStateRef.current === 'closed') toggleNewSession()
+      }),
+    []
+  )
   // HOVER → open the chat panel (peek), like the old hover-the-notch behavior, but reported by the hit-window since
   // it sits on top of the notch. The overlay mousemove keeps it open while over the chassis; a grace covers the
   // notch→chassis transit so it does not flicker shut.
@@ -262,8 +268,18 @@ export default function App(): JSX.Element {
       const overHandle = !!r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
       // The shown panel is the NotchHost portal (the .nh-chassis shell) — measure ITS real rect so a hover-opened
       // panel stays open while the cursor is anywhere over it (its size varies per view).
-      const pr = document.querySelector('.nh-chassis')?.getBoundingClientRect()
-      const inPanel = !!pr && e.clientX >= pr.left && e.clientX <= pr.right && e.clientY >= pr.top && e.clientY <= pr.bottom
+      const panelEl = document.querySelector('.nh-chassis') as HTMLElement | null
+      const pr = panelEl?.getBoundingClientRect()
+      const panelHitSlop = 10
+      const inPanelRect =
+        !!pr &&
+        e.clientX >= pr.left - panelHitSlop &&
+        e.clientX <= pr.right + panelHitSlop &&
+        e.clientY >= pr.top - panelHitSlop &&
+        e.clientY <= pr.bottom + panelHitSlop
+      const hitEl = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+      const inPanelDom = !!hitEl?.closest?.('.nh-chassis')
+      const inPanel = inPanelRect || inPanelDom
       overChassisRef.current = inPanel
       const want = overHandle || notchOverRef.current || (st === 'panel' && inPanel)
       if (want && notchHoverGraceRef.current) {
@@ -787,6 +803,7 @@ export default function App(): JSX.Element {
             onChassisHoverChange={setChassisHover}
             onChassisResize={() => {
               notchHoldUntilRef.current = performance.now() + NOTCH_HOVER_OPEN_GRACE_MS
+              setNotchInteractive(true)
             }}
             onAttachChange={onIslandAttachChange}
           />,
