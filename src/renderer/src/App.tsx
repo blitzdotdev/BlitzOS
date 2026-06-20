@@ -23,6 +23,10 @@ type AgentRuntimeDebugStatus = {
 }
 type TerminalListEntry = { id?: string; title?: string; status?: string; kind?: string; stage?: number | null; area?: number | null }
 const THEME_STORAGE_KEY = 'blitzos.theme'
+const NOTCH_HOVER_OPEN_GRACE_MS = 220
+const NOTCH_HOVER_CLOSE_DELAY_MS = 90
+const NOTCH_HOVER_RESCHEDULE_PAD_MS = 30
+const NOTCH_CHASSIS_KEEPALIVE_MS = 180
 
 function systemTheme(): ThemeMode {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
@@ -110,6 +114,36 @@ export default function App(): JSX.Element {
     notchStateRef.current = s
     setNotchState(s)
   }
+  const scheduleNotchHoverClose = (delay = NOTCH_HOVER_CLOSE_DELAY_MS): void => {
+    if (notchHoverGraceRef.current) clearTimeout(notchHoverGraceRef.current)
+    notchHoverGraceRef.current = window.setTimeout(() => {
+      notchHoverGraceRef.current = 0
+      if (notchPinnedRef.current || notchStateRef.current !== 'panel') return
+      if (notchOverRef.current || overChassisRef.current) return
+      const holdRemaining = notchHoldUntilRef.current - performance.now()
+      if (holdRemaining > 0) {
+        scheduleNotchHoverClose(Math.min(holdRemaining + NOTCH_HOVER_RESCHEDULE_PAD_MS, NOTCH_HOVER_OPEN_GRACE_MS))
+        return
+      }
+      applyNotchState('closed')
+      setNotchInteractive(false)
+    }, delay)
+  }
+  const setChassisHover = (on: boolean): void => {
+    overChassisRef.current = on
+    if (on) {
+      if (notchHoverGraceRef.current) {
+        clearTimeout(notchHoverGraceRef.current)
+        notchHoverGraceRef.current = 0
+      }
+      if (notchStateRef.current === 'panel') {
+        notchHoldUntilRef.current = performance.now() + NOTCH_CHASSIS_KEEPALIVE_MS
+        setNotchInteractive(true)
+      }
+    } else {
+      scheduleNotchHoverClose()
+    }
+  }
   // ⌥Space TOGGLE (item 2): ⌥Space simply shows/hides the dynamic island in the new-session state. closed → panel
   // (new-session, PINNED open, prompt focused); anything shown → closed (hide). A pure toggle, no staircase.
   const notchToggleAtRef = useRef(0)
@@ -161,20 +195,14 @@ export default function App(): JSX.Element {
             clearTimeout(notchHoverGraceRef.current)
             notchHoverGraceRef.current = 0
           }
+          notchHoldUntilRef.current = performance.now() + NOTCH_HOVER_OPEN_GRACE_MS
           if (notchStateRef.current === 'closed') {
             setIslandInitialView('home') // hover always shows the widget home grid (no keybind opens home)
             applyNotchState('panel')
           }
           setNotchInteractive(true)
         } else {
-          if (notchHoverGraceRef.current) clearTimeout(notchHoverGraceRef.current)
-          notchHoverGraceRef.current = window.setTimeout(() => {
-            notchHoverGraceRef.current = 0
-            if (!notchOverRef.current && !overChassisRef.current && !notchPinnedRef.current && notchStateRef.current === 'panel') {
-              applyNotchState('closed')
-              setNotchInteractive(false)
-            }
-          }, 200)
+          scheduleNotchHoverClose()
         }
       }),
     []
@@ -221,10 +249,18 @@ export default function App(): JSX.Element {
       const inPanel = !!pr && e.clientX >= pr.left && e.clientX <= pr.right && e.clientY >= pr.top && e.clientY <= pr.bottom
       overChassisRef.current = inPanel
       const want = overHandle || notchOverRef.current || (st === 'panel' && inPanel)
+      if (want && notchHoverGraceRef.current) {
+        clearTimeout(notchHoverGraceRef.current)
+        notchHoverGraceRef.current = 0
+      }
       if ((overHandle || notchOverRef.current) && st === 'closed') {
         setIslandInitialView('home') // hover always shows the widget home grid (no keybind opens home)
         applyNotchState('panel')
-      } else if (st === 'panel' && !want) applyNotchState('closed')
+      } else if (st === 'panel' && !want) {
+        scheduleNotchHoverClose(120)
+        setNotchInteractive(true)
+        return
+      }
       setNotchInteractive(want)
     }
     window.addEventListener('mousemove', onMove, true)
@@ -741,8 +777,9 @@ export default function App(): JSX.Element {
           <NotchHost
             menuBarH={notchMenuBarH}
             initialView={islandInitialView}
+            onChassisHoverChange={setChassisHover}
             onChassisResize={() => {
-              notchHoldUntilRef.current = performance.now() + 1000
+              notchHoldUntilRef.current = performance.now() + NOTCH_HOVER_OPEN_GRACE_MS
             }}
           />,
           document.body

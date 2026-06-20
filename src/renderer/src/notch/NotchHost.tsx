@@ -47,10 +47,12 @@ const mapThreads = (
 export function NotchHost({
   menuBarH,
   onChassisResize,
+  onChassisHoverChange,
   initialView = 'home'
 }: {
   menuBarH: number
   onChassisResize?: () => void
+  onChassisHoverChange?: (on: boolean) => void
   initialView?: 'home' | 'session' // the view to open into: 'home' (hover) or 'session' (⌥Space). Remounts per open.
 }): JSX.Element {
   // 'home' = the widget home screen (the grid); 'session' = a widget is open (today's agent chat/session UI).
@@ -197,7 +199,13 @@ export function NotchHost({
   const dataView = onHome ? 'home' : safePage === 0 ? 'session' : 'process'
   return (
     <div className="nhost" data-view={dataView}>
-      <div className={`nh-chassis${attachOpen && !onHome ? ' nh-wide' : ''}`} data-view={dataView}>
+      <div
+        className={`nh-chassis${attachOpen && !onHome ? ' nh-wide' : ''}`}
+        data-view={dataView}
+        onPointerEnter={() => onChassisHoverChange?.(true)}
+        onPointerMove={() => onChassisHoverChange?.(true)}
+        onPointerLeave={() => onChassisHoverChange?.(false)}
+      >
         {/* The HOME button (the only island chrome) + the Peek toggle live ONLY inside a widget; the home grid is bare. */}
         {!onHome && (
           <button type="button" className="nh-home-btn" onClick={() => setView('home')} title="Home" aria-label="Home">

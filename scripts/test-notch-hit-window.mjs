@@ -13,6 +13,7 @@ const overlay = readFileSync(join(repoRoot, 'src/main/notch-overlay.ts'), 'utf8'
 const index = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')
 const preload = readFileSync(join(repoRoot, 'src/preload/index.ts'), 'utf8')
 const app = readFileSync(join(repoRoot, 'src/renderer/src/App.tsx'), 'utf8')
+const notchHost = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHost.tsx'), 'utf8')
 const css = readFileSync(join(repoRoot, 'src/renderer/src/styles.css'), 'utf8')
 
 let failures = 0
@@ -55,6 +56,11 @@ ok('preload exposes the bridge: notch.click/hover (hit-window → main) + onHand
     /onHandleClick/.test(preload) && /onHandleHover/.test(preload))
 ok('renderer: hit-window CLICK → toggleNewSession (island panel; V1 has no canvas fullscreen), HOVER → open/close the panel',
   /onHandleClick\?\.\(\(\) => toggleNewSession\(\)\)/.test(app) && /onHandleHover\?\.\(\(on\) =>/.test(app))
+ok('renderer: hover-opened island has close hysteresis and the chassis keeps the overlay interactive for clicks',
+  /NOTCH_HOVER_OPEN_GRACE_MS/.test(app) && /scheduleNotchHoverClose/.test(app) && /onChassisHoverChange=\{setChassisHover\}/.test(app) &&
+    /onPointerEnter=\{\(\) => onChassisHoverChange\?\.\(true\)\}/.test(notchHost) &&
+    /onPointerMove=\{\(\) => onChassisHoverChange\?\.\(true\)\}/.test(notchHost) &&
+    /onPointerLeave=\{\(\) => onChassisHoverChange\?\.\(false\)\}/.test(notchHost))
 ok('renderer: the visual pill uses the REAL notch width + is gated on a real notch (no notch → no band, ⌥Space only)',
   /style=\{\{ width: notchWidth/.test(app) && /notchOn && hasNotch &&/.test(app) &&
     /notchClipFor\(notchState[\s\S]*?notchWidth\)/.test(app))
