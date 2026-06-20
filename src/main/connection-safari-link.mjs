@@ -86,7 +86,12 @@ export function makeSafariLink({ connectionOps } = {}) {
     const existing = refToConn.get(String(tabId))
     if (existing && typeof connectionOps.connectionIsLive === 'function' && connectionOps.connectionIsLive(existing)) {
       const info = connectionOps.connectionInfo(existing)
-      if (info) return { ...info, tab: { tabId } }
+      if (info) {
+        // re-attaching an already-live Safari tab from a (possibly different) chat → transfer ownership so it lists
+        // in THIS chat's dropbox + wakes this chat's agent, instead of staying owned by the first chat and vanishing.
+        if (typeof connectionOps.connectionSetOwner === 'function') connectionOps.connectionSetOwner(existing, opts.agentId)
+        return { ...info, tab: { tabId } }
+      }
     }
     const got = await doJS('(function(){return JSON.stringify({url:location.href,title:document.title})})()', ref.w, ref.t)
     if (got.error) return got

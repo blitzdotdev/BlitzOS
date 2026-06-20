@@ -27,6 +27,9 @@ const NOTCH_HOVER_OPEN_GRACE_MS = 220
 const NOTCH_HOVER_CLOSE_DELAY_MS = 90
 const NOTCH_HOVER_RESCHEDULE_PAD_MS = 30
 const NOTCH_CHASSIS_KEEPALIVE_MS = 180
+// Turning the attach panel OFF holds the island open this long even if the cursor has already left it, so closing
+// attach never yanks the island shut under the user. DO NOT REMOVE this heuristic (pinned in agent-os/CLAUDE.md).
+const NOTCH_ATTACH_CLOSE_HOLD_MS = 1500
 
 function systemTheme(): ThemeMode {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
@@ -163,8 +166,12 @@ export default function App(): JSX.Element {
         notchHoverGraceRef.current = 0
       }
       setNotchInteractive(true)
-    } else if (!overChassisRef.current && !notchOverRef.current && !notchPinnedRef.current) {
-      scheduleNotchHoverClose()
+    } else {
+      // Heuristic (DO NOT REMOVE — pinned in agent-os/CLAUDE.md): turning attach OFF holds the island open for
+      // ~1.5s even if the cursor has already left it, so collapsing the attach panel never yanks the island shut
+      // under the user. notchHoldUntilRef defers the hover auto-close (scheduleNotchHoverClose respects it).
+      notchHoldUntilRef.current = performance.now() + NOTCH_ATTACH_CLOSE_HOLD_MS
+      if (!overChassisRef.current && !notchOverRef.current && !notchPinnedRef.current) scheduleNotchHoverClose()
     }
   }
   // ⌥Space TOGGLE: the generic "show/hide the dynamic island" keybind. closed → panel (PINNED open, RESTORED to the
@@ -257,25 +264,10 @@ export default function App(): JSX.Element {
     if (!notchOn) return
     const onMove = (e: MouseEvent): void => {
       const st = notchStateRef.current
-      // A PINNED panel (opened via ⌥Space) stays open regardless of the mouse and keeps the window interactive,
-      // so the user can move the cursor away and still type. Only HOVER-opened panels follow the mouse below.
-      if (st === 'panel' && notchPinnedRef.current) {
-        setNotchInteractive(true)
-        return
-      }
-      // Grace after a chassis RESIZE (attach panel / peek toggled): the island just changed size and may have
-      // shrunk out from under the cursor, so a plain hover test would read "not over it" and hide the whole
-      // island. Hold it open + interactive during the grace window (NotchHost stamps notchHoldUntilRef on resize).
-      // Skip while the attach picker is open — there the want-based logic governs interactivity (click-through off
-      // the chassis so the Dock/other apps stay clickable), and the island never retracts anyway.
-      if (st === 'panel' && !notchAttachOpenRef.current && performance.now() < notchHoldUntilRef.current) {
-        setNotchInteractive(true)
-        return
-      }
       const r = notchHandleRef.current?.getBoundingClientRect()
       const overHandle = !!r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
-      // The shown panel is the NotchHost portal (the .nh-chassis shell) — measure ITS real rect so a hover-opened
-      // panel stays open while the cursor is anywhere over it (its size varies per view).
+      // The shown panel is the NotchHost portal (the .nh-chassis shell) — measure ITS real rect (+ a small slop and a
+      // DOM hit-test) so a hover-opened panel stays open while the cursor is anywhere over it (its size varies).
       const panelEl = document.querySelector('.nh-chassis') as HTMLElement | null
       const pr = panelEl?.getBoundingClientRect()
       const panelHitSlop = 10
@@ -289,24 +281,24 @@ export default function App(): JSX.Element {
       const inPanelDom = !!hitEl?.closest?.('.nh-chassis')
       const inPanel = inPanelRect || inPanelDom
       overChassisRef.current = inPanel
+      // OVER THE ISLAND = over the physical notch handle/notch, or over the open chassis. This ALONE drives
+      // click-through: ONLY the island's own pixels capture the mouse, so the rest of the full-display overlay stays
+      // click-through and the rest of macOS is clickable everywhere else — even while the island is PINNED open
+      // (⌥Space) or the attach panel is up. "Keep open" (pin / attach / grace) is a VISIBILITY decision, fully
+      // decoupled from capture below; nothing ever forces the whole window interactive off the island.
       const want = overHandle || notchOverRef.current || (st === 'panel' && inPanel)
       if (want && notchHoverGraceRef.current) {
         clearTimeout(notchHoverGraceRef.current)
         notchHoverGraceRef.current = 0
       }
       if ((overHandle || notchOverRef.current) && st === 'closed') {
-        applyNotchState('panel') // restores the LAST view+tab, not always Home
+        applyNotchState('panel') // hovering the notch opens the panel (restores the LAST view+tab, not always Home)
       } else if (st === 'panel' && !want) {
-        // Attach panel (the window picker) open: NEVER retract, and go CLICK-THROUGH so clicks reach the Dock /
-        // menu bar / other apps. The glow + drag run on the helper's HID event tap, independent of this overlay's
-        // click-through, so picking keeps working while the island stays open.
-        if (notchAttachOpenRef.current) {
-          setNotchInteractive(false)
-          return
-        }
-        scheduleNotchHoverClose(120)
-        setNotchInteractive(true)
-        return
+        // The cursor left the island. RETRACT only if nothing is holding it open: a ⌥Space pin, the attach panel, or
+        // the post-resize / attach-close grace window. A held panel stays VISIBLE but still goes click-through
+        // (setNotchInteractive(want) below), so the Dock / menu bar / other apps stay clickable off the island.
+        const heldOpen = notchPinnedRef.current || notchAttachOpenRef.current || performance.now() < notchHoldUntilRef.current
+        if (!heldOpen) scheduleNotchHoverClose(120)
       }
       setNotchInteractive(want)
     }

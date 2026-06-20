@@ -75,6 +75,9 @@ export interface ConnectionOps {
   connectionList(forAgent?: string): { connections: ConnectionInfo[] }
   /** Reassign every source owned by `fromAgent` (default '') to `toAgent`; returns what moved (for the spawn brief). */
   connectionReassign(toAgent: string, fromAgent?: string): Array<{ connId: string; type: string; sourceId: string; title: string }>
+  /** Transfer ONE connection to a chat (the dedup re-attach path: a re-attached live source follows to the chat
+   *  now attaching it, so it lists under THIS chat instead of vanishing). Last attacher wins; wakes the new owner. */
+  connectionSetOwner(connId: string, agentId?: string): { ok?: boolean; changed?: boolean; error?: string }
   connectionRead(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>
   connectionAct(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>
   connectionRunJs(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>

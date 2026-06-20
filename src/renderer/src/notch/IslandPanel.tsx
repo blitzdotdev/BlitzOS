@@ -82,31 +82,76 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const closedHeightRef = useRef<number | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [detailRows, setDetailRows] = useState<Array<{ label: string }>>([])
-  // The sources attached to THIS chat (its owned connections) → chips on the latest user message, like a standard
-  // chat where what you attached rides the message. Derived from the chat's live connections (re-fetched after a
-  // send / attach toggle), not a frozen per-message snapshot — the connections persist; the agent has them.
-  const [attachments, setAttachments] = useState<Array<{ connId: string; type: string; title: string }>>([])
+  // Attachment chips ride the message they were SENT with, and ONLY that one. A source stays connected so the agent
+  // can keep using it, so the LIVE connection list can't tell us which message it belongs to — pinning the live list
+  // to the latest user message re-shows it above every later message (the bug). Instead: at SEND, snapshot the
+  // sources NEWLY attached since the last send (connIds not shown yet) and pin them to that user message's ordinal,
+  // so each chip appears exactly once. Keyed per chat (activeId) so switching tabs doesn't mix or lose them.
+  // (Session-local: a fresh reopen won't reconstruct chips for past messages — there's no persisted per-message
+  // attachment record, and re-deriving from the live connections is exactly the bug being fixed.)
+  type AttachChip = { connId: string; type: string; title: string }
+  const [sentAtts, setSentAtts] = useState<Record<string, Record<number, AttachChip[]>>>({})
+  const shownConnRef = useRef<Record<string, Set<string>>>({})
+  const seenChatRef = useRef<Set<string>>(new Set())
+  const pendingNewSessionRef = useRef<AttachChip[] | null>(null)
+  const fetchChips = (chat: string): Promise<AttachChip[]> =>
+    Promise.resolve(window.agentOS?.connections?.list?.(chat))
+      .then((r) => {
+        const list = Array.isArray(r?.connections) ? (r.connections as Array<Record<string, unknown>>) : []
+        return list.map((c) => ({ connId: String(c.connId), type: String(c.type || 'tab'), title: String(c.title || c.sourceId || 'source') }))
+      })
+      .catch(() => [] as AttachChip[])
+  // First sight of a chat this session: baseline its already-live connections as "shown" (attached before now → they
+  // must NOT chip onto the next message), EXCEPT a freshly spawned agent inheriting what you attached on the
+  // new-session composer → pin those to its first message (ordinal 0).
   useEffect(() => {
-    if (!activeId) {
-      setAttachments([])
+    if (!activeId) return
+    const chat = activeId
+    if (seenChatRef.current.has(chat)) return
+    seenChatRef.current.add(chat)
+    const pending = pendingNewSessionRef.current
+    pendingNewSessionRef.current = null
+    void fetchChips(chat).then((live) => {
+      const shown = (shownConnRef.current[chat] ||= new Set())
+      const pend = pending && pending.length ? live.filter((c) => pending.some((p) => p.connId === c.connId)) : []
+      if (pend.length) setSentAtts((prev) => ({ ...prev, [chat]: { ...(prev[chat] || {}), 0: pend } }))
+      live.forEach((c) => shown.add(c.connId)) // baseline the rest (+ the pinned ones) so each shows only once
+    })
+  }, [activeId])
+  const recordSentAttachments = (): void => {
+    if (!activeId) return
+    const chat = activeId
+    const ord = messages.reduce((n, m) => n + (m.role === 'user' ? 1 : 0), 0) // ordinal of the user msg being sent
+    void fetchChips(chat).then((all) => {
+      const shown = (shownConnRef.current[chat] ||= new Set())
+      const fresh = all.filter((c) => !shown.has(c.connId))
+      if (!fresh.length) return
+      fresh.forEach((c) => shown.add(c.connId))
+      setSentAtts((prev) => ({ ...prev, [chat]: { ...(prev[chat] || {}), [ord]: fresh } }))
+    })
+  }
+  const handleSend = (text: string): void => {
+    if (activeId) {
+      recordSentAttachments()
+      onSend(text)
       return
     }
-    let live = true
-    window.agentOS?.connections
-      ?.list?.(activeId)
-      .then((r) => {
-        if (!live) return
-        const list = Array.isArray(r?.connections) ? (r.connections as Array<Record<string, unknown>>) : []
-        setAttachments(list.map((c) => ({ connId: String(c.connId), type: String(c.type || 'tab'), title: String(c.title || c.sourceId || 'source') })))
+    // new-session composer: capture the pre-spawn sources (owner '') BEFORE the spawn reassigns them away, so the
+    // spawned agent's first message shows them. Delay the spawn by one (in-process) list call to win that race.
+    void fetchChips('')
+      .then((fresh) => {
+        if (fresh.length) pendingNewSessionRef.current = fresh
       })
-      .catch(() => {
-        /* best-effort */
-      })
-    return () => {
-      live = false
-    }
-  }, [activeId, messages.length, attachOpen])
-  const lastUserIdx = messages.map((m) => m.role).lastIndexOf('user') // chips ride the most recent user message
+      .finally(() => onSend(text))
+  }
+  // chips per transcript index: the snapshot pinned to each user message's ordinal (undefined elsewhere).
+  const chatAtts = (activeId && sentAtts[activeId]) || {}
+  let userOrdinal = -1
+  const chipsByIndex = messages.map((m) => {
+    if (m.role !== 'user') return undefined
+    userOrdinal++
+    return chatAtts[userOrdinal]
+  })
   // Brandon's tab-rename state ("Rename agent tabs from notch").
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
@@ -224,7 +269,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
         <ChatInput
           className="isl-bar"
           placeholder={placeholder}
-          onSend={onSend}
+          onSend={handleSend}
           autoFocus={autoFocus}
           maxHeight={maxHeight}
           sendLabel="↑"
@@ -445,9 +490,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                 if (isSubmittedAskAnswer) return null
                 return (
                   <Fragment key={`${i}:${m.ts || ''}`}>
-                    {i === lastUserIdx && attachments.length > 0 && (
+                    {chipsByIndex[i] && chipsByIndex[i]!.length > 0 && (
                       <div className="isl-msg-attach">
-                        {attachments.map((a) => (
+                        {chipsByIndex[i]!.map((a) => (
                           <span key={a.connId} className="isl-attach-chip" data-type={a.type} title={a.title}>
                             <span className="isl-attach-chip-glyph" aria-hidden>
                               {a.type === 'window' ? '▢' : '◐'}
