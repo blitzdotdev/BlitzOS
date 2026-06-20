@@ -11,24 +11,6 @@
 // localhost is trusted; relay + server are untrusted (gate page content to surfaces the user shared).
 import { listWidgets, getWidgetSource, saveWidget, widgetAuthoringMd } from './widget-catalog.mjs'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
-// Home-grid geometry (plans/blitzos-single-canvas-navigation.md): the single bounded region ("home")
-// on the infinite canvas, and the park band just below it where off-home work surfaces land.
-import { homeRect, parkBandRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
-// Home slot lattice: the SAME pure placer the renderer uses, so an agent placement and a human
-// drag-snap can never disagree about what is free.
-import { latticeFor, cardRect, findSlot, budgetUsed, gridSummary, sizeForDims, spanOf, HOME_BUDGET } from '../renderer/src/stage-core.mjs'
-
-// OFF-SCREEN = the open infinite canvas OUTSIDE home (the single bounded region the user's scale-1
-// frame shows). There is no separate hidden pool: a work surface parks below home, naturally off-screen
-// at scale 1 and revealed when the user zooms out. Computed geometrically — a surface is off-screen iff
-// it has no slot and its CENTER falls outside the home rect.
-function isOffstage(s, vp) {
-  if (!s || s.slot) return false
-  const r = homeRect(vp || DEFAULT_VP)
-  const cx = (Number(s.x) || 0) + (Number(s.w) || 0) / 2
-  const cy = (Number(s.y) || 0) + (Number(s.h) || 0) / 2
-  return cx < r.x || cx >= r.x + r.w || cy < r.y || cy >= r.y + r.h
-}
 
 function parse(body) {
   try {
@@ -104,32 +86,23 @@ function instrument(t) {
   }
 }
 
-// The agent-facing view of desktop state — layout fields ONLY (master's contract): an INDEX, not the
-// content. srcdoc `html` and `props` are omitted (bloat; chat/activity props hold the full transcript).
-// To VERIFY a specific widget's data landed (a srcdoc iframe can't be read_window'd), use the targeted
-// `get_surface {id}` tool — pull one surface's props on demand instead of pushing everyone's every call.
-// ONE definition so every transport (and the widget list_state tool) returns the IDENTICAL shape.
+// The agent-facing view of state — surface essentials ONLY: an INDEX, not the content. srcdoc `html`
+// and `props` are omitted (bloat; chat/activity props hold the full transcript). To VERIFY a specific
+// widget's data landed (a srcdoc iframe can't be read_window'd), use the targeted `get_surface {id}`
+// tool. ONE definition so every transport (and the widget list_state tool) returns the IDENTICAL shape.
 export function serializeStateForAgent(state) {
   const s = state || {}
-  // WHITELIST (never spread `...s`): live state carries internal bookkeeping the agent must not see
-  // (it once leaked stage indices). Project exactly the agent-facing fields, no more.
+  // WHITELIST (never spread `...s`): live state carries internal bookkeeping the agent must not see.
+  // Project exactly the agent-facing fields, no more.
   return {
-    viewport: s.viewport,
-    view: s.view,
-    camera: s.camera,
-    mode: s.mode,
     workspace: s.workspace,
     workspace_path: s.workspace_path,
     surfaces: (s.surfaces || []).map((x) => {
       const out = {
-        id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
+        id: x.id, kind: x.kind, title: x.title, url: x.url, component: x.component,
         // A web surface is a BROWSER WINDOW: url/title above are its ACTIVE tab's; `tabs` lists all
         // of them. update_surface{url} / read_window / surface_control act on the active tab.
         ...(x.kind === 'web' && Array.isArray(x.tabs) && x.tabs.length ? { tabs: x.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url })), activeTab: x.activeTab || 0 } : {}),
-        // Home desktop: a slotted surface is ON home; off-screen = parked on the open canvas below home.
-        ...(x.slot ? { slot: x.slot } : {}),
-        ...(isOffstage(x, s.viewport) ? { offstage: true } : {}),
-        ...(x.focus ? { focus: true } : {}),
         // jsx/tsx widgets advertise their lang; a compile/runtime failure surfaces as lastError
         // (the confirm-a-drive read: fix the source, update_surface, re-check).
         ...(x.lang && x.lang !== 'html' ? { lang: x.lang } : {}),
@@ -140,11 +113,7 @@ export function serializeStateForAgent(state) {
       if (x.agentId != null) out.agentId = x.agentId
       if (x.component === 'terminal') out.terminals = (x.tabs || []).map((t) => ({ id: t.terminalId, title: t.title }))
       return out
-    }),
-    // The user's desktop at a glance: the home slot grid, what's tiled, the attention budget, and the
-    // off-screen pool (work parked on the canvas below home) — reason in slots, never pixels.
-    grid: gridSummary(s.surfaces || [], s.viewport),
-    offstage: (s.surfaces || []).filter((x) => isOffstage(x, s.viewport)).map((x) => ({ id: x.id, kind: x.kind, title: x.title, url: x.url }))
+    })
   }
 }
 
@@ -159,7 +128,7 @@ export function serializeSurfaceForAgent(state, id) {
   }
   return {
     surface: {
-      id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, z: x.z, zoom: x.zoom, title: x.title, url: x.url, component: x.component, pinned: x.pinned,
+      id: x.id, kind: x.kind, title: x.title, url: x.url, component: x.component,
       ...(x.kind === 'web' && Array.isArray(x.tabs) && x.tabs.length ? { tabs: x.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url })), activeTab: x.activeTab || 0 } : {}),
       ...(x.props ? { props: x.props } : {})
     }
@@ -194,33 +163,6 @@ async function provisionBlitzApp(slug) {
  *   customizeWidget(name,html,agentId?,lang?)->{ok,rel}, systemUi(name)->html|null, systemUiInfo(name)->{source,lang}|null, groupIntoFolder(name,ids,x,y,kind)->{ok,...} }
  */
 export function makeOsTools(ops) {
-  // Home placement (shared by place_widget / bring_home / auto-placed creates): budget-check, find a
-  // free span on the home lattice, derive the tile's world rect. Returns either { slot, rect } or
-  // { full } (budget or space) with the occupants so the agent can evict.
-  const placeOnStage = (sizeArg, near, dims, pinned) => {
-    const st = ops.getState() || {}
-    const surfaces = st.surfaces || []
-    const size = typeof sizeArg === 'string' && sizeArg ? sizeArg.toLowerCase() : sizeForDims(dims?.w, dims?.h)
-    const sp = spanOf(size)
-    if (!pinned && budgetUsed(surfaces) + sp.c * sp.r > HOME_BUDGET) {
-      return { full: { error: 'home_full', reason: 'attention budget', ...gridSummary(surfaces, st.viewport) } }
-    }
-    const lat = latticeFor(st.viewport)
-    const slot = findSlot(surfaces, lat, size, near || null)
-    if (!slot) return { full: { error: 'home_full', reason: 'no free span for ' + size, ...gridSummary(surfaces, st.viewport) } }
-    return { slot: { col: slot.col, row: slot.row, size }, rect: cardRect(lat, slot.col, slot.row, size) }
-  }
-  // Park a work surface OFF-SCREEN: on the open canvas just below home — outside the user's scale-1
-  // frame, in plain view when they zoom out. Cascaded so parked windows fan out.
-  const parkOffstage = () => {
-    const st = ops.getState() || {}
-    const vp = st.viewport || DEFAULT_VP
-    const band = parkBandRect(vp)
-    const parked = (st.surfaces || []).filter(
-      (s) => s && !s.slot && s.y >= band.y && s.y < band.y + band.h && s.x + (s.w || 0) > band.x && s.x < band.x + band.w
-    ).length % 8
-    return { x: Math.round(band.x + 60 + parked * 64), y: Math.round(band.y + 24 + parked * 24) }
-  }
   return [
     {
       path: '/create_surface',
@@ -238,30 +180,10 @@ export function makeOsTools(ops) {
           const widgetError = nativeCatalogWidgetError(a.component)
           if (widgetError) return widgetError
         }
-        // Home desktop: web/app are WORK surfaces — born OFF-SCREEN (parked on the canvas below home),
-        // never on home uninvited; bring_home is the deliberate act that brings something to attention.
-        // srcdoc/native widgets auto-take a free slot (a created widget the user can't see is useless)
-        // and park off-screen when home is full — the reply says which.
-        let staged = null
-        let offstage = false
-        if (a.kind === 'web' || a.kind === 'app') {
-          if (a.x == null && a.y == null) Object.assign(a, parkOffstage())
-          offstage = true
-        } else if (!a.slot && !a.role && !a.pinned) {
-          const p = placeOnStage(a.size, a.near, { w: a.w, h: a.h }, false)
-          if (p.slot) {
-            a.slot = p.slot
-            staged = p.slot
-          } else {
-            Object.assign(a, parkOffstage())
-            offstage = true
-          }
-        }
         const id = ops.createSurface(a)
         const ctx = ops.workspaceContext()
         return {
           id,
-          ...(staged ? { slot: staged } : offstage ? { offstage: true, hint: a.kind === 'web' || a.kind === 'app' ? 'parked on the canvas below home — bring_home {id} only when the user should SEE it' : 'home was full — parked below it; bring_home later or evict' } : {}),
           workspace: ctx.workspace,
           workspace_path: ctx.workspace_path,
           siblings: (ctx.siblings || []).filter((s) => s.id !== id).map((s) => s.title)
@@ -276,90 +198,7 @@ export function makeOsTools(ops) {
       handler: ({ body }) => {
         const a = parse(body)
         if (typeof a.url !== 'string') return { status: 400, body: { error: 'url required' } }
-        Object.assign(a, parkOffstage()) // work surface: off-screen, on the open canvas below home
-        return { id: ops.openWindow(a), offstage: true }
-      }
-    },
-    {
-      path: '/place_widget',
-      description:
-        "Put a widget on the user's desktop (HOME — a slot grid that never overlaps and never reflows). You pick a SIZE + optional position HINT; the OS picks the exact free slot — there is NO x/y. size: s (1x1 square) | m (2x1 wide) | l (2x2 big) | xl (4x2 hero) | tall (2x3, chat-shaped) | xxl (4x4 full-focus — alone it IS home). near: 'top-left'|'top-right'|'bottom-left'|'bottom-right'|'center' or another surface's id (lands adjacent). Pass an EXISTING surface id to bring it home, OR kind+html/component/props to create directly into the slot. Before creating from authored srcdoc/JSX/TSX source, self-review it against get_widget_authoring and fix obvious issues. Returns { id, slot } or { error:'home_full', tiles, budget } — then evict (send_offscreen) or queue. Home is the user's ATTENTION: one widget that lets them act beats N raw windows.",
-      input_schema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          size: { type: 'string', enum: ['s', 'm', 'l', 'xl', 'tall', 'xxl'] },
-          near: { type: 'string' },
-          kind: { type: 'string', enum: ['srcdoc', 'native', 'web', 'app'] },
-          html: { type: 'string' },
-          url: { type: 'string' },
-          component: { type: 'string' },
-          props: { type: 'object' },
-          title: { type: 'string' }
-        }
-      },
-      handler: ({ body }) => {
-        const a = parse(body)
-        const st = ops.getState() || {}
-        if (a.id) {
-          const cur = (st.surfaces || []).find((s) => s && s.id === String(a.id))
-          if (!cur) return { status: 404, body: { error: `no surface ${a.id}` } }
-          const p = placeOnStage(a.size, a.near, { w: cur.w, h: cur.h }, !!cur.pinned)
-          if (p.full) return { status: 409, body: p.full }
-          const r = ops.updateSurface(String(a.id), { slot: p.slot, focus: null, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h })
-          return r && r.ok === false ? { status: 404, body: { error: r.error } } : { id: String(a.id), slot: p.slot }
-        }
-        if (!a.kind) return { status: 400, body: { error: 'pass an existing id, or kind(+html/component/url) to create into the slot' } }
-        if (a.kind === 'native') {
-          const widgetError = nativeCatalogWidgetError(a.component)
-          if (widgetError) return widgetError
-        }
-        const p = placeOnStage(a.size, a.near, { w: a.w, h: a.h }, false)
-        if (p.full) return { status: 409, body: p.full }
-        const id = ops.createSurface({ kind: a.kind, html: a.html, url: a.url, component: a.component, props: a.props, title: a.title, slot: p.slot, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h })
-        return { id, slot: p.slot }
-      }
-    },
-    {
-      path: '/bring_home',
-      description:
-        "Bring an off-screen surface HOME onto the user's desktop, into a free slot (size defaults to fit; same slot system as place_widget). The deliberate act of asking for the user's attention — do it when they should SEE or ACT on the surface, not for every working window. Args: {id, size?, near?}. Returns { id, slot } or home_full.",
-      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, size: { type: 'string', enum: ['s', 'm', 'l', 'xl', 'tall', 'xxl'] }, near: { type: 'string' } } },
-      handler: ({ body }) => {
-        const a = parse(body)
-        const st = ops.getState() || {}
-        const cur = (st.surfaces || []).find((s) => s && s.id === String(a.id))
-        if (!cur) return { status: 404, body: { error: `no surface ${a.id}` } }
-        const p = placeOnStage(a.size, a.near, { w: cur.w, h: cur.h }, !!cur.pinned)
-        if (p.full) return { status: 409, body: p.full }
-        const r = ops.updateSurface(String(a.id), { slot: p.slot, focus: null, x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h })
-        return r && r.ok === false ? { status: 404, body: { error: r.error } } : { id: String(a.id), slot: p.slot }
-      }
-    },
-    {
-      path: '/send_offscreen',
-      description:
-        "Move a surface OFF-SCREEN: it parks on the open canvas just below the user's home frame (still alive — keep driving it; they see it when they zoom out; bring_home returns it). Use to free home's attention budget or tidy after a task. Args: {id}.",
-      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
-      handler: ({ body }) => {
-        const a = parse(body)
-        const st = ops.getState() || {}
-        const cur = (st.surfaces || []).find((s) => s && s.id === String(a.id))
-        if (!cur) return { status: 404, body: { error: `no surface ${a.id}` } }
-        const r = ops.updateSurface(String(a.id), { slot: null, focus: null, ...parkOffstage() })
-        return r && r.ok === false ? { status: 404, body: { error: r.error } } : { ok: true, offstage: true }
-      }
-    },
-    {
-      path: '/move_surface',
-      description:
-        'Move a surface to (x, y) world pixels. If the id lives in ANOTHER workspace, this BRINGS it into the active one and places it (keeping its id) — use it to pull just that one window here; switch_workspace instead when you want its whole desktop.',
-      input_schema: { type: 'object', required: ['id', 'x', 'y'], properties: { id: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } },
-      handler: ({ body }) => {
-        const a = parse(body)
-        // 2C: ops return {ok:false,error} for an unknown id — surface it as a real error, not a silent ok.
-        const r = ops.moveSurface(String(a.id), Number(a.x), Number(a.y))
-        return r && r.ok === false ? { status: 404, body: { error: r.error } } : { ok: true }
+        return { id: ops.openWindow(a) }
       }
     },
     {
@@ -380,14 +219,6 @@ export function makeOsTools(ops) {
       handler: ({ body }) => {
         const r = ops.closeSurface(String(parse(body).id))
         return r && r.ok === false ? { status: 404, body: { error: r.error } } : { ok: true }
-      }
-    },
-    {
-      path: '/go_to_primary',
-      description: 'Fly to home — recenter the view on the home frame of the active workspace.',
-      handler: () => {
-        ops.goToPrimary()
-        return { ok: true }
       }
     },
     {
@@ -417,33 +248,6 @@ export function makeOsTools(ops) {
         if (!a.id) return { status: 400, body: { error: 'id required' } }
         const r = serializeSurfaceForAgent(ops.getState(), String(a.id))
         return r.error ? { status: 404, body: r } : r
-      }
-    },
-    {
-      path: '/list_workspaces',
-      description:
-        "List the user's workspaces (separate persistent desktops; each folder = its own memory). Returns { workspaces:[{name,nodeCount,updatedAt,path}], active, activePath, root }. CALL FIRST to decide WHERE work belongs: a workspace with UNRELATED surfaces isn't a continuation → create_workspace + switch_workspace. activePath = the folder you author into.",
-      handler: () => ops.listWorkspaces()
-    },
-    {
-      path: '/create_workspace',
-      description: 'Create a NEW empty workspace (a fresh desktop) for an UNRELATED task, so you do not pile it onto whatever the user already has open. Returns { ok, name }. Follow with switch_workspace to move the user there.',
-      input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-      handler: ({ body }) => {
-        const name = String(parse(body).name || '').trim()
-        if (!name) return { status: 400, body: { error: 'name required' } }
-        return ops.createWorkspace(name)
-      }
-    },
-    {
-      path: '/switch_workspace',
-      description: 'Move the user to a workspace by name (their canvas swaps to that desktop). Use right after create_workspace to take them to the fresh space for a new task; the user can switch back themselves anytime. Returns { ok, active }.',
-      input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-      handler: async ({ body }) => {
-        const name = String(parse(body).name || '').trim()
-        if (!name) return { status: 400, body: { error: 'name required' } }
-        const r = await ops.switchWorkspace(name)
-        return r && r.ok ? { ok: true, active: r.active } : { status: 404, body: { error: (r && r.error) || 'switch failed' } }
       }
     },
     {
@@ -627,17 +431,6 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/customize_widget',
-      description:
-        "Rewrite a built-in OS widget's UI — currently {name:'chat'}. The default chat is a React/TSX hub, but html/jsx/tsx are supported; it live-reloads. Preserve required chat behavior: render sessions/threads/status, send with window.blitz.sendMessage(text, activeSessionId), create/rename/clear with window.blitz.chat(...), and keep markdown/images/blitz-ui card behavior if replacing it. Read the current source with get_system_ui first, self-review the replacement against get_widget_authoring, then customize. Args: {name, html, lang?:'html'|'jsx'|'tsx', agent?}. Chat customization is global to the hub.",
-      input_schema: { type: 'object', required: ['name', 'html'], properties: { name: { type: 'string' }, html: { type: 'string' }, lang: { type: 'string', enum: ['html', 'jsx', 'tsx'] }, agent: { type: 'string' } } },
-      handler: ({ body }) => {
-        const b = parse(body)
-        const r = ops.customizeWidget(String(b.name || ''), String(b.html || ''), b.agent != null ? String(b.agent) : '0', b.lang != null ? String(b.lang) : undefined)
-        return r.ok ? { ok: true, file: r.rel, lang: r.lang } : { status: 400, body: { error: r.error || 'failed' } }
-      }
-    },
-    {
       path: '/get_system_ui',
       description: "Read a built-in widget's current UI source before editing it (the fork pattern). Args: {name:'chat'}. Returns {html, source, lang, file}; html is kept for backward compatibility.",
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
@@ -696,15 +489,12 @@ export function makeOsTools(ops) {
           const w = getWidgetSource(view === 'kanban' ? 'wf-kanban' : 'wf-graph')
           if (w) {
             const desc = { kind: 'srcdoc', html: w.html, lang: w.lang && w.lang !== 'html' ? w.lang : 'jsx', props: { ...(w.props || {}), runId, transparent: true }, title: typeof a.title === 'string' ? a.title : 'Workflow' }
-            const p = placeOnStage('xl', a.near, {}, false)
-            if (p.slot) { desc.slot = p.slot; desc.x = p.rect.x; desc.y = p.rect.y; desc.w = p.rect.w; desc.h = p.rect.h }
-            else Object.assign(desc, parkOffstage())
             surfaceId = ops.createSurface(desc)
           }
         } catch { /* the live view is best-effort; the run still proceeds even if the widget can't mount */ }
         const r = await ops.runWorkflow({ file, args: a.args, runId, surfaceId, view, agentId: a.agent != null ? String(a.agent) : '0' })
         if (!r || r.ok === false) return { status: 500, body: { error: (r && r.error) || 'run failed to start', runId, surfaceId } }
-        return { ok: true, runId, surfaceId, note: `Live view is on the canvas. The result lands at .blitzos/workflows/${runId}/result.json on run:done.` }
+        return { ok: true, runId, surfaceId, note: `The result lands at .blitzos/workflows/${runId}/result.json on run:done.` }
       }
     },
     {

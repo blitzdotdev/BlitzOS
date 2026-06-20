@@ -1,14 +1,8 @@
-// Onboarding director (P1 — plans/onboarding-case-file.md): the DETERMINISTIC half of first-run.
-// No LLM anywhere in this file. It runs the local scan (scripts/onboarding-scan.mjs) as a child
-// process, streams its real progress to the boot screen, builds the "Case File" workspace, and
-// seeds the template board. WHAT goes on the board (cards, layout, props) is the pure planner in
-// onboarding-board.mjs — this file is the impure glue (scan child, surfaces, IPC, FDA poll). The
-// same surfaces double as the resident brain's (P2) medium: it reads .blitzos/onboarding/
-// {scan.json,board.json} and drives the SAME ids via update_surface.
-//
-// FDA tutorial unlock: when Full Disk Access is off, the board gets a native 'unlock' card; we
-// poll the TCC probe (the app's own FDA, which the scan child inherits), and on grant re-scan and
-// visibly deepen the board (real focus time, Messages/Mail cadence), then retire the card.
+// Onboarding director (V1, chat-only): the DETERMINISTIC half of first-run. No LLM anywhere in this
+// file. It runs the local scan (scripts/onboarding-scan.mjs) as a child process, streams its real
+// progress to the boot screen, creates + switches to the onboarding workspace, and hands off to the
+// primary chat agent (the interview boot task). There is NO seeded widget board in V1 — the scan's
+// context.md is the chat agent's primer; the whole flow happens in one agent chat.
 //
 import { app, ipcMain, shell, screen, BrowserWindow } from 'electron'
 import { execFileSync, execFile, spawn } from 'node:child_process'
@@ -20,34 +14,27 @@ const appRoot = (): string => app.getAppPath().replace(/app\.asar$/, 'app.asar.u
 import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { osCreateSurface, osUpdateSurface, osCloseSurface, osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osGetState, osKickBrain, osClearBrainContext } from './osActions'
+import { osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osKickBrain, osClearBrainContext } from './osActions'
 import { computerUseHelper } from './computer-use-helper'
-import { getWidgetSource } from './widget-catalog.mjs'
-import { buildBoardPlan, unlockCardProps, findUnlockSlot, BRANCH_A_LAYOUT } from './onboarding-board.mjs'
-import type { ScanJson, StagedSurface } from './onboarding-board.mjs'
 import { importGoogleSignin, importSources } from './browser-import'
 
-const WS_NAME = 'case-file'
-const POLL_MS = 3000
-
-interface BoardFile {
-  v: 1
-  seededAt: number
-  fdaAtSeed: boolean
-  ids: Record<string, string> // card role → surface id (stable across restarts; the brain reads this too)
-  unlockDismissed?: boolean
+// The scan child writes scan.json; the director only checks it produced output (its rich fields feed
+// the chat agent via context.md, not this file), so a loose shape is enough here.
+interface ScanJson {
+  meta: { fda: boolean; [k: string]: unknown }
+  [k: string]: unknown
 }
+
+const WS_NAME = 'case-file'
 
 let mainWindow: (() => BrowserWindow | null) | null = null
 let starting = false
-let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const send = (channel: string, payload: unknown): void => {
   const win = mainWindow?.()
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
 }
 const progress = (p: Record<string, unknown>): void => send('onboarding:progress', p)
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 // Same probe as the scan's hasFDA(): can THIS process read a TCC-protected file? In main it tests
 // the app's own grant — exactly the entity the scan child (ELECTRON_RUN_AS_NODE) inherits.
@@ -466,97 +453,6 @@ async function runScan(wsPath: string): Promise<ScanJson | null> {
   })
 }
 
-// ---- board assembly ---------------------------------------------------------------------------
-function readBoard(wsPath: string): BoardFile | null {
-  try {
-    return JSON.parse(readFileSync(join(onboardingDir(wsPath), 'board.json'), 'utf8')) as BoardFile
-  } catch {
-    return null
-  }
-}
-function writeBoard(wsPath: string, board: BoardFile): void {
-  mkdirSync(onboardingDir(wsPath), { recursive: true })
-  writeFileSync(join(onboardingDir(wsPath), 'board.json'), JSON.stringify(board, null, 2))
-}
-
-/** Live surfaces + viewport for lattice occupancy (the pinned chat hub already holds a span).
- *  Viewport falls back to the real window content size — planning against DEFAULT_VP when the
- *  renderer hasn't pushed yet would place slots on a lattice BIGGER than the real one (observed:
- *  out-of-bounds rows rendering as a pile). */
-function liveStage(): { surfaces: StagedSurface[]; viewport: { w: number; h: number } | null } {
-  const st = osGetState() as { surfaces?: StagedSurface[]; viewport?: { w: number; h: number } }
-  let viewport = st.viewport || null
-  if (!viewport) {
-    const win = mainWindow?.()
-    if (win && !win.isDestroyed()) {
-      const b = win.getContentBounds()
-      viewport = { w: b.width, h: b.height }
-    }
-  }
-  return { surfaces: st.surfaces || [], viewport }
-}
-
-/** Re-ensure path (cached board): slot the unlock card against the LIVE lattice; a full home lattice
- *  degrades to a free-floating window (floats above tiles, never overlaps them). */
-function spawnUnlockCard(): string {
-  const live = liveStage()
-  const at = findUnlockSlot(live.surfaces, live.viewport)
-  return osCreateSurface({ kind: 'native', component: 'unlock', title: 'Unlock the personal layer', ...(at || {}), props: unlockCardProps(fdaAppName()) })
-}
-
-async function seedBoard(wsPath: string, scan: ScanJson): Promise<BoardFile> {
-  const board: BoardFile = { v: 1, seededAt: Date.now(), fdaAtSeed: scan.meta.fda, ids: {} }
-  // Branch A (FDA granted) seeds the user's hand-tuned fixed layout; Branch B keeps adaptive placement
-  // (it gets its own hand-tuned layout once captured).
-  const branchA = !!(scan.meta && scan.meta.fda)
-  const plan = buildBoardPlan(scan, { ...liveStage(), layout: branchA ? BRANCH_A_LAYOUT : null })
-  progress({ phase: 'seeding', cards: plan.length })
-  for (const card of plan) {
-    // home cards carry slot (tiles on the home lattice); parked ones carry x/y/w/h below the home frame
-    const place = card.slot ? { slot: card.slot } : { x: card.x, y: card.y, w: card.w, h: card.h }
-    if (card.native === 'unlock') {
-      board.ids.unlock = osCreateSurface({ kind: 'native', component: 'unlock', title: card.title, ...place, props: unlockCardProps(fdaAppName()) })
-    } else {
-      const widget = getWidgetSource(card.widget as string)
-      if (!widget) continue
-      board.ids[card.role] = osCreateSurface({ kind: 'srcdoc', html: widget.html, title: card.title, ...place, props: card.props })
-    }
-    await sleep(170) // staggered assembly — the human watches the board build
-  }
-  // Branch A: tile the pinned chat hub into its hand-tuned slot (xxl, top-left) so it is EMBEDDED, not
-  // free-float covering cards. Persists via the runtime-panel slot (workspace.mjs) so it stays put.
-  if (branchA && BRANCH_A_LAYOUT.chat) osUpdateSurface('chat', { slot: BRANCH_A_LAYOUT.chat })
-  // If they brought their browser in, open it at home with their captured tabs (lazy-restored) —
-  // signed-in (if they imported the Google sign-in), so the first thing they see feels like home.
-  const browserId = openWorkingSetBrowser()
-  if (browserId) board.ids.browser = browserId
-  writeBoard(wsPath, board)
-  osGoToPrimary()
-  progress({ phase: 'board-ready', fda: scan.meta.fda })
-  return board
-}
-
-/** Open ONE browser surface at home holding every captured open tab (the pre-board working set),
- *  as a tab strip. The host lazy-restores: only the active tab loads, the rest load on click. Returns
- *  the surface id, or null when no tabs were captured (the browser step was skipped). */
-function openWorkingSetBrowser(): string | null {
-  let snap: { windows?: { tabs?: { title?: string; url?: string }[] }[] } | null = null
-  try { snap = JSON.parse(readFileSync(preboardTabsPath(), 'utf8')) } catch { return null }
-  const seen = new Set<string>()
-  const tabs: { id: string; title: string; url: string }[] = []
-  for (const w of snap?.windows || []) {
-    for (const t of w?.tabs || []) {
-      const url = String(t?.url || '')
-      if (!/^https?:/i.test(url) || seen.has(url)) continue
-      seen.add(url)
-      tabs.push({ id: `wt${tabs.length}`, title: String(t?.title || url).slice(0, 200), url })
-    }
-  }
-  if (!tabs.length) return null
-  // No explicit x/y: the store centers it at home. focus:true ⇒ frontmost.
-  return osCreateSurface({ kind: 'web', title: tabs[0].title, tabs, activeTab: 0, w: 1200, h: 780, focus: true })
-}
-
 // ---- the interview (P2): resident brain only --------------------------------------------------
 interface InterviewState {
   state: 'pending' | 'done'
@@ -733,10 +629,11 @@ function startInterviewPhase(wsPath: string): void {
   watchInterviewDone(wsPath)
 }
 
-// ---- FDA unlock: poll → rescan → deepen --------------------------------------------------------
+// ---- FDA effective grant -----------------------------------------------------------------------
 // FDA now lives on the HELPER (it forces a quit-and-reopen, so it can't sit on BlitzOS). The effective
 // FDA = the helper's fullDisk when the helper is available, else BlitzOS's own (dev-inherited / the
-// legacy path). The scan reads files through whichever holds it.
+// legacy path). The scan reads files through whichever holds it. Surfaced to the renderer's preboard
+// via the onboarding:fda-status IPC.
 async function fdaGrantedEffective(): Promise<boolean> {
   if (computerUseHelper().available()) {
     const ok = await computerUseHelper().ensure()
@@ -744,56 +641,10 @@ async function fdaGrantedEffective(): Promise<boolean> {
   }
   return hasFDA()
 }
-function startFdaPoll(wsPath: string): void {
-  if (pollTimer) return
-  pollTimer = setInterval(() => {
-    const board = readBoard(wsPath)
-    if (!board || board.unlockDismissed) {
-      stopFdaPoll()
-      return
-    }
-    void fdaGrantedEffective().then((granted) => {
-      if (!granted || !pollTimer) return
-      stopFdaPoll()
-      void deepen(wsPath)
-    })
-  }, POLL_MS)
-}
-function stopFdaPoll(): void {
-  if (pollTimer) clearInterval(pollTimer)
-  pollTimer = null
-}
-
-/** FDA just landed: re-scan (Branch A+B now) and visibly deepen the board in place. */
-async function deepen(wsPath: string): Promise<void> {
-  const board = readBoard(wsPath)
-  if (!board) return
-  if (board.ids.unlock) osUpdateSurface(board.ids.unlock, { props: { state: 'scanning' } })
-  const scan = await runScan(wsPath)
-  if (!scan || !scan.meta.fda) {
-    // grant probe raced a revoke, or the rescan failed — restore the card and keep polling
-    if (board.ids.unlock) osUpdateSurface(board.ids.unlock, { props: { state: 'locked' } })
-    startFdaPoll(wsPath)
-    return
-  }
-  for (const card of buildBoardPlan(scan)) {
-    if (card.role === 'unlock') continue // its lifecycle is the granted→retire arc below
-    const id = board.ids[card.role]
-    if (id) osUpdateSurface(id, { props: card.props })
-  }
-  if (board.ids.unlock) {
-    const unlockId = board.ids.unlock
-    osUpdateSurface(unlockId, { props: { state: 'granted' } })
-    await sleep(2400)
-    osCloseSurface(unlockId)
-    delete board.ids.unlock
-  }
-  writeBoard(wsPath, board)
-  osSay('Full Disk Access granted. The personal layer is on the board: real screen time, Messages cadence, Mail correspondents, Safari.')
-  progress({ phase: 'deepened' })
-}
 
 // ---- entry ------------------------------------------------------------------------------------
+// V1 is chat-only: create + switch to the onboarding workspace, run the scan (its context.md primes
+// the chat agent), then hand off to the primary interview agent. No widget board is seeded.
 async function start(): Promise<{ ok: boolean; cached?: boolean }> {
   if (starting) return { ok: true }
   starting = true
@@ -806,27 +657,19 @@ async function start(): Promise<{ ok: boolean; cached?: boolean }> {
     }
     const wsPath = osWorkspaceContext().workspace_path
     ensureInterviewArtifacts(wsPath) // make the standing duty visible before any boot-resume of agent 0
-    const prior = readBoard(wsPath)
-    if (prior && Object.keys(prior.ids).length) {
-      // Board already seeded (a restart mid-onboarding, or dev re-run): don't re-scan or duplicate —
-      // surfaces are file-backed and just rehydrated with the workspace. Re-ensure the unlock card
-      // (native = runtime-only, it does not persist) and the poll, then hand straight to the canvas.
-      const fdaNow = await fdaGrantedEffective()
-      if (!fdaNow && !prior.unlockDismissed) {
-        prior.ids.unlock = spawnUnlockCard()
-        writeBoard(wsPath, prior)
-        startFdaPoll(wsPath)
-      }
+    // A restart mid-onboarding (the scan already ran): don't re-scan, just hand back to the canvas +
+    // resume the interview agent (or no-op when the interview is done).
+    if (existsSync(join(onboardingDir(wsPath), 'context.md'))) {
       osGoToPrimary()
-      progress({ phase: 'board-ready', cached: true, fda: fdaNow })
-      startInterviewPhase(wsPath) // resume a half-finished interview (or no-op when done)
+      progress({ phase: 'board-ready', cached: true, fda: await fdaGrantedEffective() })
+      startInterviewPhase(wsPath)
       return { ok: true, cached: true }
     }
     const scan = await runScan(wsPath)
     if (!scan) return { ok: false } // 'error' phase already sent — renderer degrades to plain desktop
-    const board = await seedBoard(wsPath, scan)
-    if (!scan.meta.fda && !board.unlockDismissed) startFdaPoll(wsPath)
-    startInterviewPhase(wsPath) // P2: the resident brain's first duty
+    osGoToPrimary()
+    progress({ phase: 'board-ready', fda: scan.meta.fda })
+    startInterviewPhase(wsPath) // the resident brain's first duty
     return { ok: true }
   } finally {
     starting = false
@@ -926,22 +769,9 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     markPreboard('signin', r.ok ? 'granted' : 'denied')
     return r
   })
-  ipcMain.handle('onboarding:dismiss-unlock', () => {
-    const wsPath = osWorkspaceContext().workspace_path
-    const board = readBoard(wsPath)
-    if (board) {
-      board.unlockDismissed = true
-      if (board.ids.unlock) {
-        osCloseSurface(board.ids.unlock)
-        delete board.ids.unlock
-      }
-      writeBoard(wsPath, board)
-    }
-    stopFdaPoll()
-    return { ok: true }
-  })
+  // V1 has no seeded unlock card / board (onboarding is chat-only) — the legacy renderer hook is a no-op.
+  ipcMain.handle('onboarding:dismiss-unlock', () => ({ ok: true }))
   app.on('before-quit', () => {
-    stopFdaPoll()
     closeDragHelper()
   })
 }

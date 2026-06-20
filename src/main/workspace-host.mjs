@@ -44,9 +44,6 @@ import {
   moveOutOfFolder,
   openFolderEntry
 } from './workspace.mjs'
-// Home grid: ONE bounded region ("home") on the infinite canvas, shared with the renderer
-// (plans/blitzos-single-canvas-navigation.md). The chat hub anchors at home; off-home is open canvas.
-import { homeRect, DEFAULT_VP } from '../renderer/src/stages-core.mjs'
 // The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
 import { writeRelayUrl } from './agent-runtime.mjs'
 // The orchestrators (dynamic-workflows) flag rides the agent's meta.json — the same record addAgent stamps.
@@ -566,25 +563,12 @@ export function createWorkspaceHost(a) {
     if (broadcast) a.broadcast({ type: 'chat', agentId: String(activeAgentId ?? '0'), ...props })
     return props
   }
-  /** The viewport last pushed by a renderer (for stage-math placement); a default until the first push. */
-  function viewportOf() {
-    try { const st = a.getState(); if (st && st.viewport && st.viewport.w) return st.viewport } catch { /* no state */ }
-    return DEFAULT_VP
-  }
   /** Build the shared chat hub surface (ensuring/recreating blitz-chat.* if missing). */
   function buildAgentSurface(agentId = '0') {
     ensureSystemRenderer(activeWorkspace, 'chat', '0')
     const primary = true
     const info = readSystemRendererInfo(activeWorkspace, 'chat', '0')
     const w = 360
-    // The hub anchors at the legacy chat spot relative to HOME center (left-of-center, -700; -210 above).
-    // Home is centered on the world origin, so this is the same free-float location as before the collapse.
-    const home = homeRect(viewportOf())
-    const x = Math.round(home.x + home.w / 2 - 700)
-    // Restore a persisted tile slot (the user tiled the chat, or onboarding seeded it) so it comes back
-    // EMBEDDED, not free-float. No persisted slot → the legacy free-float default (every existing
-    // workspace stays exactly as it was). Geometry derives from the slot in the renderer on hydrate.
-    const persisted = readRuntimePanels(activeWorkspace).find((p) => p.id === chatSurfaceId(agentId) && p.slot)
     return {
       id: chatSurfaceId(agentId),
       kind: 'srcdoc',
@@ -592,12 +576,11 @@ export function createWorkspaceHost(a) {
       pinned: primary,
       agentId: String(agentId),
       title: 'Chat',
-      x,
-      y: Math.round(home.y + home.h / 2 - 210),
+      x: -700,
+      y: -210,
       w,
       h: 460,
       z: 5,
-      ...(persisted ? { slot: persisted.slot } : {}),
       html: info?.source || '',
       lang: info?.lang || 'html',
       props: chatHubProps(String(agentId ?? '0'))
