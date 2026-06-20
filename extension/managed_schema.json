@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "description": "BlitzOS-delivered connection config. Written by BlitzOS into the managed-preferences plist at force-install, so the extension finds its local BlitzOS with no user step (chrome.storage.managed).",
+  "properties": {
+    "host": { "type": "string", "description": "BlitzOS link host (default 127.0.0.1)" },
+    "port": { "type": "integer", "description": "BlitzOS link port" },
+    "token": { "type": "string", "description": "per-install token (the real authenticator; Origin is forgeable)" }
+  }
+}

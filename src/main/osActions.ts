@@ -944,9 +944,23 @@ export function osOpenFolderEntry(path: string, x?: number, y?: number): { ok: b
 export function osListDir(rel: string): { path: string; entries: unknown[]; total: number; truncated: boolean } | null {
   return wsHost ? wsHost.listDir(String(rel || '')) : null
 }
+/** Listeners notified when ANY surface closes — the single chokepoint (user X, agent, Delete key all call
+ *  osCloseSurfaceFile). The connection layer subscribes so closing a connection's representation widget
+ *  drops the connection (instead of leaking the live adapter). */
+const surfaceClosedListeners: Array<(id: string) => void> = []
+export function onSurfaceClosed(fn: (id: string) => void): void {
+  if (typeof fn === 'function') surfaceClosedListeners.push(fn)
+}
 /** CLOSE a surface = delete its backing content file (explicit by id) so it doesn't resurrect on the next
  *  reconcile. The renderer calls this from store.closeSurface for every close (user, agent, Delete key). */
 export function osCloseSurfaceFile(id: string): { ok: boolean; removed?: string } {
+  for (const fn of surfaceClosedListeners) {
+    try {
+      fn(String(id))
+    } catch {
+      /* a listener must never break a close */
+    }
+  }
   return wsHost ? wsHost.closeSurfaceFile(String(id)) : { ok: false }
 }
 /** Agent-facing workspace control (Mission-Control parity): list / create / switch the user's folder-backed
@@ -1047,10 +1061,27 @@ export function osControlSurface(id: string, action: ControlAction): Promise<Con
   return controlWindow(id, action)
 }
 
+/** Optional rewriter applied to each surface in a hydrate payload — the connection layer uses it to repaint
+ *  a persisted connection widget to a "disconnected" state when its connection isn't live (boot / switch). */
+let hydrateSurfaceRewriter: ((s: Record<string, unknown>) => Record<string, unknown> | null) | null = null
+export function setHydrateSurfaceRewriter(fn: (s: Record<string, unknown>) => Record<string, unknown> | null): void {
+  hydrateSurfaceRewriter = typeof fn === 'function' ? fn : null
+}
 /** Send the active workspace's hydrate to the renderer (index.ts calls this on did-finish-load). */
 export function osSendHydrate(): void {
   if (!wsHost) return
-  send('hydrate', { surfaces: wsHost.hydrateSurfaces(), camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', workspace: wsHost.active() })
+  let surfaces = wsHost.hydrateSurfaces() as Array<Record<string, unknown>>
+  if (hydrateSurfaceRewriter) {
+    surfaces = surfaces.map((s) => {
+      try {
+        return hydrateSurfaceRewriter!(s) || s
+      } catch {
+        return s
+      }
+    })
+  }
+  // Single-canvas nav: no stageCount/stageOrder; mode defaults 'desktop' (legacy persisted 'canvas' ignored).
+  send('hydrate', { surfaces, camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', workspace: wsHost.active() })
 }
 export function osRestoreChatHub(): { ok: boolean; id?: string; error?: string } {
   try {

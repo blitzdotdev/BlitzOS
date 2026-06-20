@@ -3,7 +3,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { IconChat, IconCode, IconFolder, IconGlobe, IconNote, IconPlus, IconSparkle } from './Icons'
 
-export type SurfaceLauncherKind = 'browser' | 'note' | 'chat' | 'widget' | 'folder' | 'board'
+export type SurfaceLauncherKind = 'browser' | 'note' | 'chat' | 'widget' | 'folder' | 'board' | 'connect'
 type AnimationSourceRect = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
 type LauncherPlacement = 'toolbar' | 'sidebar'
 
@@ -25,7 +25,9 @@ export const SURFACE_LAUNCHER_ITEMS: SurfaceLauncherItem[] = [
   { kind: 'note', label: 'Note', icon: <IconNote /> },
   { kind: 'chat', label: 'Chat', icon: <IconChat /> },
   { kind: 'widget', label: 'Widget', icon: <IconCode /> },
-  { kind: 'folder', label: 'Folder', icon: <IconFolder /> }
+  { kind: 'folder', label: 'Folder', icon: <IconFolder /> },
+  // Connect an external Chrome/Safari tab or a macOS app window into BlitzOS as a per-source tool provider.
+  { kind: 'connect', label: 'Connect', icon: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 7H7a5 5 0 0 0 0 10h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8" /></svg>) }
   // Board is being slowly deprecated from primary creation UI. Keep SurfaceLauncherKind/backend support
   // for existing boards and non-primary flows, but do not expose it in the toolbar/sidebar or Option radial menu.
   // { kind: 'board', label: 'Board', icon: <IconBoard /> }

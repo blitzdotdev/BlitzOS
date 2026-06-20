@@ -15,7 +15,8 @@
 export const ACTIVITY_TOOLS = new Set([
   '/open_window', '/create_surface', '/update_surface', '/move_surface', '/close_surface',
   '/surface_control', '/read_window', '/spawn_widget', '/save_widget', '/say', '/go_to_primary',
-  '/new_app', '/customize_widget', '/create_workspace', '/switch_workspace'
+  '/new_app', '/customize_widget', '/create_workspace', '/switch_workspace',
+  '/connection_read', '/connection_act', '/connection_run_js', '/connection_call_tool', '/connection_save_tool', '/connection_drop'
 ])
 
 /** A short human label for an agent tool call, for the activity feed. */
@@ -45,6 +46,12 @@ export function activityText(path, a) {
     case '/switch_workspace': return `↪ switching to “${safeText(a.name)}”`
     case '/say': return `💬 ${safeText(a.text, 4000)}`
     case '/go_to_primary': return '⌂ recenter'
+    case '/connection_read': return '👁 reading a connected source'
+    case '/connection_act': return `⌖ ${a.action || 'acting'} on a connected source`
+    case '/connection_run_js': return '⌖ running JS in a connected tab'
+    case '/connection_call_tool': return `▸ ${safeText(a.name || 'tool')} on a connection`
+    case '/connection_save_tool': return `💾 saving connection tool ${safeText(a.name || '')}`
+    case '/connection_drop': return '🔌 disconnecting a source'
     default: return path.replace(/^\//, '')
   }
 }

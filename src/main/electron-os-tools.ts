@@ -11,6 +11,8 @@ import {
   osUpdateSurface,
   osCloseSurface,
   osCloseSurfaceFile,
+  onSurfaceClosed,
+  setHydrateSurfaceRewriter,
   osGoToPrimary,
   osGetState,
   osWorkspaceContext,
@@ -35,6 +37,7 @@ import {
 } from './osActions'
 import { makeTerminalOps } from './terminal-ops.mjs'
 import { makeActionItems } from './action-items.mjs'
+import { makeConnectionOps } from './connection-ops.mjs'
 import { emitSurfaceAction } from './events'
 import { runWorkflowHosted } from './workflow-host.mjs'
 
@@ -128,6 +131,35 @@ export const electronActionItems = makeActionItems({
   emitMoment: (action) => emitSurfaceAction('inbox', action)
 })
 Object.assign(electronOps, electronActionItems)
+
+// Connections (connection-ops.mjs) — the SHARED registry + per-source tool store + dispatch, bound to
+// Electron's surface primitives. The tab (Chrome extension) and window (BlitzComputerUse helper) adapters
+// bind through electronConnections.connectionBind / report changes via connectionNotify. Object.assign'd
+// BEFORE makeOsTools(electronOps) below so the connection_* tool handlers find these ops.
+export const electronConnections = makeConnectionOps({
+  getWorkspacePath: () => osWorkspaceContext().workspace_path,
+  createSurface: (desc: SurfaceDescriptor) => osCreateSurface(desc),
+  updateSurface: (id: string, patch: Record<string, unknown>) => osUpdateSurface(id, patch),
+  closeSurface: (id: string) => {
+    osCloseSurfaceFile(id)
+    osCloseSurface(id)
+  },
+  getSurfaces: () => (osGetState().surfaces || []) as Array<Record<string, unknown>>,
+  // An agent is "available" to author a connection's view iff a managed agent terminal is running. Used to
+  // word the placeholder honestly (no "the agent is building a view" when none is running).
+  isAgentAvailable: () => {
+    try {
+      return electronTerminalOps.listTerminals().some((t) => t.kind === 'agent' && t.status === 'running')
+    } catch {
+      return false
+    }
+  }
+})
+Object.assign(electronOps, electronConnections)
+// Closing a connection's representation widget drops the connection (no leaked adapter/socket).
+onSurfaceClosed((id) => void electronConnections.handleSurfaceClosed(id))
+// On (re)hydrate, repaint persisted connection widgets whose connection isn't live → "disconnected".
+setHydrateSurfaceRewriter((s) => electronConnections.rewriteHydratedSurface(s))
 
 export const OS_TOOLS: OsTool[] = makeOsTools(electronOps)
 export const OS_TOOLS_BY_PATH: Record<string, OsTool> = makeOsToolsByPath(electronOps)

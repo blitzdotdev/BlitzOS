@@ -40,6 +40,16 @@ function parse(body) {
 
 let _wfRunSeq = 0 // monotonic suffix so two run_workflow calls in the same ms never collide on runId
 
+// Map a connection-op result ({error}/{ok}/{result}/{capability_unavailable}) to an HTTP-shaped tool return.
+// A capability mismatch is a SOFT result (200) — the agent reads `capability_unavailable` and adapts, it is
+// never a hard error (the connection doc's contract). A missing connection is a 404; other errors are 400.
+function mapConnResult(out) {
+  if (out && typeof out === 'object' && out.error && out.error !== 'capability_unavailable') {
+    return { status: /^no connection/.test(out.error) ? 404 : 400, body: out }
+  }
+  return out
+}
+
 const NATIVE_COMPONENTS = new Set(['note', 'chat', 'activity', 'terminal', 'runtime', 'inbox', 'file', 'dir', 'files', 'unlock', 'folder'])
 
 function nativeCatalogWidgetError(component) {
@@ -832,6 +842,160 @@ export function makeOsTools(ops) {
         const a = parse(body)
         if (!a.id) return { status: 400, body: { error: 'id required' } }
         return { ok: ops.resolveAction(String(a.id), a.resolution ? String(a.resolution) : 'done') }
+      }
+    },
+    {
+      path: '/connection_list',
+      description:
+        "List CONNECTED external sources (the browser tabs / macOS windows the user connected into BlitzOS). Each: { connId, type:'tab'|'window', sourceId (a tab's origin host or a window's app bundle id), title, status:'live'|'disconnected'|'reconnecting', capabilities, surfaceId (its representation widget), savedTools, description }. A connection is a per-source TOOL PROVIDER — read/act on it with the other connection_* tools, passing its connId as `connection`. Empty until something is connected.",
+      handler: () => {
+        if (typeof ops.connectionList !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        return ops.connectionList()
+      }
+    },
+    {
+      path: '/connection_list_tabs',
+      description:
+        "List the user's open browser tabs that CAN be connected (via the BlitzOS Connector extension). Returns { tabs:[{tabId,title,url}] }. Then connection_connect_tab one of them. Errors if the extension isn't installed/connected yet.",
+      handler: async () => {
+        if (typeof ops.connectionListTabs !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        return mapConnResult(await ops.connectionListTabs())
+      }
+    },
+    {
+      path: '/connection_connect_tab',
+      description:
+        "Connect a browser tab (a tabId from connection_list_tabs) into BlitzOS as a per-source tool provider, and spawn its representation widget. This is the agent-initiated 'connect the user's Gmail tab' path. Args: {tabId, title?}. Returns { connId, surfaceId, sourceId }.",
+      input_schema: { type: 'object', required: ['tabId'], properties: { tabId: { type: ['number', 'string'] }, title: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionConnectTab !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (a.tabId == null) return { status: 400, body: { error: 'tabId required' } }
+        return mapConnResult(await ops.connectionConnectTab(a.tabId, { title: a.title }))
+      }
+    },
+    {
+      path: '/connection_list_windows',
+      description:
+        "List the user's open macOS app windows that CAN be connected (via the BlitzComputerUse helper — macOS + local only). Returns { windows:[{windowId,pid,app,bundleId,title}] }. Then connection_connect_window one of them.",
+      handler: async () => {
+        if (typeof ops.connectionListWindows !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        return mapConnResult(await ops.connectionListWindows())
+      }
+    },
+    {
+      path: '/connection_connect_window',
+      description:
+        "Connect a macOS app window (a windowId from connection_list_windows) into BlitzOS as a per-source tool provider, and spawn its representation widget. Read via its accessibility tree (or a screenshot when AX is thin); act via AXPress/set (background) or coordinate CGEvent (needs the window raised). Args: {windowId, title?}. Returns { connId, surfaceId, sourceId }.",
+      input_schema: { type: 'object', required: ['windowId'], properties: { windowId: { type: 'number' }, title: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionConnectWindow !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (a.windowId == null) return { status: 400, body: { error: 'windowId required' } }
+        return mapConnResult(await ops.connectionConnectWindow(a.windowId, { title: a.title }))
+      }
+    },
+    {
+      path: '/connection_install_extension',
+      description:
+        "Install the BlitzOS Connector Chrome extension (force-install) so the user's tabs can be connected. Prompts the user for admin ONCE (writes a Chrome managed policy; BlitzOS serves the extension locally). macOS + the BlitzOS app only. Returns { ok, note } or an error to relay. Only needed when connection_list_tabs reports the extension isn't connected.",
+      handler: async () => {
+        if (typeof ops.connectionInstallExtension !== 'function') return { status: 501, body: { error: 'extension install is available only in the BlitzOS app (macOS, local)' } }
+        return mapConnResult(await ops.connectionInstallExtension())
+      }
+    },
+    {
+      path: '/connection_read',
+      description:
+        "Read a connected source — a TAB: DOM/text (pass a CSS `selector` to scope it); a WINDOW: its accessibility tree/value, or a `screenshot` when the structure is too thin to read. SCOPED + CAPPED by default (pass {max} bytes to read more) — never dump a whole tree into context. Args: {connection, selector?, screenshot?, max?}. Returns { result }.",
+      input_schema: { type: 'object', required: ['connection'], properties: { connection: { type: 'string' }, selector: { type: 'string' }, screenshot: { type: 'boolean' }, max: { type: 'number' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionRead !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const { connection, ...args } = parse(body)
+        if (!connection) return { status: 400, body: { error: 'connection (connId) required' } }
+        return mapConnResult(await ops.connectionRead(String(connection), args))
+      }
+    },
+    {
+      path: '/connection_act',
+      description:
+        "Act on a connected source: click / type / set — BY REF (a tab: CSS `selector`; a window: AXPress on a role/label — both work in the BACKGROUND) or BY COORDINATE ({x,y} — needs the window raised; macOS-local). Args: {connection, action:'click'|'type'|'set'|'key', selector?, x?, y?, text?, key?}. Returns { ok, effect } — the observed change, so you verify the act actually landed.",
+      input_schema: { type: 'object', required: ['connection'], properties: { connection: { type: 'string' }, action: { type: 'string' }, selector: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, text: { type: 'string' }, key: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionAct !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const { connection, ...args } = parse(body)
+        if (!connection) return { status: 400, body: { error: 'connection (connId) required' } }
+        return mapConnResult(await ops.connectionAct(String(connection), args))
+      }
+    },
+    {
+      path: '/connection_run_js',
+      description:
+        "Run JavaScript in a connected TAB's page (tab-only — a window returns capability_unavailable). `code` is a function body: use `return` to read a value; `args` are passed in as the argument. Args: {connection, code, args?, max?}. Returns { result }.",
+      input_schema: { type: 'object', required: ['connection', 'code'], properties: { connection: { type: 'string' }, code: { type: 'string' }, args: { type: 'object' }, max: { type: 'number' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionRunJs !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (!a.connection) return { status: 400, body: { error: 'connection (connId) required' } }
+        if (typeof a.code !== 'string') return { status: 400, body: { error: 'code (a JS function body) required' } }
+        return mapConnResult(await ops.connectionRunJs(String(a.connection), { code: a.code, args: a.args, max: a.max }))
+      }
+    },
+    {
+      path: '/connection_save_tool',
+      description:
+        "Save a NAMED reusable tool for this source, keyed on its sourceId — so every connection to the same site/app reuses it, across sessions (the per-source tools.json). A TAB tool is JS (`code`, a function body); a WINDOW tool is a recipe of AX/coordinate `steps`. kind:'read' returns a value; kind:'act' MUST return its effect so a stale selector is detectable (a silent no-op is the enemy). Args: {connection, name, description?, kind?, code?|steps?}. Returns { ok, name, count }.",
+      input_schema: { type: 'object', required: ['connection', 'name'], properties: { connection: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, kind: { type: 'string', enum: ['read', 'act'] }, code: { type: 'string' }, steps: {} } },
+      handler: ({ body }) => {
+        if (typeof ops.connectionSaveTool !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (!a.connection) return { status: 400, body: { error: 'connection (connId) required' } }
+        return mapConnResult(ops.connectionSaveTool(String(a.connection), { name: a.name, description: a.description, kind: a.kind, code: a.code, steps: a.steps }))
+      }
+    },
+    {
+      path: '/connection_call_tool',
+      description:
+        "Run a saved tool by name on a connection (see connection_list_tools). Args: {connection, name, args?}. Returns { ok, effect } — or { stale:true } when the saved selector no longer matches the page/app (re-derive it: connection_read, then connection_save_tool to replace it).",
+      input_schema: { type: 'object', required: ['connection', 'name'], properties: { connection: { type: 'string' }, name: { type: 'string' }, args: { type: 'object' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionCallTool !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (!a.connection || !a.name) return { status: 400, body: { error: 'connection and name required' } }
+        return mapConnResult(await ops.connectionCallTool(String(a.connection), String(a.name), a.args || {}))
+      }
+    },
+    {
+      path: '/connection_list_tools',
+      description: 'List the saved tools for a connection (keyed on its sourceId): each { name, description, kind } + the source description. A fresh session calls this to inherit everything a past session already learned about the source. Args: {connection}.',
+      input_schema: { type: 'object', required: ['connection'], properties: { connection: { type: 'string' } } },
+      handler: ({ body }) => {
+        if (typeof ops.connectionListTools !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (!a.connection) return { status: 400, body: { error: 'connection (connId) required' } }
+        return mapConnResult(ops.connectionListTools(String(a.connection)))
+      }
+    },
+    {
+      path: '/connection_describe',
+      description: "Write a one-line note about what a source is for (stored next to its tools.json; shown in connection_list + the per-connection briefing). Your own memory of why this connection exists. Args: {connection, description}.",
+      input_schema: { type: 'object', required: ['connection', 'description'], properties: { connection: { type: 'string' }, description: { type: 'string' } } },
+      handler: ({ body }) => {
+        if (typeof ops.connectionSetDescription !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (!a.connection) return { status: 400, body: { error: 'connection (connId) required' } }
+        return mapConnResult(ops.connectionSetDescription(String(a.connection), String(a.description || '')))
+      }
+    },
+    {
+      path: '/connection_drop',
+      description: 'Disconnect a connection (tears down the live link). Its representation widget + saved tools persist for next time — reconnecting the same source re-attaches to them. Args: {connection}.',
+      input_schema: { type: 'object', required: ['connection'], properties: { connection: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionDrop !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (!a.connection) return { status: 400, body: { error: 'connection (connId) required' } }
+        return mapConnResult(await ops.connectionDrop(String(a.connection)))
       }
     }
   ].map(instrument)

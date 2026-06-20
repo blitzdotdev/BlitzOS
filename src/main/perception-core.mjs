@@ -87,7 +87,7 @@ export function dropContentShare(surfaceId) {
 export function redactMoment(m) {
   // A 'message' (in-canvas chat) or 'connector' (the user wired/removed an integration) moment is
   // consent by construction, not scraped page content, so it crosses the relay intact.
-  if (m.trigger === 'message' || m.trigger === 'connector') return m
+  if (m.trigger === 'message' || m.trigger === 'connector' || m.trigger === 'connection') return m
   // A 'tick' (W2 supervisor heartbeat) carries only OS METADATA — agent status edges, terminal exits, and
   // "surface X edited" FLAGS (the changed surface ids + a short title label) + counts — never the scraped
   // CONTENT of a surface (open/close are owned by the 'canvas' moment, not the tick). That metadata is
@@ -577,6 +577,27 @@ export function emitConnectorChange(provider, connected) {
   const name = String(provider || 'a connector')
   const verb = connected ? 'connected' : 'disconnected'
   emit({ seq: ++seq, ts: Date.now(), surfaceId: 'system', trigger: 'connector', windowMs: 0, signals: { connector: 1 }, user: [`connector ${verb}: ${name}`] })
+}
+
+/** A connected external SOURCE (a browser tab / macOS window) was connected, changed, or dropped — wake
+ *  the agent so it (re-)reads the source and refreshes the representation widget. Carries METADATA ONLY
+ *  (connId/sourceId/status + a short verb), never scraped page content, so it crosses the relay intact
+ *  (the agent pulls details via connection_read). Tied to the representation surface when there is one;
+ *  routed to the primary watcher ('0') like a connector moment. A SIGNIFICANT source change calls this
+ *  (immediate wake); routine churn does not (the adapter just refreshes its cached snapshot). */
+export function emitConnectionMoment(surfaceId, info = {}) {
+  const sourceId = String(info.sourceId || '')
+  const verb = String(info.verb || info.summary || 'changed')
+  emit({
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId: String(surfaceId || 'system'),
+    trigger: 'connection',
+    windowMs: 0,
+    signals: { connection: 1 },
+    user: [`connection ${verb}: ${sourceId}`.trim()],
+    connection: { connId: String(info.connId || ''), sourceId, status: String(info.status || 'live') }
+  })
 }
 
 /** The human placed a spatial ANNOTATION on a surface and asked the agent about that exact spot (item

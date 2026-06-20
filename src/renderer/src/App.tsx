@@ -15,6 +15,7 @@ import { NotchHost } from './notch/NotchHost'
 import { PrimarySpace } from './components/PrimarySpace'
 import { Sidebar } from './components/Sidebar'
 import { RadialSurfaceMenu, menuOrigin, MENU_SIZE } from './components/RadialSurfaceMenu'
+import { ConnectPicker } from './components/ConnectPicker'
 import type { SurfaceLauncherKind } from './components/SurfaceLauncherButton'
 import { IconChat, IconSparkle, IconCheck, IconInbox, IconSessions, IconTerminal } from './components/Icons'
 import { FolderOverlay } from './components/FolderOverlay'
@@ -819,6 +820,7 @@ export default function App(): JSX.Element {
   const canvasWheelGestureUntil = useRef(0)
   const pointerRef = useRef<{ x: number; y: number }>({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
   const [radialMenu, setRadialMenu] = useState<{ x: number; y: number } | null>(null)
+  const [connectPicker, setConnectPicker] = useState(false) // the "Connect a tab/window" picker overlay
 
   useEffect(() => {
     if (!showAi) setAiCopied(false)
@@ -1956,6 +1958,10 @@ export default function App(): JSX.Element {
   }
 
   function createFromLauncher(kind: SurfaceLauncherKind, source?: AnimationSourceRect | null): void {
+    if (kind === 'connect') {
+      setConnectPicker(true)
+      return
+    }
     // The Option radial menu opens AT the cursor, so create the surface centered there and FREE of the
     // home clamp — it lands where the user pointed, even off-home. Invoked from the dock instead, `at` is
     // null and creation falls back to the home cascade (plans/blitzos-single-canvas-navigation.md).
@@ -2632,6 +2638,7 @@ export default function App(): JSX.Element {
       )}
 
       <RadialSurfaceMenu center={radialMenu} onCreateSurface={createFromLauncher} onClose={() => setRadialMenu(null)} overWeb={radialOverWeb} />
+      {connectPicker && <ConnectPicker onClose={() => setConnectPicker(false)} />}
 
       {hasWorkspaces && showOverview && <Overview onClose={closeOverview} onSwitch={switchWorkspace} theme={theme} onThemeChange={chooseTheme} />}
 

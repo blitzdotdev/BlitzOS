@@ -4585,3 +4585,154 @@ button {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
+
+/* Connect picker (radial "Connect" → list + connect an external tab/window) */
+.connect-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 14, 0.42);
+  backdrop-filter: blur(3px);
+}
+.connect-picker {
+  width: min(720px, 92vw);
+  max-height: 78vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(22, 24, 30, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  color: #e7e9ef;
+  overflow: hidden;
+  font-size: 13px;
+}
+.connect-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 16px;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.connect-picker-x {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.connect-picker-x:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.connect-picker-status {
+  padding: 8px 16px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.connect-picker-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: auto;
+}
+.connect-picker-col {
+  padding: 12px 14px;
+  min-width: 0;
+}
+.connect-picker-col + .connect-picker-col {
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+}
+.connect-picker-col h4 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.45);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.connect-picker-refresh {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 5px;
+}
+.connect-picker-refresh:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.connect-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  color: #e7e9ef;
+  cursor: pointer;
+}
+.connect-picker-row:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--accent);
+}
+.connect-picker-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.connect-picker-badge {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+  border-radius: 5px;
+  padding: 2px 6px;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connect-picker-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connect-picker-empty {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 6px 2px;
+}
+.connect-picker-install {
+  display: inline-block;
+  margin-top: 8px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.connect-picker-install:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

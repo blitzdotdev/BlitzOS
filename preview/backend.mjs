@@ -55,6 +55,9 @@ import { withActivity } from '../src/main/activity.mjs'
 // Shared multi-agent terminal lifecycle (tmux-backed, workspace-keyed) — SAME module Electron binds.
 import { makeTerminalOps } from '../src/main/terminal-ops.mjs'
 import { makeActionItems } from '../src/main/action-items.mjs'
+import { makeConnectionOps } from '../src/main/connection-ops.mjs'
+import { makeTabLink } from '../src/main/connection-tab-link.mjs'
+import { makeSafariLink } from '../src/main/connection-safari-link.mjs'
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
 import { fileURLToPath } from 'node:url'
 
@@ -487,6 +490,7 @@ const serverOps = {
     osState = { ...osState, surfaces: (osState.surfaces || []).filter((s) => s.id !== i) }
     broadcast({ type: 'close', id: i })
     if (SERVER_MODE && host) host.closeSurface(i).catch(() => {})
+    try { serverConnections?.handleSurfaceClosed(i) } catch { /* connection cleanup best-effort */ } // drop the connection if this was its widget
     wsHost.closeSurfaceFile(i) // delete the backing content file so it doesn't resurrect (no-renderer agent close)
     durableFlush()
     return { ok: true }
@@ -619,6 +623,39 @@ Object.assign(serverOps, serverTerminalOps)
 const serverActionItems = makeActionItems({ getWorkspacePath: () => wsHost.activePath(), emit: broadcast, emitMoment: (action) => emitSurfaceAction('inbox', action) })
 Object.assign(serverOps, serverActionItems)
 
+// Connections — the SAME shared registry + per-source tool store + dispatch Electron binds (connection-ops.mjs).
+// Server seam: active workspace folder + the server's createSurface (the representation widget). The tab
+// (remote-paired extension) and window adapters bind through serverConnections.connectionBind / connectionNotify.
+const serverConnections = makeConnectionOps({
+  getWorkspacePath: () => wsHost.activePath(),
+  createSurface: (desc) => serverOps.createSurface(desc),
+  updateSurface: (id, patch) => serverOps.updateSurface(id, patch),
+  closeSurface: (id) => serverOps.closeSurface(id),
+  getSurfaces: () => osState.surfaces || [],
+  isAgentAvailable: () => {
+    try {
+      return serverTerminalOps.listTerminals().some((t) => t.kind === 'agent' && t.status === 'running')
+    } catch {
+      return false
+    }
+  }
+})
+Object.assign(serverOps, serverConnections)
+
+// The BlitzOS Connector extension links here too (a self-hosted LOCAL server = localhost, same as Electron).
+// A connected tab becomes a per-source tool provider. (Remote-server tab pairing over an authenticated WSS is
+// a later refinement; the localhost path covers the co-located case the feature targets.)
+const serverTabLink = makeTabLink({ connectionOps: serverConnections, token: process.env.BLITZ_CONNECTOR_TOKEN || '' })
+serverConnections.setTabLink(serverTabLink)
+serverTabLink
+  .start()
+  .then((r) => {
+    if (r.ok) console.log('[agent-os backend] connector link on 127.0.0.1:' + r.port)
+  })
+  .catch(() => {})
+// Safari tabs via Apple Events (only works when the server is co-located on a Mac with Safari; harmless else).
+serverConnections.setSafariLink(makeSafariLink({ connectionOps: serverConnections }))
+
 // Start the agent-socket relay via the SHARED lifecycle module (relay.mjs) — connect + self-heal + watchdog +
 // status all live there now (one impl, Electron too). The server only supplies its tools + the adapter: how to
 // publish the URL/status to the browser (SSE broadcast); URL changes refresh .blitzos/relay-url.
@@ -693,10 +730,18 @@ const server = createServer(async (req, res) => {
     res.write(`data: ${JSON.stringify({ type: 'agentStatus', online: !!(relay && relay.isOnline()), agentUrl, agent: !!process.env.BLITZ_AGENT })}\n\n`)
     // Phase 2: hand the connecting renderer the current canvas so it restores it (and flips
     // its hydrate gate). osState is the persisted-on-boot canvas, or the live one mid-session.
-    // Single-canvas nav: ONE home region, no stages — so no stageCount/stageOrder/currentStage
-    // is sent (the field is pinned 'desktop' where unset; legacy persisted 'canvas' is ignored).
+    // Repaint persisted connection widgets whose connection isn't live → "disconnected" (parity with Electron).
+    // Single-canvas nav: ONE home region, no stages — so no stageCount/stageOrder/currentStage is sent
+    // (the field is pinned 'desktop' where unset; legacy persisted 'canvas' is ignored).
+    const hydrateSurfaces = wsHost.hydrateSurfaces().map((s) => {
+      try {
+        return serverConnections.rewriteHydratedSurface(s) || s
+      } catch {
+        return s
+      }
+    })
     res.write(
-      `data: ${JSON.stringify({ type: 'hydrate', surfaces: wsHost.hydrateSurfaces(), camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'desktop', workspace: wsHost.active() })}\n\n`
+      `data: ${JSON.stringify({ type: 'hydrate', surfaces: hydrateSurfaces, camera: osState.camera || { x: 0, y: 0, scale: 1 }, mode: osState.mode || 'desktop', workspace: wsHost.active() })}\n\n`
     )
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))
@@ -937,6 +982,7 @@ const server = createServer(async (req, res) => {
     })
     req.on('end', () => {
       const b = toolBody(xbody)
+      try { serverConnections?.handleSurfaceClosed(String(b.id || '')) } catch { /* best-effort */ } // user closed a widget → drop its connection
       const r = wsHost.closeSurfaceFile(String(b.id || ''))
       return json(res, 200, r || { ok: false })
     })

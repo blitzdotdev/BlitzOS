@@ -12,7 +12,9 @@ export const WIDGET_TOOLS = [
   'close_surface',
   'go_to_primary',
   'list_state',
-  'set_theme'
+  'set_theme',
+  'connection_call_tool',
+  'connection_reconnect'
 ]
 
 export function isWidgetTool(name) {
@@ -95,6 +97,31 @@ export function makeWidgetToolHandlers(ops) {
       if (!ops.setTheme) return { ok: false, error: 'set_theme not available in this transport' }
       return ops.setTheme({ accent: a.accent, accentDeep: a.accentDeep })
     },
-    list_state: () => serializeStateForAgent(ops.getState())
+    list_state: () => serializeStateForAgent(ops.getState()),
+    // A representation widget may run ITS OWN connection's saved tools — and ONLY its own. The widget
+    // bridge has no per-surface scoping, so we derive the connId from the CALLING surface (ctx.surfaceId)
+    // and IGNORE any connection id the (untrusted) widget passes. This is the one code-executing widget
+    // tool, so the scoping is load-bearing.
+    connection_call_tool: async (a, ctx = {}) => {
+      if (typeof ops.connectionForSurface !== 'function' || typeof ops.connectionCallTool !== 'function') throw new Error('connections not available here')
+      const connId = ops.connectionForSurface(ctx && ctx.surfaceId)
+      if (!connId) throw new Error('this widget is not bound to a connection')
+      const name = String((a && a.name) || '')
+      if (!name) throw new Error('name required')
+      return ops.connectionCallTool(connId, name, (a && a.args) || {})
+    },
+    // The "Reconnect" button on a DISCONNECTED connection widget. Derives the source from the CALLING surface's
+    // own props (connSource/connType — set when the widget was created), so it reconnects ITS source only and
+    // can't be pointed elsewhere. Works on a disconnected widget (no live connection needed — it reads the surface).
+    connection_reconnect: async (a, ctx = {}) => {
+      if (typeof ops.connectionReconnectSource !== 'function') throw new Error('connections not available here')
+      const sid = ctx && ctx.surfaceId
+      if (!sid) throw new Error('no calling surface')
+      const st = ops.getState ? ops.getState() : {}
+      const surf = ((st && st.surfaces) || []).find((s) => s && s.id === String(sid))
+      const p = (surf && surf.props) || {}
+      if (!p.connSource) throw new Error('this widget is not a connection widget')
+      return ops.connectionReconnectSource(String(p.connSource), p.connType === 'window' ? 'window' : 'tab')
+    }
   }
 }

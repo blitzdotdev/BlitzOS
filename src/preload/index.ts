@@ -133,6 +133,24 @@ const api = {
   actionClear(id: string): void {
     ipcRenderer.send('os:action-clear', id)
   },
+  /** Connections — connect a browser tab / macOS window into BlitzOS (the radial "Connect" entry). */
+  connections: {
+    listTabs(): Promise<{ tabs?: unknown[]; error?: string }> {
+      return (ipcRenderer.invoke('os:conn-list-tabs') as Promise<{ tabs?: unknown[]; error?: string }>).catch(() => ({ error: 'unavailable' }))
+    },
+    listWindows(): Promise<{ windows?: unknown[]; error?: string }> {
+      return (ipcRenderer.invoke('os:conn-list-windows') as Promise<{ windows?: unknown[]; error?: string }>).catch(() => ({ error: 'unavailable' }))
+    },
+    connectTab(tabId: number | string): Promise<Record<string, unknown>> {
+      return (ipcRenderer.invoke('os:conn-connect-tab', tabId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
+    },
+    connectWindow(windowId: number): Promise<Record<string, unknown>> {
+      return (ipcRenderer.invoke('os:conn-connect-window', windowId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
+    },
+    installExtension(): Promise<Record<string, unknown>> {
+      return (ipcRenderer.invoke('os:conn-install') as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
+    }
+  },
   /** The agent-socket paste URL (for the "Connect AI" affordance). */
   onAgentSocketUrl(cb: (url: string) => void): () => void {
     const listener = (_e: unknown, url: string): void => cb(url)
