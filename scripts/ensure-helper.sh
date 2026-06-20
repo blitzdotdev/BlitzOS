@@ -22,15 +22,19 @@ fi
 
 # 1) Computer Use helper (build once if missing).
 CU_EXE="native/computer-use-helper/build/BlitzComputerUse.app/Contents/MacOS/BlitzComputerUse"
-if [[ ! -x "$CU_EXE" ]]; then
-  echo "[ensure-helper] Computer Use helper missing — building it once (native/computer-use-helper/build.sh)"
-  bash native/computer-use-helper/build.sh || echo "[ensure-helper] WARN: CU helper build failed — dev continues without it" >&2
+CU_DIR="native/computer-use-helper"
+# (Re)build if MISSING or STALE — the source (.swift / Info.plist) is newer than the built binary. "build once if
+# missing" silently left edits uncompiled (you'd edit main.swift, restart dev, and run the old binary). `-nt` closes
+# that: any source edit rebuilds on the next dev. install() then re-copies it (its CFBundleVersion was bumped).
+if [[ ! -x "$CU_EXE" || "$CU_DIR/main.swift" -nt "$CU_EXE" || "$CU_DIR/Info.plist" -nt "$CU_EXE" ]]; then
+  echo "[ensure-helper] Computer Use helper missing or stale — (re)building ($CU_DIR/build.sh)"
+  bash "$CU_DIR/build.sh" || echo "[ensure-helper] WARN: CU helper build failed — dev continues without it" >&2
 fi
 
-# 2) notch-geometry CLI (build once if missing).
+# 2) notch-geometry CLI (build if missing or the source changed).
 NOTCH_BIN="native/notch-geometry/notch-geometry"
-if [[ ! -x "$NOTCH_BIN" ]]; then
-  echo "[ensure-helper] notch-geometry missing — building it once (native/notch-geometry/build.sh)"
+if [[ ! -x "$NOTCH_BIN" || "native/notch-geometry/main.swift" -nt "$NOTCH_BIN" ]]; then
+  echo "[ensure-helper] notch-geometry missing or stale — (re)building (native/notch-geometry/build.sh)"
   bash native/notch-geometry/build.sh || echo "[ensure-helper] WARN: notch-geometry build failed — notch toggle is ⌥Space-only in dev" >&2
 fi
 

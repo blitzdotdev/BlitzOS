@@ -9,6 +9,7 @@
 // It wraps IslandPanel in the invariant BLACK chassis (.nh-chassis), which grows wide when the attach panel opens.
 import './notch.css'
 import { useEffect, useRef, useState } from 'react'
+import { clearStaged } from './stagingStore'
 import IslandPanel from './IslandPanel'
 import IslandHome from './IslandHome'
 import IslandSettings from './IslandSettings'
@@ -95,20 +96,22 @@ export function NotchHost({
   onAttachChange,
   onStateChange,
   initialView = 'home',
-  initialPage = 0
+  initialPage = 0,
+  initialAttachOpen = false
 }: {
   menuBarH: number
   onChassisResize?: () => void
   onChassisHoverChange?: (on: boolean) => void
   onAttachChange?: (open: boolean) => void // attach panel (the macOS window picker) opened/closed → App pins the island open
-  onStateChange?: (view: 'home' | 'settings' | 'session', page: number) => void // report view+page so App restores it on the next open
+  onStateChange?: (view: 'home' | 'settings' | 'session', page: number, attachOpen: boolean) => void // report view+page+attach so App restores it on the next open
   initialView?: 'home' | 'settings' | 'session' // the view to open into — RESTORED from the last open (NotchHost remounts per open)
   initialPage?: number // the tab to open into (0 = composer, 1..N = agent) — also restored from the last open
+  initialAttachOpen?: boolean // the attach panel's open/closed state — also restored from the last open
 }): JSX.Element {
   // 'home' = the icon grid; 'settings' = debug settings; 'session' = today's agent chat/session UI.
   const [view, setView] = useState<'home' | 'settings' | 'session'>(initialView)
   const [page, setPage] = useState(initialPage) // 0 = new-session composer; 1..N = the agent at page-1
-  const [attachOpen, setAttachOpen] = useState(false)
+  const [attachOpen, setAttachOpen] = useState(initialAttachOpen)
   const [sessions, setSessions] = useState<IslandSession[]>([])
   const [archivedSessions, setArchivedSessions] = useState<IslandSession[]>([])
   const [threads, setThreads] = useState<Record<string, IslandMessage[]>>({})
@@ -125,9 +128,9 @@ export function NotchHost({
   // Report the island's view + tab up to App so reopening it (hover OR ⌥Space) restores where the user left off,
   // instead of resetting to Home. App stashes these and feeds them back as initialView/initialPage on the next open.
   useEffect(() => {
-    onStateChange?.(view, page)
+    onStateChange?.(view, page, attachOpen)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, page])
+  }, [view, page, attachOpen])
 
   // Tell the host whenever the chassis SIZE changes (attach panel opens/closes, peek toggles) so its hover-close
   // grace timer holds the island open: a shrink otherwise pulls the chassis out from under the cursor and the
@@ -460,6 +463,7 @@ export function NotchHost({
     // also fixes the new-session break: leaving attach open across the page-switch to the spawned agent collided
     // with the agent-chat attach layout (the height-lock) and broke the island.
     setAttachOpen(false)
+    clearStaged(activeIdRef.current) // the staged sources rode this message (chips) → clear this chat's tray
     if (safePage === 0) {
       window.agentOS
         ?.notch?.send?.(text, false)

@@ -192,7 +192,7 @@ export function makeConnectionOps({
         }
       }
       try {
-        updateSurface(String(surfaceId), { html: placeholderHtml(sid, kind, title), title: title || sid, props: { connection: connId, connType: kind, connSource: sid } })
+        updateSurface(String(surfaceId), { html: placeholderHtml(sid, kind, title), title: title || sid, props: { connection: connId, connType: kind, connSource: sid, connAgent: agentId != null ? String(agentId) : '' } })
       } catch {
         /* renderer gone */
       }
@@ -202,7 +202,7 @@ export function makeConnectionOps({
     const slot = registry.size % 6
     if (!surfaceId) {
       try {
-        surfaceId = createSurface({ kind: 'srcdoc', html: placeholderHtml(sid, kind, title), title: title || sid, w: 380, h: 460, x: 90 + slot * 46, y: 90 + slot * 46, props: { connection: connId, connType: kind, connSource: sid } })
+        surfaceId = createSurface({ kind: 'srcdoc', html: placeholderHtml(sid, kind, title), title: title || sid, w: 380, h: 460, x: 90 + slot * 46, y: 90 + slot * 46, props: { connection: connId, connType: kind, connSource: sid, connAgent: agentId != null ? String(agentId) : '' } })
       } catch {
         surfaceId = null
       }
@@ -621,9 +621,10 @@ export function makeConnectionOps({
   // Reconnect a source by its sourceId — the "Reconnect" affordance on a DISCONNECTED widget. Re-finds the
   // matching tab/window (by origin host for a tab, bundle id for a window) among what's currently connectable
   // and connects it (which adopts the disconnected widget). Returns a navigable error if the source isn't open.
-  async function connectionReconnectSource(sourceId, type) {
+  async function connectionReconnectSource(sourceId, type, opts = {}) {
     const sid = String(sourceId || '')
     if (!sid) return { error: 'sourceId required' }
+    const co = opts && opts.agentId != null ? { agentId: opts.agentId } : {}
     const wantWindow = type === 'window'
     if (!wantWindow && tabLink) {
       try {
@@ -635,7 +636,7 @@ export function makeConnectionOps({
             return false
           }
         })
-        if (match) return tabLink.connectTab(match.tabId, {})
+        if (match) return tabLink.connectTab(match.tabId, co)
       } catch {
         /* fall through */
       }
@@ -650,7 +651,7 @@ export function makeConnectionOps({
             return false
           }
         })
-        if (match) return safariLink.connectTab(match.tabId, {})
+        if (match) return safariLink.connectTab(match.tabId, co)
       } catch {
         /* fall through */
       }
@@ -660,12 +661,56 @@ export function makeConnectionOps({
         const r = await windowLink.listWindows()
         const wins = (r && r.windows) || []
         const match = wins.find((w) => String(w.bundleId) === sid || String(w.app) === sid)
-        if (match) return windowLink.connectWindow(match.windowId, {})
+        if (match) return windowLink.connectWindow(match.windowId, co)
       } catch {
         /* fall through */
       }
     }
     return { error: `couldn't find an open ${wantWindow ? 'window' : 'tab'} for ${sid} to reconnect — open it, then reconnect`, notFound: true }
+  }
+
+  // Boot / link-(re)connect auto-restore: re-bind every persisted-but-dead connection widget to its still-open
+  // tab/window, preserving the owning agent — so a BlitzOS restart doesn't make the agent lose its tab and ask
+  // the user to reconnect. Idempotent: a connection that's already live is skipped (connectTab/connectWindow
+  // dedup re-attaches anyway); a source whose tab/window is gone stays disconnected (no error surfaced).
+  let restoreInFlight = false
+  async function connectionRestoreAll() {
+    if (restoreInFlight) return { restored: 0, total: 0, skipped: 'in-flight' }
+    restoreInFlight = true
+    try {
+      let surfaces = []
+      try {
+        surfaces = getSurfaces() || []
+      } catch {
+        surfaces = []
+      }
+      const liveSurfaces = new Set([...registry.values()].filter((x) => x.status === 'live' && x.surfaceId).map((x) => String(x.surfaceId)))
+      const seen = new Set()
+      const targets = []
+      for (const s of surfaces) {
+        const p = s && s.props
+        if (!p || !p.connection) continue
+        if (liveSurfaces.has(String(s.id))) continue // already live (e.g. workspace switch without a restart)
+        const tsid = String(p.connSource || '')
+        const ttype = p.connType === 'window' ? 'window' : 'tab'
+        const key = ttype + ':' + tsid
+        if (!tsid || seen.has(key)) continue
+        seen.add(key)
+        targets.push({ sid: tsid, type: ttype, agentId: p.connAgent != null ? String(p.connAgent) : '' })
+      }
+      let restored = 0
+      for (const t of targets) {
+        try {
+          const r = await connectionReconnectSource(t.sid, t.type, { agentId: t.agentId })
+          if (r && !r.error) restored++
+        } catch {
+          /* a source that won't reconnect (tab/window gone) just stays disconnected */
+        }
+      }
+      return { restored, total: targets.length }
+    } finally {
+      restoreInFlight = false
+    }
   }
   function setInstaller(fn) {
     installer = fn
@@ -685,6 +730,7 @@ export function makeConnectionOps({
     connectionListWindows,
     connectionConnectWindow,
     connectionReconnectSource,
+    connectionRestoreAll,
     setInstaller,
     connectionInstallExtension,
     // adapter / registry API (used by the tab + window adapters and by tests)

@@ -7,6 +7,7 @@
 import './attach.css'
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { useStagedSet, stageSources, unstageSources } from './stagingStore'
 
 type Tab = { tabId: number | string; title?: string; url?: string; browser?: string; windowId?: number; active?: boolean; favIconUrl?: string }
 type Win = { windowId: number; app?: string; title?: string; icon?: string }
@@ -89,6 +90,17 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     setHover({ app, title, x: r.left + r.width / 2, y: r.bottom + 8 })
   }
 
+  // The dropbox is a STAGING tray, not a mirror of every live connection: it shows only sources the USER staged
+  // (dropped in, or connected from the right list) for their NEXT message, keyed per chat. The tray lives in a
+  // module-level external store (stagingStore) so it SURVIVES the island close+reopen — AttachPanel remounts per
+  // open, but the store doesn't, so there is nothing to seed or wipe. On SEND it clears (NotchHost.onSend →
+  // clearStaged) while the connection stays alive for the agent; the agent's OWN connections (e.g. a reconnect)
+  // never enter the tray. A staged key is `tab:<id>` / `window:<id>` / `conn:<id>`.
+  const stagedSet = useStagedSet(activeSessionId)
+  const markStaged = (...keys: string[]): void => stageSources(activeSessionId, ...keys)
+  const isStaged = (c: Conn): boolean =>
+    !!stagedSet && (stagedSet.has('conn:' + c.connId) || stagedSet.has((c.type === 'window' ? 'window:' : 'tab:') + String(c.ref)))
+
   // Latest-wins: listTabs/listWindows hit the extension/helper with variable latency, so an OLDER refresh can
   // resolve AFTER a newer one. Without this guard a stale snapshot (captured before a just-dropped connection
   // existed) clobbers the fresh one → the prune effect then culls the new icon. Stamp each run; apply only the latest.
@@ -152,12 +164,14 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
       else if (m.kind === 'connected') {
         setDragOver(false)
         if (!m.ok) {
-          setNotice({ ok: false, text: `Couldn't add ${String(m.app || 'window')}` })
+          // Prefer the specific reason from main (e.g. "Chrome connector not connected") over a generic label.
+          setNotice({ ok: false, text: String(m.error || `Couldn't add ${String(m.app || 'window')}`) })
           return
         }
         void refresh() // a window was dropped in → reflect it in the connectors list too
         const connId = String(m.connId || '')
         if (!connId) return
+        markStaged('conn:' + connId) // a macOS-window drop = the user staging it
         const src: AddedSource = {
           connId,
           app: String(m.app || 'Window'),
@@ -178,7 +192,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
 
   useEffect(() => {
     if (!notice) return
-    const t = window.setTimeout(() => setNotice(null), 2800)
+    const t = window.setTimeout(() => setNotice(null), notice.ok ? 2800 : 4500) // errors linger so the reason is readable
     return () => clearTimeout(t)
   }, [notice])
 
@@ -207,6 +221,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     const conn = bridge()
     if (!conn) return
     const existing = connForTab(t)
+    if (!existing) markStaged('tab:' + t.tabId) // user staged it for the next message
     setConnections((prev) =>
       existing ? prev.filter((c) => c.connId !== existing.connId) : [...prev, { connId: 'pending:t' + t.tabId, type: 'tab', ref: t.tabId }]
     )
@@ -216,6 +231,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     const conn = bridge()
     if (!conn) return
     const existing = connForWin(w)
+    if (!existing) markStaged('window:' + w.windowId) // user staged it for the next message
     setConnections((prev) =>
       existing ? prev.filter((c) => c.connId !== existing.connId) : [...prev, { connId: 'pending:w' + w.windowId, type: 'window', ref: w.windowId }]
     )
@@ -233,6 +249,8 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   // delay, then disconnect + reconcile in the background.
   function removeConn(connId: string): void {
     setHover(null)
+    const gone = connections.find((x) => x.connId === connId)
+    unstageSources(activeSessionId, 'conn:' + connId, ...(gone ? [(gone.type === 'window' ? 'window:' : 'tab:') + String(gone.ref)] : []))
     setConnections((prev) => prev.filter((c) => c.connId !== connId))
     setDropped((prev) => {
       if (!(connId in prev)) return prev
@@ -248,6 +266,13 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   function removeGroup(g: AttachGroup): void {
     setHover(null)
     const ids = new Set(g.items.map((it) => it.connId))
+    const keys: string[] = []
+    for (const it of g.items) {
+      keys.push('conn:' + it.connId)
+      const gone = connections.find((x) => x.connId === it.connId)
+      if (gone) keys.push((gone.type === 'window' ? 'window:' : 'tab:') + String(gone.ref))
+    }
+    unstageSources(activeSessionId, ...keys)
     setConnections((prev) => prev.filter((c) => !ids.has(c.connId)))
     setDropped((prev) => {
       let changed = false
@@ -329,6 +354,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   const tabG = new Map<string, AttachGroup>()
   const winG = new Map<string, AttachGroup>()
   for (const c of connections) {
+    if (!isStaged(c)) continue // the dropbox is the staging tray: only USER-staged sources, cleared on send
     if (c.type === 'window') {
       const w = winByRef.get(String(c.ref))
       const d = dropped[c.connId]
@@ -355,7 +381,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   // single plain icon chip.
   const pillGroups = [...tabG.values(), ...winG.values()].filter((g) => g.type === 'tab' || g.items.length >= 2)
   const singleWindows = [...winG.values()].filter((g) => g.items.length === 1)
-  const hasAttached = connections.length > 0
+  const hasAttached = connections.some(isStaged)
 
   return (
     <div className="att">
