@@ -46,8 +46,8 @@ import {
 } from './workspace.mjs'
 // The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
 import { writeRelayUrl } from './agent-runtime.mjs'
-// The orchestrators (dynamic-workflows) flag rides the agent's meta.json — the same record addAgent stamps.
-import { setTerminalOrchestrators } from './terminal-manager.mjs'
+// Agent settings ride the same terminal meta.json the manager owns.
+import { readTerminalMeta, setTerminalOrchestrators, writeTerminalMeta } from './terminal-manager.mjs'
 // The inbox is a runtime surface in osState; reconcileInboxItems keeps its items authoritative from the store.
 import { reconcileInboxItems } from './action-items.mjs'
 
@@ -400,27 +400,39 @@ export function createWorkspaceHost(a) {
     const legacy = join(activeWorkspace, '.blitzos', 'sessions')
     return existsSync(legacy) ? legacy : t
   }
-  function agentIds() {
-    const ids = ['0']
+  function readAgentMetaFile(agentId) {
+    const id = String(agentId ?? '0')
+    return readTerminalMeta(agentDir(), id)
+  }
+  function listedAgentIds({ includeArchived = false, archivedOnly = false } = {}) {
+    const ids = archivedOnly ? [] : ['0']
     const dir = agentDir()
     try {
       for (const d of readdirSync(dir, { withFileTypes: true })) {
         if (!d.isDirectory() || d.name === '0') continue
-        try { const m = JSON.parse(readFileSync(join(dir, d.name, 'meta.json'), 'utf8')); if (m && (m.kind === 'agent' || m.kind === 'chat')) ids.push(d.name) } catch { /* skip */ }
+        try {
+          const m = readAgentMetaFile(d.name)
+          if (!m || (m.kind !== 'agent' && m.kind !== 'chat')) continue
+          const archived = !!m.archived
+          if (archivedOnly ? archived : includeArchived || !archived) ids.push(d.name)
+        } catch { /* skip */ }
       }
     } catch { /* no terminals dir */ }
     return ids
   }
+  function agentIds() { return listedAgentIds() }
+  function allAgentIds() { return listedAgentIds({ includeArchived: true }) }
+  function archivedAgentIds() { return listedAgentIds({ archivedOnly: true }) }
   function readAgentMeta(agentId) {
     const id = String(agentId ?? '0')
-    try {
-      const m = JSON.parse(readFileSync(join(agentDir(), id, 'meta.json'), 'utf8'))
-      if (m && typeof m === 'object') return { id, ...(id === '0' ? { title: 'Main', kind: 'agent' } : {}), ...m }
-    } catch {
-      /* fall through */
-    }
+    const m = readAgentMetaFile(id)
+    if (m && typeof m === 'object') return { id, ...(id === '0' ? { title: 'Main', kind: 'agent' } : {}), ...m, ...(m.title ? { title: agentTitleText(m.title) } : {}) }
     if (id === '0') return { id, title: 'Main', kind: 'agent' }
     return { id }
+  }
+  function writeAgentMeta(agentId, next) {
+    const id = String(agentId)
+    writeTerminalMeta(agentDir(), id, next)
   }
   function clearChatQuietTimer(agentId) {
     const id = String(agentId ?? '0')
@@ -506,8 +518,23 @@ export function createWorkspaceHost(a) {
     const last = Array.isArray(messages) && messages.length ? messages[messages.length - 1] : null
     return last ? String(last.text || '').replace(/\s+/g, ' ').trim().slice(0, 96) : ''
   }
+  function agentTitleText(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 24)
+  }
+  function sessionSummary(id, meta, messages, sessionStatus) {
+    return {
+      id,
+      title: id === '0' ? 'Main' : agentTitleText(meta.title || `Chat ${id}`),
+      status: sessionStatus,
+      updatedAt: Math.max(Number(messages[messages.length - 1]?.ts) || 0, Number(chatStatuses.get(id)?.updatedAt) || 0),
+      lastMessagePreview: previewText(messages),
+      unread: false,
+      ...(meta.archived ? { archivedAt: Number(meta.archivedAt) || 0 } : {})
+    }
+  }
   function chatHubProps(activeAgentId = '0') {
     const ids = agentIds()
+    const archivedIds = archivedAgentIds()
     const threads = {}
     const status = {}
     const sessions = ids.map((id) => {
@@ -515,24 +542,25 @@ export function createWorkspaceHost(a) {
       const messages = readChatMessages(activeWorkspace, 400, id)
       threads[id] = messages
       status[id] = chatStatus(id)
-      return {
-        id,
-        title: id === '0' ? 'Main' : String(meta.title || `Chat ${id}`),
-        status: status[id],
-        updatedAt: Math.max(Number(messages[messages.length - 1]?.ts) || 0, Number(chatStatuses.get(id)?.updatedAt) || 0),
-        lastMessagePreview: previewText(messages),
-        unread: false
-      }
+      return sessionSummary(id, meta, messages, status[id])
     })
+    const archivedSessions = archivedIds.map((id) => {
+      const meta = readAgentMeta(id)
+      const messages = readChatMessages(activeWorkspace, 400, id)
+      return sessionSummary(id, meta, messages, chatStatus(id))
+    })
+    const requestedActive = String(activeAgentId ?? '0')
+    const active = ids.includes(requestedActive) ? requestedActive : '0'
     return {
       sessions,
+      archivedSessions,
       threads,
       status,
-      activeAgentId: String(activeAgentId ?? '0'),
+      activeAgentId: active,
       // Back-compat for old/custom chat UIs that still render a single messages array.
-      messages: threads[String(activeAgentId ?? '0')] || threads['0'] || [],
-      agentId: String(activeAgentId ?? '0'),
-      sessionId: String(activeAgentId ?? '0')
+      messages: threads[active] || threads['0'] || [],
+      agentId: active,
+      sessionId: active
     }
   }
   function updateChatHubState(activeAgentId = '0', broadcast = false) {
@@ -603,7 +631,7 @@ export function createWorkspaceHost(a) {
    *  Non-numeric ids (none today) are ignored for the max. */
   function newAgentId() {
     let max = 0
-    for (const id of agentIds()) { const n = Number(id); if (Number.isInteger(n) && n > max) max = n }
+    for (const id of allAgentIds()) { const n = Number(id); if (Number.isInteger(n) && n > max) max = n }
     return String(max + 1)
   }
   /** Register a new agent: write its meta (kind:'agent'), refresh the chat hub's thread list, and launch
@@ -649,6 +677,45 @@ export function createWorkspaceHost(a) {
       try { a.launchAgent(id, 0) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) } // single home → stage 0
     }
   }
+  function setAgentArchived(agentId, archived) {
+    const id = String(agentId)
+    if (id === '0') return { ok: false, error: 'cannot archive the primary agent' }
+    if (!/^[0-9]+$/.test(id)) return { ok: false, error: 'invalid agent id' }
+    if (switching) return { ok: false, error: 'switch in progress' }
+    const meta = readAgentMeta(id)
+    if (!meta || (meta.kind !== 'agent' && meta.kind !== 'chat')) return { ok: false, error: 'unknown agent id' }
+    const next = { ...meta, id, kind: meta.kind || 'agent' }
+    if (archived) {
+      next.archived = true
+      next.archivedAt = Date.now()
+    } else {
+      delete next.archived
+      delete next.archivedAt
+    }
+    try {
+      writeAgentMeta(id, next)
+    } catch (e) {
+      return { ok: false, error: e?.message || (archived ? 'archive failed' : 'restore failed') }
+    }
+    if (archived) {
+      try { a.pauseAgent?.(id) } catch (e) { console.error('[workspace] pauseAgent failed for', id, e?.message || e) }
+      clearChatQuietTimer(id)
+      chatTerminalActivityAt.delete(id)
+      setChatStatusLocal(id, 'stopped', 'archive')
+    } else {
+      setChatStatusLocal(id, 'starting', 'restore')
+      try {
+        if (typeof a.restartAgent === 'function') a.restartAgent(id)
+        else a.launchAgent?.(id, 0, next.title)
+      } catch (e) {
+        console.error('[workspace] restartAgent failed for', id, e?.message || e)
+      }
+    }
+    updateChatHubState(archived ? '0' : id, true)
+    return { ok: true, archived: !!archived }
+  }
+  function archiveAgent(agentId) { return setAgentArchived(agentId, true) }
+  function unarchiveAgent(agentId) { return setAgentArchived(agentId, false) }
   /** Close a NON-primary agent: stop it (no auto-restart), remove its transcript/system renderer files +
    *  terminal metadata (chat-<id>.md, blitz-<id>-chat.*, .blitzos/terminals/<id>/), and drop its chat widget.
    *  Primary '0' is never closable. Idempotent. */
@@ -678,8 +745,9 @@ export function createWorkspaceHost(a) {
   /** Rename an agent (cosmetic — the id stays the file key). Updates meta + the widget title live. */
   function renameAgent(agentId, newTitle) {
     const id = String(agentId)
-    const title = String(newTitle || '').trim()
+    const title = agentTitleText(newTitle)
     if (!title) return { ok: false, error: 'title required' }
+    if (id === '0') return { ok: false, error: 'main agent cannot be renamed' }
     // SECURITY: numeric id only — else the meta.json write below (raw join on the id) path-escapes the
     // workspace (e.g. id '../../../../tmp/evil'). Untrusted-relay reachable via rename_agent.
     if (!/^[0-9]+$/.test(id)) return { ok: false, error: 'invalid agent id' }
@@ -1024,6 +1092,8 @@ export function createWorkspaceHost(a) {
     newAgentId,
     addAgent,
     setAgentOrchestrators,
+    archiveAgent,
+    unarchiveAgent,
     closeAgent,
     renameAgent,
     resumeAgentsOnBoot,

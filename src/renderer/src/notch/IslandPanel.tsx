@@ -12,9 +12,13 @@ import { AttachPanel } from './AttachPanel'
 import { IslandTerminalPane } from './IslandTerminalPane'
 import type { IslandPanelProps } from './types'
 
+const AGENT_NAME_MAX = 24
+
 // A compose / pen glyph for the new-session tab (kept distinct from the attach "+").
 const PEN_PATH =
   'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z'
+const ARCHIVE_PATH =
+  'M4 7h16M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 11h6M5 3h14a1 1 0 0 1 1 1v3H4V4a1 1 0 0 1 1-1Z'
 // A stable, vibrant per-agent gradient (the peek "album art") derived from the agent id.
 function agentGradient(id: string): string {
   // Spread hues by the GOLDEN ANGLE so sequential agent ids ('0','1','2'…) get maximally DIFFERENT, diverse colors
@@ -44,6 +48,7 @@ const statusLabel = (s: string): string => {
       return 'Idle' // watching, idle
   }
 }
+const cleanAgentName = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, AGENT_NAME_MAX)
 
 export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const {
@@ -60,7 +65,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     attachOpen,
     onToggleAttach,
     debugTerminalEnabled,
-    activeTerminal
+    activeTerminal,
+    onArchiveAgent,
+    onRenameAgent
   } = props
   const top = Math.max(28, menuBarH) + 8
   const isNew = page === 0 // the pen tab
@@ -98,6 +105,13 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     }
   }, [activeId, messages.length, attachOpen])
   const lastUserIdx = messages.map((m) => m.role).lastIndexOf('user') // chips ride the most recent user message
+  // Brandon's tab-rename state ("Rename agent tabs from notch").
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const skipRenameBlurRef = useRef(false)
+  const committingRenameRef = useRef<string | null>(null)
 
   // The chat is PURE messages (the agent's real say() + your steers). The narrator's summaries do NOT appear here
   // — they live in the peek "now playing" view. Keep the chat pinned to the latest message — also when attach
@@ -129,6 +143,14 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     setDetailRows([])
   }, [activeId])
 
+  useEffect(() => {
+    if (!editingId) return
+    const el = renameInputRef.current
+    if (!el) return
+    el.focus()
+    el.select()
+  }, [editingId])
+
   const toggleDetails = (): void => {
     const next = !detailsOpen
     setDetailsOpen(next)
@@ -140,6 +162,44 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           /* best-effort */
         })
     }
+  }
+
+  const startRename = (sessionId: string, title: string): void => {
+    setEditingId(sessionId)
+    setEditingName(title.slice(0, AGENT_NAME_MAX))
+    setRenameBusy(false)
+  }
+  const cancelRename = (skipBlur = false): void => {
+    skipRenameBlurRef.current = skipBlur
+    committingRenameRef.current = null
+    setEditingId(null)
+    setEditingName('')
+    setRenameBusy(false)
+  }
+  const commitRename = (sessionId: string): void => {
+    if (renameBusy || committingRenameRef.current) return
+    const next = cleanAgentName(editingName)
+    const current = sessions.find((s) => s.id === sessionId)?.title || ''
+    if (!next || next === current) {
+      cancelRename()
+      return
+    }
+    committingRenameRef.current = sessionId
+    setRenameBusy(true)
+    onRenameAgent(sessionId, next)
+      .then((ok) => {
+        if (ok) cancelRename()
+        else {
+          committingRenameRef.current = null
+          setRenameBusy(false)
+          renameInputRef.current?.focus()
+        }
+      })
+      .catch(() => {
+        committingRenameRef.current = null
+        setRenameBusy(false)
+        renameInputRef.current?.focus()
+      })
   }
 
   // The message bar (attach "+" to the left of the pill), then the inline attachment panel BELOW it (the island
@@ -177,7 +237,19 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
 
   // The shared horizontal tab strip (pen + one chip per agent), kept in BOTH the chat and the peek view.
   const tabStrip = (
-    <div className="isl-tabs" role="tablist">
+    <div
+      className="isl-tabs"
+      role="tablist"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) e.preventDefault()
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }}
+    >
       <button
         type="button"
         role="tab"
@@ -191,20 +263,76 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           <path d={PEN_PATH} fill="currentColor" />
         </svg>
       </button>
-      {sessions.map((s, i) => (
-        <button
-          key={s.id}
-          type="button"
-          role="tab"
-          aria-selected={page === i + 1}
-          className={`isl-chip isl-chip-agent${page === i + 1 ? ' active' : ''}`}
-          onClick={() => onSelectPage(i + 1)}
-        >
-          <span className="isl-chip-album" style={{ background: agentGradient(s.id) }} aria-hidden />
-          <span className="isl-chip-label">{s.title}</span>
-          <span className="isl-chip-dot" data-status={dotStatus(s.status)} aria-hidden />
-        </button>
-      ))}
+      {sessions.map((s, i) => {
+        const selected = page === i + 1
+        const editing = editingId === s.id
+        if (editing) {
+          return (
+            <form
+              key={s.id}
+              role="tab"
+              aria-selected={selected}
+              className={`isl-chip isl-chip-agent isl-chip-editing${selected ? ' active' : ''}`}
+              onSubmit={(e) => {
+                e.preventDefault()
+                commitRename(s.id)
+              }}
+              onClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+            >
+              <span className="isl-chip-album" style={{ background: agentGradient(s.id) }} aria-hidden />
+              <input
+                ref={renameInputRef}
+                className="isl-chip-input"
+                value={editingName}
+                maxLength={AGENT_NAME_MAX}
+                disabled={renameBusy}
+                aria-label="Rename agent"
+                onChange={(e) => setEditingName(e.currentTarget.value)}
+                onBlur={() => {
+                  if (skipRenameBlurRef.current) {
+                    skipRenameBlurRef.current = false
+                    return
+                  }
+                  commitRename(s.id)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    cancelRename(true)
+                  }
+                }}
+              />
+              <span className="isl-chip-dot" data-status={dotStatus(s.status)} aria-hidden />
+            </form>
+          )
+        }
+        return (
+          <button
+            key={s.id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            className={`isl-chip isl-chip-agent${selected ? ' active' : ''}`}
+            onClick={() => onSelectPage(i + 1)}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              if (s.id === '0') return
+              onSelectPage(i + 1)
+              startRename(s.id, s.title)
+            }}
+            title={s.id === '0' ? 'Main' : 'Right-click to rename'}
+          >
+            <span className="isl-chip-album" style={{ background: agentGradient(s.id) }} aria-hidden />
+            <span className="isl-chip-label">{s.title}</span>
+            <span className="isl-chip-dot" data-status={dotStatus(s.status)} aria-hidden />
+          </button>
+        )
+      })}
     </div>
   )
 
@@ -307,12 +435,28 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               status={activeTerminal?.status || 'unknown'}
             />
           )}
-          <button type="button" className={`isl-details${detailsOpen ? ' open' : ''}`} onClick={toggleDetails}>
-            <span className="isl-details-caret" aria-hidden>
-              {detailsOpen ? '▾' : '▸'}
-            </span>
-            Details
-          </button>
+          <div className="isl-actions">
+            <button type="button" className={`isl-details${detailsOpen ? ' open' : ''}`} onClick={toggleDetails}>
+              <span className="isl-details-caret" aria-hidden>
+                {detailsOpen ? '▾' : '▸'}
+              </span>
+              Details
+            </button>
+            {activeId && activeId !== '0' && (
+              <button
+                type="button"
+                className="isl-archive"
+                onClick={() => onArchiveAgent(activeId)}
+                title="Archive agent"
+                aria-label="Archive agent"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+                  <path d={ARCHIVE_PATH} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span>Archive</span>
+              </button>
+            )}
+          </div>
           {detailsOpen && (
             <div className="isl-detail-rows">
               {detailRows.length === 0 ? (

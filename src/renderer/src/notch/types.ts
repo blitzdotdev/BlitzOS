@@ -9,6 +9,8 @@ export interface IslandSession {
   id: string
   title: string
   status: string
+  lastMessagePreview?: string
+  archivedAt?: number
 }
 
 export interface IslandMessage {
@@ -47,4 +49,6 @@ export interface IslandPanelProps {
   onToggleAttach: () => void
   debugTerminalEnabled: boolean // debug-only: show the active agent's tmux terminal inside the chat app
   activeTerminal?: IslandTerminalMeta // metadata for activeId's managed terminal; activeId remains the terminal id
+  onArchiveAgent: (id: string) => void
+  onRenameAgent: (id: string, title: string) => Promise<boolean>
 }

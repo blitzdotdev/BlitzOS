@@ -32,6 +32,9 @@ export interface TerminalMeta {
   /** the dynamic-workflows ("orchestrators") capability toggle: when true the boot-task provider hands this
    *  agent the orchestrator duty (author + run blitzscript workflows). Sticky across re-spawn (spawnTerminal). */
   orchestrators?: boolean
+  /** hidden from active chat tabs, but retained in settings + on disk for restore/delete. */
+  archived?: boolean
+  archivedAt?: number
 }
 
 export interface SpawnTerminalOpts {
@@ -54,6 +57,9 @@ export interface SpawnTerminalOpts {
   claudeEstablished?: boolean
   /** explicit orchestrators flag to carry onto the spawned meta; absent ⇒ inherit on-disk (re-spawn preserves it). */
   orchestrators?: boolean
+  /** hidden from active chat tabs; normally inherited from disk by spawnTerminal. */
+  archived?: boolean
+  archivedAt?: number
 }
 
 export interface TerminalEvent {

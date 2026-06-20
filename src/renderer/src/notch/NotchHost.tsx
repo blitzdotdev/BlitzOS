@@ -16,6 +16,7 @@ import type { IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta 
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
+const AGENT_NAME_MAX = 24
 
 // peek toggle glyphs: compress (corners in → enter peek) / expand (corners out → back to chat).
 const PEEK_IN = 'M5 9h4a1 1 0 0 0 1-1V4M19 9h-4a1 1 0 0 1-1-1V4M5 15h4a1 1 0 0 1 1 1v4M19 15h-4a1 1 0 0 0-1 1v4'
@@ -26,20 +27,24 @@ const SETTINGS_PATH =
 // The chat broadcast / snapshot shapes (subset we use). The host sends raw host statuses + role'd transcripts.
 type ChatAction = {
   type: 'chat'
-  sessions?: Array<{ id?: unknown; title?: unknown; status?: unknown }>
+  sessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }>
+  archivedSessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }>
   threads?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown }>>
   status?: Record<string, string>
 }
+type AgentMutationResult = { ok?: boolean; error?: string; archived?: boolean; title?: string }
 type TerminalAction = {
   type: 'terminal-spawn' | 'terminal-exit' | 'terminal-stop' | 'agent-remove'
   id?: unknown
   exitCode?: unknown
   terminal?: { id?: unknown; title?: unknown; status?: unknown; kind?: unknown }
 }
-const mapSession = (s: { id?: unknown; title?: unknown; status?: unknown }): IslandSession => ({
+const mapSession = (s: { id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }): IslandSession => ({
   id: String(s.id),
   title: String(s.title || `Chat ${s.id}`),
-  status: String(s.status || 'idle')
+  status: String(s.status || 'idle'),
+  ...(s.lastMessagePreview ? { lastMessagePreview: String(s.lastMessagePreview) } : {}),
+  ...(s.archivedAt ? { archivedAt: Number(s.archivedAt) || undefined } : {})
 })
 const mapTerminal = (t: { id?: unknown; title?: unknown; status?: unknown; kind?: unknown }): IslandTerminalMeta | null => {
   if (t.id == null) return null
@@ -65,6 +70,7 @@ function readDebugActiveTerminal(): boolean {
     return false
   }
 }
+const cleanAgentName = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, AGENT_NAME_MAX)
 type MilestoneAction = { type: 'milestone'; agentId?: string; id?: unknown; ts?: unknown; kind?: string; text?: unknown }
 // Strip the legacy "Attached before you started …" brief that older builds appended to the user's message text
 // (it persisted in chat.md). New sends never inject it; this keeps already-persisted messages clean at display.
@@ -104,6 +110,7 @@ export function NotchHost({
   const [page, setPage] = useState(initialPage) // 0 = new-session composer; 1..N = the agent at page-1
   const [attachOpen, setAttachOpen] = useState(false)
   const [sessions, setSessions] = useState<IslandSession[]>([])
+  const [archivedSessions, setArchivedSessions] = useState<IslandSession[]>([])
   const [threads, setThreads] = useState<Record<string, IslandMessage[]>>({})
   const [status, setStatus] = useState<Record<string, string>>({})
   const [milestones, setMilestones] = useState<Record<string, IslandMilestone[]>>({})
@@ -155,6 +162,10 @@ export function NotchHost({
     }
   }
 
+  const applyArchivedSessions = (arr: IslandSession[]): void => {
+    setArchivedSessions(arr.filter((s) => s.id !== '0'))
+  }
+
   // Snapshot on open + subscribe to the live chat broadcast.
   useEffect(() => {
     let live = true
@@ -163,6 +174,7 @@ export function NotchHost({
       .then((snap) => {
         if (!live || !snap) return
         applySessions((snap.sessions || []).map(mapSession))
+        applyArchivedSessions((snap.archivedSessions || []).map(mapSession))
         setThreads(mapThreads(snap.threads))
         setStatus(snap.status || {})
         setMilestones((snap.milestones || {}) as Record<string, IslandMilestone[]>)
@@ -175,6 +187,7 @@ export function NotchHost({
       if (!act) return
       if (act.type === 'chat') {
         if (Array.isArray(act.sessions)) applySessions(act.sessions.map(mapSession))
+        if (Array.isArray(act.archivedSessions)) applyArchivedSessions(act.archivedSessions.map(mapSession))
         if (act.threads) setThreads(mapThreads(act.threads))
         if (act.status) setStatus(act.status)
       } else if (act.type === 'milestone' && act.agentId) {
@@ -334,6 +347,112 @@ export function NotchHost({
   const activeStatus = activeId ? status[activeId] || activeSession?.status || 'idle' : 'idle'
 
   const goPage = (next: number): void => setPage(clamp(next, 0, N))
+  const requestArchiveAgent = (id: string): Promise<AgentMutationResult> => {
+    if (window.agentOS?.archiveAgent) return window.agentOS.archiveAgent(id)
+    if (window.agentOS?.chatControl) return window.agentOS.chatControl('archive', { id }) as Promise<AgentMutationResult>
+    return Promise.resolve({ ok: false, error: 'archive bridge unavailable' })
+  }
+  const requestRestoreAgent = (id: string): Promise<AgentMutationResult> => {
+    if (window.agentOS?.unarchiveAgent) return window.agentOS.unarchiveAgent(id)
+    if (window.agentOS?.chatControl) return window.agentOS.chatControl('unarchive', { id }) as Promise<AgentMutationResult>
+    return Promise.resolve({ ok: false, error: 'restore bridge unavailable' })
+  }
+  const moveSessionToArchive = (id: string): void => {
+    const session = sessions.find((s) => s.id === id)
+    if (!session) return
+    const archivedAt = session.archivedAt || Date.now()
+    const localPreview = [...(threads[id] || [])]
+      .reverse()
+      .find((m) => String(m.text || '').trim())
+      ?.text.replace(/\s+/g, ' ')
+      .trim()
+    const archived: IslandSession = { ...session, status: status[id] || session.status, lastMessagePreview: session.lastMessagePreview || localPreview, archivedAt }
+    setSessions((prev) => prev.filter((s) => s.id !== id))
+    setArchivedSessions((prev) => (prev.some((s) => s.id === id) ? prev.map((s) => (s.id === id ? archived : s)) : [...prev, archived]))
+    setPage(0)
+  }
+  const moveSessionFromArchive = (id: string): void => {
+    const session = archivedSessions.find((s) => s.id === id)
+    if (!session) return
+    const restored: IslandSession = { id: session.id, title: session.title, status: status[id] || session.status }
+    setArchivedSessions((prev) => prev.filter((s) => s.id !== id))
+    setSessions((prev) => {
+      const next = prev.some((s) => s.id === id) ? prev.map((s) => (s.id === id ? restored : s)) : [...prev, restored]
+      const idx = next.findIndex((s) => s.id === id)
+      if (idx >= 0) setPage(idx + 1)
+      return next
+    })
+    setView('session')
+  }
+  const archiveAgent = (id: string): void => {
+    if (id === '0') return
+    if (!sessions.some((s) => s.id === id)) return
+    requestArchiveAgent(id)
+      .then((r) => {
+        if (r?.ok) {
+          if (pendingJump.current === id) pendingJump.current = null
+          moveSessionToArchive(id)
+        } else {
+          console.warn('[notch] archive failed', r?.error || id)
+        }
+      })
+      .catch((e) => {
+        console.warn('[notch] archive failed', e)
+      })
+  }
+  const restoreAgent = (id: string): void => {
+    if (id === '0') return
+    pendingJump.current = id
+    requestRestoreAgent(id)
+      .then((r) => {
+        if (r?.ok) moveSessionFromArchive(id)
+        else {
+          if (pendingJump.current === id) pendingJump.current = null
+          console.warn('[notch] restore failed', r?.error || id)
+        }
+      })
+      .catch((e) => {
+        if (pendingJump.current === id) pendingJump.current = null
+        console.warn('[notch] restore failed', e)
+      })
+  }
+  const deleteArchivedAgent = (id: string): void => {
+    if (id === '0') return
+    window.agentOS
+      ?.closeAgent?.(id)
+      .then((r) => {
+        if (r?.ok) {
+          if (pendingJump.current === id) pendingJump.current = null
+          setArchivedSessions((prev) => prev.filter((s) => s.id !== id))
+        }
+      })
+      .catch(() => {
+        /* delete failed; leave it in the archived list */
+      })
+  }
+  const renameAgent = (id: string, title: string): Promise<boolean> => {
+    const next = cleanAgentName(title)
+    if (!id || !next) return Promise.resolve(false)
+    const request =
+      window.agentOS?.renameAgent?.(id, next) ??
+      (window.agentOS?.chatControl?.('rename', { id, title: next }) as Promise<AgentMutationResult> | undefined)
+    if (!request) return Promise.resolve(false)
+    return request
+      .then((r) => {
+        if (!r?.ok) {
+          console.warn('[notch] rename failed', r?.error || id)
+          return false
+        }
+        const saved = cleanAgentName((r as AgentMutationResult).title || next)
+        setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title: saved } : s)))
+        setArchivedSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title: saved } : s)))
+        return true
+      })
+      .catch((e) => {
+        console.warn('[notch] rename failed', e)
+        return false
+      })
+  }
 
   // page 0 (pen) = spawn a NEW session; an agent tab = steer that session. Both are real (no mock append).
   const onSend = (text: string): void => {
@@ -369,13 +488,22 @@ export function NotchHost({
   const onHome = view === 'home'
   const inSession = view === 'session'
   const dataView = onHome ? 'home' : view === 'settings' ? 'settings' : safePage === 0 ? 'session' : 'process'
+  const holdChassisHover = (): void => onChassisHoverChange?.(true)
+  const openChat = (): void => {
+    holdChassisHover()
+    setPage(0)
+    setPeek(false)
+    setAttachOpen(false)
+    setView('session')
+  }
   return (
     <div className="nhost" data-view={dataView}>
       <div
         className={`nh-chassis${attachOpen && !onHome ? ' nh-wide' : ''}`}
         data-view={dataView}
-        onPointerEnter={() => onChassisHoverChange?.(true)}
-        onPointerMove={() => onChassisHoverChange?.(true)}
+        onPointerEnter={holdChassisHover}
+        onPointerMove={holdChassisHover}
+        onPointerDownCapture={holdChassisHover}
         onPointerLeave={() => onChassisHoverChange?.(false)}
       >
         {/* Settings is notch chrome, not a widget tile. It expands the home view into a settings list. */}
@@ -427,13 +555,16 @@ export function NotchHost({
             menuBarH={menuBarH}
             sessions={sessions}
             status={status}
-            onOpenChat={() => setView('session')}
+            onOpenChat={openChat}
           />
         ) : view === 'settings' ? (
           <IslandSettings
             menuBarH={menuBarH}
             showActiveTerminal={debugActiveTerminal}
             onToggleActiveTerminal={chooseDebugActiveTerminal}
+            archivedSessions={archivedSessions}
+            onRestoreAgent={restoreAgent}
+            onDeleteAgent={deleteArchivedAgent}
           />
         ) : (
           <IslandPanel
@@ -451,6 +582,8 @@ export function NotchHost({
             onToggleAttach={() => setAttachOpen((v) => !v)}
             debugTerminalEnabled={debugActiveTerminal}
             activeTerminal={activeId ? terminals[activeId] : undefined}
+            onArchiveAgent={archiveAgent}
+            onRenameAgent={renameAgent}
           />
         )}
       </div>
