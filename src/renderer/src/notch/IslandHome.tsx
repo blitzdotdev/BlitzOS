@@ -1,8 +1,8 @@
 // IslandHome — the island's HOME SCREEN (the default view when the island appears on notch hover). An iPhone-style
 // row of widget icons. V1 ships ONE functional widget, Chat (centered), flanked by two dotted-outline placeholders
 // for the widgets agents will generate next. Tapping Chat enters the agent session UI (NotchHost flips to 'session').
-// No queue/archive — future agent-made widgets just drop onto this grid. The black chassis + NotchShape are owned by
-// NotchHost and are INVARIANT; this paints only the interior.
+// Settings are notch chrome, not a widget. The black chassis + NotchShape are owned by NotchHost and are INVARIANT;
+// this paints only the interior.
 import './island.css'
 import type { IslandSession } from './types'
 

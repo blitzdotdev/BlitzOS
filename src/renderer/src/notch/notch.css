@@ -64,6 +64,48 @@
   display: block;
 }
 
+/* Home-view settings: shell chrome, not part of the widget icon grid. */
+.nh-settings-btn {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  padding: 4px;
+  transition: color 0.15s ease-out, background 0.15s ease-out;
+}
+.nh-settings-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+.nh-settings-btn.on {
+  color: #ffd84d;
+}
+.nh-settings-btn svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+.nh-settings-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffd84d;
+  box-shadow: 0 0 0 2px #000;
+}
+
 /* the HOME button: the ONLY chrome in the island (user constraint), pinned top-LEFT in the notch band, mirroring
    the peek toggle. Shown only inside a widget (the chat/session view); tapping it returns to the home grid. */
 .nh-home-btn {

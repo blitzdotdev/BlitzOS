@@ -9,6 +9,7 @@ import './island.css'
 import { useEffect, useRef, useState } from 'react'
 import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
+import { IslandTerminalPane } from './IslandTerminalPane'
 import type { IslandPanelProps } from './types'
 
 // A compose / pen glyph for the new-session tab (kept distinct from the attach "+").
@@ -45,8 +46,22 @@ const statusLabel = (s: string): string => {
 }
 
 export default function IslandPanel(props: IslandPanelProps): JSX.Element {
-  const { sessions, page, onSelectPage, messages, milestones, status, activeId, peek, onSend, menuBarH, attachOpen, onToggleAttach } =
-    props
+  const {
+    sessions,
+    page,
+    onSelectPage,
+    messages,
+    milestones,
+    status,
+    activeId,
+    peek,
+    onSend,
+    menuBarH,
+    attachOpen,
+    onToggleAttach,
+    debugTerminalEnabled,
+    activeTerminal
+  } = props
   const top = Math.max(28, menuBarH) + 8
   const isNew = page === 0 // the pen tab
   const feedRef = useRef<HTMLDivElement>(null)
@@ -226,6 +241,13 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               ))
             )}
           </div>
+          {debugTerminalEnabled && activeId && (
+            <IslandTerminalPane
+              terminalId={activeId}
+              title={activeTerminal?.title || `Agent ${activeId}`}
+              status={activeTerminal?.status || 'unknown'}
+            />
+          )}
           <button type="button" className={`isl-details${detailsOpen ? ' open' : ''}`} onClick={toggleDetails}>
             <span className="isl-details-caret" aria-hidden>
               {detailsOpen ? '▾' : '▸'}

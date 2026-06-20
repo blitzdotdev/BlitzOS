@@ -121,6 +121,98 @@ button.isl-app-chat:active .isl-app-icon {
   background: transparent;
 }
 
+/* ── SETTINGS SCREEN: debug-only controls surfaced in the notch home flow. ─────────────────────────────────── */
+.nh-island.isl-settings {
+  min-height: 170px;
+  gap: 14px;
+  padding-bottom: 22px;
+}
+.nh-island .isl-settings-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: isl-rise 0.22s ease-out both;
+}
+.nh-island .isl-debug-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 21px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: #ffd84d;
+  color: #1c1500;
+  font: 900 10px/1 var(--isl-round);
+  letter-spacing: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58), 0 0 0 1px rgba(255, 216, 77, 0.16);
+}
+.nh-island .isl-settings-title {
+  color: var(--isl-text);
+  font-size: 16px;
+  font-weight: 650;
+}
+.nh-island .isl-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+  animation: isl-rise 0.24s ease-out 0.04s both;
+}
+.nh-island .isl-setting-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.nh-island .isl-setting-name {
+  color: var(--isl-text);
+  font-size: 14px;
+  font-weight: 560;
+  line-height: 18px;
+}
+.nh-island .isl-setting-note {
+  color: var(--isl-muted);
+  font-size: 12px;
+  line-height: 15px;
+}
+.nh-island .isl-setting-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.nh-island .isl-setting-toggle {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  flex: none;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.16);
+  transition: background 0.16s ease-out;
+}
+.nh-island .isl-setting-toggle span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nh-island .isl-setting-input:checked + .isl-setting-toggle {
+  background: #ffd84d;
+}
+.nh-island .isl-setting-input:checked + .isl-setting-toggle span {
+  transform: translateX(20px);
+}
+
 /* content rises in under the chassis reveal (opacity only — the chassis owns the shape + the slide). */
 @keyframes isl-rise {
   from {
@@ -516,6 +608,66 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-feed::-webkit-scrollbar-thumb {
   background: #ffffff26;
   border-radius: 9999px;
+}
+
+/* ── DEBUG TERMINAL: read-only active-agent terminal view, scoped to the selected chat tab. ─────────────────── */
+.nh-island .isl-terminal-debug {
+  position: relative;
+  flex: none;
+  height: clamp(132px, 24vh, 176px);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 216, 77, 0.24);
+  border-radius: 12px;
+  background: #050505;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  animation: isl-rise 0.22s ease-out both;
+}
+.nh-island .isl-terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+.nh-island .isl-terminal-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #fff;
+  font: 600 12px/1 var(--isl-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-terminal-status {
+  flex: none;
+  color: var(--isl-muted);
+  font: 10px/1 var(--isl-round);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.nh-island .isl-terminal-mount {
+  position: absolute;
+  inset: 30px 0 0;
+  padding: 5px 7px 7px;
+}
+.nh-island .isl-terminal-mount .xterm {
+  height: 100%;
+}
+.nh-island .isl-terminal-mount .xterm-viewport {
+  overflow-y: auto;
+}
+.nh-island .isl-terminal-overlay {
+  position: absolute;
+  inset: 30px 0 0;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 5, 5, 0.76);
+  color: var(--isl-muted);
+  font: 12px/1 var(--isl-font);
+  pointer-events: none;
 }
 .nh-island .isl-act {
   display: grid;

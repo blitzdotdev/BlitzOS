@@ -11,13 +11,17 @@ import './notch.css'
 import { useEffect, useRef, useState } from 'react'
 import IslandPanel from './IslandPanel'
 import IslandHome from './IslandHome'
-import type { IslandSession, IslandMessage, IslandMilestone } from './types'
+import IslandSettings from './IslandSettings'
+import type { IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta } from './types'
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
+const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
 
 // peek toggle glyphs: compress (corners in → enter peek) / expand (corners out → back to chat).
 const PEEK_IN = 'M5 9h4a1 1 0 0 0 1-1V4M19 9h-4a1 1 0 0 1-1-1V4M5 15h4a1 1 0 0 1 1 1v4M19 15h-4a1 1 0 0 0-1 1v4'
 const PEEK_OUT = 'M9 4H5a1 1 0 0 0-1 1v4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4M15 20h4a1 1 0 0 0 1-1v-4'
+const SETTINGS_PATH =
+  'M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5ZM19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-.6a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 .6-1a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 .6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.18.35.39.68.6 1H20a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-.5 1Z'
 
 // The chat broadcast / snapshot shapes (subset we use). The host sends raw host statuses + role'd transcripts.
 type ChatAction = {
@@ -26,11 +30,41 @@ type ChatAction = {
   threads?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown }>>
   status?: Record<string, string>
 }
+type TerminalAction = {
+  type: 'terminal-spawn' | 'terminal-exit' | 'terminal-stop' | 'agent-remove'
+  id?: unknown
+  exitCode?: unknown
+  terminal?: { id?: unknown; title?: unknown; status?: unknown; kind?: unknown }
+}
 const mapSession = (s: { id?: unknown; title?: unknown; status?: unknown }): IslandSession => ({
   id: String(s.id),
   title: String(s.title || `Chat ${s.id}`),
   status: String(s.status || 'idle')
 })
+const mapTerminal = (t: { id?: unknown; title?: unknown; status?: unknown; kind?: unknown }): IslandTerminalMeta | null => {
+  if (t.id == null) return null
+  return {
+    id: String(t.id),
+    title: String(t.title || `Agent ${t.id}`),
+    status: String(t.status || 'unknown'),
+    kind: String(t.kind || 'terminal')
+  }
+}
+const mapAgentTerminals = (raw: unknown[]): Record<string, IslandTerminalMeta> => {
+  const out: Record<string, IslandTerminalMeta> = {}
+  for (const item of raw) {
+    const meta = mapTerminal((item || {}) as { id?: unknown; title?: unknown; status?: unknown; kind?: unknown })
+    if (meta && meta.kind === 'agent') out[meta.id] = meta
+  }
+  return out
+}
+function readDebugActiveTerminal(): boolean {
+  try {
+    return window.localStorage.getItem(DEBUG_ACTIVE_TERMINAL_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 type MilestoneAction = { type: 'milestone'; agentId?: string; id?: unknown; ts?: unknown; kind?: string; text?: unknown }
 const mapThreads = (
   raw?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown }>>
@@ -55,14 +89,16 @@ export function NotchHost({
   onChassisHoverChange?: (on: boolean) => void
   initialView?: 'home' | 'session' // the view to open into: 'home' (hover) or 'session' (⌥Space). Remounts per open.
 }): JSX.Element {
-  // 'home' = the widget home screen (the grid); 'session' = a widget is open (today's agent chat/session UI).
-  const [view, setView] = useState<'home' | 'session'>(initialView)
+  // 'home' = the icon grid; 'settings' = debug settings; 'session' = today's agent chat/session UI.
+  const [view, setView] = useState<'home' | 'settings' | 'session'>(initialView)
   const [page, setPage] = useState(0) // 0 = new-session composer; 1..N = the agent at page-1
   const [attachOpen, setAttachOpen] = useState(false)
   const [sessions, setSessions] = useState<IslandSession[]>([])
   const [threads, setThreads] = useState<Record<string, IslandMessage[]>>({})
   const [status, setStatus] = useState<Record<string, string>>({})
   const [milestones, setMilestones] = useState<Record<string, IslandMilestone[]>>({})
+  const [terminals, setTerminals] = useState<Record<string, IslandTerminalMeta>>({})
+  const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
   const pendingJump = useRef<string | null>(null) // after a spawn, jump to the new session once it appears
   const nRef = useRef(0)
@@ -78,7 +114,16 @@ export function NotchHost({
       return
     }
     onChassisResize?.()
-  }, [attachOpen, peek, view]) // home↔session resizes the chassis too — hold the island open across the transit
+  }, [attachOpen, debugActiveTerminal, peek, view]) // view/debug changes resize the chassis too — hold the island open across the transit
+
+  const chooseDebugActiveTerminal = (on: boolean): void => {
+    setDebugActiveTerminal(on)
+    try {
+      window.localStorage.setItem(DEBUG_ACTIVE_TERMINAL_KEY, on ? '1' : '0')
+    } catch {
+      /* debug-only persistence */
+    }
+  }
 
   // Apply a roster update; if we just spawned a session and it now exists, jump to its tab.
   const applySessions = (arr: IslandSession[]): void => {
@@ -142,6 +187,63 @@ export function NotchHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Track managed agent terminals for the debug pane. The active agent id is the canonical terminal id, but the
+  // metadata gives the pane a title/status and lets terminal lifecycle actions update without reopening surfaces.
+  useEffect(() => {
+    let live = true
+    const refreshTerminals = (): void => {
+      Promise.resolve(window.agentOS?.terminalList?.() ?? [])
+        .then((list) => {
+          if (!live || !Array.isArray(list)) return
+          setTerminals(mapAgentTerminals(list))
+        })
+        .catch(() => {
+          /* terminal debug pane remains best-effort */
+        })
+    }
+    refreshTerminals()
+    const off = window.agentOS?.onAction?.((a: unknown) => {
+      const act = a as TerminalAction
+      if (!act) return
+      if (act.type === 'terminal-spawn') {
+        const fromPayload = mapTerminal({
+          id: act.id ?? act.terminal?.id,
+          title: act.terminal?.title,
+          status: act.terminal?.status,
+          kind: act.terminal?.kind
+        })
+        if (fromPayload && fromPayload.kind === 'agent') setTerminals((prev) => ({ ...prev, [fromPayload.id]: fromPayload }))
+        refreshTerminals()
+      } else if (act.type === 'terminal-exit' || act.type === 'terminal-stop') {
+        const id = act.id == null ? '' : String(act.id)
+        if (id) {
+          setTerminals((prev) => {
+            const cur = prev[id]
+            return cur ? { ...prev, [id]: { ...cur, status: 'exited' } } : prev
+          })
+        }
+        refreshTerminals()
+      } else if (act.type === 'agent-remove') {
+        const id = act.id == null ? '' : String(act.id)
+        if (id) {
+          setTerminals((prev) => {
+            const next = { ...prev }
+            delete next[id]
+            return next
+          })
+        }
+      }
+    })
+    return () => {
+      live = false
+      try {
+        off?.()
+      } catch {
+        /* best-effort */
+      }
+    }
+  }, [])
+
   // Tab navigation by KEYBOARD: Ctrl+Tab → next, Ctrl+Shift+Tab → prev, wrapping the pen tab (0) + agents (1..N).
   // Disabled while the attachment panel is open. (Swipe just scrolls the strip; it never pages.)
   useEffect(() => {
@@ -196,7 +298,8 @@ export function NotchHost({
   // The CHASSIS is invariant black + the original NotchShape, and grows wide when the attach panel opens. The
   // PEEK toggle lives at the very top (the notch / menu-bar band), top-right, ALWAYS visible across every view.
   const onHome = view === 'home'
-  const dataView = onHome ? 'home' : safePage === 0 ? 'session' : 'process'
+  const inSession = view === 'session'
+  const dataView = onHome ? 'home' : view === 'settings' ? 'settings' : safePage === 0 ? 'session' : 'process'
   return (
     <div className="nhost" data-view={dataView}>
       <div
@@ -206,7 +309,22 @@ export function NotchHost({
         onPointerMove={() => onChassisHoverChange?.(true)}
         onPointerLeave={() => onChassisHoverChange?.(false)}
       >
-        {/* The HOME button (the only island chrome) + the Peek toggle live ONLY inside a widget; the home grid is bare. */}
+        {/* Settings is notch chrome, not a widget tile. It expands the home view into a settings list. */}
+        {onHome && (
+          <button
+            type="button"
+            className={`nh-settings-btn${debugActiveTerminal ? ' on' : ''}`}
+            onClick={() => setView('settings')}
+            title="Settings"
+            aria-label="Settings"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+              <path d={SETTINGS_PATH} fill="currentColor" />
+            </svg>
+            {debugActiveTerminal && <span className="nh-settings-dot" aria-hidden />}
+          </button>
+        )}
+        {/* The HOME button + Peek toggle live inside expanded island views; the home widget row stays widget-only. */}
         {!onHome && (
           <button type="button" className="nh-home-btn" onClick={() => setView('home')} title="Home" aria-label="Home">
             <svg viewBox="0 0 24 24" aria-hidden focusable="false">
@@ -221,7 +339,7 @@ export function NotchHost({
             </svg>
           </button>
         )}
-        {!onHome && (
+        {inSession && (
           <button
             type="button"
             className={`nh-peek-toggle${peek ? ' on' : ''}`}
@@ -236,7 +354,18 @@ export function NotchHost({
           </button>
         )}
         {onHome ? (
-          <IslandHome menuBarH={menuBarH} sessions={sessions} status={status} onOpenChat={() => setView('session')} />
+          <IslandHome
+            menuBarH={menuBarH}
+            sessions={sessions}
+            status={status}
+            onOpenChat={() => setView('session')}
+          />
+        ) : view === 'settings' ? (
+          <IslandSettings
+            menuBarH={menuBarH}
+            showActiveTerminal={debugActiveTerminal}
+            onToggleActiveTerminal={chooseDebugActiveTerminal}
+          />
         ) : (
           <IslandPanel
             sessions={sessions}
@@ -251,6 +380,8 @@ export function NotchHost({
             menuBarH={menuBarH}
             attachOpen={attachOpen}
             onToggleAttach={() => setAttachOpen((v) => !v)}
+            debugTerminalEnabled={debugActiveTerminal}
+            activeTerminal={activeId ? terminals[activeId] : undefined}
           />
         )}
       </div>
