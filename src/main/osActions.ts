@@ -34,7 +34,7 @@ export interface SurfaceDescriptor {
   html?: string
   component?: string
   props?: Record<string, unknown>
-  /** A tile on the home slot lattice — geometry derives from the cell (stage-core). */
+  /** Legacy slot field (the home lattice was cut in V1); retained only for workspace.json back-compat. */
   slot?: { col: number; row: number; size: string }
   /** Browser (web) tabs declared up front — opens a multi-tab browser with its strip pre-filled
    *  (the host lazy-restores: only activeTab loads, the rest load on click). */
@@ -68,9 +68,8 @@ export interface OsState {
   /** Last bulk layout transaction (a folder-wide reconcile) — perception treats the push as ONE gesture. */
   bulkAt?: number
   workspace?: string
-  // The active workspace's absolute folder path (~/Blitz/<name>). The filesystem IS the canvas: a LOCAL
-  // agent authors surfaces by writing files INTO this folder (.html=panel, .md=note, .weblink=web) and the
-  // host's watcher materializes them in ~250ms. Surfaced so the agent knows WHERE to write.
+  // The active workspace's absolute folder path (~/Blitz/<name>) — the agent's persistence root (chat.md,
+  // sessions, onboarding artifacts). Surfaced so the agent knows WHERE to read/write.
   workspace_path?: string
 }
 

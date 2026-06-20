@@ -73,9 +73,7 @@ export interface Surface {
   tabs?: SurfaceTab[]
   /** Active tab index (default 0). */
   activeTab?: number
-  /** Home lattice (plans/blitzos-single-canvas-navigation.md). Slotted tile: integer cell on the single
-   *  home lattice. x/y/w/h are DERIVED from it (stage-core slotRect) so rendering/persistence stay
-   *  unchanged; a viewport change re-derives. Absent = free-form window. */
+  /** Legacy slot field — the home lattice was cut in V1. Retained only for workspace.json back-compat. */
   slot?: { col: number; row: number; size: string }
   /** Focus window (L3): a human-pulled free-form floater above the tile grid; the one free-form exception. */
   focus?: boolean
