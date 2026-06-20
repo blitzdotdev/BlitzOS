@@ -617,6 +617,7 @@ button.isl-app-chat:active .isl-app-icon {
   height: clamp(132px, 24vh, 176px);
   min-height: 0;
   overflow: hidden;
+  overscroll-behavior: contain;
   border: 1px solid rgba(255, 216, 77, 0.24);
   border-radius: 12px;
   background: #050505;
@@ -648,16 +649,29 @@ button.isl-app-chat:active .isl-app-icon {
   text-transform: uppercase;
   white-space: nowrap;
 }
-.nh-island .isl-terminal-mount {
+.nh-island .isl-terminal-log {
   position: absolute;
   inset: 30px 0 0;
-  padding: 5px 7px 7px;
-}
-.nh-island .isl-terminal-mount .xterm {
-  height: 100%;
-}
-.nh-island .isl-terminal-mount .xterm-viewport {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 7px 9px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  color: #f4f4f5;
+  font: 10px/1.25 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  outline: none;
+}
+.nh-island .isl-terminal-log::-webkit-scrollbar {
+  width: 6px;
+}
+.nh-island .isl-terminal-log::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 9999px;
 }
 .nh-island .isl-terminal-overlay {
   position: absolute;
