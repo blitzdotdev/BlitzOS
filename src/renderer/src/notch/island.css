@@ -34,6 +34,93 @@
   max-height: 72vh;
 }
 
+/* ── HOME SCREEN: an iPhone-style row of widget icons. The middle tile sits at the island's horizontal center
+   (a centered flex row of 3). V1 = one real widget (Chat) + two dotted placeholders. ─────────────────────────── */
+.nh-island.isl-home {
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 22px;
+}
+.isl-home-grid {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center; /* the middle (Chat) tile lands dead-center in the island */
+  gap: 34px;
+}
+.isl-app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+button.isl-app {
+  cursor: pointer;
+}
+.isl-app-icon {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  border-radius: 22px; /* iOS app-icon squircle radius (~29% of the tile) */
+  display: grid;
+  place-items: center;
+}
+.isl-app-icon svg {
+  width: 38px;
+  height: 38px;
+  display: block;
+}
+/* the one functional widget — a vivid Apple-blue app icon that pops against the black island */
+.isl-app-chat .isl-app-icon {
+  color: #fff;
+  background: linear-gradient(160deg, #2a93ff 0%, #0a84ff 52%, #0066d6 100%);
+  box-shadow: 0 6px 18px rgba(10, 132, 255, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  transition: transform 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+}
+button.isl-app-chat:hover .isl-app-icon {
+  transform: translateY(-2px);
+}
+button.isl-app-chat:active .isl-app-icon {
+  transform: scale(0.95);
+}
+.isl-app-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--isl-muted);
+}
+/* a live-activity dot when an agent is working */
+.isl-app-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #30d158; /* Apple system green */
+  border: 2px solid #000;
+  box-shadow: 0 0 0 0 rgba(48, 209, 88, 0.5);
+  animation: isl-app-pulse 1.8s ease-out infinite;
+}
+@keyframes isl-app-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(48, 209, 88, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0);
+  }
+}
+/* empty placeholders — dotted outline only, no fill, no label */
+.isl-app-empty .isl-app-icon {
+  border: 2px dashed rgba(255, 255, 255, 0.16);
+  background: transparent;
+}
+
 /* content rises in under the chassis reveal (opacity only — the chassis owns the shape + the slide). */
 @keyframes isl-rise {
   from {

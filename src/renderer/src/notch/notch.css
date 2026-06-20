@@ -63,6 +63,31 @@
   height: 15px;
   display: block;
 }
+
+/* the HOME button: the ONLY chrome in the island (user constraint), pinned top-LEFT in the notch band, mirroring
+   the peek toggle. Shown only inside a widget (the chat/session view); tapping it returns to the home grid. */
+.nh-home-btn {
+  position: absolute;
+  top: 8px;
+  left: 16px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.55);
+  padding: 4px;
+  transition: color 0.15s ease-out;
+}
+.nh-home-btn:hover {
+  color: #fff;
+}
+.nh-home-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
 @keyframes nhost-in {
   from {
     opacity: 0;

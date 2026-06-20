@@ -10,6 +10,7 @@
 import './notch.css'
 import { useEffect, useRef, useState } from 'react'
 import IslandPanel from './IslandPanel'
+import IslandHome from './IslandHome'
 import type { IslandSession, IslandMessage, IslandMilestone } from './types'
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
@@ -43,7 +44,17 @@ const mapThreads = (
   return out
 }
 
-export function NotchHost({ menuBarH, onChassisResize }: { menuBarH: number; onChassisResize?: () => void }): JSX.Element {
+export function NotchHost({
+  menuBarH,
+  onChassisResize,
+  initialView = 'home'
+}: {
+  menuBarH: number
+  onChassisResize?: () => void
+  initialView?: 'home' | 'session' // the view to open into: 'home' (hover) or 'session' (⌥Space). Remounts per open.
+}): JSX.Element {
+  // 'home' = the widget home screen (the grid); 'session' = a widget is open (today's agent chat/session UI).
+  const [view, setView] = useState<'home' | 'session'>(initialView)
   const [page, setPage] = useState(0) // 0 = new-session composer; 1..N = the agent at page-1
   const [attachOpen, setAttachOpen] = useState(false)
   const [sessions, setSessions] = useState<IslandSession[]>([])
@@ -65,7 +76,7 @@ export function NotchHost({ menuBarH, onChassisResize }: { menuBarH: number; onC
       return
     }
     onChassisResize?.()
-  }, [attachOpen, peek])
+  }, [attachOpen, peek, view]) // home↔session resizes the chassis too — hold the island open across the transit
 
   // Apply a roster update; if we just spawned a session and it now exists, jump to its tab.
   const applySessions = (arr: IslandSession[]): void => {
@@ -182,35 +193,58 @@ export function NotchHost({ menuBarH, onChassisResize }: { menuBarH: number; onC
 
   // The CHASSIS is invariant black + the original NotchShape, and grows wide when the attach panel opens. The
   // PEEK toggle lives at the very top (the notch / menu-bar band), top-right, ALWAYS visible across every view.
+  const onHome = view === 'home'
+  const dataView = onHome ? 'home' : safePage === 0 ? 'session' : 'process'
   return (
-    <div className="nhost" data-view={safePage === 0 ? 'session' : 'process'}>
-      <div className={`nh-chassis${attachOpen ? ' nh-wide' : ''}`} data-view={safePage === 0 ? 'session' : 'process'}>
-        <button
-          type="button"
-          className={`nh-peek-toggle${peek ? ' on' : ''}`}
-          onClick={togglePeek}
-          aria-pressed={peek}
-          title={peek ? 'Expand to chat' : 'Peek all sessions'}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden focusable="false">
-            <path d={peek ? PEEK_OUT : PEEK_IN} stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
-          </svg>
-          <span>{peek ? 'Expand' : 'Peek'}</span>
-        </button>
-        <IslandPanel
-          sessions={sessions}
-          page={safePage}
-          onSelectPage={goPage}
-          messages={messages}
-          milestones={activeMilestones}
-          status={activeStatus}
-          activeId={activeId}
-          peek={peek}
-          onSend={onSend}
-          menuBarH={menuBarH}
-          attachOpen={attachOpen}
-          onToggleAttach={() => setAttachOpen((v) => !v)}
-        />
+    <div className="nhost" data-view={dataView}>
+      <div className={`nh-chassis${attachOpen && !onHome ? ' nh-wide' : ''}`} data-view={dataView}>
+        {/* The HOME button (the only island chrome) + the Peek toggle live ONLY inside a widget; the home grid is bare. */}
+        {!onHome && (
+          <button type="button" className="nh-home-btn" onClick={() => setView('home')} title="Home" aria-label="Home">
+            <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+              <path
+                d="M3 11.4 12 4l9 7.4M5.5 9.8V20h4V14.5h5V20h4V9.8"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+              />
+            </svg>
+          </button>
+        )}
+        {!onHome && (
+          <button
+            type="button"
+            className={`nh-peek-toggle${peek ? ' on' : ''}`}
+            onClick={togglePeek}
+            aria-pressed={peek}
+            title={peek ? 'Expand to chat' : 'Peek all sessions'}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+              <path d={peek ? PEEK_OUT : PEEK_IN} stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+            </svg>
+            <span>{peek ? 'Expand' : 'Peek'}</span>
+          </button>
+        )}
+        {onHome ? (
+          <IslandHome menuBarH={menuBarH} sessions={sessions} status={status} onOpenChat={() => setView('session')} />
+        ) : (
+          <IslandPanel
+            sessions={sessions}
+            page={safePage}
+            onSelectPage={goPage}
+            messages={messages}
+            milestones={activeMilestones}
+            status={activeStatus}
+            activeId={activeId}
+            peek={peek}
+            onSend={onSend}
+            menuBarH={menuBarH}
+            attachOpen={attachOpen}
+            onToggleAttach={() => setAttachOpen((v) => !v)}
+          />
+        )}
       </div>
     </div>
   )

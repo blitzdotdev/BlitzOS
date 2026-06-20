@@ -448,6 +448,9 @@ export default function App(): JSX.Element {
   // interactive notch hit-window (main), so they are bulletproof + constant in every state (no click-through race).
   const [notchWidth, setNotchWidth] = useState(NOTCH_W)
   const [hasNotch, setHasNotch] = useState(false)
+  // The island opens into a VIEW: 'home' (the widget home grid — HOVER only, no keybind) or 'session' (a new agent
+  // session — ⌥Space). App sets this before opening; NotchHost remounts per open so it always honors the latest.
+  const [islandInitialView, setIslandInitialView] = useState<'home' | 'session'>('home')
   const overChassisRef = useRef(false) // cursor over the chat chassis (overlay mousemove) — keeps the panel open
   const notchOverRef = useRef(false) // cursor over the physical notch (reported by the hit-window's hover)
   const notchHoverGraceRef = useRef(0) // close grace so a notch→chassis transit does not flicker the panel shut
@@ -524,7 +527,8 @@ export default function App(): JSX.Element {
     if (notchStateRef.current === 'closed') {
       setNotchPinnedBoth(true) // a keyboard-opened panel stays open regardless of the mouse
       setNotchInteractive(true)
-      applyNotchState('panel') // NotchHost's session composer autofocuses
+      setIslandInitialView('session') // ⌥Space opens STRAIGHT to a new agent session (the home grid is hover-only, no keybind)
+      applyNotchState('panel')
     } else {
       // hide (panel or open → closed)
       setNotchPinnedBoth(false)
@@ -562,7 +566,10 @@ export default function App(): JSX.Element {
             clearTimeout(notchHoverGraceRef.current)
             notchHoverGraceRef.current = 0
           }
-          if (notchStateRef.current === 'closed') applyNotchState('panel')
+          if (notchStateRef.current === 'closed') {
+            setIslandInitialView('home') // hover always shows the widget home grid (no keybind opens home)
+            applyNotchState('panel')
+          }
           setNotchInteractive(true)
         } else {
           if (notchHoverGraceRef.current) clearTimeout(notchHoverGraceRef.current)
@@ -623,8 +630,10 @@ export default function App(): JSX.Element {
       const inPanel = !!pr && e.clientX >= pr.left && e.clientX <= pr.right && e.clientY >= pr.top && e.clientY <= pr.bottom
       overChassisRef.current = inPanel
       const want = overHandle || notchOverRef.current || (st === 'panel' && inPanel)
-      if ((overHandle || notchOverRef.current) && st === 'closed') applyNotchState('panel')
-      else if (st === 'panel' && !want) applyNotchState('closed')
+      if ((overHandle || notchOverRef.current) && st === 'closed') {
+        setIslandInitialView('home') // hover always shows the widget home grid (no keybind opens home)
+        applyNotchState('panel')
+      } else if (st === 'panel' && !want) applyNotchState('closed')
       setNotchInteractive(want)
     }
     window.addEventListener('mousemove', onMove, true)
@@ -2369,6 +2378,7 @@ export default function App(): JSX.Element {
         createPortal(
           <NotchHost
             menuBarH={notchMenuBarH}
+            initialView={islandInitialView}
             onChassisResize={() => {
               notchHoldUntilRef.current = performance.now() + 1000
             }}
