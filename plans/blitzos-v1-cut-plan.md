@@ -6,6 +6,28 @@
 
 ---
 
+## Status — EXECUTED (on `origin/blitz-v1`)
+
+The cut is done. The canvas is gone from the renderer, the main process, the agent's tools, its doctrine, and the persistence layer. `npm run typecheck` + `npm run build` + the full source-assert suite were green at **every** commit, and each was rebased/merged cleanly alongside the team's live island work (the computer-use picker, the attach panel, the notch debug-terminal).
+
+| phase | commit | what changed |
+|---|---|---|
+| notch→canvas sever | `33d5ff6` | island is closed↔panel only; deleted openNotch/closeNotch/toggleNotch + the `'open'` fullscreen grow |
+| App.tsx canvas removal | `c2c0ff6` | **2722 → ~700 lines**: the `.world` + SurfaceFrame map, dock, Overview, radial, folders, annotations, all pan/zoom/freeze/⌘T gestures + the canvas `onAction` branches |
+| canvas components delete | `51deb63` | **27 files**: SurfaceFrame + the 4 renderers (web/srcdoc/native/app), runtime panels, Sidebar, Overview, RadialSurfaceMenu, AnnotationLayer, folders/files, SurfacePreview, cameraController, capture |
+| store gut | `23a6d01` | **1209 → 220 lines**: cut camera/transform, the whole slot API, folders, selection/marquee, undo, annotations, web/bookmarks |
+| main-side lattice removal | `65eb7c0` | cut 9 canvas/workspace tools (place_widget/bring_home/send_offscreen/move_surface/go_to_primary + list/create/switch_workspace + customize_widget), gutted the agent serializer, cut the onboarding board, deleted `stage-core`/`stages-core` |
+| test-suite fix | `f5be904` | widget-tools allowlist dangling dep (move_surface/go_to_primary) + greened the suite |
+| perception status-only | `dffad63` | the supervisor tick now diffs only agent status + terminal exits (no surface geometry); cut `trigger:'canvas'`/`'annotation'` + the in-page INJECT/DRAIN sensors (Electron) |
+| doctrine sweep | `6aefbe2` | blitzos-agents.md 30→0 canvas words; tool descriptions + the interview/onboarding boot duties reframed to island reality (chat-only); cut blitzos-externalize.md + neutralized workflow-enrichment |
+| tools + dev doc | `25de280` | cut the vestigial surface/web/widget tools (**39 survive**); run_workflow no longer creates a widget; rewrote `agent-os/CLAUDE.md` for island-only V1 |
+| hygiene | `d606bdc` | stale lattice/canvas comments |
+| persistence collapse | `e233343` | stripped the dead `camera`/`mode`/`view`/`bulkAt`/`stack`/`slot` from `OsState` + `workspace.json` (now `{version,id,kind,groups,nodes}`); single workspace; reads stay back-compat tolerant |
+
+**Deferred (trivial or separate, all flagged):** the `dismissUnlock` no-op IPC + its bridge method, and the dormant multi-workspace switcher IPC (both reach into `preload`/`index.ts`, live-edited by the team). The widget-system FILES (`widget-catalog`/`widget-tools`/`widget-jsx-core`/`widgets/`) and the INJECT/DRAIN sensors are KEPT but dormant — still imported by `preview/backend.mjs` (server mode) + tests; cutting them belongs to a server-mode pass. Deep supervision (read the worker's `.jsonl`), the icon/widget home-screen, and run_workflow live-viz remain experimental/post-V1 per the sections below.
+
+---
+
 ## The big decision — RESOLVED: web surfaces are axed
 
 Browser-use in V1 = the user's **real Chrome** via the connector extension (out-of-process). Computer-use = the native helper. Neither needs a BlitzOS-owned `web` surface.

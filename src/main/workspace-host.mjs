@@ -55,24 +55,19 @@ import { reconcileInboxItems } from './action-items.mjs'
  * @param {object} a
  * @param {string}   a.root         WORKSPACES_ROOT (holds many workspace folders)
  * @param {string}  [a.initialName] 'Home' default, or the basename of an explicit override
- * @param {() => any} a.getState    returns the current osState ({surfaces,camera,mode,view})
+ * @param {() => any} a.getState    returns the current osState ({surfaces})
  * @param {(s:any) => void} a.setState  sets osState (the host owns it on hydrate/switch/reconcile)
  * @param {(obj:any) => void} a.broadcast  send a message to all connected renderers
  * @param {() => any[]} [a.getActionItems]  the authoritative action-items list (listActions()) — the inbox
  *        surface's items are reconciled against this on hydrate + onStatePush so a stale osState copy never wins.
  * @param {(surfaces:any[]) => (Promise<any>|void)} [a.onSurfaces]  realize web surfaces (server: spin/tear
  *        headless targets; Electron: no-op, WebContentsView host owns browser guests)
- * @param {'desktop'} [a.defaultMode]  IGNORED — mode is pinned to 'desktop' for now (single-canvas nav;
- *        the field is slated for removal). Kept for caller compatibility.
  * @param {boolean} [a.explicitInitial]  true when initialName was PINNED by the user (BLITZ_WORKSPACE):
  *        skip the boot-where-you-left-off preference and honor the pin.
  */
 export function createWorkspaceHost(a) {
   const root = resolve(a.root)
   const onSurfaces = a.onSurfaces || (() => {})
-  // Single-canvas nav pins the navigation mode to 'desktop' (canvas/Control-Mode is gone). a.defaultMode
-  // is intentionally ignored until the `mode` field is removed (plans/blitzos-single-canvas-navigation.md).
-  const defaultMode = 'desktop'
   mkdirSync(root, { recursive: true })
 
   let initialName = a.initialName || 'Home'
@@ -129,7 +124,7 @@ export function createWorkspaceHost(a) {
     (s.kind === 'native' && (s.component === 'chat' || s.component === 'activity' || s.component === 'folder' || s.component === 'files' || s.component === 'terminal' || s.component === 'runtime' || s.component === 'inbox' || s.component === 'unlock'))
 
   const active = () => basename(activeWorkspace)
-  const blank = () => ({ surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: defaultMode })
+  const blank = () => ({ surfaces: [] })
 
   function flush() {
     if (writeTimer) {
@@ -155,8 +150,8 @@ export function createWorkspaceHost(a) {
       const r = reconcileWorkspace(activeWorkspace, placeAt || {})
       if (!r) return
       // Nothing on disk changed → the renderer already has this exact state. Broadcasting anyway
-      // re-sent the FULL surface array (props included) on every watcher blip — and reset live
-      // camera/mode to the persisted ones. Skip; real changes (new/renamed/dropped files) pass.
+      // re-sent the FULL surface array (props included) on every watcher blip. Skip; real changes
+      // (new/renamed/dropped files) pass.
       if (!r.changed) return
       // Preserve LIVE state that disk doesn't represent, so a reconcile never destroys it:
       //  - runtime chat/activity panels + iPhone-style folder groupings (never persisted as nodes)
@@ -170,9 +165,9 @@ export function createWorkspaceHost(a) {
       const keep = (st.surfaces || []).filter((s) => isRuntimeLike(s) || (!r.knownIds.has(s.id) && !reconciledIds.has(s.id)))
       const groupOf = new Map((st.surfaces || []).filter((s) => s.groupId).map((s) => [s.id, { groupId: s.groupId, peek: s.peek }]))
       const merged = [...r.surfaces.map((s) => { const g = groupOf.get(s.id); return g ? { ...s, groupId: g.groupId, peek: g.peek } : s }), ...keep]
-      a.setState({ ...st, surfaces: merged, camera: r.camera, mode: r.mode })
+      a.setState({ ...st, surfaces: merged })
       Promise.resolve(onSurfaces(merged)).catch(() => {})
-      a.broadcast({ type: 'reconcile', surfaces: merged, camera: r.camera, mode: r.mode, workspace: active() })
+      a.broadcast({ type: 'reconcile', surfaces: merged, workspace: active() })
     } catch (e) {
       console.error('[workspace] reconcile failed:', e?.message || e)
     }
@@ -181,8 +176,7 @@ export function createWorkspaceHost(a) {
     if (reconcileTimer) return
     reconcileTimer = setTimeout(() => {
       reconcileTimer = null
-      const v = a.getState().view
-      doReconcile(v ? { cx: v.cx, cy: v.cy } : {})
+      doReconcile({})
     }, 250)
   }
   /** Ingest a file the user DROPPED onto the canvas: write it into the active workspace, then
@@ -274,7 +268,7 @@ export function createWorkspaceHost(a) {
     }))
     a.setState({ ...st, surfaces })
     Promise.resolve(onSurfaces(surfaces)).catch(() => {})
-    a.broadcast({ type: 'reconcile', surfaces, camera: st.camera, mode: st.mode, workspace: active() })
+    a.broadcast({ type: 'reconcile', surfaces, workspace: active() })
     flush()
     return { ok: true, path: nextRel }
   }
@@ -329,7 +323,7 @@ export function createWorkspaceHost(a) {
     surfaces = refreshDirSurfaceCounts(surfaces)
     a.setState({ ...st, surfaces })
     Promise.resolve(onSurfaces(surfaces)).catch(() => {})
-    a.broadcast({ type: 'reconcile', surfaces, camera: st.camera, mode: st.mode, workspace: active() })
+    a.broadcast({ type: 'reconcile', surfaces, workspace: active() })
     flush()
     return r
   }
@@ -891,10 +885,9 @@ export function createWorkspaceHost(a) {
       // activity feed still lives in .blitzos/state/panels.json. Merge both back on boot.
       migrateChatToFile() // seed chat.md from an old panels.json transcript, once
       const panels = readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')
-      const base = h || { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' }
+      const base = h || { surfaces: [] }
       const surfaces = [...base.surfaces, ...buildAgentSurfaces(), ...panels]
-      // Single-canvas nav: ONE home region, no stages — so nothing to self-heal on hydrate.
-      a.setState({ surfaces, camera: base.camera, mode: base.mode })
+      a.setState({ surfaces })
       if (surfaces.length) console.log(`[workspace] hydrated ${base.surfaces.length} surface(s) + ${panels.length} panel(s) from ${activeWorkspace}`)
     } catch (e) {
       console.error('[workspace] hydrate failed:', e?.message || e)
@@ -980,11 +973,11 @@ export function createWorkspaceHost(a) {
       // activity panel — never carry the previous workspace's over.
       migrateChatToFile()
       const surfaces = [...next.surfaces, ...buildAgentSurfaces(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
-      a.setState({ surfaces, camera: next.camera, mode: next.mode, view: { cx: next.camera.x, cy: next.camera.y } })
+      a.setState({ surfaces })
       await Promise.resolve(onSurfaces(surfaces)) // awaited so an overlapping switch can't strand targets
       startWatch()
       rememberActive() // boot returns the user HERE, not to the default
-      a.broadcast({ type: 'switch', surfaces, camera: next.camera, mode: next.mode, workspace: name })
+      a.broadcast({ type: 'switch', surfaces, workspace: name })
       console.log(`[workspace] switched → ${name}`)
       return { status: 200, body: { ok: true, active: name } }
     } finally {

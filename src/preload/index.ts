@@ -159,6 +159,23 @@ const api = {
       return (ipcRenderer.invoke('os:conn-install') as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
     }
   },
+  /** Window picker — while the attach drop-zone is visible, the computer-use helper highlights ANY macOS
+   *  window the cursor is over (glow + the app's icon) and lets you DRAG that icon into the drop-zone to
+   *  connect it. `start` arms it with the drop-zone's on-screen rect (global, top-left CSS px ≈ macOS points);
+   *  `onEvent` streams hover/over/connected/error so the UI can react. */
+  pick: {
+    start(dropZone: { x: number; y: number; w: number; h: number }): Promise<{ ok: boolean; error?: string }> {
+      return (ipcRenderer.invoke('os:pick-start', dropZone) as Promise<{ ok: boolean; error?: string }>).catch((e) => ({ ok: false, error: String(e) }))
+    },
+    stop(): void {
+      void ipcRenderer.invoke('os:pick-stop').catch(() => {})
+    },
+    onEvent(cb: (m: { kind: string; [k: string]: unknown }) => void): () => void {
+      const listener = (_e: unknown, m: { kind: string; [k: string]: unknown }): void => cb(m)
+      ipcRenderer.on('os:pick-event', listener)
+      return () => ipcRenderer.removeListener('os:pick-event', listener)
+    }
+  },
   /** The agent-socket paste URL (for the "Connect AI" affordance). */
   onAgentSocketUrl(cb: (url: string) => void): () => void {
     const listener = (_e: unknown, url: string): void => cb(url)

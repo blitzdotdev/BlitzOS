@@ -549,6 +549,26 @@ app.whenReady().then(() => {
   ipcMain.handle('os:conn-connect-tab', (_e, id: number | string) => electronConnections.connectionConnectTab(id, {}))
   ipcMain.handle('os:conn-connect-window', (_e, id: number) => electronConnections.connectionConnectWindow(Number(id), {}))
   ipcMain.handle('os:conn-install', () => electronConnections.connectionInstallExtension())
+  // Window picker: arm the CU helper's hover-highlight-and-drag overlay over the user's REAL macOS windows.
+  // dropZone is the attach drop-zone's on-screen rect (global, top-left points); dropping a window there connects
+  // it (handled by the helper's pick_drop event below). excludePids skips BlitzOS's own window (no self-highlight).
+  ipcMain.handle('os:pick-start', async (_e, dropZone: { x: number; y: number; w: number; h: number }) => {
+    const helper = computerUseHelper()
+    const e = await helper.ensure()
+    if (!e.ok) {
+      mainWindow?.webContents.send('os:pick-event', { kind: 'error', error: e.error || 'computer-use helper unavailable' })
+      return { ok: false, error: e.error }
+    }
+    const r = await helper.call('pick_start', { dropZone, excludePids: [process.pid] })
+    if (r.error || r.ok === false) {
+      void helper.request('accessibility').catch(() => {}) // most likely the tap needs Accessibility — raise the prompt
+      const error = String(r.error || 'enable Accessibility for BlitzComputerUse, then reopen the attach panel')
+      mainWindow?.webContents.send('os:pick-event', { kind: 'error', error })
+      return { ok: false, error }
+    }
+    return { ok: true }
+  })
+  ipcMain.handle('os:pick-stop', () => computerUseHelper().call('pick_stop').catch(() => ({})))
   ipcMain.on('os:terminal-stop', (_e, id: string) => electronTerminalOps.stopTerminal(String(id)))
   ipcMain.on('os:terminal-remove', (_e, id: string) => electronTerminalOps.removeTerminal(String(id)))
   ipcMain.on('os:terminal-restart', (_e, id: string) => { void electronTerminalOps.restartTerminal(String(id)) })
@@ -1059,6 +1079,22 @@ app.whenReady().then(() => {
   // Window connect (macOS-local only): the BlitzComputerUse helper IS the window adapter (AX + vision +
   // CGEvent). It's ensured lazily on the first window op (it holds the Accessibility + Screen-Recording grants).
   electronConnections.setWindowLink(makeWindowLink({ connectionOps: electronConnections, helper: computerUseHelper() }))
+  // Window-picker drops: when the helper reports a window dragged into the attach drop-zone, connect THAT window
+  // (the same path as the Connect picker), then tell the renderer the outcome. hover/over/cancel just drive UI feedback.
+  computerUseHelper().onEvent((m) => {
+    const kind = m?.kind
+    if (kind === 'pick_drop' && typeof m.windowId === 'number') {
+      void electronConnections
+        .connectionConnectWindow(Number(m.windowId), {})
+        .then((res) => {
+          const ok = !!res && !res.error
+          mainWindow?.webContents.send('os:pick-event', { kind: 'connected', ok, windowId: m.windowId, app: m.app, bundleId: m.bundleId, title: m.title, error: res?.error })
+        })
+        .catch((err) => mainWindow?.webContents.send('os:pick-event', { kind: 'connected', ok: false, error: String(err) }))
+    } else if (kind === 'pick_over' || kind === 'pick_hover' || kind === 'pick_cancel') {
+      mainWindow?.webContents.send('os:pick-event', m)
+    }
+  })
   // Safari tabs via Apple Events `do JavaScript` (merged into connection_list_tabs as browser:'safari').
   electronConnections.setSafariLink(makeSafariLink({ connectionOps: electronConnections }))
   // Force-install of the connector extension: serve the .crx/updates.xml on localhost + expose the

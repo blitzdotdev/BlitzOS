@@ -86,11 +86,13 @@ export function NotchHost({
   menuBarH,
   onChassisResize,
   onChassisHoverChange,
+  onAttachChange,
   initialView = 'home'
 }: {
   menuBarH: number
   onChassisResize?: () => void
   onChassisHoverChange?: (on: boolean) => void
+  onAttachChange?: (open: boolean) => void // attach panel (the macOS window picker) opened/closed → App pins the island open
   initialView?: 'home' | 'session' // the view to open into: 'home' (hover) or 'session' (⌥Space). Remounts per open.
 }): JSX.Element {
   // 'home' = the icon grid; 'settings' = debug settings; 'session' = today's agent chat/session UI.
@@ -197,6 +199,51 @@ export function NotchHost({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Tell App when the attach panel opens/closes so it can pin the island open (the picker needs the cursor to roam
+  // off the chassis onto other windows). Reset on unmount so a closed island never stays pinned.
+  useEffect(() => {
+    onAttachChange?.(attachOpen)
+    return () => onAttachChange?.(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attachOpen])
+
+  // Window picker: while the attach panel is open, the computer-use helper highlights the macOS window under the
+  // cursor and lets you drag its app icon into the drop-zone (.att-drop) to connect it. Arm it with the drop-zone's
+  // ON-SCREEN rect, re-measuring across the open transition (the chassis grows + the panel expands, so the rect
+  // settles a few frames late). Cleanup (panel closed / island unmounted) disarms the overlay.
+  useEffect(() => {
+    if (!attachOpen) return
+    const pick = window.agentOS?.pick
+    if (!pick) return
+    let stopped = false
+    const measure = (): { x: number; y: number; w: number; h: number } | null => {
+      const el = document.querySelector('.att-drop') as HTMLElement | null
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      if (r.width < 4 || r.height < 4) return null
+      // viewport rect → on-screen rect (top-left global points; the overlay window's origin + the element offset).
+      return { x: window.screenX + r.left, y: window.screenY + r.top, w: r.width, h: r.height }
+    }
+    const arm = (): void => {
+      if (stopped) return
+      const z = measure()
+      if (z) void pick.start(z)
+    }
+    // re-measure across the 0.32s chassis-grow transition (+ settle margin) so the on-screen rect is final.
+    const raf = requestAnimationFrame(arm)
+    const timers = [200, 460, 720].map((ms) => window.setTimeout(arm, ms))
+    return () => {
+      stopped = true
+      cancelAnimationFrame(raf)
+      timers.forEach(clearTimeout)
+      try {
+        pick.stop()
+      } catch {
+        /* best-effort */
+      }
+    }
+  }, [attachOpen])
 
   // Track managed agent terminals for the debug pane. The active agent id is the canonical terminal id, but the
   // metadata gives the pane a title/status and lets terminal lifecycle actions update without reopening surfaces.

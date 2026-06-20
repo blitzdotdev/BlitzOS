@@ -53,6 +53,41 @@
   border-color: rgba(255, 255, 255, 0.4);
   background: rgba(255, 255, 255, 0.02);
 }
+/* dragging a macOS window over the drop zone (the picker reports it crossed in) → "release to add". */
+.nh-island .att-drop.dragover {
+  border-style: solid;
+  border-color: var(--isl-accent);
+  background: rgba(60, 130, 246, 0.12);
+}
+.nh-island .att-drop.dragover .att-drop-plus {
+  border-color: var(--isl-accent);
+  color: #fff;
+}
+/* a brief confirmation after a window is added (green) or fails (red). */
+.nh-island .att-drop.added {
+  border-style: solid;
+  border-color: rgba(52, 199, 89, 0.7);
+  background: rgba(52, 199, 89, 0.1);
+}
+.nh-island .att-drop.failed {
+  border-style: solid;
+  border-color: rgba(255, 99, 92, 0.7);
+  background: rgba(255, 99, 92, 0.08);
+}
+.nh-island .att-drop-hint[data-notice='ok'] {
+  color: #5fdc83;
+}
+.nh-island .att-drop-hint[data-notice='err'] {
+  color: #ff7a72;
+}
+.nh-island .att-drop.added .att-drop-plus {
+  border-color: rgba(52, 199, 89, 0.7);
+  color: #5fdc83;
+}
+.nh-island .att-drop.failed .att-drop-plus {
+  border-color: rgba(255, 99, 92, 0.7);
+  color: #ff7a72;
+}
 .nh-island .att-drop-hint {
   display: flex;
   flex-direction: column;

@@ -101,6 +101,9 @@ export default function App(): JSX.Element {
   // RESIZES (attach panel / peek toggle) so a shrink can't pull the chassis out from under the cursor and make
   // the hover handler immediately hide the whole island. NotchHost stamps it via onChassisResize.
   const notchHoldUntilRef = useRef(0)
+  // The attach panel (the macOS window picker) is open → keep the island OPEN + interactive (an extra pin source,
+  // like ⌥Space) so the cursor can leave the chassis to hover/drag other windows without the island retracting.
+  const notchAttachOpenRef = useRef(false)
   const setNotchInteractive = (on: boolean): void => {
     if (notchLastIRef.current === on) return
     notchLastIRef.current = on
@@ -118,7 +121,7 @@ export default function App(): JSX.Element {
     if (notchHoverGraceRef.current) clearTimeout(notchHoverGraceRef.current)
     notchHoverGraceRef.current = window.setTimeout(() => {
       notchHoverGraceRef.current = 0
-      if (notchPinnedRef.current || notchStateRef.current !== 'panel') return
+      if (notchPinnedRef.current || notchAttachOpenRef.current || notchStateRef.current !== 'panel') return
       if (notchOverRef.current || overChassisRef.current) return
       const holdRemaining = notchHoldUntilRef.current - performance.now()
       if (holdRemaining > 0) {
@@ -141,6 +144,20 @@ export default function App(): JSX.Element {
         setNotchInteractive(true)
       }
     } else {
+      scheduleNotchHoverClose()
+    }
+  }
+  // The attach panel (macOS window picker) opened/closed. While OPEN the island is pinned open + interactive so the
+  // cursor can leave the chassis to hover/drag other windows; on CLOSE, resume normal hover (retract if already away).
+  const onIslandAttachChange = (open: boolean): void => {
+    notchAttachOpenRef.current = open
+    if (open) {
+      if (notchHoverGraceRef.current) {
+        clearTimeout(notchHoverGraceRef.current)
+        notchHoverGraceRef.current = 0
+      }
+      setNotchInteractive(true)
+    } else if (!overChassisRef.current && !notchOverRef.current && !notchPinnedRef.current) {
       scheduleNotchHoverClose()
     }
   }
@@ -230,7 +247,7 @@ export default function App(): JSX.Element {
       const st = notchStateRef.current
       // A PINNED panel (opened via ⌥Space) stays open regardless of the mouse and keeps the window interactive,
       // so the user can move the cursor away and still type. Only HOVER-opened panels follow the mouse below.
-      if (st === 'panel' && notchPinnedRef.current) {
+      if (st === 'panel' && (notchPinnedRef.current || notchAttachOpenRef.current)) {
         setNotchInteractive(true)
         return
       }
@@ -771,6 +788,7 @@ export default function App(): JSX.Element {
             onChassisResize={() => {
               notchHoldUntilRef.current = performance.now() + NOTCH_HOVER_OPEN_GRACE_MS
             }}
+            onAttachChange={onIslandAttachChange}
           />,
           document.body
         )}
