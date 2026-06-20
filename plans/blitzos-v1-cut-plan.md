@@ -65,8 +65,8 @@ These reach an agent's eyes. Delete or rewrite every spatial word (canvas / home
 **Concepts to delete everywhere:** canvas / infinite plane / home / off-home / park / off-screen / offstage / "arrange the desktop" · slot lattice / `place_widget` / spans / S-M-L-XL → **removed** (no widget tool in V1; widgets deferred) · stages / "each agent gets its own stage" → "one tab per agent" · workspaces / `switch_workspace` / Mission-Control switcher → single implicit workspace · `bring_home` / `send_offscreen` / `go_to_primary` · the radial create-at-cursor menu · "show me → open the source on the canvas" → an island target (a pinned widget) or just chat.
 
 **Cut (delete the file) vs rewrite (keep the function, delete the spatial words):**
-- **Cut:** `blitzos-interview.md` + `blitzos-onboarding.md` if the interview is dropped (they are built entirely on the slot-lattice board — open call 2); `blitzos-externalize.md` if workflow-enrichment is dropped (open call 5).
-- **Rewrite:** `blitzos-agents.md`, `os-tools.mjs` (tool descriptions), `agent-runtime.mjs` (the `stage` bootstrap fragment), `perception-core.mjs` (the standing nudge + `canvas`/`annotation`/`tick` triggers), `widget-catalog.mjs`, `onboarding.ts`, `agent-os/CLAUDE.md` (dev doctrine for the team's coding agents).
+- **Cut:** `blitzos-externalize.md` (no externalization in V1 — the externalize-work-into-widgets doctrine defers with widgets).
+- **Rewrite:** `blitzos-agents.md`, `os-tools.mjs` (tool descriptions), `agent-runtime.mjs` (the `stage` bootstrap fragment), `perception-core.mjs` (the standing nudge + `canvas`/`annotation`/`tick` triggers), `widget-catalog.mjs`, `onboarding.ts`, **`blitzos-interview.md` + `blitzos-onboarding.md` (chat-only, de-externalized — no board)**, `agent-os/CLAUDE.md` (dev doctrine for the team's coding agents).
 - **Keep untouched:** `blitzos-orchestrator.md`, `plans/siri-prompt.md`, the prose/style rules.
 
 ---
@@ -102,7 +102,7 @@ Explicitly NOT V1. The "notion of surfaces" V1 removes (canvas surfaces) returns
 ## Open product calls (MJ to confirm)
 
 1. ~~Web surfaces~~ — **RESOLVED: axed** (browser-use = the user's real Chrome via the extension; no BlitzOS `web` surface). Supervisor tick — **RESOLVED: keep status-only** (see autonomy engine).
-2. **Interview duty** — keep it (de-canvased) or cut to the permission/sign-in frontload only? The agent-runtime + onboarding readers disagree; needs a call.
+2. ~~Interview duty~~ — **RESOLVED: keep the onboarding, chat-only.** The whole flow (scan → interview → personalization) happens in **one agent chat** (agent `'0'`) with **no externalization** — no case-file board, no seeded widgets, the agent just talks. Rewrite the duty docs chat-only; the board planner is cut, the scan survives as the chat agent's context primer.
 3. **Single implicit workspace** + collapse persistence to one store — confirm (kills the switcher, `switch_workspace`, multi-folder).
 4. **Island chat is native React** (`IslandPanel`) → cut the `blitz-chat` srcdoc system-renderer family (`ensureSystemRenderer`/`customize_widget`)?
 5. ~~`run_workflow` live-viz~~ — **RESOLVED: deferred.** Widgets are deferred, so workflow progress reports **in chat** for V1; the live graph returns with the experimental surfaces.
