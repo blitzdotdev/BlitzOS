@@ -41,7 +41,7 @@ function nativeCatalogWidgetError(component) {
   return {
     status: 400,
     body: {
-      error: `${name} is a library widget, not a native component. Use spawn_widget {"name":"${name}","props":{...}} instead of create_surface/place_widget with kind:"native".`
+      error: `${name} is a library widget, not a native component. Use spawn_widget {"name":"${name}","props":{...}} instead of create_surface with kind:"native".`
     }
   }
 }
@@ -193,7 +193,7 @@ export function makeOsTools(ops) {
     {
       path: '/open_window',
       description:
-        'Open a third-party website as a live web surface. This is the default way to make public/current web evidence visible in Blitz, then drive it with surface_control/read_window. Internal web search is allowed only as a discovery index for candidate URLs/query angles; every source you rely on must be opened in Blitz before you present findings. For open-ended research, use multiple query angles when useful rather than doing one visible search. Tab rule: do not call open_window repeatedly for sources in the SAME research lane when you can write/update one tabbed .weblink in workspace_path; use open_window for a single source, the first page in a lane, or a genuinely separate lane. It opens OFF-SCREEN (parked on the canvas just below the user\'s scale-1 frame), visible when they zoom out to watch you work. Call bring_home {id} only when they should look at it. Returns { id, offstage:true }.',
+        'Open a web surface (a third-party website). For real public/current web research, prefer the user\'s connected browser (connection_read / connection_act) so the evidence is in a tool the user already drives; internal web search is allowed only as a discovery index for candidate URLs/query angles. Returns { id }.',
       input_schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, title: { type: 'string' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -235,7 +235,7 @@ export function makeOsTools(ops) {
     {
       path: '/list_state',
       description:
-        'List the canvas: active workspace, its folder path (workspace_path), and the open surfaces (layout fields only — an INDEX; use get_surface for one surface\'s props). Local agents author by writing files into workspace_path; check surfaces to judge THIS desktop vs a fresh workspace.',
+        'List the workspace: its folder path (workspace_path) and the open surfaces (layout fields only — an INDEX; use get_surface for one surface\'s props). Local agents can author by writing files into workspace_path.',
       handler: () => serializeStateForAgent(ops.getState())
     },
     {
@@ -253,7 +253,7 @@ export function makeOsTools(ops) {
     {
       path: '/new_app',
       description:
-        "Provision a real blitz.dev app (SQLite+R2+auth, edge-deployed) for a DELIVERABLE the user will keep/ship (landing page, site, app, dashboard — even if v1 looks static); not for scratch scaffolding (→ srcdoc). Returns { preview_url, claim_url, agents_md, slug }. Then author files and PRESENT as one `app` surface per page/variation, tiled (canvas = the gallery, never an in-app chooser). Speed-first: build what's asked, offer backends. Working rules in the doctrine's 'Build deliverables on blitz.dev'. Args { slug } (a-z 0-9 -).",
+        "Provision a real blitz.dev app (SQLite+R2+auth, edge-deployed) for a DELIVERABLE the user will keep/ship (landing page, site, app, dashboard — even if v1 looks static). Returns { preview_url, claim_url, agents_md, slug }. Then author files and tell the user the claim URL. For N variations to compare, spawn one sub-agent per variation, each with its OWN app (never one app with N routes, never an in-app chooser). Speed-first: build what's asked, offer backends. Working rules in the doctrine's 'Build deliverables on blitz.dev'. Args { slug } (a-z 0-9 -).",
       input_schema: { type: 'object', required: ['slug'], properties: { slug: { type: 'string', description: 'unique project slug, a-z 0-9 -' }, title: { type: 'string' } } },
       handler: async ({ body }) => {
         const slug = String(parse(body).slug || '')
@@ -329,7 +329,7 @@ export function makeOsTools(ops) {
     {
       path: '/spawn_widget',
       description:
-        'Open a library widget on the canvas as a live sandboxed surface. For any non-trivial user task, `pipeline` is the default first visible progress surface: spawn it before hidden work with props.items exactly like {items:[{label,sub?,status:"active"|"queued"|"done"}]}; do not use props.steps. Then drive it with update_surface{id,props:{items}} as items move. The default task-start pipeline auto-closes after every item is done; keep final output in a separate note/widget/surface, or pass props.autoClose=false only when the pipeline itself is the durable artifact. A thinking-widget is an INSTRUMENT you DRIVE, not a final render: update it after EACH step of progress, never once at the end. Prefer widgets with useful interaction (filter/sort/expand/open source/chat action) unless the content is truly atomic. Returns { id, drive? }. Use list_widgets for names.',
+        'Open a library widget in the workspace as a live sandboxed surface. For a task with progress to track, `pipeline` is a handy live progress surface: spawn it with props.items exactly like {items:[{label,sub?,status:"active"|"queued"|"done"}]}; do not use props.steps. Then drive it with update_surface{id,props:{items}} as items move. The default task-start pipeline auto-closes after every item is done; keep final output in a separate note/widget/surface, or pass props.autoClose=false only when the pipeline itself is the durable artifact. A thinking-widget is an INSTRUMENT you DRIVE, not a final render: update it after EACH step of progress, never once at the end. Prefer widgets with useful interaction (filter/sort/expand/open source/chat action) unless the content is truly atomic. Returns { id, drive? }. Use list_widgets for names.',
       input_schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, props: { type: 'object' } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -387,7 +387,7 @@ export function makeOsTools(ops) {
     {
       path: '/say',
       description:
-        "Send a chat message to the USER (their in-canvas Chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. For non-trivial tasks, saying you are working is not enough: create/update a live progress widget (usually pipeline) before hidden work, then use say only for concise milestones or final synthesis. A substantial result, a fix, a diff, or a how-it-works explanation is a VISUAL-FIRST widget (lead with a diagram or before/after, built on the design kit), NOT a chat dump: never paste a diff, a code block, or a multi-paragraph explanation into chat; point to the widget in one line and put the decision in `ask` buttons. To SHOW a visual, do BOTH: keep the real SOURCE open as a web surface (the live page it's from), AND screenshot it (surface_control {action:'screenshot'} returns base64 PNG) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary agents MUST pass {agent:'<your id>'} so it lands in YOUR chat.",
+        "Send a chat message to the USER (the island chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. For non-trivial tasks, say a one-line plan first, then short notes as you work — going dark is a failure. Keep it tight: never paste a diff, a code block, or a multi-paragraph wall into chat; if a result needs more than a couple of lines, write it to a deliverable (a file, or a blitz.dev app) and link it, putting the decision in `ask` buttons. To SHOW a visual, screenshot the real SOURCE in the user's connected browser (connection_read can return an image) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary agents MUST pass {agent:'<your id>'} so it lands in YOUR chat.",
       input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, agent: { type: 'string' }, workspace: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
@@ -473,7 +473,7 @@ export function makeOsTools(ops) {
     {
       path: '/run_workflow',
       description:
-        "Run a blitzscript workflow with a LIVE VISUAL on the canvas. Use this INSTEAD of `bash .blitzos/blitz run` whenever you want the user to WATCH a workflow execute. It places a live graph (or kanban) widget bound to this run on home and streams every phase / agent-leaf / fan-out event into it in real time; a fresh agent also enriches the view as it runs. Returns IMMEDIATELY with { runId, surfaceId } — the run continues in the background and writes its result to <workspace>/.blitzos/workflows/<runId>/result.json on completion (read it when you need the result). Args: {file (path to a Claude-shaped workflow .js you authored + `blitz check`ed), view?:'graph'|'kanban', args? (the workflow's `args` input), title?}.",
+        "Run a blitzscript workflow you authored, reporting its progress in chat as it runs. Use this INSTEAD of `bash .blitzos/blitz run` when you want the run managed for you. Returns IMMEDIATELY with { runId } — the run continues in the background, and writes its result to <workspace>/.blitzos/workflows/<runId>/result.json on completion (read it when you need the result), so `say` progress and the final synthesis to the user as it lands. Args: {file (path to a Claude-shaped workflow .js you authored + `blitz check`ed), args? (the workflow's `args` input), title?}.",
       input_schema: { type: 'object', required: ['file'], properties: { file: { type: 'string' }, view: { type: 'string', enum: ['graph', 'kanban'] }, args: {}, title: { type: 'string' }, agent: { type: 'string' } } },
       handler: async ({ body }) => {
         if (typeof ops.runWorkflow !== 'function') return { status: 501, body: { error: 'run_workflow not supported on this transport' } }

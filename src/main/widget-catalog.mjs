@@ -197,7 +197,7 @@ for state the widget itself should remember.
 
 ## Review before creating
 
-Before you call \`create_surface\`, \`place_widget\`, \`update_surface\`, or \`save_widget\`
+Before you call \`create_surface\`, \`spawn_widget\`, \`update_surface\`, or \`save_widget\`
 with new or changed widget source, read your own code once like a reviewer and fix the
 obvious mistakes. This is mandatory for authored, forked, and replacement widgets;
 trusted library widgets can be spawned as-is unless you edit them.
@@ -228,8 +228,8 @@ done.
 
 ## Look like a WIDGET, not a web page (the design language)
 
-A widget on the stage is a macOS-desktop-widget peer, not a document. The OS already draws the
-window chrome; the tile's content must read at a glance:
+A widget is a small mini-app, not a document. The OS already draws the
+window chrome; the widget's content must read at a glance:
 
 - **No titlebar.** Do NOT add \`<blitz-titlebar>\` to a widget (it's for full app frames like the
   chat). Identity is a tiny caps LABEL inline at the top, or nothing when the content self-explains:
