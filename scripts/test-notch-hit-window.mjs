@@ -137,6 +137,23 @@ ok('archive metadata is durable and archive parks the agent without deleting its
 ok('active chat view offers archive only for non-primary agents',
   /onArchiveAgent/.test(islandPanel) && /activeId !== '0'/.test(islandPanel) && /Archive agent/.test(islandPanel) &&
     /className="isl-archive"/.test(islandPanel))
+ok('agent tabs can be renamed inline from right-click with a 24-character cap',
+  /renameAgent\(agentId: string, newTitle: string\)[\s\S]*?'os:rename-agent'/.test(preload) &&
+    /ipcMain\.handle\('os:rename-agent'/.test(index) &&
+    /AGENT_NAME_MAX = 24/.test(islandPanel) &&
+    /onContextMenu=\{\(e\) => \{[\s\S]*?startRename\(s\.id, s\.title\)/.test(islandPanel) &&
+    /if \(s\.id === '0'\) return/.test(islandPanel) &&
+    /className="isl-chip-input"/.test(islandPanel) &&
+    /maxLength=\{AGENT_NAME_MAX\}/.test(islandPanel) &&
+    /onSubmit=\{\(e\) => \{[\s\S]*?commitRename\(s\.id\)/.test(islandPanel) &&
+    /e\.key === 'Escape'/.test(islandPanel) &&
+    /onRenameAgent=\{renameAgent\}/.test(notchHost) &&
+    /function agentTitleText/.test(workspaceHost) &&
+    /if \(id === '0'\) return \{ ok: false, error: 'main agent cannot be renamed' \}/.test(workspaceHost) &&
+    /title: id === '0' \? 'Main' : agentTitleText\(meta\.title \|\| `Chat \$\{id\}`\)/.test(workspaceHost) &&
+    /\.slice\(0, 24\)/.test(workspaceHost) &&
+    /isl-chip-editing/.test(islandCss) &&
+    /isl-chip-input/.test(islandCss))
 ok('archive returns the island to the tab strip without the custom archive animation path',
   /moveSessionToArchive/.test(notchHost) && /setPage\(0\)/.test(notchHost) &&
     !/archivingId/.test(islandPanel) && !/isl-archiving/.test(islandPanel) && !/isl-archive-flight/.test(islandPanel) &&

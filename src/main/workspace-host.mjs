@@ -426,7 +426,7 @@ export function createWorkspaceHost(a) {
   function readAgentMeta(agentId) {
     const id = String(agentId ?? '0')
     const m = readAgentMetaFile(id)
-    if (m && typeof m === 'object') return { id, ...(id === '0' ? { title: 'Main', kind: 'agent' } : {}), ...m }
+    if (m && typeof m === 'object') return { id, ...(id === '0' ? { title: 'Main', kind: 'agent' } : {}), ...m, ...(m.title ? { title: agentTitleText(m.title) } : {}) }
     if (id === '0') return { id, title: 'Main', kind: 'agent' }
     return { id }
   }
@@ -518,10 +518,13 @@ export function createWorkspaceHost(a) {
     const last = Array.isArray(messages) && messages.length ? messages[messages.length - 1] : null
     return last ? String(last.text || '').replace(/\s+/g, ' ').trim().slice(0, 96) : ''
   }
+  function agentTitleText(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 24)
+  }
   function sessionSummary(id, meta, messages, sessionStatus) {
     return {
       id,
-      title: id === '0' ? 'Main' : String(meta.title || `Chat ${id}`),
+      title: id === '0' ? 'Main' : agentTitleText(meta.title || `Chat ${id}`),
       status: sessionStatus,
       updatedAt: Math.max(Number(messages[messages.length - 1]?.ts) || 0, Number(chatStatuses.get(id)?.updatedAt) || 0),
       lastMessagePreview: previewText(messages),
@@ -742,8 +745,9 @@ export function createWorkspaceHost(a) {
   /** Rename an agent (cosmetic — the id stays the file key). Updates meta + the widget title live. */
   function renameAgent(agentId, newTitle) {
     const id = String(agentId)
-    const title = String(newTitle || '').trim()
+    const title = agentTitleText(newTitle)
     if (!title) return { ok: false, error: 'title required' }
+    if (id === '0') return { ok: false, error: 'main agent cannot be renamed' }
     // SECURITY: numeric id only — else the meta.json write below (raw join on the id) path-escapes the
     // workspace (e.g. id '../../../../tmp/evil'). Untrusted-relay reachable via rename_agent.
     if (!/^[0-9]+$/.test(id)) return { ok: false, error: 'invalid agent id' }

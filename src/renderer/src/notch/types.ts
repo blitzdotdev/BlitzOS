@@ -50,4 +50,5 @@ export interface IslandPanelProps {
   debugTerminalEnabled: boolean // debug-only: show the active agent's tmux terminal inside the chat app
   activeTerminal?: IslandTerminalMeta // metadata for activeId's managed terminal; activeId remains the terminal id
   onArchiveAgent: (id: string) => void
+  onRenameAgent: (id: string, title: string) => Promise<boolean>
 }

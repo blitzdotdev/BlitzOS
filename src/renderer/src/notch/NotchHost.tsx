@@ -16,6 +16,7 @@ import type { IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta 
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
+const AGENT_NAME_MAX = 24
 
 // peek toggle glyphs: compress (corners in → enter peek) / expand (corners out → back to chat).
 const PEEK_IN = 'M5 9h4a1 1 0 0 0 1-1V4M19 9h-4a1 1 0 0 1-1-1V4M5 15h4a1 1 0 0 1 1 1v4M19 15h-4a1 1 0 0 0-1 1v4'
@@ -31,7 +32,7 @@ type ChatAction = {
   threads?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown }>>
   status?: Record<string, string>
 }
-type AgentMutationResult = { ok?: boolean; error?: string; archived?: boolean }
+type AgentMutationResult = { ok?: boolean; error?: string; archived?: boolean; title?: string }
 type TerminalAction = {
   type: 'terminal-spawn' | 'terminal-exit' | 'terminal-stop' | 'agent-remove'
   id?: unknown
@@ -69,6 +70,7 @@ function readDebugActiveTerminal(): boolean {
     return false
   }
 }
+const cleanAgentName = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, AGENT_NAME_MAX)
 type MilestoneAction = { type: 'milestone'; agentId?: string; id?: unknown; ts?: unknown; kind?: string; text?: unknown }
 const mapThreads = (
   raw?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown }>>
@@ -410,6 +412,29 @@ export function NotchHost({
         /* delete failed; leave it in the archived list */
       })
   }
+  const renameAgent = (id: string, title: string): Promise<boolean> => {
+    const next = cleanAgentName(title)
+    if (!id || !next) return Promise.resolve(false)
+    const request =
+      window.agentOS?.renameAgent?.(id, next) ??
+      (window.agentOS?.chatControl?.('rename', { id, title: next }) as Promise<AgentMutationResult> | undefined)
+    if (!request) return Promise.resolve(false)
+    return request
+      .then((r) => {
+        if (!r?.ok) {
+          console.warn('[notch] rename failed', r?.error || id)
+          return false
+        }
+        const saved = cleanAgentName((r as AgentMutationResult).title || next)
+        setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title: saved } : s)))
+        setArchivedSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title: saved } : s)))
+        return true
+      })
+      .catch((e) => {
+        console.warn('[notch] rename failed', e)
+        return false
+      })
+  }
 
   // page 0 (pen) = spawn a NEW session; an agent tab = steer that session. Both are real (no mock append).
   const onSend = (text: string): void => {
@@ -536,6 +561,7 @@ export function NotchHost({
             debugTerminalEnabled={debugActiveTerminal}
             activeTerminal={activeId ? terminals[activeId] : undefined}
             onArchiveAgent={archiveAgent}
+            onRenameAgent={renameAgent}
           />
         )}
       </div>
