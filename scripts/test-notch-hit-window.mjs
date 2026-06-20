@@ -18,6 +18,8 @@ const notchHost = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHost.
 const islandHome = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandHome.tsx'), 'utf8')
 const islandPanel = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandPanel.tsx'), 'utf8')
 const markdownMessage = readFileSync(join(repoRoot, 'src/renderer/src/notch/MarkdownMessage.tsx'), 'utf8')
+const messageParts = readFileSync(join(repoRoot, 'src/renderer/src/notch/messageParts.ts'), 'utf8')
+const markdownSafety = readFileSync(join(repoRoot, 'src/renderer/src/notch/markdownSafety.ts'), 'utf8')
 const islandSettings = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandSettings.tsx'), 'utf8')
 const islandTerminal = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandTerminalPane.tsx'), 'utf8')
 const notchTypes = readFileSync(join(repoRoot, 'src/renderer/src/notch/types.ts'), 'utf8')
@@ -179,7 +181,8 @@ ok('permanent archived-agent delete goes through closeAgent only after settings 
     /onDeleteAgent\(session\.id\)/.test(islandSettings) && !/stopAgent/.test(islandSettings) && !/openTerminal/.test(islandSettings))
 ok('island chat renders markdown with react-markdown + GFM and no raw HTML path',
   pkg.dependencies?.['react-markdown'] && pkg.dependencies?.['remark-gfm'] &&
-    /import MarkdownMessage,\s*\{ parseAskCard \} from '.\/MarkdownMessage'/.test(islandPanel) &&
+    /import MarkdownMessage from '.\/MarkdownMessage'/.test(islandPanel) &&
+    /import \{ matchingChoiceAnswer \} from '.\/messageParts'/.test(islandPanel) &&
     /<MarkdownMessage[\s\S]*?role=\{m\.role\}[\s\S]*?text=\{m\.text\}/.test(islandPanel) &&
     /from 'react-markdown'/.test(markdownMessage) &&
     /from 'remark-gfm'/.test(markdownMessage) &&
@@ -193,16 +196,27 @@ ok('markdown links use the safe external-url bridge and unsafe schemes become in
     /ipcMain\.handle\('os:open-external-url'/.test(index) &&
     /shell\.openExternal\(url\)/.test(index) &&
     /url\.protocol === 'http:' \|\| url\.protocol === 'https:' \|\| url\.protocol === 'mailto:'/.test(index) &&
-    /DATA_IMAGE_RE/.test(markdownMessage) &&
+    /DATA_IMAGE_RE/.test(markdownSafety) &&
+    /markdownUrlTransform/.test(markdownMessage) &&
     /className="isl-md-link inert"/.test(markdownMessage) &&
     /\.isl-md-table-wrap/.test(islandCss) &&
     /user-select: text/.test(islandCss))
-ok('blitz-ui choice prompts render as tappable island cards instead of raw JSON',
-  /parseAskCard/.test(markdownMessage) &&
-    /```blitz-ui/.test(markdownMessage) &&
-    /JSON\.parse/.test(markdownMessage) &&
-    /rawKind === 'choice' \|\| rawKind === 'grid'/.test(markdownMessage) &&
-    /className=\{`isl-ask-card/.test(markdownMessage) &&
+ok('island chat has a typed message-parts adapter before rendering markdown or prompts',
+  /IslandMessagePart/.test(notchTypes) &&
+    /type: 'text'/.test(notchTypes) &&
+    /type: 'choice'/.test(notchTypes) &&
+    /type: 'tool'/.test(notchTypes) &&
+    /parts\?: IslandMessagePart\[\]/.test(notchTypes) &&
+    /messagePartsFor/.test(messageParts) &&
+    /parseBlitzUiChoicePart/.test(messageParts) &&
+    /matchingChoiceAnswer/.test(messageParts) &&
+    /messagePartsFor\(\{ role, text, parts: providedParts \}\)/.test(markdownMessage))
+ok('blitz-ui choice prompts render as typed tappable island parts instead of raw JSON',
+  /```blitz-ui/.test(messageParts) &&
+    /JSON\.parse/.test(messageParts) &&
+    /rawKind === 'choice' \|\| rawKind === 'grid'/.test(messageParts) &&
+    /className=\{`isl-ask-card \$\{part\.layout\}/.test(markdownMessage) &&
+    /case 'choice':/.test(markdownMessage) &&
     /onChoose\?\.\(option\.label\)/.test(markdownMessage) &&
     /onChoose=\{\(choice\) => onSend\(choice\)\}/.test(islandPanel) &&
     /\.isl-ask-card/.test(islandCss) &&
@@ -210,8 +224,8 @@ ok('blitz-ui choice prompts render as tappable island cards instead of raw JSON'
 ok('submitted blitz-ui prompts collapse to prompt plus selected answer in history',
   /selectedAnswer/.test(markdownMessage) &&
     /isl-ask-selected/.test(markdownMessage) &&
-    /className=\{`isl-ask-card \$\{card\.type\}\$\{answered \? ' answered' : ''\}`\}/.test(markdownMessage) &&
-    /matchingAskAnswer/.test(islandPanel) &&
+    /className=\{`isl-ask-card \$\{part\.layout\}\$\{answered \? ' answered' : ''\}`\}/.test(markdownMessage) &&
+    /matchingChoiceAnswer/.test(islandPanel) &&
     /isSubmittedAskAnswer/.test(islandPanel) &&
     /if \(isSubmittedAskAnswer\) return null/.test(islandPanel) &&
     /\.isl-ask-card\.answered/.test(islandCss) &&

@@ -1161,6 +1161,42 @@ button.isl-app-chat:active .isl-app-icon {
   color: var(--isl-muted);
   font-size: 12px;
 }
+.nh-island .isl-msg-part + .isl-msg-part {
+  margin-top: 8px;
+}
+.nh-island .isl-msg-part.status,
+.nh-island .isl-msg-part.error,
+.nh-island .isl-msg-part.tool,
+.nh-island .isl-msg-part.attachment {
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--isl-muted);
+  font-size: 12px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+.nh-island .isl-msg-part.error,
+.nh-island .isl-msg-part.status.error {
+  border-color: rgba(255, 99, 99, 0.24);
+  background: rgba(255, 99, 99, 0.09);
+  color: #ffd1d1;
+}
+.nh-island .isl-msg-part.tool {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.nh-island .isl-msg-part.tool code {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  color: var(--isl-text);
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
 .nh-island .isl-ask-msg {
   width: 100%;
 }

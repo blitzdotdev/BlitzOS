@@ -17,7 +17,24 @@ export interface IslandMessage {
   role: 'user' | 'agent'
   text: string
   ts?: number
+  parts?: IslandMessagePart[]
 }
+
+export interface IslandChoiceOption {
+  label: string
+  sub?: string
+  img?: string
+}
+
+export type IslandMessagePart =
+  | { type: 'text'; text: string }
+  | { type: 'choice'; layout: 'confirm' | 'choice' | 'grid'; prompt: string; options: IslandChoiceOption[] }
+  | { type: 'tool'; title: string; state: 'preparing' | 'awaiting-permission' | 'running' | 'output' | 'error' | 'denied'; output?: string; error?: string }
+  | { type: 'attachment'; title: string; sourceType?: string }
+  | { type: 'status'; text: string; tone?: 'info' | 'working' | 'warning' | 'error' }
+  | { type: 'error'; text: string }
+
+export type IslandChoicePart = Extract<IslandMessagePart, { type: 'choice' }>
 
 // A summarized step from the narrator (Haiku): one plain past-tense line of what the agent did.
 export interface IslandMilestone {

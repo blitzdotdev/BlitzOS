@@ -10,7 +10,8 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
 import { IslandTerminalPane } from './IslandTerminalPane'
-import MarkdownMessage, { parseAskCard } from './MarkdownMessage'
+import MarkdownMessage from './MarkdownMessage'
+import { matchingChoiceAnswer } from './messageParts'
 import type { IslandPanelProps } from './types'
 
 const AGENT_NAME_MAX = 24
@@ -50,13 +51,6 @@ const statusLabel = (s: string): string => {
   }
 }
 const cleanAgentName = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, AGENT_NAME_MAX)
-const matchingAskAnswer = (promptText: string, answerText?: string): string | undefined => {
-  if (!answerText) return undefined
-  const ask = parseAskCard(promptText)
-  if (!ask) return undefined
-  const cleanAnswer = answerText.trim()
-  return ask.options.some((option) => option.label === cleanAnswer) ? cleanAnswer : undefined
-}
 
 export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const {
@@ -421,8 +415,8 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               messages.map((m, i) => {
                 const previous = messages[i - 1]
                 const selectedAnswer =
-                  m.role === 'agent' && messages[i + 1]?.role === 'user' ? matchingAskAnswer(m.text, messages[i + 1]?.text) : undefined
-                const isSubmittedAskAnswer = m.role === 'user' && previous?.role === 'agent' && Boolean(matchingAskAnswer(previous.text, m.text))
+                  m.role === 'agent' && messages[i + 1]?.role === 'user' ? matchingChoiceAnswer(m.text, messages[i + 1]?.text) : undefined
+                const isSubmittedAskAnswer = m.role === 'user' && previous?.role === 'agent' && Boolean(matchingChoiceAnswer(previous.text, m.text))
                 if (isSubmittedAskAnswer) return null
                 return (
                   <Fragment key={`${i}:${m.ts || ''}`}>
@@ -438,7 +432,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                         ))}
                       </div>
                     )}
-                    <MarkdownMessage role={m.role} text={m.text} selectedAnswer={selectedAnswer} onChoose={(choice) => onSend(choice)} />
+                    <MarkdownMessage role={m.role} text={m.text} parts={m.parts} selectedAnswer={selectedAnswer} onChoose={(choice) => onSend(choice)} />
                   </Fragment>
                 )
               })

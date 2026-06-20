@@ -1,48 +1,15 @@
 import { memo, useMemo, type MouseEvent } from 'react'
-import Markdown, { type Components, type UrlTransform } from 'react-markdown'
+import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { IslandMessage } from './types'
+import { markdownUrlTransform, normalizedExternalUrl, normalizedImageSrc } from './markdownSafety'
+import { messagePartsFor } from './messageParts'
+import type { IslandChoicePart, IslandMessage, IslandMessagePart } from './types'
 
 const remarkPlugins = [remarkGfm]
-const SAFE_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
-const SAFE_IMAGE_PROTOCOLS = new Set(['http:', 'https:'])
-const DATA_IMAGE_RE = /^data:image\/(?:png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i
-const ASK_CARD_MAX_OPTIONS = 12
 
-type AskKind = 'confirm' | 'choice' | 'grid'
-export type AskOption = { label: string; sub?: string; img?: string }
-export type AskCard = { type: AskKind; prompt: string; options: AskOption[] }
-type MarkdownMessageProps = Pick<IslandMessage, 'role' | 'text'> & {
+type MarkdownMessageProps = Pick<IslandMessage, 'role' | 'text' | 'parts'> & {
   onChoose?: (choice: string) => void
   selectedAnswer?: string
-}
-
-function normalizedExternalUrl(raw?: string): string | null {
-  const value = String(raw || '').trim()
-  if (!value || /[\u0000-\u001f\u007f]/.test(value)) return null
-  try {
-    const url = new URL(value)
-    return SAFE_LINK_PROTOCOLS.has(url.protocol) ? url.href : null
-  } catch {
-    return null
-  }
-}
-
-function normalizedImageSrc(raw?: string): string | null {
-  const value = String(raw || '').trim()
-  if (!value || /[\u0000-\u001f\u007f]/.test(value)) return null
-  if (DATA_IMAGE_RE.test(value)) return value
-  try {
-    const url = new URL(value)
-    return SAFE_IMAGE_PROTOCOLS.has(url.protocol) ? url.href : null
-  } catch {
-    return null
-  }
-}
-
-export const markdownUrlTransform: UrlTransform = (value, key) => {
-  if (key === 'src') return normalizedImageSrc(value) || ''
-  return normalizedExternalUrl(value) || ''
 }
 
 type Fence = { char: '`' | '~'; size: number }
@@ -94,56 +61,6 @@ function splitMarkdownBlocks(markdown: string): string[] {
 
   if (current.length) blocks.push(current.join('\n'))
   return blocks.length ? blocks : ['']
-}
-
-function cleanAskText(value: unknown, max: number): string {
-  return String(value || '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max)
-}
-
-function normalizeAskOption(value: unknown): AskOption | null {
-  if (typeof value === 'string') {
-    const label = cleanAskText(value, 120)
-    return label ? { label } : null
-  }
-  if (!value || typeof value !== 'object') return null
-  const option = value as Record<string, unknown>
-  const label = cleanAskText(option.label || option.title || option.value, 120)
-  if (!label) return null
-  const sub = cleanAskText(option.sub || option.detail || option.description, 180)
-  const img = normalizedImageSrc(String(option.img || option.image || '')) || undefined
-  return { label, ...(sub ? { sub } : {}), ...(img ? { img } : {}) }
-}
-
-export function parseAskCard(text: string): AskCard | null {
-  const trimmed = text.trim()
-  if (!trimmed) return null
-
-  const fenceMatch = /^```blitz-ui\s*\n([\s\S]*?)\n?```\s*$/i.exec(trimmed)
-  const jsonText = fenceMatch ? fenceMatch[1].trim() : trimmed.startsWith('{') && trimmed.endsWith('}') ? trimmed : ''
-  if (!jsonText) return null
-
-  let raw: unknown
-  try {
-    raw = JSON.parse(jsonText)
-  } catch {
-    return null
-  }
-  if (!raw || typeof raw !== 'object') return null
-
-  const spec = raw as Record<string, unknown>
-  const rawKind = cleanAskText(spec.type || spec.kind, 32)
-  const type: AskKind = rawKind === 'choice' || rawKind === 'grid' ? rawKind : 'confirm'
-  const prompt = cleanAskText(spec.prompt, 240)
-  const options = (Array.isArray(spec.options) ? spec.options : [])
-    .map(normalizeAskOption)
-    .filter((option): option is AskOption => Boolean(option))
-    .slice(0, ASK_CARD_MAX_OPTIONS)
-
-  if (!prompt || !options.length) return null
-  return { type, prompt, options }
 }
 
 const markdownComponents: Components = {
@@ -213,19 +130,30 @@ const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }): J
   )
 })
 
-function AskCardMessage({
-  card,
+const MarkdownTextPart = memo(function MarkdownTextPart({ text }: { text: string }): JSX.Element {
+  const blocks = useMemo(() => splitMarkdownBlocks(text), [text])
+  return (
+    <>
+      {blocks.map((block, index) => (
+        <MarkdownBlock key={`${index}:${block.length}:${block.slice(0, 24)}`} text={block} />
+      ))}
+    </>
+  )
+})
+
+function ChoicePartMessage({
+  part,
   onChoose,
   selectedAnswer
 }: {
-  card: AskCard
+  part: IslandChoicePart
   onChoose?: (choice: string) => void
   selectedAnswer?: string
 }): JSX.Element {
   const answered = Boolean(selectedAnswer)
   return (
-    <div className={`isl-ask-card ${card.type}${answered ? ' answered' : ''}`} role="group" aria-label={card.prompt}>
-      <div className="isl-ask-prompt">{card.prompt}</div>
+    <div className={`isl-ask-card ${part.layout}${answered ? ' answered' : ''}`} role="group" aria-label={part.prompt}>
+      <div className="isl-ask-prompt">{part.prompt}</div>
       {answered ? (
         <div className="isl-ask-selected" aria-label={`Selected answer: ${selectedAnswer}`}>
           <span className="isl-ask-selected-kicker">Selected</span>
@@ -233,42 +161,71 @@ function AskCardMessage({
         </div>
       ) : (
         <div className="isl-ask-options">
-          {card.options.map((option, index) => (
-            <button
-              key={`${index}:${option.label}`}
-              type="button"
-              className="isl-ask-option"
-              disabled={!onChoose}
-              onClick={() => onChoose?.(option.label)}
-            >
-              {option.img && <img src={option.img} alt="" loading="lazy" decoding="async" />}
-              <span className="isl-ask-label">{option.label}</span>
-              {option.sub && <span className="isl-ask-sub">{option.sub}</span>}
-            </button>
-          ))}
+          {part.options.map((option, index) => {
+            const img = normalizedImageSrc(option.img)
+            return (
+              <button
+                key={`${index}:${option.label}`}
+                type="button"
+                className="isl-ask-option"
+                disabled={!onChoose}
+                onClick={() => onChoose?.(option.label)}
+              >
+                {img && <img src={img} alt="" loading="lazy" decoding="async" />}
+                <span className="isl-ask-label">{option.label}</span>
+                {option.sub && <span className="isl-ask-sub">{option.sub}</span>}
+              </button>
+            )
+          })}
         </div>
       )}
     </div>
   )
 }
 
-function MarkdownMessage({ role, text, onChoose, selectedAnswer }: MarkdownMessageProps): JSX.Element {
-  const askCard = useMemo(() => (role === 'agent' ? parseAskCard(text) : null), [role, text])
-  const blocks = useMemo(() => splitMarkdownBlocks(text), [text])
-
-  if (askCard) {
-    return (
-      <div className={`isl-msg ${role} isl-md-msg isl-ask-msg`}>
-        <AskCardMessage card={askCard} onChoose={onChoose} selectedAnswer={selectedAnswer} />
-      </div>
-    )
+function renderMessagePart(part: IslandMessagePart, index: number, onChoose?: (choice: string) => void, selectedAnswer?: string): JSX.Element {
+  switch (part.type) {
+    case 'choice':
+      return <ChoicePartMessage key={`choice:${index}:${part.prompt}`} part={part} onChoose={onChoose} selectedAnswer={selectedAnswer} />
+    case 'error':
+      return (
+        <div key={`error:${index}`} className="isl-msg-part error">
+          {part.text}
+        </div>
+      )
+    case 'status':
+      return (
+        <div key={`status:${index}`} className={`isl-msg-part status ${part.tone || 'info'}`}>
+          {part.text}
+        </div>
+      )
+    case 'tool':
+      return (
+        <div key={`tool:${index}:${part.title}`} className={`isl-msg-part tool ${part.state}`}>
+          <span>{part.title}</span>
+          {part.output && <code>{part.output}</code>}
+          {part.error && <span>{part.error}</span>}
+        </div>
+      )
+    case 'attachment':
+      return (
+        <div key={`attachment:${index}:${part.title}`} className="isl-msg-part attachment">
+          {part.title}
+        </div>
+      )
+    case 'text':
+    default:
+      return <MarkdownTextPart key={`text:${index}:${part.text.length}:${part.text.slice(0, 24)}`} text={part.text} />
   }
+}
+
+function MarkdownMessage({ role, text, parts: providedParts, onChoose, selectedAnswer }: MarkdownMessageProps): JSX.Element {
+  const parts = useMemo(() => messagePartsFor({ role, text, parts: providedParts }), [role, text, providedParts])
+  const hasChoice = parts.some((part) => part.type === 'choice')
 
   return (
-    <div className={`isl-msg ${role} isl-md-msg`}>
-      {blocks.map((block, index) => (
-        <MarkdownBlock key={`${index}:${block.length}:${block.slice(0, 24)}`} text={block} />
-      ))}
+    <div className={`isl-msg ${role} isl-md-msg${hasChoice ? ' isl-ask-msg' : ''}`}>
+      {parts.map((part, index) => renderMessagePart(part, index, onChoose, selectedAnswer))}
     </div>
   )
 }
