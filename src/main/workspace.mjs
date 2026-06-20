@@ -1,10 +1,11 @@
 // Workspace serializer — the workspaces design (agent-os-workspaces.md), Phases 1–3.
 //
-// Maps the canvas <-> a workspace FOLDER, both ways:
-//   <dir>/.blitzos/workspace.json   ← the one layout file: { version, id, kind, camera, mode, stack, nodes[], groups[] }
+// Maps the surface set <-> a workspace FOLDER, both ways (V1 island: the canvas camera/mode/stack/slot
+// fields are CUT — the on-disk layout is the node/surface list only):
+//   <dir>/.blitzos/workspace.json   ← the one layout file: { version, id, kind, nodes[], groups[] }
 //   <dir>/<content files>           ← everything-is-a-file: note→.md, web→.weblink, srcdoc→.html
 //
-//   writeWorkspace()      project the live desktop (osState) onto the folder.
+//   writeWorkspace()      project the live surfaces (osState) onto the folder.
 //   readWorkspace()       reconstruct surface descriptors (hydrate on boot/connect).
 //   reconcileWorkspace()  idempotent re-scan when the folder changes externally (reload content,
 //                         auto-place new files, heal a rename, drop missing).
@@ -56,12 +57,6 @@ const MAX_META = 1_000_000 // cap workspace.json before reading it whole (a plan
 function clampScale(v) {
   const n = Number(v)
   return Number.isFinite(n) ? Math.min(Math.max(n, 0.2), 3) : 1
-}
-function safeCamera(c) {
-  if (!c || typeof c !== 'object') return { x: 0, y: 0, scale: 1 }
-  const x = Number(c.x)
-  const y = Number(c.y)
-  return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0, scale: clampScale(c.scale) }
 }
 function safeUrl(u) {
   const s = String(u || '')
@@ -434,26 +429,10 @@ export function openBootJournal(root, mode) {
   }
 }
 
-/** Home-grid field a node carries (plans/blitzos-single-canvas-navigation.md): `slot {col,row,size}`
- *  for tiles pinned to the single home lattice. Off-home is GEOMETRIC (a surface parked outside the home
- *  rect), so no zone field exists. Normalized on write so a hand-edited workspace.json can't poison the
- *  placer (x/y/w/h stay the rendering truth; slots re-derive them on viewport change). The legacy
- *  `slotStage`/`slotArea` are IGNORED — there are no stages anymore (an old file's extra field just loads). */
-function stageFields(s) {
-  const out = {}
-  if (s.slot && typeof s.slot === 'object') {
-    const col = Math.max(0, Math.round(Number(s.slot.col) || 0))
-    const row = Math.max(0, Math.round(Number(s.slot.row) || 0))
-    const size = typeof s.slot.size === 'string' ? s.slot.size.toLowerCase() : 's'
-    out.slot = { col, row, size }
-  }
-  return out
-}
-
 /**
  * Serialize osState into the workspace folder. Returns a small summary.
  * @param {string} dir absolute path to the workspace folder.
- * @param {object} osState the renderer's last pushed state ({surfaces, camera, mode}).
+ * @param {object} osState the renderer's last pushed state ({surfaces}).
  */
 export function writeWorkspace(dir, osState) {
   const metaDir = join(dir, '.blitzos')
@@ -464,7 +443,6 @@ export function writeWorkspace(dir, osState) {
   const surfaces = Array.isArray(osState?.surfaces) ? osState.surfaces : []
 
   const nodes = []
-  const order = [] // { id, z } for the stack, built from the SAME kept nodes (no divergent pass)
   const seen = new Set() // dedupe: an agent-reused/duplicate id must not clobber another's file
   for (const s of surfaces) {
     if (!s || typeof s.id !== 'string' || !s.id) continue // never write a node with no/blank id
@@ -486,10 +464,8 @@ export function writeWorkspace(dir, osState) {
         y: Math.round(s.y),
         w: Math.round(s.w),
         h: Math.round(s.h),
-        ...stageFields(s),
         ...(Object.keys(fview).length ? { view: fview } : {})
       })
-      order.push({ id: s.id, z: s.z || 0 })
       continue
     }
     const c = contentFor(kind, s)
@@ -513,10 +489,8 @@ export function writeWorkspace(dir, osState) {
       w: Math.round(s.w),
       h: Math.round(s.h),
       ...(s.zoom && s.zoom !== 1 ? { zoom: s.zoom } : {}),
-      ...stageFields(s),
       ...(Object.keys(view).length ? { view } : {})
     })
-    order.push({ id: s.id, z: s.z || 0 })
   }
   const nodeIds = new Set(nodes.map((n) => n.id))
   const groups = visualGroupsFromSurfaces(surfaces, nodeIds)
@@ -525,37 +499,21 @@ export function writeWorkspace(dir, osState) {
   // transcript, the activity feed) must survive a backend RESTART — persist them to
   // .blitzos/state/panels.json (machine-local) and merge them back in on boot (#38).
   // The chat hub is a srcdoc with role:'chat' (not native), so match BOTH the native activity panel and
-  // the role-based chat — otherwise the chat's layout (its slot, when the user or onboarding tiles it)
-  // has nowhere to persist and reverts to free-float on every boot.
+  // the role-based chat.
   const runtimePanels = surfaces.filter(
     (s) => s && ((s.kind === 'native' && (s.component === 'chat' || s.component === 'activity')) || s.role === 'chat')
   )
 
-  // Don't materialize an empty workspace.json (or scaffold) for a fresh, empty canvas — only
+  // Don't materialize an empty workspace.json (or scaffold) for a fresh, empty workspace — only
   // once there's something to persist (a node, a runtime panel, or an existing workspace to sync).
   if (nodes.length === 0 && runtimePanels.length === 0 && !existsSync(metaFile)) return { metaFile, nodeCount: 0 }
 
-  // z-order: node ids back→front, from the kept nodes only.
-  const stack = order
-    .slice()
-    .sort((a, b) => a.z - b.z)
-    .map((o) => o.id)
-
-  const cam = osState?.camera
-  const camera =
-    cam && typeof cam.scale === 'number'
-      ? { x: Math.round(cam.x || 0), y: Math.round(cam.y || 0), scale: Math.round(cam.scale * 1000) / 1000 }
-      : { x: 0, y: 0, scale: 1 }
-
-  // Single-canvas nav: ONE home region, so no stage fields are written. `mode` is pinned to 'desktop'
-  // (canvas/Control-Mode is gone; the field is slated for removal — plans/blitzos-single-canvas-navigation.md).
+  // V1 island: the on-disk layout is the node/surface list (+ visual folder groups). The canvas
+  // camera/mode/stack fields are CUT (no infinite plane, no z-stacking of free windows).
   const ws = {
     version: VERSION,
     id: wsId || randomUUID(),
     kind: 'blitzos.workspace',
-    camera,
-    mode: 'desktop',
-    stack,
     groups,
     nodes
   }
@@ -608,9 +566,6 @@ function writeRuntimePanels(dir, panels) {
         w: Math.round(s.w) || (isAct ? 320 : 360),
         h: Math.round(s.h) || (isAct ? 200 : 460),
         z: s.z || 0,
-        // Persist the tile slot so a slotted chat/activity panel survives a restart (the user tiles the
-        // chat, or onboarding seeds it; without this it reverts to free-float — the "popped out" bug).
-        ...(s.slot ? { slot: s.slot } : {}),
         title: typeof s.title === 'string' ? s.title : s.component,
         props: sp
       }
@@ -643,7 +598,6 @@ export function readRuntimePanels(dir) {
         w: Number(s.w) || (s.component === 'activity' ? 320 : 360),
         h: Number(s.h) || (s.component === 'activity' ? 200 : 460),
         z: Number(s.z) || 0,
-        ...(s.slot && typeof s.slot === 'object' ? { slot: s.slot } : {}),
         title: typeof s.title === 'string' ? s.title : s.component,
         props: s.props && typeof s.props === 'object' ? s.props : {}
       }))
@@ -700,7 +654,7 @@ function titleFromPath(p) {
  * Reconstruct surface descriptors from a workspace folder (inverse of writeWorkspace) —
  * Phase 2 hydrate. Reads .blitzos/workspace.json's nodes + each content file. A node whose
  * content file is missing is skipped (Phase 3 reconcile will mark it "missing"). Returns
- * { surfaces, camera, mode } or null if there is no workspace.json.
+ * { surfaces } or null if there is no workspace.json.
  * @param {string} dir absolute path to the workspace folder.
  */
 // Reconstruct ONE surface descriptor from a node + its (jail-confined) content file.
@@ -719,7 +673,7 @@ function nodeToSurface(dir, n, z) {
       return null // vanished
     }
     const name = basename(n.path)
-    const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || 200, h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z, ...stageFields(n) }
+    const base = { id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, w: Number(n.w) || 200, h: Number(n.h) || (n.kind === 'dir' ? 170 : 200), z }
     if (n.kind === 'dir') {
       let entries = 0
       try {
@@ -753,8 +707,7 @@ function nodeToSurface(dir, n, z) {
     w: Number(n.w) || 240,
     h: Number(n.h) || 240,
     z,
-    ...(n.zoom ? { zoom: clampScale(n.zoom) } : {}),
-    ...stageFields(n)
+    ...(n.zoom ? { zoom: clampScale(n.zoom) } : {})
   }
   if (n.kind === 'note') {
     const noteProps = { text: content, ...(typeof view.color === 'string' ? { color: view.color } : {}) }
@@ -798,7 +751,7 @@ function nodeToSurface(dir, n, z) {
 
 /**
  * Reconstruct surface descriptors from a workspace folder (inverse of writeWorkspace) —
- * Phase 2 hydrate. Returns { surfaces, camera, mode } or null if there is no workspace.json.
+ * Phase 2 hydrate. Returns { surfaces } or null if there is no workspace.json.
  */
 function parseMeta(file) {
   try {
@@ -813,19 +766,19 @@ export function readWorkspace(dir) {
   // fall back to the last-good copy if the live file is corrupt/truncated (spec §3.1 safety net).
   const ws = parseMeta(metaFile) ?? parseMeta(metaFile + '.bak')
   if (!ws || !Array.isArray(ws.nodes)) return null
+  // V1 island: no canvas z-stack is written. A legacy file may still carry a `stack` array — honor it for
+  // stable z if present (back-compat), else assign sequential z. New files have none; the field defaults absent.
   const stack = Array.isArray(ws.stack) ? ws.stack : []
   const zByIdx = new Map(stack.map((id, i) => [id, i + 1]))
   const surfaces = []
-  let seq = stack.length + 1 // seed fallback z ABOVE all stacked nodes (no collision)
+  let seq = stack.length + 1 // seed fallback z ABOVE all (legacy-)stacked nodes (no collision)
   for (const n of ws.nodes) {
     const s = nodeToSurface(dir, n, zByIdx.get(n?.id) ?? seq)
     seq++
     if (s) surfaces.push(s)
   }
   const groupedSurfaces = applyVisualGroups(surfaces, ws.groups)
-  // Single-canvas nav: no stages, and `mode` is pinned to 'desktop' (a legacy 'canvas' file just loads as
-  // desktop — Control Mode is gone). Any leftover stageCount/stageOrder on disk is simply ignored.
-  return { surfaces: groupedSurfaces, camera: safeCamera(ws.camera), mode: 'desktop' }
+  return { surfaces: groupedSurfaces }
 }
 
 /** Ground truth: is surface `id` STILL a real on-disk node of `dir` — i.e. its persisted workspace.json
@@ -881,9 +834,8 @@ arrange; edit the files and the canvas updates live. The workspace IS this folde
 - images / other files — a tile.
 
 ## Layout
-\`.blitzos/workspace.json\` holds the spatial layout: for each node, its \`id\`, file \`path\`,
-\`x/y/w/h\`, the z-order in \`stack\`, and the \`camera\`. BlitzOS owns this file — edit a node's
-\`x\`/\`y\` to move it, reorder \`stack\` to restack.
+\`.blitzos/workspace.json\` holds the layout: for each node, its \`id\`, file \`path\`, and
+\`x/y/w/h\`. BlitzOS owns this file — edit a node's \`x\`/\`y\` to move it.
 
 ## For an agent
 Operate this workspace with plain file tools — no API needed:
@@ -914,10 +866,10 @@ function defaultSizeFor(kind) {
 }
 
 /**
- * Reconcile the canvas with the folder on disk (Phase 3). Idempotent re-scan: reads the nodes
+ * Reconcile the surface set with the folder on disk (Phase 3). Idempotent re-scan: reads the nodes
  * (fresh content), auto-places NEW loose .md/.weblink files, heals a single unambiguous rename,
  * drops nodes whose file vanished, and writes back workspace.json only if the node set changed.
- * Returns { surfaces, camera, mode, changed } or null if there is no workspace.json.
+ * Returns { surfaces, changed, knownIds } or null if there is no workspace.json.
  * @param {string} dir workspace folder
  * @param {{cx?:number, cy?:number}} [placeAt] world-space center to cascade new nodes around
  */
@@ -1152,6 +1104,8 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     }
   }
 
+  // V1 island: no canvas z-stack is written. A legacy file may still carry a `stack` array — honor it for
+  // stable z if present (back-compat), else assign sequential z.
   const stackPrev = Array.isArray(ws.stack) ? ws.stack : []
   const zByIdx = new Map(stackPrev.map((id, idx) => [id, idx + 1]))
   let seq = stackPrev.length + 1
@@ -1160,18 +1114,14 @@ export function reconcileWorkspace(dir, placeAt = {}) {
     const s = nodeToSurface(dir, n, zByIdx.get(n.id) ?? seq++)
     if (s) surfaces.push(s)
   }
-  const camera = safeCamera(ws.camera)
-  // Single-canvas nav: `mode` is pinned to 'desktop' and there are no stages. A rewrite (only when the node
-  // set actually changed) drops any leftover stageCount/stageOrder/mode:'canvas' from disk — extra fields
-  // on an old file just load and then fall away on the next reconcile.
-  const mode = 'desktop'
 
   if (changed) {
+    // The rewrite drops any leftover camera/mode/stack/slot from an old file — they simply fall away.
     const groups = visualGroupsFromMeta(ws.groups, new Set(alive.map((n) => n.id)))
-    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', camera, mode, stack: surfaces.map((s) => s.id), groups, nodes: alive }
+    const out = { version: VERSION, id: typeof ws.id === 'string' ? ws.id : randomUUID(), kind: 'blitzos.workspace', groups, nodes: alive }
     writeMeta(metaFile, out) // atomic + keeps workspace.json.bak
   }
-  return { surfaces, camera, mode, changed, knownIds }
+  return { surfaces, changed, knownIds }
 }
 
 // ---- cross-workspace surface addressing (item 4): a surface id lives in exactly one workspace folder.
@@ -1257,7 +1207,7 @@ export function relocateSurface(root, destDir, id, placeAt = {}) {
     const srcMeta = join(srcDir, '.blitzos', 'workspace.json')
     const m = JSON.parse(readFileSync(srcMeta, 'utf8'))
     m.nodes = (m.nodes || []).filter((n) => n.id !== id)
-    if (Array.isArray(m.stack)) m.stack = m.stack.filter((x) => x !== id)
+    delete m.stack // V1 island: the canvas z-stack is gone; drop any legacy field on rewrite
     writeMeta(srcMeta, m)
   } catch {
     /* source json untouched — the moved file is gone, so it won't resurface there on reconcile anyway */
@@ -1590,7 +1540,9 @@ export function moveOutOfFolder(dir, paths, placeAt = {}) {
     skipped++
     skippedPaths.push(String(p || ''))
   }
-  const stack = Array.isArray(ws.stack) ? ws.stack : []
+  // V1 island: no canvas z-stack. z is just a per-surface render field — hand each moved/updated surface
+  // a fresh incrementing z; the legacy `stack` array is dropped on rewrite (delete below).
+  let zSeq = (ws.nodes || []).length + 1
   const cx = Number(placeAt.x)
   const cy = Number(placeAt.y)
 
@@ -1659,16 +1611,14 @@ export function moveOutOfFolder(dir, paths, placeAt = {}) {
         const next = nodeWithPath(n, nextPrefix + n.path.slice(prefix.length))
         Object.assign(n, next)
         if (!('view' in next)) delete n.view
-        const updated = nodeToSurface(dir, n, Array.isArray(ws.stack) ? ws.stack.indexOf(n.id) + 1 || ws.stack.length + 1 : ws.stack.length)
+        const updated = nodeToSurface(dir, n, zSeq++)
         if (updated) {
           updatedSurfaces.push(updated)
           updatedIds.push(updated.id)
         }
       }
     }
-    ws.stack = [...stack.filter((id) => id !== node.id), node.id]
-    stack.splice(0, stack.length, ...ws.stack)
-    const surface = nodeToSurface(dir, node, ws.stack.length)
+    const surface = nodeToSurface(dir, node, zSeq++)
     if (surface) {
       surfaces.push(surface)
       surfaceIds.push(surface.id)
@@ -1678,7 +1628,10 @@ export function moveOutOfFolder(dir, paths, placeAt = {}) {
     pathMoves.push({ from: srcRel, to: destRel })
   }
 
-  if (moved > 0) writeMeta(metaFile, ws)
+  if (moved > 0) {
+    delete ws.stack // V1 island: drop any legacy canvas z-stack on rewrite
+    writeMeta(metaFile, ws)
+  }
   return { ok: moved > 0, moved, skipped, movedPaths, skippedPaths, pathMoves, surfaceIds, surfaces, updatedIds, updatedSurfaces, ...(moved > 0 ? {} : { error: 'nothing movable' }) }
 }
 
@@ -1734,10 +1687,11 @@ export function openFolderEntry(dir, rel, placeAt = {}) {
       h: sz.h
     }
     ws.nodes.push(node)
-    ws.stack = Array.isArray(ws.stack) ? [...ws.stack.filter((id) => id !== node.id), node.id] : [node.id]
+    delete ws.stack // V1 island: drop any legacy canvas z-stack on rewrite
     writeMeta(metaFile, ws)
   }
-  const surface = nodeToSurface(dir, node, Array.isArray(ws.stack) ? ws.stack.indexOf(node.id) + 1 || ws.stack.length + 1 : 1)
+  // V1 island: no canvas z-stack — hand the surface a top-of-set z (it's a render-only field now).
+  const surface = nodeToSurface(dir, node, (ws.nodes || []).length + 1)
   return surface ? { ok: true, id: surface.id, surface } : { ok: false, error: 'could not open entry' }
 }
 
@@ -1762,7 +1716,7 @@ export function removeSurfaceFile(dir, id) {
       const ws = readMetaFile(metaFile)
       if (ws) {
         ws.nodes = (ws.nodes || []).filter((n) => n && n.id !== String(id))
-        if (Array.isArray(ws.stack)) ws.stack = ws.stack.filter((x) => x !== String(id))
+        delete ws.stack // V1 island: drop any legacy canvas z-stack on rewrite
         writeMeta(metaFile, ws)
       }
       return { ok: true, removed: rel, keptFile: true }

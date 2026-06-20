@@ -34,8 +34,6 @@ export interface SurfaceDescriptor {
   html?: string
   component?: string
   props?: Record<string, unknown>
-  /** Legacy slot field (the home lattice was cut in V1); retained only for workspace.json back-compat. */
-  slot?: { col: number; row: number; size: string }
   /** Browser (web) tabs declared up front — opens a multi-tab browser with its strip pre-filled
    *  (the host lazy-restores: only activeTab loads, the rest load on click). */
   tabs?: Array<{ id: string; title?: string; url?: string }>
@@ -57,16 +55,10 @@ export interface OsState {
     component?: string
     z?: number
     props?: Record<string, unknown>
-    slot?: { col: number; row: number; size: string }
     pinned?: boolean
     agentId?: string
     focus?: boolean
   }>
-  camera?: { x: number; y: number; scale: number }
-  view?: { cx: number; cy: number }
-  mode?: string
-  /** Last bulk layout transaction (a folder-wide reconcile) — perception treats the push as ONE gesture. */
-  bulkAt?: number
   workspace?: string
   // The active workspace's absolute folder path (~/Blitz/<name>) — the agent's persistence root (chat.md,
   // sessions, onboarding artifacts). Surfaced so the agent knows WHERE to read/write.
@@ -109,7 +101,7 @@ function durableFlush(): void {
 }
 // The SHARED workspace host (created in initOsActions, once app paths exist) — the SAME module the
 // server backend uses, so workspaces are ONE feature across both modes. Electron adapter: broadcast =
-// os:action IPC; web surfaces are main-owned WebContentsViews (onSurfaces no-op); mode 'desktop'.
+// os:action IPC; web surfaces are main-owned WebContentsViews (onSurfaces no-op).
 let wsHost: ReturnType<typeof createWorkspaceHost> | null = null
 const newWorkspaceAgentStarts = new Set<string>()
 // surfaceId -> the browser guest's WebContents id (so we can read/control its DOM)
@@ -198,7 +190,6 @@ export function initOsActions(opts: {
     },
     onSurfaces: () => {}, // Electron web surfaces are in-DOM <webview> guests (renderer-owned)
     getActionItems: () => (actionItemsProvider ? actionItemsProvider() : []), // authoritative inbox items (index.ts wires it)
-    defaultMode: 'desktop', // home-only: new Electron boards home on the single bounded lattice (single-canvas navigation)
     // An agent backend runs in a VISIBLE terminal; index.ts wires this from the shared agent-runtime
     // core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
     launchAgent: (id, home, title) => launchAgentHook?.(id, home, title),
@@ -246,22 +237,15 @@ export function initOsActions(opts: {
 
   ipcMain.on('os:state', (_e, state: OsState) => {
     if (state && Array.isArray(state.surfaces)) {
-      // A bulk layout transaction (a folder-wide reconcile) translates MANY windows at once; the renderer
-      // stamps the push with bulkAt → re-seed the status-only tick baseline (never diff it as phantom edges).
-      if (typeof state.bulkAt === 'number' && state.bulkAt !== lastRendererBulkAt) {
-        lastRendererBulkAt = state.bulkAt
-        resetTickBaseline()
-      }
       wsHost?.onStatePush(state)
       // telemetry: a compact layout keyframe (~every 20s, not every push) — replay resyncs from these;
       // content fidelity comes from the 'act' stream, so heavy props are deliberately dropped here.
       if (Date.now() - lastStateKeyframe > 20_000) {
         lastStateKeyframe = Date.now()
-        const s = state as unknown as { mode?: unknown; surfaces: Array<Record<string, unknown>> }
+        const s = state as unknown as { surfaces: Array<Record<string, unknown>> }
         tel('state', {
-          mode: s.mode,
           n: s.surfaces.length,
-          surfaces: s.surfaces.map((x) => ({ id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, title: x.title, url: x.url, slot: x.slot }))
+          surfaces: s.surfaces.map((x) => ({ id: x.id, kind: x.kind, x: x.x, y: x.y, w: x.w, h: x.h, title: x.title, url: x.url }))
         })
       }
     }
@@ -403,10 +387,6 @@ export function osRadialPhase(phase: 'down' | 'up' | 'cancel'): void {
     sendToRenderer('os:radial', { phase })
   }
 }
-
-// Last bulk stamp seen on an os:state push (a folder-wide reconcile) — gates the status-only tick's
-// baseline re-seed in the os:state handler (a bulk layout transaction must not read as phantom agent edges).
-let lastRendererBulkAt = 0
 
 /** Create any surface kind. Returns its id. */
 export function osCreateSurface(desc: SurfaceDescriptor): string {
@@ -906,8 +886,7 @@ export function osSendHydrate(): void {
       }
     })
   }
-  // Single-canvas nav: no stageCount/stageOrder; mode defaults 'desktop' (legacy persisted 'canvas' ignored).
-  send('hydrate', { surfaces, camera: cached.camera || { x: 0, y: 0, scale: 1 }, mode: cached.mode || 'desktop', workspace: wsHost.active() })
+  send('hydrate', { surfaces, workspace: wsHost.active() })
 }
 export function osRestoreChatHub(): { ok: boolean; id?: string; error?: string } {
   try {

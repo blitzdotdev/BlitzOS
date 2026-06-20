@@ -6,11 +6,10 @@ export interface WorkspaceHostAdapter {
   initialName?: string
   /** true when initialName was PINNED by the user (BLITZ_WORKSPACE): skip boot-where-you-left-off. */
   explicitInitial?: boolean
-  getState(): { surfaces: unknown[]; camera?: { x: number; y: number; scale: number }; mode?: string; view?: { cx: number; cy: number } }
+  getState(): { surfaces: unknown[] }
   setState(s: unknown): void
   broadcast(obj: unknown): void
   onSurfaces?: (surfaces: unknown[]) => Promise<unknown> | void
-  defaultMode?: 'canvas' | 'desktop'
   /** Launch (or resume) the managed terminal for an agent in its stage. Wired by each transport
    *  from the shared agent-runtime core + its terminal-ops; absent ⇒ no agent auto-launch. */
   launchAgent?: (agentId: string, stage: number, title?: string) => void
