@@ -53,8 +53,8 @@ ok('main forwards the hit-window click/hover to the overlay renderer + pushes th
 ok('preload exposes the bridge: notch.click/hover (hit-window → main) + onHandleClick/onHandleHover (→ overlay)',
   /click\(\): void \{[\s\S]*?'os:notch-click'/.test(preload) && /hover\(on: boolean\): void \{[\s\S]*?'os:notch-hover'/.test(preload) &&
     /onHandleClick/.test(preload) && /onHandleHover/.test(preload))
-ok('renderer: hit-window CLICK → toggleNotch (fullscreen), HOVER → open/close the panel',
-  /onHandleClick\?\.\(\(\) => toggleNotch\(\)\)/.test(app) && /onHandleHover\?\.\(\(on\) =>/.test(app))
+ok('renderer: hit-window CLICK → toggleNewSession (island panel; V1 has no canvas fullscreen), HOVER → open/close the panel',
+  /onHandleClick\?\.\(\(\) => toggleNewSession\(\)\)/.test(app) && /onHandleHover\?\.\(\(on\) =>/.test(app))
 ok('renderer: the visual pill uses the REAL notch width + is gated on a real notch (no notch → no band, ⌥Space only)',
   /style=\{\{ width: notchWidth/.test(app) && /notchOn && hasNotch &&/.test(app) &&
     /notchClipFor\(notchState[\s\S]*?notchWidth\)/.test(app))

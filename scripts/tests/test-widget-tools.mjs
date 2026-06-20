@@ -7,7 +7,7 @@ let fail = 0
 const ok = (n, c) => (c ? (pass++, console.log('  ✓ ' + n)) : (fail++, console.log('  ✗ ' + n)))
 
 console.log('# the allowlist allows the intended OS tools')
-for (const t of ['create_surface', 'open_window', 'move_surface', 'update_surface', 'close_surface', 'go_to_primary', 'list_state', 'set_theme']) ok('allows ' + t, isWidgetTool(t))
+for (const t of ['create_surface', 'open_window', 'update_surface', 'close_surface', 'list_state', 'set_theme']) ok('allows ' + t, isWidgetTool(t))
 
 console.log('\n# …and DENIES everything dangerous / off-list (no relay pass-through)')
 for (const t of ['eval', 'surface_control', 'read_window', 'save_widget', 'customize_widget', 'group', 'provider_call', '__proto__', 'constructor', '', 'createSurface']) ok('denies ' + JSON.stringify(t), !isWidgetTool(t))
@@ -59,7 +59,6 @@ const threw = (fn) => { try { fn(); return false } catch { return true } }
 ok('create_surface throws on missing kind', threw(() => H.create_surface({})))
 ok('open_window throws on missing url', threw(() => H.open_window({})))
 ok('update_surface throws on missing id', threw(() => H.update_surface({ url: 'u' })))
-ok('move_surface throws on missing id', threw(() => H.move_surface({ x: 1, y: 2 })))
 ok('close_surface throws on missing id', threw(() => H.close_surface({})))
 const explicitClose = H.close_surface({ id: 'explicit-widget' }, { surfaceId: 'self-widget' })
 ok('close_surface with explicit id closes that surface', explicitClose.ok === true && opsCalls.some((c) => c[0] === 'closeSurface' && c[1] === 'explicit-widget'))
@@ -73,7 +72,7 @@ ok('update_surface → ok:true, id stripped from patch', u.ok === true && upd[1]
 // finding #3: list_state returns WHITELISTED layout fields only — no html, no props/transcript leak.
 const ls = H.list_state()
 const s0 = ls.surfaces[0]
-ok('list_state keeps layout fields + workspace', s0.id === 'a' && s0.w === 2 && s0.pinned === true && ls.workspace === 'W' && ls.workspace_path === '/w')
+ok('list_state keeps surface essentials + workspace (V1: no layout fields)', s0.id === 'a' && s0.kind === 'srcdoc' && s0.title === 'T' && ls.workspace === 'W' && ls.workspace_path === '/w')
 ok('list_state DROPS html + props (no transcript leak)', !('html' in s0) && !('props' in s0))
 // the handler map is exactly the allowlist (no extra / missing tools)
 ok('handler keys === the allowlist', JSON.stringify(Object.keys(H).sort()) === JSON.stringify([...WIDGET_TOOLS].sort()))

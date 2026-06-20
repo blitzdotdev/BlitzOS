@@ -7,10 +7,8 @@ import { serializeStateForAgent } from './os-tools.mjs'
 export const WIDGET_TOOLS = [
   'create_surface',
   'open_window',
-  'move_surface',
   'update_surface',
   'close_surface',
-  'go_to_primary',
   'list_state',
   'set_theme',
   'connection_call_tool',
@@ -49,8 +47,8 @@ export function makeWidgetToolRunner(handlers) {
  * widget `blitz.tool` contract (id-as-{id}, validation, list_state shape) can NOT drift
  * between desktop and server the way the two hand-written maps did. The closed allowlist is still enforced
  * by makeWidgetToolRunner; this only supplies the (subset of) handlers a widget is allowed to reach.
- * @param {object} ops — same shape os-tools.mjs documents (createSurface->id, openWindow->id, moveSurface,
- *   updateSurface, closeSurface, goToPrimary, getState).
+ * @param {object} ops — same shape os-tools.mjs documents (createSurface->id, openWindow->id,
+ *   updateSurface, closeSurface, getState).
  */
 export function makeWidgetToolHandlers(ops) {
   return {
@@ -61,12 +59,6 @@ export function makeWidgetToolHandlers(ops) {
     open_window: (a) => {
       if (typeof a.url !== 'string') throw new Error('url required')
       return { id: ops.openWindow(a) }
-    },
-    move_surface: (a) => {
-      const id = String(a.id || '')
-      if (!id) throw new Error('id required')
-      ops.moveSurface(id, Number(a.x) || 0, Number(a.y) || 0)
-      return { ok: true }
     },
     update_surface: (a) => {
       const id = String(a.id || '')
@@ -87,10 +79,6 @@ export function makeWidgetToolHandlers(ops) {
       const id = String(explicitId || ctx.surfaceId || '')
       if (!id) throw new Error('id required')
       ops.closeSurface(id)
-      return { ok: true }
-    },
-    go_to_primary: () => {
-      ops.goToPrimary()
       return { ok: true }
     },
     set_theme: (a) => {
