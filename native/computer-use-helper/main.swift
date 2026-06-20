@@ -201,6 +201,7 @@ func listWindows() -> [[String: Any]] {
     let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     guard let infos = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else { return [] }
     var out: [[String: Any]] = []
+    var iconByPid: [Int: String] = [:] // one icon encode per app, reused across its windows
     for info in infos {
         if (info[kCGWindowLayer as String] as? Int) ?? 0 != 0 { continue } // normal app windows only
         let wid = (info[kCGWindowNumber as String] as? Int) ?? 0
@@ -209,7 +210,9 @@ func listWindows() -> [[String: Any]] {
         let title = (info[kCGWindowName as String] as? String) ?? ""
         let bounds = (info[kCGWindowBounds as String] as? [String: Any]) ?? [:]
         let bundleId = NSRunningApplication(processIdentifier: pid_t(pid))?.bundleIdentifier ?? ""
-        out.append(["windowId": wid, "pid": pid, "app": app, "bundleId": bundleId, "title": title, "bounds": bounds])
+        let icon: String
+        if let cached = iconByPid[pid] { icon = cached } else { icon = pickIconBase64(pid); iconByPid[pid] = icon }
+        out.append(["windowId": wid, "pid": pid, "app": app, "bundleId": bundleId, "title": title, "bounds": bounds, "icon": icon])
     }
     return out
 }

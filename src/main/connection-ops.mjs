@@ -364,6 +364,21 @@ export function makeConnectionOps({
     return moved
   }
 
+  // Transfer ONE existing connection to a chat. The dedup path (connectTab/connectWindow re-attaching an
+  // already-LIVE source) calls this so a source re-attached from a different chat FOLLOWS to the chat now
+  // attaching it — otherwise it stays owned by the first chat, so connection_list(thisChat) omits it and the
+  // dropbox shows it for ~0.5s then prunes it (the "disappears, but works on another chat" bug). Last attacher
+  // wins (single-owner model, matches the per-chat dropbox). Wakes the new owner; no-op if already the owner.
+  function connectionSetOwner(connId, agentId) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    const owner = agentId != null ? String(agentId) : ''
+    if (String(r.agentId || '') === owner) return { ok: true, changed: false }
+    r.agentId = owner
+    emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: r.sourceId, status: r.status, verb: 'attached', agentId: owner })
+    return { ok: true, changed: true }
+  }
+
   async function connectionRead(connId, args) {
     const r = rec(connId)
     if (!r) return { error: `no connection ${connId}` }
@@ -685,6 +700,7 @@ export function makeConnectionOps({
     // agent-facing ops (called by the os-tools.mjs handlers + the widget bridge)
     connectionList,
     connectionReassign,
+    connectionSetOwner,
     connectionRead,
     connectionAct,
     connectionRunJs,

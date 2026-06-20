@@ -2,28 +2,27 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key>
-  <string>BlitzOS Computer Use</string>
-  <key>CFBundleDisplayName</key>
-  <string>BlitzOS Computer Use</string>
-  <key>CFBundleIdentifier</key>
-  <string>dev.blitz.os.computeruse</string>
-  <key>CFBundleExecutable</key>
-  <string>BlitzComputerUse</string>
-  <key>CFBundleIconFile</key>
-  <string>AppIcon</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleVersion</key>
-  <string>8</string>
-  <key>CFBundleShortVersionString</key>
-  <string>1.7</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
-  <!-- Faceless background agent: no Dock icon, no menu bar (matches Codex's CUAService). -->
-  <key>LSUIElement</key>
-  <true/>
-  <key>NSAppleEventsUsageDescription</key>
-  <string>BlitzOS Computer Use automates apps on your behalf.</string>
+	<key>CFBundleDisplayName</key>
+	<string>BlitzOS Computer Use</string>
+	<key>CFBundleExecutable</key>
+	<string>BlitzComputerUse</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.blitz.os.computeruse</string>
+	<key>CFBundleName</key>
+	<string>BlitzOS Computer Use</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.7</string>
+	<key>CFBundleVersion</key>
+	<string>9</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>BlitzOS Computer Use automates apps on your behalf.</string>
 </dict>
 </plist>

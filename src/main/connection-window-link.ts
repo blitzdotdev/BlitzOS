@@ -5,7 +5,6 @@
 // TCC grants. Window connect is intentionally Electron+local only (a remote server would need a local
 // companion on the user's Mac — deferred per the design).
 import type { ConnectionOps } from './connection-ops.mjs'
-import { attachAppIcons } from './app-icons'
 
 interface HelperLike {
   ensure(): Promise<{ ok: boolean; error?: string }>
@@ -44,18 +43,27 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
   async function listWindows(): Promise<Record<string, unknown>> {
     const e = await ready()
     if (!e.ok) return { error: e.error || 'the BlitzComputerUse helper is not available' }
+    // The helper provides the REAL macOS app icon per window (NSRunningApplication.icon → base64 PNG): it is the
+    // one GUI-session process that can read it — Electron's app.getFileIcon returns a generic placeholder in dev.
     const r = await helper.call('list_windows')
-    if (r.error) return { error: String(r.error) }
-    const wins = Array.isArray(r.windows) ? (r.windows as Array<{ pid?: number }>) : []
-    return { windows: await attachAppIcons(wins) }
+    return r.error ? { error: String(r.error) } : { windows: r.windows }
   }
 
   async function connectWindow(windowId: number, opts: { title?: string; sourceId?: string; agentId?: string } = {}): Promise<Record<string, unknown>> {
     // DEDUP: this exact window is already connected (and live) → re-attach, don't spawn a duplicate.
     const existing = windowToConn.get(Number(windowId))
     if (existing && typeof connectionOps.connectionIsLive === 'function' && connectionOps.connectionIsLive(existing)) {
-      const info = (connectionOps as unknown as { connectionInfo: (id: string) => Record<string, unknown> | null }).connectionInfo(existing)
-      if (info) return { ...info, window: { windowId: Number(windowId) } }
+      const ops = connectionOps as unknown as {
+        connectionInfo: (id: string) => Record<string, unknown> | null
+        connectionSetOwner?: (id: string, agentId?: string) => unknown
+      }
+      const info = ops.connectionInfo(existing)
+      if (info) {
+        // re-attaching an already-live window from a (possibly different) chat → transfer ownership so it lists in
+        // THIS chat's dropbox + wakes this chat's agent, instead of staying owned by the first chat and vanishing.
+        if (typeof ops.connectionSetOwner === 'function') ops.connectionSetOwner(existing, opts.agentId)
+        return { ...info, window: { windowId: Number(windowId) } }
+      }
     }
     const e = await ready()
     if (!e.ok) return { error: e.error || 'the BlitzComputerUse helper is not available' }

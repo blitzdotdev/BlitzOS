@@ -212,7 +212,12 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
     const existing = tabToConn.get(id)
     if (existing && typeof connectionOps.connectionIsLive === 'function' && connectionOps.connectionIsLive(existing)) {
       const info = connectionOps.connectionInfo(existing)
-      if (info) return { ...info, tab: { tabId: id } }
+      if (info) {
+        // re-attaching an already-live tab from a (possibly different) chat → transfer ownership so it lists in
+        // THIS chat's dropbox + wakes this chat's agent, instead of staying owned by the first chat and vanishing.
+        if (typeof connectionOps.connectionSetOwner === 'function') connectionOps.connectionSetOwner(existing, opts.agentId)
+        return { ...info, tab: { tabId: id } }
+      }
     }
     let tab = knownTabs.find((t) => t.tabId === id)
     if (!tab) tab = (await listTabs()).find((t) => t.tabId === id)

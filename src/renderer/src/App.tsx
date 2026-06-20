@@ -27,6 +27,9 @@ const NOTCH_HOVER_OPEN_GRACE_MS = 220
 const NOTCH_HOVER_CLOSE_DELAY_MS = 90
 const NOTCH_HOVER_RESCHEDULE_PAD_MS = 30
 const NOTCH_CHASSIS_KEEPALIVE_MS = 180
+// Turning the attach panel OFF holds the island open this long even if the cursor has already left it, so closing
+// attach never yanks the island shut under the user. DO NOT REMOVE this heuristic (pinned in agent-os/CLAUDE.md).
+const NOTCH_ATTACH_CLOSE_HOLD_MS = 1500
 
 function systemTheme(): ThemeMode {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
@@ -163,8 +166,12 @@ export default function App(): JSX.Element {
         notchHoverGraceRef.current = 0
       }
       setNotchInteractive(true)
-    } else if (!overChassisRef.current && !notchOverRef.current && !notchPinnedRef.current) {
-      scheduleNotchHoverClose()
+    } else {
+      // Heuristic (DO NOT REMOVE — pinned in agent-os/CLAUDE.md): turning attach OFF holds the island open for
+      // ~1.5s even if the cursor has already left it, so collapsing the attach panel never yanks the island shut
+      // under the user. notchHoldUntilRef defers the hover auto-close (scheduleNotchHoverClose respects it).
+      notchHoldUntilRef.current = performance.now() + NOTCH_ATTACH_CLOSE_HOLD_MS
+      if (!overChassisRef.current && !notchOverRef.current && !notchPinnedRef.current) scheduleNotchHoverClose()
     }
   }
   // ⌥Space TOGGLE: the generic "show/hide the dynamic island" keybind. closed → panel (PINNED open, RESTORED to the

@@ -252,6 +252,21 @@ async function main() {
   ok('rehydrate repaints a DEAD connection widget to disconnected', rew && /disconnected/i.test(rew.html) && /mail\.google\.com/.test(rew.html))
   ok('rehydrate ignores a non-connection surface', ops.rewriteHydratedSurface({ id: 'note1', props: { text: 'hi' }, html: 'note' }) === null)
 
+  // --- per-chat ownership + transfer-on-reattach (the dropbox "disappears, works on another chat" fix) ---
+  // A source is owned by the chat that attached it; connectionList(forAgent) scopes to that owner. Re-attaching an
+  // already-live source from a different chat must TRANSFER ownership (connectionSetOwner, called by the dedup path
+  // in the tab/safari/window links) so it lists under the chat now attaching it instead of vanishing.
+  const ownBind = ops.connectionBind({ type: 'tab', sourceId: 'owned.example.com', adapter: stubAdapter(), agentId: 'A' })
+  ok('a connection is scoped to its owner chat', ops.connectionList('A').connections.some((c) => c.connId === ownBind.connId))
+  ok('another chat does NOT see it', !ops.connectionList('B').connections.some((c) => c.connId === ownBind.connId))
+  const moved = ops.connectionSetOwner(ownBind.connId, 'B')
+  ok('connectionSetOwner transfers ownership', moved.ok === true && moved.changed === true)
+  ok('after transfer the NEW chat sees it', ops.connectionList('B').connections.some((c) => c.connId === ownBind.connId))
+  ok('after transfer the OLD chat no longer sees it', !ops.connectionList('A').connections.some((c) => c.connId === ownBind.connId))
+  ok('re-setting the same owner is a no-op', ops.connectionSetOwner(ownBind.connId, 'B').changed === false)
+  ok('connectionSetOwner on an unknown connId errors', !!ops.connectionSetOwner('conn_nope', 'B').error)
+  ok('an unscoped list (undefined) still sees every owner', ops.connectionList().connections.some((c) => c.connId === ownBind.connId))
+
   rmSync(ws, { recursive: true, force: true })
   console.log('\n' + (fail ? '✗' : '✓') + ' connections: ' + pass + ' passed, ' + fail + ' failed')
   process.exit(fail ? 1 : 0)
