@@ -11,6 +11,7 @@ import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
 import { IslandTerminalPane } from './IslandTerminalPane'
 import MarkdownMessage from './MarkdownMessage'
+import { agentGradient } from './agentVisuals'
 import { matchingChoiceAnswer } from './messageParts'
 import type { IslandPanelProps } from './types'
 
@@ -21,25 +22,16 @@ const PEN_PATH =
   'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z'
 const ARCHIVE_PATH =
   'M4 7h16M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 11h6M5 3h14a1 1 0 0 1 1 1v3H4V4a1 1 0 0 1 1-1Z'
-// A stable, vibrant per-agent gradient (the peek "album art") derived from the agent id.
-function agentGradient(id: string): string {
-  // Spread hues by the GOLDEN ANGLE so sequential agent ids ('0','1','2'…) get maximally DIFFERENT, diverse colors
-  // (a plain char-hash put them ~1° apart, so every agent looked the same). Numeric ids use the number directly.
-  let n = 0
-  for (let i = 0; i < id.length; i++) n = (n * 33 + id.charCodeAt(i)) >>> 0
-  const base = /^\d+$/.test(id) ? parseInt(id, 10) : n
-  const h = (base * 137.508) % 360
-  return `radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.42) 0%, transparent 40%), linear-gradient(145deg, hsl(${h} 85% 60%), hsl(${(h + 50) % 360} 80% 56%) 45%, hsl(${(h + 110) % 360} 82% 60%))`
-}
 
-// Raw host status → the dot (only 'working' pulses blue; everything else is a gray dot).
-const dotStatus = (s: string): string => (s === 'working' || s === 'starting' ? 'working' : 'idle')
+// Raw host status → status symbol: warming pulses blue, working spins, everything else is quiet.
+const dotStatus = (s: string): string => (s === 'starting' ? 'warming' : s === 'working' ? 'working' : 'idle')
 // Raw host status → a plain one-word label for the live status line.
 const statusLabel = (s: string): string => {
   switch (s) {
     case 'working':
-    case 'starting':
       return 'Working'
+    case 'starting':
+      return 'Warming up'
     case 'waiting':
       return 'Needs you'
     case 'stopped':
