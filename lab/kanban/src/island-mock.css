@@ -1,0 +1,260 @@
+/* A faithful mock of the BlitzOS dynamic-island CHAT, so the embedded board previews exactly how it would look once
+   ported into the island. Palette + bubbles ported from the real src/renderer/src/notch/island.css. The board sits
+   inline as a widget bubble in the transcript. The Run/Replay bar above is LAB chrome (not part of the island). */
+.isl-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  padding: 22px 16px 40px;
+  background: radial-gradient(120% 80% at 50% -10%, #1a1a1f 0%, #08080a 60%);
+}
+
+/* the black island chassis (a rounded panel hanging from the notch) */
+.island {
+  --isl-text: #ffffff;
+  --isl-muted: #ffffff99;
+  --isl-dim: #ffffff66;
+  --isl-faint: #ffffff14;
+  --isl-surface: #0a0a0a;
+  --isl-surface2: #161616;
+  --isl-accent: #0a84ff;
+  width: 100%;
+  max-width: 500px;
+  align-self: flex-start;
+  position: relative;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 26px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  padding: 12px 12px 10px;
+  display: flex;
+  flex-direction: column;
+}
+/* the little notch pill protruding at the very top, like the dynamic island */
+.island-notch {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 132px;
+  height: 22px;
+  background: #000;
+  border-radius: 0 0 14px 14px;
+}
+
+/* tab strip (the agent-tab pills) */
+.isl-tabs-mock {
+  display: flex;
+  gap: 6px;
+  padding: 14px 4px 10px;
+}
+.isl-chip-mock {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--isl-muted);
+  background: var(--isl-surface);
+  border: 1px solid var(--isl-faint);
+  border-radius: 9999px;
+  padding: 5px 12px 5px 5px;
+}
+.isl-chip-mock.pen {
+  padding: 5px 9px;
+  color: var(--isl-dim);
+}
+.isl-chip-mock.active {
+  color: var(--isl-text);
+  font-weight: 600;
+  background: var(--isl-surface2);
+  border-color: #ffffff1f;
+}
+.isl-chip-album {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: radial-gradient(120% 120% at 28% 18%, rgba(255, 255, 255, 0.4) 0%, transparent 40%),
+    linear-gradient(145deg, #0a84ff, #7b5cff 55%, #ff6ac1);
+}
+.isl-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--isl-dim);
+}
+.isl-chip-dot.working {
+  background: var(--isl-accent);
+  animation: wk-pulse 1.5s ease-in-out infinite;
+}
+
+/* the transcript */
+.isl-feed-mock {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 4px 4px 10px;
+}
+.isl-msg {
+  font-size: 14px;
+  line-height: 19px;
+  padding: 7px 13px;
+  border-radius: 18px;
+  max-width: 80%;
+  width: fit-content;
+  overflow-wrap: anywhere;
+}
+.isl-msg.user {
+  align-self: flex-end;
+  background: var(--isl-accent);
+  color: #fff;
+}
+.isl-msg.agent {
+  align-self: flex-start;
+  background: #3b3b3d;
+  color: #fff;
+}
+.isl-msg.agent.typing {
+  color: var(--isl-muted);
+  font-style: italic;
+}
+
+/* the board, embedded inline as a widget bubble (wider than a text bubble, like an attachment/widget) */
+/* the board bubble is a transparent FRAME — the board paints its own dotted surface, so no double-framing. The
+   caption sits above it; the board (.kb) brings the border + dotted bg. */
+.isl-board-bubble {
+  align-self: stretch;
+  margin: 3px 0;
+  overflow: visible;
+}
+.isl-board-bubble > .kb {
+  max-height: 440px;
+  overflow: auto;
+}
+.isl-board-cap {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--isl-dim);
+  padding: 0 2px 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.isl-board-cap .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--isl-dim);
+  flex: none;
+}
+/* WORKING: pulsing blue (the dot itself breathes + a soft expanding glow ring) */
+.isl-board-cap .dot.working {
+  background: var(--isl-accent);
+  animation: cap-dot-pulse 1.4s ease-in-out infinite;
+}
+@keyframes cap-dot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.55), 0 0 6px 0 rgba(10, 132, 255, 0.5);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(10, 132, 255, 0), 0 0 10px 1px rgba(10, 132, 255, 0.85);
+    opacity: 0.65;
+  }
+}
+/* DONE: solid green, still, with a steady soft glow */
+.isl-board-cap .dot.done {
+  background: #30d158;
+  box-shadow: 0 0 7px 0 rgba(48, 209, 88, 0.55);
+  animation: none;
+}
+
+/* the steer bar (composer) */
+.isl-composer-mock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 2px;
+}
+.isl-attach-mock {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--isl-faint);
+  background: transparent;
+  color: var(--isl-muted);
+  font-size: 18px;
+  cursor: default;
+  flex: none;
+}
+.isl-bar-mock {
+  flex: 1;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+  border-radius: 9999px;
+  border: 1px solid var(--isl-faint);
+  color: var(--isl-dim);
+  font-size: 14px;
+}
+.isl-send-mock {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--isl-surface2);
+  color: var(--isl-dim);
+  flex: none;
+}
+
+/* the lab toolbar (NOT part of the island) */
+.lab-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  flex-wrap: wrap;
+  flex: none;
+}
+
+/* ── drill-in scoped to the EMBED FRAME (the board bubble) ──
+   The leaf drawer renders INSIDE .isl-board-bubble (IslandChat drops {drawer} there). Override the lab-window
+   defaults (.dr-scrim is fixed/full-window) so the overlay covers ONLY the board bubble — like a panel inside the
+   widget, not a whole-island or whole-page modal. */
+.isl-board-bubble {
+  position: relative; /* positioning context for the scoped drawer */
+}
+.isl-board-bubble > .kb {
+  position: relative;
+  z-index: 0;
+}
+.isl-board-bubble .dr-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  border-radius: 13px; /* match the board frame */
+  overflow: hidden;
+}
+/* the leaf drawer: a bottom sheet filling the board frame, rounded to match */
+.isl-board-bubble .dr {
+  margin-left: 0;
+  margin-top: auto; /* slide up from the bottom of the embed */
+  width: 100%;
+  height: auto;
+  max-height: 92%;
+  border-left: 0;
+  border-top: 1px solid var(--isl-faint);
+  border-radius: 12px;
+  box-shadow: 0 -16px 44px rgba(0, 0, 0, 0.6);
+  animation: isl-sheet-up 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes isl-sheet-up {
+  from {
+    transform: translateY(16px);
+    opacity: 0.4;
+  }
+}

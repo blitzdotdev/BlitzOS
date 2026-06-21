@@ -47,7 +47,7 @@ export function workflowMemDir(runId) {
  * Start a hosted workflow run. Returns quickly (after the run STARTS) with { ok, runId, surfaceId };
  * the run itself completes in the background and writes result.json to its memDir.
  */
-export async function runWorkflowHosted({ file, args, runId, surfaceId = null, view = 'graph', agentId = '0' } = {}) {
+export async function runWorkflowHosted({ file, args, runId, surfaceId = null, view = 'graph', agentId = '0', dry = false } = {}) {
   if (!file) return { ok: false, error: 'run_workflow: file (a workflow .js path) is required' }
   const id = runId || mintRunId()
   await ensureSink()
@@ -65,7 +65,7 @@ export async function runWorkflowHosted({ file, args, runId, surfaceId = null, v
   // writes result.json on completion. We do NOT await it (a workflow can run for minutes).
   const rt = await loadRuntime()
   Promise.resolve()
-    .then(() => rt.runWorkflow(file, { args, memDir, runId: id }))
+    .then(() => rt.runWorkflow(file, { args, memDir, runId: id, dry }))
     .catch((e) => { /* run:done(ok:false) was already emitted by runWorkflow; nothing else to do */ void e })
 
   return { ok: true, runId: id, surfaceId, memDir }

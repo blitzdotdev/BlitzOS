@@ -6,6 +6,7 @@ import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface } from './types'
 import { isRuntimePanel } from './types'
 import { NotchHost } from './notch/NotchHost'
+import { DictationPreview } from './notch/DictationPreview'
 import { ConnectPicker } from './components/ConnectPicker'
 import { IconCheck } from './components/Icons'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
@@ -822,6 +823,7 @@ export default function App(): JSX.Element {
           />,
           document.body
         )}
+      {createPortal(<DictationPreview />, document.body)}
 
       {showAi && (
         <div className="hud-backdrop" onPointerDown={() => setShowAi(false)}>

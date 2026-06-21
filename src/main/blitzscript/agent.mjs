@@ -67,7 +67,8 @@ function _release() {
 const PER_RUN_CALL_CAP = 1000        // agent() calls per RUN (G6); the dry-run path has its OWN cap.
 
 export class RunContext {
-  constructor({ memDir = null, depth = 0, args = undefined, budget = null, phase = null, defaultModel = undefined, runId = null } = {}) {
+  constructor({ memDir = null, depth = 0, args = undefined, budget = null, phase = null, defaultModel = undefined, runId = null, dry = false } = {}) {
+    this.dry = !!dry                     // per-run dry preflight (no spawn; emits the skeleton). Race-free vs env.
     this.memDir = memDir || null
     this.depth = Number.isFinite(Number(depth)) ? Number(depth) : 0
     this.args = args
@@ -278,6 +279,52 @@ async function _withWorktree(ctx, tag, baseCwd, fn) {
  *                           path. With a schema, dry-run returns stubFromSchema(schema) instead.
  * @returns {Promise<string|object|null>}  text (no schema) | validated object (schema) | null (schema retries exhausted)
  */
+// ── per-leaf capture (OPT-IN via BLITZ_CAPTURE_LEAVES; e.g. the kanban lab) ──────────────────────
+// Additive telemetry for a drill-in view: writes each leaf's prompt + typed result + claude session_id
+// (→ its full rollout under ~/.claude/projects) to <memDir>/leaves/<nodeId>.json. Best-effort + guarded.
+// OFF by default — the product run path is byte-for-byte unchanged when the env is unset.
+function _tryJson(s) {
+  try {
+    return JSON.parse(s)
+  } catch {
+    return null
+  }
+}
+function _sessionIdFrom(stdout) {
+  const text = String(stdout || '')
+  const whole = _tryJson(text.trim())
+  if (whole && whole.session_id) return String(whole.session_id)
+  const lines = text.split('\n')
+  for (let k = lines.length - 1; k >= 0; k--) {
+    const o = _tryJson(lines[k].trim())
+    if (o && o.session_id) return String(o.session_id)
+  }
+  return ''
+}
+// The prose acknowledgment (the harness's FINAL assistant text) — a human one-liner of what the leaf did. For a
+// schema leaf this sits BESIDE structured_output (harness.parse → `.result`); for a text leaf it equals the result.
+function _leafSummary(harness, stdout, out) {
+  try {
+    if (harness && typeof harness.parse === 'function') {
+      const s = String(harness.parse(stdout) || '').trim()
+      if (s) return s
+    }
+  } catch {
+    /* best-effort */
+  }
+  return typeof out === 'string' ? out : ''
+}
+function captureLeaf(memDir, rec) {
+  if (!process.env.BLITZ_CAPTURE_LEAVES || !memDir) return
+  try {
+    const dir = join(memDir, 'leaves')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, rec.nodeId + '.json'), JSON.stringify(rec))
+  } catch {
+    /* never break a run on a capture write */
+  }
+}
+
 export async function agent(prompt, opts = {}, fallback = undefined) {
   if (typeof prompt !== 'string') throw new Error('blitz agent: prompt must be a string')
   const ctx = getRunContext()
@@ -309,13 +356,17 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
   // body, the positional half of the journal key (G5).
   const i = ctx.jIndex++
 
-  // DRY RUN (`blitz check`): return a stub/fallback, no spawn, no journal. Uses its OWN counter (G6).
-  if (process.env.BLITZ_DRY_RUN) {
+  // DRY RUN (`blitz check`, or a per-run ctx.dry preflight): no spawn, no journal — return a stub/fallback. We DO
+  // emit agent:start + agent:done, so a dry run is a COMPLETE instant skeleton (every leaf with its label + phase),
+  // which a viz uses as a preflight to show the whole planned graph before anything runs. Own counter (G6).
+  if (process.env.BLITZ_DRY_RUN || ctx.dry) {
     const cap = Number(process.env.BLITZ_DRY_MAX_CALLS || 5000)
     ctx.dryCalls++
     if (ctx.dryCalls > cap) throw new Error(`blitz check: agent() called ${ctx.dryCalls} times (> ${cap}) — likely an unbounded loop`)
-    if (schema) return stubFromSchema(schema)
-    return fallback !== undefined ? fallback : '[blitz dry-run fallback: this agent() call had no 3rd-arg fallback]'
+    const out = schema ? stubFromSchema(schema) : fallback !== undefined ? fallback : '[blitz dry-run fallback: this agent() call had no 3rd-arg fallback]'
+    emitProgress(ctx, { type: 'agent:start', nodeId: i, label: opts.label != null ? String(opts.label) : null, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), model: model || undefined, harness: harnessName, prompt: fullPrompt })
+    emitProgress(ctx, { type: 'agent:done', nodeId: i, status: schema && out === null ? 'null' : 'ok', ms: 0, tokens: 0, preview: previewOf(out) })
+    return out
   }
 
   // Per-RUN lifetime cap (G6): real calls only, reset each runWorkflow.
@@ -352,12 +403,14 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
   const schemaRetries = schema ? Math.max(1, Math.min(3, Number(opts.schemaRetries) || 1)) : 0
 
   let leafTokens = 0  // tokens parsed for THIS leaf (best-effort), surfaced on its agent:done event
+  let leafStdout = '' // raw stdout of the last attempt (carries claude's session_id) — for BLITZ_CAPTURE_LEAVES
   const runOnce = async (cwd, extraNote) => {
     const built = usingStructured
       ? harness.buildStructured(extraNote ? fullPrompt + extraNote : fullPrompt, buildOpts, schema, ctx)
       : harness.build(fullPrompt, buildOpts)
     const childEnv = { ...(built.env || {}), BLITZ_DEPTH: String(depth) }
     const stdout = await _spawn(built.cmd, built.args, childEnv, cwd)
+    leafStdout = stdout
     // Accumulate token usage for budget (best-effort; harnesses expose usage() when they can parse it).
     if (typeof harness.usage === 'function') {
       try { const u = harness.usage(stdout); if (Number.isFinite(u)) { ctx.tokensSpent += u; leafTokens += u } } catch { /* best-effort */ }
@@ -400,9 +453,11 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
       ? await _withWorktree(ctx, opts.label || `i${i}`, opts.cwd, exec)
       : await exec(opts.cwd)
     emitProgress(ctx, { type: 'agent:done', nodeId: i, status: (out === null && schema) ? 'null' : 'ok', ms: Date.now() - startedAt, tokens: leafTokens, preview: previewOf(out) })
+    captureLeaf(ctx.memDir, { nodeId: i, label: opts.label != null ? String(opts.label) : null, prompt: fullPrompt, model: model || '', harness: harnessName, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), status: (out === null && schema) ? 'null' : 'ok', ms: Date.now() - startedAt, tokens: leafTokens, result: out === undefined ? null : out, summary: process.env.BLITZ_CAPTURE_LEAVES ? _leafSummary(harness, leafStdout, out) : '', sessionId: _sessionIdFrom(leafStdout), ts: Date.now() })
     return out
   } catch (e) {
     emitProgress(ctx, { type: 'agent:done', nodeId: i, status: 'error', ms: Date.now() - startedAt, tokens: leafTokens, message: e && e.message ? e.message : String(e) })
+    captureLeaf(ctx.memDir, { nodeId: i, label: opts.label != null ? String(opts.label) : null, prompt: fullPrompt, model: model || '', harness: harnessName, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), status: 'error', ms: Date.now() - startedAt, tokens: leafTokens, result: null, error: e && e.message ? e.message : String(e), sessionId: _sessionIdFrom(leafStdout), ts: Date.now() })
     throw e
   } finally {
     _release()

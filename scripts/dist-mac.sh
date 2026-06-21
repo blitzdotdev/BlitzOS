@@ -15,6 +15,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
   # The dynamic-island HUD: same Developer-ID-sign + fail-soft pattern (electron-builder.yml extraResources
   # copies native/island-helper/build/BlitzIsland.app into Contents/Resources, which index.ts then resolves).
   BLITZ_ISLAND_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:-}" bash native/island-helper/build.sh || echo "[dist] WARN: island helper build failed — packaging without it"
+  BLITZ_DICTATION_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:-}" bash native/dictation-helper/build.sh || echo "[dist] WARN: dictation helper build failed - packaging without it"
   # The notch-geometry CLI (exact physical-notch read for the bulletproof notch hit-window). No TCC/entitlement
   # needed (plain NSScreen read), so build.sh ad-hoc signs; electron-builder.yml extraResources copies the binary.
   bash native/notch-geometry/build.sh || echo "[dist] WARN: notch-geometry build failed — notch hit-window falls back to no band"

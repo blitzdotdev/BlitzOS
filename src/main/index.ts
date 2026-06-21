@@ -38,6 +38,7 @@ import { registerOnboarding, interviewBootTask, claudeCliPath, codexCliPath, set
 import { initUpdater, openBuildPicker, isDevMachine } from './update'
 import { resolveTmuxBin } from './tmux-host.mjs'
 import { computerUseHelper } from './computer-use-helper'
+import { dictationHelper, handleDictationEvent } from './stt/dictation'
 import { launchIslandHelper, setIslandDeps } from './island-bridge.mjs'
 import type { IslandHelperHandle } from './island-bridge.mjs'
 // The island isolation boundary (the ONE shared membership core, pure-node so a node test imports the REAL
@@ -1177,6 +1178,8 @@ app.whenReady().then(() => {
   // Window connect (macOS-local only): the BlitzComputerUse helper IS the window adapter (AX + vision +
   // CGEvent). It's ensured lazily on the first window op (it holds the Accessibility + Screen-Recording grants).
   electronConnections.setWindowLink(makeWindowLink({ connectionOps: electronConnections, helper: computerUseHelper() }))
+  dictationHelper().onEvent((m) => { void handleDictationEvent(m) })
+  void dictationHelper().ensure().then((r) => { if (r.ok) void dictationHelper().maybeAcquireModel() })
   // Window-picker drops: route by WHAT landed (browser-ness by bundleId), not just by whether bounds matched.
   // A BROWSER window resolves to its ACTIVE TAB through the connector extension — real DOM/run_js at TAB resolution
   // (matched by on-screen BOUNDS: the dropped CGWindow bounds and the extension's chrome.windows bounds are the same
@@ -1540,6 +1543,7 @@ app.on('before-quit', () => {
   osFlushWorkspace()
   try { electronTerminalOps.stopHosts() } catch { /* ignore */ } // flush terminal scrollback + close tmux control clients (terminals survive)
   try { computerUseHelper().shutdown() } catch { /* ignore */ } // quit the CU helper + close its socket
+  try { dictationHelper().shutdown() } catch { /* ignore */ }
   try { islandHelper?.stop() } catch { /* ignore */ } // stop relaunch-supervision only; the island is a separate LSUIElement that may keep running (it reconnects with backoff)
   try { globalShortcut.unregister('Alt+Space') } catch { /* ignore */ } // release the notch-spill island's ⌥Space chord (scoped, so other consumers are untouched)
   bootJournal?.markClean() // LAST: "clean shutdown" means everything above flushed first

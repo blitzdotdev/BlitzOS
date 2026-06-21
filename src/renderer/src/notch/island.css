@@ -1457,3 +1457,27 @@ button.isl-app-chat:active .isl-app-icon {
     animation: none;
   }
 }
+
+.dictation-preview {
+  position: fixed;
+  left: 50%;
+  bottom: 48px;
+  transform: translateX(-50%) translateY(8px);
+  max-width: 60vw;
+  padding: 10px 18px;
+  border-radius: 16px;
+  background: rgba(20, 20, 22, 0.82);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1.35;
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 2147483646;
+  white-space: pre-wrap;
+}
+.dictation-preview[data-show='true'] {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

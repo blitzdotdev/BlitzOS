@@ -35,6 +35,8 @@ extraResources:
   # `open`s it. Without this copy the packaged candidate never exists and the HUD never starts in prod.
   - from: native/island-helper/build/BlitzIsland.app
     to: BlitzIsland.app
+  - from: native/dictation-helper/build/BlitzDictation.app
+    to: BlitzDictation.app
   # The notch-geometry CLI: reads the EXACT physical notch from NSScreen so the always-interactive notch hit-window
   # sits over the real cutout (src/main/notch-overlay.ts readNotchGeometry resolves it at process.resourcesPath/
   # notch-geometry). No notch => hasNotch:false and BlitzOS draws no band. Plain binary, no TCC/entitlement needed.

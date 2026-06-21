@@ -38,4 +38,17 @@ if [[ ! -x "$NOTCH_BIN" || "native/notch-geometry/main.swift" -nt "$NOTCH_BIN" ]
   bash native/notch-geometry/build.sh || echo "[ensure-helper] WARN: notch-geometry build failed — notch toggle is ⌥Space-only in dev" >&2
 fi
 
+# 3) Dictation helper (SwiftPM, macOS 15+). Fail-soft so ordinary dev keeps running if the
+# FluidAudio graph cannot build on this machine.
+if command -v swift >/dev/null 2>&1; then
+  DICT_EXE="native/dictation-helper/build/BlitzDictation.app/Contents/MacOS/BlitzDictation"
+  DICT_DIR="native/dictation-helper"
+  if [[ ! -x "$DICT_EXE" || "$DICT_DIR/Sources/BlitzDictation/main.swift" -nt "$DICT_EXE" || "$DICT_DIR/Info.plist" -nt "$DICT_EXE" ]]; then
+    echo "[ensure-helper] Dictation helper missing or stale - (re)building ($DICT_DIR/build.sh)"
+    bash "$DICT_DIR/build.sh" || echo "[ensure-helper] WARN: dictation helper build failed - dev continues without it" >&2
+  fi
+else
+  echo "[ensure-helper] swift (SwiftPM) not found - dev runs WITHOUT dictation" >&2
+fi
+
 exit 0
