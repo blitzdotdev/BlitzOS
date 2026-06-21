@@ -456,10 +456,10 @@ export function makeConnectionOps({
     if (r.type === 'tab') out = await dispatch(r, 'run_js', { code: tool.code, args: args || {} })
     else out = await dispatch(r, 'act', { steps: tool.steps, args: args || {} })
     // a failed/empty saved tool = STALE (a selector rotted): tell the agent to re-derive, never return wrong data silently
-    if (out && out.error) return { error: out.error, stale: true, note: 'saved tool failed — re-derive it (read the source) + connection_save_tool to replace it' }
+    if (out && out.error) return { error: out.error, stale: true, note: 'saved tool failed — read the source, then connection_save_tool: overwrite the same name if it is a stale selector on the same page-type, or save a distinctly-named variant if this is a different sub-type of the same source' }
     const effect = out && typeof out === 'object' ? ('effect' in out ? out.effect : 'result' in out ? out.result : out) : out
     if (tool.kind === 'act' && (effect == null || effect === '')) {
-      return { ok: false, stale: true, note: 'saved act tool produced no effect — likely a stale selector; re-derive + connection_save_tool' }
+      return { ok: false, stale: true, note: 'saved act tool produced no effect (likely a stale selector, or a different sub-type of the same source) — read the source, then connection_save_tool (overwrite if same page-type, else a distinctly-named variant)' }
     }
     return { ok: true, name: tool.name, effect: cap(effect) }
   }

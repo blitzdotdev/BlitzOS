@@ -518,7 +518,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_call_tool',
       description:
-        "Run a saved tool by name on a connection (see connection_list_tools). Args: {connection, name, args?}. Returns { ok, effect } — or { stale:true } when the saved selector no longer matches the page/app (re-derive it: connection_read, then connection_save_tool to replace it).",
+        "Run a saved tool by name on a connection (see connection_list_tools). Args: {connection, name, args?}. Returns { ok, effect } — or { stale:true } when the saved tool no longer matches the page/app: read the source, then connection_save_tool — overwrite the same name if it is a stale selector on the same page-type, or save a distinctly-named variant if this is a different sub-type of the same source (e.g. Sheets vs Docs share docs.google.com).",
       input_schema: { type: 'object', required: ['connection', 'name'], properties: { connection: { type: 'string' }, name: { type: 'string' }, args: { type: 'object' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionCallTool !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
