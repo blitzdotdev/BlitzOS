@@ -47,6 +47,8 @@ export interface TmuxHost {
   onData(id: string, cb: (data: string) => void, opts?: { replay?: boolean }): () => void
   onExit(id: string, cb: (e: { exitCode: number | null; signal: number | null }) => void): () => void
   scrollback(id: string): string
+  /** Current rendered pane text (capture-pane -p, no escapes) — for the wake watchdog frozen-check. */
+  capture(id: string): string
   has(id: string): boolean
   info(id: string): TmuxSessionInfo | null
   list(): TmuxSessionInfo[]

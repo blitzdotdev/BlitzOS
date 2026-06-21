@@ -99,6 +99,8 @@ export interface TerminalManager {
   /** Reattach-on-boot: adopt tmux windows that survived a restart; returns adopted ids. */
   restore(): Promise<string[]>
   scrollback(id: string): string
+  /** Current rendered pane text (capture-pane -p) — for the wake watchdog frozen-check. */
+  capturePane(id: string): string
   getTerminal(id: string): TerminalMeta | null
   /** Whether a terminal is wired to a live tmux window THIS run (a survivor adopted by restore, or fresh). */
   isLive(id: string): boolean

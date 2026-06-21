@@ -219,6 +219,9 @@ export function createTmuxHost(cfg) {
     rec.exitL.add(cb); return () => rec.exitL.delete(cb)
   }
   const scrollback = (id) => { const r = terminals.get(id); return r ? r.ring.join('') : '' }
+  // Current RENDERED pane text (capture-pane -p, no escapes) — the wake watchdog diffs this across a settle
+  // window to tell a frozen/idle pane from one actively producing output, without parsing TUI semantics.
+  function capture(id) { const r = terminals.get(id); if (!r) return ''; try { return tmuxSync(['capture-pane', '-p', '-t', r.pane]) } catch { return '' } }
   const has = (id) => terminals.has(id)
   const info = (id) => { const r = terminals.get(id); return r ? { id: r.id, pid: r.pid, window: r.window, pane: r.pane, cols: r.cols, rows: r.rows, exited: r.exited, exitCode: r.exitCode, startedAt: r.startedAt, endedAt: r.endedAt || null } : null }
   const list = () => [...terminals.values()].map((r) => info(r.id))
@@ -245,7 +248,7 @@ export function createTmuxHost(cfg) {
   function killServer() { try { tmuxSync(['kill-server']) } catch { /* ignore */ } } // terminals DIE
   function stopAll() { for (const id of [...terminals.keys()]) kill(id) }
 
-  return { start, spawn, write, resize, kill, remove, onData, onExit, scrollback, has, info, list, adoptExisting, stop, killServer, stopAll }
+  return { start, spawn, write, resize, kill, remove, onData, onExit, scrollback, capture, has, info, list, adoptExisting, stop, killServer, stopAll }
 }
 
 // Minimal shell-arg quoting for control-mode command lines (single-quote, escape embedded quotes).

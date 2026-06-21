@@ -37,14 +37,17 @@ function agentGradient(id: string): string {
   return `radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.42) 0%, transparent 40%), linear-gradient(145deg, hsl(${h} 85% 60%), hsl(${(h + 50) % 360} 80% 56%) 45%, hsl(${(h + 110) % 360} 82% 60%))`
 }
 
-// Raw host status → the dot (only 'working' pulses blue; everything else is a gray dot).
-const dotStatus = (s: string): string => (s === 'working' || s === 'starting' ? 'working' : 'idle')
+// Raw host status → the dot (working + reconnecting pulse so a stuck/reviving agent never reads as a dead gray
+// 'Idle'; everything else is a gray dot).
+const dotStatus = (s: string): string => (s === 'working' || s === 'starting' || s === 'reconnecting' ? 'working' : 'idle')
 // Raw host status → a plain one-word label for the live status line.
 const statusLabel = (s: string): string => {
   switch (s) {
     case 'working':
     case 'starting':
       return 'Working'
+    case 'reconnecting': // the OS is reviving a deaf agent (wait-loop died, e.g. rate-limited) — see agent-wake-watchdog
+      return 'Reconnecting'
     case 'waiting':
       return 'Needs you'
     case 'stopped':

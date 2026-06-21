@@ -4,7 +4,8 @@ import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { startControlServer } from './control-server'
 import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf } from './osActions'
-import { emitSystemMoment, setMomentTap } from './events'
+import { emitSystemMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
+import { createWakeWatchdog } from './agent-wake-watchdog.mjs'
 import { openBootJournal, chatFileName } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
 import { installGuestSessionPolicy, resolvePermissionPrompt, attachGuestWindowPolicy } from './guest-capabilities'
@@ -574,7 +575,7 @@ app.whenReady().then(() => {
   ipcMain.handle('os:agent-orchestrators', (_e, p: { id: string; on?: boolean }) => { try { return osSetOrchestrators(String(p?.id), p?.on === undefined ? true : !!p.on) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   // One-shot snapshot for the dynamic island on open: the session roster + transcripts + status. The island
   // then rides the live `os:action {type:'chat'}` broadcast for updates.
-  ipcMain.handle('os:agents-snapshot', () => { try { return osAgentsSnapshot() } catch { return { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {} } } })
+  ipcMain.handle('os:agents-snapshot', () => { try { const s = osAgentsSnapshot(); return { ...s, status: applyWakeOverride(s.status || {}, islandActiveWs()) } } catch { return { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {} } } })
   // The island's per-session "Details" expand: the agent's recent raw tool calls (Grep/Edit/Run …), read from
   // its canonical transcript. Deterministic, no LLM.
   ipcMain.handle('os:agent-details', (_e, p: { id?: string }) => { try { return osAgentDetails(String(p?.id ?? '0')) } catch { return { rows: [] } } })
@@ -1108,6 +1109,51 @@ app.whenReady().then(() => {
     subscribeEvents: (cb: (ev: { id?: string; line?: { at: number; text: string }; upsert?: { title?: string; state?: string }; list?: Array<{ id: string; title: string; state: string }> }) => void): (() => void) => startChatTail(cb)
   }
   setIslandDeps(realDeps)
+
+  // ── Self-healing agent wake recovery (plans/blitzos-agent-wake-recovery.md) ───────────────────────────────
+  // Agent wake-up is pull-only: each agent must keep a background .blitzos/wait.sh long-polling /events. If its
+  // turn dies before relaunching wait.sh (a rate-limit 429, a crash mid-turn), it goes deaf and the user's island
+  // messages pile up unread while the island shows a bare "Idle". perception-core flags such an undelivered
+  // message; this watchdog confirms the pane is FROZEN (idle, not mid-turn) and types a catch-up nudge into its
+  // tmux pane so it self-heals via its own /events ritual — the user never touches tmux. While reviving, the
+  // island shows 'reconnecting' (the override self-clears the instant the agent's heartbeat resumes).
+  const wakeOverride = new Map<string, { status: string; since: number; ws: string | null }>()
+  const wakeKey = (id: string, ws: string | null): string => `${ws == null ? '' : ws}/${id}`
+  // Apply the live override to a host-status map for workspace `wsName` (returns the same ref when nothing applies).
+  // An override SELF-CLEARS once lastPollAt (the wait-loop heartbeat) advances past when it was set, so a recovered
+  // agent shows its real status with no clear-race.
+  const applyWakeOverride = (status: Record<string, string>, wsName: string): Record<string, string> => {
+    if (wakeOverride.size === 0) return status
+    let out: Record<string, string> | null = null
+    for (const [k, ov] of [...wakeOverride]) {
+      if ((ov.ws == null ? '' : ov.ws) !== wsName) continue
+      const id = k.slice(k.indexOf('/') + 1)
+      if (lastPollAt(id, ov.ws) >= ov.since) { wakeOverride.delete(k); continue } // heartbeat resumed → drop
+      if (!out) out = { ...status }
+      out[id] = ov.status
+    }
+    return out || status
+  }
+  // A deaf agent emits no chat broadcast of its own, so the watchdog drives the live island status when it flips
+  // an agent to 'reconnecting' (or clears it). Sends the full active-ws status map (the island replaces wholesale).
+  const pushIslandStatus = (): void => {
+    try { osBroadcast({ type: 'chat', status: applyWakeOverride(osAgentStatus() || {}, islandActiveWs()) }) } catch { /* best-effort */ }
+  }
+  const wakeWatchdog = createWakeWatchdog({
+    lastPollAt,
+    sendToTerminal: (id, data) => electronTerminalOps.sendToTerminal(String(id), String(data)),
+    captureTerminal: (id) => electronTerminalOps.captureTerminal(String(id)),
+    isLive: (id) => electronTerminalOps.isTerminalLive(String(id)),
+    setStatus: (id, ws, st) => {
+      const k = wakeKey(String(id), ws)
+      if (st) wakeOverride.set(k, { status: st, since: Date.now(), ws })
+      else wakeOverride.delete(k)
+      pushIslandStatus()
+    },
+    log: (m) => console.log('[wake]', m)
+  })
+  setUndeliveredWakeHook((moment) => { try { wakeWatchdog.onUndelivered(moment) } catch { /* never break perception */ } })
+  app.on('before-quit', () => { try { wakeWatchdog.stop() } catch { /* ignore */ } })
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()

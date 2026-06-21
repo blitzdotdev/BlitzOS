@@ -14,6 +14,10 @@ export interface BlitzMoment {
   action?: Record<string, unknown>
   /** the user's text, for trigger 'message' (the island chat) */
   message?: string
+  /** target agent for a private moment (trigger 'message'/'action'/'connection'); defaults to '0'. */
+  agentId?: string
+  /** the workspace active when this moment was emitted (v2 scoping stamp). */
+  workspace?: string
   /** the supervisor tick's material diff (trigger 'tick') — metadata only (agent status edges + terminal exits). */
   diff?: TickDiff
 }
@@ -48,6 +52,11 @@ export function emitConnectionMoment(surfaceId: string, info?: { connId?: string
 /** An OS-level event both inhabitants should know about (crash recovery, update, restore…). */
 export function emitSystemMoment(kind: string, line: string, detail?: Record<string, unknown>): void
 export function waitForEvents(since: number, maxMs: number, agentId?: string, workspace?: string | null): Promise<BlitzMoment[]>
+/** Register a hook fired when a 'message' moment reaches NO live waiter (the target agent's wait-loop is dead).
+ *  The Electron host wires the wake watchdog here. No-op until set; never breaks the emit path. */
+export function setUndeliveredWakeHook(fn: ((moment: BlitzMoment) => void) | null): void
+/** Last epoch-ms an agent ran a /events long-poll — its wait-loop liveness heartbeat. 0 = never seen. */
+export function lastPollAt(agentId: string, workspace?: string | null): number
 /** Register the active-workspace provider; every emitted moment is stamped with it (v2 bleed fix). */
 export function setWorkspaceProvider(fn: (() => string | null | undefined) | null): void
 /** Register the agent-snapshot provider for the supervisor tick (the transport wires it once). */
