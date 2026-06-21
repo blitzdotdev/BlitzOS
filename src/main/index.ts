@@ -12,6 +12,7 @@ import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, electronOps, electronConnections, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
 import { makeTabLink } from './connection-tab-link.mjs'
 import { makeWindowLink } from './connection-window-link'
+import { makeAttachmentStore } from './attachment-store.mjs'
 import { makeSafariLink } from './connection-safari-link.mjs'
 import { startConnectorServer, installConnector, isConnectorPolicyInstalled } from './connection-install'
 import { isChromiumBrowser, decideDrop } from './browser-drop.mjs'
@@ -600,6 +601,12 @@ app.whenReady().then(() => {
   ipcMain.handle('os:conn-install', () => electronConnections.connectionInstallExtension())
   ipcMain.handle('os:conn-list', (_e, agentId?: string) => electronConnections.connectionList(agentId != null ? String(agentId) : undefined))
   ipcMain.handle('os:conn-drop', (_e, connId: string) => electronConnections.connectionDrop(String(connId)))
+  // Per-message attachment snapshots (the frozen in-chat dropbox), persisted under <ws>/.blitzos/attachments/<chat>.json.
+  const attachmentStore = makeAttachmentStore({ getWorkspacePath: () => osWorkspaceContext().workspace_path || null })
+  ipcMain.handle('os:attach-get', (_e, chat: string) => attachmentStore.listAttachments(String(chat ?? '')))
+  ipcMain.handle('os:attach-record', (_e, chat: string, ordinal: number, groups: unknown) =>
+    attachmentStore.recordAttachments(String(chat ?? ''), Number(ordinal) || 0, Array.isArray(groups) ? groups : [])
+  )
   // Window picker: arm the CU helper's hover-highlight-and-drag overlay over the user's REAL macOS windows.
   // dropZone is the attach drop-zone's on-screen rect (global, top-left points); dropping a window there connects
   // it (handled by the helper's pick_drop event below). excludePids skips BlitzOS's own window (no self-highlight).
