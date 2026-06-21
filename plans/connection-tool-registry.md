@@ -97,14 +97,19 @@ entries by `sourceId`; supports host lookup + optional intent search (text / emb
 Auth: read access for connected BlitzOS clients; write access internal-only (our vetting pipeline).
 
 ## Locked decisions (build pass 1)
-- **Server home: a STANDALONE service** we host (not folded into the relay). Client base URL is configured via
-  `BLITZ_TOOL_REGISTRY_URL` (e.g. the deployed `https://tools.blitzos.dev`; for local dev, the bundled
-  registry-server on `http://127.0.0.1:7700`). Unset → the registry tools return a clear "not configured" error
-  (never a hard failure).
+- **Server home: a CLOUDFLARE WORKER** (`registry-server/worker.mjs`) — same infra family as the agent-socket
+  relay. Built as **one router core + two thin transports** (no parallel impl): the Worker for prod, a Node http
+  server (`registry-server/server.mjs`) for local dev, both binding the SAME `registry-core.mjs` + vetted
+  `registry-data.mjs`. Client base URL is configured via `BLITZ_TOOL_REGISTRY_URL` (the deployed Worker domain;
+  for local dev, `wrangler dev` on `http://127.0.0.1:8787` or the Node server on `http://127.0.0.1:7700`). Unset
+  → the registry tools return a clear "not configured" error (never a hard failure).
+  - Data ships **bundled in the Worker** from the `tools/*.json` seeds (no KV/D1/R2) — redeploy IS the
+    internal-only write path. `contentHash` is computed with **Web Crypto** (`crypto.subtle`) so it is identical
+    in Node and Workers with no compat flags.
 - **Auth: OPEN READ.** Vetted tools are first-party and non-secret; any connected client can read. WRITE is
   internal-only (our vetting pipeline / the seed files) — not exposed to clients.
 - **Sequencing: CONTRACT-FIRST.** The HTTP contract below is the single spec; the client tools are built against
-  it and a minimal real standalone server implements exactly it (`registry-server/`).
+  it and the Worker (+ the Node dev server) implement exactly it (`registry-server/`).
 - **Search: host-exact to start** (we already have the `sourceId` key); `q` (intent) is accepted and may be a
   no-op substring match in pass 1, upgraded to embedding search later — same contract.
 - **Surfacing: agent-only first** (the agent pulls vetted tools); a user-facing "browse the toolkit" island UI
