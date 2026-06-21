@@ -17,6 +17,7 @@ const app = readFileSync(join(repoRoot, 'src/renderer/src/App.tsx'), 'utf8')
 const notchHost = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHost.tsx'), 'utf8')
 const islandHome = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandHome.tsx'), 'utf8')
 const islandPanel = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandPanel.tsx'), 'utf8')
+const attachPanel = readFileSync(join(repoRoot, 'src/renderer/src/notch/AttachPanel.tsx'), 'utf8')
 const agentVisuals = readFileSync(join(repoRoot, 'src/renderer/src/notch/agentVisuals.ts'), 'utf8')
 const markdownMessage = readFileSync(join(repoRoot, 'src/renderer/src/notch/MarkdownMessage.tsx'), 'utf8')
 const messageParts = readFileSync(join(repoRoot, 'src/renderer/src/notch/messageParts.ts'), 'utf8')
@@ -25,6 +26,7 @@ const islandSettings = readFileSync(join(repoRoot, 'src/renderer/src/notch/Islan
 const islandTerminal = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandTerminalPane.tsx'), 'utf8')
 const notchTypes = readFileSync(join(repoRoot, 'src/renderer/src/notch/types.ts'), 'utf8')
 const islandCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/island.css'), 'utf8')
+const attachCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/attach.css'), 'utf8')
 const notchCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/notch.css'), 'utf8')
 const css = readFileSync(join(repoRoot, 'src/renderer/src/styles.css'), 'utf8')
 const workspaceHost = readFileSync(join(repoRoot, 'src/main/workspace-host.mjs'), 'utf8')
@@ -85,6 +87,30 @@ ok('renderer: hover-opened island has close hysteresis and the chassis keeps the
     /onPointerMove=\{holdChassisHover\}/.test(notchHost) &&
     /onPointerDownCapture=\{holdChassisHover\}/.test(notchHost) &&
     /onPointerLeave=\{\(\) => onChassisHoverChange\?\.\(false\)\}/.test(notchHost))
+ok('attach window picker prompts once when Accessibility is missing and degrades granted failures to a neutral list hint',
+  /let pickSeq = 0/.test(index) &&
+    /let pickStopSeq = 0/.test(index) &&
+    /let pickRelaunching: Promise<void> \| null = null/.test(index) &&
+    /let pickPermissionFlow: Promise<boolean> \| null = null/.test(index) &&
+    /waitForPickerAccessibilityGrant/.test(index) &&
+    /const seq = \+\+pickSeq/.test(index) &&
+    /const stopSeq = pickStopSeq/.test(index) &&
+    /!grantedBeforeRetry/.test(index) &&
+    /if \(!pickPermissionFlow\)/.test(index) &&
+    /helper\.request\('accessibility'\)/.test(index) &&
+    /Date\.now\(\) \+ 60_000/.test(index) &&
+    /helper\.grantedFor\('accessibility', tccBeforeRetry\)/.test(index) &&
+    /helper[\s\S]*?\.relaunchForGrant\(\)/.test(index) &&
+    /if \(seq !== pickSeq \|\| stopSeq !== pickStopSeq\) return \{ ok: false, error: 'picker cancelled' \}/.test(index) &&
+    /ipcMain\.handle\('os:pick-stop'[\s\S]*?pickSeq\+\+[\s\S]*?pickStopSeq\+\+/.test(index) &&
+    /kind: 'picker_unavailable'/.test(index) &&
+    /I opened the Accessibility prompt/.test(index) &&
+    /Use the list on the right/.test(index) &&
+    /const \[pickerNotice, setPickerNotice\] = useState<string \| null>\(null\)/.test(attachPanel) &&
+    /m\.kind === 'picker_unavailable'/.test(attachPanel) &&
+    /pickerNotice \? 'info'/.test(attachPanel) &&
+    /\.nh-island \.att-drop\.unavailable/.test(attachCss) &&
+    /\.nh-island \.att-drop-hint\[data-notice='info'\]/.test(attachCss))
 ok('session tab strip has a real blank-space hit area and clear hover affordance',
   /min-height: 40px/.test(islandCss) && /width: 100%/.test(islandCss) &&
     /e\.target === e\.currentTarget/.test(islandPanel) && /e\.stopPropagation\(\)/.test(islandPanel) &&

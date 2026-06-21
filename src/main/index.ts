@@ -24,6 +24,7 @@ import { wireEnrichment, spawnWorkflowEnrichment } from './workflow-enrichment.m
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, orchestratorBootTask } from './agent-runtime.mjs'
 import { startNarrator } from './agent-narrator.mjs'
 import { readTerminalMeta } from './terminal-manager.mjs'
+import { wasInterrupted } from './agent-interrupt.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -610,7 +611,23 @@ app.whenReady().then(() => {
   // Window picker: arm the CU helper's hover-highlight-and-drag overlay over the user's REAL macOS windows.
   // dropZone is the attach drop-zone's on-screen rect (global, top-left points); dropping a window there connects
   // it (handled by the helper's pick_drop event below). excludePids skips BlitzOS's own window (no self-highlight).
+  let pickSeq = 0
+  let pickStopSeq = 0
+  let pickRelaunching: Promise<void> | null = null
+  let pickPermissionFlow: Promise<boolean> | null = null
+  const waitForPickerAccessibilityGrant = async (helper: ReturnType<typeof computerUseHelper>, stopSeq: number): Promise<boolean> => {
+    await helper.request('accessibility').catch(() => null)
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline && stopSeq === pickStopSeq) {
+      const tcc = await helper.status().catch(() => null)
+      if (helper.grantedFor('accessibility', tcc)) return true
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+    return false
+  }
   ipcMain.handle('os:pick-start', async (_e, dropZone: { x: number; y: number; w: number; h: number }, selfRect: { x: number; y: number; w: number; h: number }, activeSessionId?: string) => {
+    const seq = ++pickSeq
+    const stopSeq = pickStopSeq
     pickActiveSession = activeSessionId != null ? String(activeSessionId) : '' // the chat that owns whatever gets dropped
     const helper = computerUseHelper()
     const e = await helper.ensure()
@@ -618,16 +635,66 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send('os:pick-event', { kind: 'error', error: e.error || 'computer-use helper unavailable' })
       return { ok: false, error: e.error }
     }
-    const r = await helper.call('pick_start', { dropZone, selfRect, excludePids: [process.pid] })
+    const startArgs = { dropZone, selfRect, excludePids: [process.pid] }
+    let r = await helper.call('pick_start', startArgs)
+    let prompted = false
     if (r.error || r.ok === false) {
-      void helper.request('accessibility').catch(() => {}) // most likely the tap needs Accessibility — raise the prompt
-      const error = String(r.error || 'enable Accessibility for BlitzComputerUse, then reopen the attach panel')
-      mainWindow?.webContents.send('os:pick-event', { kind: 'error', error })
-      return { ok: false, error }
+      const tccBeforeRetry = await helper.status().catch(() => null)
+      let grantedBeforeRetry = helper.grantedFor('accessibility', tccBeforeRetry)
+      if (!grantedBeforeRetry) {
+        // Missing permission is different from an already-granted-but-failing event tap. Ask once while this
+        // connector panel is open; NotchHost arms the picker several times as layout settles.
+        prompted = true
+        if (!pickPermissionFlow) {
+          mainWindow?.webContents.send('os:pick-event', {
+            kind: 'picker_unavailable',
+            reason: 'accessibility',
+            message: 'I opened the Accessibility prompt for window drag. You can still use the list on the right.',
+            error: String(r.error || 'could not start window picker')
+          })
+          pickPermissionFlow = waitForPickerAccessibilityGrant(helper, stopSeq).finally(() => {
+            pickPermissionFlow = null
+          })
+        }
+        grantedBeforeRetry = await pickPermissionFlow
+        if (seq !== pickSeq || stopSeq !== pickStopSeq) return { ok: false, error: 'picker cancelled' }
+      }
+      // A just-granted TCC permission often only applies to a fresh helper process. If the helper reports
+      // Accessibility as granted, relaunch it and retry once. If it still fails after that, avoid nagging.
+      if (grantedBeforeRetry) {
+        if (!pickRelaunching) {
+          pickRelaunching = helper
+            .relaunchForGrant()
+            .catch(() => ({ ok: false }))
+            .then(() => undefined)
+            .finally(() => {
+              pickRelaunching = null
+            })
+        }
+        await pickRelaunching
+        if (seq !== pickSeq || stopSeq !== pickStopSeq) return { ok: false, error: 'picker cancelled' }
+        r = await helper.call('pick_start', startArgs)
+      }
+    }
+    if (r.error || r.ok === false) {
+      const tcc = await helper.status().catch(() => null)
+      const granted = helper.grantedFor('accessibility', tcc)
+      const raw = String(r.error || 'could not start window picker')
+      const message = granted
+        ? 'Window drag is unavailable right now. Use the list on the right to add an app or tab.'
+        : prompted
+          ? 'I opened the Accessibility prompt for window drag. You can still use the list on the right.'
+          : 'Window drag needs Accessibility for BlitzComputerUse. Use the list on the right, or grant Accessibility later.'
+      mainWindow?.webContents.send('os:pick-event', { kind: 'picker_unavailable', reason: granted ? 'event_tap_failed' : 'accessibility', message, error: raw })
+      return { ok: false, error: message }
     }
     return { ok: true }
   })
-  ipcMain.handle('os:pick-stop', () => computerUseHelper().call('pick_stop').catch(() => ({})))
+  ipcMain.handle('os:pick-stop', () => {
+    pickSeq++
+    pickStopSeq++
+    return computerUseHelper().call('pick_stop').catch(() => ({}))
+  })
   ipcMain.on('os:terminal-stop', (_e, id: string) => electronTerminalOps.stopTerminal(String(id)))
   ipcMain.on('os:terminal-remove', (_e, id: string) => electronTerminalOps.removeTerminal(String(id)))
   ipcMain.on('os:terminal-restart', (_e, id: string) => { void electronTerminalOps.restartTerminal(String(id)) })
@@ -1396,11 +1463,38 @@ app.whenReady().then(() => {
     // changes as workspace state changes). An agent with the ORCHESTRATORS flag gets the duty to author + run
     // blitzscript workflows; agent '0' carries the onboarding standing duty (pending interview -> interview duty,
     // finished -> resident initiative duty); every other bare peer gets null. (The Job model is retired.)
+    // Handed to an agent that a restart cut off MID-TURN, so it picks its unfinished work back up with no user
+    // nudge. Gated by the backend-agnostic wasInterrupted seam (claude=stop_reason, codex=exit-code): a cleanly
+    // idle agent (e.g. a chat agent waiting for the user) or an unknown backend never gets it and never acts.
+    const RESUME_CLAUSE =
+      'You were interrupted mid-task by an app restart (your last step did not finish). Pick your unfinished work back up from where you left off, without waiting for the user, and stay within the act-vs-ask boundary (reversible work freely, ask before any irreversible outward act).'
     setBootTaskProvider((id: string) => {
-      // ORCHESTRATORS toggle (per-agent, stamped on meta.json): the flag means "author + run blitzscript workflows".
-      // Reads the same meta the flag was stamped on; a broken read just falls through to the interview/null path.
-      try { const td = terminalsDirOf(); if (td && readTerminalMeta(td, String(id))?.orchestrators) return orchestratorBootTask() } catch { /* fall through to interview */ }
-      return String(id) === '0' ? interviewBootTask() : null
+      const td = terminalsDirOf()
+      let meta: ReturnType<typeof readTerminalMeta> = null
+      try {
+        meta = td ? readTerminalMeta(td, String(id)) : null
+      } catch {
+        meta = null
+      }
+      // Base standing duty (unchanged): the ORCHESTRATORS flag → author/run workflows; agent '0' → onboarding/
+      // resident duty; every other bare peer → none.
+      let duty: string | null = null
+      try {
+        if (meta?.orchestrators) duty = orchestratorBootTask()
+      } catch {
+        /* fall through to interview */
+      }
+      if (duty == null) duty = String(id) === '0' ? interviewBootTask() : null
+      // AUTO-CONTINUE: if this agent was cut off mid-turn, prepend the resume clause to whatever duty it has (or
+      // make it the duty). Clean/idle agent or unknown backend → wasInterrupted is false/null → no clause added.
+      let interrupted: boolean | null = null
+      try {
+        interrupted = meta ? wasInterrupted(meta, { wsRoot: osActiveWorkspaceDir() }) : null
+      } catch {
+        interrupted = null
+      }
+      if (interrupted) return duty ? `${RESUME_CLAUSE} ${duty}` : RESUME_CLAUSE
+      return duty
     })
     const launchAgent = (id: string, stage: number, title?: string): void => {
       const ws = osWorkspaceContext().workspace_path
