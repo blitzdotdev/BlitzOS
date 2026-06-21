@@ -96,15 +96,52 @@ The registry server itself: a controlled HTTP endpoint (standalone, or alongside
 entries by `sourceId`; supports host lookup + optional intent search (text / embeddings over name+description).
 Auth: read access for connected BlitzOS clients; write access internal-only (our vetting pipeline).
 
-## Open questions / decisions for later
-- **Search:** host-exact only (free — we already have the key) to start, or add intent/embedding search now?
-- **Server home:** standalone registry service vs part of the existing relay/control infra?
-- **Agent vs user surfacing:** agent-only (the agent silently pulls vetted tools) — or also a user-visible
-  "browse the toolkit" UI in the island? (Default: agent-only first.)
-- **Refresh/versioning UX:** when a registry tool the agent saved gets a new vetted version, notify + re-fetch
-  on next use, or leave saved copies pinned until a stale failure? (Default: pinned; re-fetch on stale.)
+## Locked decisions (build pass 1)
+- **Server home: a STANDALONE service** we host (not folded into the relay). Client base URL is configured via
+  `BLITZ_TOOL_REGISTRY_URL` (e.g. the deployed `https://tools.blitzos.dev`; for local dev, the bundled
+  registry-server on `http://127.0.0.1:7700`). Unset → the registry tools return a clear "not configured" error
+  (never a hard failure).
+- **Auth: OPEN READ.** Vetted tools are first-party and non-secret; any connected client can read. WRITE is
+  internal-only (our vetting pipeline / the seed files) — not exposed to clients.
+- **Sequencing: CONTRACT-FIRST.** The HTTP contract below is the single spec; the client tools are built against
+  it and a minimal real standalone server implements exactly it (`registry-server/`).
+- **Search: host-exact to start** (we already have the `sourceId` key); `q` (intent) is accepted and may be a
+  no-op substring match in pass 1, upgraded to embedding search later — same contract.
+- **Surfacing: agent-only first** (the agent pulls vetted tools); a user-facing "browse the toolkit" island UI
+  is later.
+- **Versioning: saved copies are PINNED** by `contentHash`; the agent re-fetches deliberately, and the natural
+  re-fetch trigger is a `{stale}` failure. No silent auto-update.
+
+## HTTP contract (v1) — the single spec for client + server
+Base URL = `BLITZ_TOOL_REGISTRY_URL`. All client calls are **GET, open read, JSON responses.**
+
+- `GET /v1/tools?sourceId=<host|bundleId>&q=<intent?>`
+  → `200 { sourceId, entries: [{ name, description, kind, sourceId, version, contentHash, vettedBy, vettedAt }] }`
+  — **metadata only, NO `code`/`steps`** (discovery is cheap; bodies are a second, deliberate fetch).
+- `GET /v1/tool?sourceId=<host|bundleId>&name=<name>`
+  → `200 { entry: { name, description, kind, code?(tab) | steps?(window), sourceId, version, contentHash, vettedBy, vettedAt } }`
+  → `404 { error }` when absent.
+- `GET /v1/health` → `200 { ok: true }`.
+
+`contentHash` = `sha256` of the canonical `code`/`steps` body (the pin a saved tool records). `version` is a
+monotonic string per (sourceId,name). `vettedBy`/`vettedAt` are provenance shown to the agent/user.
+
+## Client tools (added once in os-tools.mjs, bound on all 3 transports)
+- `connection_registry_search { connection?|sourceId?, query? }` → resolves the sourceId (from a live `connection`
+  or an explicit `sourceId`), returns `{ sourceId, entries }` (metadata only — never executes).
+- `connection_registry_get { sourceId, name }` → `{ entry }` (full, incl. code/steps) for the agent to inspect.
+- `connection_registry_add { connection?|sourceId?, name }` → get + write into `tools.json` (upsert by name),
+  stamped `{ source:'registry', version, contentHash }`. Guard: the entry's `sourceId` must equal the target.
+  It lands as an ordinary saved tool — run later via the effect-verified `connection_call_tool`, never directly.
+
+Risk note: `connection_registry_add` writes only FIRST-PARTY VETTED code, and execution still flows through
+`connection_call_tool` — so it is strictly safer than the already-open `connection_save_tool` (which writes
+arbitrary agent-authored code). No extra transport gate beyond what `save_tool` has.
+
+## Still open (later passes)
 - **Stale-report telemetry:** do clients report `{stale}` tool ids back to our vetting queue? (Aggregate id +
   version only — never page content — to respect the no-phone-home-of-user-data posture.)
-- **Sub-type granularity:** the registry is keyed on host like `tools.json`, so Docs/Sheets/Slides share
-  `docs.google.com` — registry entries should use the same distinct-name variant convention (`read_text_sheets`)
-  and carry an `appliesTo` hint if/when we add that field.
+- **Sub-type granularity / `appliesTo`:** the registry is host-keyed like `tools.json`, so Docs/Sheets/Slides
+  share `docs.google.com` — entries use the distinct-name variant convention (`read_text_sheets`) and could
+  carry an `appliesTo` URL/path hint once that field exists.
+- **Embedding/intent search**, and the **user-facing browse UI**.

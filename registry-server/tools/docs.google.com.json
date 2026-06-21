@@ -1,0 +1,20 @@
+[
+  {
+    "name": "read_text",
+    "description": "Full text of the current Google DOC (the kix editor).",
+    "kind": "read",
+    "code": "var ed=document.querySelector('.kix-appview-editor');return ed?ed.innerText:null"
+  },
+  {
+    "name": "doc_title",
+    "description": "Title of the current Google Doc.",
+    "kind": "read",
+    "code": "return document.querySelector('.docs-title-input')?.value||document.title"
+  },
+  {
+    "name": "read_text_sheets",
+    "description": "Values of the visible cells in the current Google SHEET (Docs/Sheets share docs.google.com — this is the Sheets variant of read_text).",
+    "kind": "read",
+    "code": "return [...document.querySelectorAll('.waffle .cell-input, .grid-table-container .cell')].map(c=>c.innerText).filter(Boolean).slice(0,500)"
+  }
+]

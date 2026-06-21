@@ -290,6 +290,51 @@ async function main() {
   ok('connectionSetOwner on an unknown connId errors', !!ops.connectionSetOwner('conn_nope', 'B').error)
   ok('an unscoped list (undefined) still sees every owner', ops.connectionList().connections.some((c) => c.connId === ownBind.connId))
 
+  // ---------- the first-party TOOL REGISTRY (connection_registry_search / _get / _add) ----------
+  // a fake registry server via an injected fetchImpl — proves search(meta)/get(full)/add(into tools.json) without HTTP.
+  const REG = {
+    'docs.google.com': [
+      { name: 'read_text', description: 'doc text', kind: 'read', code: "return document.body.innerText", sourceId: 'docs.google.com', version: '1', contentHash: 'sha256:abc' }
+    ]
+  }
+  const mkRes = (status, obj) => ({ ok: status >= 200 && status < 300, status, json: async () => obj })
+  const fakeFetch = async (url) => {
+    const u = new URL(url)
+    const sid = u.searchParams.get('sourceId')
+    if (u.pathname === '/v1/tools') return mkRes(200, { sourceId: sid, entries: (REG[sid] || []).map(({ code, steps, ...m }) => m) })
+    if (u.pathname === '/v1/tool') {
+      const e = (REG[sid] || []).find((t) => t.name === u.searchParams.get('name'))
+      return e ? mkRes(200, { entry: e }) : mkRes(404, { error: 'not found' })
+    }
+    return mkRes(404, { error: 'not found' })
+  }
+  const regWs = mkdtempSync(join(tmpdir(), 'blitz-reg-'))
+  const rops = makeConnectionOps({ getWorkspacePath: () => regWs, createSurface: () => 'rs', registryUrl: 'http://reg.test', fetchImpl: fakeFetch })
+  const rconn = rops.connectionBind({ type: 'tab', sourceId: 'docs.google.com', title: 'Doc', adapter: stubAdapter() }).connId
+
+  const search = await rops.connectionRegistrySearch({ connection: rconn })
+  ok('registry_search returns entries for the connection sourceId', search.sourceId === 'docs.google.com' && search.entries.length === 1 && search.entries[0].name === 'read_text')
+  ok('registry_search returns METADATA ONLY (no code)', search.entries[0].code === undefined)
+  const sById = await rops.connectionRegistrySearch({ sourceId: 'docs.google.com', query: 'text' })
+  ok('registry_search works by sourceId + query', sById.entries.length === 1)
+  ok('registry_search for an unknown source is empty (not an error)', (await rops.connectionRegistrySearch({ sourceId: 'nope.com' })).entries.length === 0)
+
+  const full = await rops.connectionRegistryGet({ sourceId: 'docs.google.com', name: 'read_text' })
+  ok('registry_get returns the full entry incl. code', full.entry && full.entry.code === 'return document.body.innerText')
+  ok('registry_get for a missing tool errors', !!(await rops.connectionRegistryGet({ sourceId: 'docs.google.com', name: 'nope' })).error)
+
+  const added = await rops.connectionRegistryAdd({ connection: rconn, name: 'read_text' })
+  ok('registry_add installs the tool into tools.json', added.ok === true && added.name === 'read_text')
+  const listed = rops.connectionListTools(rconn).tools
+  ok('the added tool now shows in connection_list_tools', listed.some((t) => t.name === 'read_text'))
+  ok('the added tool is stamped source:registry + contentHash', listed.find((t) => t.name === 'read_text')?.source === 'registry' && !!listed.find((t) => t.name === 'read_text')?.contentHash)
+  ok('the added tool is runnable via connection_call_tool', (await rops.connectionCallTool(rconn, 'read_text')).ok === true)
+
+  // not-configured + guard cases
+  const noUrl = makeConnectionOps({ getWorkspacePath: () => regWs, createSurface: () => 'x', fetchImpl: fakeFetch })
+  ok('an unconfigured registry reports a clear error', /not configured/.test((await noUrl.connectionRegistrySearch({ sourceId: 'docs.google.com' })).error || ''))
+  rmSync(regWs, { recursive: true, force: true })
+
   rmSync(ws, { recursive: true, force: true })
   console.log('\n' + (fail ? '✗' : '✓') + ' connections: ' + pass + ' passed, ' + fail + ' failed')
   process.exit(fail ? 1 : 0)

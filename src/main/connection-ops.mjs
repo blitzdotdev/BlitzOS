@@ -83,7 +83,11 @@ export function makeConnectionOps({
   closeSurface = () => {},
   getSurfaces = () => [],
   isAgentAvailable = () => false,
-  markWrite = defaultMarkWrite
+  markWrite = defaultMarkWrite,
+  // the first-party tool registry (plans/connection-tool-registry.md): a standalone HTTP service we host,
+  // open-read. Configured via BLITZ_TOOL_REGISTRY_URL; unset = the registry tools report "not configured".
+  registryUrl = process.env.BLITZ_TOOL_REGISTRY_URL || '',
+  fetchImpl = (...a) => globalThis.fetch(...a)
 } = {}) {
   // connId -> { connId, type:'tab'|'window', sourceId, title, capabilities, status, surfaceId, adapter }
   const registry = new Map()
@@ -731,6 +735,89 @@ export function makeConnectionOps({
     return installer()
   }
 
+  // ================= the first-party TOOL REGISTRY (plans/connection-tool-registry.md) =================
+  // A standalone HTTP service we host + vet. The agent SEARCHES it, GETS an entry, and ADDS it to its own
+  // tools.json — the registry is a CANDIDATE SOURCE, never an execution path (execution stays on the
+  // effect-verified connectionCallTool). Contract v1: GET /v1/tools?sourceId=&q= ; GET /v1/tool?sourceId=&name= .
+
+  // Resolve the target sourceId from either a live connId or an explicit sourceId string.
+  function registrySid({ connection, sourceId }) {
+    if (connection != null) {
+      const r = rec(connection)
+      if (r) return r.sourceId
+    }
+    return sourceId != null && String(sourceId) !== '' ? String(sourceId) : null
+  }
+  async function registryFetch(path) {
+    if (!registryUrl) return { error: 'tool registry not configured (set BLITZ_TOOL_REGISTRY_URL)' }
+    let res
+    try {
+      res = await fetchImpl(registryUrl.replace(/\/+$/, '') + path, { headers: { accept: 'application/json' } })
+    } catch (e) {
+      return { error: `tool registry unreachable: ${String((e && e.message) || e)}` }
+    }
+    if (res && res.status === 404) return { error: 'not found', status: 404 }
+    if (!res || !res.ok) return { error: `tool registry error (status ${res ? res.status : '?'})` }
+    try {
+      return { body: await res.json() }
+    } catch {
+      return { error: 'tool registry returned invalid JSON' }
+    }
+  }
+
+  // search: metadata only (no code/steps) — discovery is cheap, bodies are a deliberate second fetch.
+  async function connectionRegistrySearch({ connection, sourceId, query } = {}) {
+    const sid = registrySid({ connection, sourceId })
+    if (!sid) return { error: 'a connection (connId) or sourceId is required' }
+    const qs = `?sourceId=${encodeURIComponent(sid)}${query ? `&q=${encodeURIComponent(String(query))}` : ''}`
+    const r = await registryFetch('/v1/tools' + qs)
+    if (r.error) return r
+    const entries = Array.isArray(r.body && r.body.entries) ? r.body.entries : []
+    return { sourceId: sid, entries }
+  }
+
+  // get: the full entry incl. code/steps, for the agent to inspect before adding.
+  async function connectionRegistryGet({ sourceId, name } = {}) {
+    const sid = sourceId != null ? String(sourceId) : null
+    if (!sid || !name) return { error: 'sourceId and name are required' }
+    const r = await registryFetch(`/v1/tool?sourceId=${encodeURIComponent(sid)}&name=${encodeURIComponent(String(name))}`)
+    if (r.error) return r.status === 404 ? { error: `no registry tool "${name}" for ${sid}` } : r
+    const entry = r.body && r.body.entry
+    if (!entry || !entry.name) return { error: 'tool registry returned a malformed entry' }
+    return { entry }
+  }
+
+  // add: fetch a vetted entry and write it into THIS source's tools.json (upsert by name), pinned by
+  // contentHash. It becomes an ordinary saved tool — run later via connectionCallTool, never executed here.
+  async function connectionRegistryAdd({ connection, sourceId, name } = {}) {
+    const sid = registrySid({ connection, sourceId })
+    if (!sid) return { error: 'a connection (connId) or sourceId is required' }
+    if (!name) return { error: 'name is required' }
+    const got = await connectionRegistryGet({ sourceId: sid, name })
+    if (got.error) return got
+    const e = got.entry
+    // never let an entry fetched for one source be written under another
+    if (e.sourceId != null && String(e.sourceId) !== sid) return { error: `registry entry is for ${e.sourceId}, not ${sid}` }
+    const kind = e.kind === 'act' ? 'act' : 'read'
+    const hasBody = e.code != null || e.steps != null
+    if (!hasBody) return { error: 'registry entry has no code/steps' }
+    const saved = {
+      name: String(e.name),
+      description: String(e.description || ''),
+      kind,
+      ...(e.steps != null ? { steps: e.steps } : { code: String(e.code || '') }),
+      source: 'registry',
+      version: e.version != null ? String(e.version) : undefined,
+      contentHash: e.contentHash != null ? String(e.contentHash) : undefined
+    }
+    const tools = readTools(sid)
+    const i = tools.findIndex((t) => t.name === saved.name)
+    if (i >= 0) tools[i] = saved
+    else tools.push(saved)
+    if (!writeTools(sid, tools)) return { error: 'no active workspace to save the tool into' }
+    return { ok: true, name: saved.name, sourceId: sid, version: saved.version, count: tools.length }
+  }
+
   return {
     // tab + window link registration + the user/agent connect entries
     setTabLink,
@@ -765,6 +852,10 @@ export function makeConnectionOps({
     connectionListTools,
     connectionCallTool,
     connectionDrop,
-    connectionSetDescription
+    connectionSetDescription,
+    // first-party tool registry
+    connectionRegistrySearch,
+    connectionRegistryGet,
+    connectionRegistryAdd
   }
 }

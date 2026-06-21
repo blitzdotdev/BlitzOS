@@ -559,6 +559,41 @@ export function makeOsTools(ops) {
         if (!a.connection) return { status: 400, body: { error: 'connection (connId) required' } }
         return mapConnResult(await ops.connectionDrop(String(a.connection)))
       }
+    },
+    {
+      path: '/connection_registry_search',
+      description:
+        "Search the FIRST-PARTY tool registry (our vetted, hosted library of per-source tools) for a source. Returns metadata only ({ name, description, kind, version } — NO code), never runs anything. Before deriving an operation from scratch, search here AND connection_list_tools and prefer a vetted tool. Args: {connection?|sourceId?, query?} — pass a live connection (connId) to use its sourceId, or a sourceId (a site host like 'mail.google.com') directly.",
+      input_schema: { type: 'object', properties: { connection: { type: 'string' }, sourceId: { type: 'string' }, query: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionRegistrySearch !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        return mapConnResult(await ops.connectionRegistrySearch({ connection: a.connection, sourceId: a.sourceId, query: a.query }))
+      }
+    },
+    {
+      path: '/connection_registry_get',
+      description:
+        'Get the full registry entry (incl. its code/steps) so you can inspect a vetted tool before adding it. Args: {sourceId, name}. Use connection_registry_add to install it into a connection.',
+      input_schema: { type: 'object', required: ['sourceId', 'name'], properties: { sourceId: { type: 'string' }, name: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionRegistryGet !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (!a.sourceId || !a.name) return { status: 400, body: { error: 'sourceId and name required' } }
+        return mapConnResult(await ops.connectionRegistryGet({ sourceId: String(a.sourceId), name: String(a.name) }))
+      }
+    },
+    {
+      path: '/connection_registry_add',
+      description:
+        "Install a vetted registry tool into a source's tools.json (upsert by name, pinned by contentHash). It becomes an ordinary saved tool — run it later with connection_call_tool (effect-verified); it is NOT executed by this call. Args: {connection?|sourceId?, name}.",
+      input_schema: { type: 'object', required: ['name'], properties: { connection: { type: 'string' }, sourceId: { type: 'string' }, name: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionRegistryAdd !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (!a.name) return { status: 400, body: { error: 'name required' } }
+        return mapConnResult(await ops.connectionRegistryAdd({ connection: a.connection, sourceId: a.sourceId, name: String(a.name) }))
+      }
     }
   ].map(instrument)
 }
