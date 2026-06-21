@@ -7,17 +7,17 @@
 // the original NotchShape are owned by NotchHost and are INVARIANT; this paints ONLY the interior.
 import './island.css'
 import './wf.css'
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
 import { AttachTray, type TrayGroup } from './attachTray'
 import { useSentTray, recordSentTray, getLiveTray } from './sentTrayStore'
 import { IslandTerminalPane } from './IslandTerminalPane'
 import MarkdownMessage from './MarkdownMessage'
-import IslandKanban from './IslandKanban'
-import IslandLeafDrawer from './IslandLeafDrawer'
+import IslandKanban, { type WfStats } from './IslandKanban'
+import { fmtMs, fmtTok } from './wfShared'
 import { matchingChoiceAnswer } from './messageParts'
-import type { IslandPanelProps } from './types'
+import type { IslandPanelProps, IslandWfRun } from './types'
 
 const AGENT_NAME_MAX = 24
 
@@ -136,6 +136,46 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     userOrdinal++
     return sentTray[userOrdinal]
   })
+  // Per-run rolled-up stats for the board caption (reported up by each IslandKanban on run:done). The callback is
+  // STABLE (useCallback) and no-ops when the value is unchanged, so it never loops the child's reporting effect.
+  const [runStats, setRunStats] = useState<Record<string, WfStats | null>>({})
+  const handleRunStats = useCallback((runId: string, s: WfStats | null) => {
+    setRunStats((prev) => (prev[runId] === s ? prev : { ...prev, [runId]: s }))
+  }, [])
+  // Anchor each live workflow board AFTER the last message that preceded its run (the agent's "running…" line),
+  // so the board sits in TIME ORDER in the transcript instead of stacking at the top. A run whose start predates
+  // every message (no preceding message) renders at the very top. Keyed by message index → the runs anchored there.
+  const runsByAnchor = new Map<number, IslandWfRun[]>()
+  const leadingRuns: IslandWfRun[] = []
+  for (const r of runs) {
+    let idx = -1
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if ((messages[i].ts || 0) <= r.startedAt) {
+        idx = i
+        break
+      }
+    }
+    if (idx < 0) leadingRuns.push(r)
+    else {
+      const arr = runsByAnchor.get(idx) || []
+      arr.push(r)
+      runsByAnchor.set(idx, arr)
+    }
+  }
+  const renderBoard = (r: IslandWfRun): JSX.Element => {
+    const s = runStats[r.runId]
+    return (
+      <div className={`isl-wf-board${r.done ? ' isl-wf-done' : ''}`} key={r.runId}>
+        <div className="isl-wf-board-head">
+          <span className="isl-wf-dot" aria-hidden />
+          <span>{r.done ? (r.ok ? 'workflow done' : 'workflow failed') : 'workflow running'}</span>
+          {r.file ? <span className="isl-wf-file">{r.file.replace(/^.*\//, '')}</span> : null}
+          <span className="isl-wf-stats">{s ? `${fmtMs(s.ms)} · ${s.calls} agents · ${fmtTok(s.tokens)} tok` : 'running…'}</span>
+        </div>
+        <IslandKanban runId={r.runId} skeleton={r.skeleton} onStats={handleRunStats} />
+      </div>
+    )
+  }
   // Brandon's tab-rename state ("Rename agent tabs from notch").
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
@@ -464,43 +504,33 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
             )}
           </div>
           <div className="isl-feed" ref={feedRef}>
-            {runs.length > 0 && (
-              // Live workflow runs render as inline kanban boards at the TOP of the feed (stack-all, start order).
-              // A run freezes on done but stays in the transcript as a record of what happened.
-              <div className="isl-wf-runs">
-                {runs.map((r) => (
-                  <div className={`isl-wf-board${r.done ? ' isl-wf-done' : ''}`} key={r.runId}>
-                    <div className="isl-wf-board-head">
-                      <span className="isl-wf-dot" aria-hidden />
-                      <span>{r.done ? (r.ok ? 'workflow done' : 'workflow failed') : 'workflow running'}</span>
-                      {r.file ? <span className="isl-wf-file">{r.file.replace(/^.*\//, '')}</span> : null}
-                    </div>
-                    <IslandKanban runId={r.runId} skeleton={r.skeleton} />
-                  </div>
-                ))}
-              </div>
-            )}
             {messages.length === 0 && runs.length === 0 ? (
               <div className="isl-empty">No messages yet</div>
             ) : (
-              messages.map((m, i) => {
-                const previous = messages[i - 1]
-                const selectedAnswer =
-                  m.role === 'agent' && messages[i + 1]?.role === 'user' ? matchingChoiceAnswer(m.text, messages[i + 1]?.text) : undefined
-                const isSubmittedAskAnswer = m.role === 'user' && previous?.role === 'agent' && Boolean(matchingChoiceAnswer(previous.text, m.text))
-                if (isSubmittedAskAnswer) return null
-                return (
-                  <Fragment key={`${i}:${m.ts || ''}`}>
-                    {trayByIndex[i] && trayByIndex[i]!.length > 0 && (
-                      // a frozen, read-only, glass-pill copy of the dropbox — scrolls + tooltips, no delete.
-                      <div className="isl-msg-tray">
-                        <AttachTray groups={trayByIndex[i]!} readOnly />
-                      </div>
-                    )}
-                    <MarkdownMessage role={m.role} text={m.text} parts={m.parts} selectedAnswer={selectedAnswer} onChoose={(choice) => onSend(choice)} />
-                  </Fragment>
-                )
-              })
+              <>
+                {/* runs that started before any message render at the top; the rest are interleaved below */}
+                {leadingRuns.map((r) => renderBoard(r))}
+                {messages.map((m, i) => {
+                  const previous = messages[i - 1]
+                  const selectedAnswer =
+                    m.role === 'agent' && messages[i + 1]?.role === 'user' ? matchingChoiceAnswer(m.text, messages[i + 1]?.text) : undefined
+                  const isSubmittedAskAnswer = m.role === 'user' && previous?.role === 'agent' && Boolean(matchingChoiceAnswer(previous.text, m.text))
+                  if (isSubmittedAskAnswer) return null
+                  return (
+                    <Fragment key={`${i}:${m.ts || ''}`}>
+                      {trayByIndex[i] && trayByIndex[i]!.length > 0 && (
+                        // a frozen, read-only, glass-pill copy of the dropbox — scrolls + tooltips, no delete.
+                        <div className="isl-msg-tray">
+                          <AttachTray groups={trayByIndex[i]!} readOnly />
+                        </div>
+                      )}
+                      <MarkdownMessage role={m.role} text={m.text} parts={m.parts} selectedAnswer={selectedAnswer} onChoose={(choice) => onSend(choice)} />
+                      {/* live workflow board(s) anchored right after THIS message (the agent's "running…" line) */}
+                      {(runsByAnchor.get(i) || []).map((r) => renderBoard(r))}
+                    </Fragment>
+                  )
+                })}
+              </>
             )}
           </div>
           {debugTerminalEnabled && activeId && (

@@ -7,6 +7,7 @@ import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
 import { readFileSync } from 'node:fs'
 import { sessionJsonlPath, readSessionEvents, toolLabel } from './agent-transcript.mjs'
+import { applyWfRun, type WfRunRecord } from './wf-run-state.mjs'
 import { tel } from './telemetry'
 import type { WebContents } from 'electron'
 
@@ -616,44 +617,50 @@ export function setMilestonesProvider(fn: ((id: string) => IslandMilestone[]) | 
 // keeps its own frozen state; the registry only needs to re-hydrate open runs on island reopen). Keep done
 // runs for a short window so a late reopen still sees them frozen.
 export type IslandWfRun = { runId: string; agentId: string; file: string; startedAt: number; done: boolean; ok: boolean; skeleton: unknown[]; memDir: string | null }
-const _wfRuns = new Map<string, IslandWfRun>() // runId -> run
+const _wfRuns = new Map<string, IslandWfRun>() // runId -> run (dropped WF_RUN_KEEP_DONE_MS after done)
 const _wfRunsByAgent = new Map<string, string[]>() // agentId -> runIds (most-recent-last)
+// Durable runId -> memDir map: the run's absolute memory dir (main-minted), kept for the WHOLE session so the
+// drill-in drawer can resolve a frozen board's leaves long after the 30s registry window. This is what closes
+// the path-traversal boundary (os:wf-leaf resolves memDir HERE by runId, never from the renderer). Capped.
+const _wfMemDirs = new Map<string, string>()
+const WF_MEMDIR_CAP = 1000
 const WF_RUN_KEEP_DONE_MS = 30_000
 let _wfRunsProvider: ((id: string) => IslandWfRun[]) | null = null
-/** Record a workflow-run broadcast (started or done). Called from osBroadcast. */
+/** Record a workflow-run broadcast (started or done). Called from osBroadcast. Folds through the shared
+ *  applyWfRun rule so the main registry and the renderer (NotchHost) handle the "second started" identically. */
 export function osNoteWfRun(action: Record<string, unknown>): void {
   const runId = String(action.runId || '')
   if (!runId) return
   const agentId = String(action.agentId ?? '0')
-  if (action.started) {
-    const run: IslandWfRun = {
-      runId,
-      agentId,
-      file: String(action.file || ''),
-      startedAt: Date.now(),
-      done: false,
-      ok: false,
-      skeleton: Array.isArray(action.skeleton) ? action.skeleton as unknown[] : [],
-      memDir: action.memDir == null ? null : String(action.memDir)
-    }
-    _wfRuns.set(runId, run)
-    const list = _wfRunsByAgent.get(agentId) || []
-    if (!list.includes(runId)) list.push(runId)
-    _wfRunsByAgent.set(agentId, list)
-  } else if (action.done) {
-    const run = _wfRuns.get(runId)
-    if (run) { run.done = true; run.ok = !!action.ok }
-    // schedule cleanup of a done run after the keep window (the board keeps its own state)
+  const prev = _wfRuns.get(runId)
+  const next = applyWfRun(prev as WfRunRecord | undefined, action) as IslandWfRun | null
+  if (!next) return
+  _wfRuns.set(runId, next)
+  // Remember the run's memDir durably (survives the 30s registry cleanup) so the drawer always resolves it.
+  if (next.memDir) {
+    _wfMemDirs.set(runId, next.memDir)
+    if (_wfMemDirs.size > WF_MEMDIR_CAP) { const oldest = _wfMemDirs.keys().next().value; if (oldest != null) _wfMemDirs.delete(oldest) }
+  }
+  const list = _wfRunsByAgent.get(agentId) || []
+  if (!list.includes(runId)) { list.push(runId); _wfRunsByAgent.set(agentId, list) }
+  // Cleanup a DONE run after the keep window (the board keeps its own frozen state; _wfMemDirs is NOT cleared,
+  // so a late drawer open still resolves the leaf path). Only the `done` transition schedules it.
+  if (action.done && next.done) {
     setTimeout(() => {
       _wfRuns.delete(runId)
-      const list = _wfRunsByAgent.get(agentId)
-      if (list) {
-        const i = list.indexOf(runId)
-        if (i >= 0) list.splice(i, 1)
-        if (!list.length) _wfRunsByAgent.delete(agentId)
+      const l = _wfRunsByAgent.get(agentId)
+      if (l) {
+        const i = l.indexOf(runId)
+        if (i >= 0) l.splice(i, 1)
+        if (!l.length) _wfRunsByAgent.delete(agentId)
       }
     }, WF_RUN_KEEP_DONE_MS)
   }
+}
+/** The trusted absolute memDir for a run (main-minted), or null. The drawer's leaf read resolves the path HERE
+ *  by runId — the renderer never supplies a filesystem path, so there is no path-traversal surface. */
+export function osWfRunMemDir(runId: string): string | null {
+  return _wfMemDirs.get(String(runId || '')) || null
 }
 /** Set an external runs provider (reserved; defaults to the in-process registry above). */
 export function setWfRunsProvider(fn: ((id: string) => IslandWfRun[]) | null): void {
@@ -936,11 +943,17 @@ export function osActiveWorkspaceDir(): string | null {
   return wsHost ? wsHost.activePath() : null
 }
 /** Read one terminal leaf's captured record (Asked/Did/Returned) for the island kanban drill-in drawer.
- *  Returns { leaf } or null when capture is off / the leaf hasn't finished / the file is missing. */
-export function osReadLeaf(runId: string, nodeId: string): { leaf: Record<string, unknown> } | null {
-  const root = osActiveWorkspaceDir()
-  if (!root || !runId || nodeId == null) return null
-  const f = join(root, '.blitzos', 'workflows', String(runId), 'leaves', String(nodeId) + '.json')
+ *  `memDir` is the run's absolute memory dir (from the run record, trusted — main minted it via workflowMemDir);
+ *  resolving from it (NOT the active workspace) keeps the drawer correct across workspace switches. `runId`/
+ *  `nodeId` are validated against a safe charset to block path traversal (they originate from a renderer click,
+ *  a privilege boundary). Returns { leaf } or null when capture is off / the leaf hasn't finished / missing. */
+const _LEAF_ID_RE = /^[\w.-]+$/
+export function osReadLeaf(memDir: string | null, runId: string, nodeId: string): { leaf: Record<string, unknown> } | null {
+  if (!memDir || !runId || nodeId == null) return null
+  const rid = String(runId)
+  const nid = String(nodeId)
+  if (!_LEAF_ID_RE.test(rid) || !_LEAF_ID_RE.test(nid)) return null // block ../ traversal
+  const f = join(memDir, 'leaves', nid + '.json')
   try {
     const leaf = JSON.parse(readFileSync(f, 'utf8'))
     if (leaf && typeof leaf === 'object') return { leaf: leaf as Record<string, unknown> }

@@ -27,6 +27,7 @@ export interface WfNode {
   preview: string
   error: string
   prompt?: string
+  summary?: string // the leaf's human prose one-liner (harness final text) — the readable card headline (no IPC)
 }
 
 export function reduce(events: unknown[]): WfModel {
@@ -103,6 +104,7 @@ export function reduce(events: unknown[]): WfModel {
         n.tokens = Number(e.tokens) || 0
         n.preview = String(e.preview || '')
         n.error = String(e.message || '')
+        if (e.summary) n.summary = String(e.summary) // human one-liner for the card face (no per-card leaf fetch)
       }
     }
   }

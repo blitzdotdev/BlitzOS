@@ -9,8 +9,8 @@
 // DI seam (wireWorkflowHost), like wireJobModel/wireLauncher: Electron injects the workspace path + the
 // enrichment spawner from index.ts, so this module stays free of Electron imports and is headless-testable.
 
-import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, existsSync } from 'node:fs'
+import { join, isAbsolute } from 'node:path'
 import { ensureRun, subscribe, snapshot, isDone } from './workflow-bus.mjs'
 import * as bus from './workflow-bus.mjs'
 
@@ -49,6 +49,14 @@ export function workflowMemDir(runId) {
  */
 export async function runWorkflowHosted({ file, args, runId, surfaceId = null, view = 'graph', agentId = '0', dry = false } = {}) {
   if (!file) return { ok: false, error: 'run_workflow: file (a workflow .js path) is required' }
+  // The agent authors workflow files relative to ITS workspace cwd (e.g. ".blitzos/blitzscripts/x.js"), but this
+  // host runs in the MAIN process whose cwd is the app dir — so a relative `file` would resolve there and the
+  // runtime's readFileSync would ENOENT *before* emitting any event (an empty run dir, a board that never fills).
+  // Resolve a relative file against the active workspace, and FAIL FAST with a clear error (so the agent learns
+  // the path is wrong instead of getting ok:true for a doomed background run).
+  const wsPath = _deps && typeof _deps.getWorkspacePath === 'function' ? _deps.getWorkspacePath() : null
+  file = !isAbsolute(file) && wsPath ? join(wsPath, file) : file
+  if (!existsSync(file)) return { ok: false, error: `run_workflow: workflow file not found: ${file}` }
   const id = runId || mintRunId()
   await ensureSink()
   ensureRun(id) // make the buffer up front so a widget that subscribes before the first emit still attaches
@@ -61,40 +69,47 @@ export async function runWorkflowHosted({ file, args, runId, surfaceId = null, v
     try { _deps.spawnEnrichment({ runId: id, surfaceId, file, view, agentId, memDir }) } catch { /* never block the run */ }
   }
 
-  // Announce the run to the island (the kanban board in chat subscribes to this). Best-effort: a missing
-  // broadcast seam (headless/test) just means no board — the run itself is unaffected.
   const broadcast = _deps && typeof _deps.broadcast === 'function' ? _deps.broadcast : null
-  // DRY PREFLIGHT: the full structural skeleton (every leaf, label + phase), instant + no LLM. Per-run `dry`
-  // flag, so it never affects the real run. Best-effort + timeout — the live board still works without it
-  // (it just lacks TODO cards for not-yet-run phases). Mirrors the lab's vite.config preflight.
-  let skeleton = []
-  if (!dry && broadcast) {
-    let skelId = null
-    try {
-      skelId = mintRunId()
-      ensureRun(skelId)
-      const rt0 = await loadRuntime()
-      await Promise.race([
-        rt0.runWorkflow(file, { args, memDir: null, runId: skelId, dry: true }),
-        new Promise((r) => setTimeout(r, 8000))
-      ])
-      skeleton = snapshot(skelId).filter((e) => e.type !== 'run:done')
-    } catch { /* preflight is best-effort */ }
-    // Always drop the preflight's temp buffer so it never leaks (the skeleton was copied into `skeleton`).
-    if (skelId) { try { bus.clearRun(skelId) } catch { /* best-effort */ } }
-  }
-  try { broadcast({ type: 'workflow-run', agentId: String(agentId ?? '0'), runId: id, file, started: true, skeleton, memDir }) } catch { /* best-effort */ }
+  const aid = String(agentId ?? '0')
+  // Announce START immediately with an empty skeleton so the board mounts + the live run kicks off with NO
+  // delay. The dry preflight (TODO cards) runs IN PARALLEL and re-broadcasts `started` with the skeleton once
+  // it resolves; the board re-renders with TODO cards when it lands. This avoids blocking the real run on the
+  // preflight (the prior version awaited the preflight before starting the run, stalling every run by up to 8s).
+  try { broadcast({ type: 'workflow-run', agentId: aid, runId: id, file, started: true, skeleton: [], memDir }) } catch { /* best-effort */ }
 
   // Run in the BACKGROUND. The global sink streams events to the bus -> the subscribed widget; the runtime
   // writes result.json on completion. We do NOT await it (a workflow can run for minutes).
   const rt = await loadRuntime()
   Promise.resolve()
     .then(() => rt.runWorkflow(file, { args, memDir, runId: id, dry }))
-    .then(() => { try { broadcast && broadcast({ type: 'workflow-run', agentId: String(agentId ?? '0'), runId: id, done: true, ok: true }) } catch { /* best-effort */ } })
+    .then(() => { try { broadcast && broadcast({ type: 'workflow-run', agentId: aid, runId: id, done: true, ok: true }) } catch { /* best-effort */ } })
     .catch((e) => {
       void e
-      try { broadcast && broadcast({ type: 'workflow-run', agentId: String(agentId ?? '0'), runId: id, done: true, ok: false }) } catch { /* best-effort */ }
+      try { broadcast && broadcast({ type: 'workflow-run', agentId: aid, runId: id, done: true, ok: false }) } catch { /* best-effort */ }
     })
+
+  // DRY PREFLIGHT (TODO cards): the full structural skeleton (every leaf, label + phase), instant + no LLM.
+  // Per-run `dry` flag, so it never affects the real run. Best-effort + timeout — runs IN PARALLEL with the
+  // real run so it never stalls it. On resolve, re-broadcasts `started` with the skeleton so the board adds
+  // TODO cards. A dry run executes the workflow BODY (declares phases/fan-outs; no leaves spawn), so workflows
+  // with top-level side effects (file writes, network) WILL see them twice — acceptable for declarative
+  // workflows, and the lab does the same. TODO: guard body side effects if this ever bites.
+  if (!dry && broadcast) {
+    const skelId = mintRunId()
+    ensureRun(skelId)
+    Promise.resolve()
+      .then(async () => {
+        const rt0 = await loadRuntime()
+        await Promise.race([
+          rt0.runWorkflow(file, { args, memDir: null, runId: skelId, dry: true }),
+          new Promise((r) => setTimeout(r, 8000))
+        ])
+        const skeleton = snapshot(skelId).filter((e) => e.type !== 'run:done')
+        try { broadcast({ type: 'workflow-run', agentId: aid, runId: id, started: true, skeleton, memDir }) } catch { /* best-effort */ }
+      })
+      .catch(() => { /* preflight is best-effort */ })
+      .finally(() => { try { bus.clearRun(skelId) } catch { /* best-effort */ } })
+  }
 
   return { ok: true, runId: id, surfaceId, memDir }
 }

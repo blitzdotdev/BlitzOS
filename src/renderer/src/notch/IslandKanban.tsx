@@ -4,7 +4,7 @@
 // live), folds events through mergeSkeleton(skeleton), freezes + unsubscribes on run:done.
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { mergeSkeleton, type WfNode } from './wfReduce'
-import { useLeaf, summarize, cardHead, fmtMs, fmtTok } from './wfShared'
+import { eventCardHead, fmtMs, fmtTok } from './wfShared'
 import IslandLeafDrawer from './IslandLeafDrawer'
 
 // Insert <wbr> after : / - _ so a long id wraps at delimiters instead of mid-word, staying fully visible.
@@ -41,9 +41,11 @@ function DoingCard({ n, onOpen }: { n: WfNode; onOpen: (id: string) => void }): 
     </button>
   )
 }
-function DoneCard({ n, runId, onOpen }: { n: WfNode; runId: string; onOpen: (id: string) => void }): JSX.Element {
-  const leaf = useLeaf(runId, n.nodeId, true)
-  const head = leaf ? cardHead(leaf) : summarize(n.preview, n.preview) || '…'
+function DoneCard({ n, onOpen }: { n: WfNode; onOpen: (id: string) => void }): JSX.Element {
+  // Human one-liner from the EVENT only — NO per-card leaf fetch (a 30-leaf run would fire 30 IPCs). cardHead
+  // prefers a salient structured field (parsed from the preview), falling back to the leaf's prose summary that
+  // agent:done now carries; never the raw JSON string. The full record loads lazily only when the drawer opens.
+  const head = eventCardHead(n) || '…'
   const cls = n.status === 'error' ? ' kc-error' : n.status === 'empty' ? ' kc-empty' : ''
   return (
     <button className={`kc kc-done${cls}`} onClick={() => onOpen(n.nodeId)} title="click for the full output + what the agent did">
@@ -59,19 +61,26 @@ function DoneCard({ n, runId, onOpen }: { n: WfNode; runId: string; onOpen: (id:
   )
 }
 
+export interface WfStats {
+  ms: number
+  calls: number
+  tokens: number
+}
 export interface IslandKanbanProps {
   runId: string
   skeleton: unknown[]
+  /** Report the run's rolled-up stats (set on run:done; null while running) so the board caption can show
+   *  "{ms} · {calls} agents · {tokens} tok". Must be a STABLE callback (useCallback) to avoid an effect loop. */
+  onStats?: (runId: string, stats: WfStats | null) => void
 }
 
-export default function IslandKanban({ runId, skeleton }: IslandKanbanProps): JSX.Element {
+export default function IslandKanban({ runId, skeleton, onStats }: IslandKanbanProps): JSX.Element {
   const [events, setEvents] = useState<unknown[]>([])
   const [done, setDone] = useState(false)
   const [openNodeId, setOpenNodeId] = useState<string | null>(null)
 
-  // Subscribe to the wf bus: backlog replayed synchronously, then live events. Unsubscribe on unmount/run:done.
+  // Subscribe to the wf bus: backlog replayed, then live events. Unsubscribe on unmount/run:done.
   useEffect(() => {
-    let off: (() => void) | null = null
     let live = true
     const seen = new Set<unknown>()
     const push = (ev: unknown): void => {
@@ -82,18 +91,16 @@ export default function IslandKanban({ runId, skeleton }: IslandKanbanProps): JS
       setEvents((prev) => [...prev, ev])
       if ((ev as { type?: string })?.type === 'run:done') setDone(true)
     }
-    // snapshot first (backlog), then subscribe for live.
-    window.agentOS
-      ?.wfSnapshot?.(runId)
-      .then((snap: unknown) => {
-        if (!live || !Array.isArray(snap)) return
-        for (const ev of snap) push(ev)
-        off = window.agentOS?.onWfEvent?.((p: { runId: string; ev: unknown }) => {
-          if (p.runId === runId) push(p.ev)
-        }) ?? null
-      })
+    // Register the live listener FIRST, BEFORE snapshot/subscribe, so an event fired during that window is never
+    // lost (the seq `seen` set de-dupes the backlog snapshot against any overlapping live event). The prior order
+    // (register only after the snapshot resolved) could drop a live event → a card stuck "running" forever.
+    const off = window.agentOS?.onWfEvent?.((p: { runId: string; ev: unknown }) => {
+      if (p.runId === runId) push(p.ev)
+    }) ?? null
+    // Pull the current backlog, then tell main to start fanning live events for this run.
+    window.agentOS?.wfSnapshot?.(runId)
+      .then((snap: unknown) => { if (live && Array.isArray(snap)) for (const ev of snap) push(ev) })
       .catch(() => {})
-    // also subscribe so live events arrive even before the snapshot resolves
     window.agentOS?.wfSubscribe?.(runId).catch(() => {})
     return () => {
       live = false
@@ -103,6 +110,11 @@ export default function IslandKanban({ runId, skeleton }: IslandKanbanProps): JS
   }, [runId])
 
   const m = useMemo(() => mergeSkeleton(events, skeleton), [events, skeleton])
+
+  // Report the rolled-up stats up to the board caption (null until run:done sets m.stats).
+  useEffect(() => {
+    onStats?.(runId, m.stats)
+  }, [runId, m.stats, onStats])
 
   const phases = useMemo(() => {
     const isDone = (s: string) => s === 'done' || s === 'error' || s === 'empty'
@@ -128,42 +140,40 @@ export default function IslandKanban({ runId, skeleton }: IslandKanbanProps): JS
     return `92px minmax(0, ${w(t, 0.95)}fr) minmax(0, ${w(g, 1.35)}fr) minmax(0, ${w(d, 1.5)}fr)`
   }, [phases])
 
+  const openNode = openNodeId ? m.nodes[openNodeId] || null : null
+  // Drill-in REPLACES the board grid in the SAME frame (the run head stays above it), so the detail grows to its
+  // full content with NO internal scrolling, scoped to the board width. The close button (X) returns to the grid.
+  if (openNode) return <IslandLeafDrawer runId={runId} node={openNode} onClose={() => setOpenNodeId(null)} />
+
   if (!phases.length) {
     return <div className="kb-empty">{done ? 'workflow finished' : 'waiting for the first event…'}</div>
   }
 
-  const openNode = openNodeId ? m.nodes[openNodeId] || null : null
-
   return (
-    <>
-      <div className={`kb${done ? ' kb-done' : ''}`}>
-        <div className="kb-grid" style={{ gridTemplateColumns: gridCols }}>
-          <div className="kb-corner" />
-          <div className="kb-colh kb-h-todo">To do</div>
-          <div className="kb-colh kb-h-doing">Doing</div>
-          <div className="kb-colh kb-h-done">Done</div>
-          {phases.map((p) => (
-            <Fragment key={p.phaseId || '__setup'}>
-              <div className="kb-rowh">
-                <span className="kb-rowh-name">{p.title}</span>
-                <span className="kb-rowh-n">{p.todo.length + p.doing.length + p.done.length} agents</span>
-              </div>
-              <div className="kb-cell kb-cell-todo">
-                {p.todo.map((n) => (<TodoCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
-              </div>
-              <div className="kb-cell kb-cell-doing">
-                {p.doing.map((n) => (<DoingCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
-              </div>
-              <div className="kb-cell kb-cell-done">
-                {p.done.map((n) => (<DoneCard n={n} runId={runId} key={n.nodeId} onOpen={setOpenNodeId} />))}
-              </div>
-            </Fragment>
-          ))}
-        </div>
+    <div className={`kb${done ? ' kb-done' : ''}`}>
+      <div className="kb-grid" style={{ gridTemplateColumns: gridCols }}>
+        <div className="kb-corner" />
+        <div className="kb-colh kb-h-todo">To do</div>
+        <div className="kb-colh kb-h-doing">Doing</div>
+        <div className="kb-colh kb-h-done">Done</div>
+        {phases.map((p) => (
+          <Fragment key={p.phaseId || '__setup'}>
+            <div className="kb-rowh">
+              <span className="kb-rowh-name">{p.title}</span>
+              <span className="kb-rowh-n">{p.todo.length + p.doing.length + p.done.length} agents</span>
+            </div>
+            <div className="kb-cell kb-cell-todo">
+              {p.todo.map((n) => (<TodoCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
+            </div>
+            <div className="kb-cell kb-cell-doing">
+              {p.doing.map((n) => (<DoingCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
+            </div>
+            <div className="kb-cell kb-cell-done">
+              {p.done.map((n) => (<DoneCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
+            </div>
+          </Fragment>
+        ))}
       </div>
-      {openNode && (
-        <IslandLeafDrawer runId={runId} node={openNode} onClose={() => setOpenNodeId(null)} />
-      )}
-    </>
+    </div>
   )
 }

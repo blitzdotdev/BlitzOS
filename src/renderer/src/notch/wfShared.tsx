@@ -5,15 +5,30 @@ import { useEffect, useState, type ReactNode } from 'react'
 export const fmtMs = (ms: number): string => (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : Math.round(ms || 0) + 'ms')
 export const fmtTok = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'k' : String(t || 0))
 
+// A card's `preview` is previewOf(out) = JSON.stringify(out) sliced to ~280 chars. Parse it back to the typed
+// value so summarize/cardHead can pick a HUMAN field instead of rendering the raw JSON string. A truncated (slice
+// cut mid-JSON) or non-JSON preview won't parse → return it as the plain string (summarize then takes its text).
+export function tryParsePreview(preview: string): unknown {
+  if (!preview) return ''
+  try {
+    return JSON.parse(preview)
+  } catch {
+    return preview
+  }
+}
+
 // Fetch the captured leaf record once the leaf is terminal (done/error/empty). Lazy on-click via the bridge.
+// Main resolves the run's memDir by runId, so this takes only (runId, nodeId). Clears stale state on EVERY change
+// so a slow or {ok:false} fetch can never leave the PREVIOUS card's Asked/Did/Returned on screen.
 export function useLeaf(runId: string, nodeId: string | null, terminal: boolean): Record<string, unknown> | null {
   const [leaf, setLeaf] = useState<Record<string, unknown> | null>(null)
   useEffect(() => {
+    setLeaf(null) // drop the prior card's record immediately on any run/node/terminal change
     if (!terminal || nodeId == null) return
     let live = true
     window.agentOS
       ?.wfLeaf?.(runId, nodeId)
-      .then((r) => live && r && r.ok && r.leaf && setLeaf(r.leaf))
+      .then((r) => { if (live && r && r.ok && r.leaf) setLeaf(r.leaf) })
       .catch(() => {})
     return () => {
       live = false
@@ -77,6 +92,20 @@ export function cardHead(leaf: Record<string, unknown> | null): string {
   if (fromResult && !shapeOnly) return fromResult
   const summary = leaf.summary && String(leaf.summary).trim() ? summarize(leaf.summary, '') : ''
   return summary || fromResult || '—'
+}
+
+// The card-face headline from an agent:done node — NO leaf fetch. Three cases, NEVER raw JSON:
+//  (1) the preview parses to an OBJECT → cardHead picks a salient structured field (prose summary as fallback);
+//  (2) the preview is a JSON-ish STRING (a structured result whose JSON.stringify was truncated past the ~280-char
+//      preview cap, so it no longer parses) → use the leaf's prose `summary` (which agent:done now carries);
+//  (3) the preview is plain text → summarize it directly.
+export function eventCardHead(node: { preview?: string; summary?: string }): string {
+  const preview = node.preview || ''
+  const parsed = tryParsePreview(preview)
+  if (parsed && typeof parsed === 'object') return cardHead({ result: parsed, summary: node.summary }) || '—'
+  const looksJson = /^\s*[[{]/.test(preview) // a (truncated) JSON object/array that did not parse
+  if (looksJson && node.summary && String(node.summary).trim()) return summarize(node.summary, '') || '—'
+  return summarize(parsed, node.summary || preview) || '—'
 }
 
 // Pretty-print + syntax-highlight any JSON value (the "Returned" section). Pure regex tokenizer; no innerHTML.

@@ -13,7 +13,9 @@ export interface IslandLeafDrawerProps {
 }
 
 export default function IslandLeafDrawer({ runId, node, onClose }: IslandLeafDrawerProps): JSX.Element | null {
-  const terminal = !!node && node.status !== 'running'
+  // Terminal = a leaf that actually RAN (a captured record exists). A queued TODO card is NOT terminal, so we
+  // never fetch a non-existent leaf for it (that would return {ok:false} and show stale/empty content).
+  const terminal = !!node && (node.status === 'done' || node.status === 'error' || node.status === 'empty')
   const leaf = useLeaf(runId, node ? node.nodeId : null, terminal)
   if (!node) return null
   const ask = (leaf && String(leaf.prompt || '')) || node.prompt || ''

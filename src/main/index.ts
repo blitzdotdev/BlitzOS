@@ -2,8 +2,9 @@ import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShort
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
+import { spawn, execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir } from './osActions'
 import { emitSystemMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
 import { createWakeWatchdog } from './agent-wake-watchdog.mjs'
 import { openBootJournal, chatFileName } from './workspace.mjs'
@@ -63,8 +64,9 @@ process.stderr.on('error', () => {})
 process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getAppPath(), 'widgets')
 // Per-leaf capture for the island kanban drill-in drawer: writes <memDir>/leaves/<nodeId>.json
 // (prompt + result + summary + sessionId) for every terminal leaf. Best-effort + guarded + cheap
-// (agent.mjs:captureLeaf). On by default so the drawer works for every run; unset to disable.
-process.env.BLITZ_CAPTURE_LEAVES = process.env.BLITZ_CAPTURE_LEAVES || '1'
+// (agent.mjs:captureLeaf). Default ON; set BLITZ_CAPTURE_LEAVES=0 (or '' / 'false') to disable. Uses ??, NOT
+// ||, so an explicit '0'/'' the operator set is preserved instead of being coerced back to '1'.
+process.env.BLITZ_CAPTURE_LEAVES = process.env.BLITZ_CAPTURE_LEAVES ?? '1'
 
 // ONE BlitzOS per machine: a second launch focuses the first instead of fighting it for the browser
 // partition + the workspace watchers (observed live: partition LOCK errors, two hosts persisting over
@@ -719,9 +721,13 @@ app.whenReady().then(() => {
     })
     ipcMain.handle('os:wf-snapshot', (_e, runId: string) => wfSnapshot(String(runId || '')))
     // The island kanban drill-in drawer: read a terminal leaf's captured record (Asked/Did/Returned).
-    // Lazy on-click; returns { leaf } or { ok:false } when capture is off / the leaf hasn't finished.
+    // Lazy on-click; returns { leaf } or { ok:false } when capture is off / the leaf hasn't finished. The run's
+    // absolute memDir is resolved HERE by runId from the trusted main-side registry (osWfRunMemDir) — the
+    // renderer never supplies a filesystem path, so there is no path-traversal surface. It stays correct across
+    // workspace switches (the memDir was recorded when the run started); runId/nodeId are also validated.
     ipcMain.handle('os:wf-leaf', (_e, runId: string, nodeId: string) => {
-      const r = osReadLeaf(String(runId || ''), String(nodeId || ''))
+      const memDir = osWfRunMemDir(String(runId || ''))
+      const r = osReadLeaf(memDir, String(runId || ''), String(nodeId || ''))
       return r && r.leaf ? { ok: true, leaf: r.leaf } : { ok: false }
     })
   }

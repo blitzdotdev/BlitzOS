@@ -14,6 +14,7 @@ import IslandPanel from './IslandPanel'
 import IslandHome from './IslandHome'
 import IslandSettings from './IslandSettings'
 import type { IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta, IslandWfRun } from './types'
+import { applyWfRun } from '../../../main/wf-run-state.mjs'
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
@@ -212,30 +213,19 @@ export function NotchHost({
           return { ...prev, [aid]: [...list, m].slice(-60) }
         })
       } else if (act.type === 'workflow-run') {
-        // The island's inline kanban board: a run started or finished for an agent.
+        // The island's inline kanban board: a run started or finished for an agent. Fold through the SAME
+        // applyWfRun rule the main registry uses, so a late skeleton-bearing `started` UPSERTS the skeleton (the
+        // live board gains its TODO cards) without un-finishing a run that already received its `done`.
         const runId = String((act as WfRunAction).runId || '')
         const aid = String((act as WfRunAction).agentId ?? '0')
         if (!runId) return
         setRuns((prev) => {
           const list = prev[aid] || []
-          if ((act as WfRunAction).started) {
-            const run: IslandWfRun = {
-              runId,
-              agentId: aid,
-              file: String((act as WfRunAction).file || ''),
-              startedAt: Date.now(),
-              done: false,
-              ok: false,
-              skeleton: Array.isArray((act as WfRunAction).skeleton) ? (act as WfRunAction).skeleton as unknown[] : [],
-              memDir: (act as WfRunAction).memDir == null ? null : String((act as WfRunAction).memDir)
-            }
-            if (list.some((r) => r.runId === runId)) return prev
-            return { ...prev, [aid]: [...list, run] }
-          }
-          if ((act as WfRunAction).done) {
-            return { ...prev, [aid]: list.map((r) => (r.runId === runId ? { ...r, done: true, ok: !!(act as WfRunAction).ok } : r)) }
-          }
-          return prev
+          const existing = list.find((r) => r.runId === runId)
+          const next = applyWfRun(existing, act as unknown as Record<string, unknown>) as IslandWfRun | null
+          if (!next) return prev
+          const nextList = existing ? list.map((r) => (r.runId === runId ? next : r)) : [...list, next]
+          return { ...prev, [aid]: nextList }
         })
       }
     })

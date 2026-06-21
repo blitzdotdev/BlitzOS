@@ -137,20 +137,28 @@ console.log('\nagent({schema}) end-to-end (stub spawner):')
     ok('dry-run agent({schema}) returns the schema stub', JSON.stringify(v) === JSON.stringify({ k: '' }), v)
   })
 
-  // real path: a valid structured_output -> the object
+  // real path: the leaf returns the AUTO-WRAPPED shape { meta:{human_summary}, output } -> agent() UNWRAPS to `output`
   await withRunContext(new RunContext({}), async () => {
-    _setSpawn(async () => JSON.stringify({ result: 'prose', structured_output: { k: 'hello' } }))
+    _setSpawn(async () => JSON.stringify({ result: 'prose', structured_output: { meta: { human_summary: 'said hello' }, output: { k: 'hello' } } }))
     const v = await agent('x', { schema, harness: 'claude' })
-    ok('agent({schema}) returns the validated object', JSON.stringify(v) === JSON.stringify({ k: 'hello' }), v)
+    ok('agent({schema}) returns the UNWRAPPED output (meta.human_summary stripped)', JSON.stringify(v) === JSON.stringify({ k: 'hello' }), v)
     _setSpawn(null)
   })
 
-  // bad-then-good: first response misses `k` (invalid) -> re-prompt -> good
+  // bad-then-good: first response's `output` misses `k` (invalid) -> re-prompt -> good wrapped
   await withRunContext(new RunContext({}), async () => {
     let n = 0
-    _setSpawn(async () => { n++; return JSON.stringify(n === 1 ? { result: 'p', structured_output: { wrong: 1 } } : { result: 'p', structured_output: { k: 'fixed' } }) })
+    _setSpawn(async () => { n++; return JSON.stringify(n === 1 ? { result: 'p', structured_output: { meta: { human_summary: 'x' }, output: { wrong: 1 } } } : { result: 'p', structured_output: { meta: { human_summary: 'fixed it' }, output: { k: 'fixed' } } }) })
     const v = await agent('x', { schema, harness: 'claude', schemaRetries: 1 })
     ok('a schema-invalid first response triggers a re-prompt, then succeeds', JSON.stringify(v) === JSON.stringify({ k: 'fixed' }) && n === 2, { v, n })
+    _setSpawn(null)
+  })
+
+  // the human_summary is a SCHEMA REQUIREMENT: a valid `output` but NO meta.human_summary fails -> null after retries
+  await withRunContext(new RunContext({}), async () => {
+    _setSpawn(async () => JSON.stringify({ result: 'p', structured_output: { output: { k: 'ok' } } }))
+    const v = await agent('x', { schema, harness: 'claude', schemaRetries: 1 })
+    ok('a response missing meta.human_summary -> null (the summary is auto-required)', v === null, v)
     _setSpawn(null)
   })
 
