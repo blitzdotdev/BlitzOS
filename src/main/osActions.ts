@@ -575,7 +575,7 @@ export function setRestartAgent(fn: (agentId: string) => void): void {
 }
 // Re-exec a running agent with a FRESH context. The onboarding director calls this at the
 // interview→resident HANDOFF; the transport wires it to a session-id rotation + restart, so the resident
-// boots a clean conversation and rebuilds state from profile.md + board.json + initiative.md + chat.md
+// boots a clean conversation and rebuilds state from profile.md + board.json + chat.md
 // (its bootstrap reads them), at the resident effort (xhigh). The full interview transcript stays in
 // chat.md, so nothing is lost.
 let clearBrainContextHook: ((agentId: string) => void) | null = null

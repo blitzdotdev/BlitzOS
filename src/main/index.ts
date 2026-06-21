@@ -143,7 +143,7 @@ function gatherDurableState(): { files: Record<string, string>; permissions?: un
     }
     add('.blitzos/workspace.json', join(ws, '.blitzos', 'workspace.json'))
     try { for (const f of readdirSync(ws)) if (/\.(md|html|weblink|jsx|tsx)$/.test(f)) add(f, join(ws, f)) } catch { /* skip */ }
-    for (const f of ['profile.md', 'initiative.md', 'board.json', 'interview.json']) add(`.blitzos/onboarding/${f}`, join(ws, '.blitzos', 'onboarding', f))
+    for (const f of ['profile.md', 'board.json', 'interview.json']) add(`.blitzos/onboarding/${f}`, join(ws, '.blitzos', 'onboarding', f))
     let permissions: unknown
     let bookmarks: unknown
     try {
