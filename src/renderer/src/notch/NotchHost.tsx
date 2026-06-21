@@ -560,6 +560,7 @@ export function NotchHost({
             </svg>
           </button>
         )}
+        {/* Peek toggle hidden for now (not needed). Restore this block to bring it back.
         {inSession && (
           <button
             type="button"
@@ -574,6 +575,7 @@ export function NotchHost({
             <span>{peek ? 'Expand' : 'Peek'}</span>
           </button>
         )}
+        */}
         {onHome ? (
           <IslandHome
             menuBarH={menuBarH}

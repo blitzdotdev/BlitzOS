@@ -984,8 +984,8 @@ button.isl-app-chat:active .isl-app-icon {
    carves it to a point (the ::after MUST match the chassis #000 the feed sits on). */
 .nh-island .isl-msg {
   position: relative;
-  font-size: 14px;
-  line-height: 19px;
+  font-size: 16px; /* 12pt (Google Docs size) */
+  line-height: 22px;
   padding: 7px 13px;
   border-radius: 18px;
   max-width: 76%;
@@ -997,8 +997,8 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-msg.user {
   align-self: flex-end;
-  background: var(--isl-accent);
-  color: #fff;
+  background: #fff;
+  color: #000;
 }
 .nh-island .isl-msg.agent {
   align-self: flex-start;
@@ -1028,7 +1028,7 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-msg.user::before {
   right: -7px;
   width: 18px;
-  background: var(--isl-accent);
+  background: #fff;
   border-bottom-left-radius: 16px 14px;
 }
 .nh-island .isl-msg.user::after {
@@ -1058,9 +1058,9 @@ button.isl-app-chat:active .isl-app-icon {
   margin-top: 8px;
 }
 .nh-island .isl-md-msg :where(h1, h2, h3, h4, h5, h6) {
-  font-size: 15px;
+  font-size: 17px; /* keep headings just above the 16px (12pt) body */
   font-weight: 700;
-  line-height: 20px;
+  line-height: 22px;
   letter-spacing: 0;
 }
 .nh-island .isl-md-msg :where(ul, ol) {
@@ -1099,7 +1099,25 @@ button.isl-app-chat:active .isl-app-icon {
   text-underline-offset: 2px;
 }
 .nh-island .isl-msg.user a {
-  color: #fff;
+  color: var(--isl-accent);
+}
+/* the user bubble is white → flip its markdown chrome to dark-on-white so code / quotes / tables stay readable */
+.nh-island .isl-msg.user.isl-md-msg :not(pre) > code {
+  background: rgba(0, 0, 0, 0.08);
+}
+.nh-island .isl-msg.user.isl-md-msg pre {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+.nh-island .isl-msg.user.isl-md-msg blockquote {
+  border-left-color: rgba(0, 0, 0, 0.22);
+  color: rgba(0, 0, 0, 0.6);
+}
+.nh-island .isl-msg.user.isl-md-msg :where(th, td) {
+  border-color: rgba(0, 0, 0, 0.18);
+}
+.nh-island .isl-msg.user.isl-md-msg th {
+  background: rgba(0, 0, 0, 0.06);
 }
 .nh-island .isl-md-link.inert {
   color: currentColor;
@@ -1414,11 +1432,11 @@ button.isl-app-chat:active .isl-app-icon {
   width: 28px;
   height: 28px;
   flex: none;
-  align-self: flex-end;
+  align-self: center; /* vertically center in the bar (was flex-end, which biased it low on a single line) */
   border: 0;
   border-radius: 50%;
-  background: var(--isl-accent); /* Apple blue send circle */
-  color: #fff;
+  background: #fff; /* white send circle */
+  color: #000; /* dark arrow so it stays visible on white */
   font-size: 17px;
   line-height: 1;
   display: inline-flex;
