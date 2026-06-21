@@ -6,8 +6,9 @@ Port the lab's Kanban A (`lab/kanban/src/`) into the real island chat. When an a
 - Wf event pipe already exists, unused in V1 renderer: `workflow-bus.mjs` (per-runId buffer + replay-then-live `subscribe`), `workflow-host.mjs:runWorkflowHosted`, `index.ts:693` `os:wf-{subscribe,snapshot}` IPC + `os:wf-event` fan-out, `preload` `window.agentOS.wf.*` bridges.
 - `run_workflow` already takes `agent` (default `'0'`) → a run is tied to an agent at mint. No new agent tool.
 - Per-leaf capture ALREADY exists, opt-in via `BLITZ_CAPTURE_LEAVES=1` (`agent.mjs:282-322` `captureLeaf` → `<memDir>/leaves/<nodeId>.json` = `{prompt,result,summary,sessionId,...}`). Lab sets the flag; real app does NOT → dormant. Enabling = one env line.
-- "Asked"=`prompt`. "Returned"=`result` (typed). "Did" = the leaf's final assistant text — NOT `summary` (`_leafSummary` is a stringified parse), so add one field to `captureLeaf` (see runtime edit).
+- "Asked"=`prompt`. "Returned"=`result` (typed). "Did"=`summary` — verified: `_leafSummary` calls `harness.parse(stdout)` which returns the final assistant prose (claude `.result`, codex `agent_message`). So `summary` IS the "Did". No runtime edit needed.
 - Milestones already ride `os:action {type:'milestone'}` → NotchHost state → IslandPanel prop, hydrating via `osAgentsSnapshot`. Runs reuse this exact path — no new store module.
+- Transcript (`chat.md`) is PLAIN TEXT: `appendChatMessage` writes `### role · ts`+text; `readChatMessages` returns `{role,text,ts}` — NO `parts` persisted. `parts` on the type is runtime-only. Feed keys messages by `${i}:${ts}`; appends keep prior indices stable, so a board at index N stays at N. Verified.
 
 ## Decisions (locked)
 1. Placement: INLINE in the transcript as a new message-part, anchored at run start, updating in place, frozen on done.
@@ -18,8 +19,7 @@ Port the lab's Kanban A (`lab/kanban/src/`) into the real island chat. When an a
 6. Runs flow the milestone path: `osBroadcast({type:'workflow-run',...})` + hydrate in `osAgentsSnapshot`; NotchHost `onAction` adds a `workflow-run` branch (no new external store).
 
 ## File plan
-- `blitzscript/agent.mjs`: in `captureLeaf` add `did` = the leaf's final assistant text (extracted from `leafStdout`, best-effort). ~3 additive lines. Then "Did" reads straight from the leaf JSON — no rollout resolution.
-- `workflow-host.mjs`: in `runWorkflowHosted` run a best-effort `dry:true` preflight → `skeleton`; broadcast `{type:'workflow-run',agentId,runId,file,title,started:true,skeleton,memDir}` via `osBroadcast`; on `run:done` broadcast `{...done:true,ok}`.
+- `workflow-host.mjs`: add a `broadcast` seam to `wireWorkflowHost` deps (keeps the module Electron-free, like `spawnEnrichment`). In `runWorkflowHosted` run a best-effort `dry:true` preflight → `skeleton`; broadcast `{type:'workflow-run',agentId,runId,file,title,started:true,skeleton,memDir}`; on `run:done` broadcast `{...done:true,ok}`.
 - `index.ts`: set `process.env.BLITZ_CAPTURE_LEAVES='1'` at boot; add `ipcMain.handle('os:wf-leaf',...)` → read `<ws>/.blitzos/workflows/<runId>/leaves/<nodeId>.json` and return it. Extend `osAgentsSnapshot` to include `runs` per agent (open runs).
 - `osActions.ts`: add `osReadLeaf(runId,nodeId)`; expose a runs provider for the snapshot if cleaner than inline.
 - `preload/index.ts`: add `window.agentOS.wf.leaf(runId,nodeId)`; reuse `subscribe`/`snapshot`/`onWfEvent`.
@@ -34,7 +34,7 @@ Port the lab's Kanban A (`lab/kanban/src/`) into the real island chat. When an a
 ## Out of scope (V1)
 Model B; Run/Replay toolbar (live-only, past runs frozen in transcript); per-agent history view (stack-all is the history).
 
-## Open (resolve before coding)
-1. Transcript anchoring: confirm the message-part path in `IslandPanel`/`messageParts.ts`/`MarkdownMessage.tsx` can host a live-updating board at a stable ordinal without re-anchoring on every transcript push. No lab precedent; verify first.
+## Resolved: transcript anchoring (option 1)
+The board is NOT a persisted chat.md entry and NOT a `parts` field. It's a separate LIVE REGION interleaved into the feed render by NotchHost's `runs[agentId]` state (milestone-style). IslandPanel renders `<IslandKanban>` at the position of the run's start (nearest agent message after `startedAt`, or at the run's own timestamp), reconstructed at render time. Re-anchoring on re-hydrate is acceptable. No chat.md format change, no persistence-layer edit, no `parts` persistence. The board subscribes to the live wf bus by runId.
 
-Status: plan only, no code. Next: resolve open 1.
+Status: plan complete, all questions resolved. Next: implement.

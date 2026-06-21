@@ -15,7 +15,7 @@ import { ensureRun, subscribe, snapshot, isDone } from './workflow-bus.mjs'
 import * as bus from './workflow-bus.mjs'
 
 let _deps = null
-/** deps: { getWorkspacePath():string, spawnEnrichment?(info):void } */
+/** deps: { getWorkspacePath():string, spawnEnrichment?(info):void, broadcast?(action):void } */
 export function wireWorkflowHost(deps) { _deps = deps || null }
 
 let _runtimePromise = null
@@ -61,12 +61,40 @@ export async function runWorkflowHosted({ file, args, runId, surfaceId = null, v
     try { _deps.spawnEnrichment({ runId: id, surfaceId, file, view, agentId, memDir }) } catch { /* never block the run */ }
   }
 
+  // Announce the run to the island (the kanban board in chat subscribes to this). Best-effort: a missing
+  // broadcast seam (headless/test) just means no board — the run itself is unaffected.
+  const broadcast = _deps && typeof _deps.broadcast === 'function' ? _deps.broadcast : null
+  // DRY PREFLIGHT: the full structural skeleton (every leaf, label + phase), instant + no LLM. Per-run `dry`
+  // flag, so it never affects the real run. Best-effort + timeout — the live board still works without it
+  // (it just lacks TODO cards for not-yet-run phases). Mirrors the lab's vite.config preflight.
+  let skeleton = []
+  if (!dry && broadcast) {
+    let skelId = null
+    try {
+      skelId = mintRunId()
+      ensureRun(skelId)
+      const rt0 = await loadRuntime()
+      await Promise.race([
+        rt0.runWorkflow(file, { args, memDir: null, runId: skelId, dry: true }),
+        new Promise((r) => setTimeout(r, 8000))
+      ])
+      skeleton = snapshot(skelId).filter((e) => e.type !== 'run:done')
+    } catch { /* preflight is best-effort */ }
+    // Always drop the preflight's temp buffer so it never leaks (the skeleton was copied into `skeleton`).
+    if (skelId) { try { bus.clearRun(skelId) } catch { /* best-effort */ } }
+  }
+  try { broadcast({ type: 'workflow-run', agentId: String(agentId ?? '0'), runId: id, file, started: true, skeleton, memDir }) } catch { /* best-effort */ }
+
   // Run in the BACKGROUND. The global sink streams events to the bus -> the subscribed widget; the runtime
   // writes result.json on completion. We do NOT await it (a workflow can run for minutes).
   const rt = await loadRuntime()
   Promise.resolve()
     .then(() => rt.runWorkflow(file, { args, memDir, runId: id, dry }))
-    .catch((e) => { /* run:done(ok:false) was already emitted by runWorkflow; nothing else to do */ void e })
+    .then(() => { try { broadcast && broadcast({ type: 'workflow-run', agentId: String(agentId ?? '0'), runId: id, done: true, ok: true }) } catch { /* best-effort */ } })
+    .catch((e) => {
+      void e
+      try { broadcast && broadcast({ type: 'workflow-run', agentId: String(agentId ?? '0'), runId: id, done: true, ok: false }) } catch { /* best-effort */ }
+    })
 
   return { ok: true, runId: id, surfaceId, memDir }
 }

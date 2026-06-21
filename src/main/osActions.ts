@@ -362,6 +362,9 @@ export function osBroadcast(action: Record<string, unknown>): void {
       if (action.id != null) wsHost?.setChatStatus(String(action.id), 'stopped')
     } else if (action?.type === 'terminal-exit') {
       if (action.id != null) wsHost?.setChatStatus(String(action.id), Number(action.exitCode) ? 'error' : 'stopped')
+    } else if (action?.type === 'workflow-run') {
+      // record + re-broadcast to the island (started/done) for the in-chat kanban
+      osNoteWfRun(action)
     }
   } catch {
     /* status sync is best-effort; the terminal event itself must still publish */
@@ -606,6 +609,62 @@ export function setMilestonesProvider(fn: ((id: string) => IslandMilestone[]) | 
   milestonesProvider = fn
 }
 
+// The island's live workflow-run registry, mirroring the milestone provider but maintained IN-PROCESS
+// (a run isn't a workspace artifact). workflow-host broadcasts {type:'workflow-run',...} → osBroadcast →
+// here: we record started/done + skeleton per (agentId, runId). The snapshot + the live broadcast feed the
+// island's kanban boards. Capped; a run is dropped from the registry once it's done AND consumed (the board
+// keeps its own frozen state; the registry only needs to re-hydrate open runs on island reopen). Keep done
+// runs for a short window so a late reopen still sees them frozen.
+export type IslandWfRun = { runId: string; agentId: string; file: string; startedAt: number; done: boolean; ok: boolean; skeleton: unknown[]; memDir: string | null }
+const _wfRuns = new Map<string, IslandWfRun>() // runId -> run
+const _wfRunsByAgent = new Map<string, string[]>() // agentId -> runIds (most-recent-last)
+const WF_RUN_KEEP_DONE_MS = 30_000
+let _wfRunsProvider: ((id: string) => IslandWfRun[]) | null = null
+/** Record a workflow-run broadcast (started or done). Called from osBroadcast. */
+export function osNoteWfRun(action: Record<string, unknown>): void {
+  const runId = String(action.runId || '')
+  if (!runId) return
+  const agentId = String(action.agentId ?? '0')
+  if (action.started) {
+    const run: IslandWfRun = {
+      runId,
+      agentId,
+      file: String(action.file || ''),
+      startedAt: Date.now(),
+      done: false,
+      ok: false,
+      skeleton: Array.isArray(action.skeleton) ? action.skeleton as unknown[] : [],
+      memDir: action.memDir == null ? null : String(action.memDir)
+    }
+    _wfRuns.set(runId, run)
+    const list = _wfRunsByAgent.get(agentId) || []
+    if (!list.includes(runId)) list.push(runId)
+    _wfRunsByAgent.set(agentId, list)
+  } else if (action.done) {
+    const run = _wfRuns.get(runId)
+    if (run) { run.done = true; run.ok = !!action.ok }
+    // schedule cleanup of a done run after the keep window (the board keeps its own state)
+    setTimeout(() => {
+      _wfRuns.delete(runId)
+      const list = _wfRunsByAgent.get(agentId)
+      if (list) {
+        const i = list.indexOf(runId)
+        if (i >= 0) list.splice(i, 1)
+        if (!list.length) _wfRunsByAgent.delete(agentId)
+      }
+    }, WF_RUN_KEEP_DONE_MS)
+  }
+}
+/** Set an external runs provider (reserved; defaults to the in-process registry above). */
+export function setWfRunsProvider(fn: ((id: string) => IslandWfRun[]) | null): void {
+  _wfRunsProvider = fn
+}
+function wfRunsForAgent(id: string): IslandWfRun[] {
+  if (_wfRunsProvider) return _wfRunsProvider(id)
+  const list = _wfRunsByAgent.get(String(id || '0')) || []
+  return list.map((rid) => _wfRuns.get(rid)).filter((r): r is IslandWfRun => !!r)
+}
+
 /** Resolve an agent's canonical Claude session id (for locating its transcript jsonl). It lives in the
  *  terminal-manager's per-agent meta (`<ws>/.blitzos/terminals/<id>/meta.json`), the SAME file it owns. */
 export function osAgentClaudeSid(id: string): string | null {
@@ -628,8 +687,9 @@ export function osAgentsSnapshot(): {
   threads: Record<string, Array<Record<string, unknown>>>
   status: Record<string, string>
   milestones: Record<string, IslandMilestone[]>
+  runs: Record<string, IslandWfRun[]>
 } {
-  const empty = { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {} }
+  const empty = { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {}, runs: {} }
   if (!wsHost) return empty
   try {
     const p = wsHost.chatHubProps() as {
@@ -649,7 +709,16 @@ export function osAgentsSnapshot(): {
         }
       }
     }
-    return { sessions, archivedSessions: p.archivedSessions || [], threads: p.threads || {}, status: p.status || {}, milestones }
+    const runs: Record<string, IslandWfRun[]> = {}
+    for (const s of sessions) {
+      try {
+        const r = wfRunsForAgent(String(s.id))
+        if (r.length) runs[String(s.id)] = r
+      } catch {
+        /* per-agent best-effort */
+      }
+    }
+    return { sessions, archivedSessions: p.archivedSessions || [], threads: p.threads || {}, status: p.status || {}, milestones, runs }
   } catch {
     return empty
   }
@@ -865,6 +934,20 @@ export function osSurfaceIdForWebContents(wc: { id: number } | null | undefined)
 /** Absolute path of the active workspace folder (where a guest download lands), or null before init. */
 export function osActiveWorkspaceDir(): string | null {
   return wsHost ? wsHost.activePath() : null
+}
+/** Read one terminal leaf's captured record (Asked/Did/Returned) for the island kanban drill-in drawer.
+ *  Returns { leaf } or null when capture is off / the leaf hasn't finished / the file is missing. */
+export function osReadLeaf(runId: string, nodeId: string): { leaf: Record<string, unknown> } | null {
+  const root = osActiveWorkspaceDir()
+  if (!root || !runId || nodeId == null) return null
+  const f = join(root, '.blitzos', 'workflows', String(runId), 'leaves', String(nodeId) + '.json')
+  try {
+    const leaf = JSON.parse(readFileSync(f, 'utf8'))
+    if (leaf && typeof leaf === 'object') return { leaf: leaf as Record<string, unknown> }
+    return null
+  } catch {
+    return null
+  }
 }
 export function osGetState(): OsState {
   // Thread the active workspace identity + absolute folder PATH into every state read, so the agent always

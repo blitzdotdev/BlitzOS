@@ -3,7 +3,7 @@ import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf } from './osActions'
 import { emitSystemMoment, setMomentTap } from './events'
 import { openBootJournal, chatFileName } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -60,6 +60,10 @@ process.stderr.on('error', () => {})
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
 process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getAppPath(), 'widgets')
+// Per-leaf capture for the island kanban drill-in drawer: writes <memDir>/leaves/<nodeId>.json
+// (prompt + result + summary + sessionId) for every terminal leaf. Best-effort + guarded + cheap
+// (agent.mjs:captureLeaf). On by default so the drawer works for every run; unset to disable.
+process.env.BLITZ_CAPTURE_LEAVES = process.env.BLITZ_CAPTURE_LEAVES || '1'
 
 // ONE BlitzOS per machine: a second launch focuses the first instead of fighting it for the browser
 // partition + the workspace watchers (observed live: partition LOCK errors, two hosts persisting over
@@ -686,7 +690,9 @@ app.whenReady().then(() => {
   wireEnrichment({ repoRoot: process.cwd(), claudeCmd: process.env.BLITZ_CLAUDE_CMD || 'claude', getWorkspacePath: () => osWorkspaceContext().workspace_path || null })
   wireWorkflowHost({
     getWorkspacePath: () => osWorkspaceContext().workspace_path || null,
-    spawnEnrichment: (info) => { try { spawnWorkflowEnrichment(info) } catch { /* enrichment is best-effort; the generic widget stands */ } }
+    spawnEnrichment: (info) => { try { spawnWorkflowEnrichment(info) } catch { /* enrichment is best-effort; the generic widget stands */ } },
+    // The island's kanban board in chat rides these broadcasts (started/done), exactly like {type:'milestone'}.
+    broadcast: (action) => { try { osBroadcast(action) } catch { /* best-effort */ } }
   })
 
   // The widget-bridge subscribe path: a srcdoc widget calls blitz.workflow.subscribe(runId) -> SurfaceFrame
@@ -711,6 +717,12 @@ app.whenReady().then(() => {
       if (off) { try { off() } catch { /* ignore */ }; wfSubs.delete(key) }
     })
     ipcMain.handle('os:wf-snapshot', (_e, runId: string) => wfSnapshot(String(runId || '')))
+    // The island kanban drill-in drawer: read a terminal leaf's captured record (Asked/Did/Returned).
+    // Lazy on-click; returns { leaf } or { ok:false } when capture is off / the leaf hasn't finished.
+    ipcMain.handle('os:wf-leaf', (_e, runId: string, nodeId: string) => {
+      const r = osReadLeaf(String(runId || ''), String(nodeId || ''))
+      return r && r.leaf ? { ok: true, leaf: r.leaf } : { ok: false }
+    })
   }
 
   // The Notch (dynamic island) — THE MERGE: the real BlitzOS UI window IS the notch. The renderer clips

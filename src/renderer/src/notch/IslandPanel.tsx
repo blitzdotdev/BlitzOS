@@ -6,6 +6,7 @@
 // Every composer has an attach "+" that toggles the AttachPanel inline (the island grows). The BLACK chassis +
 // the original NotchShape are owned by NotchHost and are INVARIANT; this paints ONLY the interior.
 import './island.css'
+import './wf.css'
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
@@ -13,6 +14,8 @@ import { AttachTray, type TrayGroup } from './attachTray'
 import { useSentTray, recordSentTray, getLiveTray } from './sentTrayStore'
 import { IslandTerminalPane } from './IslandTerminalPane'
 import MarkdownMessage from './MarkdownMessage'
+import IslandKanban from './IslandKanban'
+import IslandLeafDrawer from './IslandLeafDrawer'
 import { matchingChoiceAnswer } from './messageParts'
 import type { IslandPanelProps } from './types'
 
@@ -61,6 +64,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     onSelectPage,
     messages,
     milestones,
+    runs,
     status,
     activeId,
     peek,
@@ -450,7 +454,23 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
             )}
           </div>
           <div className="isl-feed" ref={feedRef}>
-            {messages.length === 0 ? (
+            {runs.length > 0 && (
+              // Live workflow runs render as inline kanban boards at the TOP of the feed (stack-all, start order).
+              // A run freezes on done but stays in the transcript as a record of what happened.
+              <div className="isl-wf-runs">
+                {runs.map((r) => (
+                  <div className={`isl-wf-board${r.done ? ' isl-wf-done' : ''}`} key={r.runId}>
+                    <div className="isl-wf-board-head">
+                      <span className="isl-wf-dot" aria-hidden />
+                      <span>{r.done ? (r.ok ? 'workflow done' : 'workflow failed') : 'workflow running'}</span>
+                      {r.file ? <span className="isl-wf-file">{r.file.replace(/^.*\//, '')}</span> : null}
+                    </div>
+                    <IslandKanban runId={r.runId} skeleton={r.skeleton} />
+                  </div>
+                ))}
+              </div>
+            )}
+            {messages.length === 0 && runs.length === 0 ? (
               <div className="isl-empty">No messages yet</div>
             ) : (
               messages.map((m, i) => {

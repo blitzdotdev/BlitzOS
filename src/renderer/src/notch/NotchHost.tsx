@@ -13,7 +13,7 @@ import { clearStaged } from './stagingStore'
 import IslandPanel from './IslandPanel'
 import IslandHome from './IslandHome'
 import IslandSettings from './IslandSettings'
-import type { IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta } from './types'
+import type { IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta, IslandWfRun } from './types'
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
@@ -73,6 +73,7 @@ function readDebugActiveTerminal(): boolean {
 }
 const cleanAgentName = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, AGENT_NAME_MAX)
 type MilestoneAction = { type: 'milestone'; agentId?: string; id?: unknown; ts?: unknown; kind?: string; text?: unknown }
+type WfRunAction = { type: 'workflow-run'; runId?: unknown; agentId?: unknown; file?: unknown; started?: unknown; done?: unknown; ok?: unknown; skeleton?: unknown[]; memDir?: unknown }
 // Strip the legacy "Attached before you started …" brief that older builds appended to the user's message text
 // (it persisted in chat.md). New sends never inject it; this keeps already-persisted messages clean at display.
 const stripAttachBrief = (text: string): string => text.replace(/\n+Attached before you started \(drive these with[\s\S]*$/, '').trim()
@@ -117,6 +118,7 @@ export function NotchHost({
   const [threads, setThreads] = useState<Record<string, IslandMessage[]>>({})
   const [status, setStatus] = useState<Record<string, string>>({})
   const [milestones, setMilestones] = useState<Record<string, IslandMilestone[]>>({})
+  const [runs, setRuns] = useState<Record<string, IslandWfRun[]>>({}) // per-agent live workflow runs (inline kanban)
   const [terminals, setTerminals] = useState<Record<string, IslandTerminalMeta>>({})
   const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
@@ -181,12 +183,13 @@ export function NotchHost({
         setThreads(mapThreads(snap.threads))
         setStatus(snap.status || {})
         setMilestones((snap.milestones || {}) as Record<string, IslandMilestone[]>)
+        setRuns((snap.runs || {}) as Record<string, IslandWfRun[]>)
       })
       .catch(() => {
         /* no host yet */
       })
     const off = window.agentOS?.onAction?.((a: unknown) => {
-      const act = a as ChatAction | MilestoneAction
+      const act = a as ChatAction | MilestoneAction | WfRunAction
       if (!act) return
       if (act.type === 'chat') {
         if (Array.isArray(act.sessions)) applySessions(act.sessions.map(mapSession))
@@ -207,6 +210,32 @@ export function NotchHost({
           const list = prev[aid] || []
           if (list.some((x) => x.id === m.id)) return prev
           return { ...prev, [aid]: [...list, m].slice(-60) }
+        })
+      } else if (act.type === 'workflow-run') {
+        // The island's inline kanban board: a run started or finished for an agent.
+        const runId = String((act as WfRunAction).runId || '')
+        const aid = String((act as WfRunAction).agentId ?? '0')
+        if (!runId) return
+        setRuns((prev) => {
+          const list = prev[aid] || []
+          if ((act as WfRunAction).started) {
+            const run: IslandWfRun = {
+              runId,
+              agentId: aid,
+              file: String((act as WfRunAction).file || ''),
+              startedAt: Date.now(),
+              done: false,
+              ok: false,
+              skeleton: Array.isArray((act as WfRunAction).skeleton) ? (act as WfRunAction).skeleton as unknown[] : [],
+              memDir: (act as WfRunAction).memDir == null ? null : String((act as WfRunAction).memDir)
+            }
+            if (list.some((r) => r.runId === runId)) return prev
+            return { ...prev, [aid]: [...list, run] }
+          }
+          if ((act as WfRunAction).done) {
+            return { ...prev, [aid]: list.map((r) => (r.runId === runId ? { ...r, done: true, ok: !!(act as WfRunAction).ok } : r)) }
+          }
+          return prev
         })
       }
     })
@@ -347,6 +376,7 @@ export function NotchHost({
   activeIdRef.current = activeId ?? '' // '' = the new-session composer; sources dropped there are reassigned on spawn
   const messages = activeId ? threads[activeId] || [] : []
   const activeMilestones = activeId ? milestones[activeId] || [] : []
+  const activeRuns = activeId ? runs[activeId] || [] : []
   const activeStatus = activeId ? status[activeId] || activeSession?.status || 'idle' : 'idle'
 
   const goPage = (next: number): void => setPage(clamp(next, 0, N))
@@ -577,6 +607,7 @@ export function NotchHost({
             onSelectPage={goPage}
             messages={messages}
             milestones={activeMilestones}
+            runs={activeRuns}
             status={activeStatus}
             activeId={activeId}
             peek={peek}
