@@ -74,6 +74,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   const [installNote, setInstallNote] = useState<string | null>(null)
   // Live feedback from the macOS window picker (NotchHost arms it while this panel is open).
   const [dragOver, setDragOver] = useState(false)
+  const [pickerNotice, setPickerNotice] = useState<string | null>(null)
   // Live feedback for an INTERNAL drag: a connectors-list row (or child tab) being dragged onto the drop zone.
   const [listDragOver, setListDragOver] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
@@ -151,8 +152,14 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     const off = window.agentOS?.pick?.onEvent?.((m) => {
       if (m.kind === 'pick_over') setDragOver(!!m.inside)
       else if (m.kind === 'pick_cancel') setDragOver(false)
+      else if (m.kind === 'pick_hover') setPickerNotice(null)
+      else if (m.kind === 'picker_unavailable') {
+        setDragOver(false)
+        setPickerNotice(String(m.message || 'Window drag is unavailable. Use the list on the right.'))
+      }
       else if (m.kind === 'connected') {
         setDragOver(false)
+        setPickerNotice(null)
         if (!m.ok) {
           // Prefer the specific reason from main (e.g. "Chrome connector not connected") over a generic label.
           setNotice({ ok: false, text: String(m.error || `Couldn't add ${String(m.app || 'window')}`) })
@@ -351,7 +358,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
       <div className="att-boxes">
         {/* LEFT: the attached tray (canonical, from `connections`) — also still the live macOS-window drop zone. */}
         <div
-          className={`att-drop${dragOver || listDragOver ? ' dragover' : ''}${hasAttached ? ' has-added' : ''}${notice && !notice.ok ? ' failed' : ''}`}
+          className={`att-drop${dragOver || listDragOver ? ' dragover' : ''}${pickerNotice ? ' unavailable' : ''}${hasAttached ? ' has-added' : ''}${notice && !notice.ok ? ' failed' : ''}`}
           role="button"
           tabIndex={0}
           aria-label="Drag a macOS window here"
@@ -360,8 +367,8 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
           onDrop={onBoxDrop}
         >
           {!hasAttached ? (
-            <div className="att-drop-hint" data-notice={notice && !notice.ok ? 'err' : undefined}>
-              <span>{notice && !notice.ok ? notice.text : dragOver || listDragOver ? 'Release to add' : 'Drag a macOS window here'}</span>
+            <div className="att-drop-hint" data-notice={notice && !notice.ok ? 'err' : pickerNotice ? 'info' : undefined}>
+              <span>{notice && !notice.ok ? notice.text : pickerNotice || (dragOver || listDragOver ? 'Release to add' : 'Drag a macOS window here')}</span>
             </div>
           ) : (
             <AttachTray groups={trayGroups} onRemoveConn={removeConn} onRemoveGroup={removeGroup} />
