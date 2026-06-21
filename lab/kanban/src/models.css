@@ -25,6 +25,11 @@
     radial-gradient(var(--kb-dot) 1.2px, transparent 1.2px);
   background-size: 100% 100%, 20px 20px;
   background-position: 0 0, -1px -1px;
+  scrollbar-width: none; /* hide the vertical scrollbar (Firefox) — the board still scrolls */
+  -ms-overflow-style: none; /* hide it (old Edge/IE) */
+}
+.kb::-webkit-scrollbar {
+  display: none; /* hide it (Chromium / WebKit) */
 }
 .kb-empty {
   color: var(--kb-dim);
@@ -35,7 +40,10 @@
    per-cell borders for crisp separators. */
 .kb-grid {
   display: grid;
-  grid-template-columns: 96px 1fr 1fr 1.25fr;
+  /* phase label | To do | Doing | Done. The actual widths are set DYNAMICALLY by ModelA (inline style) from each
+     column's occupancy — empty columns shrink and hand their space to the busy ones, Done takes the most. This is
+     the static fallback. minmax(0,…fr) keeps it fluid so the board always fits the island (no horizontal scroll). */
+  grid-template-columns: 92px minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(0, 1.6fr);
   align-items: stretch;
 }
 /* header row */
@@ -54,6 +62,7 @@
   align-items: center;
   justify-content: center;
   text-align: center;
+  white-space: nowrap; /* the header label NEVER wraps ("TO DO" stays one line) */
 }
 .kb-h-todo {
   color: var(--kb-yellow);
@@ -94,6 +103,7 @@
   border-bottom: 1px solid var(--kb-line);
   border-left: 1px solid var(--kb-line);
   min-height: 52px;
+  min-width: 0; /* let the grid track honor its fr/fixed size instead of growing to card content */
 }
 /* a leaf card */
 .kc {
@@ -109,10 +119,11 @@
   gap: 3px;
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  min-width: 0; /* never force the column wider than its track (label ellipsis + output wrap handle overflow) */
 }
 .kc-label-row {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start; /* top-align the model badge next to a wrapped, multi-line title */
   gap: 6px;
   min-width: 0;
 }
@@ -120,9 +131,7 @@
   font-size: 12px;
   font-weight: 600;
   line-height: 1.25;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere; /* wrap a long title onto multiple lines so it is ALWAYS fully visible (no ellipsis cutoff) */
   flex: 1;
   min-width: 0;
 }
@@ -148,10 +157,14 @@
 }
 .kc-foot {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap; /* a stat wraps to a new line instead of spilling out of a narrow card */
+  gap: 1px 8px;
   font-size: 10px;
   color: var(--kb-dim);
   font-variant-numeric: tabular-nums;
+}
+.kc-foot span {
+  white-space: nowrap; /* keep "437.1k tok" together as one unit when it wraps */
 }
 /* To do — yellow-tinted dashed plan card */
 .kc-todo {
@@ -452,65 +465,56 @@
   color: var(--isl-dim);
   margin-bottom: 6px;
 }
+/* ONE card per section (Asked / Did / Returned): a single bordered container; content sits flush inside it. */
+.dr-card {
+  border: 1px solid var(--isl-faint);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 10px 12px;
+}
 .dr-prompt {
   margin: 0;
   white-space: pre-wrap;
   font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--isl-muted);
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--isl-faint);
-  border-radius: 9px;
-  padding: 9px 11px;
   max-height: 220px;
-  overflow: auto;
+  overflow: auto; /* borderless — the .dr-card provides the single frame */
 }
 .dr-empty {
   font-size: 12px;
   color: var(--isl-dim);
   font-style: italic;
 }
-.dr-timeline {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.dr-step {
-  font-size: 12px;
-  line-height: 1.45;
-  border-radius: 8px;
-  padding: 7px 9px;
-}
-.dr-text {
-  background: rgba(255, 255, 255, 0.03);
+/* the agent's final message ("Did"), rendered as light markdown (bold / inline code / headings / paragraphs) */
+.md {
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--isl-text);
-  white-space: pre-wrap;
 }
-.dr-tool {
-  display: flex;
-  gap: 7px;
-  align-items: baseline;
-  background: rgba(10, 132, 255, 0.08);
-  border: 1px solid rgba(10, 132, 255, 0.18);
-}
-.dr-tool-name {
+.md-h {
   font-weight: 700;
-  color: #6db3ff;
-  flex: none;
+  color: var(--isl-text);
+  margin: 10px 0 4px;
 }
-.dr-tool-in {
-  font: 11px ui-monospace, Menlo, monospace;
-  color: var(--isl-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.md-h:first-child {
+  margin-top: 0;
 }
-.dr-result {
-  background: rgba(48, 209, 88, 0.06);
-  border: 1px solid rgba(48, 209, 88, 0.16);
-  color: var(--isl-muted);
-  white-space: pre-wrap;
-  max-height: 180px;
-  overflow: auto;
+.md-p {
+  margin: 0 0 8px;
+}
+.md-p:last-child {
+  margin-bottom: 0;
+}
+.md strong {
+  font-weight: 700;
+  color: #fff;
+}
+.md-code {
+  font: 11.5px ui-monospace, Menlo, monospace;
+  color: #9fd0ff;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  padding: 0 4px;
 }
 
 /* ───────────── human output rendering (shared) ───────────── */
@@ -520,36 +524,29 @@
   color: var(--isl-text);
   white-space: pre-wrap;
 }
-.out-list {
+/* pretty + syntax-highlighted JSON (the "Returned" section) — Material-palenight-ish on the dark island */
+.json-view {
   margin: 0;
-  padding-left: 18px;
-  font-size: 12.5px;
-  line-height: 1.5;
+  font: 11.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #c0c8d2;
+  white-space: pre;
+  overflow: auto;
+  max-height: 320px;
+  -webkit-overflow-scrolling: touch;
+  tab-size: 2;
 }
-.out-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.out-field {
-  display: flex;
-  gap: 10px;
-  font-size: 12.5px;
-  border-bottom: 1px solid var(--isl-faint);
-  padding-bottom: 5px;
-}
-.out-k {
-  flex: none;
-  min-width: 96px;
-  font-weight: 650;
-  color: var(--isl-muted);
-}
-.out-v {
-  color: var(--isl-text);
-  overflow-wrap: anywhere;
-}
-.out-field code,
-.out-list code {
-  font: 11.5px ui-monospace, Menlo, monospace;
-  color: #9fd0ff;
-}
+.json-view .jk {
+  color: #82aaff;
+} /* keys */
+.json-view .js {
+  color: #c3e88d;
+} /* strings */
+.json-view .jn {
+  color: #f78c6c;
+} /* numbers */
+.json-view .jb {
+  color: #c792ea;
+} /* true / false / null */
+.json-view .jpunc {
+  color: #7a8595;
+} /* braces, brackets, commas, colons */

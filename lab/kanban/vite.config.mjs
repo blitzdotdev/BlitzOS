@@ -95,11 +95,12 @@ const shortInput = (input) => {
 function parseRollout(file, max = 240) {
   const steps = []
   let ask = ''
+  let final = '' // the agent's LAST assistant text turn (its final message) — what "Did" shows
   let lines = []
   try {
     lines = readFileSync(file, 'utf8').split('\n').filter(Boolean)
   } catch {
-    return { steps, ask }
+    return { steps, ask, final }
   }
   for (const line of lines) {
     let e
@@ -111,24 +112,27 @@ function parseRollout(file, max = 240) {
     const msg = e.message || e
     const role = e.type || msg.role
     const content = msg && msg.content
+    // `steps` is capped at `max`, but `final` (the agent's LAST assistant text) keeps updating across the WHOLE
+    // file — it drives the "Did" view, so it must never be truncated by the step cap.
     if (role === 'user') {
       if (typeof content === 'string') {
         if (!ask) ask = content
       } else if (Array.isArray(content)) {
         for (const b of content) {
           if (b.type === 'text' && !ask) ask = b.text
-          else if (b.type === 'tool_result') steps.push({ kind: 'result', text: blockText(b.content).slice(0, 1400) })
+          else if (b.type === 'tool_result' && steps.length < max) steps.push({ kind: 'result', text: blockText(b.content).slice(0, 1400) })
         }
       }
     } else if (role === 'assistant' && Array.isArray(content)) {
       for (const b of content) {
-        if (b.type === 'text' && b.text && b.text.trim()) steps.push({ kind: 'text', text: b.text })
-        else if (b.type === 'tool_use') steps.push({ kind: 'tool', name: b.name, input: shortInput(b.input) })
+        if (b.type === 'text' && b.text && b.text.trim()) {
+          if (steps.length < max) steps.push({ kind: 'text', text: b.text })
+          final = b.text // ALWAYS update — the final message survives the step cap
+        } else if (b.type === 'tool_use' && steps.length < max) steps.push({ kind: 'tool', name: b.name, input: shortInput(b.input) })
       }
     }
-    if (steps.length >= max) break
   }
-  return { steps, ask }
+  return { steps, ask, final }
 }
 
 function apiPlugin() {
@@ -227,9 +231,9 @@ function apiPlugin() {
             const rec = readLeaf(u.searchParams.get('runId'), u.searchParams.get('nodeId'))
             if (!rec) return json(res, 404, { error: 'no leaf record' })
             const file = findRollout(rec.sessionId)
-            if (!file) return json(res, 200, { ask: rec.prompt || '', steps: [], note: 'no rollout file for this session id' })
+            if (!file) return json(res, 200, { ask: rec.prompt || '', steps: [], final: rec.summary || '', note: 'no rollout file for this session id' })
             const parsed = parseRollout(file)
-            return json(res, 200, { ask: parsed.ask || rec.prompt || '', steps: parsed.steps, sessionId: rec.sessionId })
+            return json(res, 200, { ask: parsed.ask || rec.prompt || '', steps: parsed.steps, final: parsed.final || rec.summary || '', sessionId: rec.sessionId })
           }
           return json(res, 404, { error: 'no route' })
         } catch (e) {

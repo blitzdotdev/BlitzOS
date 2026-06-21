@@ -4,7 +4,7 @@
 // open the relevant leaf's session (the data that flows across an edge IS its source leaf's output).
 import React, { useMemo } from 'react'
 import { buildGraph } from './graph.js'
-import { useLeaf, summarize } from './shared.jsx'
+import { useLeaf, summarize, cardHead, isFixture } from './shared.jsx'
 
 const COLW = 196
 const ROWH = 58
@@ -14,7 +14,8 @@ const NH = 44
 function LeafNode({ n, runId, onOpen }) {
   const done = n.status === 'done' || n.status === 'error' || n.status === 'empty'
   const leaf = useLeaf(runId, n.nodeId, done)
-  const head = done ? summarize(leaf ? leaf.result : n.preview, n.preview) : n.status === 'queued' ? 'queued' : 'running…'
+  // Human one-liner (same as the kanban Done card): concise structured summary, prose fallback; (fixtures only) preview.
+  const head = done ? (leaf ? cardHead(leaf) : isFixture(runId) ? summarize(n.preview, n.preview) : '…') : n.status === 'queued' ? 'queued' : 'running…'
   return (
     <button className={`gn gn-leaf gn-${n.status}`} style={{ width: NW, height: NH }} onClick={() => onOpen(n.nodeId)} title="click for this leaf's session">
       <span className={`gn-ring gn-ring-${n.status}`} />

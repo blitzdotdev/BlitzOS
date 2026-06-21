@@ -1,20 +1,7 @@
 // The drill-in drawer, shared by both models. Click a leaf → see its REAL session: Asked (the input prompt),
-// Did (the leaf's claude rollout: text turns + tool calls + results), Returned (the typed output, human-readable).
-import React from 'react'
-import { useLeaf, useLeafSession, Output, fmtMs, fmtTok } from './shared.jsx'
-
-function Step({ s }) {
-  if (s.kind === 'text') return <div className="dr-step dr-text">{s.text}</div>
-  if (s.kind === 'tool')
-    return (
-      <div className="dr-step dr-tool">
-        <span className="dr-tool-name">{s.name}</span>
-        <code className="dr-tool-in">{s.input}</code>
-      </div>
-    )
-  if (s.kind === 'result') return <div className="dr-step dr-result">{s.text}</div>
-  return null
-}
+// Did (the agent's FINAL message — its own one-take account of what it did), Returned (the typed output, as
+// pretty syntax-highlighted JSON).
+import { useLeaf, useLeafSession, Output, Markdown, fmtMs, fmtTok } from './shared.jsx'
 
 export default function LeafDrawer({ runId, node, onClose }) {
   const terminal = node && node.status !== 'running'
@@ -43,44 +30,42 @@ export default function LeafDrawer({ runId, node, onClose }) {
         </div>
 
         <div className="dr-body">
-          <div className="dr-sec">
+          <section className="dr-sec">
             <div className="dr-sec-h">Asked</div>
-            {ask ? <pre className="dr-prompt">{ask}</pre> : <div className="dr-empty">{isFixture ? 'synthetic sample — no captured prompt' : 'no prompt captured'}</div>}
-          </div>
+            <div className="dr-card">
+              {ask ? <pre className="dr-prompt">{ask}</pre> : <div className="dr-empty">{isFixture ? 'synthetic sample — no captured prompt' : 'no prompt captured'}</div>}
+            </div>
+          </section>
 
-          <div className="dr-sec">
-            <div className="dr-sec-h">Did{sess && sess.steps ? ` · ${sess.steps.length} steps` : ''}</div>
-            {isFixture ? (
-              <div className="dr-empty">synthetic sample — run a real script to see the session</div>
-            ) : loading ? (
-              <div className="dr-empty">loading session…</div>
-            ) : sess && sess.steps && sess.steps.length ? (
-              <div className="dr-timeline">
-                {sess.steps.map((s, i) => (
-                  <Step s={s} key={i} />
-                ))}
-              </div>
-            ) : (
-              <div className="dr-empty">{sess && sess.note ? sess.note : 'no tool steps (a single-turn answer)'}</div>
-            )}
-          </div>
+          <section className="dr-sec">
+            <div className="dr-sec-h">Did</div>
+            <div className="dr-card">
+              {isFixture ? (
+                <div className="dr-empty">synthetic sample — run a real script to see the session</div>
+              ) : loading ? (
+                <div className="dr-empty">loading session…</div>
+              ) : sess && sess.final ? (
+                <Markdown text={sess.final} />
+              ) : (
+                <div className="dr-empty">{sess && sess.note ? sess.note : 'no final message captured'}</div>
+              )}
+            </div>
+          </section>
 
-          <div className="dr-sec">
+          <section className="dr-sec">
             <div className="dr-sec-h">Returned</div>
-            {node.status === 'running' ? (
-              <div className="dr-empty">still running…</div>
-            ) : result !== undefined ? (
-              <div className="dr-returned">
+            <div className="dr-card">
+              {node.status === 'running' ? (
+                <div className="dr-empty">still running…</div>
+              ) : result !== undefined ? (
                 <Output result={result} fallback={node.preview} />
-              </div>
-            ) : node.preview ? (
-              <div className="dr-returned">
+              ) : node.preview && isFixture ? (
                 <Output result={node.preview} fallback="" />
-              </div>
-            ) : (
-              <div className="dr-empty">no output</div>
-            )}
-          </div>
+              ) : (
+                <div className="dr-empty">no output</div>
+              )}
+            </div>
+          </section>
         </div>
       </div>
     </div>

@@ -130,7 +130,8 @@
 }
 .isl-board-bubble > .kb {
   max-height: 440px;
-  overflow: auto;
+  overflow-x: hidden; /* fluid columns already fit the island; clip any rounding spill so there is NO horizontal scroll */
+  overflow-y: auto;
 }
 .isl-board-cap {
   font-size: 10.5px;
