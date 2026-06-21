@@ -114,6 +114,9 @@ button {
   pointer-events: none;
   display: grid;
   place-items: center;
+  /* TOP-EDGE BLEED (same rationale as .nh-chassis): 4px of black above the flush top edge, clipped off by the
+     physical screen edge in the normal case, filling any 1px sub-pixel gap at the very top during a transition. */
+  box-shadow: 0 -4px 0 0 #000;
 }
 /* The COLLAPSED compact presentation (2026 Dynamic-Island behavior): the closed notch is a LIVE glance of agent
    activity, not static decoration. One status dot whose color + motion track the aggregate roster state, plus a
