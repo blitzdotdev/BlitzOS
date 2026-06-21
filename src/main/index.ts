@@ -59,6 +59,63 @@ import { notchOverlayWindowOptions, applyNotchOverlay, setNotchInteractive, read
 process.stdout.on('error', () => {})
 process.stderr.on('error', () => {})
 
+// "Open in Terminal": hand a LIVE terminal off to a real terminal window (macOS Terminal.app) so TUIs
+// (claude/codex, full-screen curses) render correctly — the embedded DEBUG pane strips ANSI and garbles them.
+// A terminal is a real tmux window, so this is just `tmux attach` in a Terminal window. Every decision below
+// was verified against the live tmux 3.5a server:
+//   • Target the window by its tmux window-id (@N), NEVER session:name — blitz ids are numeric and a numeric
+//     tmux target is read as a window INDEX, so `blitz:0` hits __blitzroot__, not the agent window named '0'.
+//   • Attach through a per-id GROUPED session (view-<id>) that shares blitz's windows but keeps its OWN
+//     current-window, so opening one (or several) watchers never moves BlitzOS's control client or a manual
+//     `tmux attach -t blitz` the user has open.
+//   • Interactive + mouse on (view session ONLY): the wheel scrolls. tmux read-only (-r) disables copy-mode
+//     and scrolling outright — "only keys bound to detach-client/switch-client have any effect" (man tmux) —
+//     so a read-only watch literally cannot scroll. `mouse on` is set on the view session, not blitz, so the
+//     agent's session is untouched. Tradeoff: keystrokes now reach the agent's session, so this is a
+//     watch-and-optionally-step-in view.
+//   • LAUNCH via Terminal.app's `do script` (AppleScript), NOT by exec'ing a terminal binary directly.
+//     Exec'ing the Ghostty binary forwards to the user's already-running Ghostty instance and could tear down
+//     its existing windows ("kills all processes on ghostty"). `do script` opens a FRESH window and never
+//     touches other windows/apps. The command is passed as osascript argv (item 1 of argv), so it needs only
+//     shell-quoting, no AppleScript-string escaping. `exec` so the window closes cleanly when tmux detaches.
+//   • Use the SAME bundled tmux the host runs (spec.bin) so client/server protocol versions match.
+// KNOWN: a tmux window is shared across clients, so the Terminal client contributes to that window's size
+// negotiation (window-size 'latest') — watching can reflow the agent's pane to the Terminal window's size.
+// TODO(view-cleanup): the detached view-<id> grouped sessions linger until the workspace tmux server dies;
+// reap them on terminal close/remove if they ever accumulate.
+const shq = (s: string): string => `'` + String(s).replace(/'/g, `'\\''`) + `'`
+function openTerminalExternal(id: string): { ok: boolean; error?: string } {
+  if (process.platform !== 'darwin') return { ok: false, error: 'Open in Terminal is macOS-only' }
+  const spec = electronTerminalOps.attachSpec(id)
+  if (!spec) return { ok: false, error: 'terminal is not a live tmux window' }
+  const grp = `view-${id}`
+  const t = (...a: string[]): string[] => ['-S', spec.socket, ...a]
+  try {
+    // Idempotently ensure the per-id grouped session, then point IT (not blitz) at this window by @id.
+    let exists = true
+    try { execFileSync(spec.bin, t('has-session', '-t', grp), { stdio: 'ignore' }) } catch { exists = false }
+    if (!exists) execFileSync(spec.bin, t('new-session', '-d', '-s', grp, '-t', spec.session), { stdio: 'ignore' })
+    execFileSync(spec.bin, t('select-window', '-t', `${grp}:${spec.window}`), { stdio: 'ignore' })
+    // Mouse on for THIS view session only (idempotent every open) so the wheel scrolls — blitz keeps its own.
+    execFileSync(spec.bin, t('set-option', '-t', grp, 'mouse', 'on'), { stdio: 'ignore' })
+    // Open a FRESH Terminal.app window running the attach. cmdLine is ONE osascript argv element (shell-quoted),
+    // so no AppleScript-string escaping is needed and spaces in the socket path are safe. exec → clean close.
+    const cmdLine = 'exec ' + [spec.bin, '-S', spec.socket, 'attach', '-t', grp].map(shq).join(' ')
+    const child = spawn('osascript', [
+      '-e', 'on run argv',
+      '-e', 'tell application "Terminal" to do script (item 1 of argv)',
+      '-e', 'tell application "Terminal" to activate',
+      '-e', 'end run',
+      cmdLine
+    ], { detached: true, stdio: 'ignore' })
+    child.on('error', (e) => console.error('[terminal] Terminal.app launch failed:', (e as Error)?.message || e))
+    child.unref()
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || 'failed to open Terminal' }
+  }
+}
+
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
 process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getAppPath(), 'widgets')
@@ -567,6 +624,9 @@ app.whenReady().then(() => {
   ipcMain.on('os:terminal-input', (_e, p: { id: string; data: string }) => electronTerminalOps.sendToTerminal(String(p?.id), String(p?.data ?? '')))
   ipcMain.on('os:terminal-resize', (_e, p: { id: string; cols: number; rows: number }) => electronTerminalOps.resizeTerminal(String(p?.id), Number(p?.cols) || 80, Number(p?.rows) || 24))
   ipcMain.handle('os:terminal-read', (_e, id: string) => electronTerminalOps.readTerminal(String(id)))
+  // "Open in Ghostty": open this terminal in a real terminal window (read-only) so TUIs render properly,
+  // instead of the ANSI-stripped embedded DEBUG pane. See openTerminalExternal (module scope) for the why.
+  ipcMain.handle('os:terminal-open-external', (_e, id: string) => openTerminalExternal(String(id)))
   ipcMain.on('os:terminal-spawn', (_e, opts: { command?: string; title?: string }) => { void electronTerminalOps.spawnTerminal(opts || {}) })
   ipcMain.on('os:agent-spawn', (_e, p?: { title?: string }) => { try { osSpawnAgent(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
   ipcMain.handle('os:close-agent', (_e, id: string) => { try { return osCloseAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })

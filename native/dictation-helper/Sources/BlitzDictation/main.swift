@@ -249,11 +249,19 @@ final class DictationController: @unchecked Sendable {
     }
 
     private func installFnTap() {
+        // Input Monitoring (NOT Accessibility) is the correct grant for OBSERVING keys. Request it here
+        // so the user gets the right prompt; it takes effect after the sidecar relaunches.
+        if !CGPreflightListenEventAccess() {
+            emit(["state": "perm", "need": "inputMonitoring", "granted": false])
+            _ = CGRequestListenEventAccess()
+        }
         let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
         guard let eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .defaultTap,
+            // .listenOnly => Input Monitoring only (an active .defaultTap would require ACCESSIBILITY,
+            // which this sidecar must never request; insertion is delegated to the computer-use helper).
+            options: .listenOnly,
             eventsOfInterest: mask,
             callback: fnTapCallback,
             userInfo: nil
