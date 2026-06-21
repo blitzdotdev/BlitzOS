@@ -143,6 +143,18 @@ Risk note: `connection_registry_add` writes only FIRST-PARTY VETTED code, and ex
 `connection_call_tool` — so it is strictly safer than the already-open `connection_save_tool` (which writes
 arbitrary agent-authored code). No extra transport gate beyond what `save_tool` has.
 
+## Verified seed tools + a known-hard case (from a live Google Docs run, 2026-06)
+- **`docs.google.com` `rename_doc(title)` — VERIFIED, vetted.** Sync-DOM: set `.docs-title-input` value + commit
+  with Enter; `document.title` reflects the committed name. Full registry path verified on a live Doc:
+  `registry_get → registry_add → call_tool` renamed in ~0.3s (vs the agent's minutes doing it ad-hoc).
+- **`share_doc` is NOT shippable as a pure-JS tool — deliberately omitted.** Evidence from the live Doc: (1) the
+  Share dialog's email field renders in a **cross-origin iframe** (`clients6.google.com/static/proxy`), so page
+  JS can't reach it; (2) the Drive API (`googleapis.com`) returns **403** with cookies — no OAuth token, and
+  BlitzOS is browser-first with no OAuth subsystem by design; (3) Safari `do JavaScript` is **synchronous** —
+  can't `await fetch` even if a token existed. So sharing a Doc is a genuine **computer-use** task (real clicks
+  into the cross-origin iframe), inherently slower — not a registry-tool gap to paper over with a fake snippet.
+  (Chrome's extension path can `await fetch`, but still has no Drive token, so it hits the same 403 wall.)
+
 ## Still open (later passes)
 - **Stale-report telemetry:** do clients report `{stale}` tool ids back to our vetting queue? (Aggregate id +
   version only — never page content — to respect the no-phone-home-of-user-data posture.)
