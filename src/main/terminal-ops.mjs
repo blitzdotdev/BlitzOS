@@ -106,6 +106,9 @@ export function makeTerminalOps({ getWorkspacePath, emit = () => {}, markWrite =
     sendToTerminal: (id, data) => { const m = mgrFor(); return m ? m.sendToTerminal(id, data) : false },
     resizeTerminal: (id, cols, rows) => { const m = mgrFor(); return m ? m.resizeTerminal(id, cols, rows) : false },
     readTerminal: (id) => { const m = mgrFor(); return m ? m.scrollback(id) : '' },
+    /** Current RENDERED pane text (capture-pane -p) — the wake watchdog diffs it across a settle window to
+     *  tell a frozen/idle pane from one actively producing output. '' when no manager/terminal. */
+    captureTerminal: (id) => { const m = mgrFor(); return m ? m.capturePane(id) : '' },
     stopTerminal: (id) => { const m = mgrFor(); return m ? m.stopTerminal(id) : false },
     /** Permanently remove a terminal (kill if live + delete its persisted record) so it leaves the tray. Never '0'. */
     removeTerminal: (id) => { const m = mgrFor(); return m ? m.removeTerminal(id) : false },

@@ -7,6 +7,8 @@ export interface TerminalOps {
   sendToTerminal(id: string, data: string): boolean
   resizeTerminal(id: string, cols: number, rows: number): boolean
   readTerminal(id: string): string
+  /** Current rendered pane text (capture-pane -p) — the wake watchdog diffs it across a settle window. */
+  captureTerminal(id: string): string
   stopTerminal(id: string): boolean
   removeTerminal(id: string): boolean
   /** Re-spawn a dead terminal from its persisted meta (one-click resume). */

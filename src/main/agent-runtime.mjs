@@ -18,7 +18,17 @@ import { fileURLToPath } from 'node:url'
 // Absolute paths to the blitzscript runtime, from THIS module's location. In dev these are real repo files
 // the agent's `node` runs/imports. PACKAGING TODO: asarUnpack src/main/blitzscript so a packaged build's
 // system node can reach them too.
-const BLITZ_RUN = fileURLToPath(new URL('./blitzscript/run.mjs', import.meta.url))
+// BUNDLED-ELECTRON FIX: when main is bundled to out/main/, the sibling out/main/blitzscript/run.mjs does NOT
+// exist (electron-vite flattens + hashes chunks), so the agent's `.blitzos/blitz` shim pointed at a missing
+// file and `blitz check`/`run` failed. run.mjs is plain Node, so fall back to the real SOURCE run.mjs
+// (src/main/blitzscript/run.mjs) when the bundled sibling is absent. The server transport runs unbundled from
+// src/main, so its first resolution already hits the real file (no remap).
+const BLITZ_RUN = (() => {
+  const here = fileURLToPath(new URL('./blitzscript/run.mjs', import.meta.url))
+  if (existsSync(here)) return here
+  const src = here.replace('/out/main/', '/src/main/')
+  return existsSync(src) ? src : here
+})()
 const ORCHESTRATOR_DUTY_SRC = fileURLToPath(new URL('./blitzos-orchestrator.md', import.meta.url))
 
 /** Write `<blitzDir>/blitz` (the agent's runner shim -> `node <run.mjs> "$@"`) + copy the orchestrator duty
@@ -37,7 +47,7 @@ export function writeBlitzShim(blitzDir) {
 /** The orchestrators-toggle boot-task duty (returned by the provider for an orchestrator agent). A short
  *  pointer; the full how-to is the copied `.blitzos/orchestrator.md`. */
 export function orchestratorBootTask() {
-  return `ORCHESTRATOR MODE (you author + run workflows, Claude Code workflow style). For a task that is genuinely hard, large, massively parallel, adversarial, or over-context-window, AUTHOR and RUN a workflow instead of doing it all inline; for trivial / one-shot requests just answer directly. Read \`.blitzos/orchestrator.md\` for the full how-to. The runner is \`.blitzos/blitz\`: run \`bash .blitzos/blitz capabilities\` FIRST (your harness/model/effort options), then author a workflow.js the SAME way you would a Claude Code workflow — start with \`export const meta = { name, description }\`, use the INJECTED GLOBALS (NO imports) \`agent(prompt, opts?, fallback?)\` (spawns a sub-agent leaf; with \`opts.schema\` it returns the validated object, else its text), \`parallel\`, \`pipeline\`, \`phase\`, \`log\`, plus \`args\`/\`budget\`/\`workflow()\`, and END the file with \`return <result>\`. Do mechanical work in code; let the agent leaves do file/tool work. Run \`bash .blitzos/blitz check <workflow.js>\` until it PASSes, then \`bash .blitzos/blitz run [--resume] <workflow.js>\`. Stay within the act-vs-ask boundary (reversible work freely; ask before any irreversible outward act) and narrate progress with say.`
+  return `ORCHESTRATOR MODE (you author + run workflows, Claude Code workflow style). For a task that is genuinely hard, large, massively parallel, adversarial, or over-context-window, AUTHOR and RUN a workflow instead of doing it all inline; for trivial / one-shot requests just answer directly. Read \`.blitzos/orchestrator.md\` for the full how-to. The runner is \`.blitzos/blitz\`: run \`bash .blitzos/blitz capabilities\` FIRST (your harness/model/effort options), then author a workflow.js the SAME way you would a Claude Code workflow — start with \`export const meta = { name, description }\`, use the INJECTED GLOBALS (NO imports) \`agent(prompt, opts?, fallback?)\` (spawns a sub-agent leaf; with \`opts.schema\` it returns the validated object, else its text), \`parallel\`, \`pipeline\`, \`phase\`, \`log\`, plus \`args\`/\`budget\`/\`workflow()\`, and END the file with \`return <result>\`. Do mechanical work in code; let the agent leaves do file/tool work. Run \`bash .blitzos/blitz check <workflow.js>\` until it PASSes, then RUN IT WITH THE \`run_workflow\` SYSCALL (\`run_workflow { file }\`) — NOT \`bash .blitzos/blitz run\` and NOT your own built-in Workflow tool; ONLY \`run_workflow\` streams the run live into the user's chat as a kanban board (the other two run invisibly to BlitzOS, so the user sees nothing). \`run_workflow\` works for every agent (no 403). Stay within the act-vs-ask boundary (reversible work freely; ask before any irreversible outward act) and narrate progress with say.`
 }
 
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))

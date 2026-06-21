@@ -232,7 +232,7 @@ function bindGlobals(ctx) {
 }
 
 // ── 5) runWorkflow: fresh per-run RunContext (G4/G6) ──────────────────────────────────────────────
-export async function runWorkflow(file, { args, memDir, budget, depth = 0, runId = null } = {}) {
+export async function runWorkflow(file, { args, memDir, budget, depth = 0, runId = null, dry = false } = {}) {
   const { meta, body } = loadWorkflow(file)
   // Ensure the mem dir exists up front so the journal (written DURING agent() calls, before result.json)
   // and a nested workflow()'s SUBDIR can be created. The CLI also mkdir's it; this makes runWorkflow
@@ -245,6 +245,7 @@ export async function runWorkflow(file, { args, memDir, budget, depth = 0, runId
     budget: budget != null ? makeBudget(budget) : null, // a raw number -> a budget object; null = unbounded
     defaultModel: meta && typeof meta.model === 'string' ? meta.model : undefined,
     runId, // the externalization run id — stamped onto every WfEvent so a host sink can route by run.
+    dry, // per-run dry preflight: agents emit a skeleton (start+done) but never spawn. Race-free vs BLITZ_DRY_RUN.
   })
   return withRunContext(runCtx, async () => {
     const startedAt = Date.now()

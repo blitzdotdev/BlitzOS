@@ -74,6 +74,12 @@ export interface NotchGeometry {
   notchHeight: number // physical notch height = safe-area top inset (points)
 }
 
+// The hover/click catcher hugs the VISIBLE nudge (the centered peek pill), not the whole notch band: a small box
+// centered in the band (both axes) so hovering/clicking the empty notch around the nudge no longer opens the island.
+// Tune these to taste; the renderer's overHandle box (App.tsx NOTCH_HIT_W/H) must stay in sync.
+export const NOTCH_HIT_W = 44
+export const NOTCH_HIT_H = 22
+
 /** Read the active display's physical notch via the bundled native CLI. hasNotch:false on non-notched displays.
  *  Best-effort: any failure → null and the caller skips the hit-window. No TCC/permission needed (NSScreen read). */
 export function readNotchGeometry(): Promise<NotchGeometry | null> {
@@ -114,11 +120,17 @@ export function notchHitRect(
   const b = screen.getPrimaryDisplay().bounds
   const safeTop = Math.max(1, Math.round(g.notchHeight))
   const visibleBand = Math.max(28, Math.round(menuBarH || 0))
+  const band = Math.min(safeTop, visibleBand)
+  // hug the nudge: a small box centered in the notch band (both axes), so the catcher covers only the nudge, not the
+  // whole notch — hovering/clicking the empty notch around it no longer opens the island.
+  const nW = Math.round(g.notchWidth)
+  const hitH = Math.min(band, NOTCH_HIT_H)
+  const hitW = Math.min(nW, NOTCH_HIT_W)
   return {
-    x: Math.round(b.x + g.notchLeft),
-    y: Math.round(b.y),
-    width: Math.round(g.notchWidth),
-    height: Math.min(safeTop, visibleBand)
+    x: Math.round(b.x + g.notchLeft + (nW - hitW) / 2),
+    y: Math.round(b.y + (band - hitH) / 2),
+    width: hitW,
+    height: hitH
   }
 }
 
