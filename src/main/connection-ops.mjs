@@ -19,15 +19,20 @@
 
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { markWrite as defaultMarkWrite } from './workspace.mjs'
 import { emitConnectionMoment, setContentShare, dropContentShare } from './perception-core.mjs'
 
 const READ_CAP = 8192 // default size cap on a read result — never dump a whole DOM/AX tree into context
 
-// sourceId -> a filesystem-safe directory name (origin host / app bundle id are already safe-ish; harden anyway)
+// sourceId -> a filesystem-safe directory name. A readable prefix + a hash of the RAW id, so: (1) the result
+// can NEVER be a path-traversal segment ('..', '.', '', or contain '/') — the hash suffix guarantees a valid
+// non-empty name with no dots; and (2) distinct sources never COLLIDE onto one tools.json (e.g. 'a/b' vs 'a_b'
+// both sanitize to 'a_b' but get different hashes). Don't reuse '.' in the dir name at all (dots -> '_').
 function safeSourceId(sourceId) {
-  return String(sourceId || 'unknown').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120) || 'unknown'
+  const raw = String(sourceId || 'unknown')
+  const prefix = raw.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'src'
+  return prefix + '-' + createHash('sha1').update(raw).digest('hex').slice(0, 10)
 }
 
 // Scope + cap a read so a connection can never flood the agent's context with a whole DOM/AX tree.
@@ -46,13 +51,19 @@ function cap(value, max = READ_CAP) {
   }
   if (s.length <= max) return value
   // A structured read ({url,title,text} or {...,text}) that's too big: truncate the TEXT field IN PLACE so the
-  // agent still gets clean structure (url/title/role intact), not a half-JSON blob.
+  // agent still gets clean structure (url/title/role intact), not a half-JSON blob — BUT only if the non-text
+  // fields alone fit. If a non-text field (a huge url/href/attribute) is itself over the cap, truncating text
+  // can't help, so fall through to the labeled preview rather than returning a still-oversized object.
   if (value && typeof value === 'object' && typeof value.text === 'string') {
-    const keep = Math.max(0, value.text.length - (s.length - max))
-    return { ...value, text: value.text.slice(0, keep), truncated: true, bytes: s.length, note }
+    const overhead = s.length - value.text.length // bytes of everything EXCEPT the text field's content
+    if (overhead <= max) {
+      const keep = Math.max(0, value.text.length - (s.length - max))
+      return { ...value, text: value.text.slice(0, keep), truncated: true, bytes: s.length, note }
+    }
   }
-  // Any other too-big object (e.g. a deep AX/DOM tree): a LABELED preview string — never a `head` that looks
-  // like it should be parsed as data. The agent narrows the read instead of trusting a truncated dump.
+  // Any other too-big object (a deep AX/DOM tree, or a structured read whose non-text fields blow the cap):
+  // a LABELED preview string — never a `head` that looks like it should be parsed as data, and ALWAYS within
+  // the cap. The agent narrows the read instead of trusting a truncated dump.
   return { truncated: true, bytes: s.length, preview: s.slice(0, max), note }
 }
 

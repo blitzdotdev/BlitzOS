@@ -5,7 +5,7 @@
 
 import { makeConnectionOps } from '../src/main/connection-ops.mjs'
 import { makeWidgetToolHandlers } from '../src/main/widget-tools.mjs'
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -94,12 +94,35 @@ async function main() {
   const treeRead = await ops.connectionRead(treeConn, {})
   ok('a capped deep tree returns a labeled preview (not head)', treeRead.result && treeRead.result.truncated === true && typeof treeRead.result.preview === 'string' && treeRead.result.head === undefined)
 
+  // H3: a structured read whose NON-text field is itself over the cap must STILL be capped (not pass through)
+  const fatAdapter = stubAdapter({ read: { result: { url: 'https://x/' + 'u'.repeat(20000), text: 'short' } } })
+  const { connId: fatConn } = ops.connectionBind({ type: 'tab', sourceId: 'fat.example.com', adapter: fatAdapter })
+  const fatRead = await ops.connectionRead(fatConn, { max: 2000 })
+  ok('a read with a huge NON-text field is still capped (no pass-through)', fatRead.result && fatRead.result.truncated === true && JSON.stringify(fatRead.result).length <= 2600)
+
+  // H2: a malicious/degenerate sourceId can NEVER produce a path-traversal dir, and distinct sources never collide
+  ops.connectionSaveTool(ops.connectionBind({ type: 'tab', sourceId: '..', adapter: stubAdapter() }).connId, { name: 't', kind: 'read', code: '1' })
+  ok("a '..' sourceId does NOT escape the connections dir", !existsSync(join(ws, '.blitzos', 'tools.json')) && existsSync(join(ws, '.blitzos', 'connections')))
+  const cA = ops.connectionBind({ type: 'tab', sourceId: 'a/b', adapter: stubAdapter() }).connId
+  const cB = ops.connectionBind({ type: 'tab', sourceId: 'a_b', adapter: stubAdapter() }).connId
+  ops.connectionSaveTool(cA, { name: 'fromA', kind: 'read', code: '1' })
+  ok("distinct sources 'a/b' and 'a_b' do NOT collide onto one tools.json", !ops.connectionListTools(cB).tools.some((t) => t.name === 'fromA'))
+
   // --- save a tool -> writes tools.json under the workspace, keyed on sourceId ---
   const saved = ops.connectionSaveTool(connId, { name: 'unread', description: 'unread count', kind: 'read', code: "return document.querySelectorAll('tr.zE').length" })
   ok('save_tool succeeds', saved.ok === true && saved.count === 1)
-  const toolsFile = join(ws, '.blitzos', 'connections', 'mail.google.com', 'tools.json')
-  ok('tools.json written at .blitzos/connections/<sourceId>/', existsSync(toolsFile))
-  ok('tools.json holds the saved tool', JSON.parse(readFileSync(toolsFile, 'utf8'))[0].name === 'unread')
+  // the dir is a hash-suffixed safe name (no traversal / no collisions), so locate it dynamically
+  const connRoot = join(ws, '.blitzos', 'connections')
+  const findToolsFile = () => {
+    for (const d of existsSync(connRoot) ? readdirSync(connRoot) : []) {
+      const f = join(connRoot, d, 'tools.json')
+      if (existsSync(f) && JSON.parse(readFileSync(f, 'utf8')).some((t) => t.name === 'unread')) return f
+    }
+    return null
+  }
+  const toolsFile = findToolsFile()
+  ok('tools.json written under .blitzos/connections/<safeSourceId>/', !!toolsFile)
+  ok('tools.json holds the saved tool', toolsFile && JSON.parse(readFileSync(toolsFile, 'utf8'))[0].name === 'unread')
   ok('list_tools reflects it', ops.connectionListTools(connId).tools.length === 1)
 
   // --- call_tool: a tab tool runs via run_js (the saved code), kind read returns its value ---
