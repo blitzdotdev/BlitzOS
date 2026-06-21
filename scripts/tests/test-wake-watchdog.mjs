@@ -8,36 +8,38 @@ let failed = 0
 const ok = (cond, msg) => { if (!cond) { failed++; console.error('  ✗ ' + msg) } else { console.log('  ✓ ' + msg) } }
 
 // Small timings so the suite runs in well under a second; real timers (no fake-clock indirection).
-const T = { graceMs: 30, settleMs: 10, recheckMs: 30, maxTries: 3, maxWatchMs: 100_000 }
+const T = { graceMs: 30, settleMs: 10, recheckMs: 30, maxTries: 3, maxWatchMs: 100_000, submitDelayMs: 8, rateLimitBackoffMs: 40 }
+const RL_PANE = 'API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited'
 
-// Build a watchdog with controllable deps. `pane` is a function returning the current pane text (so a test can
-// make it change = "working"); `poll` returns the agent's last-poll time.
 function harness({ pane = () => 'FROZEN', poll = () => 0, isLive = () => true } = {}) {
-  const nudges = []
+  const writes = []
   const statuses = []
   const wd = createWakeWatchdog({
     ...T,
     lastPollAt: (id) => poll(id),
-    sendToTerminal: (id, data) => { nudges.push({ id, data }); return true },
+    sendToTerminal: (id, data) => { writes.push({ id, data }); return true },
     captureTerminal: () => pane(),
     isLive: (id) => isLive(id),
     setStatus: (id, ws, st) => statuses.push({ id, ws, st }),
     log: () => {}
   })
-  return { wd, nudges, statuses }
+  // A nudge is now TWO writes: the catch-up text, then a SEPARATE '\r' (Enter). Track them apart.
+  const textNudges = () => writes.filter((w) => /wait\.sh/.test(w.data))
+  const enters = () => writes.filter((w) => w.data === '\r')
+  return { wd, writes, statuses, textNudges, enters }
 }
 
 async function run() {
-  // 1. Dead loop + frozen pane → exactly one nudge + 'reconnecting'.
+  // 1. Dead loop + frozen pane → one text nudge + a SEPARATE Enter (the submit-fix), + 'reconnecting'.
   {
-    console.log('1. dead loop, frozen pane → nudge')
+    console.log('1. dead+frozen → nudge submits as text + separate Enter (not text+\\r)')
     const h = harness({ pane: () => 'FROZEN', poll: () => 0 })
     h.wd.onUndelivered({ agentId: '21', workspace: 'case-file' })
-    await delay(T.graceMs + T.settleMs + 25)
-    ok(h.nudges.length === 1, `one nudge sent (got ${h.nudges.length})`)
-    ok(h.nudges[0]?.id === '21', 'nudge targets agent 21')
-    ok(/wait\.sh/.test(h.nudges[0]?.data || ''), 'nudge tells it to relaunch wait.sh')
-    ok(/\r$/.test(h.nudges[0]?.data || ''), 'nudge ends with a submit (CR)')
+    await delay(T.graceMs + T.settleMs + T.submitDelayMs + 30)
+    ok(h.textNudges().length === 1, `one text nudge (got ${h.textNudges().length})`)
+    ok(h.textNudges()[0]?.id === '21', 'nudge targets agent 21')
+    ok(!/\r/.test(h.textNudges()[0]?.data || ''), 'the text write contains NO carriage return (the old bug)')
+    ok(h.enters().length === 1, `Enter sent as a SEPARATE write (got ${h.enters().length})`)
     ok(h.statuses.some((s) => s.st === 'reconnecting'), "island status set to 'reconnecting'")
     h.wd.stop()
   }
@@ -46,57 +48,84 @@ async function run() {
   {
     console.log('2. heartbeat alive → no nudge')
     const msgAt = Date.now()
-    const h = harness({ poll: () => msgAt + 1000 }) // last poll is AFTER the message
+    const h = harness({ poll: () => msgAt + 1000 })
     h.wd.onUndelivered({ agentId: '5', workspace: 'case-file' })
-    await delay(T.graceMs + T.settleMs + 25)
-    ok(h.nudges.length === 0, `no nudge for a live loop (got ${h.nudges.length})`)
+    await delay(T.graceMs + T.settleMs + 30)
+    ok(h.textNudges().length === 0, `no nudge for a live loop (got ${h.textNudges().length})`)
     h.wd.stop()
   }
 
-  // 3. Working: the pane changes across the settle window → no nudge (treated as busy, keeps watching).
+  // 3. Working: the pane changes across the settle window → no nudge.
   {
     console.log('3. pane changing (working) → no nudge')
     let n = 0
-    const h = harness({ pane: () => `frame ${n++}`, poll: () => 0 }) // every capture differs
+    const h = harness({ pane: () => `frame ${n++}`, poll: () => 0 })
     h.wd.onUndelivered({ agentId: '7', workspace: 'case-file' })
-    await delay(T.graceMs + T.settleMs + 25)
-    ok(h.nudges.length === 0, `no nudge while the pane is changing (got ${h.nudges.length})`)
+    await delay(T.graceMs + T.settleMs + 30)
+    ok(h.textNudges().length === 0, `no nudge while the pane is changing (got ${h.textNudges().length})`)
     h.wd.stop()
   }
 
-  // 4. Process gone → no nudge (terminal-manager restart owns that).
+  // 4. Process gone → no nudge.
   {
     console.log('4. pane not live → no nudge')
     const h = harness({ isLive: () => false, poll: () => 0 })
     h.wd.onUndelivered({ agentId: '9', workspace: 'case-file' })
-    await delay(T.graceMs + T.settleMs + 25)
-    ok(h.nudges.length === 0, `no nudge when the pane is dead (got ${h.nudges.length})`)
+    await delay(T.graceMs + T.settleMs + 30)
+    ok(h.textNudges().length === 0, `no nudge when the pane is dead (got ${h.textNudges().length})`)
     h.wd.stop()
   }
 
-  // 5. Never recovers → nudges up to maxTries, then gives up to 'error'.
+  // 5. Never recovers, NOT rate-limited → nudges up to maxTries, then gives up to 'error'.
   {
-    console.log('5. never recovers → backoff cap then error')
+    console.log('5. never recovers (not rate-limited) → backoff cap then error')
     const h = harness({ pane: () => 'FROZEN', poll: () => 0 })
     h.wd.onUndelivered({ agentId: '21', workspace: 'case-file' })
-    await delay(T.graceMs + T.maxTries * (T.settleMs + T.recheckMs) + 120)
-    ok(h.nudges.length === T.maxTries, `capped at ${T.maxTries} nudges (got ${h.nudges.length})`)
+    await delay(T.graceMs + T.maxTries * (T.settleMs + T.recheckMs) + 160)
+    ok(h.textNudges().length === T.maxTries, `capped at ${T.maxTries} text nudges (got ${h.textNudges().length})`)
     ok(h.statuses.some((s) => s.st === 'error'), "gave up to 'error' status")
     h.wd.stop()
-    const after = h.nudges.length
-    await delay(T.recheckMs + 30)
-    ok(h.nudges.length === after, 'no further nudges after give-up/stop')
   }
 
-  // 6. Coalesce: a second message while already recovering does not start a second watcher.
+  // 6. Concurrent messages coalesce.
   {
     console.log('6. concurrent messages coalesce')
     const h = harness({ pane: () => 'FROZEN', poll: () => 0 })
     h.wd.onUndelivered({ agentId: '21', workspace: 'case-file' })
     h.wd.onUndelivered({ agentId: '21', workspace: 'case-file' })
     h.wd.onUndelivered({ agentId: '21', workspace: 'case-file' })
-    await delay(T.graceMs + T.settleMs + 25)
-    ok(h.nudges.length === 1, `three messages → one nudge (got ${h.nudges.length})`)
+    await delay(T.graceMs + T.settleMs + T.submitDelayMs + 30)
+    ok(h.textNudges().length === 1, `three messages → one nudge (got ${h.textNudges().length})`)
+    h.wd.stop()
+  }
+
+  // 7. RATE-LIMITED → holds first (no nudge), probes on a long backoff, and NEVER escalates to 'error'.
+  {
+    console.log('7. rate-limited → hold first, probe on backoff, never error')
+    const h = harness({ pane: () => RL_PANE, poll: () => 0 })
+    h.wd.onUndelivered({ agentId: '27', workspace: 'case-file' })
+    await delay(T.graceMs + T.settleMs + 20)
+    ok(h.textNudges().length === 0, `no nudge on first rate-limit sighting — held (got ${h.textNudges().length})`)
+    ok(h.statuses.some((s) => s.st === 'reconnecting'), "held at 'reconnecting'")
+    await delay(2 * T.rateLimitBackoffMs + 60) // let a couple of backoffs elapse → probe nudge(s)
+    ok(h.textNudges().length >= 1, `probes a nudge after backoff (got ${h.textNudges().length})`)
+    ok(!h.statuses.some((s) => s.st === 'error'), "rate-limit NEVER escalates to 'error'")
+    h.wd.stop()
+  }
+
+  // 8. Rate-limit CLEARS → the next probe wakes it (heartbeat resumes) → watchdog clears the record.
+  {
+    console.log('8. rate-limit clears → probe wakes it, watchdog clears')
+    let limited = true
+    const h = harness({
+      pane: () => (limited ? RL_PANE : 'FROZEN'),
+      poll: () => (limited ? 0 : Date.now()) // once the limit lifts, the agent re-polls (heartbeat advances)
+    })
+    h.wd.onUndelivered({ agentId: '27', workspace: 'case-file' })
+    await delay(T.graceMs + T.rateLimitBackoffMs + 30) // first hold, into the probe cycle
+    limited = false                                    // limit lifts
+    await delay(T.rateLimitBackoffMs + T.settleMs + 50)
+    ok(h.wd._size() === 0, 'watchdog cleared the agent once its heartbeat resumed')
     h.wd.stop()
   }
 

@@ -13,11 +13,22 @@
 const GRACE_MS = 20_000      // after an undelivered message, give the agent's own loop this long to recover first
 const SETTLE_MS = 1_200      // gap between the two pane captures that tell "working" (changing) from "stuck" (frozen)
 const RECHECK_MS = 25_000    // after a nudge, how long to wait for the heartbeat to resume before retrying
-const MAX_TRIES = 3          // nudges before giving up to 'error' (never spam the pane)
-const MAX_WATCH_MS = 300_000 // give up watching a never-resolving agent after 5 min (bounds the re-arm loop)
+const MAX_TRIES = 3          // nudges before giving up to 'error' (never spam the pane) — NON-rate-limit path only
+const MAX_WATCH_MS = 600_000 // give up watching a never-resolving agent after 10 min (bounds the re-arm loop)
+const SUBMIT_DELAY_MS = 450  // gap between typing the nudge text and the Enter so the TUI submits it (see nudgeSubmit)
+const RATE_LIMIT_BACKOFF_MS = 90_000 // a rate-limited agent: how long to hold between probe-nudges (don't hammer the API)
 
-// The catch-up directive typed into a deaf agent's pane. ONE line (no embedded newline) + a trailing CR to
-// submit. Phrased in the agent's own bootstrap vocabulary so it self-heals through its existing /events ritual.
+// A rate-limited TUI is the DOMINANT deaf cause and a special case: you cannot type your way out of a 429 (the
+// agent can't make any API call to process a nudge, and a submitted nudge just triggers another throttle). It heals
+// only when the limit lifts — but a deaf agent's loop won't relaunch itself, so the OS must still wake it ONCE the
+// limit clears. So on a rate-limit the watchdog HOLDS (no fast nudges), then PROBES on a long backoff, and never
+// escalates to 'error' (it's transient). Read off the same pane the frozen-check already captures.
+const RATE_LIMIT_RE = /rate.?limit|temporarily limiting|usage limit|overloaded|too many requests|\b(?:429|529)\b/i
+
+// The catch-up directive typed into a deaf agent's pane. ONE line (no embedded newline). The Enter is sent
+// SEPARATELY (see nudgeSubmit): Claude's TUI treats text+newline arriving in one burst as a PASTE, keeping the \r
+// as a literal newline in the composer (the nudge silently stacks as unsubmitted draft). A distinct, slightly
+// delayed Enter submits. Phrased in the agent's own bootstrap vocabulary so it self-heals via its /events ritual.
 const NUDGE =
   '[BlitzOS] Your background event-wait (.blitzos/wait.sh) stopped, so you are not receiving messages. Recover now: read new events since your cursor via /events, handle anything waiting and reply, then relaunch .blitzos/wait.sh in the BACKGROUND so future messages reach you.'
 
@@ -45,7 +56,9 @@ export function createWakeWatchdog(deps = {}) {
     settleMs = SETTLE_MS,
     recheckMs = RECHECK_MS,
     maxTries = MAX_TRIES,
-    maxWatchMs = MAX_WATCH_MS
+    maxWatchMs = MAX_WATCH_MS,
+    submitDelayMs = SUBMIT_DELAY_MS,
+    rateLimitBackoffMs = RATE_LIMIT_BACKOFF_MS
   } = deps
   if (typeof lastPollAt !== 'function' || typeof sendToTerminal !== 'function') {
     throw new Error('createWakeWatchdog: lastPollAt + sendToTerminal are required')
@@ -88,16 +101,41 @@ export function createWakeWatchdog(deps = {}) {
       rec.timer = setTimer(() => { void check(k) }, graceMs)
       return
     }
-    // STUCK and deaf → wake it.
-    rec.tries++
-    log(`wake-watchdog: agent ${agentId} (${workspace || 'default'}) deaf — nudge ${rec.tries}/${maxTries}`)
+    // STUCK and deaf. WHY it's stuck decides the recovery.
     setStatus(agentId, workspace, 'reconnecting')
-    try { sendToTerminal(agentId, NUDGE + '\r') } catch (e) { log('wake-watchdog inject failed: ' + ((e && e.message) || e)) }
+    if (RATE_LIMIT_RE.test(b)) {
+      // Rate-limited: a nudge can't be processed under a 429 and would just re-throttle. HOLD, then PROBE on a long
+      // backoff — the first time we only wait (the limit was just hit); after a full backoff we send ONE nudge to
+      // test whether it cleared (if so it submits + the agent relaunches its loop; if not it re-dies and we wait
+      // again). Never escalate to 'error' — a throttle is transient and the agent is not actually broken.
+      const probing = rec.rlSeen === true
+      if (probing) nudgeSubmit(agentId)
+      rec.rlSeen = true
+      log(`wake-watchdog: agent ${agentId} (${workspace || 'default'}) rate-limited — ${probing ? 'probe nudge' : 'holding'} (backoff ${Math.round(rateLimitBackoffMs / 1000)}s)`)
+      rec.timer = setTimer(() => { void check(k) }, rateLimitBackoffMs)
+      return
+    }
+    // Genuinely frozen for another reason (a crashed turn): nudge promptly, quick retries, give up to 'error'.
+    rec.rlSeen = false
+    rec.tries++
+    log(`wake-watchdog: agent ${agentId} (${workspace || 'default'}) deaf (frozen) — nudge ${rec.tries}/${maxTries}`)
+    nudgeSubmit(agentId)
     rec.timer = setTimer(() => {
       if (lastPollAt(agentId, workspace) >= msgTs) return done(k)                                  // recovered — the nudge worked
       if (rec.tries >= maxTries) { setStatus(agentId, workspace, 'error'); return done(k) }         // give up — surface + stop
       void check(k)                                                                                // retry: re-confirm frozen, nudge again
     }, recheckMs)
+  }
+
+  // Submit a nudge as TWO steps: type the text, then send Enter as a SEPARATE keypress after a short delay.
+  // Claude's TUI treats a burst of text-then-newline as a PASTE and keeps the \r as a literal newline (the nudge
+  // stacks as unsubmitted draft); a distinct, slightly-delayed Enter is read as a real submit. Verified live: a
+  // combined `text+\r` write stacked 3 unsent drafts, while separate text then a delayed Enter submits.
+  function nudgeSubmit(id) {
+    try {
+      sendToTerminal(id, NUDGE)
+      setTimer(() => { try { sendToTerminal(id, '\r') } catch { /* ignore */ } }, submitDelayMs)
+    } catch (e) { log('wake-watchdog inject failed: ' + ((e && e.message) || e)) }
   }
 
   function done(k) { const rec = recs.get(k); if (rec) { clearTimer(rec.timer); recs.delete(k) } }

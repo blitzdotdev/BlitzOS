@@ -71,6 +71,15 @@ Slices 1-3 built; `npm run check` green (typecheck + parity + build); watchdog m
 - **Automated end-to-end is unproven on the LIVE instance:** the running BlitzOS predates this build, so the fully-automatic path (kill a wait-loop, type in the island, auto-heal with zero manual steps) activates only after a BlitzOS restart. The mechanism + the logic are proven; the wiring takes effect next launch.
 - **Live-status flicker (minor):** a `reconnecting` override can be briefly overwritten by an unrelated `os:action{type:'chat'}` broadcast (another agent's activity) until the next nudge re-pushes. The override would need to ride every chat broadcast (an osActions seam) to be flicker-free. Acceptable for V1.
 
+## Fixes after live testing (2026-06-21) — two real bugs found on agent 27
+
+A second deaf agent (27, rate-limited) surfaced two bugs in the first cut; both verified on its live pane and fixed:
+
+- **The nudge never submitted.** `sendToTerminal(id, NUDGE + '\r')` sent the text and CR in ONE write. Claude's TUI treats a text+newline burst as a PASTE, so the `\r` became a literal newline and the nudge stacked as unsubmitted draft (3 piled up on agent 27). Fix (`nudgeSubmit`): type the text, then send Enter as a SEPARATE write after `SUBMIT_DELAY_MS` (450ms). Verified live: a standalone `send-keys -H 0d` submits; the combined write does not.
+- **Nudging is wrong for a rate-limit (the dominant deaf cause).** You can't type out of a 429: the agent can't process the nudge under the limit, and submitting just re-throttles. But a deaf agent's loop won't relaunch itself either, so the OS must still wake it once the limit lifts. Fix: `RATE_LIMIT_RE` reads the (already-captured) pane; on a rate-limit the watchdog HOLDS, then PROBES one nudge per `RATE_LIMIT_BACKOFF_MS` (90s), and NEVER escalates to `error` (transient). The non-rate-limit frozen path keeps the fast nudge + `error`-on-give-up. `maxWatchMs` raised to 10 min.
+
+Tests: `test-wake-watchdog.mjs` now 18 assertions (submit = text + separate Enter; rate-limit holds-then-probes, never errors; rate-limit-clears recovers). Live-proven by reviving agent 27.
+
 ## Open questions
 
 - GRACE exact value (20s vs 30s) — tune against the 25s poll boundary live.
