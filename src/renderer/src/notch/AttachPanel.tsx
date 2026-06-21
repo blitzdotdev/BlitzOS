@@ -5,8 +5,10 @@
 // Safari) and app windows. Clicking a row toggles it CONNECTED — giving the agent access (connectTab/connectWindow);
 // click again disconnects (connectionDrop). The marked set is the live `connections.list()`, matched by `ref`.
 import './attach.css'
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useStagedSet, stageSources, unstageSources } from './stagingStore'
+import { buildTrayGroups, AttachTray, Favicon, AppIcon, type TrayGroup } from './attachTray'
+import { publishLiveTray } from './sentTrayStore'
 
 type Tab = { tabId: number | string; title?: string; url?: string; browser?: string; windowId?: number; active?: boolean; favIconUrl?: string }
 type Win = { windowId: number; app?: string; title?: string; icon?: string }
@@ -60,11 +62,6 @@ interface AddedSource {
   title: string // the window title (the dir for a terminal, the page for a browser)
 }
 
-// The grouped view of the attached tray (the LEFT box), derived from `connections`. An item is one connected
-// source (a tab carries a favicon; a window item just a title). A group is one browser's tabs or one app's windows.
-type AttachItem = { connId: string; favicon?: string; title: string }
-type AttachGroup = { key: string; type: 'tab' | 'window'; label: string; appIcon?: string; items: AttachItem[] }
-
 // activeSessionId = the chat this attach panel belongs to ('' = the new-session composer; sources attached there are
 // reassigned to the agent on spawn). It OWNS what gets connected, so connection_list scopes per chat + the attach
 // wakes the right agent.
@@ -82,12 +79,17 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
   // Windows DROPPED into the dropbox: their real app icons live here (keyed by connId), hover one for its detail.
   const [dropped, setDropped] = useState<Record<string, AddedSource>>({})
-  // the hovered item → a fixed-position tooltip (portaled to <body> so the dropbox clip can't cut it off).
-  const [hover, setHover] = useState<{ app: string; title: string; x: number; y: number } | null>(null)
-  const showTip = (el: HTMLElement, app: string, title: string): void => {
-    const r = el.getBoundingClientRect()
-    setHover({ app, title, x: r.left + r.width / 2, y: r.bottom + 8 })
-  }
+
+  // The dropbox is a STAGING tray, not a mirror of every live connection: it shows only sources the USER staged
+  // (dropped in, or connected from the right list) for their NEXT message, keyed per chat. The tray lives in a
+  // module-level external store (stagingStore) so it SURVIVES the island close+reopen — AttachPanel remounts per
+  // open, but the store doesn't, so there is nothing to seed or wipe. On SEND it clears (NotchHost.onSend →
+  // clearStaged) while the connection stays alive for the agent; the agent's OWN connections (e.g. a reconnect)
+  // never enter the tray. A staged key is `tab:<id>` / `window:<id>` / `conn:<id>`.
+  const stagedSet = useStagedSet(activeSessionId)
+  const markStaged = (...keys: string[]): void => stageSources(activeSessionId, ...keys)
+  const isStaged = (c: Conn): boolean =>
+    !!stagedSet && (stagedSet.has('conn:' + c.connId) || stagedSet.has((c.type === 'window' ? 'window:' : 'tab:') + String(c.ref)))
 
   // Latest-wins: listTabs/listWindows hit the extension/helper with variable latency, so an OLDER refresh can
   // resolve AFTER a newer one. Without this guard a stale snapshot (captured before a just-dropped connection
@@ -152,12 +154,14 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
       else if (m.kind === 'connected') {
         setDragOver(false)
         if (!m.ok) {
-          setNotice({ ok: false, text: `Couldn't add ${String(m.app || 'window')}` })
+          // Prefer the specific reason from main (e.g. "Chrome connector not connected") over a generic label.
+          setNotice({ ok: false, text: String(m.error || `Couldn't add ${String(m.app || 'window')}`) })
           return
         }
         void refresh() // a window was dropped in → reflect it in the connectors list too
         const connId = String(m.connId || '')
         if (!connId) return
+        markStaged('conn:' + connId) // a macOS-window drop = the user staging it
         const src: AddedSource = {
           connId,
           app: String(m.app || 'Window'),
@@ -178,7 +182,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
 
   useEffect(() => {
     if (!notice) return
-    const t = window.setTimeout(() => setNotice(null), 2800)
+    const t = window.setTimeout(() => setNotice(null), notice.ok ? 2800 : 4500) // errors linger so the reason is readable
     return () => clearTimeout(t)
   }, [notice])
 
@@ -207,6 +211,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     const conn = bridge()
     if (!conn) return
     const existing = connForTab(t)
+    if (!existing) markStaged('tab:' + t.tabId) // user staged it for the next message
     setConnections((prev) =>
       existing ? prev.filter((c) => c.connId !== existing.connId) : [...prev, { connId: 'pending:t' + t.tabId, type: 'tab', ref: t.tabId }]
     )
@@ -216,6 +221,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     const conn = bridge()
     if (!conn) return
     const existing = connForWin(w)
+    if (!existing) markStaged('window:' + w.windowId) // user staged it for the next message
     setConnections((prev) =>
       existing ? prev.filter((c) => c.connId !== existing.connId) : [...prev, { connId: 'pending:w' + w.windowId, type: 'window', ref: w.windowId }]
     )
@@ -232,7 +238,8 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   // (the dropbox + the right list both render from that) and the pick cache immediately so it vanishes with zero
   // delay, then disconnect + reconcile in the background.
   function removeConn(connId: string): void {
-    setHover(null)
+    const gone = connections.find((x) => x.connId === connId)
+    unstageSources(activeSessionId, 'conn:' + connId, ...(gone ? [(gone.type === 'window' ? 'window:' : 'tab:') + String(gone.ref)] : []))
     setConnections((prev) => prev.filter((c) => c.connId !== connId))
     setDropped((prev) => {
       if (!(connId in prev)) return prev
@@ -245,9 +252,15 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     void conn.disconnect(connId).catch(() => {}).then(() => refreshConnections())
   }
   // Remove a WHOLE group via its top-right X: disconnect every item in it (same optimistic path as removeConn).
-  function removeGroup(g: AttachGroup): void {
-    setHover(null)
+  function removeGroup(g: TrayGroup): void {
     const ids = new Set(g.items.map((it) => it.connId))
+    const keys: string[] = []
+    for (const it of g.items) {
+      keys.push('conn:' + it.connId)
+      const gone = connections.find((x) => x.connId === it.connId)
+      if (gone) keys.push((gone.type === 'window' ? 'window:' : 'tab:') + String(gone.ref))
+    }
+    unstageSources(activeSessionId, ...keys)
     setConnections((prev) => prev.filter((c) => !ids.has(c.connId)))
     setDropped((prev) => {
       let changed = false
@@ -319,43 +332,19 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   const iconByApp = new Map<string, string>()
   for (const w of windows) if (w.app && w.icon) iconByApp.set(w.app, w.icon)
   const groupIcon = (b?: string): string | undefined => iconByApp.get(b === 'chrome' ? 'Google Chrome' : b === 'safari' ? 'Safari' : b || '')
-  // The dropbox is the canonical ATTACHED tray, derived from `connections` (so it two-way-syncs with the right
-  // list: connect a tab there and it shows here too). Grouped so 10 Chrome tabs read as ONE Chrome pill of
-  // favicons, not 10 identical app icons. Tabs → one pill per browser (app icon | favicons). Windows → grouped by
-  // app (app icon | title labels) at 2+, else a single plain app-icon chip. Enriched from the live tab/window
-  // lists + the pick cache (a freshly dropped window's icon/title, before the lists refresh).
-  const tabByRef = new Map(tabs.map((t) => [String(t.tabId), t]))
-  const winByRef = new Map(windows.map((w) => [String(w.windowId), w]))
-  const tabG = new Map<string, AttachGroup>()
-  const winG = new Map<string, AttachGroup>()
-  for (const c of connections) {
-    if (c.type === 'window') {
-      const w = winByRef.get(String(c.ref))
-      const d = dropped[c.connId]
-      const app = d?.app || w?.app || c.title || c.sourceId || 'Window'
-      let g = winG.get(app)
-      if (!g) {
-        g = { key: 'a:' + app, type: 'window', label: app, appIcon: d?.icon || w?.icon, items: [] }
-        winG.set(app, g)
-      }
-      if (!g.appIcon) g.appIcon = d?.icon || w?.icon
-      g.items.push({ connId: c.connId, title: d?.title || w?.title || c.title || app })
-    } else {
-      const t = tabByRef.get(String(c.ref))
-      const browser = t?.browser || 'chrome'
-      let g = tabG.get(browser)
-      if (!g) {
-        g = { key: 'b:' + browser, type: 'tab', label: browser === 'safari' ? 'Safari' : 'Chrome', appIcon: groupIcon(browser), items: [] }
-        tabG.set(browser, g)
-      }
-      g.items.push({ connId: c.connId, favicon: t?.favIconUrl, title: t?.title || t?.url || c.title || c.sourceId || 'Tab' })
-    }
-  }
-  // Tab groups are always a pill (even one tab → a Chrome pill); a window group is a pill only at 2+, else a
-  // single plain icon chip.
-  const pillGroups = [...tabG.values(), ...winG.values()].filter((g) => g.type === 'tab' || g.items.length >= 2)
-  const singleWindows = [...winG.values()].filter((g) => g.items.length === 1)
-  const hasAttached = connections.length > 0
+  // The dropbox tray (LEFT box) = the staged sources, grouped — built by the SHARED buildTrayGroups so the live
+  // dropbox and the frozen in-chat snapshot can never drift. Memoized so the published live copy + the AttachTray
+  // only churn when the staged set / lists actually change.
+  const trayGroups = useMemo(
+    () => buildTrayGroups(connections, tabs, windows, dropped, isStaged),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [connections, tabs, windows, dropped, stagedSet]
+  )
+  const hasAttached = trayGroups.length > 0
+  // Publish this chat's live tray so a SEND can freeze an exact copy (sentTrayStore.getLiveTray → IslandPanel).
+  useEffect(() => {
+    publishLiveTray(activeSessionId, trayGroups)
+  }, [activeSessionId, trayGroups])
 
   return (
     <div className="att">
@@ -375,69 +364,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
               <span>{notice && !notice.ok ? notice.text : dragOver || listDragOver ? 'Release to add' : 'Drag a macOS window here'}</span>
             </div>
           ) : (
-            <div className="att-added-stack">
-              {pillGroups.map((g) => (
-                <div className="att-pill" key={g.key}>
-                  {/* group remove (top-right) — drops the WHOLE group at once; same glass X as a single chip */}
-                  <button type="button" className="att-pill-remove" aria-label={`Remove all ${g.label}`} title={`Remove all ${g.label}`} onClick={() => removeGroup(g)}>
-                    <RemoveX />
-                  </button>
-                  <span className="att-pill-app">
-                    <AppIcon src={g.appIcon} name={g.label} />
-                  </span>
-                  <span className="att-pill-div" aria-hidden />
-                  <span className="att-pill-items">
-                    {g.items.map((it, i) => (
-                      <div
-                        className="att-pill-item"
-                        key={it.connId}
-                        onMouseEnter={(e) => showTip(e.currentTarget, g.label, it.title)}
-                        onMouseLeave={() => setHover(null)}
-                      >
-                        {g.type === 'tab' ? (
-                          <Favicon src={it.favicon} />
-                        ) : (
-                          // non-browser windows: a fake alphabet tile (A, B, C…) instead of the dir text; the real
-                          // title is on hover (tooltip). Same size as every other icon.
-                          <span className="att-pill-letter" aria-hidden>
-                            {String.fromCharCode(65 + (i % 26))}
-                          </span>
-                        )}
-                        <button type="button" className="att-added-remove" aria-label={`Remove ${it.title}`} title={`Remove ${it.title}`} onClick={() => removeConn(it.connId)}>
-                          <RemoveX />
-                        </button>
-                      </div>
-                    ))}
-                  </span>
-                </div>
-              ))}
-              {singleWindows.length > 0 && (
-                <div className="att-singles">
-                  {singleWindows.map((g) => {
-                    const it = g.items[0]
-                    return (
-                      <div
-                        className="att-added-chip"
-                        key={g.key}
-                        onMouseEnter={(e) => showTip(e.currentTarget, g.label, it.title)}
-                        onMouseLeave={() => setHover(null)}
-                      >
-                        {g.appIcon ? (
-                          <img className="att-added-icon" src={`data:image/png;base64,${g.appIcon}`} alt={g.label} draggable={false} />
-                        ) : (
-                          <span className="att-added-icon att-added-fallback" aria-hidden>
-                            {g.label.slice(0, 1)}
-                          </span>
-                        )}
-                        <button type="button" className="att-added-remove" aria-label={`Remove ${g.label}`} title={`Remove ${g.label}`} onClick={() => removeConn(it.connId)}>
-                          <RemoveX />
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
+            <AttachTray groups={trayGroups} onRemoveConn={removeConn} onRemoveGroup={removeGroup} />
           )}
         </div>
 
@@ -535,54 +462,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
           )}
         </div>
       </div>
-      {/* hover tooltip for a dropped app icon — portaled to <body> so the dropbox's clip can't cut it off. */}
-      {hover &&
-        createPortal(
-          <div className="att-tip" style={{ left: hover.x, top: hover.y }} role="tooltip">
-            <span className="att-tip-app">{hover.app}</span>
-            <span className="att-tip-val">{hover.title || '—'}</span>
-          </div>,
-          document.body
-        )}
     </div>
-  )
-}
-
-// The small × glyph shared by every remove control (favicon hover-overlay, window label, single chip).
-function RemoveX(): JSX.Element {
-  return (
-    <svg viewBox="0 0 10 10" width="8" height="8" aria-hidden>
-      <path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-// A 16px favicon with a globe-glyph fallback (some favIconUrls are chrome-internal and won't load cross-context).
-function Favicon({ src }: { src?: string }): JSX.Element {
-  const [failed, setFailed] = useState(false)
-  if (!src || failed) {
-    return (
-      <span className="att-favicon att-favicon-fallback" aria-hidden>
-        ◍
-      </span>
-    )
-  }
-  return <img className="att-favicon" src={src} alt="" aria-hidden draggable={false} onError={() => setFailed(true)} />
-}
-
-// A 16px macOS app icon (base64 PNG the BlitzComputerUse helper resolves per window via NSRunningApplication.icon).
-// Falls back to the app's first letter when the icon is missing or fails to decode.
-function AppIcon({ src, name }: { src?: string; name?: string }): JSX.Element {
-  const [failed, setFailed] = useState(false)
-  if (!src || failed) {
-    return (
-      <span className="att-favicon att-app-fallback" aria-hidden>
-        {(name || '?').slice(0, 1).toUpperCase()}
-      </span>
-    )
-  }
-  return (
-    <img className="att-favicon att-app-icon" src={`data:image/png;base64,${src}`} alt="" aria-hidden draggable={false} onError={() => setFailed(true)} />
   )
 }
 

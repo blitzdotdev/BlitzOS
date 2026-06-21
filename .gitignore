@@ -54,3 +54,5 @@ release/
 /tmp/
 # electron-vite TEMP build configs (the canonical config is electron.vite.config.ts) — never commit
 electron.vite.config.*.mjs
+# reference repos cloned for porting/RE (Blender, three.js, etc.) — local only, can be huge, never commit
+.repos/

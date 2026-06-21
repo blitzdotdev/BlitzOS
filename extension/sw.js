@@ -13,10 +13,14 @@
 // Reports tab nav/title/close so BlitzOS can keep each connection's representation widget fresh.
 
 const DEFAULTS = { host: '127.0.0.1', port: 7682, token: '' }
+const RECONNECT_FAST = 700 // retry cadence once we know the port — a BlitzOS restart rebinds the SAME port and is back in ~1-2s
+const SAME_PORT_GIVEUP = 30 // fails on the known-good port (~21s) before assuming BlitzOS truly moved + falling back to range probing
 let cfg = { ...DEFAULTS }
 let ws = null
-let backoff = 1000
-let probe = 0 // cycles through the localhost port range so the extension self-discovers BlitzOS (no managed port needed)
+let backoff = RECONNECT_FAST
+let probe = 0 // walks the localhost range during INITIAL discovery only (no managed port needed)
+let goodPort = null // the port we last connected on; preferred on every reconnect so a restart never cycles the probe away from it
+let goodPortFails = 0
 
 async function loadConfig() {
   try {
@@ -48,23 +52,26 @@ async function connect() {
   if (connected() || (ws && ws.readyState === WebSocket.CONNECTING)) return
   await loadConfig()
   const ports = portsToTry()
-  const port = ports[probe % ports.length]
+  // Prefer the last-known-good port (a restart rebinds it); only walk the range during initial discovery.
+  const port = goodPort != null ? goodPort : ports[probe % ports.length]
   const url = `ws://${cfg.host}:${port}/blitz-connector${cfg.token ? `?token=${encodeURIComponent(cfg.token)}` : ''}`
   try {
     ws = new WebSocket(url)
   } catch {
-    probe++
+    onLinkDown()
     return scheduleReconnect()
   }
   ws.onopen = async () => {
-    backoff = 1000
-    probe = 0 // found it — stick to this port
+    backoff = RECONNECT_FAST
+    probe = 0
+    goodPort = port // lock onto the port that worked — reconnect straight to it next time
+    goodPortFails = 0
     send({ type: 'hello', extension: chrome.runtime.id, tabs: await listTabs() })
   }
   ws.onmessage = (ev) => handle(ev.data)
   ws.onclose = () => {
     ws = null
-    probe++ // try the next port in the range next time
+    onLinkDown()
     scheduleReconnect()
   }
   ws.onerror = () => {
@@ -76,8 +83,21 @@ async function connect() {
   }
 }
 
+// A connect attempt failed or a live link dropped. Keep retrying the known-good port FAST; only after a long
+// streak (BlitzOS genuinely moved ports) drop it and walk the range again.
+function onLinkDown() {
+  if (goodPort != null && ++goodPortFails >= SAME_PORT_GIVEUP) {
+    goodPort = null
+    goodPortFails = 0
+    probe++
+  } else if (goodPort == null) {
+    probe++ // initial discovery: advance through the range
+  }
+}
+
 function scheduleReconnect() {
-  backoff = Math.min(backoff * 2, 20000)
+  // Near-constant fast retry on a known port (a restart is back in ~1-2s); slow exponential only while probing.
+  backoff = goodPort != null ? RECONNECT_FAST : Math.min(Math.max(backoff * 2, 1000), 20000)
   setTimeout(connect, backoff)
 }
 

@@ -171,6 +171,16 @@ const api = {
       return (ipcRenderer.invoke('os:conn-drop', connId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
     }
   },
+  /** Per-message attachment SNAPSHOTS (the frozen in-chat dropbox), persisted on disk so they survive a restart.
+   *  `get` returns `{ attachments: { "<ordinal>": TrayGroup[] } }` for a chat; `record` freezes one message's tray. */
+  attachments: {
+    get(chat: string): Promise<{ attachments?: Record<string, unknown>; error?: string }> {
+      return (ipcRenderer.invoke('os:attach-get', chat) as Promise<{ attachments?: Record<string, unknown>; error?: string }>).catch(() => ({ error: 'unavailable' }))
+    },
+    record(chat: string, ordinal: number, groups: unknown): Promise<Record<string, unknown>> {
+      return (ipcRenderer.invoke('os:attach-record', chat, ordinal, groups) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
+    }
+  },
   /** Window picker — while the attach drop-zone is visible, the computer-use helper highlights ANY macOS
    *  window the cursor is over (glow + the app's icon) and lets you DRAG that icon into the drop-zone to
    *  connect it. `start` arms it with the drop-zone's on-screen rect (global, top-left CSS px ≈ macOS points);

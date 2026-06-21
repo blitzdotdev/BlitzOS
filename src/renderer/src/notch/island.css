@@ -1536,41 +1536,57 @@ button.isl-app-chat:active .isl-app-icon {
   white-space: nowrap;
 }
 
-/* attachment chips that ride the user's message — the sources connected to this chat (tab/window), right-aligned
-   above the bubble like a standard chat's file attachments. */
-.nh-island .isl-msg-attach {
+/* the in-chat attachment SNAPSHOT — a frozen, read-only, scaled-down copy of the dropbox above the user message it
+   rode on. Glass pill (the agent-tab .isl-chip look: dark surface + faint hairline), right-aligned like the bubble.
+   Scrolls (capped height) and keeps tooltips; the read-only AttachTray drops every delete control. */
+.nh-island .isl-msg-tray {
   align-self: flex-end;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 5px;
   max-width: 80%;
-  margin-bottom: 1px;
+  box-sizing: border-box;
+  margin-bottom: 3px;
+  padding: 6px 8px;
+  border-radius: 14px;
+  background: var(--isl-surface);
+  border: 1px solid var(--isl-faint);
+  max-height: 104px;
+  overflow-y: auto;
+  scrollbar-width: none;
 }
-.nh-island .isl-attach-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 168px;
-  padding: 3px 9px 3px 7px;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: var(--isl-muted);
-  font-size: 11.5px;
+.nh-island .isl-msg-tray::-webkit-scrollbar {
+  display: none;
 }
-.nh-island .isl-attach-chip-glyph {
-  flex: none;
-  font-size: 10px;
-  color: var(--isl-accent);
+/* reuse the dropbox markup (.att-added-stack/.att-pill/…) but: the .isl-msg-tray is the scroll container (neutralize
+   the live box's own flex+scroll+padding), and every 44px tile SCALES DOWN to 28px for the compact in-chat copy. */
+.nh-island .isl-msg-tray .att-added-stack {
+  padding: 0;
+  gap: 6px;
+  overflow: visible;
 }
-.nh-island .isl-attach-chip[data-type='window'] .isl-attach-chip-glyph {
-  color: #30d158;
+.nh-island .isl-msg-tray .att-pill {
+  gap: 7px;
+  padding: 4px 9px 4px 6px;
+  border-radius: 15px;
 }
-.nh-island .isl-attach-chip-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.nh-island .isl-msg-tray .att-pill-items,
+.nh-island .isl-msg-tray .att-singles {
+  gap: 6px;
+}
+.nh-island .isl-msg-tray .att-pill-app .att-favicon,
+.nh-island .isl-msg-tray .att-pill-item,
+.nh-island .isl-msg-tray .att-pill-item .att-favicon,
+.nh-island .isl-msg-tray .att-pill-letter,
+.nh-island .isl-msg-tray .att-added-chip,
+.nh-island .isl-msg-tray .att-added-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+.nh-island .isl-msg-tray .att-pill-letter,
+.nh-island .isl-msg-tray .att-pill-app .att-favicon-fallback,
+.nh-island .isl-msg-tray .att-pill-app .att-app-fallback,
+.nh-island .isl-msg-tray .att-pill-item .att-favicon-fallback,
+.nh-island .isl-msg-tray .att-added-fallback {
+  font-size: 12px;
 }
 
 /* ── the STEER / new-session composer = the iMessage input pill. Transparent fill, a hairline grey capsule; the

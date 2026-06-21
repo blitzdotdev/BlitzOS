@@ -7,6 +7,7 @@
 //  - UNCONTROLLED (defaultValue + ref) to preserve native undo/redo/paste and avoid re-rendering a parent feed,
 //  - send affordance enabled only when the trimmed value is non-empty.
 import { useEffect, useRef, useState } from 'react'
+import { getDraft, setDraft } from './draftStore'
 
 export function ChatInput({
   className = '',
@@ -14,7 +15,8 @@ export function ChatInput({
   onSend,
   maxHeight = 120,
   autoFocus = false,
-  sendLabel = '↑'
+  sendLabel = '↑',
+  draftKey
 }: {
   className?: string
   placeholder?: string
@@ -22,6 +24,8 @@ export function ChatInput({
   maxHeight?: number
   autoFocus?: boolean
   sendLabel?: string
+  /** Persist the half-typed draft per chat so it survives the island close/reopen + tab switches. */
+  draftKey?: string
 }): JSX.Element {
   const ref = useRef<HTMLTextAreaElement>(null)
   const [canSend, setCanSend] = useState(false)
@@ -41,6 +45,17 @@ export function ChatInput({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Load this chat's saved draft on mount AND whenever the active chat changes (a tab switch reuses this same
+  // composer instance) — so a half-typed message survives the island reopen and each chat keeps its own draft.
+  useEffect(() => {
+    const el = ref.current
+    if (!el || draftKey == null) return
+    el.value = getDraft(draftKey)
+    autosize()
+    sync()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey])
+
   const send = (): void => {
     const el = ref.current
     const text = el?.value.trim()
@@ -50,6 +65,7 @@ export function ChatInput({
       el.value = '' // uncontrolled: clear via the node, keep native undo stack intact otherwise
       autosize()
     }
+    if (draftKey != null) setDraft(draftKey, '') // the draft rode the message — clear it for this chat
     setCanSend(false)
   }
 
@@ -64,6 +80,7 @@ export function ChatInput({
         onInput={() => {
           autosize()
           sync()
+          if (draftKey != null) setDraft(draftKey, ref.current?.value || '')
         }}
         onKeyDown={(e) => {
           // IME guard: while composing (or the legacy 229 keyCode), Enter commits the candidate, never sends.

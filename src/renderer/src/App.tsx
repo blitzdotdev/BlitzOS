@@ -84,9 +84,13 @@ export default function App(): JSX.Element {
   // the next open (NotchHost remounts per open). Refs, not state, so updating them never re-renders App.
   const islandViewRef = useRef<'home' | 'settings' | 'session'>('home')
   const islandPageRef = useRef(0)
-  const onIslandStateChange = (view: 'home' | 'settings' | 'session', page: number): void => {
+  // Also remember the attach panel (open/closed) so reopening the island restores it, not just the view+tab. (The
+  // per-chat staging TRAY lives in stagingStore — a module store that survives the remount on its own.)
+  const islandAttachOpenRef = useRef(false)
+  const onIslandStateChange = (view: 'home' | 'settings' | 'session', page: number, attachOpen: boolean): void => {
     islandViewRef.current = view
     islandPageRef.current = page
+    islandAttachOpenRef.current = attachOpen
   }
   const overChassisRef = useRef(false) // cursor over the chat chassis (overlay mousemove) — keeps the panel open
   const notchOverRef = useRef(false) // cursor over the physical notch (reported by the hit-window's hover)
@@ -807,6 +811,7 @@ export default function App(): JSX.Element {
             menuBarH={notchMenuBarH}
             initialView={islandViewRef.current}
             initialPage={islandPageRef.current}
+            initialAttachOpen={islandAttachOpenRef.current}
             onStateChange={onIslandStateChange}
             onChassisHoverChange={setChassisHover}
             onChassisResize={() => {

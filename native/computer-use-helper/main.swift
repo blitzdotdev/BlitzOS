@@ -352,7 +352,7 @@ final class PickPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-// The glow ring (a stroked rounded-rect with a colored shadow) over the window border + the app icon at top-center.
+// The glow ring (a stroked rounded-rect with a colored shadow) over the window border + the app icon at its center.
 final class PickHighlightView: NSView {
     private let ring = CAShapeLayer()
     private let iconHolder = NSView()
@@ -388,17 +388,17 @@ final class PickHighlightView: NSView {
     required init?(coder: NSCoder) { fatalError("no coder") }
 
     func setIcon(_ img: NSImage?) { iconView.image = img }
+    // Hide just the centered app icon (the ring stays) — on grab, so only the dragged cursor icon is visible.
+    func setIconHidden(_ hidden: Bool) { iconHolder.isHidden = hidden }
 
     override func layout() {
         super.layout()
         let r = bounds.insetBy(dx: pad, dy: pad) // the ring sits on the window's border
         ring.frame = bounds
         ring.path = CGPath(roundedRect: r, cornerWidth: 11, cornerHeight: 11, transform: nil)
-        // icon at TOP-CENTER (non-flipped NSView: top = maxY)
+        // icon centered on the window (its real middle), so it reads as "this whole window".
         let box: CGFloat = 56, icon: CGFloat = 44
-        let cx = bounds.midX
-        let topY = bounds.maxY - pad - box / 2 - 4
-        iconHolder.frame = CGRect(x: cx - box / 2, y: topY - box / 2, width: box, height: box)
+        iconHolder.frame = CGRect(x: bounds.midX - box / 2, y: bounds.midY - box / 2, width: box, height: box)
         iconView.frame = CGRect(x: (box - icon) / 2, y: (box - icon) / 2, width: icon, height: icon)
     }
 }
@@ -560,6 +560,7 @@ final class PickController {
             highlightPanel = panel; highlightView = v
         }
         highlightView?.setIcon(pickAppIcon(h.pid))
+        highlightView?.setIconHidden(false) // a fresh hover always shows the centered icon (it's hidden during a drag)
         highlightPanel?.setFrame(ns, display: true)
         highlightView?.needsLayout = true
         highlightPanel?.orderFront(nil)
@@ -567,6 +568,7 @@ final class PickController {
 
     private func beginDrag(_ h: PickWin, at p: CGPoint) {
         dragging = true; dragWin = h; lastInside = false
+        highlightView?.setIconHidden(true) // on grab, hide the static center icon so only the cursor icon is visible
         let v = PickDragView(frame: NSRect(x: 0, y: 0, width: 54, height: 54))
         v.setIcon(pickAppIcon(h.pid))
         // ABOVE the BlitzOS island (which sits at .screenSaver) so the dragged icon stays visible as it travels

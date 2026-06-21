@@ -12,8 +12,10 @@ import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, electronOps, electronConnections, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
 import { makeTabLink } from './connection-tab-link.mjs'
 import { makeWindowLink } from './connection-window-link'
+import { makeAttachmentStore } from './attachment-store.mjs'
 import { makeSafariLink } from './connection-safari-link.mjs'
 import { startConnectorServer, installConnector, isConnectorPolicyInstalled } from './connection-install'
+import { isChromiumBrowser, decideDrop } from './browser-drop.mjs'
 import { wireLauncher, registerLauncher } from './launcher'
 import { wireWorkflowHost, subscribe as wfSubscribe, snapshot as wfSnapshot } from './workflow-host.mjs'
 import { wireEnrichment, spawnWorkflowEnrichment } from './workflow-enrichment.mjs'
@@ -599,6 +601,12 @@ app.whenReady().then(() => {
   ipcMain.handle('os:conn-install', () => electronConnections.connectionInstallExtension())
   ipcMain.handle('os:conn-list', (_e, agentId?: string) => electronConnections.connectionList(agentId != null ? String(agentId) : undefined))
   ipcMain.handle('os:conn-drop', (_e, connId: string) => electronConnections.connectionDrop(String(connId)))
+  // Per-message attachment snapshots (the frozen in-chat dropbox), persisted under <ws>/.blitzos/attachments/<chat>.json.
+  const attachmentStore = makeAttachmentStore({ getWorkspacePath: () => osWorkspaceContext().workspace_path || null })
+  ipcMain.handle('os:attach-get', (_e, chat: string) => attachmentStore.listAttachments(String(chat ?? '')))
+  ipcMain.handle('os:attach-record', (_e, chat: string, ordinal: number, groups: unknown) =>
+    attachmentStore.recordAttachments(String(chat ?? ''), Number(ordinal) || 0, Array.isArray(groups) ? groups : [])
+  )
   // Window picker: arm the CU helper's hover-highlight-and-drag overlay over the user's REAL macOS windows.
   // dropZone is the attach drop-zone's on-screen rect (global, top-left points); dropping a window there connects
   // it (handled by the helper's pick_drop event below). excludePids skips BlitzOS's own window (no self-highlight).
@@ -1133,7 +1141,26 @@ app.whenReady().then(() => {
   // connects becomes a per-source tool provider (connection_* tools + a representation widget). The per-install
   // token is delivered to the extension via managed storage at force-install (absent in unpacked dev, where the
   // Origin: chrome-extension://<our id> check alone gates the localhost link).
-  const tabLink = makeTabLink({ connectionOps: electronConnections, token: process.env.BLITZ_CONNECTOR_TOKEN || '' })
+  // On the rising edge of the connector link (extension (re)connects — boot OR a Chrome restart), auto-rebind every
+  // persisted connection to its still-open tab so a BlitzOS restart never makes the agent lose its tab + ask the user
+  // to reconnect. Small settle delay lets the extension's hello/tab list land first. Idempotent (live ones skipped).
+  let tabLinkUp = false
+  const tabLink = makeTabLink({
+    connectionOps: electronConnections,
+    token: process.env.BLITZ_CONNECTOR_TOKEN || '',
+    onStatus: (s) => {
+      const up = !!s.connected
+      if (up && !tabLinkUp) {
+        setTimeout(() => {
+          void electronConnections
+            .connectionRestoreAll()
+            .then((r) => r && r.total && console.log(`[blitzos] connections restored: ${r.restored}/${r.total}`))
+            .catch(() => {})
+        }, 800)
+      }
+      tabLinkUp = up
+    }
+  })
   electronConnections.setTabLink(tabLink)
   tabLink
     .start()
@@ -1142,15 +1169,20 @@ app.whenReady().then(() => {
       else console.warn('[blitzos] connector link not started:', r.error)
     })
     .catch((e) => console.warn('[blitzos] connector link error:', e))
+  // Window connections (computer-use helper) don't ride the extension, so restore them once shortly after boot too
+  // (the helper is prewarmed). Tabs get re-tried here as well if the extension is already up; otherwise onStatus covers them.
+  setTimeout(() => void electronConnections.connectionRestoreAll().catch(() => {}), 6000)
 
   // Window connect (macOS-local only): the BlitzComputerUse helper IS the window adapter (AX + vision +
   // CGEvent). It's ensured lazily on the first window op (it holds the Accessibility + Screen-Recording grants).
   electronConnections.setWindowLink(makeWindowLink({ connectionOps: electronConnections, helper: computerUseHelper() }))
-  // Window-picker drops: route by what landed. A browser window the extension knows (matched by on-screen BOUNDS)
-  // connects its ACTIVE TAB through the Chrome extension — real DOM/run_js at TAB resolution. Anything else (a
-  // non-browser app, or no extension running) connects as a native WINDOW through the computer-use helper (AX tree +
-  // screenshot + coordinate clicks). The dropped CGWindow bounds and the extension's chrome.windows bounds are the
-  // same physical window, so a small-tolerance match is the whole bridge (CGWindowID and Chrome's tabId never meet).
+  // Window-picker drops: route by WHAT landed (browser-ness by bundleId), not just by whether bounds matched.
+  // A BROWSER window resolves to its ACTIVE TAB through the connector extension — real DOM/run_js at TAB resolution
+  // (matched by on-screen BOUNDS: the dropped CGWindow bounds and the extension's chrome.windows bounds are the same
+  // physical window, so a small-tolerance match is the whole bridge — CGWindowID and Chrome's tabId never otherwise
+  // meet). A browser whose tab can't be resolved fails LOUDLY (connector unavailable) — it must NEVER degrade into a
+  // whole-window grab that exposes every tab and misleads the agent. A NON-browser window connects as a native WINDOW
+  // through the computer-use helper (AX tree + screenshot + coordinate clicks); only browsers attempt the tab match.
   const matchBrowserTab = async (b: { x: number; y: number; w: number; h: number }): Promise<number | null> => {
     if (!tabLink.isConnected()) return null
     const wins = (await tabLink.listWindows().catch(() => null)) as Array<{
@@ -1167,24 +1199,49 @@ app.whenReady().then(() => {
     }
     return best && best.score <= 120 ? best.tabId : null // ~120pt total slack covers the title bar + rounding
   }
+  // The connector's MV3 service worker can be momentarily asleep at the instant of a drop (it re-wakes + reconnects
+  // within ~1s via its keepalive/alarm). Retry the match for ~2s so a transient disconnect doesn't make a browser
+  // drop fall through to the whole-window path — the exact bug this whole branch exists to prevent.
+  const matchBrowserTabRetry = async (b: { x: number; y: number; w: number; h: number }): Promise<number | null> => {
+    for (let i = 0; i < 5; i++) {
+      const tabId = await matchBrowserTab(b)
+      if (tabId != null) return tabId
+      if (i < 4) await new Promise((r) => setTimeout(r, 400))
+    }
+    return null
+  }
   computerUseHelper().onEvent((m) => {
     const kind = m?.kind
     if (kind === 'pick_drop' && typeof m.windowId === 'number') {
       const bounds = { x: Number(m.x) || 0, y: Number(m.y) || 0, w: Number(m.w) || 0, h: Number(m.h) || 0 }
-      void matchBrowserTab(bounds)
-        .then((tabId) =>
-          tabId != null
-            ? electronConnections.connectionConnectTab(tabId, { agentId: pickActiveSession })
-            : electronConnections.connectionConnectWindow(Number(m.windowId), { agentId: pickActiveSession })
-        )
-        .then((res) => {
-          const ok = !!res && !res.error
-          const connId = typeof res?.connId === 'string' ? res.connId : ''
+      const app = String(m.app || '')
+      const bundleId = String(m.bundleId || '')
+      void (async () => {
+        // A browser drop must resolve to its active TAB (retry covers a momentarily-asleep connector). Only browsers
+        // try the tab match — a non-browser window with bounds that happen to coincide with a tab must NOT become a tab.
+        const isBrowser = isChromiumBrowser(bundleId, app)
+        const tabId = isBrowser ? await matchBrowserTabRetry(bounds) : null
+        const action = decideDrop({ isBrowser, tabId })
+        if (action === 'error') {
+          // Browser, but the tab connector stayed unavailable. Fail LOUDLY — never a misleading whole-window grab.
+          console.warn(`[blitzos] ${app || 'browser'} drop: tab connector unavailable, not attaching (windowId ${m.windowId})`)
           mainWindow?.webContents.send('os:pick-event', {
-            kind: 'connected', ok, connId, windowId: m.windowId, pid: m.pid, app: m.app, bundleId: String(m.bundleId || ''), title: String(m.title || ''), icon: m.icon, error: res?.error
+            kind: 'connected', ok: false, windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon,
+            error: `${app || 'Browser'} connector not connected. Load the BlitzOS Connector, then drop again.`
           })
+          return
+        }
+        const res =
+          action === 'tab'
+            ? await electronConnections.connectionConnectTab(tabId as number, { agentId: pickActiveSession })
+            : await electronConnections.connectionConnectWindow(Number(m.windowId), { agentId: pickActiveSession })
+        const ok = !!res && !res.error
+        const connId = typeof res?.connId === 'string' ? res.connId : ''
+        console.log(`[blitzos] drop → ${action}${action === 'tab' ? ` tab=${tabId}` : ''} ok=${ok} (${app || bundleId})`)
+        mainWindow?.webContents.send('os:pick-event', {
+          kind: 'connected', ok, connId, windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon, error: res?.error
         })
-        .catch((err) => mainWindow?.webContents.send('os:pick-event', { kind: 'connected', ok: false, error: String(err) }))
+      })().catch((err) => mainWindow?.webContents.send('os:pick-event', { kind: 'connected', ok: false, error: String(err) }))
     } else if (kind === 'pick_over' || kind === 'pick_hover' || kind === 'pick_cancel') {
       mainWindow?.webContents.send('os:pick-event', m)
     }

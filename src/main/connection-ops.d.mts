@@ -67,7 +67,11 @@ export interface ConnectionOps {
   connectionListWindows(): Promise<Record<string, unknown>>
   connectionConnectWindow(windowId: number, opts?: { title?: string; sourceId?: string; agentId?: string }): Promise<Record<string, unknown>>
   /** Reconnect a source by sourceId (the Reconnect button on a disconnected widget): re-finds + connects the tab/window. */
-  connectionReconnectSource(sourceId: string, type?: 'tab' | 'window'): Promise<Record<string, unknown>>
+  connectionReconnectSource(sourceId: string, type?: 'tab' | 'window', opts?: { agentId?: string }): Promise<Record<string, unknown>>
+  /** Boot / link-(re)connect auto-restore: re-bind every persisted-but-dead connection to its still-open tab/window
+   *  (preserving the owning agent). Idempotent; sources whose tab/window is gone stay disconnected. */
+  connectionRestoreAll(): Promise<{ restored: number; total: number; skipped?: string }>
+
   /** Force-install the connector extension (Electron + macOS only); registered via setInstaller. */
   setInstaller(fn: (() => Promise<{ ok: boolean; error?: string; note?: string }>) | null): void
   connectionInstallExtension(): Promise<Record<string, unknown>>
