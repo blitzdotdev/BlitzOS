@@ -611,7 +611,23 @@ app.whenReady().then(() => {
   // Window picker: arm the CU helper's hover-highlight-and-drag overlay over the user's REAL macOS windows.
   // dropZone is the attach drop-zone's on-screen rect (global, top-left points); dropping a window there connects
   // it (handled by the helper's pick_drop event below). excludePids skips BlitzOS's own window (no self-highlight).
+  let pickSeq = 0
+  let pickStopSeq = 0
+  let pickRelaunching: Promise<void> | null = null
+  let pickPermissionFlow: Promise<boolean> | null = null
+  const waitForPickerAccessibilityGrant = async (helper: ReturnType<typeof computerUseHelper>, stopSeq: number): Promise<boolean> => {
+    await helper.request('accessibility').catch(() => null)
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline && stopSeq === pickStopSeq) {
+      const tcc = await helper.status().catch(() => null)
+      if (helper.grantedFor('accessibility', tcc)) return true
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+    return false
+  }
   ipcMain.handle('os:pick-start', async (_e, dropZone: { x: number; y: number; w: number; h: number }, selfRect: { x: number; y: number; w: number; h: number }, activeSessionId?: string) => {
+    const seq = ++pickSeq
+    const stopSeq = pickStopSeq
     pickActiveSession = activeSessionId != null ? String(activeSessionId) : '' // the chat that owns whatever gets dropped
     const helper = computerUseHelper()
     const e = await helper.ensure()
@@ -619,16 +635,66 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send('os:pick-event', { kind: 'error', error: e.error || 'computer-use helper unavailable' })
       return { ok: false, error: e.error }
     }
-    const r = await helper.call('pick_start', { dropZone, selfRect, excludePids: [process.pid] })
+    const startArgs = { dropZone, selfRect, excludePids: [process.pid] }
+    let r = await helper.call('pick_start', startArgs)
+    let prompted = false
     if (r.error || r.ok === false) {
-      void helper.request('accessibility').catch(() => {}) // most likely the tap needs Accessibility — raise the prompt
-      const error = String(r.error || 'enable Accessibility for BlitzComputerUse, then reopen the attach panel')
-      mainWindow?.webContents.send('os:pick-event', { kind: 'error', error })
-      return { ok: false, error }
+      const tccBeforeRetry = await helper.status().catch(() => null)
+      let grantedBeforeRetry = helper.grantedFor('accessibility', tccBeforeRetry)
+      if (!grantedBeforeRetry) {
+        // Missing permission is different from an already-granted-but-failing event tap. Ask once while this
+        // connector panel is open; NotchHost arms the picker several times as layout settles.
+        prompted = true
+        if (!pickPermissionFlow) {
+          mainWindow?.webContents.send('os:pick-event', {
+            kind: 'picker_unavailable',
+            reason: 'accessibility',
+            message: 'I opened the Accessibility prompt for window drag. You can still use the list on the right.',
+            error: String(r.error || 'could not start window picker')
+          })
+          pickPermissionFlow = waitForPickerAccessibilityGrant(helper, stopSeq).finally(() => {
+            pickPermissionFlow = null
+          })
+        }
+        grantedBeforeRetry = await pickPermissionFlow
+        if (seq !== pickSeq || stopSeq !== pickStopSeq) return { ok: false, error: 'picker cancelled' }
+      }
+      // A just-granted TCC permission often only applies to a fresh helper process. If the helper reports
+      // Accessibility as granted, relaunch it and retry once. If it still fails after that, avoid nagging.
+      if (grantedBeforeRetry) {
+        if (!pickRelaunching) {
+          pickRelaunching = helper
+            .relaunchForGrant()
+            .catch(() => ({ ok: false }))
+            .then(() => undefined)
+            .finally(() => {
+              pickRelaunching = null
+            })
+        }
+        await pickRelaunching
+        if (seq !== pickSeq || stopSeq !== pickStopSeq) return { ok: false, error: 'picker cancelled' }
+        r = await helper.call('pick_start', startArgs)
+      }
+    }
+    if (r.error || r.ok === false) {
+      const tcc = await helper.status().catch(() => null)
+      const granted = helper.grantedFor('accessibility', tcc)
+      const raw = String(r.error || 'could not start window picker')
+      const message = granted
+        ? 'Window drag is unavailable right now. Use the list on the right to add an app or tab.'
+        : prompted
+          ? 'I opened the Accessibility prompt for window drag. You can still use the list on the right.'
+          : 'Window drag needs Accessibility for BlitzComputerUse. Use the list on the right, or grant Accessibility later.'
+      mainWindow?.webContents.send('os:pick-event', { kind: 'picker_unavailable', reason: granted ? 'event_tap_failed' : 'accessibility', message, error: raw })
+      return { ok: false, error: message }
     }
     return { ok: true }
   })
-  ipcMain.handle('os:pick-stop', () => computerUseHelper().call('pick_stop').catch(() => ({})))
+  ipcMain.handle('os:pick-stop', () => {
+    pickSeq++
+    pickStopSeq++
+    return computerUseHelper().call('pick_stop').catch(() => ({}))
+  })
   ipcMain.on('os:terminal-stop', (_e, id: string) => electronTerminalOps.stopTerminal(String(id)))
   ipcMain.on('os:terminal-remove', (_e, id: string) => electronTerminalOps.removeTerminal(String(id)))
   ipcMain.on('os:terminal-restart', (_e, id: string) => { void electronTerminalOps.restartTerminal(String(id)) })

@@ -51,11 +51,18 @@
   border-color: rgba(255, 99, 92, 0.7);
   background: rgba(255, 99, 92, 0.08);
 }
+.nh-island .att-drop.unavailable {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.02);
+}
 .nh-island .att-drop-hint[data-notice='ok'] {
   color: #5fdc83;
 }
 .nh-island .att-drop-hint[data-notice='err'] {
   color: #ff7a72;
+}
+.nh-island .att-drop-hint[data-notice='info'] {
+  color: var(--isl-muted);
 }
 .nh-island .att-drop-hint {
   display: flex;
