@@ -20,6 +20,10 @@ export interface WakeWatchdogDeps {
   recheckMs?: number
   maxTries?: number
   maxWatchMs?: number
+  /** Gap (ms) between typing the nudge text and the separate Enter, so the TUI submits it (paste-vs-submit fix). */
+  submitDelayMs?: number
+  /** A rate-limited agent: how long to hold between probe-nudges (don't hammer the throttled API). */
+  rateLimitBackoffMs?: number
 }
 
 export interface WakeWatchdog {

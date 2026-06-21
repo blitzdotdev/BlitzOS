@@ -875,9 +875,25 @@ app.whenReady().then(() => {
         notchHitWin.webContents.on('will-navigate', (e) => e.preventDefault()) // fixed inline page only
         notchHitWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
         notchHitWin.on('closed', () => { notchHitWin = null })
+        // Show ONLY after the first transparent paint. Shown before that (the old immediate showInactive), a
+        // transparent macOS window keeps its opaque WHITE backing and this empty catcher never repaints over it —
+        // that was the persistent "white pill" at the notch. showInactive so it never steals focus from the app under it.
+        let hitShown = false
+        const showHit = (): void => {
+          if (hitShown || !notchHitWin || notchHitWin.isDestroyed()) return
+          hitShown = true
+          notchHitWin.showInactive()
+          // Re-assert the rect AFTER show: macOS clamps a fresh window's y into the work area (below the menu bar),
+          // which dropped the catcher ~34px below the physical notch onto the content (it stole clicks from browser
+          // tabs). enableLargerThanScreen + this setBounds put it back over the notch; re-assert once more after the
+          // clamp settles (matches the main overlay's 700ms re-assert).
+          notchHitWin.setBounds(rect)
+          notchHitWin.setIgnoreMouseEvents(notchOverlayInteractive, { forward: true })
+          setTimeout(() => { try { if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.setBounds(rect) } catch { /* destroyed */ } }, 800)
+        }
+        notchHitWin.once('ready-to-show', showHit)
+        setTimeout(showHit, 1500) // fallback: a missed ready-to-show must never leave the click/hover catcher hidden
         notchHitWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(NOTCH_HIT_HTML))
-        notchHitWin.showInactive() // never steal focus from the app the user is over
-        notchHitWin.setIgnoreMouseEvents(notchOverlayInteractive, { forward: true })
       } else {
         notchHitWin.setBounds(rect)
         notchHitWin.setAlwaysOnTop(true, 'screen-saver', 1)
@@ -1537,15 +1553,12 @@ app.whenReady().then(() => {
       } catch {
         meta = null
       }
-      // Base standing duty (unchanged): the ORCHESTRATORS flag → author/run workflows; agent '0' → onboarding/
-      // resident duty; every other bare peer → none.
-      let duty: string | null = null
-      try {
-        if (meta?.orchestrators) duty = orchestratorBootTask()
-      } catch {
-        /* fall through to interview */
-      }
-      if (duty == null) duty = String(id) === '0' ? interviewBootTask() : null
+      // HARDCODE (per request): EVERY non-primary agent session is an orchestrator — it boots able + primed to
+      // author and run blitzscript workflows (via the run_workflow syscall, which shows the live board in chat).
+      // Agent '0' keeps its onboarding/resident duty (it still learns run_workflow from the served doctrine).
+      // The per-agent meta.orchestrators flag is superseded by this floor (all peers are orchestrators). meta is
+      // still read below for the interrupt check.
+      let duty: string | null = String(id) === '0' ? interviewBootTask() : orchestratorBootTask()
       // AUTO-CONTINUE: if this agent was cut off mid-turn, prepend the resume clause to whatever duty it has (or
       // make it the duty). Clean/idle agent or unknown backend → wasInterrupted is false/null → no clause added.
       let interrupted: boolean | null = null
