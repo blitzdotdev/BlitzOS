@@ -35,19 +35,32 @@
   max-height: 72vh;
 }
 
-/* ── HOME SCREEN: an iPhone-style row of widget icons. The middle tile sits at the island's horizontal center
-   (a centered flex row of 3). V1 = one real widget (Chat) + two dotted placeholders. ─────────────────────────── */
+/* ── HOME SCREEN: Chat + Settings chrome + active agents. V1 has no widget placeholders. ─────────────────────── */
 .nh-island.isl-home {
-  min-height: 150px;
-  align-items: center;
+  min-height: 204px;
+  align-items: stretch;
   justify-content: center;
-  padding-bottom: 22px;
+  padding-right: 24px;
+  padding-bottom: 20px;
+  padding-left: 24px;
 }
-.isl-home-grid {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center; /* the middle (Chat) tile lands dead-center in the island */
-  gap: 34px;
+.nh-island.isl-home.has-working {
+  min-height: 204px;
+}
+.isl-home-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 220px);
+  align-items: center;
+  gap: 28px;
+  width: min(100%, 468px);
+  margin: 0 auto;
+}
+.isl-home-chat-zone {
+  display: grid;
+  place-items: center;
+  min-height: 132px;
+  padding-right: 28px;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
 }
 .isl-app {
   display: flex;
@@ -116,10 +129,152 @@ button.isl-app-chat:active .isl-app-icon {
     box-shadow: 0 0 0 0 rgba(48, 209, 88, 0);
   }
 }
-/* empty placeholders — dotted outline only, no fill, no label */
-.isl-app-empty .isl-app-icon {
-  border: 2px dashed rgba(255, 255, 255, 0.16);
+.isl-home-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.isl-home-agents-title {
+  padding-left: 2px;
+  color: var(--isl-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+}
+.isl-home-working {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+  max-height: 146px;
+  box-sizing: border-box;
+  padding: 0 4px 0 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+.isl-home-working::-webkit-scrollbar {
+  width: 4px;
+}
+.isl-home-working::-webkit-scrollbar-thumb {
+  background: #ffffff26;
+  border-radius: 9999px;
+}
+.isl-home-empty {
+  padding: 12px 2px 0;
+  color: var(--isl-dim);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 16px;
+}
+.isl-working-agent {
+  width: 100%;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  box-sizing: border-box;
+  padding: 6px 9px 6px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--isl-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.14s ease-out, background 0.14s ease-out, border-color 0.14s ease-out;
+}
+.isl-working-agent:hover {
+  color: var(--isl-text);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.isl-working-agent[data-home-state='done'] {
+  border-color: rgba(48, 209, 88, 0.22);
+  background: rgba(48, 209, 88, 0.08);
+}
+.isl-working-agent[data-home-state='done']:hover {
+  border-color: rgba(48, 209, 88, 0.34);
+  background: rgba(48, 209, 88, 0.12);
+}
+.isl-working-agent:active {
+  transform: scale(0.98);
+}
+.isl-working-agent-icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+}
+.isl-working-agent-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+}
+.isl-working-agent-name {
+  display: block;
+  max-width: 100%;
+  min-height: 16px;
+  overflow: hidden;
+  color: var(--isl-text);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.isl-working-agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--isl-muted);
+  font-size: 10px;
+  font-weight: 600;
+  min-height: 14px;
+  line-height: 14px;
+}
+.isl-working-agent-dot {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  border-radius: 50%;
   background: transparent;
+  animation: isl-spin 0.8s linear infinite;
+}
+.isl-working-agent-check {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  background: #30d158;
+  color: #000;
+}
+.isl-working-agent-check svg {
+  width: 10px;
+  height: 10px;
+  display: block;
+}
+.isl-working-agent-check path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.isl-working-agent[data-home-state='done'] .isl-working-agent-status {
+  color: #8ff0a4;
 }
 
 /* ── SETTINGS SCREEN: debug-only controls surfaced in the notch home flow. ─────────────────────────────────── */
@@ -468,9 +623,25 @@ button.isl-app-chat:active .isl-app-icon {
   border-radius: 9999px;
   padding: 4px 12px 4px 10px;
 }
-.nh-island .isl-status[data-status='working'] .isl-status-dot {
+.nh-island .isl-status[data-status='warming'] {
+  color: var(--isl-text);
+  align-self: flex-start;
+  background: rgba(10, 132, 255, 0.12);
+  border-radius: 9999px;
+  padding: 4px 12px 4px 10px;
+}
+.nh-island .isl-status[data-status='warming'] .isl-status-dot {
   background: var(--isl-accent);
   animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-status[data-status='working'] .isl-status-dot {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  background: transparent;
+  animation: isl-spin 0.8s linear infinite;
 }
 .nh-island .isl-archive {
   flex: none;
@@ -694,6 +865,9 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-peek-status[data-status='working'] {
   color: var(--isl-text);
 }
+.nh-island .isl-peek-status[data-status='warming'] {
+  color: var(--isl-text);
+}
 .nh-island .isl-peek-statusdot {
   width: 8px;
   height: 8px;
@@ -701,9 +875,18 @@ button.isl-app-chat:active .isl-app-icon {
   border-radius: 50%;
   background: var(--isl-dim);
 }
-.nh-island .isl-peek-status[data-status='working'] .isl-peek-statusdot {
+.nh-island .isl-peek-status[data-status='warming'] .isl-peek-statusdot {
   background: var(--isl-accent);
   animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-peek-status[data-status='working'] .isl-peek-statusdot {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  background: transparent;
+  animation: isl-spin 0.8s linear infinite;
 }
 /* ── tab chip strip (the process header — carries agent identity + status; swipe scrolls it, never pages) ─────── */
 .nh-island .isl-tabs {
@@ -791,10 +974,19 @@ button.isl-app-chat:active .isl-app-icon {
   flex: none;
   background: var(--isl-dim); /* gray = not running */
 }
-/* running = a pulsing BLUE dot; anything else stays gray (no yellow, no red, no other color). */
-.nh-island .isl-chip-dot[data-status='working'] {
+/* warming = a pulsing BLUE dot; true working = a spinning BLUE ring. */
+.nh-island .isl-chip-dot[data-status='warming'] {
   background: var(--isl-accent);
   animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-chip-dot[data-status='working'] {
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  background: transparent;
+  animation: isl-spin 0.8s linear infinite;
 }
 
 /* Album-pill tabs: each agent chip carries a mini gradient "album", then its name, then the status dot. */
@@ -975,6 +1167,11 @@ button.isl-app-chat:active .isl-app-icon {
   }
   100% {
     box-shadow: 0 0 0 0 rgba(10, 132, 255, 0);
+  }
+}
+@keyframes isl-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 @keyframes isl-pulse {
@@ -1454,6 +1651,11 @@ button.isl-app-chat:active .isl-app-icon {
     animation: isl-rise 0.12s ease-out both;
   }
   .nh-island .isl-act[data-status='running'] .isl-act-glyph {
+    animation: none;
+  }
+  .nh-island .isl-chip-dot[data-status='working'],
+  .nh-island .isl-status[data-status='working'] .isl-status-dot,
+  .nh-island .isl-peek-status[data-status='working'] .isl-peek-statusdot {
     animation: none;
   }
 }
