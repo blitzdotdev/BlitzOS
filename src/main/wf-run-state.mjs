@@ -41,9 +41,14 @@ export function applyWfRun(prev, action, now) {
       done: false,
       ok: false,
       skeleton: incoming,
-      memDir: action.memDir == null ? null : String(action.memDir)
+      memDir: action.memDir == null ? null : String(action.memDir),
+      stats: null // rolled-up {ms,calls,tokens}; filled on the `done` transition (from the run:done event)
     }
   }
-  if (action.done && prev) return { ...prev, done: true, ok: !!action.ok }
+  // `done` carries the run's final stats (from the run:done event) so a COLLAPSED pill can show
+  // "{ms} · {calls} agents · {tokens} tok" straight from the durable record — no board mount/replay needed.
+  if (action.done && prev) {
+    return { ...prev, done: true, ok: !!action.ok, stats: action.stats && typeof action.stats === 'object' ? action.stats : (prev.stats ?? null) }
+  }
   return prev || null
 }

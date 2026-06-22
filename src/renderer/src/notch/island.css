@@ -200,6 +200,14 @@ button.isl-app-chat:active .isl-app-icon {
   border-color: rgba(48, 209, 88, 0.34);
   background: rgba(48, 209, 88, 0.12);
 }
+.isl-working-agent[data-home-state='waiting'] {
+  border-color: rgba(255, 214, 10, 0.24);
+  background: rgba(255, 214, 10, 0.08);
+}
+.isl-working-agent[data-home-state='waiting']:hover {
+  border-color: rgba(255, 214, 10, 0.38);
+  background: rgba(255, 214, 10, 0.12);
+}
 .isl-working-agent:active {
   transform: scale(0.98);
 }
@@ -273,8 +281,33 @@ button.isl-app-chat:active .isl-app-icon {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.isl-working-agent-alert {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  background: #ffd60a;
+  color: #000;
+}
+.isl-working-agent-alert svg {
+  width: 10px;
+  height: 10px;
+  display: block;
+}
+.isl-working-agent-alert path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .isl-working-agent[data-home-state='done'] .isl-working-agent-status {
   color: #8ff0a4;
+}
+.isl-working-agent[data-home-state='waiting'] .isl-working-agent-status {
+  color: #ffe27a;
 }
 
 /* ── SETTINGS SCREEN: debug-only controls surfaced in the notch home flow. ─────────────────────────────────── */
@@ -630,9 +663,20 @@ button.isl-app-chat:active .isl-app-icon {
   border-radius: 9999px;
   padding: 4px 12px 4px 10px;
 }
+.nh-island .isl-status[data-status='waiting'] {
+  color: var(--isl-text);
+  align-self: flex-start;
+  background: rgba(255, 214, 10, 0.12);
+  border-radius: 9999px;
+  padding: 4px 12px 4px 10px;
+}
 .nh-island .isl-status[data-status='warming'] .isl-status-dot {
   background: var(--isl-accent);
   animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-status[data-status='waiting'] .isl-status-dot {
+  background: #ffd60a;
+  box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.14);
 }
 .nh-island .isl-status[data-status='working'] .isl-status-dot {
   width: 10px;
@@ -865,15 +909,18 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-peek-status[data-status='working'] {
   color: var(--isl-text);
 }
-.nh-island .isl-peek-status[data-status='warming'] {
-  color: var(--isl-text);
-}
 .nh-island .isl-peek-statusdot {
   width: 8px;
   height: 8px;
   flex: none;
   border-radius: 50%;
   background: var(--isl-dim);
+}
+.nh-island .isl-peek-status[data-status='working'] {
+  color: var(--isl-text);
+}
+.nh-island .isl-peek-status[data-status='warming'] {
+  color: var(--isl-text);
 }
 .nh-island .isl-peek-status[data-status='warming'] .isl-peek-statusdot {
   background: var(--isl-accent);
@@ -987,6 +1034,12 @@ button.isl-app-chat:active .isl-app-icon {
   border-top-color: var(--isl-accent);
   background: transparent;
   animation: isl-spin 0.8s linear infinite;
+}
+.nh-island .isl-chip-dot[data-status='waiting'] {
+  width: 8px;
+  height: 8px;
+  background: #ffd60a;
+  box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.14);
 }
 
 /* Album-pill tabs: each agent chip carries a mini gradient "album", then its name, then the status dot. */
@@ -1659,11 +1712,6 @@ button.isl-app-chat:active .isl-app-icon {
     animation: isl-rise 0.12s ease-out both;
   }
   .nh-island .isl-act[data-status='running'] .isl-act-glyph {
-    animation: none;
-  }
-  .nh-island .isl-chip-dot[data-status='working'],
-  .nh-island .isl-status[data-status='working'] .isl-status-dot,
-  .nh-island .isl-peek-status[data-status='working'] .isl-peek-statusdot {
     animation: none;
   }
 }

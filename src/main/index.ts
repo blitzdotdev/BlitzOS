@@ -4,8 +4,8 @@ import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { spawn, execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir } from './osActions'
-import { emitSystemMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
+import { emitSystemMoment, emitWorkflowMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
 import { createWakeWatchdog } from './agent-wake-watchdog.mjs'
 import { openBootJournal, chatFileName } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
@@ -636,7 +636,7 @@ app.whenReady().then(() => {
   ipcMain.handle('os:agent-orchestrators', (_e, p: { id: string; on?: boolean }) => { try { return osSetOrchestrators(String(p?.id), p?.on === undefined ? true : !!p.on) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   // One-shot snapshot for the dynamic island on open: the session roster + transcripts + status. The island
   // then rides the live `os:action {type:'chat'}` broadcast for updates.
-  ipcMain.handle('os:agents-snapshot', () => { try { const s = osAgentsSnapshot(); return { ...s, status: applyWakeOverride(s.status || {}, islandActiveWs()) } } catch { return { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {} } } })
+  ipcMain.handle('os:agents-snapshot', () => { try { const s = osAgentsSnapshot(); return { ...s, status: applyWakeOverride(s.status || {}, islandActiveWs()) } } catch { return { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {}, runs: {} } } })
   // The island's per-session "Details" expand: the agent's recent raw tool calls (Grep/Edit/Run …), read from
   // its canonical transcript. Deterministic, no LLM.
   ipcMain.handle('os:agent-details', (_e, p: { id?: string }) => { try { return osAgentDetails(String(p?.id ?? '0')) } catch { return { rows: [] } } })
@@ -754,7 +754,13 @@ app.whenReady().then(() => {
     getWorkspacePath: () => osWorkspaceContext().workspace_path || null,
     spawnEnrichment: (info) => { try { spawnWorkflowEnrichment(info) } catch { /* enrichment is best-effort; the generic widget stands */ } },
     // The island's kanban board in chat rides these broadcasts (started/done), exactly like {type:'milestone'}.
-    broadcast: (action) => { try { osBroadcast(action) } catch { /* best-effort */ } }
+    broadcast: (action) => { try { osBroadcast(action) } catch { /* best-effort */ } },
+    // Wake the launching agent via /events when a hosted run finishes (bugs 2+3), so it stops hand-rolling a
+    // result.json poll. Fired next to persistEvents in the host; here we turn it into an agent-private 'workflow'
+    // moment. memDir comes straight from the host (result.json is already written under it before this fires).
+    onRunComplete: ({ runId, agentId, ok, memDir }) => {
+      try { emitWorkflowMoment(String(runId || ''), String(agentId ?? '0'), { ok: ok !== false, resultPath: memDir ? join(String(memDir), 'result.json') : '' }) } catch { /* best-effort */ }
+    }
   })
 
   // The widget-bridge subscribe path: a srcdoc widget calls blitz.workflow.subscribe(runId) -> SurfaceFrame
@@ -765,6 +771,7 @@ app.whenReady().then(() => {
     ipcMain.handle('os:wf-subscribe', (e, runId: string) => {
       const id = String(runId || '')
       if (!id) return { ok: false }
+      osWfHydrateIfCold(id) // seed the bus from disk if this is a cold (evicted/post-relaunch) run, so the backlog replays a frozen board
       const wc = e.sender
       const key = `${wc.id}:${id}`
       if (wfSubs.has(key)) return { ok: true } // already streaming to this webContents for this run
@@ -778,7 +785,11 @@ app.whenReady().then(() => {
       const off = wfSubs.get(key)
       if (off) { try { off() } catch { /* ignore */ }; wfSubs.delete(key) }
     })
-    ipcMain.handle('os:wf-snapshot', (_e, runId: string) => wfSnapshot(String(runId || '')))
+    ipcMain.handle('os:wf-snapshot', (_e, runId: string) => { const id = String(runId || ''); osWfHydrateIfCold(id); return wfSnapshot(id) })
+    // The island loads an agent's boards on tab-open: the durable disk index merged with the live registry. The
+    // renderer also pings os:tab-viewed so the memory-eviction sweep keeps a recently-viewed tab's runs cached.
+    ipcMain.handle('os:wf-load-agent-runs', (_e, agentId: string) => { try { return osLoadAgentRuns(String(agentId ?? '0')) } catch { return [] } })
+    ipcMain.on('os:tab-viewed', (_e, agentId: string) => { try { osNoteTabViewed(String(agentId ?? '0')) } catch { /* best-effort */ } })
     // The island kanban drill-in drawer: read a terminal leaf's captured record (Asked/Did/Returned).
     // Lazy on-click; returns { leaf } or { ok:false } when capture is off / the leaf hasn't finished. The run's
     // absolute memDir is resolved HERE by runId from the trusted main-side registry (osWfRunMemDir) — the
@@ -789,6 +800,10 @@ app.whenReady().then(() => {
       const r = osReadLeaf(memDir, String(runId || ''), String(nodeId || ''))
       return r && r.leaf ? { ok: true, leaf: r.leaf } : { ok: false }
     })
+    // Memory-eviction sweep: every 5 min, drop DONE workflow runs' in-memory state (registry + bus buffer) for
+    // tabs unviewed past the 15-min TTL. Disk (index.json + events.jsonl) is untouched, so re-viewing reloads them.
+    const wfSweep = setInterval(() => { try { osSweepWfMemory() } catch { /* best-effort */ } }, 5 * 60_000)
+    app.on('before-quit', () => clearInterval(wfSweep))
   }
 
   // The Notch (dynamic island) — THE MERGE: the real BlitzOS UI window IS the notch. The renderer clips

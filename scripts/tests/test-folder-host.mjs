@@ -2,11 +2,16 @@
 // reconcile, with the new folder broadcast to renderers. Drives the real host with a fake adapter +
 // a real temp dir (the host is transport-agnostic; this is exactly what backend.mjs / osActions call).
 import { createWorkspaceHost } from '../../src/main/workspace-host.mjs'
-import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 process.env.BLITZ_CHAT_STATUS_QUIET_MS = '20'
+process.env.BLITZ_CHAT_TERMINAL_ACTIVITY_THROTTLE_MS = '100'
+process.env.BLITZ_CHAT_TERMINAL_WORK_MS = '250'
+process.env.BLITZ_CHAT_POST_SAY_SETTLE_MS = '30'
+process.env.BLITZ_CHAT_POST_SAY_TERMINAL_WORK_MS = '60'
+process.env.BLITZ_CHAT_CLAUDE_END_TURN_POLL_MS = '10'
 
 let failures = 0
 const ok = (name, cond, extra) => {
@@ -20,6 +25,7 @@ const note = (id, text) => ({ id, kind: 'native', component: 'note', x: 0, y: 0,
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const root = mkdtempSync(join(tmpdir(), 'aos-host-'))
+process.env.CLAUDE_CONFIG_DIR = join(root, '.claude')
 let osState = { surfaces: [], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' }
 const broadcasts = []
 const host = createWorkspaceHost({
@@ -34,6 +40,18 @@ const host = createWorkspaceHost({
 })
 const ws = host.activePath()
 const md = () => readdirSync(ws).filter((n) => n.endsWith('.md') && n !== 'BLITZOS.md')
+const asst = (stop, text = 'ok') => JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { role: 'assistant', content: [{ type: 'text', text }], stop_reason: stop } })
+const user = (text) => JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: [{ type: 'text', text }] } })
+const claudeJsonl = (sid) => {
+  const dir = join(process.env.CLAUDE_CONFIG_DIR, 'projects', ws.replace(/[/.]/g, '-'))
+  mkdirSync(dir, { recursive: true })
+  return join(dir, `${sid}.jsonl`)
+}
+const attachClaudeSession = (id, sid) => {
+  const mp = join(ws, '.blitzos', 'terminals', String(id), 'meta.json')
+  const meta = JSON.parse(readFileSync(mp, 'utf8'))
+  writeFileSync(mp, JSON.stringify({ ...meta, agentRuntime: 'claude', claudeSessionId: sid }, null, 2))
+}
 
 console.log('workspace-host.group — end-to-end (the path backend /group + Cmd+G hit):')
 // the renderer "pushed" a board with 3 notes
@@ -97,16 +115,95 @@ ok('appendChat syncs osState chat surface props (fresh hydrate shows it)', (osSt
 ok('appendChat exposes hub threads', Array.isArray(osState.surfaces.find((s) => s.role === 'chat')?.props?.threads?.['0']))
 ok('user chat marks the agent working', chatProps().status?.['0'] === 'working', chatProps().status)
 host.appendChat('agent', 'hi there')
-ok('agent /say does not force idle', chatProps().status?.['0'] === 'working', chatProps().status)
+ok('agent /say keeps the turn briefly open', chatProps().status?.['0'] === 'working', chatProps().status)
+await sleep(45)
+ok('agent /say settles after the post-reply grace window', chatProps().status?.['0'] === 'watching', chatProps().status)
+host.noteAgentActivity('0', 'terminal')
+ok('terminal output after a settled reply stays passive', chatProps().status?.['0'] === 'watching', chatProps().status)
 host.noteAgentActivity('0', 'tool')
 ok('tool activity keeps the agent working', chatProps().status?.['0'] === 'working', chatProps().status)
 await sleep(45)
 ok('quiet running agent transitions to watching', chatProps().status?.['0'] === 'watching', chatProps().status)
+host.addAgent('3', 'Agent 3')
+host.appendChat('user', 'keep working after a progress note', '3')
+host.appendChat('agent', 'I found the first issue and I am checking the rest.', '3')
+ok('post-reply agent remains working during the settle window', chatProps().status?.['3'] === 'working', chatProps().status)
+host.noteAgentActivity('3', 'terminal')
+ok('terminal output during the settle window keeps the agent working', chatProps().status?.['3'] === 'working', chatProps().status)
+await sleep(45)
+ok('continued terminal work keeps the agent working past the quiet timeout', chatProps().status?.['3'] === 'working', chatProps().status)
+await sleep(70)
+ok('post-reply terminal continuation settles before the full terminal-work lease', chatProps().status?.['3'] === 'watching', chatProps().status)
+host.addAgent('4', 'Agent 4')
+host.appendChat('user', 'reply after a pause, then keep working', '4')
+await sleep(45)
+ok('quiet delayed reply turn demotes before the first reply', chatProps().status?.['4'] === 'watching', chatProps().status)
+host.appendChat('agent', 'I have a direction and I am checking it now.', '4')
+ok('delayed reply still reopens the post-reply working window', chatProps().status?.['4'] === 'working', chatProps().status)
+host.noteAgentActivity('4', 'terminal')
+ok('terminal output after a delayed reply keeps the agent working', chatProps().status?.['4'] === 'working', chatProps().status)
+host.addAgent('5', 'Agent 5')
+host.appendChat('user', 'ask me to choose', '5')
+host.appendChat('agent', '```blitz-ui\n{"type":"choice","prompt":"Pick one","options":["A","B"]}\n```', '5')
+ok('blitz-ui choice prompts mark the agent response-needed', chatProps().status?.['5'] === 'waiting', chatProps().status)
+await sleep(45)
+ok('response-needed status survives quiet timeout', chatProps().status?.['5'] === 'waiting', chatProps().status)
+host.noteAgentActivity('5', 'terminal')
+host.noteAgentActivity('5', 'tool')
+ok('terminal/tool noise does not clear response-needed status', chatProps().status?.['5'] === 'waiting', chatProps().status)
+host.appendChat('user', 'A', '5')
+ok('user response clears response-needed status and wakes the agent', chatProps().status?.['5'] === 'working', chatProps().status)
+host.addAgent('6', 'Agent 6')
+host.appendChat('user', 'scan HN', '6')
+host.appendChat('agent', "The HN scan is complete and delivered. I'm idle now, watching for your next message.", '6')
+ok('explicit idle final reply settles immediately instead of lingering working', chatProps().status?.['6'] === 'watching', chatProps().status)
+host.noteAgentActivity('6', 'terminal')
+ok('terminal noise after explicit idle final reply stays passive', chatProps().status?.['6'] === 'watching', chatProps().status)
+host.addAgent('7', 'Agent 7')
+host.appendChat('user', 'scan a lot, then report back', '7')
+host.noteAgentActivity('7', 'terminal')
+ok('pre-reply terminal output marks the agent working', chatProps().status?.['7'] === 'working', chatProps().status)
+host.appendChat('agent', 'The scan is complete.', '7')
+await sleep(90)
+ok('agent reply shrinks existing terminal work and settles before the full lease', chatProps().status?.['7'] === 'watching', chatProps().status)
+host.addAgent('8', 'Agent 8')
+attachClaudeSession('8', 's-clean')
+writeFileSync(claudeJsonl('s-clean'), user('old') + '\n' + asst('end_turn', 'old done') + '\n')
+host.appendChat('user', 'do one thing and stop', '8')
+host.noteAgentActivity('8', 'terminal')
+appendFileSync(claudeJsonl('s-clean'), user('do one thing and stop') + '\n' + asst('end_turn', 'new done') + '\n')
+host.appendChat('agent', 'Done.', '8')
+ok('fresh Claude end_turn settles the agent immediately', chatProps().status?.['8'] === 'watching', chatProps().status)
+host.addAgent('9', 'Agent 9')
+attachClaudeSession('9', 's-stale')
+writeFileSync(claudeJsonl('s-stale'), user('old') + '\n' + asst('end_turn', 'old done') + '\n')
+host.appendChat('user', 'do one more thing', '9')
+host.noteAgentActivity('9', 'terminal')
+host.appendChat('agent', 'I am checking that now.', '9')
+ok('stale Claude end_turn from a prior turn is ignored', chatProps().status?.['9'] === 'working', chatProps().status)
+host.addAgent('10', 'Agent 10')
+attachClaudeSession('10', 's-late-clean')
+writeFileSync(claudeJsonl('s-late-clean'), user('old') + '\n' + asst('end_turn', 'old done') + '\n')
+host.appendChat('user', 'finish after the say arrives', '10')
+host.noteAgentActivity('10', 'terminal')
+setTimeout(() => appendFileSync(claudeJsonl('s-late-clean'), user('finish after the say arrives') + '\n' + asst('end_turn', 'late done') + '\n'), 1)
+host.appendChat('agent', 'Done.', '10')
+ok('Claude agent remains working until the delayed end_turn lands', chatProps().status?.['10'] === 'working', chatProps().status)
+await sleep(20)
+ok('delayed Claude end_turn settles before the full post-reply window', chatProps().status?.['10'] === 'watching', chatProps().status)
+host.appendChat('user', 'run a long shell task')
+await sleep(120)
+ok('quiet user turn without terminal output settles to watching', chatProps().status?.['0'] === 'watching', chatProps().status)
+host.noteAgentActivity('0', 'terminal')
+ok('terminal output after a recent user turn restores working', chatProps().status?.['0'] === 'working', chatProps().status)
+await sleep(45)
+ok('contextual terminal output keeps working past the quiet timeout', chatProps().status?.['0'] === 'working', chatProps().status)
 ok('both roles append in order', host.appendChat('user', 'x').slice(0, 2).map((m) => m.role).join() === 'user,agent')
 const added = host.addAgent('1', 'Agent 1')
-ok('new agent starts in warmup', added.id === '1' && chatProps().status?.['1'] === 'starting', chatProps().status)
+ok('new agent starts ready instead of warmup', added.id === '1' && chatProps().status?.['1'] === 'idle', chatProps().status)
+host.setChatStatus('1', 'starting')
 host.noteAgentActivity('1', 'terminal')
-ok('startup terminal output keeps warmup status', chatProps().status?.['1'] === 'starting', chatProps().status)
+ok('existing-agent startup terminal output keeps warmup status', chatProps().status?.['1'] === 'starting', chatProps().status)
 host.noteAgentActivity('1', 'say')
 host.appendChat('agent', 'BlitzOS here, live on your desktop. What are we working on?', '1')
 ok('startup ready message settles to watching', chatProps().status?.['1'] === 'watching', chatProps().status)
@@ -114,6 +211,12 @@ host.noteAgentActivity('1', 'terminal')
 ok('passive wait-loop terminal output stays watching', chatProps().status?.['1'] === 'watching', chatProps().status)
 await sleep(45)
 ok('quiet new agent becomes watching', chatProps().status?.['1'] === 'watching', chatProps().status)
+host.addAgent('2', 'Agent 2')
+host.noteWorkflowRun('2', 'wf-1', true)
+await sleep(45)
+ok('active workflow keeps agent working past the quiet timeout', chatProps().status?.['2'] === 'working', chatProps().status)
+host.noteWorkflowRun('2', 'wf-1', false)
+ok('workflow completion recomputes away from working', chatProps().status?.['2'] !== 'working', chatProps().status)
 host.setChatStatus('1', 'stopped')
 ok('terminal stop marks stopped immediately', chatProps().status?.['1'] === 'stopped', chatProps().status)
 host.setChatStatus('1', 'error')

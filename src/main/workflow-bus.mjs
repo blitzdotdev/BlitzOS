@@ -24,10 +24,37 @@ export function publish(ev) {
   if (!ev || ev.runId == null) return null // off-host / nested-workflow events have no run to route to
   const r = ensureRun(ev.runId)
   const stamped = { seq: r.seq++, ts: Date.now(), ...ev }
-  if (r.events.length < MAX_EVENTS) r.events.push(stamped)
+  // Always retain the terminal run:done even past the cap — it is the one event the reducer needs to mark a
+  // replayed (late-subscriber or disk-hydrated) board 'done'. Without this a >MAX_EVENTS run would persist an
+  // events.jsonl with no run:done and reload as perpetually 'running'.
+  if (r.events.length < MAX_EVENTS || stamped.type === 'run:done') r.events.push(stamped)
   if (stamped.type === 'run:done') r.done = true
   for (const cb of r.subs) { try { cb(stamped) } catch { /* a bad subscriber must never break the run */ } }
   return stamped
+}
+
+/** Seed a COLD run's buffer from its persisted event stream (wf-store.readEventsLog) so a later subscribe
+ *  replays the disk events and the board renders an identical frozen view. No-op if the run is already
+ *  live/hydrated (events present) — never double-seeds. Does NOT fan out (no live subscribers yet); preserves
+ *  the original `seq`/`ts` stamped at write time so a future live+disk overlap still de-dupes by seq. */
+export function hydrate(runId, events) {
+  if (runId == null || !Array.isArray(events) || !events.length) return false
+  const r = ensureRun(runId)
+  if (r.events.length) return false // already live or hydrated — don't double-seed
+  for (const ev of events) {
+    if (!ev || typeof ev !== 'object') continue
+    r.events.push(ev)
+    if (typeof ev.seq === 'number' && ev.seq >= r.seq) r.seq = ev.seq + 1 // keep seq monotonic past the disk max
+    if (ev.type === 'run:done') r.done = true
+  }
+  return true
+}
+
+/** How many live subscribers a run has (0 if unknown). The memory-eviction sweep uses this to avoid clearing a
+ *  run whose board is currently mounted + watching. */
+export function subCount(runId) {
+  const r = runId == null ? null : _runs.get(String(runId))
+  return r ? r.subs.size : 0
 }
 
 /** Subscribe to a run: REPLAY the buffered backlog synchronously, then receive live events. Returns unsubscribe. */

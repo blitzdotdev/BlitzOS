@@ -13,20 +13,23 @@ ok(a && a.runId === 'r1' && a.agentId === '2', 'started (new) creates the run wi
 ok(a.done === false && a.ok === false, 'started (new) is not done')
 ok(a.startedAt === 1000 && a.memDir === '/m/r1' && a.file === '/w/x.js', 'started (new) carries startedAt/memDir/file')
 ok(Array.isArray(a.skeleton) && a.skeleton.length === 0, 'started (new) with empty skeleton → []')
+ok(a.stats === null, 'started (new) initializes stats to null')
 
-// 2. `done` marks the run finished.
-const b = applyWfRun(a, { type: 'workflow-run', runId: 'r1', done: true, ok: true }, 2000)
+// 2. `done` marks the run finished + carries the final stats (so a COLLAPSED pill shows them, no board mount).
+const b = applyWfRun(a, { type: 'workflow-run', runId: 'r1', done: true, ok: true, stats: { ms: 1200, calls: 4, tokens: 800 } }, 2000)
 ok(b.done === true && b.ok === true, 'done marks done + ok')
 ok(b.startedAt === 1000, 'done preserves startedAt')
+ok(b.stats && b.stats.ms === 1200 && b.stats.calls === 4 && b.stats.tokens === 800, 'done carries the final stats onto the record')
 
 // 3. THE REGRESSION — a late `started` carrying the real skeleton arrives AFTER done (fast-run order):
-//    it must adopt the skeleton but leave the run FINISHED (never flip done back to false).
+//    it must adopt the skeleton but leave the run FINISHED (never flip done back to false) AND keep the stats.
 const skel = [{ type: 'agent:start', nodeId: 0 }, { type: 'agent:start', nodeId: 1 }]
 const c = applyWfRun(b, { type: 'workflow-run', runId: 'r1', started: true, skeleton: skel, memDir: '/m/r1' }, 3000)
 ok(c.done === true, 'late started after done does NOT un-finish the run (the core regression)')
 ok(c.ok === true, 'late started preserves ok')
 ok(c.skeleton.length === 2, 'late started UPSERTS the real skeleton (board gets its TODO cards)')
 ok(c.startedAt === 1000, 'late started preserves the original startedAt')
+ok(c.stats && c.stats.calls === 4, 'late started preserves the stats set on done')
 
 // 4. Common slow-run order — started([]) then started(skeleton) while still running: skeleton updates, stays running.
 const d0 = applyWfRun(undefined, { type: 'workflow-run', runId: 'r2', started: true, skeleton: [] }, 1000)

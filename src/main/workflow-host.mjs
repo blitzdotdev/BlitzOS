@@ -13,9 +13,10 @@ import { mkdirSync, existsSync } from 'node:fs'
 import { join, isAbsolute } from 'node:path'
 import { ensureRun, subscribe, snapshot, isDone } from './workflow-bus.mjs'
 import * as bus from './workflow-bus.mjs'
+import { writeEventsLog, writeSkeleton } from './wf-store.mjs'
 
 let _deps = null
-/** deps: { getWorkspacePath():string, spawnEnrichment?(info):void, broadcast?(action):void } */
+/** deps: { getWorkspacePath():string, spawnEnrichment?(info):void, broadcast?(action):void, onRunComplete?(info):void } */
 export function wireWorkflowHost(deps) { _deps = deps || null }
 
 let _runtimePromise = null
@@ -79,13 +80,32 @@ export async function runWorkflowHosted({ file, args, runId, surfaceId = null, v
 
   // Run in the BACKGROUND. The global sink streams events to the bus -> the subscribed widget; the runtime
   // writes result.json on completion. We do NOT await it (a workflow can run for minutes).
+  // Persist the run's full WfEvent buffer to <memDir>/events.jsonl when it SETTLES (run:done has been published
+  // to the bus by the time runWorkflow resolves). This is the durable source the board re-hydrates from after the
+  // bus drops the run (memory eviction) or a relaunch — the SAME reducer renders an identical frozen board.
+  // TODO(kanban-persistence): snapshot(id) is the BUS buffer, capped at MAX_EVENTS (6000) with only run:done kept
+  // past the cap. A run that emits >6000 events (a massively-parallel fan-out) therefore persists a TRUNCATED
+  // stream — on reload the frozen board is missing the dropped middle agent:done cards (live was complete). Fix
+  // when it bites: append events to events.jsonl as they arrive (uncapped on disk) instead of one capped snapshot.
+  const persistEvents = () => { try { if (memDir) writeEventsLog(memDir, snapshot(id)) } catch { /* best-effort */ } }
+  // The run's final rolled-up stats live on the run:done event ({ms,calls,tokens}); carry them on the `done`
+  // broadcast so the durable run record (index.json) holds them and a COLLAPSED board pill can show
+  // "{ms} · {calls} agents · {tokens} tok" straight from the cheap record — no board mount/replay needed.
+  const finalStats = () => { try { const rd = snapshot(id).find((e) => e && e.type === 'run:done'); return rd ? { ms: Number(rd.ms) || 0, calls: Number(rd.calls) || 0, tokens: Number(rd.tokens) || 0 } : null } catch { return null } }
+  // WAKE the launching agent via /events on completion (bugs 2+3), right beside persistEvents so the durable
+  // artifact and the wake are ONE seam. Injected (onRunComplete) so this module stays perception-free; index.ts
+  // turns it into an agent-private 'workflow' moment. By the time this fires, result.json is on disk (the runtime
+  // writes it before runWorkflow resolves) AND events.jsonl is too (persistEvents ran just above). Skip dry runs.
+  const wake = (ok) => { if (dry) return; try { _deps && typeof _deps.onRunComplete === 'function' && _deps.onRunComplete({ runId: id, agentId: aid, ok, memDir }) } catch { /* best-effort */ } }
   const rt = await loadRuntime()
   Promise.resolve()
     .then(() => rt.runWorkflow(file, { args, memDir, runId: id, dry }))
-    .then(() => { try { broadcast && broadcast({ type: 'workflow-run', agentId: aid, runId: id, done: true, ok: true }) } catch { /* best-effort */ } })
+    .then(() => { persistEvents(); wake(true); try { broadcast && broadcast({ type: 'workflow-run', agentId: aid, runId: id, done: true, ok: true, stats: finalStats() }) } catch { /* best-effort */ } })
     .catch((e) => {
       void e
-      try { broadcast && broadcast({ type: 'workflow-run', agentId: aid, runId: id, done: true, ok: false }) } catch { /* best-effort */ }
+      persistEvents() // an errored run still gets its (partial) board frozen on disk
+      wake(false)
+      try { broadcast && broadcast({ type: 'workflow-run', agentId: aid, runId: id, done: true, ok: false, stats: finalStats() }) } catch { /* best-effort */ }
     })
 
   // DRY PREFLIGHT (TODO cards): the full structural skeleton (every leaf, label + phase), instant + no LLM.
@@ -105,6 +125,7 @@ export async function runWorkflowHosted({ file, args, runId, surfaceId = null, v
           new Promise((r) => setTimeout(r, 8000))
         ])
         const skeleton = snapshot(skelId).filter((e) => e.type !== 'run:done')
+        try { if (memDir) writeSkeleton(memDir, skeleton) } catch { /* best-effort: a reloaded board falls back to its real events */ }
         try { broadcast({ type: 'workflow-run', agentId: aid, runId: id, started: true, skeleton, memDir }) } catch { /* best-effort */ }
       })
       .catch(() => { /* preflight is best-effort */ })

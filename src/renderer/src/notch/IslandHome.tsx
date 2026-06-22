@@ -9,7 +9,9 @@ import type { IslandSession } from './types'
 const CHAT_GLYPH = 'M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z'
 const isActiveStatus = (value: string): boolean => value === 'working' || value === 'starting'
 const isWorkingStatus = (value: string): boolean => value === 'working'
+const isWaitingStatus = (value: string): boolean => value === 'waiting'
 const CHECK_PATH = 'm5 12 4 4L19 6'
+const ALERT_PATH = 'M12 7v6M12 17h.01'
 
 export function IslandHome({
   menuBarH,
@@ -33,7 +35,10 @@ export function IslandHome({
     const st = status[s.id] || s.status
     return isActiveStatus(st)
   })
-  const railSessions = sessions.filter((s) => isWorkingStatus(status[s.id] || s.status) || doneAgents.has(s.id))
+  const railSessions = sessions.filter((s) => {
+    const rawStatus = status[s.id] || s.status
+    return isWorkingStatus(rawStatus) || isWaitingStatus(rawStatus) || doneAgents.has(s.id)
+  })
   return (
     <div className={`nh-island isl-home${railSessions.length ? ' has-working has-home-rail' : ''}`} style={{ paddingTop: top }}>
       <div className="isl-home-layout">
@@ -55,7 +60,7 @@ export function IslandHome({
               <div className="isl-home-working">
                 {railSessions.map((s) => {
                   const rawStatus = status[s.id] || s.status
-                  const homeState = isWorkingStatus(rawStatus) ? 'working' : 'done'
+                  const homeState = isWaitingStatus(rawStatus) ? 'waiting' : isWorkingStatus(rawStatus) ? 'working' : 'done'
                   return (
                     <button
                       type="button"
@@ -75,10 +80,16 @@ export function IslandHome({
                                 <path d={CHECK_PATH} />
                               </svg>
                             </span>
+                          ) : homeState === 'waiting' ? (
+                            <span className="isl-working-agent-alert" aria-hidden>
+                              <svg viewBox="0 0 24 24" focusable="false">
+                                <path d={ALERT_PATH} />
+                              </svg>
+                            </span>
                           ) : (
                             <span className="isl-working-agent-dot" aria-hidden />
                           )}
-                          {homeState === 'done' ? 'Done' : 'Working'}
+                          {homeState === 'done' ? 'Done' : homeState === 'waiting' ? 'Response Needed' : 'Working'}
                         </span>
                       </span>
                     </button>

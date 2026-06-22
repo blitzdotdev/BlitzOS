@@ -24,13 +24,14 @@ const HOME_SEEN_WORKING_AGENTS_KEY = 'blitzos.home.seenWorkingAgents'
 const AGENT_NAME_MAX = 24
 const isHomeActiveStatus = (value?: string): boolean => value === 'working' || value === 'starting'
 const isHomeWorkingStatus = (value?: string): boolean => value === 'working'
-const isHomeDoneReviewStatus = (value?: string): boolean => !!value && !isHomeActiveStatus(value) && value !== 'error'
+const isHomeWaitingStatus = (value?: string): boolean => value === 'waiting'
+const isHomeDoneReviewStatus = (value?: string): boolean => !!value && !isHomeActiveStatus(value) && !isHomeWaitingStatus(value) && value !== 'error'
 const FAKE_HOME_AGENTS: IslandSession[] = [
   { id: 'fake-home-1', title: 'Research', status: 'working' },
   { id: 'fake-home-2', title: 'Build pass', status: 'working' },
   { id: 'fake-home-3', title: 'Review queue', status: 'idle' },
   { id: 'fake-home-4', title: 'Browser QA', status: 'working' },
-  { id: 'fake-home-5', title: 'Docs sweep', status: 'watching' },
+  { id: 'fake-home-5', title: 'Docs sweep', status: 'waiting' },
   { id: 'fake-home-6', title: 'Deploy check', status: 'working' },
   { id: 'fake-home-7', title: 'Inbox triage', status: 'idle' },
   { id: 'fake-home-8', title: 'Data pull', status: 'working' },
@@ -41,7 +42,7 @@ const FAKE_HOME_STATUS = FAKE_HOME_AGENTS.reduce<Record<string, string>>((acc, s
   acc[s.id] = s.status
   return acc
 }, {})
-const FAKE_HOME_DONE_IDS = FAKE_HOME_AGENTS.filter((s) => !isHomeWorkingStatus(s.status)).map((s) => s.id)
+const FAKE_HOME_DONE_IDS = FAKE_HOME_AGENTS.filter((s) => isHomeDoneReviewStatus(s.status)).map((s) => s.id)
 
 // peek toggle glyphs: compress (corners in → enter peek) / expand (corners out → back to chat).
 const PEEK_IN = 'M5 9h4a1 1 0 0 0 1-1V4M19 9h-4a1 1 0 0 1-1-1V4M5 15h4a1 1 0 0 1 1 1v4M19 15h-4a1 1 0 0 0-1 1v4'
@@ -229,7 +230,7 @@ export function NotchHost({
       return
     }
     onChassisResize?.()
-  }, [attachOpen, debugActiveTerminal, peek, view]) // view/debug changes resize the chassis too — hold the island open across the transit
+  }, [attachOpen, debugActiveTerminal, debugFakeHomeAgents, peek, view]) // view/debug changes resize the chassis too — hold the island open across the transit
 
   const chooseDebugActiveTerminal = (on: boolean): void => {
     setDebugActiveTerminal(on)
@@ -309,7 +310,7 @@ export function NotchHost({
 
     for (const session of nextSessions) {
       const rawStatus = liveStatus[session.id]
-      if (isHomeActiveStatus(rawStatus)) doneClear.push(session.id)
+      if (isHomeActiveStatus(rawStatus) || isHomeWaitingStatus(rawStatus)) doneClear.push(session.id)
       if (viewRef.current === 'home' && isHomeWorkingStatus(rawStatus)) ensureSeen(session.id)
     }
     for (const id of Object.keys(seenPrev)) {
@@ -321,6 +322,9 @@ export function NotchHost({
       const rawStatus = liveStatus[id]
       if (isHomeDoneReviewStatus(rawStatus)) {
         doneAdd.push(id)
+        clearSeen(id)
+      } else if (isHomeWaitingStatus(rawStatus)) {
+        doneClear.push(id)
         clearSeen(id)
       } else if (isHomeActiveStatus(rawStatus)) {
         doneClear.push(id)
@@ -358,7 +362,7 @@ export function NotchHost({
     const doneIds: string[] = []
     const activeIds: string[] = []
     for (const [id, next] of Object.entries(nextStatus)) {
-      if (isHomeActiveStatus(next)) {
+      if (isHomeActiveStatus(next) || isHomeWaitingStatus(next)) {
         activeIds.push(id)
         continue
       }
@@ -488,6 +492,53 @@ export function NotchHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // The active tab's agent id (mirrors the activeId computed in the render body below). Derived here so the load
+  // effect can key on this STRING — firing only on a real tab change, not on every chat broadcast (each makes a
+  // fresh `sessions` array, which would otherwise re-fire the IPC + reload on every message).
+  const activeTabIdx = clamp(page, 0, sessions.length)
+  const activeTabId = activeTabIdx === 0 ? '' : sessions[activeTabIdx - 1]?.id || ''
+  // Load an agent's persisted + live workflow boards whenever its tab becomes active, and ping "viewed" so the
+  // board memory-eviction sweep keeps it cached. Disk is the source of truth (index.json + events.jsonl), so this
+  // pulls back runs that were evicted from memory or survived a relaunch — finished boards never vanish. Merges
+  // (never clobbers) any in-flight run that arrived via a live broadcast but isn't yet in the loaded list.
+  useEffect(() => {
+    const id = activeTabId
+    if (!id) return
+    let live = true
+    try { window.agentOS?.tabViewed?.(id) } catch { /* best-effort */ }
+    window.agentOS
+      ?.wfLoadAgentRuns?.(id)
+      .then((list: Array<Record<string, unknown>>) => {
+        if (!live || !Array.isArray(list)) return
+        const loaded = list as unknown as IslandWfRun[]
+        setRuns((prev) => {
+          const byId = new Map<string, IslandWfRun>()
+          for (const r of prev[id] || []) byId.set(r.runId, r) // keep in-flight runs (live-broadcast race)
+          for (const r of loaded) {
+            const cur = byId.get(r.runId)
+            if (!cur) { byId.set(r.runId, r); continue }
+            // A `done`/skeleton-bearing broadcast can reach the RENDERER before main's osLoadAgentRuns read its
+            // registry, so the loaded (disk) row may be STALER than the live one. Merge with the same invariants
+            // applyWfRun enforces: a run never un-finishes, and a non-empty skeleton is never dropped. (A raw
+            // overwrite reintroduced exactly the "live board reverts to running / loses its TODO cards" class.)
+            byId.set(r.runId, {
+              ...r,
+              done: cur.done || r.done,
+              ok: cur.done ? cur.ok : r.ok,
+              skeleton: cur.skeleton && cur.skeleton.length ? cur.skeleton : r.skeleton,
+              startedAt: cur.startedAt || r.startedAt,
+              memDir: r.memDir || cur.memDir
+            })
+          }
+          return { ...prev, [id]: [...byId.values()].sort((a, b) => a.startedAt - b.startedAt) }
+        })
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [activeTabId])
+
   // Tell App when the attach panel opens/closes so it can pin the island open (the picker needs the cursor to roam
   // off the chassis onto other windows). Reset on unmount so a closed island never stays pinned.
   useEffect(() => {
@@ -606,10 +657,11 @@ export function NotchHost({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [attachOpen])
 
-  const N = sessions.length
+  const displaySessions = sessions.map((s) => ({ ...s, status: status[s.id] || s.status }))
+  const N = displaySessions.length
   const safePage = clamp(page, 0, N)
   const activeIndex = safePage === 0 ? -1 : safePage - 1
-  const activeSession = activeIndex >= 0 ? sessions[activeIndex] : null
+  const activeSession = activeIndex >= 0 ? displaySessions[activeIndex] : null
   const activeId = activeSession?.id
   activeIdRef.current = activeId ?? '' // '' = the new-session composer; sources dropped there are reassigned on spawn
   const messages = activeId ? threads[activeId] || [] : []
@@ -787,7 +839,7 @@ export function NotchHost({
     setAttachOpen(false)
     setView('session')
   }
-  const homeSessions = debugFakeHomeAgents ? FAKE_HOME_AGENTS : sessions
+  const homeSessions = debugFakeHomeAgents ? FAKE_HOME_AGENTS : displaySessions
   const homeStatus = debugFakeHomeAgents ? FAKE_HOME_STATUS : status
   const homeDoneAgentIds = debugFakeHomeAgents ? FAKE_HOME_DONE_IDS : Object.keys(homeDoneAgents)
   return (
@@ -868,7 +920,7 @@ export function NotchHost({
           />
         ) : (
           <IslandPanel
-            sessions={sessions}
+            sessions={displaySessions}
             page={safePage}
             onSelectPage={goPage}
             messages={messages}

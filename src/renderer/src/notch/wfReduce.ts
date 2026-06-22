@@ -122,9 +122,16 @@ export function mergeSkeleton(realEvents: unknown[], skeletonEvents: unknown[]):
   for (const id of real.nodeOrder) if (!(id in skel.nodes)) nodeOrder.push(id)
   const nodes: Record<string, WfNode> = {}
   for (const id of nodeOrder) {
-    nodes[id] = real.nodes[id]
-      ? real.nodes[id]
-      : { ...skel.nodes[id], status: 'queued', ms: 0, tokens: 0, preview: '', error: '' }
+    const r = real.nodes[id]
+    if (r) {
+      // A real node's live agent:start carries no prompt (only the dry SKELETON does). Inherit the skeleton's
+      // prompt when the real one lacks it, so the drawer's "Asked" is populated while the leaf is still in Doing
+      // (the EXACT prompt reloads from the captured leaf file the moment it finishes). No event-stream bloat.
+      const sk = skel.nodes[id]
+      nodes[id] = r.prompt || !(sk && sk.prompt) ? r : { ...r, prompt: sk.prompt }
+    } else {
+      nodes[id] = { ...skel.nodes[id], status: 'queued', ms: 0, tokens: 0, preview: '', error: '' }
+    }
   }
   const groupOrder = skel.groupOrder.slice()
   for (const id of real.groupOrder) if (!(id in skel.groups)) groupOrder.push(id)

@@ -54,6 +54,7 @@ export interface IslandWfRun {
   ok: boolean
   skeleton: unknown[]
   memDir: string | null
+  stats?: { ms: number; calls: number; tokens: number } | null // final rolled-up stats (on done) → collapsed pill caption, no board mount
 }
 
 export interface IslandTerminalMeta {

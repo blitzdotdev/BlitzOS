@@ -2,6 +2,7 @@
 // Click a card → Asked (the input prompt) / Did (the agent's final message, as markdown) / Returned (typed JSON).
 // The leaf record comes from osReadLeaf (BLITZ_CAPTURE_LEAVES). "Did" = leaf.summary (the harness's final
 // assistant text), rendered with the renderer's shared MarkdownMessage.
+import { useEffect, useRef } from 'react'
 import { useLeaf, Output, fmtMs, fmtTok } from './wfShared'
 import MarkdownMessage from './MarkdownMessage'
 import type { WfNode } from './wfReduce'
@@ -17,6 +18,15 @@ export default function IslandLeafDrawer({ runId, node, onClose }: IslandLeafDra
   // never fetch a non-existent leaf for it (that would return {ok:false} and show stale/empty content).
   const terminal = !!node && (node.status === 'done' || node.status === 'error' || node.status === 'empty')
   const leaf = useLeaf(runId, node ? node.nodeId : null, terminal)
+  // On open (or switching cards), bring the drawer's TOP (head + Asked) into view, so a card clicked LOW on a
+  // tall board doesn't leave you staring at the empty space below the sheet. block:'start' = sheet top → viewport top.
+  const drRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = drRef.current
+    if (!el) return
+    const raf = requestAnimationFrame(() => { try { el.scrollIntoView({ block: 'start', behavior: 'smooth' }) } catch { /* ignore */ } })
+    return () => cancelAnimationFrame(raf)
+  }, [node ? node.nodeId : null])
   if (!node) return null
   const ask = (leaf && String(leaf.prompt || '')) || node.prompt || ''
   const result = leaf ? leaf.result : undefined
@@ -24,7 +34,7 @@ export default function IslandLeafDrawer({ runId, node, onClose }: IslandLeafDra
 
   return (
     <div className="dr-scrim" onClick={onClose}>
-      <div className="dr" onClick={(e) => e.stopPropagation()}>
+      <div className="dr" ref={drRef} onClick={(e) => e.stopPropagation()}>
         <div className="dr-head">
           <span className={`dr-dot dr-${node.status}`} />
           <span className="dr-label">{node.label}</span>

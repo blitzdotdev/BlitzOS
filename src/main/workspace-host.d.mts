@@ -21,6 +21,8 @@ export interface WorkspaceHostAdapter {
   stopAgent?: (agentId: string) => void
   /** The authoritative action-items list (listActions()); the inbox surface's items are reconciled to it. */
   getActionItems?: () => unknown[]
+  /** Optional Electron-only V1 helper: generate a short title from an agent's first user message. */
+  generateAgentTitle?: (input: { agentId: string; text: string; workspacePath: string }) => Promise<string | null> | string | null
 }
 
 export interface WorkspaceHost {
@@ -62,6 +64,7 @@ export interface WorkspaceHost {
   systemUiInfo(name: string): { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null
   setChatStatus(agentId: string, status: 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error'): { ok: boolean }
   noteAgentActivity(agentId: string, source?: string): { ok: boolean; throttled?: boolean; error?: string }
+  noteWorkflowRun(agentId: string, runId: string, active: boolean): { ok: boolean; error?: string }
   /** Snapshot { agentId -> status } of every chat-bearing agent — the W2 supervisor tick's agent-state input. */
   chatStatusSnapshot(): Record<string, 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error'>
   /** Full chat-hub props for one active agent: the session roster + per-session transcripts + status. Used by

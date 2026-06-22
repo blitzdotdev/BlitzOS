@@ -254,7 +254,7 @@ export function makeOsTools(ops) {
     {
       path: '/run_workflow',
       description:
-        "Run a blitzscript workflow you authored, reporting its progress in chat as it runs. Use this INSTEAD of `bash .blitzos/blitz run` when you want the run managed for you. Returns IMMEDIATELY with { runId } — the run continues in the background, and writes its result to <workspace>/.blitzos/workflows/<runId>/result.json on completion (read it when you need the result), so `say` progress and the final synthesis to the user as it lands. Args: {file (path to a Claude-shaped workflow .js you authored + `blitz check`ed), args? (the workflow's `args` input), title?}.",
+        "Run a blitzscript workflow you authored, reporting its progress in chat as it runs. Use this INSTEAD of `bash .blitzos/blitz run` when you want the run managed for you. Returns IMMEDIATELY with { runId } — the run continues in the background, and writes its result to <workspace>/.blitzos/workflows/<runId>/result.json on completion. You are WOKEN via /events when the run finishes (no need to poll result.json — it is on disk before the wake), so read it then and `say` progress and the final synthesis to the user as it lands. Args: {file (path to a Claude-shaped workflow .js you authored + `blitz check`ed), args? (the workflow's `args` input), title?}.",
       input_schema: { type: 'object', required: ['file'], properties: { file: { type: 'string' }, args: {}, title: { type: 'string' }, agent: { type: 'string' } } },
       handler: async ({ body }) => {
         if (typeof ops.runWorkflow !== 'function') return { status: 501, body: { error: 'run_workflow not supported on this transport' } }
@@ -264,7 +264,7 @@ export function makeOsTools(ops) {
         const runId = 'wf_' + Date.now().toString(36) + (_wfRunSeq++).toString(36)
         const r = await ops.runWorkflow({ file, args: a.args, runId, agentId: a.agent != null ? String(a.agent) : '0' })
         if (!r || r.ok === false) return { status: 500, body: { error: (r && r.error) || 'run failed to start', runId } }
-        return { ok: true, runId, note: `Progress reports in chat; the result lands at .blitzos/workflows/${runId}/result.json on run:done.` }
+        return { ok: true, runId, note: `Progress reports in chat; you'll be WOKEN via /events when the run finishes, then read .blitzos/workflows/${runId}/result.json (it is on disk before the wake).` }
       }
     },
     {

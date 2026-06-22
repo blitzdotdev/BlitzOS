@@ -1,4 +1,9 @@
 // Types for wf-run-state.mjs (the shared `workflow-run` upsert rule).
+export interface WfStats {
+  ms: number
+  calls: number
+  tokens: number
+}
 export interface WfRunRecord {
   runId: string
   agentId: string
@@ -8,6 +13,7 @@ export interface WfRunRecord {
   ok: boolean
   skeleton: unknown[]
   memDir: string | null
+  stats?: WfStats | null
 }
 /** Fold one `workflow-run` broadcast into a single run record. `started` upserts (never un-finishes); `done`
  *  marks done/ok. Returns the new record, or the previous record unchanged for an irrelevant action. */
