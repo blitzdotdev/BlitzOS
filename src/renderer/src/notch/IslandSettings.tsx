@@ -15,6 +15,8 @@ export function IslandSettings({
   menuBarH,
   showActiveTerminal,
   onToggleActiveTerminal,
+  showFakeHomeAgents,
+  onToggleFakeHomeAgents,
   archivedSessions,
   onRestoreAgent,
   onDeleteAgent
@@ -22,6 +24,8 @@ export function IslandSettings({
   menuBarH: number
   showActiveTerminal: boolean
   onToggleActiveTerminal: (on: boolean) => void
+  showFakeHomeAgents: boolean
+  onToggleFakeHomeAgents: (on: boolean) => void
   archivedSessions: IslandSession[]
   onRestoreAgent: (id: string) => void
   onDeleteAgent: (id: string) => void
@@ -47,6 +51,21 @@ export function IslandSettings({
             type="checkbox"
             checked={showActiveTerminal}
             onChange={(e) => onToggleActiveTerminal(e.currentTarget.checked)}
+          />
+          <span className="isl-setting-toggle" aria-hidden>
+            <span />
+          </span>
+        </label>
+        <label className="isl-setting-row">
+          <span className="isl-setting-copy">
+            <span className="isl-setting-name">Show fake Home agents</span>
+            <span className="isl-setting-note">Design preview</span>
+          </span>
+          <input
+            className="isl-setting-input"
+            type="checkbox"
+            checked={showFakeHomeAgents}
+            onChange={(e) => onToggleFakeHomeAgents(e.currentTarget.checked)}
           />
           <span className="isl-setting-toggle" aria-hidden>
             <span />
