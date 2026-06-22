@@ -37,3 +37,21 @@ export const SOURCES = {
   'docs.google.com': await normalize('docs.google.com', docs),
   'github.com': await normalize('github.com', github)
 }
+
+// Curated sourceId -> official MCP endpoint map (served at GET /v1/mcp?sourceId=). Seeds the detection cascade's
+// tier-2 for sources that don't self-advertise /.well-known/mcp.json (plans/blitzos-mcp-connections.md). Each
+// entry is a DCR-capable provider (its authorization server exposes registration_endpoint, so BlitzOS can
+// self-register with no manually-created app — DCR-only is the V1 scope). A miss returns endpoint:null; the
+// broker still confirms DCR-eligibility live against the endpoint's metadata before any OAuth. This is DATA
+// only — no per-site logic lives in registry-core.mjs. Adding a vetted provider = add a line here (+ redeploy).
+// Both the apex and the canonical app/api host map to the same endpoint (a connected tab can report either).
+export const MCP_ENDPOINTS = {
+  // Notion — DCR proven live 2026-06-22 (POST https://mcp.notion.com/register returned a client_id, no pre-reg).
+  'www.notion.com': 'https://mcp.notion.com/mcp',
+  'notion.so': 'https://mcp.notion.com/mcp',
+  'www.notion.so': 'https://mcp.notion.com/mcp',
+  // Sentry — official remote MCP (sentry.dev), DCR-capable.
+  'sentry.io': 'https://mcp.sentry.dev/mcp',
+  // Linear — official remote MCP, DCR-capable.
+  'linear.app': 'https://mcp.linear.app/mcp'
+}

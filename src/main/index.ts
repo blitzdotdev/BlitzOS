@@ -1341,6 +1341,10 @@ app.whenReady().then(() => {
   // Window connections (computer-use helper) don't ride the extension, so restore them once shortly after boot too
   // (the helper is prewarmed). Tabs get re-tried here as well if the extension is already up; otherwise onStatus covers them.
   setTimeout(() => void electronConnections.connectionRestoreAll().catch(() => {}), 6000)
+  // MCP connections have NO representation surface (the token store is their persistence), so connectionRestoreAll
+  // (which scans getSurfaces) can't reach them — re-establish each previously-approved MCP source from its kept
+  // refresh_token, with no human step. Idempotent; a source whose refresh fails lands 'error'/'reauth'.
+  setTimeout(() => void electronConnections.mcpRestoreAll().then((r: { restored: number; total: number }) => r && r.total && console.log(`[blitzos] MCP connections restored: ${r.restored}/${r.total}`)).catch(() => {}), 6500)
 
   // Window connect (macOS-local only): the BlitzComputerUse helper IS the window adapter (AX + vision +
   // CGEvent). It's ensured lazily on the first window op (it holds the Accessibility + Screen-Recording grants).

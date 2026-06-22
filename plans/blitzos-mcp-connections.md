@@ -1,67 +1,99 @@
-# BlitzOS MCP Connections — prefer official MCP over injected JS
+# BlitzOS MCP Connections — MCP as an invisible tool provenance
 
-**Status:** Researched + live-verified (2026-06-22). NOT implemented. Awaiting go.
+**Status:** Built + adversarially reviewed + live-tested (2026-06-22). The invisible surface, runtime `mcp.<domain>` discovery, the broker (DCR + PKCE + refresh), the encrypted token store, and proactive-wake are implemented and GREEN: `npm run check` (typecheck + parity + build) passes, connections 94/0, all four MCP suites pass. Two adversarial-review rounds (13 findings) all fixed. LIVE-VERIFIED: the proactive wake moment fires for real (a `linear.app` integration moment landed in an agent's `/events` feed). NOT yet proven live: a clean end-to-end unlock → one-tap approve → MCP-data-call run (see Live findings under Provisioning).
 
-**Goal.** When a connected source (a web tab today) has an official MCP server, the agent should use it instead of injected JS. Injected JS is fragile on JS-hostile sites (Google Docs canvas, Trusted-Types pages); the site's own MCP is clean, server-side, and uses real OAuth. We can't predict which site a user connects, so detection must be general (no per-site code in core).
+**Goal.** A connected source's toolkit gains powerful server-side tools, and the agent never knows MCP exists. MCP is a third **provenance** inside the per-source connection tool registry you already have (alongside banked-JS and vetted tools). The agent's whole vocabulary stays `connection_list_tools` / `connection_call_tool` / `connection_save_tool`. BlitzOS is the broker (DCR + OAuth + token refresh + MCP client), purely internal. Scope is **DCR-only** providers (Notion, Sentry, Linear, ...); detection auto-filters to them.
 
-**Key decision: BlitzOS does NOT host an MCP client.** Both supported harnesses (Claude Code, Codex) ship their own MCP client that takes a remote server by URL and runs the OAuth themselves. BlitzOS already spawns and controls those processes, so its job is install + auth-trigger + reload. No MCP client, no token store, no dynamic tools in `os-tools.mjs`. The MCP tools live in the harness as native `mcp__*` tools, not as BlitzOS connection tools.
+## Decision: MCP is invisible — a third provenance in the existing registry
 
-## Verified live (evidence)
+Today a source's toolkit has two provenances: **banked JS** (`connection_save_tool`) and **vetted-registry** tools. Add **MCP** as a third and hide the seam:
+- `connection_list_tools(sourceId)` returns the **union** of all three as a flat list of `{name, description, inputSchema?}`. Provenance is never exposed.
+- `connection_call_tool(sourceId, name, args)` routes internally by provenance: JS runs in the page, MCP goes through the broker with a live token. The agent can't tell which.
+- `connection_save_tool` is unchanged — the agent keeps adding its own tools as it goes; the union just grows.
 
-- **Detection signal is rock-solid.** Hitting any remote MCP endpoint unauthenticated returns a uniform RFC 9728 signal. Confirmed identical on Notion, Sentry, Linear:
-  `HTTP 401` + `www-authenticate: Bearer realm="OAuth", resource_metadata="https://mcp.<host>/.well-known/oauth-protected-resource/mcp"`. The `oauth-protected-resource` doc then returns `authorization_servers`.
-- **Detection verified live end-to-end against Google (2026-06-22).** Simulated the agent opening Drive/Gmail/Calendar/Docs/Sheets cold: each `sourceId` resolved via the directory map to a LIVE Google MCP endpoint, confirmed by its protected-resource metadata. Live Google first-party servers: `drivemcp`, `gmailmcp`, `calendarmcp`, `docsmcp`, `sheetsmcp`, `slidesmcp`, `chatmcp` (all `*.googleapis.com/mcp/v1`); `people/tasks/meet/forms/keep` 404. `x.com` correctly fell through to no-MCP. Map refinement: point `docs.google.com`→`docsmcp` and `sheets.google.com`→`sheetsmcp` (dedicated servers with `documents`/`spreadsheets` scopes), the exact JS-adversarial sites this whole feature targets.
-- **Two auth classes (setup cost differs).** Notion-class = Dynamic Client Registration + self-advertised `.well-known/mcp.json` = zero-setup, `add` then approve. Google-class = NO public DCR (`accounts.google.com` exposes no `registration_endpoint`) = needs a PRE-REGISTERED OAuth client (id/secret). So for Google-class providers BlitzOS must ship its own Google-verified OAuth client (as Anthropic does for the claude.ai connectors) or walk the user through a GCP client. This is the main real-world friction, and it is per-provider, not per-site. **Google end-to-end VERIFIED 2026-06-22:** a self-made GCP **Desktop** OAuth client (testing mode, self as test user) + `claude mcp add --client-id/--client-secret` → `/mcp` Authenticate → connected, authenticated, 8 Drive tools against `drivemcp.googleapis.com/mcp/v1`. Desktop client type is REQUIRED (loopback redirect on any port/path); a Web client fails the exact redirect-URI match. (This covers connect + auth + tools-list ONLY; Google data CALLS are blocked by a verification gate, see CALL-level below.) Product implication: BlitzOS ships its own Google-verified OAuth client so users skip the GCP setup entirely. Google adds one more developer-side gotcha: each service is gated behind enabling ITS api in the backing Cloud project (e.g. `drivemcp.googleapis.com` must be Enabled, separately from `gmailmcp`, `docsmcp`...), though ONE OAuth client covers all of them. BlitzOS absorbs both the client and the per-API enablement by owning the project. None of this exists for non-Google (Notion-class) providers. **CALL-level: TWO gates found (2026-06-22, direct token probe).** **Gate 1 (fixed):** the raw Drive API returned `403 SERVICE_DISABLED service=drive.googleapis.com consumer=projects/118090436804` because the project had only the gateway API (`drivemcp.googleapis.com`) enabled, not the product API (`drive.googleapis.com`); enabling `drive.googleapis.com` made the RAW Drive API return files. So each Google MCP needs BOTH the `*mcp` gateway AND the product API enabled. **Gate 2 (the real blocker):** the MCP GATEWAY still returns "caller does not have permission" for EVERY data op (search/list/get) with EVERY scope (full `drive`, `drive.readonly`, `drive.file`), with a fresh token, even after switching the OAuth app Testing→Production, while the raw Drive API accepts the exact same tokens. Ruled out by direct test: API-enablement, scope, quota-project (`x-goog-user-project`), resource-binding (Google ignores `resource`), propagation, per-file access, and publishing status. The only remaining variable is Google app **VERIFICATION/approval**: the raw Drive API tolerates an unverified app (test-user warning), but the Drive MCP gateway refuses data ops for an unverified, self-made consumer OAuth app. Working paths: a Google-VERIFIED app (the claude.ai connector works precisely because Anthropic's app is verified), a Workspace **Internal** app (skips verification), or BlitzOS shipping its OWN verified Google app. **TAKEAWAY for BlitzOS:** for Google-class providers, ship a verified app or use the agent's native verified connector; a from-scratch user OAuth client can use the raw Drive API but NOT Google's MCP gateway for data ops. **Native-connector path confirmed both ways (2026-06-22):** Claude Code inherits the claude.ai Google connectors (Anthropic-verified), and Codex ships native Gmail/Drive plugins (`codex plugin list` shows them; a Drive connected in ChatGPT auto-appears in Codex) riding OpenAI's verified connector. So for Google-class, BlitzOS can lean on each harness's own verified connector instead of shipping its own app, the recommended V1 path. (The MCP server flattens the real reason to "caller does not have permission", so always reproduce against the underlying API to diagnose. My earlier "drive.googleapis.com disabled = the whole fix" was only Gate 1; Gate 2 is the deeper one.)
-- **Per-site `.well-known/mcp.json` works and is keyed by the tab's origin.** `https://www.notion.com/.well-known/mcp.json` → `{"name":"Notion","endpoint":"https://mcp.notion.com/mcp",...}`. `www.notion.com` IS the tab `sourceId`. Adoption is partial (Linear 404s), so it's tier-1, not the only path.
-- **Official registry is a noisy seed.** `registry.modelcontextprotocol.io/v0/servers?search=notion` returns community wrappers (Smithery, mcparmory), not first-party `mcp.notion.com`. Use it as a fallback index, prefer the well-known probe + the Anthropic directory for first-party.
-- **Claude Code install is clean.** `claude mcp add --transport http <name> <url> --scope local` writes `~/.claude.json` under the project key; `claude mcp get` then shows `Status: ! Needs authentication` (it detects the 401). OAuth is interactive (browser), tokens → macOS Keychain.
-- **Codex install is ROUGH (must work around).** `codex mcp add --url <url>` writes the `[mcp_servers.X]` TOML block but then BLOCKS on server validation (it needs OAuth) and never returns — had to `kill -9` twice. So BlitzOS must NOT shell `codex mcp add` in an unattended spawn. Write the TOML block directly, then `codex mcp login` separately. **End-to-end VERIFIED 2026-06-22** (Notion, v0.141.0, gpt-5.5): `codex mcp login` ran full OAuth (DCR + PKCE + loopback callback), and a `codex exec` turn imported the tool and called `blitz_notion/notion-search` successfully (the openai/codex #20009 "tools never import" bug did NOT reproduce). The ONLY Codex rough edge is the `add` hang, so write the TOML block.
-- **Agents are BlitzOS-managed children.** `index.ts` selects only `AGENT_RUNTIME_CLAUDE` (default) / `AGENT_RUNTIME_CODEX_SERVERLESS`, launched via `prepareAgentLaunch` → `spawnTerminal` (tmux child, `cwd=workspace`, `--session-id`/`--resume`). BlitzOS owns cwd, env, argv, restart. So install + reload is always possible for in-island agents. An external agent over agent-socket = suggest-only fallback.
+No `connection_connect_mcp`, no `mcp` flag, no word "MCP" in the doctrine. From the agent's POV a source simply *has a toolkit* it lists, calls, and extends. This is the clean realization of "a connection is a per-source TOOL PROVIDER" — MCP is just one more provider feeding that registry.
 
-## Flow
+Why invisible (vs the earlier explicit `connection_connect_mcp`):
+- **Agents don't get confused / don't fall back to `claude mcp add`.** They only know one toolkit vocabulary. (The live failure on 2026-06-22 was exactly this: with MCP exposed, the agent reached for its native `claude mcp add` and hit the mid-session no-hot-reload wall.)
+- **One uniform surface**, agent-authored and BlitzOS-provisioned tools side by side.
+- Still headless + sidesteps Claude's OAuth bugs (the agent never configures a server or sees a `WWW-Authenticate`).
 
-1. **Detect** (per connected source, cached per `sourceId` with TTL):
-   a. Probe `https://<sourceId>/.well-known/mcp.json` (and the apex if it's a subdomain). 200 → take `endpoint`.
-   b. Miss → look up `sourceId` in BlitzOS's curated map (the registry Worker, seeded from the Anthropic directory).
-   c. With an endpoint, fetch its protected-resource metadata at `<origin>/.well-known/oauth-protected-resource<path>` → `authorization_servers` + `scopes_supported` (the universal needs-auth + auth-discovery + scopes signal). Do NOT rely on a 401 alone: Google's endpoint 200s on a bad `initialize` yet still serves the PRM.
-2. **Surface.** `connection_list` gains `mcp: { available, endpoint?, needsAuth?, installed?, authed? }`.
-3. **Ask.** Agent `ask`s the user ("Notion has an official integration. Connect it? It's cleaner than driving the page.").
-4. **Install** (BlitzOS, backend-specific — see below), on yes.
-5. **Auth.** The harness runs OAuth (browser); BlitzOS surfaces the browser (it drives it anyway); user approves; harness stores the token.
-6. **Reload.** Claude: restart-resume the tmux process so it loads the new server. Codex-serverless: next `codex exec` turn reads config.toml, no restart.
-7. **Prefer.** Doctrine: once a source has native `mcp__*` tools, use them over `connection_run_js`.
+## Proven live (the backend rests on facts)
 
-## Per-backend install mechanics
+- **DCR self-registration** (2026-06-22): BlitzOS POSTed Notion's `registration_endpoint` and got a `client_id`, no pre-registration, no user interaction.
+- **Authorize + PKCE + exchange + refresh**: the probe ran the full loopback flow and minted/refreshed tokens.
+- **Upstream MCP client** (streamable HTTP `initialize` → `tools/list` → `tools/call`, `mcp-session-id` + SSE/JSON): the probe called real tools; the built broker test passes 6/6 against live public MCP servers.
+- **Detection signal**: an endpoint's `/.well-known/oauth-protected-resource<path>` → `authorization_servers` + `scopes_supported`; the AS metadata's `registration_endpoint` is the DCR discriminator (Notion has it; Google's `accounts.google.com` does not).
+- **Why DCR-only**: Google-class servers (no DCR) additionally gate data ops behind full Google app **verification** (raw Drive API tolerates an unverified app, the `drivemcp` gateway does not). Deferred until BlitzOS ships a verified app; the broker already supports it later (swap DCR for a pre-registered client).
+- **Stale fact**: Notion's `/mcp` now requires a token even for `initialize` (was unauth) — so the tool list can only be fetched AFTER approval (see the constraint below).
 
-- **Claude Code:** `claude mcp add --transport http <name> <endpoint> --scope local` (writes `~/.claude.json` under the workspace project), OR write a project `.mcp.json` in the workspace. Then restart-resume (`--resume <sid>`, keeps context). OAuth fires on first MCP call (the 401) → browser. No hot reload, so the restart is required.
-- **Codex:** write `[mcp_servers.<name>]\nurl = "<endpoint>"` to the workspace `.codex/config.toml` DIRECTLY (do not shell `codex mcp add`, it hangs). Then `codex mcp login <name>` for OAuth. codex-serverless reads config each turn, so no restart. VERIFY tools actually import (issue #20009).
+## Backend (invisible) — keep what we built
 
-## What BlitzOS owns vs the harness
+`src/main/mcp-broker.mjs` (BlitzOS as MCP client + auth owner): `dcrRegister`, two-phase `startLoopback`/`armAuthorize`, `exchangeCode`, `refresh`, `mcpInitialize/mcpListTools/mcpCallTool` (session + SSE/JSON). `src/main/mcp-detect.mjs`: the cascade (well-known → curated map → protected-resource confirm → AS-metadata DCR filter) + TTL cache + SSRF guard. Token store `src/main/mcp-token-store.mjs`: `<workspace>/.blitzos/mcp/<safeSourceId>/tokens.json`, encrypted via `safeStorage`, refresh-token reuse, boot rehydrate. All three already built, tested, and adversarially reviewed; they stay as-is, just stop being agent-visible.
 
-- BlitzOS owns: detection (probe + curated map), the `mcp` field on connections, the ask, the per-backend install (config write), the restart-resume, the doctrine. New agent tool, e.g. `connection_connect_mcp { connId | sourceId }` → does the install + reload for the active backend and returns status.
-- The harness owns: the MCP client, the OAuth flow, token storage (Keychain / codex). BlitzOS holds NO MCP tokens — less secret-handling liability.
+## The unified tool registry (the core change)
 
-## Detection map (registry Worker)
+A tool descriptor carries an INTERNAL `provider: 'js' | 'vetted' | 'mcp'` the agent never sees:
+- js / vetted: `{name, description, kind:'read'|'act', code}` (existing per-source `tools.json`).
+- mcp: `{name, description, provider:'mcp', endpoint, mcpName, inputSchema}` — no code; routed to the broker. Cached after a post-auth `tools/list` at `<workspace>/.blitzos/mcp/<safeSourceId>/tools.json` (sibling to the token file).
 
-Extend the existing vetted Worker (`registry-server/`) with a `sourceId → { endpoint }` map, seeded from the Anthropic Connectors Directory + the official registry. Data, not code, so no per-site hardcoding in core (same pattern as `registry-data.mjs`). The live `.well-known` probe is tier-1; the map covers sites that don't self-advertise yet.
+- **`connection_list_tools(sourceId)`** → returns `{ tools: [{name, description, inputSchema?}], unlock?: [...] }`. `tools` is the merged USABLE set: banked-JS + vetted + cached-MCP (only the authed ones). On a name collision across provenances, prefer MCP (server-side, robust) and drop the JS duplicate. Provenance is never exposed.
+- **Lockable integrations — the affordance, crystal clear.** When a source has a DETECTED official integration that is NOT yet authed, `connection_list_tools` ALSO returns it under `unlock`, e.g. `unlock: [{ source:'linear.app', label:'Linear', prompt:'Approve Linear access to unlock its tools' }]`. So the agent always sees, for a source: its usable tools, PLUS a short "these unlock after a one-time account approval" note. The agent can then proactively offer it ("I can connect your Linear for full access — approve?") or just reach for the capability and let `needsApproval` pop the card. It NEVER sees "MCP" — only a source that has tools and an optional account it can unlock. After approval the integration's tools move into `tools` and its `unlock` entry disappears. (A source can be usable via JS today AND have a richer integration to unlock — both show at once.)
+- **`connection_call_tool(sourceId, name, args)`** → look the tool up, route by `provider`: js/vetted run in the page (unchanged); mcp → `liveToken` (refresh if expired) → `mcpCallTool` → return the REAL result honestly (incl. `isError`, capped by `READ_CAP`). If the MCP tool is not authed, or a refresh 401s, return a connection-level `{ needsApproval:true, source, prompt:'Approve <Source> access' }` (never the word MCP/OAuth) which pops the approval card.
+- **`connection_save_tool`** → unchanged; bank JS tools as before. The union grows.
 
-## Risks / must-verify before ship
+## Provisioning + the one human step (a connection-level account approval)
 
-- **Codex end-to-end — RESOLVED (verified 2026-06-22).** Direct TOML write + `codex mcp login` + tool import + a real `notion-search` call all worked (v0.141.0/gpt-5.5); #20009 did not reproduce. Remaining rule: never shell `codex mcp add` (it hangs), write the TOML block.
-- **Claude end-to-end — VERIFIED 2026-06-22.** `/mcp` → Authenticate → browser approve → `blitz-notion connected, 17 tools`. OAuth + import confirmed.
-- **Restart-resume mid-task** keeps context AND loads the new server (claude). Verify.
-- **Browser OAuth surfaces** where the user can approve inside BlitzOS.
+The OAuth consent can't be removed, but it stops being "MCP" and becomes a normal account approval:
+- **Trigger.** When a source with a detected official integration is connected (or first listed), BlitzOS surfaces a one-time card: "Let BlitzOS use your <Source> account?" (account-access wording, no MCP/OAuth jargon). Also lazily: a `needsApproval` from `connection_call_tool` pops the same card.
+- **Proactive wake — DO NOT rely on the agent polling (the Figma lesson, 2026-06-22).** Detection is an async network probe, so the `unlock` affordance can miss a freshly-connected source's FIRST `connection_list_tools` (a real failure observed: Agent 46 connected `www.figma.com`, listed tools before detection landed, saw no `unlock`, and just drove the WebGL canvas — it never knew the integration existed). Fix (DONE in `connectionBind`): when detection LANDS a lockable integration for a connected source, BlitzOS emits a connection **moment** that wakes the connecting agent (verb: "has an official integration — connection_unlock to unlock its tools"), so discovery never depends on a re-poll. The synchronous cache still feeds `unlock` on later lists. (Note the secondary lesson: Figma's MCP is read/Dev-Mode and can't draw a shape, so even surfaced, "make a circle" correctly uses the canvas — exercise the unlock flow with an MCP-suited task like a Notion search or Linear issues.)
+- **Live findings (2026-06-22 relaunch test).** With the new build running, the proactive moment FIRED for real: `connection has an official integration — connection_unlock { sourceId: 'linear.app' }` landed in an agent's feed. But no agent completed the end-to-end flow yet, for two reasons that are NOT mechanism bugs: (1) **heavy concurrency rate-limiting** — ~10 agents running at once produced 600+ Anthropic "temporarily limiting requests" errors that stalled agents mid-flow (one got the Linear moment, then immediately rate-limited and went idle); (2) **agents default to scraping** — an agent that didn't catch the moment connected Linear and drove its GraphQL API from the page instead of unlocking. Mitigation (DONE): the doctrine now says check `connection_list_tools` FIRST and prefer an official integration over driving the page (the `run_js` rule defers to it). OPEN: prove the full unlock → one-tap approve → MCP data call with a SINGLE agent on one source (no rate-limit contention).
+- **On approve** → broker runs internally (DCR → loopback authorize → tokens stored) → `tools/list` → cache → the source's MCP tools now appear in `connection_list_tools`. On dismiss → no MCP tools; the agent uses the JS/browser path. After approval, refresh is silent forever.
+- **Constraint (honest):** auth-gated servers (Notion) can't be tool-listed pre-auth. So detection only tells BlitzOS *that an integration exists*; approving it is what *unlocks the tools* for that source. There is no agent-facing "connect" step — the tools simply appear after the user approves.
+
+## Discovery — resolve at RUNTIME, don't hardcode (implemented 2026-06-22)
+
+Discovery is a runtime cascade; the first step to yield an endpoint wins, and that endpoint is then CONFIRMED (protected-resource metadata + DCR) before it is trusted, so a wrong guess is rejected:
+1. **`.well-known/mcp.json`** on the origin — the standard, fully general, no data. Notion uses it.
+2. **Curated EXCEPTIONS** — a MINIMAL list, only providers that neither self-advertise nor follow the convention (e.g. Sentry's MCP is on `mcp.sentry.dev`, a different TLD; GitHub is `api.githubcopilot.com`). NOT a per-site catalog.
+3. **Remote registry** (`registry-server/`) — optional authoritative superset, only when `BLITZ_TOOL_REGISTRY_URL` is set.
+4. **`mcp.<domain>` convention** — a runtime heuristic with ZERO curated data: guess `https://mcp.<apex>/mcp`. It is only a guess, but SAFE because the confirm step validates it.
+
+**Why this, not a hardcoded map (the Linear lesson + the better fix):** Linear has a live, DCR-capable MCP server but does NOT self-advertise (`linear.app/.well-known/mcp.json` → 404), which made a curated map seem necessary — and the original map was stranded behind an unconfigured Worker, so Linear silently failed. But a per-site map is the wrong shape (project rule: no per-site hardcoding). The convention is the fix: probed live 2026-06-22, `mcp.<domain>/mcp` resolves a real MCP server for the majority of providers with NO per-site data — Notion, Linear, Cloudflare, Asana, PayPal, Figma, Canva, Intercom, Webflow, Wix, Neon, Prisma (13 of 22 sampled) — and a brand-new site is found the same way. Verified: `detectMcp('figma.com')` and `detectMcp('asana.com')` resolve via convention with no map entry; `x.com`/`google.com` correctly reject (the confirm step gates bad guesses). Hardcoding shrinks from "every provider" to a tiny exceptions list. Tools still come live post-auth; nothing MCP is hardcoded as a tool.
+
+## Doctrine (`src/main/blitzos-agents.md`) — never says "MCP"
+
+Replace the MCP-mentioning bullet added 2026-06-22 with the invisible framing: "Each connected source has a toolkit. `connection_list_tools` returns its usable `tools` AND any `unlock` integrations (a source can be usable now AND have a richer official integration to unlock). `connection_call_tool` runs a tool; `connection_save_tool` banks a new one. When you see an `unlock` entry (or a call returns `needsApproval`), OFFER it to the user in plain words ('I can connect your Linear for full access, approve?') and retry after they approve, that one tap is the only step. NEVER add tools to your own harness (no `claude mcp add` / `codex mcp` / `/mcp` / session restart)." No `connection_connect_mcp`, no `mcp` flag, no word "MCP" anywhere in the doctrine. **Strengthened 2026-06-22 (the scrape-default lesson):** the doctrine now tells the agent to call `connection_list_tools` FIRST on a connected source and PREFER an official integration over driving the page, and the "a tab is a JS world, do everything with `connection_run_js`" rule explicitly defers to an integration when one exists — otherwise agents scrape by habit (Figma drew on the canvas, Linear queried its GraphQL from the page) and never surface the `unlock`.
 
 ## Scope
 
-- **v1 IN:** web tabs (`sourceId = host`), detection cascade, `connection_list.mcp`, the ask, Claude install (clean) + Codex install (TOML-direct + login), restart-resume, prefer-MCP doctrine.
-- **DEFER:** native-app/window MCP (bundle ids, mostly stdio), large-scale auto-seeding of the map, any BlitzOS-hosted client (not needed).
+- **V1 IN:** MCP as an invisible provenance; the union in `connection_list_tools`/`connection_call_tool`; the connection-level account-approval card + `needsApproval`; broker/detect/token-store internals (built); DCR-only; the integration map.
+- **REMOVED from the agent surface:** the `connection_connect_mcp` tool and the `mcp` flag on `connection_list` (the op stays internal).
+- **DEFERRED:** non-DCR providers (Google verified app); variant (b) local proxy with native `mcp__*`; native-app (`window`) MCP.
 
-## Files to touch
+## Surface refactor of what we built
 
-- `src/main/connection-ops.mjs` — detection + enrich `connectionList` with `mcp`.
-- `registry-server/` — curated `sourceId → endpoint` map + query endpoint.
-- `src/main/os-tools.mjs` — `mcp` field on `connection_list`; new `connection_connect_mcp`.
-- `src/main/agent-runtime.mjs` + `index.ts` — per-backend install + restart-resume; per-agent config path (`.mcp.json` / `.codex/config.toml` in cwd, or `CLAUDE_CONFIG_DIR`).
-- `src/main/blitzos-agents.md` — doctrine: prefer MCP over `run_js`; the ask/install flow.
-- `scripts/tests/` — detection cascade + codex-write-direct.
+1. Drop `connection_connect_mcp` from `os-tools.mjs`; keep `connectMcp` as an internal op (rename e.g. `ensureMcp(sourceId)`), invoked by the connect/approval flow, not registered as an agent tool. Remove the agent-facing `mcp` flag from `connection_list`.
+2. **Detection: runtime `mcp.<domain>` convention** (DONE in `mcp-detect.mjs`) — well-known → minimal EXCEPTIONS map → optional remote registry → `mcp.<apex>/mcp` convention, all validated by the protected-resource + DCR confirm. No per-site catalog (the Linear/Figma fix); `BLITZ_TOOL_REGISTRY_URL` stays an optional remote superset. And `connection_list_tools` returns `{tools, unlock}`: usable tools merged (collision-prefer MCP) + detected-but-unauthed integrations under `unlock`.
+3. `connection_call_tool` (connection-ops) — route by provenance; emit `needsApproval` for un-authed MCP tools.
+4. Provisioning trigger on source connect/detect + the account-approval card (island UI, connection-level wording).
+5. `blitzos-agents.md` — replace the 2026-06-22 MCP bullet with the invisible framing above.
+6. Tests — list_tools-merge + call_tool-routing + needsApproval (extend the built `scripts/tests/test-mcp-*` + connections test).
+
+## Risks / watch
+
+- Provenance collision/dedup (prefer MCP, don't show duplicates).
+- Pre-auth empty toolkit: the source shows only JS tools until approved — the approval card must make the unlock obvious without the agent narrating MCP.
+- `needsApproval` loop: cap re-prompts; if dismissed, fall back to JS cleanly.
+- `connection_call_tool` honesty (real effect, no silent no-op) applies to MCP results too.
+- Security: BlitzOS holds refresh tokens — `safeStorage` at rest, loopback-only, never logged, per workspace+sourceId.
+
+## File touch list
+
+- `src/main/connection-ops.mjs` — merge MCP into `connection_list_tools`; route + `needsApproval` in `connection_call_tool`; internal `ensureMcp`; provisioning-on-connect.
+- `src/main/os-tools.mjs` — remove `connection_connect_mcp` + the `mcp` flag.
+- `src/main/mcp-broker.mjs` / `mcp-detect.mjs` / `mcp-token-store.mjs` — built; keep (add the cached `tools.json` write if not already).
+- `registry-server/` — the `sourceId → integration` map (built as `/v1/mcp`).
+- `src/main/blitzos-agents.md` — replace the MCP bullet with the invisible framing.
+- island UI — the connection-level account-approval card.
+- `scripts/tests/` — merge + routing + needsApproval coverage.

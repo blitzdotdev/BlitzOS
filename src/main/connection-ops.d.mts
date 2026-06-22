@@ -36,6 +36,23 @@ export interface ConnectionInfo {
   description?: string
 }
 
+/** A source's official integration that exists but has NOT been unlocked yet — surfaced under
+ *  connection_list_tools' `unlock`. MCP-free: the agent just sees a source it can unlock for more tools. */
+export interface ConnectionUnlock {
+  source: string
+  label: string
+  prompt: string
+}
+
+/** The result of connection_list_tools: the merged, agent-facing toolkit. Provenance (banked-JS vs the hidden
+ *  brokered integration) is never exposed; on a name collision the brokered tool wins. */
+export interface ConnectionToolkit {
+  sourceId: string
+  tools: Array<{ name: string; description?: string; inputSchema?: unknown }>
+  unlock?: ConnectionUnlock[]
+  description?: string
+}
+
 /** The agent-facing ops (Object.assign'd onto the transport's `ops`) + the adapter/registry API. */
 export interface ConnectionOps {
   /** An adapter connects a source: auto-creates + binds the representation widget; returns the ids. */
@@ -86,10 +103,32 @@ export interface ConnectionOps {
   connectionAct(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>
   connectionRunJs(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>
   connectionSaveTool(connId: string, tool: { name: string; description?: string; kind?: string; code?: string; steps?: unknown }): Record<string, unknown>
-  connectionListTools(connId: string): Record<string, unknown>
+  /** A connection's merged toolkit (banked-JS UNIONed with the hidden brokered integration's tools) + any `unlock`.
+   *  SYNC (reads the detection cache); fires detection fire-and-forget when the cache is cold. Or { error }. */
+  connectionListTools(connId: string): ConnectionToolkit | { error: string }
+  /** Run a tool on a connection: routes invisibly to the hidden brokered integration or the page. Returns the real
+   *  effect/text, { stale } for a rotten banked tool, or { needsApproval, source, prompt } when the source has an
+   *  integration to unlock. Or { error }. */
   connectionCallTool(connId: string, name: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>
   connectionDrop(connId: string): Promise<Record<string, unknown>>
   connectionSetDescription(connId: string, text: string): Record<string, unknown>
+  /** The op behind /connection_unlock — unlock a source's official integration as an INVISIBLE tool provenance.
+   *  Idempotent per sourceId (a live hidden connection is reused). detect (DCR-eligible only) → if a stored token
+   *  bundle exists, REUSE it (no human step, tools appear immediately) → else bind the loopback port first, DCR
+   *  register with that exact redirect_uri, arm the authorize URL, open the browser, and register a HIDDEN 'pending'
+   *  connection (filtered from connectionList). RETURNS IMMEDIATELY ({ ok, status:'pending'|'live', source, authUrl? });
+   *  the human approval resolves on a separate path (persist tokens → handshake → flip the hidden record to
+   *  'live'/'error' + emit a connection moment, so the source's tools enter connection_list_tools). Or { ok:false,
+   *  error, source }. NEVER blocks up to the loopback timeout. All agent-facing text is MCP-free. */
+  connectMcp(opts: { sourceId: string; agentId?: string; workspaceDir?: string }): Promise<Record<string, unknown>>
+  /** Prime the `unlock` affordance: detect (once, deduped, cached) whether a sourceId has a DCR-eligible official
+   *  integration, so connection_list_tools can synchronously decide to surface `unlock`. Fired fire-and-forget on
+   *  every tab/window connect. Returns the cached detection entry. */
+  ensureMcpDetected(sourceId: string): Promise<{ available: boolean; dcr: boolean; endpoint?: string; asMeta?: unknown; scopes?: string[]; at: number } | null>
+  /** Boot/workspace rehydrate for the HIDDEN brokered connections (no representation surface): re-establish every
+   *  previously-approved source from the encrypted token store, minting from the kept refresh_token with no human
+   *  step; the restored connections stay hidden. Idempotent; a source whose refresh fails lands 'error'/'reauth'. */
+  mcpRestoreAll(): Promise<{ restored: number; total: number; skipped?: string }>
 }
 
 export interface ConnectionOpsDeps {
@@ -107,6 +146,14 @@ export interface ConnectionOpsDeps {
   isAgentAvailable?: () => boolean
   /** Workspace-watcher self-write suppression (defaults to workspace.mjs markWrite). */
   markWrite?: (p: string) => void
+  /** First-party tool-registry base URL (defaults to BLITZ_TOOL_REGISTRY_URL). */
+  registryUrl?: string
+  /** Injectable fetch (tests; defaults to global fetch). */
+  fetchImpl?: typeof fetch
+  /** Curated MCP detection registry base (sourceId→endpoint map); defaults to BLITZ_MCP_REGISTRY_URL || BLITZ_TOOL_REGISTRY_URL. */
+  mcpRegistryUrl?: string
+  /** Open the one-time MCP OAuth authorize URL in the user's browser (Electron: shell.openExternal; server: no-op). */
+  openExternal?: (url: string) => void
 }
 
 export function makeConnectionOps(deps: ConnectionOpsDeps): ConnectionOps

@@ -5,6 +5,7 @@
 
 import { makeConnectionOps } from '../src/main/connection-ops.mjs'
 import { makeWidgetToolHandlers } from '../src/main/widget-tools.mjs'
+import { _seedCache as seedDetect, clearDetectCache } from '../src/main/mcp-detect.mjs'
 import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -334,6 +335,52 @@ async function main() {
   const noUrl = makeConnectionOps({ getWorkspacePath: () => regWs, createSurface: () => 'x', fetchImpl: fakeFetch })
   ok('an unconfigured registry reports a clear error', /not configured/.test((await noUrl.connectionRegistrySearch({ sourceId: 'docs.google.com' })).error || ''))
   rmSync(regWs, { recursive: true, force: true })
+
+  // ---------- MCP as an INVISIBLE tool provenance (plans/blitzos-mcp-connections.md) ----------
+  // The agent never sees "MCP": a connected source's connection_list_tools surfaces an `unlock` affordance when the
+  // source has a DCR-eligible official integration, and connection_call_tool returns needsApproval for an unknown
+  // tool on such a source. We drive detection deterministically by pre-seeding mcp-detect's module cache (NO network),
+  // so ensureMcpDetected (fired on connect / on list) resolves the seeded result. The LIVE broker merge + routing is
+  // covered end-to-end by scripts/tests/test-mcp-broker.mjs (live servers); here we cover the agent-facing surface.
+  const mcpWs = mkdtempSync(join(tmpdir(), 'blitz-mcp-'))
+  const mops = makeConnectionOps({ getWorkspacePath: () => mcpWs, createSurface: () => 'ms' })
+
+  // A source WITH a DCR-eligible official integration → lockable.
+  clearDetectCache()
+  seedDetect('lockable.example.com', { available: true, dcr: true, endpoint: 'https://mcp.lockable.example.com/mcp', asMeta: { registration_endpoint: 'https://as.example.com/register', authorization_endpoint: 'https://as.example.com/auth', token_endpoint: 'https://as.example.com/token' }, scopes: ['read'], via: 'test' })
+  const lockBind = mops.connectionBind({ type: 'tab', sourceId: 'lockable.example.com', title: 'Lockable', adapter: stubAdapter() })
+  // connectionBind fires ensureMcpDetected fire-and-forget; await it so the cache is primed for the sync list below.
+  await mops.ensureMcpDetected('lockable.example.com')
+  const lockTools = mops.connectionListTools(lockBind.connId)
+  ok('a hidden MCP connection is NEVER listed as a connection (filtered out)', mops.connectionList().connections.every((c) => c.type !== 'mcp'))
+  ok('connection_list_tools surfaces an `unlock` for a source with an official integration', Array.isArray(lockTools.unlock) && lockTools.unlock.length === 1 && lockTools.unlock[0].source === 'lockable.example.com')
+  ok('the unlock entry carries a plain-language prompt (no "MCP"/"OAuth" wording)', typeof lockTools.unlock[0].prompt === 'string' && !/MCP|OAuth/i.test(lockTools.unlock[0].prompt))
+  // an unknown tool on a lockable source → needsApproval (pops the approve card), not a bare "no saved tool" error.
+  const needs = await mops.connectionCallTool(lockBind.connId, 'create_issue', {})
+  ok('connection_call_tool returns needsApproval for an unknown tool on a lockable source', needs.needsApproval === true && needs.source === 'lockable.example.com')
+  ok('needsApproval prompt is MCP/OAuth-free', typeof needs.prompt === 'string' && !/MCP|OAuth/i.test(needs.prompt))
+
+  // A source WITHOUT an official integration (or non-DCR) → NOT lockable: no `unlock`, and an unknown tool is the
+  // ordinary "no saved tool" error (the agent stays on the browser path), never a needsApproval loop.
+  seedDetect('plain.example.com', { available: false, dcr: false, via: 'test' })
+  const plainBind = mops.connectionBind({ type: 'tab', sourceId: 'plain.example.com', title: 'Plain', adapter: stubAdapter() })
+  await mops.ensureMcpDetected('plain.example.com')
+  const plainTools = mops.connectionListTools(plainBind.connId)
+  ok('a non-integration source has NO unlock affordance', plainTools.unlock === undefined)
+  const plainCall = await mops.connectionCallTool(plainBind.connId, 'create_issue', {})
+  ok('an unknown tool on a non-integration source is the ordinary no-saved-tool error (no needsApproval)', !plainCall.needsApproval && /no saved tool/.test(plainCall.error || ''))
+  // a source that is available BUT non-DCR (e.g. Google) is also NOT lockable (can't self-register) → no unlock.
+  seedDetect('nondcr.example.com', { available: true, dcr: false, endpoint: 'https://mcp.nondcr.example.com/mcp', via: 'test' })
+  const ndBind = mops.connectionBind({ type: 'tab', sourceId: 'nondcr.example.com', title: 'NonDCR', adapter: stubAdapter() })
+  await mops.ensureMcpDetected('nondcr.example.com')
+  ok('an available-but-non-DCR source is not lockable (no unlock)', mops.connectionListTools(ndBind.connId).unlock === undefined)
+
+  // banked JS tools still surface for a lockable source (a source can be usable now AND have tools to unlock).
+  mops.connectionSaveTool(lockBind.connId, { name: 'banked_read', description: 'a banked tool', kind: 'read', code: 'return 1' })
+  const merged = mops.connectionListTools(lockBind.connId)
+  ok('a lockable source still lists its banked tools alongside the unlock affordance', merged.tools.some((t) => t.name === 'banked_read') && Array.isArray(merged.unlock))
+  clearDetectCache()
+  rmSync(mcpWs, { recursive: true, force: true })
 
   rmSync(ws, { recursive: true, force: true })
   console.log('\n' + (fail ? '✗' : '✓') + ' connections: ' + pass + ' passed, ' + fail + ' failed')

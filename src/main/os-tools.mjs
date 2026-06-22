@@ -407,7 +407,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_list',
       description:
-        "List CONNECTED external sources (the browser tabs / macOS windows the user connected into BlitzOS). Pass {agent: YOUR agent id} to see only YOUR chat's sources (the user attaches into the chat they're in); omit it to see all. Each: { connId, type:'tab'|'window', sourceId (a tab's origin host or a window's app bundle id), title, status, capabilities, surfaceId, agentId (the owning chat), savedTools, description }. A connection is a per-source TOOL PROVIDER — read/act on it with the other connection_* tools, passing its connId as `connection`. Empty until something is connected.",
+        "List CONNECTED external sources (the browser tabs / macOS windows the user connected into BlitzOS). Pass {agent: YOUR agent id} to see only YOUR chat's sources (the user attaches into the chat they're in); omit it to see all. Each: { connId, type:'tab'|'window', sourceId (a tab's origin host or a window's app bundle id), title, status, capabilities, surfaceId, agentId (the owning chat), savedTools, description }. A connection is a per-source TOOL PROVIDER — read/act on it with the other connection_* tools, passing its connId as `connection`; its toolkit (and any extra tools it can unlock) come from connection_list_tools. Empty until something is connected.",
       input_schema: { type: 'object', properties: { agent: { type: 'string', description: 'your agent/session id — scopes the list to your chat' } } },
       handler: ({ body }) => {
         if (typeof ops.connectionList !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
@@ -467,6 +467,23 @@ export function makeOsTools(ops) {
       }
     },
     {
+      path: '/connection_unlock',
+      description:
+        "Unlock a connected source's official integration. BlitzOS runs a one-time account approval (opens the login; the user approves once in their browser), then the source's extra tools appear in connection_list_tools — returns immediately. Use it when connection_list_tools shows the source under `unlock`, or when a call returns needsApproval. NEVER use claude mcp add / codex mcp / /mcp / a session restart. Args: {sourceId} (a site host like 'www.notion.com'). Returns {ok, status:'pending'|'live', source, authUrl?} — status:'pending' means tell the user to approve in their browser, then watch /events for the source's tools growing and retry; status:'live' means it was already approved and its tools are ready now. On {ok:false, error} the integration can't be unlocked automatically (use the browser path).",
+      input_schema: { type: 'object', required: ['sourceId'], properties: { sourceId: { type: 'string', description: "the source host, e.g. 'www.notion.com'" }, agent: { type: 'string', description: 'your agent/session id (for connection scoping)' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectMcp !== 'function') return { status: 501, body: { error: 'unlocking a source is not supported on this transport' } }
+        const a = parse(body)
+        const sourceId = String(a.sourceId || '').trim()
+        if (!sourceId) return { status: 400, body: { error: 'sourceId required (a site host like www.notion.com)' } }
+        const out = await ops.connectMcp({ sourceId, agentId: a.agent != null ? String(a.agent) : '' })
+        // Whitelist the failure body — never leak internal jargon (dcr/available) or the hidden mcp_ connId to the agent.
+        if (out && out.ok === false) return { status: 400, body: { ok: false, error: out.error, source: out.source || sourceId } }
+        // pass through the MCP-free shape (the connId is the internal handle; the agent works off `source` + status)
+        return { ok: true, status: out.status, source: out.source || sourceId, authUrl: out.authUrl, tools: out.tools }
+      }
+    },
+    {
       path: '/connection_read',
       description:
         "Read a connected source — a TAB: DOM/text (pass a CSS `selector` to scope it); a WINDOW: its accessibility tree/value, or a `screenshot` when the structure is too thin to read. SCOPED + CAPPED by default (pass {max} bytes to read more) — never dump a whole tree into context. Args: {connection, selector?, screenshot?, max?}. Returns { result }.",
@@ -518,7 +535,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_call_tool',
       description:
-        "Run a saved tool by name on a connection (see connection_list_tools). Args: {connection, name, args?}. Returns { ok, effect } — or { stale:true } when the saved tool no longer matches the page/app: read the source, then connection_save_tool — overwrite the same name if it is a stale selector on the same page-type, or save a distinctly-named variant if this is a different sub-type of the same source (e.g. Sheets vs Docs share docs.google.com).",
+        "Run a tool by name on a connection (see connection_list_tools — a source's toolkit can mix tools you banked and tools from its unlocked official integration; you call them all the same way). Returns { ok, effect } (or { ok, text } / { ok:false, isError:true, text } for a tool that errored, relayed honestly, never a fake success) — or { stale:true } when a banked tool no longer matches the page/app: read the source, then connection_save_tool (overwrite the same name if it is a stale selector on the same page-type, or save a distinctly-named variant for a different sub-type, e.g. Sheets vs Docs share docs.google.com). If it returns { needsApproval:true, source, prompt }, the source has an official integration to unlock: connection_unlock { sourceId: source }, tell the user to approve once, then retry. Args: {connection, name, args?}.",
       input_schema: { type: 'object', required: ['connection', 'name'], properties: { connection: { type: 'string' }, name: { type: 'string' }, args: { type: 'object' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionCallTool !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
@@ -529,7 +546,7 @@ export function makeOsTools(ops) {
     },
     {
       path: '/connection_list_tools',
-      description: 'List the saved tools for a connection (keyed on its sourceId): each { name, description, kind } + the source description. A fresh session calls this to inherit everything a past session already learned about the source. Args: {connection}.',
+      description: "List a connection's toolkit. Returns { sourceId, tools:[{ name, description, ... }], unlock?, description? }. `tools` is everything callable now on this source (the tools you banked for its sourceId — a fresh session inherits them all — plus any from an official integration you've unlocked); run any with connection_call_tool {connection, name}. `unlock` (when present) lists official integrations this source HAS but you haven't unlocked yet (each { source, label, prompt }) — a source can be usable now AND have a richer integration to unlock; call connection_unlock { sourceId: source } to gain those tools (the user approves once). Args: {connection}.",
       input_schema: { type: 'object', required: ['connection'], properties: { connection: { type: 'string' } } },
       handler: ({ body }) => {
         if (typeof ops.connectionListTools !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
