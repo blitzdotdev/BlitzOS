@@ -17,6 +17,7 @@ const app = readFileSync(join(repoRoot, 'src/renderer/src/App.tsx'), 'utf8')
 const notchHost = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHost.tsx'), 'utf8')
 const islandHome = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandHome.tsx'), 'utf8')
 const islandPanel = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandPanel.tsx'), 'utf8')
+const agentVisuals = readFileSync(join(repoRoot, 'src/renderer/src/notch/agentVisuals.ts'), 'utf8')
 const markdownMessage = readFileSync(join(repoRoot, 'src/renderer/src/notch/MarkdownMessage.tsx'), 'utf8')
 const messageParts = readFileSync(join(repoRoot, 'src/renderer/src/notch/messageParts.ts'), 'utf8')
 const markdownSafety = readFileSync(join(repoRoot, 'src/renderer/src/notch/markdownSafety.ts'), 'utf8')
@@ -29,6 +30,7 @@ const css = readFileSync(join(repoRoot, 'src/renderer/src/styles.css'), 'utf8')
 const workspaceHost = readFileSync(join(repoRoot, 'src/main/workspace-host.mjs'), 'utf8')
 const osActions = readFileSync(join(repoRoot, 'src/main/osActions.ts'), 'utf8')
 const terminalManager = readFileSync(join(repoRoot, 'src/main/terminal-manager.mjs'), 'utf8')
+const homeEmptyBlock = islandCss.match(/\.isl-home-empty \{[\s\S]*?\n\}/)?.[0] || ''
 
 let failures = 0
 function ok(label, cond, detail) {
@@ -96,6 +98,99 @@ ok('island feed hides horizontal overflow and keeps chat bubbles inset from the 
 ok('opening Chat from Home resets to the new-session composer instead of the last agent tab',
   /const openChat = \(\): void => \{[\s\S]*?setPage\(0\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
     /onOpenChat=\{openChat\}/.test(notchHost))
+ok('agent gradient visuals are shared between the session tabs and home working rail',
+  /export function agentGradient\(id: string\): string/.test(agentVisuals) &&
+    /import \{ agentGradient \} from '.\/agentVisuals'/.test(islandPanel) &&
+    /import \{ agentGradient \} from '.\/agentVisuals'/.test(islandHome))
+ok('home renders a compact working-agent rail that matches the tab active-work status rule',
+  /onOpenAgent: \(id: string\) => void/.test(islandHome) &&
+    /const isActiveStatus = \(value: string\): boolean => value === 'working' \|\| value === 'starting'/.test(islandHome) &&
+    /const isWorkingStatus = \(value: string\): boolean => value === 'working'/.test(islandHome) &&
+    /doneAgentIds: string\[\]/.test(islandHome) &&
+    /const railSessions = sessions\.filter\(\(s\) => isWorkingStatus\(status\[s\.id\] \|\| s\.status\) \|\| doneAgents\.has\(s\.id\)\)/.test(islandHome) &&
+    /const rawStatus = status\[s\.id\] \|\| s\.status/.test(islandHome) &&
+    /className="isl-home-layout"/.test(islandHome) &&
+    /className="isl-home-chat-zone"/.test(islandHome) &&
+    /railSessions\.length > 0 \? \([\s\S]*?className="isl-home-agents-title">Active agents[\s\S]*?\) : \([\s\S]*?className="isl-home-empty">No active agents/.test(islandHome) &&
+    /className="isl-home-empty">No active agents/.test(islandHome) &&
+    /className="isl-home-working"/.test(islandHome) &&
+    /className="isl-working-agent"/.test(islandHome) &&
+    /data-home-state=\{homeState\}/.test(islandHome) &&
+    !/isl-app-empty/.test(islandHome) &&
+    /agentGradient\(s\.id\)/.test(islandHome) &&
+    /isl-working-agent-dot/.test(islandHome) &&
+    /homeState === 'done' \? 'Done' : 'Working'/.test(islandHome) &&
+    /onClick=\{\(\) => onOpenAgent\(s\.id\)\}/.test(islandHome) &&
+    /\.nh-island\.isl-home\.has-working/.test(islandCss) &&
+    /\.isl-home-layout \{[\s\S]*?grid-template-columns: minmax\(0, 220px\) minmax\(0, 220px\)/.test(islandCss) &&
+    /\.isl-home-working \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\)[\s\S]*?max-height: 146px[\s\S]*?overflow-y: auto/.test(islandCss) &&
+    homeEmptyBlock.includes('padding: 12px 2px 0') &&
+    !/background:|border:|border-radius:|min-height:|place-items:/.test(homeEmptyBlock) &&
+    /\.isl-working-agent-main \{[\s\S]*?gap: 2px/.test(islandCss) &&
+    /\.isl-working-agent-dot \{[\s\S]*?border-top-color: var\(--isl-accent\)[\s\S]*?animation: isl-spin/.test(islandCss))
+ok('settings can enable a fake 10-agent Home grid design preview',
+  /DEBUG_FAKE_HOME_AGENTS_KEY = 'blitzos\.debug\.showFakeHomeAgents'/.test(notchHost) &&
+    /const FAKE_HOME_AGENTS: IslandSession\[\] = \[/.test(notchHost) &&
+    (notchHost.match(/id: 'fake-home-/g) || []).length === 10 &&
+    /const FAKE_HOME_DONE_IDS = FAKE_HOME_AGENTS\.filter/.test(notchHost) &&
+    /function readDebugFakeHomeAgents\(\): boolean/.test(notchHost) &&
+    /const \[debugFakeHomeAgents, setDebugFakeHomeAgents\] = useState\(readDebugFakeHomeAgents\)/.test(notchHost) &&
+    /const chooseDebugFakeHomeAgents = \(on: boolean\): void =>/.test(notchHost) &&
+    /const homeSessions = debugFakeHomeAgents \? FAKE_HOME_AGENTS : sessions/.test(notchHost) &&
+    /const homeStatus = debugFakeHomeAgents \? FAKE_HOME_STATUS : status/.test(notchHost) &&
+    /const homeDoneAgentIds = debugFakeHomeAgents \? FAKE_HOME_DONE_IDS : Object\.keys\(homeDoneAgents\)/.test(notchHost) &&
+    /sessions=\{homeSessions\}/.test(notchHost) &&
+    /status=\{homeStatus\}/.test(notchHost) &&
+    /doneAgentIds=\{homeDoneAgentIds\}/.test(notchHost) &&
+    /showFakeHomeAgents=\{debugFakeHomeAgents\}/.test(notchHost) &&
+    /onToggleFakeHomeAgents=\{chooseDebugFakeHomeAgents\}/.test(notchHost) &&
+    /showFakeHomeAgents: boolean/.test(islandSettings) &&
+    /Show fake Home agents/.test(islandSettings) &&
+    /Design preview/.test(islandSettings))
+ok('home keeps a reviewable Done pseudo-status when an agent finishes while Home is open',
+  /const isHomeActiveStatus = \(value\?: string\): boolean => value === 'working' \|\| value === 'starting'/.test(notchHost) &&
+    /const isHomeWorkingStatus = \(value\?: string\): boolean => value === 'working'/.test(notchHost) &&
+    /const isHomeDoneReviewStatus = \(value\?: string\): boolean => !!value && !isHomeActiveStatus\(value\) && value !== 'error'/.test(notchHost) &&
+    /HOME_DONE_AGENTS_KEY = 'blitzos\.home\.doneAgents'/.test(notchHost) &&
+    /HOME_SEEN_WORKING_AGENTS_KEY = 'blitzos\.home\.seenWorkingAgents'/.test(notchHost) &&
+    /function readHomeDoneAgents\(\): Record<string, true>/.test(notchHost) &&
+    /window\.sessionStorage\.getItem\(HOME_DONE_AGENTS_KEY\)/.test(notchHost) &&
+    /function readHomeSeenWorkingAgents\(\): Record<string, true>/.test(notchHost) &&
+    /window\.sessionStorage\.getItem\(HOME_SEEN_WORKING_AGENTS_KEY\)/.test(notchHost) &&
+    /function writeHomeDoneAgents\(value: Record<string, true>\): void/.test(notchHost) &&
+    /window\.sessionStorage\.setItem\(HOME_DONE_AGENTS_KEY, JSON\.stringify\(ids\)\)/.test(notchHost) &&
+    /function writeHomeSeenWorkingAgents\(value: Record<string, true>\): void/.test(notchHost) &&
+    /window\.sessionStorage\.setItem\(HOME_SEEN_WORKING_AGENTS_KEY, JSON\.stringify\(ids\)\)/.test(notchHost) &&
+    /const \[homeDoneAgents, setHomeDoneAgentsState\] = useState<Record<string, true>>\(\(\) => readHomeDoneAgents\(\)\)/.test(notchHost) &&
+    /const \[homeSeenWorkingAgents, setHomeSeenWorkingAgentsState\] = useState<Record<string, true>>\(\(\) => readHomeSeenWorkingAgents\(\)\)/.test(notchHost) &&
+    /const homeDoneAgentsRef = useRef\(homeDoneAgents\)/.test(notchHost) &&
+    /const homeSeenWorkingAgentsRef = useRef\(homeSeenWorkingAgents\)/.test(notchHost) &&
+    /writeHomeDoneAgents\(next\)/.test(notchHost) &&
+    /writeHomeSeenWorkingAgents\(next\)/.test(notchHost) &&
+    /const reconcileHomeAgentReviewState = \(nextSessions = sessionsRef\.current, nextStatus = statusRef\.current\): void =>/.test(notchHost) &&
+    /viewRef\.current === 'home' && isHomeWorkingStatus\(rawStatus\)/.test(notchHost) &&
+    /isHomeDoneReviewStatus\(rawStatus\)[\s\S]*?doneAdd\.push\(id\)/.test(notchHost) &&
+    /reconcileHomeAgentReviewState\(arr, statusRef\.current\)/.test(notchHost) &&
+    /reconcileHomeAgentReviewState\(sessionsRef\.current, nextStatus\)/.test(notchHost) &&
+    /viewRef\.current === 'home' && isHomeWorkingStatus\(prevStatus\[id\]\) && isHomeDoneReviewStatus\(next\)/.test(notchHost) &&
+    /clearHomeReviewAgents\(\)/.test(notchHost) &&
+    /clearHomeReviewAgents\(id\)/.test(notchHost) &&
+    /doneAgentIds=\{homeDoneAgentIds\}/.test(notchHost) &&
+    /homeState === 'done' \? 'Done' : 'Working'/.test(islandHome) &&
+    /isl-working-agent-check/.test(islandHome) &&
+    /\.isl-working-agent\[data-home-state='done'\]/.test(islandCss) &&
+    /\.isl-working-agent-check/.test(islandCss))
+ok('home working-agent rail jumps directly to the selected agent chat',
+  /const openAgentChat = \(id: string\): void => \{[\s\S]*?const idx = sessions\.findIndex\(\(s\) => s\.id === id\)[\s\S]*?setPage\(idx \+ 1\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
+    /onOpenAgent=\{openAgentChat\}/.test(notchHost))
+ok('notch agent status text keeps the backend starting state visible as Warming up',
+  /s === 'starting' \|\| s === 'reconnecting' \? 'warming' : s === 'working' \? 'working' : 'idle'/.test(islandPanel) &&
+    /case 'working':[\s\S]*?return 'Working'[\s\S]*?case 'starting':[\s\S]*?return 'Warming up'[\s\S]*?case 'reconnecting'/.test(islandPanel) &&
+    /statusLabel\(status\)/.test(islandPanel) &&
+    /\.isl-chip-dot\[data-status='warming'\] \{[\s\S]*?animation: isl-dot-pulse/.test(islandCss) &&
+    /\.isl-chip-dot\[data-status='working'\] \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
+    /\.isl-status\[data-status='working'\] \.isl-status-dot \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
+    /@keyframes isl-spin/.test(islandCss))
 ok('renderer: the visual pill uses the REAL notch width + is gated on a real notch (no notch → no band, ⌥Space only)',
   /style=\{\{ width: notchWidth/.test(app) && /notchOn && hasNotch &&/.test(app) &&
     /notchClipFor\(notchState[\s\S]*?notchWidth\)/.test(app))
