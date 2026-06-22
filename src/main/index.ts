@@ -2,9 +2,11 @@ import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShort
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
+import { spawn, execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast } from './osActions'
-import { emitSystemMoment, setMomentTap } from './events'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir } from './osActions'
+import { emitSystemMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
+import { createWakeWatchdog } from './agent-wake-watchdog.mjs'
 import { openBootJournal, chatFileName } from './workspace.mjs'
 import type { BootJournal } from './workspace.mjs'
 import { installGuestSessionPolicy, resolvePermissionPrompt, attachGuestWindowPolicy } from './guest-capabilities'
@@ -24,6 +26,7 @@ import { wireEnrichment, spawnWorkflowEnrichment } from './workflow-enrichment.m
 import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, orchestratorBootTask } from './agent-runtime.mjs'
 import { startNarrator } from './agent-narrator.mjs'
 import { readTerminalMeta } from './terminal-manager.mjs'
+import { wasInterrupted } from './agent-interrupt.mjs'
 import type { ActionStatus } from './action-items.mjs'
 import { initCdp } from './cdp'
 import { registerWidgets } from './widgets'
@@ -55,9 +58,71 @@ import { notchOverlayWindowOptions, applyNotchOverlay, setNotchInteractive, read
 process.stdout.on('error', () => {})
 process.stderr.on('error', () => {})
 
+// "Open in Terminal": hand a LIVE terminal off to a real terminal window (macOS Terminal.app) so TUIs
+// (claude/codex, full-screen curses) render correctly — the embedded DEBUG pane strips ANSI and garbles them.
+// A terminal is a real tmux window, so this is just `tmux attach` in a Terminal window. Every decision below
+// was verified against the live tmux 3.5a server:
+//   • Target the window by its tmux window-id (@N), NEVER session:name — blitz ids are numeric and a numeric
+//     tmux target is read as a window INDEX, so `blitz:0` hits __blitzroot__, not the agent window named '0'.
+//   • Attach through a per-id GROUPED session (view-<id>) that shares blitz's windows but keeps its OWN
+//     current-window, so opening one (or several) watchers never moves BlitzOS's control client or a manual
+//     `tmux attach -t blitz` the user has open.
+//   • Interactive + mouse on (view session ONLY): the wheel scrolls. tmux read-only (-r) disables copy-mode
+//     and scrolling outright — "only keys bound to detach-client/switch-client have any effect" (man tmux) —
+//     so a read-only watch literally cannot scroll. `mouse on` is set on the view session, not blitz, so the
+//     agent's session is untouched. Tradeoff: keystrokes now reach the agent's session, so this is a
+//     watch-and-optionally-step-in view.
+//   • LAUNCH via Terminal.app's `do script` (AppleScript), NOT by exec'ing a terminal binary directly.
+//     Exec'ing the Ghostty binary forwards to the user's already-running Ghostty instance and could tear down
+//     its existing windows ("kills all processes on ghostty"). `do script` opens a FRESH window and never
+//     touches other windows/apps. The command is passed as osascript argv (item 1 of argv), so it needs only
+//     shell-quoting, no AppleScript-string escaping. `exec` so the window closes cleanly when tmux detaches.
+//   • Use the SAME bundled tmux the host runs (spec.bin) so client/server protocol versions match.
+// KNOWN: a tmux window is shared across clients, so the Terminal client contributes to that window's size
+// negotiation (window-size 'latest') — watching can reflow the agent's pane to the Terminal window's size.
+// TODO(view-cleanup): the detached view-<id> grouped sessions linger until the workspace tmux server dies;
+// reap them on terminal close/remove if they ever accumulate.
+const shq = (s: string): string => `'` + String(s).replace(/'/g, `'\\''`) + `'`
+function openTerminalExternal(id: string): { ok: boolean; error?: string } {
+  if (process.platform !== 'darwin') return { ok: false, error: 'Open in Terminal is macOS-only' }
+  const spec = electronTerminalOps.attachSpec(id)
+  if (!spec) return { ok: false, error: 'terminal is not a live tmux window' }
+  const grp = `view-${id}`
+  const t = (...a: string[]): string[] => ['-S', spec.socket, ...a]
+  try {
+    // Idempotently ensure the per-id grouped session, then point IT (not blitz) at this window by @id.
+    let exists = true
+    try { execFileSync(spec.bin, t('has-session', '-t', grp), { stdio: 'ignore' }) } catch { exists = false }
+    if (!exists) execFileSync(spec.bin, t('new-session', '-d', '-s', grp, '-t', spec.session), { stdio: 'ignore' })
+    execFileSync(spec.bin, t('select-window', '-t', `${grp}:${spec.window}`), { stdio: 'ignore' })
+    // Mouse on for THIS view session only (idempotent every open) so the wheel scrolls — blitz keeps its own.
+    execFileSync(spec.bin, t('set-option', '-t', grp, 'mouse', 'on'), { stdio: 'ignore' })
+    // Open a FRESH Terminal.app window running the attach. cmdLine is ONE osascript argv element (shell-quoted),
+    // so no AppleScript-string escaping is needed and spaces in the socket path are safe. exec → clean close.
+    const cmdLine = 'exec ' + [spec.bin, '-S', spec.socket, 'attach', '-t', grp].map(shq).join(' ')
+    const child = spawn('osascript', [
+      '-e', 'on run argv',
+      '-e', 'tell application "Terminal" to do script (item 1 of argv)',
+      '-e', 'tell application "Terminal" to activate',
+      '-e', 'end run',
+      cmdLine
+    ], { detached: true, stdio: 'ignore' })
+    child.on('error', (e) => console.error('[terminal] Terminal.app launch failed:', (e as Error)?.message || e))
+    child.unref()
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || 'failed to open Terminal' }
+  }
+}
+
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
 // is (main is bundled to out/, so import.meta-relative resolution there is wrong).
 process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getAppPath(), 'widgets')
+// Per-leaf capture for the island kanban drill-in drawer: writes <memDir>/leaves/<nodeId>.json
+// (prompt + result + summary + sessionId) for every terminal leaf. Best-effort + guarded + cheap
+// (agent.mjs:captureLeaf). Default ON; set BLITZ_CAPTURE_LEAVES=0 (or '' / 'false') to disable. Uses ??, NOT
+// ||, so an explicit '0'/'' the operator set is preserved instead of being coerced back to '1'.
+process.env.BLITZ_CAPTURE_LEAVES = process.env.BLITZ_CAPTURE_LEAVES ?? '1'
 
 // ONE BlitzOS per machine: a second launch focuses the first instead of fighting it for the browser
 // partition + the workspace watchers (observed live: partition LOCK errors, two hosts persisting over
@@ -134,7 +199,7 @@ function gatherDurableState(): { files: Record<string, string>; permissions?: un
     }
     add('.blitzos/workspace.json', join(ws, '.blitzos', 'workspace.json'))
     try { for (const f of readdirSync(ws)) if (/\.(md|html|weblink|jsx|tsx)$/.test(f)) add(f, join(ws, f)) } catch { /* skip */ }
-    for (const f of ['profile.md', 'initiative.md', 'board.json', 'interview.json']) add(`.blitzos/onboarding/${f}`, join(ws, '.blitzos', 'onboarding', f))
+    for (const f of ['profile.md', 'board.json', 'interview.json']) add(`.blitzos/onboarding/${f}`, join(ws, '.blitzos', 'onboarding', f))
     let permissions: unknown
     let bookmarks: unknown
     try {
@@ -558,6 +623,9 @@ app.whenReady().then(() => {
   ipcMain.on('os:terminal-input', (_e, p: { id: string; data: string }) => electronTerminalOps.sendToTerminal(String(p?.id), String(p?.data ?? '')))
   ipcMain.on('os:terminal-resize', (_e, p: { id: string; cols: number; rows: number }) => electronTerminalOps.resizeTerminal(String(p?.id), Number(p?.cols) || 80, Number(p?.rows) || 24))
   ipcMain.handle('os:terminal-read', (_e, id: string) => electronTerminalOps.readTerminal(String(id)))
+  // "Open in Ghostty": open this terminal in a real terminal window (read-only) so TUIs render properly,
+  // instead of the ANSI-stripped embedded DEBUG pane. See openTerminalExternal (module scope) for the why.
+  ipcMain.handle('os:terminal-open-external', (_e, id: string) => openTerminalExternal(String(id)))
   ipcMain.on('os:terminal-spawn', (_e, opts: { command?: string; title?: string }) => { void electronTerminalOps.spawnTerminal(opts || {}) })
   ipcMain.on('os:agent-spawn', (_e, p?: { title?: string }) => { try { osSpawnAgent(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
   ipcMain.handle('os:close-agent', (_e, id: string) => { try { return osCloseAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
@@ -568,7 +636,7 @@ app.whenReady().then(() => {
   ipcMain.handle('os:agent-orchestrators', (_e, p: { id: string; on?: boolean }) => { try { return osSetOrchestrators(String(p?.id), p?.on === undefined ? true : !!p.on) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   // One-shot snapshot for the dynamic island on open: the session roster + transcripts + status. The island
   // then rides the live `os:action {type:'chat'}` broadcast for updates.
-  ipcMain.handle('os:agents-snapshot', () => { try { return osAgentsSnapshot() } catch { return { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {} } } })
+  ipcMain.handle('os:agents-snapshot', () => { try { const s = osAgentsSnapshot(); return { ...s, status: applyWakeOverride(s.status || {}, islandActiveWs()) } } catch { return { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {} } } })
   // The island's per-session "Details" expand: the agent's recent raw tool calls (Grep/Edit/Run …), read from
   // its canonical transcript. Deterministic, no LLM.
   ipcMain.handle('os:agent-details', (_e, p: { id?: string }) => { try { return osAgentDetails(String(p?.id ?? '0')) } catch { return { rows: [] } } })
@@ -610,23 +678,7 @@ app.whenReady().then(() => {
   // Window picker: arm the CU helper's hover-highlight-and-drag overlay over the user's REAL macOS windows.
   // dropZone is the attach drop-zone's on-screen rect (global, top-left points); dropping a window there connects
   // it (handled by the helper's pick_drop event below). excludePids skips BlitzOS's own window (no self-highlight).
-  let pickSeq = 0
-  let pickStopSeq = 0
-  let pickRelaunching: Promise<void> | null = null
-  let pickPermissionFlow: Promise<boolean> | null = null
-  const waitForPickerAccessibilityGrant = async (helper: ReturnType<typeof computerUseHelper>, stopSeq: number): Promise<boolean> => {
-    await helper.request('accessibility').catch(() => null)
-    const deadline = Date.now() + 60_000
-    while (Date.now() < deadline && stopSeq === pickStopSeq) {
-      const tcc = await helper.status().catch(() => null)
-      if (helper.grantedFor('accessibility', tcc)) return true
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-    }
-    return false
-  }
   ipcMain.handle('os:pick-start', async (_e, dropZone: { x: number; y: number; w: number; h: number }, selfRect: { x: number; y: number; w: number; h: number }, activeSessionId?: string) => {
-    const seq = ++pickSeq
-    const stopSeq = pickStopSeq
     pickActiveSession = activeSessionId != null ? String(activeSessionId) : '' // the chat that owns whatever gets dropped
     const helper = computerUseHelper()
     const e = await helper.ensure()
@@ -634,66 +686,16 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send('os:pick-event', { kind: 'error', error: e.error || 'computer-use helper unavailable' })
       return { ok: false, error: e.error }
     }
-    const startArgs = { dropZone, selfRect, excludePids: [process.pid] }
-    let r = await helper.call('pick_start', startArgs)
-    let prompted = false
+    const r = await helper.call('pick_start', { dropZone, selfRect, excludePids: [process.pid] })
     if (r.error || r.ok === false) {
-      const tccBeforeRetry = await helper.status().catch(() => null)
-      let grantedBeforeRetry = helper.grantedFor('accessibility', tccBeforeRetry)
-      if (!grantedBeforeRetry) {
-        // Missing permission is different from an already-granted-but-failing event tap. Ask once while this
-        // connector panel is open; NotchHost arms the picker several times as layout settles.
-        prompted = true
-        if (!pickPermissionFlow) {
-          mainWindow?.webContents.send('os:pick-event', {
-            kind: 'picker_unavailable',
-            reason: 'accessibility',
-            message: 'I opened the Accessibility prompt for window drag. You can still use the list on the right.',
-            error: String(r.error || 'could not start window picker')
-          })
-          pickPermissionFlow = waitForPickerAccessibilityGrant(helper, stopSeq).finally(() => {
-            pickPermissionFlow = null
-          })
-        }
-        grantedBeforeRetry = await pickPermissionFlow
-        if (seq !== pickSeq || stopSeq !== pickStopSeq) return { ok: false, error: 'picker cancelled' }
-      }
-      // A just-granted TCC permission often only applies to a fresh helper process. If the helper reports
-      // Accessibility as granted, relaunch it and retry once. If it still fails after that, avoid nagging.
-      if (grantedBeforeRetry) {
-        if (!pickRelaunching) {
-          pickRelaunching = helper
-            .relaunchForGrant()
-            .catch(() => ({ ok: false }))
-            .then(() => undefined)
-            .finally(() => {
-              pickRelaunching = null
-            })
-        }
-        await pickRelaunching
-        if (seq !== pickSeq || stopSeq !== pickStopSeq) return { ok: false, error: 'picker cancelled' }
-        r = await helper.call('pick_start', startArgs)
-      }
-    }
-    if (r.error || r.ok === false) {
-      const tcc = await helper.status().catch(() => null)
-      const granted = helper.grantedFor('accessibility', tcc)
-      const raw = String(r.error || 'could not start window picker')
-      const message = granted
-        ? 'Window drag is unavailable right now. Use the list on the right to add an app or tab.'
-        : prompted
-          ? 'I opened the Accessibility prompt for window drag. You can still use the list on the right.'
-          : 'Window drag needs Accessibility for BlitzComputerUse. Use the list on the right, or grant Accessibility later.'
-      mainWindow?.webContents.send('os:pick-event', { kind: 'picker_unavailable', reason: granted ? 'event_tap_failed' : 'accessibility', message, error: raw })
-      return { ok: false, error: message }
+      void helper.request('accessibility').catch(() => {}) // most likely the tap needs Accessibility — raise the prompt
+      const error = String(r.error || 'enable Accessibility for BlitzComputerUse, then reopen the attach panel')
+      mainWindow?.webContents.send('os:pick-event', { kind: 'error', error })
+      return { ok: false, error }
     }
     return { ok: true }
   })
-  ipcMain.handle('os:pick-stop', () => {
-    pickSeq++
-    pickStopSeq++
-    return computerUseHelper().call('pick_stop').catch(() => ({}))
-  })
+  ipcMain.handle('os:pick-stop', () => computerUseHelper().call('pick_stop').catch(() => ({})))
   ipcMain.on('os:terminal-stop', (_e, id: string) => electronTerminalOps.stopTerminal(String(id)))
   ipcMain.on('os:terminal-remove', (_e, id: string) => electronTerminalOps.removeTerminal(String(id)))
   ipcMain.on('os:terminal-restart', (_e, id: string) => { void electronTerminalOps.restartTerminal(String(id)) })
@@ -750,7 +752,9 @@ app.whenReady().then(() => {
   wireEnrichment({ repoRoot: process.cwd(), claudeCmd: process.env.BLITZ_CLAUDE_CMD || 'claude', getWorkspacePath: () => osWorkspaceContext().workspace_path || null })
   wireWorkflowHost({
     getWorkspacePath: () => osWorkspaceContext().workspace_path || null,
-    spawnEnrichment: (info) => { try { spawnWorkflowEnrichment(info) } catch { /* enrichment is best-effort; the generic widget stands */ } }
+    spawnEnrichment: (info) => { try { spawnWorkflowEnrichment(info) } catch { /* enrichment is best-effort; the generic widget stands */ } },
+    // The island's kanban board in chat rides these broadcasts (started/done), exactly like {type:'milestone'}.
+    broadcast: (action) => { try { osBroadcast(action) } catch { /* best-effort */ } }
   })
 
   // The widget-bridge subscribe path: a srcdoc widget calls blitz.workflow.subscribe(runId) -> SurfaceFrame
@@ -775,6 +779,16 @@ app.whenReady().then(() => {
       if (off) { try { off() } catch { /* ignore */ }; wfSubs.delete(key) }
     })
     ipcMain.handle('os:wf-snapshot', (_e, runId: string) => wfSnapshot(String(runId || '')))
+    // The island kanban drill-in drawer: read a terminal leaf's captured record (Asked/Did/Returned).
+    // Lazy on-click; returns { leaf } or { ok:false } when capture is off / the leaf hasn't finished. The run's
+    // absolute memDir is resolved HERE by runId from the trusted main-side registry (osWfRunMemDir) — the
+    // renderer never supplies a filesystem path, so there is no path-traversal surface. It stays correct across
+    // workspace switches (the memDir was recorded when the run started); runId/nodeId are also validated.
+    ipcMain.handle('os:wf-leaf', (_e, runId: string, nodeId: string) => {
+      const memDir = osWfRunMemDir(String(runId || ''))
+      const r = osReadLeaf(memDir, String(runId || ''), String(nodeId || ''))
+      return r && r.leaf ? { ok: true, leaf: r.leaf } : { ok: false }
+    })
   }
 
   // The Notch (dynamic island) — THE MERGE: the real BlitzOS UI window IS the notch. The renderer clips
@@ -860,9 +874,25 @@ app.whenReady().then(() => {
         notchHitWin.webContents.on('will-navigate', (e) => e.preventDefault()) // fixed inline page only
         notchHitWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
         notchHitWin.on('closed', () => { notchHitWin = null })
+        // Show ONLY after the first transparent paint. Shown before that (the old immediate showInactive), a
+        // transparent macOS window keeps its opaque WHITE backing and this empty catcher never repaints over it —
+        // that was the persistent "white pill" at the notch. showInactive so it never steals focus from the app under it.
+        let hitShown = false
+        const showHit = (): void => {
+          if (hitShown || !notchHitWin || notchHitWin.isDestroyed()) return
+          hitShown = true
+          notchHitWin.showInactive()
+          // Re-assert the rect AFTER show: macOS clamps a fresh window's y into the work area (below the menu bar),
+          // which dropped the catcher ~34px below the physical notch onto the content (it stole clicks from browser
+          // tabs). enableLargerThanScreen + this setBounds put it back over the notch; re-assert once more after the
+          // clamp settles (matches the main overlay's 700ms re-assert).
+          notchHitWin.setBounds(rect)
+          notchHitWin.setIgnoreMouseEvents(notchOverlayInteractive, { forward: true })
+          setTimeout(() => { try { if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.setBounds(rect) } catch { /* destroyed */ } }, 800)
+        }
+        notchHitWin.once('ready-to-show', showHit)
+        setTimeout(showHit, 1500) // fallback: a missed ready-to-show must never leave the click/hover catcher hidden
         notchHitWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(NOTCH_HIT_HTML))
-        notchHitWin.showInactive() // never steal focus from the app the user is over
-        notchHitWin.setIgnoreMouseEvents(notchOverlayInteractive, { forward: true })
       } else {
         notchHitWin.setBounds(rect)
         notchHitWin.setAlwaysOnTop(true, 'screen-saver', 1)
@@ -1160,6 +1190,64 @@ app.whenReady().then(() => {
     subscribeEvents: (cb: (ev: { id?: string; line?: { at: number; text: string }; upsert?: { title?: string; state?: string }; list?: Array<{ id: string; title: string; state: string }> }) => void): (() => void) => startChatTail(cb)
   }
   setIslandDeps(realDeps)
+
+  // ── Self-healing agent wake recovery (plans/blitzos-agent-wake-recovery.md) ───────────────────────────────
+  // Agent wake-up is pull-only: each agent must keep a background .blitzos/wait.sh long-polling /events. If its
+  // turn dies before relaunching wait.sh (a rate-limit 429, a crash mid-turn), it goes deaf and the user's island
+  // messages pile up unread while the island shows a bare "Idle". perception-core flags such an undelivered
+  // message; this watchdog confirms the pane is FROZEN (idle, not mid-turn) and types a catch-up nudge into its
+  // tmux pane so it self-heals via its own /events ritual — the user never touches tmux. While reviving, the
+  // island shows 'reconnecting' (the override self-clears the instant the agent's heartbeat resumes).
+  const wakeOverride = new Map<string, { status: string; since: number; ws: string | null }>()
+  const wakeKey = (id: string, ws: string | null): string => `${ws == null ? '' : ws}/${id}`
+  // Apply the live override to a host-status map for workspace `wsName` (returns the same ref when nothing applies).
+  // An override SELF-CLEARS once lastPollAt (the wait-loop heartbeat) advances past when it was set, so a recovered
+  // agent shows its real status with no clear-race.
+  const applyWakeOverride = (status: Record<string, string>, wsName: string): Record<string, string> => {
+    if (wakeOverride.size === 0) return status
+    let out: Record<string, string> | null = null
+    for (const [k, ov] of [...wakeOverride]) {
+      if ((ov.ws == null ? '' : ov.ws) !== wsName) continue
+      const id = k.slice(k.indexOf('/') + 1)
+      if (lastPollAt(id, ov.ws) >= ov.since) { wakeOverride.delete(k); continue } // heartbeat resumed → drop
+      if (!out) out = { ...status }
+      out[id] = ov.status
+    }
+    return out || status
+  }
+  // A deaf agent emits no chat broadcast of its own, so the watchdog drives the live island status when it flips
+  // an agent to 'reconnecting' (or clears it). Sends the full active-ws status map (the island replaces wholesale).
+  const pushIslandStatus = (): void => {
+    try { osBroadcast({ type: 'chat', status: applyWakeOverride(osAgentStatus() || {}, islandActiveWs()) }) } catch { /* best-effort */ }
+  }
+  const wakeWatchdog = createWakeWatchdog({
+    lastPollAt,
+    sendToTerminal: (id, data) => electronTerminalOps.sendToTerminal(String(id), String(data)),
+    captureTerminal: (id) => electronTerminalOps.captureTerminal(String(id)),
+    isLive: (id) => electronTerminalOps.isTerminalLive(String(id)),
+    setStatus: (id, ws, st) => {
+      const k = wakeKey(String(id), ws)
+      if (st) wakeOverride.set(k, { status: st, since: Date.now(), ws })
+      else wakeOverride.delete(k)
+      pushIslandStatus()
+    },
+    log: (m) => console.log('[wake]', m)
+  })
+  setUndeliveredWakeHook((moment) => { try { wakeWatchdog.onUndelivered(moment) } catch { /* never break perception */ } })
+  // PROACTIVE sweep: a usage/session limit an agent hits on its OWN turn surfaces no undelivered message, so the
+  // reactive hook above never sees it. Every SWEEP_MS, peek each live agent's pane; a usage-limit-with-reset arms a
+  // scheduled resume (parse the reset time → type a resume directive once it lifts). Content-agnostic; the watchdog
+  // classifies. Enumerate the active workspace's agents (the same id->status map the island renders).
+  const SWEEP_MS = 45_000
+  const wakeSweep = setInterval(() => {
+    try {
+      const ws = islandActiveWs()
+      const ids = Object.keys(osAgentStatus() || {})
+      if (ids.length) wakeWatchdog.sweep(ids.map((id) => ({ agentId: id, workspace: ws })))
+    } catch { /* never break the sweep */ }
+  }, SWEEP_MS)
+  if (typeof wakeSweep.unref === 'function') wakeSweep.unref()
+  app.on('before-quit', () => { try { wakeWatchdog.stop(); clearInterval(wakeSweep) } catch { /* ignore */ } })
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()
@@ -1462,11 +1550,35 @@ app.whenReady().then(() => {
     // changes as workspace state changes). An agent with the ORCHESTRATORS flag gets the duty to author + run
     // blitzscript workflows; agent '0' carries the onboarding standing duty (pending interview -> interview duty,
     // finished -> resident initiative duty); every other bare peer gets null. (The Job model is retired.)
+    // Handed to an agent that a restart cut off MID-TURN, so it picks its unfinished work back up with no user
+    // nudge. Gated by the backend-agnostic wasInterrupted seam (claude=stop_reason, codex=exit-code): a cleanly
+    // idle agent (e.g. a chat agent waiting for the user) or an unknown backend never gets it and never acts.
+    const RESUME_CLAUSE =
+      'You were interrupted mid-task by an app restart (your last step did not finish). Pick your unfinished work back up from where you left off, without waiting for the user, and stay within the act-vs-ask boundary (reversible work freely, ask before any irreversible outward act).'
     setBootTaskProvider((id: string) => {
-      // ORCHESTRATORS toggle (per-agent, stamped on meta.json): the flag means "author + run blitzscript workflows".
-      // Reads the same meta the flag was stamped on; a broken read just falls through to the interview/null path.
-      try { const td = terminalsDirOf(); if (td && readTerminalMeta(td, String(id))?.orchestrators) return orchestratorBootTask() } catch { /* fall through to interview */ }
-      return String(id) === '0' ? interviewBootTask() : null
+      const td = terminalsDirOf()
+      let meta: ReturnType<typeof readTerminalMeta> = null
+      try {
+        meta = td ? readTerminalMeta(td, String(id)) : null
+      } catch {
+        meta = null
+      }
+      // HARDCODE (per request): EVERY non-primary agent session is an orchestrator — it boots able + primed to
+      // author and run blitzscript workflows (via the run_workflow syscall, which shows the live board in chat).
+      // Agent '0' keeps its onboarding/resident duty (it still learns run_workflow from the served doctrine).
+      // The per-agent meta.orchestrators flag is superseded by this floor (all peers are orchestrators). meta is
+      // still read below for the interrupt check.
+      let duty: string | null = String(id) === '0' ? interviewBootTask() : orchestratorBootTask()
+      // AUTO-CONTINUE: if this agent was cut off mid-turn, prepend the resume clause to whatever duty it has (or
+      // make it the duty). Clean/idle agent or unknown backend → wasInterrupted is false/null → no clause added.
+      let interrupted: boolean | null = null
+      try {
+        interrupted = meta ? wasInterrupted(meta, { wsRoot: osActiveWorkspaceDir() }) : null
+      } catch {
+        interrupted = null
+      }
+      if (interrupted) return duty ? `${RESUME_CLAUSE} ${duty}` : RESUME_CLAUSE
+      return duty
     })
     const launchAgent = (id: string, stage: number, title?: string): void => {
       const ws = osWorkspaceContext().workspace_path

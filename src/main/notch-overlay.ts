@@ -74,6 +74,7 @@ export interface NotchGeometry {
   notchHeight: number // physical notch height = safe-area top inset (points)
 }
 
+
 /** Read the active display's physical notch via the bundled native CLI. hasNotch:false on non-notched displays.
  *  Best-effort: any failure → null and the caller skips the hit-window. No TCC/permission needed (NSScreen read). */
 export function readNotchGeometry(): Promise<NotchGeometry | null> {
@@ -132,6 +133,15 @@ export function notchHitWindowOptions(
     ...rect,
     frame: false,
     transparent: true,
+    // Place the catcher OVER the physical notch (y=0). Without this, macOS clamps a fresh window's y into the work
+    // area (below the menu bar), dropping the catcher ~34px BELOW the notch onto the content — it stole clicks from
+    // browser tabs. enableLargerThanScreen (like the main overlay) lets it sit in the menu-bar/notch band; index.ts
+    // re-asserts setBounds after show to defeat the clamp.
+    enableLargerThanScreen: true,
+    // Show only on ready-to-show (see index.ts). A transparent macOS window shown before its first transparent frame
+    // paints keeps its opaque WHITE backing; this catcher page is otherwise empty so nothing repaints over it — that
+    // was the persistent "white pill" at the notch. Created hidden, shown after the first paint.
+    show: false,
     hasShadow: false,
     resizable: false,
     movable: false,

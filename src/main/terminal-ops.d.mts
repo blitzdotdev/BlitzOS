@@ -7,6 +7,11 @@ export interface TerminalOps {
   sendToTerminal(id: string, data: string): boolean
   resizeTerminal(id: string, cols: number, rows: number): boolean
   readTerminal(id: string): string
+  /** Current rendered pane text (capture-pane -p) — the wake watchdog diffs it across a settle window. */
+  captureTerminal(id: string): string
+  /** External-terminal handoff: `tmux attach` coordinates for a live terminal's window (open it in a real
+   *  terminal app like Ghostty). `window` is the unambiguous tmux window-id (@N). null when no live window. */
+  attachSpec(id: string): { bin: string; socket: string; session: string; window: string } | null
   stopTerminal(id: string): boolean
   removeTerminal(id: string): boolean
   /** Re-spawn a dead terminal from its persisted meta (one-click resume). */

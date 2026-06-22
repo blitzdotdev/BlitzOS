@@ -44,6 +44,13 @@ function readInitialTheme(): ThemeMode {
 // macOS-NotchShape. notchPath + the two stops (closed notch → hover panel) are ported from the validated
 // notch-spill PoC; the renderer's opaque .bg paints the canvas color the clip reveals.
 const NOTCH_W = 200
+// Hover/click zone around the nudge: a small box centered on the notch (where the peek pill sits), NOT the whole
+// notch. Keep in sync with NOTCH_HIT_W/H in main/notch-overlay.ts (the native hit-window uses the same).
+const NOTCH_HIT_W = 44
+const NOTCH_HIT_H = 22
+// Pull the VISIBLE nudge pill up this many px so it tucks toward the notch instead of hanging low. Visual only — the
+// hover/click zone is compensated below so it stays centered on the notch where the cursor actually goes.
+const NOTCH_NUDGE_DY = 24
 // inset() (a rounded-rect reveal), NOT clip-path: path() with curves. inset interpolates as plain numbers, so the
 // clip is cheap and GPU-composited (with will-change). The rounded-bottom rect IS the dynamic-island look (top
 // flush with the screen edge, bottom rounded). vw/vh/notchH in CSS px.
@@ -269,7 +276,13 @@ export default function App(): JSX.Element {
     const onMove = (e: MouseEvent): void => {
       const st = notchStateRef.current
       const r = notchHandleRef.current?.getBoundingClientRect()
-      const overHandle = !!r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+      // hover-open hugs the nudge: a small box centered on the notch (the peek pill is centered there), NOT the full
+      // handle — so hovering the empty notch around the nudge no longer opens the island. Visual pill is unchanged.
+      // +NOTCH_NUDGE_DY cancels the pill's visual lift so the hover box stays centered on the notch, not the pill.
+      const overHandle =
+        !!r &&
+        Math.abs(e.clientX - (r.left + r.right) / 2) <= NOTCH_HIT_W / 2 &&
+        Math.abs(e.clientY - ((r.top + r.bottom) / 2 + NOTCH_NUDGE_DY)) <= NOTCH_HIT_H / 2
       // The shown panel is the NotchHost portal (the .nh-chassis shell) — measure ITS real rect (+ a small slop and a
       // DOM hit-test) so a hover-opened panel stays open while the cursor is anywhere over it (its size varies).
       const panelEl = document.querySelector('.nh-chassis') as HTMLElement | null
@@ -786,7 +799,7 @@ export default function App(): JSX.Element {
           <div
             ref={notchHandleRef}
             className={`notch-handle${notchState !== 'closed' ? ' is-open' : ''}`}
-            style={{ width: notchWidth, height: Math.max(28, notchMenuBarH) }}
+            style={{ width: notchWidth, height: Math.max(28, notchMenuBarH), top: -NOTCH_NUDGE_DY }}
           >
             <div
               className="notch-peek"

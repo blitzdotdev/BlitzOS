@@ -3,7 +3,7 @@
 // far cleaner than scraping the terminal. Two consumers: the dynamic-island "details" expand (rendered as-is) and
 // the milestone narrator (digested + summarized by Haiku). Backend note: this is the CLAUDE path
 // (~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl). Codex would add its own reader behind the same shape.
-import { readFileSync, existsSync, statSync } from 'node:fs'
+import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, fstatSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -17,6 +17,45 @@ export function sessionJsonlPath(wsRoot, claudeSessionId) {
     const p = join(cfgDir, 'projects', encoded, `${claudeSessionId}.jsonl`)
     return existsSync(p) ? p : null
   } catch {
+    return null
+  }
+}
+
+const STOP_TAIL_BYTES = 256 * 1024 // these transcripts get huge — read only the tail to find the last turn
+
+/** The `stop_reason` of the LAST assistant message in a Claude session JSONL (or null if none / unreadable).
+ *  Used to tell a turn that ended cleanly (end_turn/stop_sequence) from one cut off mid-turn (tool_use/truncated).
+ *  Bounded tail read so a multi-MB transcript stays cheap; a torn final line just fails to parse and is skipped. */
+export function lastAssistantStopReason(jsonlPath) {
+  if (!jsonlPath) return null
+  let fd = null
+  try {
+    fd = openSync(jsonlPath, 'r')
+    const size = fstatSync(fd).size
+    const start = size > STOP_TAIL_BYTES ? size - STOP_TAIL_BYTES : 0
+    const buf = Buffer.allocUnsafe(size - start)
+    readSync(fd, buf, 0, buf.length, start)
+    closeSync(fd)
+    fd = null
+    const lines = buf.toString('utf8').split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]
+      if (!line || line.indexOf('"assistant"') < 0) continue // cheap prefilter before JSON.parse
+      let d
+      try {
+        d = JSON.parse(line)
+      } catch {
+        continue // a partial/torn tail line (or a non-JSON line) — skip
+      }
+      if (d.type === 'assistant' && d.message && d.message.stop_reason != null) return String(d.message.stop_reason)
+    }
+    return null
+  } catch {
+    try {
+      if (fd != null) closeSync(fd)
+    } catch {
+      /* ignore */
+    }
     return null
   }
 }

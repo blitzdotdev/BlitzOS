@@ -13,51 +13,24 @@ import { clearStaged } from './stagingStore'
 import IslandPanel from './IslandPanel'
 import IslandHome from './IslandHome'
 import IslandSettings from './IslandSettings'
-import type { IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta } from './types'
+import type { IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta, IslandWfRun } from './types'
+import { applyWfRun } from '../../../main/wf-run-state.mjs'
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
-const DEBUG_FAKE_HOME_AGENTS_KEY = 'blitzos.debug.showFakeHomeAgents'
-const HOME_DONE_AGENTS_KEY = 'blitzos.home.doneAgents'
-const HOME_SEEN_WORKING_AGENTS_KEY = 'blitzos.home.seenWorkingAgents'
-const ORCHESTRATION_QUEUE_KEY = 'blitzos.orchestration.pendingAgentInstructions'
 const AGENT_NAME_MAX = 24
-const isHomeActiveStatus = (value?: string): boolean => value === 'working' || value === 'starting'
-const isHomeWorkingStatus = (value?: string): boolean => value === 'working'
-const isHomeDoneReviewStatus = (value?: string): boolean => !!value && !isHomeActiveStatus(value) && value !== 'error'
-const FAKE_HOME_AGENTS: IslandSession[] = [
-  { id: 'fake-home-1', title: 'Research', status: 'working' },
-  { id: 'fake-home-2', title: 'Build pass', status: 'working' },
-  { id: 'fake-home-3', title: 'Review queue', status: 'idle' },
-  { id: 'fake-home-4', title: 'Browser QA', status: 'working' },
-  { id: 'fake-home-5', title: 'Docs sweep', status: 'watching' },
-  { id: 'fake-home-6', title: 'Deploy check', status: 'working' },
-  { id: 'fake-home-7', title: 'Inbox triage', status: 'idle' },
-  { id: 'fake-home-8', title: 'Data pull', status: 'working' },
-  { id: 'fake-home-9', title: 'Long agent name test', status: 'stopped' },
-  { id: 'fake-home-10', title: 'Fix pass', status: 'working' }
-]
-const FAKE_HOME_STATUS = FAKE_HOME_AGENTS.reduce<Record<string, string>>((acc, s) => {
-  acc[s.id] = s.status
-  return acc
-}, {})
-const FAKE_HOME_DONE_IDS = FAKE_HOME_AGENTS.filter((s) => !isHomeWorkingStatus(s.status)).map((s) => s.id)
 
 // peek toggle glyphs: compress (corners in → enter peek) / expand (corners out → back to chat).
 const PEEK_IN = 'M5 9h4a1 1 0 0 0 1-1V4M19 9h-4a1 1 0 0 1-1-1V4M5 15h4a1 1 0 0 1 1 1v4M19 15h-4a1 1 0 0 0-1 1v4'
 const PEEK_OUT = 'M9 4H5a1 1 0 0 0-1 1v4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4M15 20h4a1 1 0 0 0 1-1v-4'
 const SETTINGS_PATH =
   'M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5ZM19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-.6a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 .6-1a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 .6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.18.35.39.68.6 1H20a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-.5 1Z'
-const ORCHESTRATION_ENABLED_SUFFIX =
-  '---\nOrchestrators ENABLED: you can now AUTHOR and RUN workflows (Claude Code workflow style) for genuinely hard, large, massively parallel, or adversarial tasks. Write a workflow.js that starts with export const meta = {…}, uses the injected globals agent()/parallel/pipeline/phase/log (NO imports), and ends with return; agent({schema}) returns a validated object. The runner is .blitzos/blitz — run bash .blitzos/blitz capabilities FIRST, then bash .blitzos/blitz check <wf.js>, then bash .blitzos/blitz run <wf.js>; the full how-to is in .blitzos/orchestrator.md. For trivial/one-shot requests, just answer directly.'
-const ORCHESTRATION_DISABLED_SUFFIX =
-  '---\nOrchestrators DISABLED: stop authoring/running workflows; handle requests directly in chat.'
 
 // The chat broadcast / snapshot shapes (subset we use). The host sends raw host statuses + role'd transcripts.
 type ChatAction = {
   type: 'chat'
-  sessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown; orchestrators?: unknown }>
-  archivedSessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown; orchestrators?: unknown }>
+  sessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }>
+  archivedSessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }>
   threads?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown }>>
   status?: Record<string, string>
 }
@@ -68,12 +41,11 @@ type TerminalAction = {
   exitCode?: unknown
   terminal?: { id?: unknown; title?: unknown; status?: unknown; kind?: unknown }
 }
-const mapSession = (s: { id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown; orchestrators?: unknown }): IslandSession => ({
+const mapSession = (s: { id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }): IslandSession => ({
   id: String(s.id),
   title: String(s.title || `Chat ${s.id}`),
   status: String(s.status || 'idle'),
   ...(s.lastMessagePreview ? { lastMessagePreview: String(s.lastMessagePreview) } : {}),
-  ...(s.orchestrators != null ? { orchestrators: !!s.orchestrators } : {}),
   ...(s.archivedAt ? { archivedAt: Number(s.archivedAt) || undefined } : {})
 })
 const mapTerminal = (t: { id?: unknown; title?: unknown; status?: unknown; kind?: unknown }): IslandTerminalMeta | null => {
@@ -100,80 +72,9 @@ function readDebugActiveTerminal(): boolean {
     return false
   }
 }
-function readDebugFakeHomeAgents(): boolean {
-  try {
-    return window.localStorage.getItem(DEBUG_FAKE_HOME_AGENTS_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-function readHomeDoneAgents(): Record<string, true> {
-  try {
-    const raw = window.sessionStorage.getItem(HOME_DONE_AGENTS_KEY)
-    const ids = JSON.parse(raw || '[]')
-    if (!Array.isArray(ids)) return {}
-    return ids.reduce<Record<string, true>>((acc, id) => {
-      if (id != null) acc[String(id)] = true
-      return acc
-    }, {})
-  } catch {
-    return {}
-  }
-}
-function writeHomeDoneAgents(value: Record<string, true>): void {
-  try {
-    const ids = Object.keys(value)
-    if (!ids.length) window.sessionStorage.removeItem(HOME_DONE_AGENTS_KEY)
-    else window.sessionStorage.setItem(HOME_DONE_AGENTS_KEY, JSON.stringify(ids))
-  } catch {
-    /* session persistence is best-effort */
-  }
-}
-function readHomeSeenWorkingAgents(): Record<string, true> {
-  try {
-    const raw = window.sessionStorage.getItem(HOME_SEEN_WORKING_AGENTS_KEY)
-    const ids = JSON.parse(raw || '[]')
-    if (!Array.isArray(ids)) return {}
-    return ids.reduce<Record<string, true>>((acc, id) => {
-      if (id != null) acc[String(id)] = true
-      return acc
-    }, {})
-  } catch {
-    return {}
-  }
-}
-function writeHomeSeenWorkingAgents(value: Record<string, true>): void {
-  try {
-    const ids = Object.keys(value)
-    if (!ids.length) window.sessionStorage.removeItem(HOME_SEEN_WORKING_AGENTS_KEY)
-    else window.sessionStorage.setItem(HOME_SEEN_WORKING_AGENTS_KEY, JSON.stringify(ids))
-  } catch {
-    /* session persistence is best-effort */
-  }
-}
-function readQueuedOrchestrationInstructions(): Record<string, string> {
-  try {
-    const raw = window.localStorage.getItem(ORCHESTRATION_QUEUE_KEY)
-    const parsed = JSON.parse(raw || '{}')
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return Object.entries(parsed as Record<string, unknown>).reduce<Record<string, string>>((acc, [id, value]) => {
-      if (value === ORCHESTRATION_ENABLED_SUFFIX || value === ORCHESTRATION_DISABLED_SUFFIX) acc[id] = value
-      return acc
-    }, {})
-  } catch {
-    return {}
-  }
-}
-function writeQueuedOrchestrationInstructions(value: Record<string, string>): void {
-  try {
-    if (!Object.keys(value).length) window.localStorage.removeItem(ORCHESTRATION_QUEUE_KEY)
-    else window.localStorage.setItem(ORCHESTRATION_QUEUE_KEY, JSON.stringify(value))
-  } catch {
-    /* local persistence is best-effort */
-  }
-}
 const cleanAgentName = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, AGENT_NAME_MAX)
 type MilestoneAction = { type: 'milestone'; agentId?: string; id?: unknown; ts?: unknown; kind?: string; text?: unknown }
+type WfRunAction = { type: 'workflow-run'; runId?: unknown; agentId?: unknown; file?: unknown; started?: unknown; done?: unknown; ok?: unknown; skeleton?: unknown[]; memDir?: unknown }
 // Strip the legacy "Attached before you started …" brief that older builds appended to the user's message text
 // (it persisted in chat.md). New sends never inject it; this keeps already-persisted messages clean at display.
 const stripAttachBrief = (text: string): string => text.replace(/\n+Attached before you started \(drive these with[\s\S]*$/, '').trim()
@@ -218,32 +119,14 @@ export function NotchHost({
   const [threads, setThreads] = useState<Record<string, IslandMessage[]>>({})
   const [status, setStatus] = useState<Record<string, string>>({})
   const [milestones, setMilestones] = useState<Record<string, IslandMilestone[]>>({})
+  const [runs, setRuns] = useState<Record<string, IslandWfRun[]>>({}) // per-agent live workflow runs (inline kanban)
   const [terminals, setTerminals] = useState<Record<string, IslandTerminalMeta>>({})
   const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
-  const [debugFakeHomeAgents, setDebugFakeHomeAgents] = useState(readDebugFakeHomeAgents)
-  const [homeDoneAgents, setHomeDoneAgentsState] = useState<Record<string, true>>(() => readHomeDoneAgents())
-  const [homeSeenWorkingAgents, setHomeSeenWorkingAgentsState] = useState<Record<string, true>>(() => readHomeSeenWorkingAgents())
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
   const pendingJump = useRef<string | null>(null) // after a spawn, jump to the new session once it appears
   const activeIdRef = useRef('') // the active chat id, mirrored for the picker arm (computed below the effect)
-  const sessionsRef = useRef<IslandSession[]>([])
-  const viewRef = useRef(view)
-  const statusRef = useRef<Record<string, string>>({})
-  const homeDoneAgentsRef = useRef(homeDoneAgents)
-  const homeSeenWorkingAgentsRef = useRef(homeSeenWorkingAgents)
-  const queuedOrchestrationInstructionsRef = useRef<Record<string, string>>(readQueuedOrchestrationInstructions())
   const nRef = useRef(0)
   nRef.current = sessions.length
-  sessionsRef.current = sessions
-  viewRef.current = view
-
-  const setQueuedOrchestrationInstruction = (id: string, instruction?: string): void => {
-    const next = { ...queuedOrchestrationInstructionsRef.current }
-    if (instruction) next[id] = instruction
-    else delete next[id]
-    queuedOrchestrationInstructionsRef.current = next
-    writeQueuedOrchestrationInstructions(next)
-  }
 
   // Report the island's view + tab up to App so reopening it (hover OR ⌥Space) restores where the user left off,
   // instead of resetting to Home. App stashes these and feeds them back as initialView/initialPage on the next open.
@@ -272,174 +155,10 @@ export function NotchHost({
       /* debug-only persistence */
     }
   }
-  const chooseDebugFakeHomeAgents = (on: boolean): void => {
-    setDebugFakeHomeAgents(on)
-    try {
-      window.localStorage.setItem(DEBUG_FAKE_HOME_AGENTS_KEY, on ? '1' : '0')
-    } catch {
-      /* debug-only persistence */
-    }
-  }
-  const updateHomeDoneAgents = (update: (prev: Record<string, true>) => Record<string, true>): void => {
-    const prev = homeDoneAgentsRef.current
-    const next = update(prev)
-    if (next === prev) return
-    homeDoneAgentsRef.current = next
-    writeHomeDoneAgents(next)
-    setHomeDoneAgentsState(next)
-  }
-  const clearHomeDoneAgents = (id?: string): void => {
-    updateHomeDoneAgents((prev) => {
-      if (!id) return {}
-      if (!prev[id]) return prev
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-  }
-  const updateHomeSeenWorkingAgents = (update: (prev: Record<string, true>) => Record<string, true>): void => {
-    const prev = homeSeenWorkingAgentsRef.current
-    const next = update(prev)
-    if (next === prev) return
-    homeSeenWorkingAgentsRef.current = next
-    writeHomeSeenWorkingAgents(next)
-    setHomeSeenWorkingAgentsState(next)
-  }
-  const clearHomeSeenWorkingAgents = (id?: string): void => {
-    updateHomeSeenWorkingAgents((prev) => {
-      if (!id) return {}
-      if (!prev[id]) return prev
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-  }
-  const clearHomeReviewAgents = (id?: string): void => {
-    clearHomeDoneAgents(id)
-    clearHomeSeenWorkingAgents(id)
-  }
-  const reconcileHomeAgentReviewState = (nextSessions = sessionsRef.current, nextStatus = statusRef.current): void => {
-    const liveStatus = nextSessions.reduce<Record<string, string>>((acc, session) => {
-      acc[session.id] = nextStatus[session.id] || session.status
-      return acc
-    }, {})
-    const liveIds = new Set(nextSessions.map((session) => session.id))
-    const seenPrev = homeSeenWorkingAgentsRef.current
-    let seenNext = seenPrev
-    const doneAdd: string[] = []
-    const doneClear: string[] = []
-
-    const ensureSeen = (id: string): void => {
-      if (seenNext[id]) return
-      if (seenNext === seenPrev) seenNext = { ...seenPrev }
-      seenNext[id] = true
-    }
-    const clearSeen = (id: string): void => {
-      if (!seenNext[id]) return
-      if (seenNext === seenPrev) seenNext = { ...seenPrev }
-      delete seenNext[id]
-    }
-
-    for (const session of nextSessions) {
-      const rawStatus = liveStatus[session.id]
-      if (isHomeActiveStatus(rawStatus)) doneClear.push(session.id)
-      if (viewRef.current === 'home' && isHomeWorkingStatus(rawStatus)) ensureSeen(session.id)
-    }
-    for (const id of Object.keys(seenPrev)) {
-      if (!liveIds.has(id)) {
-        clearSeen(id)
-        doneClear.push(id)
-        continue
-      }
-      const rawStatus = liveStatus[id]
-      if (isHomeDoneReviewStatus(rawStatus)) {
-        doneAdd.push(id)
-        clearSeen(id)
-      } else if (isHomeActiveStatus(rawStatus)) {
-        doneClear.push(id)
-      }
-    }
-    if (seenNext !== seenPrev) updateHomeSeenWorkingAgents(() => seenNext)
-    if (doneAdd.length || doneClear.length) {
-      updateHomeDoneAgents((prev) => {
-        let changed = false
-        const next = { ...prev }
-        for (const id of doneClear) {
-          if (next[id]) {
-            delete next[id]
-            changed = true
-          }
-        }
-        for (const id of Object.keys(next)) {
-          if (!liveIds.has(id)) {
-            delete next[id]
-            changed = true
-          }
-        }
-        for (const id of doneAdd) {
-          if (!next[id]) {
-            next[id] = true
-            changed = true
-          }
-        }
-        return changed ? next : prev
-      })
-    }
-  }
-  const applyStatus = (nextStatus: Record<string, string>): void => {
-    const prevStatus = statusRef.current
-    const doneIds: string[] = []
-    const activeIds: string[] = []
-    for (const [id, next] of Object.entries(nextStatus)) {
-      if (isHomeActiveStatus(next)) {
-        activeIds.push(id)
-        continue
-      }
-      if (viewRef.current === 'home' && isHomeWorkingStatus(prevStatus[id]) && isHomeDoneReviewStatus(next)) {
-        doneIds.push(id)
-      }
-    }
-    if (doneIds.length || activeIds.length) {
-      updateHomeDoneAgents((prev) => {
-        let changed = false
-        const next = { ...prev }
-        for (const id of activeIds) {
-          if (next[id]) {
-            delete next[id]
-            changed = true
-          }
-        }
-        for (const id of doneIds) {
-          if (!next[id]) {
-            next[id] = true
-            changed = true
-          }
-        }
-        return changed ? next : prev
-      })
-    }
-    statusRef.current = nextStatus
-    setStatus(nextStatus)
-    reconcileHomeAgentReviewState(sessionsRef.current, nextStatus)
-  }
 
   // Apply a roster update; if we just spawned a session and it now exists, jump to its tab.
   const applySessions = (arr: IslandSession[]): void => {
-    sessionsRef.current = arr
     setSessions(arr)
-    updateHomeSeenWorkingAgents((prev) => {
-      const live = new Set(arr.map((s) => s.id))
-      const next = { ...prev }
-      let changed = false
-      for (const id of Object.keys(next)) {
-        if (!live.has(id)) {
-          delete next[id]
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-    reconcileHomeAgentReviewState(arr, statusRef.current)
     if (pendingJump.current) {
       const idx = arr.findIndex((s) => s.id === pendingJump.current)
       if (idx >= 0) {
@@ -463,20 +182,21 @@ export function NotchHost({
         applySessions((snap.sessions || []).map(mapSession))
         applyArchivedSessions((snap.archivedSessions || []).map(mapSession))
         setThreads(mapThreads(snap.threads))
-        applyStatus(snap.status || {})
+        setStatus(snap.status || {})
         setMilestones((snap.milestones || {}) as Record<string, IslandMilestone[]>)
+        setRuns((snap.runs || {}) as Record<string, IslandWfRun[]>)
       })
       .catch(() => {
         /* no host yet */
       })
     const off = window.agentOS?.onAction?.((a: unknown) => {
-      const act = a as ChatAction | MilestoneAction
+      const act = a as ChatAction | MilestoneAction | WfRunAction
       if (!act) return
       if (act.type === 'chat') {
         if (Array.isArray(act.sessions)) applySessions(act.sessions.map(mapSession))
         if (Array.isArray(act.archivedSessions)) applyArchivedSessions(act.archivedSessions.map(mapSession))
         if (act.threads) setThreads(mapThreads(act.threads))
-        if (act.status) applyStatus(act.status)
+        if (act.status) setStatus(act.status)
       } else if (act.type === 'milestone' && act.agentId) {
         const text = String(act.text || '').trim()
         if (!text) return
@@ -491,6 +211,21 @@ export function NotchHost({
           const list = prev[aid] || []
           if (list.some((x) => x.id === m.id)) return prev
           return { ...prev, [aid]: [...list, m].slice(-60) }
+        })
+      } else if (act.type === 'workflow-run') {
+        // The island's inline kanban board: a run started or finished for an agent. Fold through the SAME
+        // applyWfRun rule the main registry uses, so a late skeleton-bearing `started` UPSERTS the skeleton (the
+        // live board gains its TODO cards) without un-finishing a run that already received its `done`.
+        const runId = String((act as WfRunAction).runId || '')
+        const aid = String((act as WfRunAction).agentId ?? '0')
+        if (!runId) return
+        setRuns((prev) => {
+          const list = prev[aid] || []
+          const existing = list.find((r) => r.runId === runId)
+          const next = applyWfRun(existing, act as unknown as Record<string, unknown>) as IslandWfRun | null
+          if (!next) return prev
+          const nextList = existing ? list.map((r) => (r.runId === runId ? next : r)) : [...list, next]
+          return { ...prev, [aid]: nextList }
         })
       }
     })
@@ -631,6 +366,7 @@ export function NotchHost({
   activeIdRef.current = activeId ?? '' // '' = the new-session composer; sources dropped there are reassigned on spawn
   const messages = activeId ? threads[activeId] || [] : []
   const activeMilestones = activeId ? milestones[activeId] || [] : []
+  const activeRuns = activeId ? runs[activeId] || [] : []
   const activeStatus = activeId ? status[activeId] || activeSession?.status || 'idle' : 'idle'
 
   const goPage = (next: number): void => setPage(clamp(next, 0, N))
@@ -674,7 +410,6 @@ export function NotchHost({
   const archiveAgent = (id: string): void => {
     if (id === '0') return
     if (!sessions.some((s) => s.id === id)) return
-    clearHomeReviewAgents(id)
     requestArchiveAgent(id)
       .then((r) => {
         if (r?.ok) {
@@ -743,26 +478,7 @@ export function NotchHost({
   }
 
   // page 0 (pen) = spawn a NEW session; an agent tab = steer that session. Both are real (no mock append).
-  const setAgentWorkflows = async (id: string, on: boolean): Promise<boolean> => {
-    const previous = !!sessionsRef.current.find((s) => s.id === id)?.orchestrators
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, orchestrators: on } : s)))
-    try {
-      const r = await window.agentOS?.setAgentOrchestrators?.(id, on)
-      if (!r?.ok) {
-        setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, orchestrators: previous } : s)))
-        return false
-      }
-      const enabled = r.orchestrators ?? on
-      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, orchestrators: enabled } : s)))
-      setQueuedOrchestrationInstruction(id, enabled === previous ? undefined : enabled ? ORCHESTRATION_ENABLED_SUFFIX : ORCHESTRATION_DISABLED_SUFFIX)
-      return true
-    } catch {
-      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, orchestrators: previous } : s)))
-      return false
-    }
-  }
-
-  const onSend = (text: string, options?: { workflows?: boolean }): void => {
+  const onSend = (text: string): void => {
     // Attachments ride the message now (shown as chips on the sent bubble), so close the staging IMMEDIATELY. This
     // also fixes the new-session break: leaving attach open across the page-switch to the spawned agent collided
     // with the agent-chat attach layout (the height-lock) and broke the island.
@@ -770,7 +486,7 @@ export function NotchHost({
     clearStaged(activeIdRef.current) // the staged sources rode this message (chips) → clear this chat's tray
     if (safePage === 0) {
       window.agentOS
-        ?.notch?.send?.(text, !!options?.workflows)
+        ?.notch?.send?.(text, false)
         .then((r) => {
           if (r?.ok && r.id != null) pendingJump.current = String(r.id)
         })
@@ -779,12 +495,7 @@ export function NotchHost({
         })
     } else if (activeId) {
       try {
-        const queuedInstruction = queuedOrchestrationInstructionsRef.current[activeId]
-        const sendMessage = window.agentOS?.sendMessage
-        if (sendMessage) {
-          sendMessage(text, activeId, queuedInstruction ? { agentText: `${text}\n\n${queuedInstruction}` } : undefined)
-          if (queuedInstruction) setQueuedOrchestrationInstruction(activeId)
-        }
+        window.agentOS?.sendMessage?.(text, activeId)
       } catch {
         /* no bridge */
       }
@@ -804,32 +515,11 @@ export function NotchHost({
   const holdChassisHover = (): void => onChassisHoverChange?.(true)
   const openChat = (): void => {
     holdChassisHover()
-    clearHomeReviewAgents()
     setPage(0)
     setPeek(false)
     setAttachOpen(false)
     setView('session')
   }
-  const openAgentChat = (id: string): void => {
-    if (debugFakeHomeAgents && id.startsWith('fake-home-')) {
-      holdChassisHover()
-      return
-    }
-    holdChassisHover()
-    const idx = sessions.findIndex((s) => s.id === id)
-    if (idx < 0) {
-      openChat()
-      return
-    }
-    clearHomeReviewAgents(id)
-    setPage(idx + 1)
-    setPeek(false)
-    setAttachOpen(false)
-    setView('session')
-  }
-  const homeSessions = debugFakeHomeAgents ? FAKE_HOME_AGENTS : sessions
-  const homeStatus = debugFakeHomeAgents ? FAKE_HOME_STATUS : status
-  const homeDoneAgentIds = debugFakeHomeAgents ? FAKE_HOME_DONE_IDS : Object.keys(homeDoneAgents)
   return (
     <div className="nhost" data-view={dataView}>
       <div
@@ -870,6 +560,7 @@ export function NotchHost({
             </svg>
           </button>
         )}
+        {/* Peek toggle hidden for now (not needed). Restore this block to bring it back.
         {inSession && (
           <button
             type="button"
@@ -884,22 +575,19 @@ export function NotchHost({
             <span>{peek ? 'Expand' : 'Peek'}</span>
           </button>
         )}
+        */}
         {onHome ? (
           <IslandHome
             menuBarH={menuBarH}
-            sessions={homeSessions}
-            status={homeStatus}
-            doneAgentIds={homeDoneAgentIds}
+            sessions={sessions}
+            status={status}
             onOpenChat={openChat}
-            onOpenAgent={openAgentChat}
           />
         ) : view === 'settings' ? (
           <IslandSettings
             menuBarH={menuBarH}
             showActiveTerminal={debugActiveTerminal}
             onToggleActiveTerminal={chooseDebugActiveTerminal}
-            showFakeHomeAgents={debugFakeHomeAgents}
-            onToggleFakeHomeAgents={chooseDebugFakeHomeAgents}
             archivedSessions={archivedSessions}
             onRestoreAgent={restoreAgent}
             onDeleteAgent={deleteArchivedAgent}
@@ -911,6 +599,7 @@ export function NotchHost({
             onSelectPage={goPage}
             messages={messages}
             milestones={activeMilestones}
+            runs={activeRuns}
             status={activeStatus}
             activeId={activeId}
             peek={peek}
@@ -922,7 +611,6 @@ export function NotchHost({
             activeTerminal={activeId ? terminals[activeId] : undefined}
             onArchiveAgent={archiveAgent}
             onRenameAgent={renameAgent}
-            onSetWorkflows={setAgentWorkflows}
           />
         )}
       </div>

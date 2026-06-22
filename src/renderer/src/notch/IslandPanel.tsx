@@ -6,16 +6,18 @@
 // Every composer has an attach "+" that toggles the AttachPanel inline (the island grows). The BLACK chassis +
 // the original NotchShape are owned by NotchHost and are INVARIANT; this paints ONLY the interior.
 import './island.css'
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import './wf.css'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
 import { AttachTray, type TrayGroup } from './attachTray'
 import { useSentTray, recordSentTray, getLiveTray } from './sentTrayStore'
 import { IslandTerminalPane } from './IslandTerminalPane'
 import MarkdownMessage from './MarkdownMessage'
-import { agentGradient } from './agentVisuals'
+import IslandKanban, { type WfStats } from './IslandKanban'
+import { fmtMs, fmtTok } from './wfShared'
 import { matchingChoiceAnswer } from './messageParts'
-import type { IslandPanelProps } from './types'
+import type { IslandPanelProps, IslandWfRun } from './types'
 
 const AGENT_NAME_MAX = 24
 
@@ -24,16 +26,28 @@ const PEN_PATH =
   'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z'
 const ARCHIVE_PATH =
   'M4 7h16M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 11h6M5 3h14a1 1 0 0 1 1 1v3H4V4a1 1 0 0 1 1-1Z'
+// A stable, vibrant per-agent gradient (the peek "album art") derived from the agent id.
+function agentGradient(id: string): string {
+  // Spread hues by the GOLDEN ANGLE so sequential agent ids ('0','1','2'…) get maximally DIFFERENT, diverse colors
+  // (a plain char-hash put them ~1° apart, so every agent looked the same). Numeric ids use the number directly.
+  let n = 0
+  for (let i = 0; i < id.length; i++) n = (n * 33 + id.charCodeAt(i)) >>> 0
+  const base = /^\d+$/.test(id) ? parseInt(id, 10) : n
+  const h = (base * 137.508) % 360
+  return `radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.42) 0%, transparent 40%), linear-gradient(145deg, hsl(${h} 85% 60%), hsl(${(h + 50) % 360} 80% 56%) 45%, hsl(${(h + 110) % 360} 82% 60%))`
+}
 
-// Raw host status → status symbol: warming pulses blue, working spins, everything else is quiet.
-const dotStatus = (s: string): string => (s === 'starting' ? 'warming' : s === 'working' ? 'working' : 'idle')
+// Raw host status → the dot (working + reconnecting pulse so a stuck/reviving agent never reads as a dead gray
+// 'Idle'; everything else is a gray dot).
+const dotStatus = (s: string): string => (s === 'working' || s === 'starting' || s === 'reconnecting' ? 'working' : 'idle')
 // Raw host status → a plain one-word label for the live status line.
 const statusLabel = (s: string): string => {
   switch (s) {
     case 'working':
-      return 'Working'
     case 'starting':
-      return 'Warming up'
+      return 'Working'
+    case 'reconnecting': // the OS is reviving a deaf agent (wait-loop died, e.g. rate-limited) — see agent-wake-watchdog
+      return 'Reconnecting'
     case 'waiting':
       return 'Needs you'
     case 'stopped':
@@ -53,6 +67,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     onSelectPage,
     messages,
     milestones,
+    runs: runsProp,
     status,
     activeId,
     peek,
@@ -63,12 +78,17 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     debugTerminalEnabled,
     activeTerminal,
     onArchiveAgent,
-    onRenameAgent,
-    onSetWorkflows
+    onRenameAgent
   } = props
+  // KANBAN BOARD HIDDEN (2026-06-21): the in-chat workflow board is unreliable — runs are ephemeral (dropped
+  // from memory 30s after done, no disk persistence, gone on relaunch), so a finished/long run shows nothing.
+  // Disabled at the render layer (run_workflow itself still runs and writes its journal to disk). The full
+  // persistence design that fixes this is in plans/blitzos-kanban-persistence.md. Flip KANBAN_HIDDEN to false to
+  // re-enable; the render path below (renderBoard / IslandKanban) is intact, just fed an empty run list.
+  const KANBAN_HIDDEN: boolean = true
+  const runs = KANBAN_HIDDEN ? [] : runsProp
   const top = Math.max(28, menuBarH) + 8
   const isNew = page === 0 // the pen tab
-  const activeSession = activeId ? sessions.find((s) => s.id === activeId) : undefined
   const feedRef = useRef<HTMLDivElement>(null)
   const lyricsRef = useRef<HTMLDivElement>(null)
   // Attach mode in an AGENT chat: lock the island to the height it had BEFORE attach opened, so the attachment panel
@@ -84,8 +104,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const sentTray = useSentTray(activeId)
   const pendingNewSessionRef = useRef<TrayGroup[] | null>(null) // composer ('') tray, pinned to the spawned agent's msg 0
   const seenChatRef = useRef<Set<string>>(new Set())
-  const [newSessionWorkflows, setNewSessionWorkflows] = useState(false)
-  const [pendingWorkflowToggle, setPendingWorkflowToggle] = useState(false)
   // On first sight of a freshly spawned agent, pin the composer tray captured at its spawning send to its first message.
   useEffect(() => {
     if (!activeId) return
@@ -98,31 +116,18 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   // Freeze an EXACT copy of the live dropbox (getLiveTray) onto the message being sent, THEN send (NotchHost.onSend
   // clears the live tray). New-session composer ('') → stash it to pin onto the spawned agent's first message.
   const handleSend = (text: string): void => {
-    const workflows = isNew ? newSessionWorkflows : !!activeSession?.orchestrators
     if (activeId) {
       const groups = getLiveTray(activeId)
       if (groups.length) {
         const ord = messages.reduce((n, m) => n + (m.role === 'user' ? 1 : 0), 0) // ordinal of the user msg being sent
         recordSentTray(activeId, ord, groups)
       }
-      onSend(text, { workflows })
+      onSend(text)
       return
     }
     const groups = getLiveTray('')
     if (groups.length) pendingNewSessionRef.current = groups
-    onSend(text, { workflows })
-  }
-  const workflowsOn = isNew ? newSessionWorkflows : !!activeSession?.orchestrators
-  const toggleWorkflows = (): void => {
-    const next = !workflowsOn
-    if (isNew || !activeId) {
-      setNewSessionWorkflows(next)
-      return
-    }
-    setPendingWorkflowToggle(true)
-    onSetWorkflows(activeId, next)
-      .catch(() => false)
-      .finally(() => setPendingWorkflowToggle(false))
+    onSend(text)
   }
   // The frozen tray per transcript index (pinned to each user message's ordinal; undefined for agent rows / no tray).
   let userOrdinal = -1
@@ -131,6 +136,46 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     userOrdinal++
     return sentTray[userOrdinal]
   })
+  // Per-run rolled-up stats for the board caption (reported up by each IslandKanban on run:done). The callback is
+  // STABLE (useCallback) and no-ops when the value is unchanged, so it never loops the child's reporting effect.
+  const [runStats, setRunStats] = useState<Record<string, WfStats | null>>({})
+  const handleRunStats = useCallback((runId: string, s: WfStats | null) => {
+    setRunStats((prev) => (prev[runId] === s ? prev : { ...prev, [runId]: s }))
+  }, [])
+  // Anchor each live workflow board AFTER the last message that preceded its run (the agent's "running…" line),
+  // so the board sits in TIME ORDER in the transcript instead of stacking at the top. A run whose start predates
+  // every message (no preceding message) renders at the very top. Keyed by message index → the runs anchored there.
+  const runsByAnchor = new Map<number, IslandWfRun[]>()
+  const leadingRuns: IslandWfRun[] = []
+  for (const r of runs) {
+    let idx = -1
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if ((messages[i].ts || 0) <= r.startedAt) {
+        idx = i
+        break
+      }
+    }
+    if (idx < 0) leadingRuns.push(r)
+    else {
+      const arr = runsByAnchor.get(idx) || []
+      arr.push(r)
+      runsByAnchor.set(idx, arr)
+    }
+  }
+  const renderBoard = (r: IslandWfRun): JSX.Element => {
+    const s = runStats[r.runId]
+    return (
+      <div className={`isl-wf-board${r.done ? ' isl-wf-done' : ''}`} key={r.runId}>
+        <div className="isl-wf-board-head">
+          <span className="isl-wf-dot" aria-hidden />
+          <span>{r.done ? (r.ok ? 'workflow done' : 'workflow failed') : 'workflow running'}</span>
+          {r.file ? <span className="isl-wf-file">{r.file.replace(/^.*\//, '')}</span> : null}
+          <span className="isl-wf-stats">{s ? `${fmtMs(s.ms)} · ${s.calls} agents · ${fmtTok(s.tokens)} tok` : 'running…'}</span>
+        </div>
+        <IslandKanban runId={r.runId} skeleton={r.skeleton} onStats={handleRunStats} />
+      </div>
+    )
+  }
   // Brandon's tab-rename state ("Rename agent tabs from notch").
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
@@ -244,20 +289,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           <span className="isl-attach-glyph" aria-hidden>
             {attachOpen ? '×' : '+'}
           </span>
-        </button>
-        <button
-          type="button"
-          className={`isl-workflows${workflowsOn ? ' on' : ''}`}
-          aria-label={`${workflowsOn ? 'Disable' : 'Enable'} Orchestration`}
-          aria-pressed={workflowsOn}
-          disabled={pendingWorkflowToggle}
-          onClick={toggleWorkflows}
-          title="Orchestration"
-        >
-          <span className="isl-workflows-switch" aria-hidden>
-            <span className="isl-workflows-knob" />
-          </span>
-          <span className="isl-workflows-label">Orchestration</span>
         </button>
         <ChatInput
           className="isl-bar"
@@ -473,27 +504,33 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
             )}
           </div>
           <div className="isl-feed" ref={feedRef}>
-            {messages.length === 0 ? (
+            {messages.length === 0 && runs.length === 0 ? (
               <div className="isl-empty">No messages yet</div>
             ) : (
-              messages.map((m, i) => {
-                const previous = messages[i - 1]
-                const selectedAnswer =
-                  m.role === 'agent' && messages[i + 1]?.role === 'user' ? matchingChoiceAnswer(m.text, messages[i + 1]?.text) : undefined
-                const isSubmittedAskAnswer = m.role === 'user' && previous?.role === 'agent' && Boolean(matchingChoiceAnswer(previous.text, m.text))
-                if (isSubmittedAskAnswer) return null
-                return (
-                  <Fragment key={`${i}:${m.ts || ''}`}>
-                    {trayByIndex[i] && trayByIndex[i]!.length > 0 && (
-                      // a frozen, read-only, glass-pill copy of the dropbox — scrolls + tooltips, no delete.
-                      <div className="isl-msg-tray">
-                        <AttachTray groups={trayByIndex[i]!} readOnly />
-                      </div>
-                    )}
-                    <MarkdownMessage role={m.role} text={m.text} parts={m.parts} selectedAnswer={selectedAnswer} onChoose={(choice) => handleSend(choice)} />
-                  </Fragment>
-                )
-              })
+              <>
+                {/* runs that started before any message render at the top; the rest are interleaved below */}
+                {leadingRuns.map((r) => renderBoard(r))}
+                {messages.map((m, i) => {
+                  const previous = messages[i - 1]
+                  const selectedAnswer =
+                    m.role === 'agent' && messages[i + 1]?.role === 'user' ? matchingChoiceAnswer(m.text, messages[i + 1]?.text) : undefined
+                  const isSubmittedAskAnswer = m.role === 'user' && previous?.role === 'agent' && Boolean(matchingChoiceAnswer(previous.text, m.text))
+                  if (isSubmittedAskAnswer) return null
+                  return (
+                    <Fragment key={`${i}:${m.ts || ''}`}>
+                      {trayByIndex[i] && trayByIndex[i]!.length > 0 && (
+                        // a frozen, read-only, glass-pill copy of the dropbox — scrolls + tooltips, no delete.
+                        <div className="isl-msg-tray">
+                          <AttachTray groups={trayByIndex[i]!} readOnly />
+                        </div>
+                      )}
+                      <MarkdownMessage role={m.role} text={m.text} parts={m.parts} selectedAnswer={selectedAnswer} onChoose={(choice) => onSend(choice)} />
+                      {/* live workflow board(s) anchored right after THIS message (the agent's "running…" line) */}
+                      {(runsByAnchor.get(i) || []).map((r) => renderBoard(r))}
+                    </Fragment>
+                  )
+                })}
+              </>
             )}
           </div>
           {debugTerminalEnabled && activeId && (

@@ -18,7 +18,7 @@
 .nh-chassis {
   pointer-events: auto;
   box-sizing: border-box;
-  width: 580px;
+  width: 696px; /* base island width (was 580px, +20%) */
   max-width: 84vw;
   background: #000;
   color: #ededed;
@@ -26,12 +26,18 @@
   overflow: hidden;
   position: relative; /* positioning context for the peek toggle in the notch band */
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  /* TOP-EDGE BLEED: paint 4px of solid black ABOVE the top edge. The square top corners sit flush at the screen
+     edge, so this strip is normally clipped off by the physical display edge (invisible). But while the entry
+     transform settles onto y=0, the chassis's GPU layer can land a sub-pixel low for a frame, exposing ~1px of
+     desktop between the screen edge and the island top. The bleed is part of the chassis's OWN layer (no seam) and
+     fills that gap. box-shadow, not a child, so overflow:hidden can't clip it and it adds no layout. */
+  box-shadow: 0 -4px 0 0 #000;
   animation: nhost-in 0.28s cubic-bezier(0.32, 0.72, 0, 1);
   /* the island EXPANDS sideways when the attachment panel opens (NotchHost adds .nh-wide). */
   transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .nh-chassis.nh-wide {
-  width: 740px;
+  width: 888px; /* attach-panel-open width (was 740px, +20%) */
 }
 
 /* the PEEK toggle: a macOS-menu-bar-style control pinned to the very top (the notch band), top-right, ALWAYS

@@ -9,6 +9,7 @@ export type TranscriptEvent =
   | { kind: 'result'; isError: boolean; ts?: number }
 
 export function sessionJsonlPath(wsRoot: string | null | undefined, claudeSessionId: string | null | undefined): string | null
+export function lastAssistantStopReason(jsonlPath: string | null | undefined): string | null
 export function toolRow(name: string, input: Record<string, unknown>): ToolRow
 export function toolLabel(row: ToolRow | null | undefined): string
 export function readSessionEvents(

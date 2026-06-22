@@ -11,7 +11,6 @@ export interface IslandSession {
   status: string
   lastMessagePreview?: string
   archivedAt?: number
-  orchestrators?: boolean
 }
 
 export interface IslandMessage {
@@ -45,6 +44,18 @@ export interface IslandMilestone {
   text: string
 }
 
+// A live workflow run, for the inline kanban board in chat. Mirrors the main-side IslandWfRun.
+export interface IslandWfRun {
+  runId: string
+  agentId: string
+  file: string
+  startedAt: number
+  done: boolean
+  ok: boolean
+  skeleton: unknown[]
+  memDir: string | null
+}
+
 export interface IslandTerminalMeta {
   id: string
   title: string
@@ -58,10 +69,11 @@ export interface IslandPanelProps {
   onSelectPage: (p: number) => void
   messages: IslandMessage[] // the active session's transcript (process view)
   milestones: IslandMilestone[] // the active session's summarized step timeline (narrator)
+  runs: IslandWfRun[] // the active session's live workflow runs (inline kanban boards)
   status: string // the active session's raw host status (process view)
   activeId?: string // the active session id (the Details expand + the peek now-playing)
   peek: boolean // peek: keep the tab bar, but the area BELOW becomes the active agent's "now playing"
-  onSend: (text: string, options?: { workflows?: boolean }) => void // page 0 = spawn a new session; an agent tab = steer it
+  onSend: (text: string) => void // page 0 = spawn a new session; an agent tab = steer it
   menuBarH: number // notch height in px, for top alignment under the physical notch
   attachOpen: boolean // the attach "+" toggles the attachment panel INLINE (island grows)
   onToggleAttach: () => void
@@ -69,5 +81,4 @@ export interface IslandPanelProps {
   activeTerminal?: IslandTerminalMeta // metadata for activeId's managed terminal; activeId remains the terminal id
   onArchiveAgent: (id: string) => void
   onRenameAgent: (id: string, title: string) => Promise<boolean>
-  onSetWorkflows: (id: string, on: boolean) => Promise<boolean>
 }

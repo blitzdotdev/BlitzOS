@@ -25,7 +25,7 @@ interface ScanJson {
   [k: string]: unknown
 }
 
-const WS_NAME = 'case-file'
+const WS_NAME = 'Home' // single workspace: onboarding runs in the default Home workspace (no separate case-file)
 
 let mainWindow: (() => BrowserWindow | null) | null = null
 let starting = false
@@ -508,22 +508,19 @@ export function replaceRestartAnchor(notepad: string, anchor: string): string {
 export function refreshRestartAnchor(wsPath: string): void {
   const dir = onboardingDir(wsPath)
   const profile = readText(join(dir, 'profile.md'))
-  const initiative = readText(join(dir, 'initiative.md'))
   const scope = profileValue(profile, 'Scope') || 'BlitzOS and agent-os testing'
   const autonomy = profileValue(profile, 'Autonomy') || 'Reversible testing and preparation can proceed without waiting.'
   const confirmation = profileValue(profile, 'Confirmation boundary') || profileValue(profile, 'Privacy and accounts') || 'Ask before outward-facing actions, destructive changes, sends, money, credentials, deploys, or account actions.'
   const priority = profileValue(profile, 'Current priority') || 'Make BlitzOS onboarding fast and reliable.'
-  const active = markdownValue(initiative, 'Focus') || 'No active initiative recorded yet.'
-  const next = markdownValue(initiative, 'Current Next Step') || 'Continue the resident initiative setup, then record the next reversible action.'
+  // The active initiative is NOT persisted (it lives in the live chat/context) — the anchor only
+  // carries the durable profile facts so a fresh resident re-proposes its initiative from there.
   const anchor = [
     RESTART_ANCHOR_HEADING,
     '',
     `- Scope: ${scope}`,
     `- Autonomy: ${autonomy}`,
     `- Confirm before: ${confirmation}`,
-    `- Priority: ${priority}`,
-    `- Active initiative: ${active}`,
-    `- Next reversible action: ${next}`
+    `- Priority: ${priority}`
   ].join('\n')
   const notepadPath = join(wsPath, 'notepad.md')
   writeFileSync(notepadPath, replaceRestartAnchor(readText(notepadPath), anchor))
@@ -574,7 +571,7 @@ const INTERVIEW_BOOT_TASK =
   'THE ONBOARDING INTERVIEW. You are the interviewer. If `.blitzos/onboarding/context.md` is not present yet, wait for it instead of asking from generic assumptions. Then read `.blitzos/onboarding/interview.md`, skim `.blitzos/onboarding/context.md` only long enough to ask the first high-value choice-card question immediately, and continue the interview from the human answers. Ask at most 4 multiple-choice questions TOTAL and NEVER an open or write/paste question (the voice card is filled from the scan, not by asking). When their work touches web or app tools, you MUST also get them signed in: first post a multi-select card listing every tool the scan saw (web.workflow plus the comm and native apps in cadence, friendly names) and let them check all they use, not just what is open, then have them connect each checked tool through the connector (the browser extension for web tools, the helper for native apps), asking them to sign in to any that are not, and confirm each connection is live so BlitzOS can read and write in their real browser and apps. Do not ask what their workflow is; the resident discovers it by exploring each tool. That sign-in is a required action and does not count toward the 4 questions. Then write `.blitzos/onboarding/profile.md` and mark `.blitzos/onboarding/interview.json` done. Onboarding will write the compact Notepad restart anchor after completion. If the chat already shows prior Q&A, continue it, do not restart.'
 
 const RESIDENT_INITIATIVE_BOOT_TASK =
-  'THE RESIDENT INITIATIVE DUTY. The onboarding interview is done, so do not sit in passive watch mode. Read the Notepad restart anchor first if it exists, then read `.blitzos/onboarding/profile.md`, `.blitzos/onboarding/initiative.md` if it exists, and the recent chat. If profile.md ends with a "First task for the resident" line, do THAT first: it is a ready-to-run reversible task in a tool the human signed into during onboarding, so connect that tool through the connector and start the work (draft, stage, prepare), then ask only before the irreversible send. Acting at once through the tools they just brought in beats proposing something new. Otherwise act on the initiative gradient from the onboarding plan: propose useful work the user did not explicitly ask for, and start one safe reversible initiative immediately. If no current initiative is recorded, send one short chat message with 2 or 3 concrete initiatives grounded in the profile, say which one you are starting now, write `.blitzos/onboarding/initiative.md` with the active initiative and next step, then make visible progress on that initiative. If an initiative is already recorded or visible, continue it instead of re-proposing. Use the chat and action items, not modals. Stay inside the user boundaries in the profile, and apply them precisely. Do ALL reversible work automatically and NEVER ask permission for it: research, DRAFTING and staging any message, post, or outreach copy, and file edits. Ask ONLY before the irreversible outward act itself: actually sending or posting, deploying, spending money, using credentials, account actions, or destructive changes. Concretely: write and stage the draft, show it in the chat, and ask only before it is sent, never before it is written. Do not merely say you are watching. Keep polling `/events`, but use idle time to originate, execute, and update your notes.'
+  'THE RESIDENT INITIATIVE DUTY. The onboarding interview is done, so do not sit in passive watch mode. Read the Notepad restart anchor first if it exists, then read `.blitzos/onboarding/profile.md` and the recent chat. If profile.md ends with a "First task for the resident" line, do THAT first: it is a ready-to-run reversible task in a tool the human signed into during onboarding, so connect that tool through the connector and start the work (draft, stage, prepare), then ask only before the irreversible send. Acting at once through the tools they just brought in beats proposing something new. Otherwise act on the initiative gradient from the onboarding plan: propose useful work the user did not explicitly ask for, and start one safe reversible initiative immediately. If no initiative is active in this chat yet, send one short chat message with 2 or 3 concrete initiatives grounded in the profile, say which one you are starting now, then make visible progress on it. Keep the active initiative in this chat and your working context — do NOT persist it to a file: the user will often refine or reject it, so there is nothing durable to write yet. If an initiative is already active in the chat, continue it instead of re-proposing. Use the chat and action items, not modals. Stay inside the user boundaries in the profile, and apply them precisely. Do ALL reversible work automatically and NEVER ask permission for it: research, DRAFTING and staging any message, post, or outreach copy, and file edits. Ask ONLY before the irreversible outward act itself: actually sending or posting, deploying, spending money, using credentials, account actions, or destructive changes. Concretely: write and stage the draft, show it in the chat, and ask only before it is sent, never before it is written. Do not merely say you are watching. Keep polling `/events`, but use idle time to originate, execute, and update your notes.'
 
 /** index.ts threads this into session '0': interview first, then the resident initiative duty. */
 export function interviewBootTask(): string | null {
@@ -643,7 +640,7 @@ async function fdaGrantedEffective(): Promise<boolean> {
 }
 
 // ---- entry ------------------------------------------------------------------------------------
-// V1 is chat-only: create + switch to the onboarding workspace, run the scan (its context.md primes
+// V1 is chat-only: create + switch to the single Home workspace, run the scan (its context.md primes
 // the chat agent), then hand off to the primary interview agent. No widget board is seeded.
 async function start(): Promise<{ ok: boolean; cached?: boolean }> {
   if (starting) return { ok: true }

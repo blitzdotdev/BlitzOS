@@ -3,7 +3,7 @@
 // behaved like a founder or an assistant.
 //
 // Usage:
-//   node scripts/export-agent-session.mjs                      # auto: the case-file agent's current session
+//   node scripts/export-agent-session.mjs                      # auto: the Home agent's current session
 //   node scripts/export-agent-session.mjs <sessionId>          # a specific session id (searched under ~/.claude/projects)
 //   node scripts/export-agent-session.mjs <path.jsonl> [out.md]
 //
@@ -26,9 +26,10 @@ function resolveJsonl(arg) {
       if (existsSync(p)) return p
     }
   }
-  // auto: the case-file agent's current claudeSessionId
+  // auto: the Home agent's current claudeSessionId (override the workspace with BLITZ_ONBOARDING_WS)
   try {
-    const meta = JSON.parse(readFileSync(join(homedir(), 'Blitz', 'case-file', '.blitzos', 'terminals', '0', 'meta.json'), 'utf8'))
+    const wsDir = process.env.BLITZ_ONBOARDING_WS || join(homedir(), 'Blitz', 'Home')
+    const meta = JSON.parse(readFileSync(join(wsDir, '.blitzos', 'terminals', '0', 'meta.json'), 'utf8'))
     for (const d of readdirSync(PROJECTS)) {
       const p = join(PROJECTS, d, meta.claudeSessionId + '.jsonl')
       if (existsSync(p)) return p

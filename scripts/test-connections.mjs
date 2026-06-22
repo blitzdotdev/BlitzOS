@@ -5,7 +5,7 @@
 
 import { makeConnectionOps } from '../src/main/connection-ops.mjs'
 import { makeWidgetToolHandlers } from '../src/main/widget-tools.mjs'
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -94,12 +94,35 @@ async function main() {
   const treeRead = await ops.connectionRead(treeConn, {})
   ok('a capped deep tree returns a labeled preview (not head)', treeRead.result && treeRead.result.truncated === true && typeof treeRead.result.preview === 'string' && treeRead.result.head === undefined)
 
+  // H3: a structured read whose NON-text field is itself over the cap must STILL be capped (not pass through)
+  const fatAdapter = stubAdapter({ read: { result: { url: 'https://x/' + 'u'.repeat(20000), text: 'short' } } })
+  const { connId: fatConn } = ops.connectionBind({ type: 'tab', sourceId: 'fat.example.com', adapter: fatAdapter })
+  const fatRead = await ops.connectionRead(fatConn, { max: 2000 })
+  ok('a read with a huge NON-text field is still capped (no pass-through)', fatRead.result && fatRead.result.truncated === true && JSON.stringify(fatRead.result).length <= 2600)
+
+  // H2: a malicious/degenerate sourceId can NEVER produce a path-traversal dir, and distinct sources never collide
+  ops.connectionSaveTool(ops.connectionBind({ type: 'tab', sourceId: '..', adapter: stubAdapter() }).connId, { name: 't', kind: 'read', code: '1' })
+  ok("a '..' sourceId does NOT escape the connections dir", !existsSync(join(ws, '.blitzos', 'tools.json')) && existsSync(join(ws, '.blitzos', 'connections')))
+  const cA = ops.connectionBind({ type: 'tab', sourceId: 'a/b', adapter: stubAdapter() }).connId
+  const cB = ops.connectionBind({ type: 'tab', sourceId: 'a_b', adapter: stubAdapter() }).connId
+  ops.connectionSaveTool(cA, { name: 'fromA', kind: 'read', code: '1' })
+  ok("distinct sources 'a/b' and 'a_b' do NOT collide onto one tools.json", !ops.connectionListTools(cB).tools.some((t) => t.name === 'fromA'))
+
   // --- save a tool -> writes tools.json under the workspace, keyed on sourceId ---
   const saved = ops.connectionSaveTool(connId, { name: 'unread', description: 'unread count', kind: 'read', code: "return document.querySelectorAll('tr.zE').length" })
   ok('save_tool succeeds', saved.ok === true && saved.count === 1)
-  const toolsFile = join(ws, '.blitzos', 'connections', 'mail.google.com', 'tools.json')
-  ok('tools.json written at .blitzos/connections/<sourceId>/', existsSync(toolsFile))
-  ok('tools.json holds the saved tool', JSON.parse(readFileSync(toolsFile, 'utf8'))[0].name === 'unread')
+  // the dir is a hash-suffixed safe name (no traversal / no collisions), so locate it dynamically
+  const connRoot = join(ws, '.blitzos', 'connections')
+  const findToolsFile = () => {
+    for (const d of existsSync(connRoot) ? readdirSync(connRoot) : []) {
+      const f = join(connRoot, d, 'tools.json')
+      if (existsSync(f) && JSON.parse(readFileSync(f, 'utf8')).some((t) => t.name === 'unread')) return f
+    }
+    return null
+  }
+  const toolsFile = findToolsFile()
+  ok('tools.json written under .blitzos/connections/<safeSourceId>/', !!toolsFile)
+  ok('tools.json holds the saved tool', toolsFile && JSON.parse(readFileSync(toolsFile, 'utf8'))[0].name === 'unread')
   ok('list_tools reflects it', ops.connectionListTools(connId).tools.length === 1)
 
   // --- call_tool: a tab tool runs via run_js (the saved code), kind read returns its value ---
@@ -266,6 +289,51 @@ async function main() {
   ok('re-setting the same owner is a no-op', ops.connectionSetOwner(ownBind.connId, 'B').changed === false)
   ok('connectionSetOwner on an unknown connId errors', !!ops.connectionSetOwner('conn_nope', 'B').error)
   ok('an unscoped list (undefined) still sees every owner', ops.connectionList().connections.some((c) => c.connId === ownBind.connId))
+
+  // ---------- the first-party TOOL REGISTRY (connection_registry_search / _get / _add) ----------
+  // a fake registry server via an injected fetchImpl — proves search(meta)/get(full)/add(into tools.json) without HTTP.
+  const REG = {
+    'docs.google.com': [
+      { name: 'read_text', description: 'doc text', kind: 'read', code: "return document.body.innerText", sourceId: 'docs.google.com', version: '1', contentHash: 'sha256:abc' }
+    ]
+  }
+  const mkRes = (status, obj) => ({ ok: status >= 200 && status < 300, status, json: async () => obj })
+  const fakeFetch = async (url) => {
+    const u = new URL(url)
+    const sid = u.searchParams.get('sourceId')
+    if (u.pathname === '/v1/tools') return mkRes(200, { sourceId: sid, entries: (REG[sid] || []).map(({ code, steps, ...m }) => m) })
+    if (u.pathname === '/v1/tool') {
+      const e = (REG[sid] || []).find((t) => t.name === u.searchParams.get('name'))
+      return e ? mkRes(200, { entry: e }) : mkRes(404, { error: 'not found' })
+    }
+    return mkRes(404, { error: 'not found' })
+  }
+  const regWs = mkdtempSync(join(tmpdir(), 'blitz-reg-'))
+  const rops = makeConnectionOps({ getWorkspacePath: () => regWs, createSurface: () => 'rs', registryUrl: 'http://reg.test', fetchImpl: fakeFetch })
+  const rconn = rops.connectionBind({ type: 'tab', sourceId: 'docs.google.com', title: 'Doc', adapter: stubAdapter() }).connId
+
+  const search = await rops.connectionRegistrySearch({ connection: rconn })
+  ok('registry_search returns entries for the connection sourceId', search.sourceId === 'docs.google.com' && search.entries.length === 1 && search.entries[0].name === 'read_text')
+  ok('registry_search returns METADATA ONLY (no code)', search.entries[0].code === undefined)
+  const sById = await rops.connectionRegistrySearch({ sourceId: 'docs.google.com', query: 'text' })
+  ok('registry_search works by sourceId + query', sById.entries.length === 1)
+  ok('registry_search for an unknown source is empty (not an error)', (await rops.connectionRegistrySearch({ sourceId: 'nope.com' })).entries.length === 0)
+
+  const full = await rops.connectionRegistryGet({ sourceId: 'docs.google.com', name: 'read_text' })
+  ok('registry_get returns the full entry incl. code', full.entry && full.entry.code === 'return document.body.innerText')
+  ok('registry_get for a missing tool errors', !!(await rops.connectionRegistryGet({ sourceId: 'docs.google.com', name: 'nope' })).error)
+
+  const added = await rops.connectionRegistryAdd({ connection: rconn, name: 'read_text' })
+  ok('registry_add installs the tool into tools.json', added.ok === true && added.name === 'read_text')
+  const listed = rops.connectionListTools(rconn).tools
+  ok('the added tool now shows in connection_list_tools', listed.some((t) => t.name === 'read_text'))
+  ok('the added tool is stamped source:registry + contentHash', listed.find((t) => t.name === 'read_text')?.source === 'registry' && !!listed.find((t) => t.name === 'read_text')?.contentHash)
+  ok('the added tool is runnable via connection_call_tool', (await rops.connectionCallTool(rconn, 'read_text')).ok === true)
+
+  // not-configured + guard cases
+  const noUrl = makeConnectionOps({ getWorkspacePath: () => regWs, createSurface: () => 'x', fetchImpl: fakeFetch })
+  ok('an unconfigured registry reports a clear error', /not configured/.test((await noUrl.connectionRegistrySearch({ sourceId: 'docs.google.com' })).error || ''))
+  rmSync(regWs, { recursive: true, force: true })
 
   rmSync(ws, { recursive: true, force: true })
   console.log('\n' + (fail ? '✗' : '✓') + ' connections: ' + pass + ' passed, ' + fail + ' failed')

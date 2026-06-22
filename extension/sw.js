@@ -150,15 +150,47 @@ function fnRead(spec) {
   if (spec.html) out.html = (root.outerHTML || '').slice(0, max)
   return out
 }
+// act runs ENTIRELY in the page (JS) — same logic as the Safari adapter's ACT_JS. 'click' fires the full
+// pointer/mouse sequence so custom web widgets (Google Docs, etc.) that listen for mousedown/pointer actually
+// respond; a bare el.click() dispatches only a lone `click` and silently no-ops on them. 'type' replays per-char
+// keydown/keypress/beforeinput/input/keyup. Web tabs are driven by JS only — never by AX/coordinate/screenshots.
 function fnAct(spec) {
   const el = spec.selector ? document.querySelector(spec.selector) : document.activeElement
+  const clickSeq = (t) => {
+    const r = t.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2
+    const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, button: 0 }
+    const P = (type, ex) => { try { return new PointerEvent(type, Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, base, ex || {})) } catch (e) { return new MouseEvent(type, Object.assign({}, base, ex || {})) } }
+    const M = (type, ex) => new MouseEvent(type, Object.assign({}, base, ex || {}))
+    t.dispatchEvent(P('pointerover')); t.dispatchEvent(M('mouseover'))
+    t.dispatchEvent(P('pointermove')); t.dispatchEvent(M('mousemove'))
+    t.dispatchEvent(P('pointerdown', { buttons: 1 })); t.dispatchEvent(M('mousedown', { buttons: 1 }))
+    if (t.focus) { try { t.focus() } catch (e) {} }
+    t.dispatchEvent(P('pointerup')); t.dispatchEvent(M('mouseup'))
+    return t.dispatchEvent(M('click'))
+  }
   if (spec.action === 'click') {
     if (!el) return { error: 'no match for ' + spec.selector }
-    const before = location.href
-    el.click()
-    return { clicked: spec.selector || true, urlBefore: before, url: location.href }
+    const before = location.href, ok = clickSeq(el)
+    return { clicked: spec.selector || true, defaultPrevented: !ok, urlBefore: before, url: location.href }
   }
-  if (spec.action === 'set' || spec.action === 'type') {
+  if (spec.action === 'type') {
+    if (!el) return { error: 'no match for ' + spec.selector }
+    if (el.focus) { try { el.focus() } catch (e) {} }
+    const text = spec.text == null ? '' : String(spec.text), editable = 'value' in el
+    for (const ch of text) {
+      const ko = { key: ch, bubbles: true, cancelable: true }
+      el.dispatchEvent(new KeyboardEvent('keydown', ko))
+      el.dispatchEvent(new KeyboardEvent('keypress', ko))
+      try { el.dispatchEvent(new InputEvent('beforeinput', { data: ch, bubbles: true, cancelable: true, inputType: 'insertText' })) } catch (e) {}
+      if (editable) el.value = (el.value || '') + ch
+      else { try { document.execCommand('insertText', false, ch) } catch (e) { el.textContent = (el.textContent || '') + ch } }
+      try { el.dispatchEvent(new InputEvent('input', { data: ch, bubbles: true, inputType: 'insertText' })) } catch (e) { el.dispatchEvent(new Event('input', { bubbles: true })) }
+      el.dispatchEvent(new KeyboardEvent('keyup', ko))
+    }
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    return { value: editable ? el.value : el.textContent || '' }
+  }
+  if (spec.action === 'set') {
     if (!el) return { error: 'no match for ' + spec.selector }
     if (el.focus) el.focus()
     if ('value' in el) {
@@ -168,12 +200,14 @@ function fnAct(spec) {
       return { value: el.value }
     }
     el.textContent = spec.text == null ? '' : String(spec.text)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
     return { value: el.textContent }
   }
   if (spec.action === 'key') {
     const t = el || document.activeElement || document.body
-    const opts = { key: spec.key, bubbles: true }
+    const opts = { key: spec.key, bubbles: true, cancelable: true }
     t.dispatchEvent(new KeyboardEvent('keydown', opts))
+    t.dispatchEvent(new KeyboardEvent('keypress', opts))
     t.dispatchEvent(new KeyboardEvent('keyup', opts))
     return { key: spec.key }
   }

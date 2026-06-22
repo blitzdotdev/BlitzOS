@@ -7,6 +7,7 @@ import { createWorkspaceHost } from './workspace-host.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
 import { readFileSync } from 'node:fs'
 import { sessionJsonlPath, readSessionEvents, toolLabel } from './agent-transcript.mjs'
+import { applyWfRun, type WfRunRecord } from './wf-run-state.mjs'
 import { tel } from './telemetry'
 import type { WebContents } from 'electron'
 
@@ -275,14 +276,12 @@ export function initOsActions(opts: {
   ipcMain.on('os:content-share', (_e, m: { surfaceId?: unknown; on?: unknown }) => {
     if (m && typeof m.surfaceId === 'string') setContentShare(m.surfaceId, !!m.on)
   })
-  // The human typed a message to the agent in chat. `agentText` is optional hidden context that wakes
-  // the agent but is not written to chat.md or rendered in the transcript.
+  // The human typed a message to the agent in the in-canvas Chat.
   ipcMain.on('os:user-message', (_e, payload: unknown) => {
-    // payload is { text, agentId, agentText } (object) - tolerate a bare string (older renderer) -> agent '0'.
+    // payload is { text, agentId } (object) — tolerate a bare string (older renderer) → agent '0'.
     const text = typeof payload === 'string' ? payload : String((payload as { text?: unknown })?.text ?? '')
     const aid = payload && typeof payload === 'object' && (payload as { agentId?: unknown }).agentId != null ? String((payload as { agentId?: unknown }).agentId) : '0'
-    const agentText = payload && typeof payload === 'object' && (payload as { agentText?: unknown }).agentText != null ? String((payload as { agentText?: unknown }).agentText) : undefined
-    osUserMessage(text, aid, { agentText })
+    osUserMessage(text, aid)
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
   ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {
@@ -364,6 +363,9 @@ export function osBroadcast(action: Record<string, unknown>): void {
       if (action.id != null) wsHost?.setChatStatus(String(action.id), 'stopped')
     } else if (action?.type === 'terminal-exit') {
       if (action.id != null) wsHost?.setChatStatus(String(action.id), Number(action.exitCode) ? 'error' : 'stopped')
+    } else if (action?.type === 'workflow-run') {
+      // record + re-broadcast to the island (started/done) for the in-chat kanban
+      osNoteWfRun(action)
     }
   } catch {
     /* status sync is best-effort; the terminal event itself must still publish */
@@ -511,18 +513,16 @@ export function osSay(text: string, agentId = '0', workspace?: string): void {
   }
   wsHost?.appendChat('agent', text, agentId)
 }
-/** USER -> agent: enter a chat message exactly as the human composer does (append '### user' to that
- *  agent's chat.md + echo to its widget, and wake that agent with a 'message' moment). Optional
- *  agentText can include hidden instructions for the live agent; only visible text is persisted. The
- *  renderer IPC and the localhost-only `user_say` test syscall both land here, so programmatic user
- *  input is indistinguishable from typed input - the test rig's input path. (No spawn hook: agents are
+/** USER → agent: enter a chat message exactly as the human composer does (append '### user' to that
+ *  agent's chat.md + echo to its widget, and wake that agent with a 'message' moment). The renderer
+ *  IPC and the localhost-only `user_say` test syscall both land here, so programmatic user input is
+ *  indistinguishable from typed input — the test rig's input path. (No spawn hook: agents are
  *  boot-resident / spawned via spawn_agent in the Terminal/Agent model.) */
-export function osUserMessage(text: string, agentId = '0', options: { agentText?: string } = {}): void {
+export function osUserMessage(text: string, agentId = '0'): void {
   if (!text.trim()) return
   const aid = String(agentId)
-  const agentText = options.agentText?.trim() ? options.agentText : text
   wsHost?.appendChat('user', text, aid) // write to that agent's chat.md + echo to its widget
-  emitUserMessage(agentText, aid) // wake ONLY that agent (trigger:'message')
+  emitUserMessage(text, aid) // wake ONLY that agent (trigger:'message')
   onUserMessage?.(aid)
 }
 
@@ -575,7 +575,7 @@ export function setRestartAgent(fn: (agentId: string) => void): void {
 }
 // Re-exec a running agent with a FRESH context. The onboarding director calls this at the
 // interview→resident HANDOFF; the transport wires it to a session-id rotation + restart, so the resident
-// boots a clean conversation and rebuilds state from profile.md + board.json + initiative.md + chat.md
+// boots a clean conversation and rebuilds state from profile.md + board.json + chat.md
 // (its bootstrap reads them), at the resident effort (xhigh). The full interview transcript stays in
 // chat.md, so nothing is lost.
 let clearBrainContextHook: ((agentId: string) => void) | null = null
@@ -610,6 +610,68 @@ export function setMilestonesProvider(fn: ((id: string) => IslandMilestone[]) | 
   milestonesProvider = fn
 }
 
+// The island's live workflow-run registry, mirroring the milestone provider but maintained IN-PROCESS
+// (a run isn't a workspace artifact). workflow-host broadcasts {type:'workflow-run',...} → osBroadcast →
+// here: we record started/done + skeleton per (agentId, runId). The snapshot + the live broadcast feed the
+// island's kanban boards. Capped; a run is dropped from the registry once it's done AND consumed (the board
+// keeps its own frozen state; the registry only needs to re-hydrate open runs on island reopen). Keep done
+// runs for a short window so a late reopen still sees them frozen.
+export type IslandWfRun = { runId: string; agentId: string; file: string; startedAt: number; done: boolean; ok: boolean; skeleton: unknown[]; memDir: string | null }
+const _wfRuns = new Map<string, IslandWfRun>() // runId -> run (dropped WF_RUN_KEEP_DONE_MS after done)
+const _wfRunsByAgent = new Map<string, string[]>() // agentId -> runIds (most-recent-last)
+// Durable runId -> memDir map: the run's absolute memory dir (main-minted), kept for the WHOLE session so the
+// drill-in drawer can resolve a frozen board's leaves long after the 30s registry window. This is what closes
+// the path-traversal boundary (os:wf-leaf resolves memDir HERE by runId, never from the renderer). Capped.
+const _wfMemDirs = new Map<string, string>()
+const WF_MEMDIR_CAP = 1000
+const WF_RUN_KEEP_DONE_MS = 30_000
+let _wfRunsProvider: ((id: string) => IslandWfRun[]) | null = null
+/** Record a workflow-run broadcast (started or done). Called from osBroadcast. Folds through the shared
+ *  applyWfRun rule so the main registry and the renderer (NotchHost) handle the "second started" identically. */
+export function osNoteWfRun(action: Record<string, unknown>): void {
+  const runId = String(action.runId || '')
+  if (!runId) return
+  const agentId = String(action.agentId ?? '0')
+  const prev = _wfRuns.get(runId)
+  const next = applyWfRun(prev as WfRunRecord | undefined, action) as IslandWfRun | null
+  if (!next) return
+  _wfRuns.set(runId, next)
+  // Remember the run's memDir durably (survives the 30s registry cleanup) so the drawer always resolves it.
+  if (next.memDir) {
+    _wfMemDirs.set(runId, next.memDir)
+    if (_wfMemDirs.size > WF_MEMDIR_CAP) { const oldest = _wfMemDirs.keys().next().value; if (oldest != null) _wfMemDirs.delete(oldest) }
+  }
+  const list = _wfRunsByAgent.get(agentId) || []
+  if (!list.includes(runId)) { list.push(runId); _wfRunsByAgent.set(agentId, list) }
+  // Cleanup a DONE run after the keep window (the board keeps its own frozen state; _wfMemDirs is NOT cleared,
+  // so a late drawer open still resolves the leaf path). Only the `done` transition schedules it.
+  if (action.done && next.done) {
+    setTimeout(() => {
+      _wfRuns.delete(runId)
+      const l = _wfRunsByAgent.get(agentId)
+      if (l) {
+        const i = l.indexOf(runId)
+        if (i >= 0) l.splice(i, 1)
+        if (!l.length) _wfRunsByAgent.delete(agentId)
+      }
+    }, WF_RUN_KEEP_DONE_MS)
+  }
+}
+/** The trusted absolute memDir for a run (main-minted), or null. The drawer's leaf read resolves the path HERE
+ *  by runId — the renderer never supplies a filesystem path, so there is no path-traversal surface. */
+export function osWfRunMemDir(runId: string): string | null {
+  return _wfMemDirs.get(String(runId || '')) || null
+}
+/** Set an external runs provider (reserved; defaults to the in-process registry above). */
+export function setWfRunsProvider(fn: ((id: string) => IslandWfRun[]) | null): void {
+  _wfRunsProvider = fn
+}
+function wfRunsForAgent(id: string): IslandWfRun[] {
+  if (_wfRunsProvider) return _wfRunsProvider(id)
+  const list = _wfRunsByAgent.get(String(id || '0')) || []
+  return list.map((rid) => _wfRuns.get(rid)).filter((r): r is IslandWfRun => !!r)
+}
+
 /** Resolve an agent's canonical Claude session id (for locating its transcript jsonl). It lives in the
  *  terminal-manager's per-agent meta (`<ws>/.blitzos/terminals/<id>/meta.json`), the SAME file it owns. */
 export function osAgentClaudeSid(id: string): string | null {
@@ -632,8 +694,9 @@ export function osAgentsSnapshot(): {
   threads: Record<string, Array<Record<string, unknown>>>
   status: Record<string, string>
   milestones: Record<string, IslandMilestone[]>
+  runs: Record<string, IslandWfRun[]>
 } {
-  const empty = { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {} }
+  const empty = { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {}, runs: {} }
   if (!wsHost) return empty
   try {
     const p = wsHost.chatHubProps() as {
@@ -653,7 +716,16 @@ export function osAgentsSnapshot(): {
         }
       }
     }
-    return { sessions, archivedSessions: p.archivedSessions || [], threads: p.threads || {}, status: p.status || {}, milestones }
+    const runs: Record<string, IslandWfRun[]> = {}
+    for (const s of sessions) {
+      try {
+        const r = wfRunsForAgent(String(s.id))
+        if (r.length) runs[String(s.id)] = r
+      } catch {
+        /* per-agent best-effort */
+      }
+    }
+    return { sessions, archivedSessions: p.archivedSessions || [], threads: p.threads || {}, status: p.status || {}, milestones, runs }
   } catch {
     return empty
   }
@@ -694,12 +766,20 @@ export function osSpawnAgent(title?: string, focus = false, orchestrators = fals
   wsHost.addAgent(id, title, opts)
   return { id, title: title || `Chat ${id}` }
 }
-/** Toggle the ORCHESTRATORS (dynamic-workflows) capability on an agent. This only persists the durable
- *  meta flag; the renderer queues a hidden one-shot instruction for the next real user message so the
- *  visible transcript stays clean. */
+/** Toggle the ORCHESTRATORS (dynamic-workflows) capability on an agent — delivery B (the plan): set the DURABLE
+ *  meta flag (so every future launch bootstraps the orchestrator duty + spawnTerminal carries it across re-exec),
+ *  then WAKE the live agent now with a short pointer to .blitzos/orchestrator.md so it gains the capability THIS
+ *  session without a disruptive re-exec. The on=false path clears the flag + tells the agent to stop. */
 export function osSetOrchestrators(agentId: string, on = true): { ok: boolean; error?: string; orchestrators?: boolean } {
   if (!wsHost) return { ok: false, error: 'no workspace host' }
   const r = wsHost.setAgentOrchestrators(String(agentId), !!on)
+  if (!r.ok) return r
+  // Delivery B live-wake: the durable flag is already persisted; this message lands in the agent's chat and wakes
+  // ONLY it (osUserMessage = the steer path). Keep it short — the full how-to is the on-disk .blitzos/orchestrator.md.
+  const msg = on
+    ? 'Orchestrators ENABLED: you can now AUTHOR and RUN workflows (Claude Code workflow style) for genuinely hard, large, massively parallel, or adversarial tasks. Write a `workflow.js` that starts with `export const meta = {…}`, uses the injected globals `agent()`/`parallel`/`pipeline`/`phase`/`log` (NO imports), and ends with `return`; `agent({schema})` returns a validated object. The runner is `.blitzos/blitz` — run `bash .blitzos/blitz capabilities` FIRST, then `bash .blitzos/blitz check <wf.js>`; then RUN it with the `run_workflow` syscall (`run_workflow { file }`), NOT `bash .blitzos/blitz run` and NOT your built-in Workflow tool — only `run_workflow` is visible to BlitzOS (it tracks the run); the other two run invisibly. Narrate progress with `say`; do NOT promise the user a live board or kanban (the in-chat board is disabled right now). The full how-to is in `.blitzos/orchestrator.md`. For trivial/one-shot requests, just answer directly.'
+    : 'Orchestrators DISABLED: stop authoring/running workflows; handle requests directly in chat.'
+  try { osUserMessage(msg, String(agentId)) } catch { /* the flag still persisted; the duty lands on the next launch */ }
   return r
 }
 /** Close a non-primary agent (stop its backend + remove its widget and files). */
@@ -861,6 +941,26 @@ export function osSurfaceIdForWebContents(wc: { id: number } | null | undefined)
 /** Absolute path of the active workspace folder (where a guest download lands), or null before init. */
 export function osActiveWorkspaceDir(): string | null {
   return wsHost ? wsHost.activePath() : null
+}
+/** Read one terminal leaf's captured record (Asked/Did/Returned) for the island kanban drill-in drawer.
+ *  `memDir` is the run's absolute memory dir (from the run record, trusted — main minted it via workflowMemDir);
+ *  resolving from it (NOT the active workspace) keeps the drawer correct across workspace switches. `runId`/
+ *  `nodeId` are validated against a safe charset to block path traversal (they originate from a renderer click,
+ *  a privilege boundary). Returns { leaf } or null when capture is off / the leaf hasn't finished / missing. */
+const _LEAF_ID_RE = /^[\w.-]+$/
+export function osReadLeaf(memDir: string | null, runId: string, nodeId: string): { leaf: Record<string, unknown> } | null {
+  if (!memDir || !runId || nodeId == null) return null
+  const rid = String(runId)
+  const nid = String(nodeId)
+  if (!_LEAF_ID_RE.test(rid) || !_LEAF_ID_RE.test(nid)) return null // block ../ traversal
+  const f = join(memDir, 'leaves', nid + '.json')
+  try {
+    const leaf = JSON.parse(readFileSync(f, 'utf8'))
+    if (leaf && typeof leaf === 'object') return { leaf: leaf as Record<string, unknown> }
+    return null
+  } catch {
+    return null
+  }
 }
 export function osGetState(): OsState {
   // Thread the active workspace identity + absolute folder PATH into every state read, so the agent always

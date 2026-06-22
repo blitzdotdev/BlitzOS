@@ -19,15 +19,20 @@
 
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { markWrite as defaultMarkWrite } from './workspace.mjs'
 import { emitConnectionMoment, setContentShare, dropContentShare } from './perception-core.mjs'
 
 const READ_CAP = 8192 // default size cap on a read result — never dump a whole DOM/AX tree into context
 
-// sourceId -> a filesystem-safe directory name (origin host / app bundle id are already safe-ish; harden anyway)
+// sourceId -> a filesystem-safe directory name. A readable prefix + a hash of the RAW id, so: (1) the result
+// can NEVER be a path-traversal segment ('..', '.', '', or contain '/') — the hash suffix guarantees a valid
+// non-empty name with no dots; and (2) distinct sources never COLLIDE onto one tools.json (e.g. 'a/b' vs 'a_b'
+// both sanitize to 'a_b' but get different hashes). Don't reuse '.' in the dir name at all (dots -> '_').
 function safeSourceId(sourceId) {
-  return String(sourceId || 'unknown').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120) || 'unknown'
+  const raw = String(sourceId || 'unknown')
+  const prefix = raw.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'src'
+  return prefix + '-' + createHash('sha1').update(raw).digest('hex').slice(0, 10)
 }
 
 // Scope + cap a read so a connection can never flood the agent's context with a whole DOM/AX tree.
@@ -46,13 +51,19 @@ function cap(value, max = READ_CAP) {
   }
   if (s.length <= max) return value
   // A structured read ({url,title,text} or {...,text}) that's too big: truncate the TEXT field IN PLACE so the
-  // agent still gets clean structure (url/title/role intact), not a half-JSON blob.
+  // agent still gets clean structure (url/title/role intact), not a half-JSON blob — BUT only if the non-text
+  // fields alone fit. If a non-text field (a huge url/href/attribute) is itself over the cap, truncating text
+  // can't help, so fall through to the labeled preview rather than returning a still-oversized object.
   if (value && typeof value === 'object' && typeof value.text === 'string') {
-    const keep = Math.max(0, value.text.length - (s.length - max))
-    return { ...value, text: value.text.slice(0, keep), truncated: true, bytes: s.length, note }
+    const overhead = s.length - value.text.length // bytes of everything EXCEPT the text field's content
+    if (overhead <= max) {
+      const keep = Math.max(0, value.text.length - (s.length - max))
+      return { ...value, text: value.text.slice(0, keep), truncated: true, bytes: s.length, note }
+    }
   }
-  // Any other too-big object (e.g. a deep AX/DOM tree): a LABELED preview string — never a `head` that looks
-  // like it should be parsed as data. The agent narrows the read instead of trusting a truncated dump.
+  // Any other too-big object (a deep AX/DOM tree, or a structured read whose non-text fields blow the cap):
+  // a LABELED preview string — never a `head` that looks like it should be parsed as data, and ALWAYS within
+  // the cap. The agent narrows the read instead of trusting a truncated dump.
   return { truncated: true, bytes: s.length, preview: s.slice(0, max), note }
 }
 
@@ -72,7 +83,11 @@ export function makeConnectionOps({
   closeSurface = () => {},
   getSurfaces = () => [],
   isAgentAvailable = () => false,
-  markWrite = defaultMarkWrite
+  markWrite = defaultMarkWrite,
+  // the first-party tool registry (plans/connection-tool-registry.md): a standalone HTTP service we host,
+  // open-read. Configured via BLITZ_TOOL_REGISTRY_URL; unset = the registry tools report "not configured".
+  registryUrl = process.env.BLITZ_TOOL_REGISTRY_URL || '',
+  fetchImpl = (...a) => globalThis.fetch(...a)
 } = {}) {
   // connId -> { connId, type:'tab'|'window', sourceId, title, capabilities, status, surfaceId, adapter }
   const registry = new Map()
@@ -445,10 +460,10 @@ export function makeConnectionOps({
     if (r.type === 'tab') out = await dispatch(r, 'run_js', { code: tool.code, args: args || {} })
     else out = await dispatch(r, 'act', { steps: tool.steps, args: args || {} })
     // a failed/empty saved tool = STALE (a selector rotted): tell the agent to re-derive, never return wrong data silently
-    if (out && out.error) return { error: out.error, stale: true, note: 'saved tool failed — re-derive it (read the source) + connection_save_tool to replace it' }
+    if (out && out.error) return { error: out.error, stale: true, note: 'saved tool failed — read the source, then connection_save_tool: overwrite the same name if it is a stale selector on the same page-type, or save a distinctly-named variant if this is a different sub-type of the same source' }
     const effect = out && typeof out === 'object' ? ('effect' in out ? out.effect : 'result' in out ? out.result : out) : out
     if (tool.kind === 'act' && (effect == null || effect === '')) {
-      return { ok: false, stale: true, note: 'saved act tool produced no effect — likely a stale selector; re-derive + connection_save_tool' }
+      return { ok: false, stale: true, note: 'saved act tool produced no effect (likely a stale selector, or a different sub-type of the same source) — read the source, then connection_save_tool (overwrite if same page-type, else a distinctly-named variant)' }
     }
     return { ok: true, name: tool.name, effect: cap(effect) }
   }
@@ -720,6 +735,89 @@ export function makeConnectionOps({
     return installer()
   }
 
+  // ================= the first-party TOOL REGISTRY (plans/connection-tool-registry.md) =================
+  // A standalone HTTP service we host + vet. The agent SEARCHES it, GETS an entry, and ADDS it to its own
+  // tools.json — the registry is a CANDIDATE SOURCE, never an execution path (execution stays on the
+  // effect-verified connectionCallTool). Contract v1: GET /v1/tools?sourceId=&q= ; GET /v1/tool?sourceId=&name= .
+
+  // Resolve the target sourceId from either a live connId or an explicit sourceId string.
+  function registrySid({ connection, sourceId }) {
+    if (connection != null) {
+      const r = rec(connection)
+      if (r) return r.sourceId
+    }
+    return sourceId != null && String(sourceId) !== '' ? String(sourceId) : null
+  }
+  async function registryFetch(path) {
+    if (!registryUrl) return { error: 'tool registry not configured (set BLITZ_TOOL_REGISTRY_URL)' }
+    let res
+    try {
+      res = await fetchImpl(registryUrl.replace(/\/+$/, '') + path, { headers: { accept: 'application/json' } })
+    } catch (e) {
+      return { error: `tool registry unreachable: ${String((e && e.message) || e)}` }
+    }
+    if (res && res.status === 404) return { error: 'not found', status: 404 }
+    if (!res || !res.ok) return { error: `tool registry error (status ${res ? res.status : '?'})` }
+    try {
+      return { body: await res.json() }
+    } catch {
+      return { error: 'tool registry returned invalid JSON' }
+    }
+  }
+
+  // search: metadata only (no code/steps) — discovery is cheap, bodies are a deliberate second fetch.
+  async function connectionRegistrySearch({ connection, sourceId, query } = {}) {
+    const sid = registrySid({ connection, sourceId })
+    if (!sid) return { error: 'a connection (connId) or sourceId is required' }
+    const qs = `?sourceId=${encodeURIComponent(sid)}${query ? `&q=${encodeURIComponent(String(query))}` : ''}`
+    const r = await registryFetch('/v1/tools' + qs)
+    if (r.error) return r
+    const entries = Array.isArray(r.body && r.body.entries) ? r.body.entries : []
+    return { sourceId: sid, entries }
+  }
+
+  // get: the full entry incl. code/steps, for the agent to inspect before adding.
+  async function connectionRegistryGet({ sourceId, name } = {}) {
+    const sid = sourceId != null ? String(sourceId) : null
+    if (!sid || !name) return { error: 'sourceId and name are required' }
+    const r = await registryFetch(`/v1/tool?sourceId=${encodeURIComponent(sid)}&name=${encodeURIComponent(String(name))}`)
+    if (r.error) return r.status === 404 ? { error: `no registry tool "${name}" for ${sid}` } : r
+    const entry = r.body && r.body.entry
+    if (!entry || !entry.name) return { error: 'tool registry returned a malformed entry' }
+    return { entry }
+  }
+
+  // add: fetch a vetted entry and write it into THIS source's tools.json (upsert by name), pinned by
+  // contentHash. It becomes an ordinary saved tool — run later via connectionCallTool, never executed here.
+  async function connectionRegistryAdd({ connection, sourceId, name } = {}) {
+    const sid = registrySid({ connection, sourceId })
+    if (!sid) return { error: 'a connection (connId) or sourceId is required' }
+    if (!name) return { error: 'name is required' }
+    const got = await connectionRegistryGet({ sourceId: sid, name })
+    if (got.error) return got
+    const e = got.entry
+    // never let an entry fetched for one source be written under another
+    if (e.sourceId != null && String(e.sourceId) !== sid) return { error: `registry entry is for ${e.sourceId}, not ${sid}` }
+    const kind = e.kind === 'act' ? 'act' : 'read'
+    const hasBody = e.code != null || e.steps != null
+    if (!hasBody) return { error: 'registry entry has no code/steps' }
+    const saved = {
+      name: String(e.name),
+      description: String(e.description || ''),
+      kind,
+      ...(e.steps != null ? { steps: e.steps } : { code: String(e.code || '') }),
+      source: 'registry',
+      version: e.version != null ? String(e.version) : undefined,
+      contentHash: e.contentHash != null ? String(e.contentHash) : undefined
+    }
+    const tools = readTools(sid)
+    const i = tools.findIndex((t) => t.name === saved.name)
+    if (i >= 0) tools[i] = saved
+    else tools.push(saved)
+    if (!writeTools(sid, tools)) return { error: 'no active workspace to save the tool into' }
+    return { ok: true, name: saved.name, sourceId: sid, version: saved.version, count: tools.length }
+  }
+
   return {
     // tab + window link registration + the user/agent connect entries
     setTabLink,
@@ -754,6 +852,10 @@ export function makeConnectionOps({
     connectionListTools,
     connectionCallTool,
     connectionDrop,
-    connectionSetDescription
+    connectionSetDescription,
+    // first-party tool registry
+    connectionRegistrySearch,
+    connectionRegistryGet,
+    connectionRegistryAdd
   }
 }
