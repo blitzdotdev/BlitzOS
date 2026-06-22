@@ -200,9 +200,34 @@ export function createTmuxHost(cfg) {
     // Windows follow the control client's size (per-window manual sizing crashes tmux 3.6); resize the client.
     return sendRaw(`refresh-client -C ${cols | 0}x${rows | 0}`)
   }
+  // `tmux kill-window` only SIGHUPs the pane's foreground process GROUP — claude's detached children and the
+  // agent's run_in_background jobs (the wait.sh curl loop, node workflow runners) survive, orphaned to launchd
+  // as high-CPU zombies. So capture the pane's whole process TREE first, kill the window, then SIGKILL the tree
+  // (by pid, valid even after they reparent to pid 1). Bounds the leak that piled up zombies + a 99% CPU spin.
+  function paneProcessTree(panePid) {
+    if (!panePid || panePid <= 1) return []
+    let out = ''
+    try { out = execFileSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8', timeout: 4000 }) } catch { return [panePid] }
+    const kids = new Map()
+    for (const line of out.split('\n')) {
+      const m = line.trim().match(/^(\d+)\s+(\d+)$/); if (!m) continue
+      const pid = +m[1], ppid = +m[2]
+      if (!kids.has(ppid)) kids.set(ppid, [])
+      kids.get(ppid).push(pid)
+    }
+    const acc = [], stack = [panePid]
+    while (stack.length) { const p = stack.pop(); for (const c of kids.get(p) || []) { acc.push(c); stack.push(c) } }
+    return [...acc, panePid] // descendants first, root last
+  }
   function kill(id) {
     const rec = terminals.get(id); if (!rec) return false
+    let tree = []
+    try {
+      const pp = parseInt(String(tmuxSync(['display-message', '-p', '-t', rec.pane, '#{pane_pid}'])).trim(), 10) || 0
+      if (pp) tree = paneProcessTree(pp)
+    } catch { /* pane already gone */ }
     try { tmuxSync(['kill-window', '-t', rec.window]) } catch { /* already gone */ }
+    for (const pid of tree) { try { process.kill(pid, 'SIGKILL') } catch { /* already dead */ } }
     if (!rec.exited) windowClosed(rec.window)
     return true
   }

@@ -320,9 +320,10 @@ while :; do
   [ -z "$B" ] && { sleep 1; continue; }
   R=$(curl -sS -X POST "$B/events" -H 'content-type: application/json' -d "{\\"since\\":$S,\\"wait\\":25$SC}" 2>/dev/null)
   case "$R" in
-    '' ) sleep 1 ;;                     # transient failure / url change — retry (relay-url re-read next loop)
-    *'"events":[]'* ) : ;;             # 25s timeout, nothing new — keep blocking
-    * ) printf '%s\\n' "$R"; exit 0 ;; # got events — hand them back to the agent's turn
+    '' ) sleep 1 ;;                                            # transient failure / url change — retry (relay-url re-read next loop)
+    *'"events":[]'* ) sleep 1 ;;                              # nothing new — brief sleep so an instant-returning server can't peg the CPU
+    *'"events":'*'"latest":'* ) printf '%s\\n' "$R"; exit 0 ;; # a REAL events payload — hand it to the agent's turn
+    * ) sleep 1 ;;                                            # garbage (HTML error / 404 body) — never feed it to the agent; retry
   esac
 done
 `
