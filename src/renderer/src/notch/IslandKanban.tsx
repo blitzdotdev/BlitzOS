@@ -83,13 +83,29 @@ export default function IslandKanban({ runId, skeleton, onStats }: IslandKanbanP
   useEffect(() => {
     let live = true
     const seen = new Set<unknown>()
+    // COALESCE every push into ONE setState per microtask. A reloaded/frozen board replays its WHOLE backlog at
+    // once (the snapshot AND the subscribe both replay it, up to MAX_EVENTS=6000), so a naive setEvents-per-event
+    // is O(n^2) array copies + n full mergeSkeleton reductions → the 1-2s tab-open freeze. Buffering the burst and
+    // flushing once makes it O(n): one concat + one reduce. Live post-mount events (rare, one at a time) coalesce
+    // the same way. The seq `seen` set still de-dupes the snapshot vs the subscribe-replay vs live overlap.
+    let pending: unknown[] = []
+    let sawDone = false
+    let scheduled = false
+    const flush = (): void => {
+      scheduled = false
+      if (!live) return
+      const batch = pending
+      pending = []
+      if (batch.length) setEvents((prev) => prev.concat(batch))
+      if (sawDone) { sawDone = false; setDone(true) }
+    }
     const push = (ev: unknown): void => {
       const key = (ev as { seq?: unknown })?.seq
-      if (key != null && seen.has(key)) return
-      if (key != null) seen.add(key)
+      if (key != null) { if (seen.has(key)) return; seen.add(key) }
       if (!live) return
-      setEvents((prev) => [...prev, ev])
-      if ((ev as { type?: string })?.type === 'run:done') setDone(true)
+      pending.push(ev)
+      if ((ev as { type?: string })?.type === 'run:done') sawDone = true
+      if (!scheduled) { scheduled = true; queueMicrotask(flush) }
     }
     // Register the live listener FIRST, BEFORE snapshot/subscribe, so an event fired during that window is never
     // lost (the seq `seen` set de-dupes the backlog snapshot against any overlapping live event). The prior order
@@ -141,9 +157,8 @@ export default function IslandKanban({ runId, skeleton, onStats }: IslandKanbanP
   }, [phases])
 
   const openNode = openNodeId ? m.nodes[openNodeId] || null : null
-  // Drill-in REPLACES the board grid in the SAME frame (the run head stays above it), so the detail grows to its
-  // full content with NO internal scrolling, scoped to the board width. The close button (X) returns to the grid.
-  if (openNode) return <IslandLeafDrawer runId={runId} node={openNode} onClose={() => setOpenNodeId(null)} />
+  // Drill-in is an OVERLAY card that slides up over the BOTTOM 90% of THIS board frame (rendered below, inside
+  // .kb). The grid stays mounted at its size behind it (no resize); the card body scrolls internally.
 
   if (!phases.length) {
     return <div className="kb-empty">{done ? 'workflow finished' : 'waiting for the first event…'}</div>
@@ -174,6 +189,9 @@ export default function IslandKanban({ runId, skeleton, onStats }: IslandKanbanP
           </Fragment>
         ))}
       </div>
+      {openNode ? (
+        <IslandLeafDrawer runId={runId} node={openNode} onClose={() => setOpenNodeId(null)} />
+      ) : null}
     </div>
   )
 }

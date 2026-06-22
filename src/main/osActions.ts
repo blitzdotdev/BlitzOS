@@ -8,6 +8,8 @@ import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBoo
 import { readFileSync } from 'node:fs'
 import { sessionJsonlPath, readSessionEvents, toolLabel } from './agent-transcript.mjs'
 import { applyWfRun, type WfRunRecord } from './wf-run-state.mjs'
+import * as wfStore from './wf-store.mjs'
+import { snapshot as busSnapshot, hydrate as busHydrate, subCount as busSubCount, clearRun as busClearRun } from './workflow-bus.mjs'
 import { tel } from './telemetry'
 import type { WebContents } from 'electron'
 
@@ -610,24 +612,41 @@ export function setMilestonesProvider(fn: ((id: string) => IslandMilestone[]) | 
   milestonesProvider = fn
 }
 
-// The island's live workflow-run registry, mirroring the milestone provider but maintained IN-PROCESS
-// (a run isn't a workspace artifact). workflow-host broadcasts {type:'workflow-run',...} → osBroadcast →
-// here: we record started/done + skeleton per (agentId, runId). The snapshot + the live broadcast feed the
-// island's kanban boards. Capped; a run is dropped from the registry once it's done AND consumed (the board
-// keeps its own frozen state; the registry only needs to re-hydrate open runs on island reopen). Keep done
-// runs for a short window so a late reopen still sees them frozen.
-export type IslandWfRun = { runId: string; agentId: string; file: string; startedAt: number; done: boolean; ok: boolean; skeleton: unknown[]; memDir: string | null }
-const _wfRuns = new Map<string, IslandWfRun>() // runId -> run (dropped WF_RUN_KEEP_DONE_MS after done)
+// The island's workflow-run registry. workflow-host broadcasts {type:'workflow-run',...} → osBroadcast → here:
+// we fold started/done + skeleton per (agentId, runId) through the shared applyWfRun rule. The registry is a
+// CACHE over the durable on-disk store (wf-store: index.json + events.jsonl + skeleton.json) — disk is the source
+// of truth. On each broadcast we also write the run's index entry; a memory-eviction sweep (osSweepWfMemory)
+// drops done runs whose tab has been unviewed for WF_MEM_TTL_MS, and osLoadAgentRuns / osWfHydrateIfCold rebuild
+// boards from disk on demand. So a finished or long-past board never vanishes (the old 30s-after-done drop did
+// exactly that). Running runs + actively-watched runs are never evicted.
+export type IslandWfRun = { runId: string; agentId: string; file: string; startedAt: number; done: boolean; ok: boolean; skeleton: unknown[]; memDir: string | null; stats?: { ms: number; calls: number; tokens: number } | null }
+const _wfRuns = new Map<string, IslandWfRun>() // runId -> run (cache; rebuilt from disk after eviction/relaunch)
 const _wfRunsByAgent = new Map<string, string[]>() // agentId -> runIds (most-recent-last)
-// Durable runId -> memDir map: the run's absolute memory dir (main-minted), kept for the WHOLE session so the
-// drill-in drawer can resolve a frozen board's leaves long after the 30s registry window. This is what closes
-// the path-traversal boundary (os:wf-leaf resolves memDir HERE by runId, never from the renderer). Capped.
+// runId -> memDir cache (the run's absolute, main-minted memory dir): closes the path-traversal boundary
+// (os:wf-leaf resolves memDir HERE by runId, never from the renderer) AND lets a relaunch hydrate from disk.
+// On a cold start this is empty and memDir is recovered from index.json (osWfMemDirFor). Capped.
 const _wfMemDirs = new Map<string, string>()
 const WF_MEMDIR_CAP = 1000
-const WF_RUN_KEEP_DONE_MS = 30_000
-let _wfRunsProvider: ((id: string) => IslandWfRun[]) | null = null
+const WF_MEM_TTL_MS = 15 * 60_000 // drop a done run's in-memory state this long after its tab was last viewed
+const _tabLastViewed = new Map<string, number>() // agentId -> last time the user viewed that tab (renderer ping)
+const _wfReconciledDirs = new Set<string>() // workflows dirs whose orphaned (done:false) runs were healed this session
+/** Cache a run's memDir under the cap (the ONE place the WF_MEMDIR_CAP eviction lives, shared by every writer). */
+function cacheWfMemDir(runId: string, memDir: string | null): void {
+  if (!memDir) return
+  _wfMemDirs.set(runId, memDir)
+  if (_wfMemDirs.size > WF_MEMDIR_CAP) { const oldest = _wfMemDirs.keys().next().value; if (oldest != null) _wfMemDirs.delete(oldest) }
+}
+/** Register a run into the in-memory registry (idempotent; never clobbers a live entry) so the eviction sweep —
+ *  which only iterates _wfRunsByAgent — also covers runs rebuilt from disk on tab-open. Without this, a cold
+ *  (post-relaunch / evicted) run that gets hydrated into the bus would never be swept and would leak until quit. */
+function registerWfRun(run: IslandWfRun): void {
+  if (!_wfRuns.has(run.runId)) _wfRuns.set(run.runId, run)
+  const list = _wfRunsByAgent.get(run.agentId) || []
+  if (!list.includes(run.runId)) { list.push(run.runId); _wfRunsByAgent.set(run.agentId, list) }
+}
+
 /** Record a workflow-run broadcast (started or done). Called from osBroadcast. Folds through the shared
- *  applyWfRun rule so the main registry and the renderer (NotchHost) handle the "second started" identically. */
+ *  applyWfRun rule (so main + the renderer agree), caches the memDir, and persists the durable index entry. */
 export function osNoteWfRun(action: Record<string, unknown>): void {
   const runId = String(action.runId || '')
   if (!runId) return
@@ -636,25 +655,19 @@ export function osNoteWfRun(action: Record<string, unknown>): void {
   const next = applyWfRun(prev as WfRunRecord | undefined, action) as IslandWfRun | null
   if (!next) return
   _wfRuns.set(runId, next)
-  // Remember the run's memDir durably (survives the 30s registry cleanup) so the drawer always resolves it.
-  if (next.memDir) {
-    _wfMemDirs.set(runId, next.memDir)
-    if (_wfMemDirs.size > WF_MEMDIR_CAP) { const oldest = _wfMemDirs.keys().next().value; if (oldest != null) _wfMemDirs.delete(oldest) }
-  }
+  cacheWfMemDir(runId, next.memDir)
   const list = _wfRunsByAgent.get(agentId) || []
   if (!list.includes(runId)) { list.push(runId); _wfRunsByAgent.set(agentId, list) }
-  // Cleanup a DONE run after the keep window (the board keeps its own frozen state; _wfMemDirs is NOT cleared,
-  // so a late drawer open still resolves the leaf path). Only the `done` transition schedules it.
-  if (action.done && next.done) {
-    setTimeout(() => {
-      _wfRuns.delete(runId)
-      const l = _wfRunsByAgent.get(agentId)
-      if (l) {
-        const i = l.indexOf(runId)
-        if (i >= 0) l.splice(i, 1)
-        if (!l.length) _wfRunsByAgent.delete(agentId)
-      }
-    }, WF_RUN_KEEP_DONE_MS)
+  // DURABLE INDEX (disk = source of truth): write/merge the run's entry on every started/done transition. The
+  // workflows dir is the memDir's parent, so the index lives in the run's OWN workspace (robust across switches).
+  if (next.memDir) {
+    try {
+      wfStore.writeIndexEntry(wfStore.workflowsDirOf(next.memDir), runId, {
+        agentId, file: next.file, startedAt: next.startedAt, done: next.done, ok: next.ok, memDir: next.memDir, stats: next.stats ?? null
+      })
+    } catch {
+      /* best-effort — a board failing to persist must never break the run */
+    }
   }
 }
 /** The trusted absolute memDir for a run (main-minted), or null. The drawer's leaf read resolves the path HERE
@@ -662,14 +675,95 @@ export function osNoteWfRun(action: Record<string, unknown>): void {
 export function osWfRunMemDir(runId: string): string | null {
   return _wfMemDirs.get(String(runId || '')) || null
 }
-/** Set an external runs provider (reserved; defaults to the in-process registry above). */
-export function setWfRunsProvider(fn: ((id: string) => IslandWfRun[]) | null): void {
-  _wfRunsProvider = fn
-}
 function wfRunsForAgent(id: string): IslandWfRun[] {
-  if (_wfRunsProvider) return _wfRunsProvider(id)
   const list = _wfRunsByAgent.get(String(id || '0')) || []
   return list.map((rid) => _wfRuns.get(rid)).filter((r): r is IslandWfRun => !!r)
+}
+
+// ── Workflow-board memory lifecycle (disk = source of truth, memory = cache) ───────────────────────────────
+/** The workflows dir for the ACTIVE workspace (the reload path when no in-session memDir is cached, e.g. relaunch). */
+function osWorkflowsDir(): string | null {
+  const ws = osActiveWorkspaceDir()
+  return ws ? join(ws, '.blitzos', 'workflows') : null
+}
+/** The run's absolute memDir: the in-session cache first, else the durable index (so it resolves after relaunch). */
+function osWfMemDirFor(runId: string): string | null {
+  const id = String(runId || '')
+  const live = _wfMemDirs.get(id)
+  if (live) return live
+  const dir = osWorkflowsDir()
+  if (!dir) return null
+  const e = wfStore.readIndex(dir)[id]
+  return e && e.memDir ? String(e.memDir) : null
+}
+/** The renderer pings the active agent id whenever its tab is viewed; the sweep keeps that tab's runs cached. */
+export function osNoteTabViewed(agentId: string): void {
+  _tabLastViewed.set(String(agentId ?? '0'), Date.now())
+}
+/** Drop DONE runs' in-memory state (registry + bus buffer) for tabs unviewed past WF_MEM_TTL_MS. Disk is never
+ *  touched (index.json + events.jsonl stay), so re-viewing the tab reloads the boards identically. Running runs
+ *  and actively-watched (mounted board) runs are NEVER evicted. Returns the count dropped (for the test). */
+export function osSweepWfMemory(now = Date.now()): number {
+  let dropped = 0
+  for (const [agentId, runIds] of [..._wfRunsByAgent]) {
+    if (now - (_tabLastViewed.get(agentId) || 0) <= WF_MEM_TTL_MS) continue // tab seen recently — keep the cache warm
+    for (const rid of runIds.slice()) {
+      const r = _wfRuns.get(rid)
+      if (!r || !r.done) continue // never evict a running run
+      if (busSubCount(rid) > 0) continue // a mounted board is watching this run — don't yank it
+      _wfRuns.delete(rid)
+      const i = runIds.indexOf(rid); if (i >= 0) runIds.splice(i, 1)
+      try { busClearRun(rid) } catch { /* best-effort */ }
+      dropped++
+    }
+    if (!runIds.length) _wfRunsByAgent.delete(agentId)
+  }
+  return dropped
+}
+/** Seed the bus from disk if a run is cold (not live/hydrated), so os:wf-snapshot / os:wf-subscribe transparently
+ *  serve a frozen board with NO board-side changes. Called by the IPC handlers before they read/stream a run. */
+export function osWfHydrateIfCold(runId: string): void {
+  const id = String(runId || '')
+  if (!id) return
+  try {
+    if (busSnapshot(id).length) return // already live or hydrated
+    const memDir = osWfMemDirFor(id)
+    if (!memDir) return
+    cacheWfMemDir(id, memDir) // cache it so the drawer resolves leaves too
+    const events = wfStore.readEventsLog(memDir)
+    if (events.length) busHydrate(id, events)
+  } catch {
+    /* best-effort */
+  }
+}
+/** Load an agent's runs for the island on tab-open: the durable disk index MERGED with the live registry (live
+ *  wins — a running/fresh run is most current). Stamps the tab viewed. Returns chronological (transcript order). */
+export function osLoadAgentRuns(agentId: string): IslandWfRun[] {
+  const aid = String(agentId ?? '0')
+  osNoteTabViewed(aid)
+  const byId = new Map<string, IslandWfRun>()
+  try {
+    const dir = osWorkflowsDir()
+    if (dir) {
+      // Heal orphaned (done:false) runs ONCE per workflows dir per session before reading: a hosted run is
+      // in-process, so any done:false entry on disk is from a prior session that died before writing `done` (the
+      // app, clean-quit OR crash, takes the run with it). Without this they'd render a phantom 'workflow running'
+      // board forever. Shield this session's genuinely-live runs (_wfRuns) so a running run is never force-failed.
+      if (!_wfReconciledDirs.has(dir)) {
+        _wfReconciledDirs.add(dir)
+        try { wfStore.reconcileOrphanRuns(dir, (rid: string) => _wfRuns.has(rid)) } catch { /* best-effort */ }
+      }
+      for (const r of wfStore.listAgentRuns(dir, aid)) byId.set(r.runId, r as IslandWfRun)
+    }
+  } catch {
+    /* disk best-effort */
+  }
+  for (const r of wfRunsForAgent(aid)) byId.set(r.runId, r) // live overrides disk
+  for (const r of byId.values()) {
+    cacheWfMemDir(r.runId, r.memDir) // cache memDirs for the drawer + hydration (under the cap)
+    registerWfRun(r) // put disk-rebuilt runs in the registry so the 15-min sweep can later evict them (no leak)
+  }
+  return [...byId.values()].sort((a, b) => a.startedAt - b.startedAt)
 }
 
 /** Resolve an agent's canonical Claude session id (for locating its transcript jsonl). It lives in the
@@ -777,7 +871,7 @@ export function osSetOrchestrators(agentId: string, on = true): { ok: boolean; e
   // Delivery B live-wake: the durable flag is already persisted; this message lands in the agent's chat and wakes
   // ONLY it (osUserMessage = the steer path). Keep it short — the full how-to is the on-disk .blitzos/orchestrator.md.
   const msg = on
-    ? 'Orchestrators ENABLED: you can now AUTHOR and RUN workflows (Claude Code workflow style) for genuinely hard, large, massively parallel, or adversarial tasks. Write a `workflow.js` that starts with `export const meta = {…}`, uses the injected globals `agent()`/`parallel`/`pipeline`/`phase`/`log` (NO imports), and ends with `return`; `agent({schema})` returns a validated object. The runner is `.blitzos/blitz` — run `bash .blitzos/blitz capabilities` FIRST, then `bash .blitzos/blitz check <wf.js>`; then RUN it with the `run_workflow` syscall (`run_workflow { file }`), NOT `bash .blitzos/blitz run` and NOT your built-in Workflow tool — only `run_workflow` is visible to BlitzOS (it tracks the run); the other two run invisibly. Narrate progress with `say`; do NOT promise the user a live board or kanban (the in-chat board is disabled right now). The full how-to is in `.blitzos/orchestrator.md`. For trivial/one-shot requests, just answer directly.'
+    ? 'Orchestrators ENABLED: you can now AUTHOR and RUN workflows (Claude Code workflow style) for genuinely hard, large, massively parallel, or adversarial tasks. Write a `workflow.js` that starts with `export const meta = {…}`, uses the injected globals `agent()`/`parallel`/`pipeline`/`phase`/`log` (NO imports), and ends with `return`; `agent({schema})` returns a validated object. The runner is `.blitzos/blitz` — run `bash .blitzos/blitz capabilities` FIRST, then `bash .blitzos/blitz check <wf.js>`; then RUN it with the `run_workflow` syscall (`run_workflow { file }`), NOT `bash .blitzos/blitz run` and NOT your built-in Workflow tool — only `run_workflow` is visible to BlitzOS (it tracks the run); the other two run invisibly. Narrate progress with `say`; an in-chat kanban board appears automatically while the run executes (you do not control it; it is durable and survives reopen/relaunch). The full how-to is in `.blitzos/orchestrator.md`. For trivial/one-shot requests, just answer directly.'
     : 'Orchestrators DISABLED: stop authoring/running workflows; handle requests directly in chat.'
   try { osUserMessage(msg, String(agentId)) } catch { /* the flag still persisted; the duty lands on the next launch */ }
   return r

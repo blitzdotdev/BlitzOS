@@ -75,15 +75,24 @@ The `blitz` runner is at `.blitzos/blitz` in your workspace. Author + check with
 - **To RUN it: call the `run_workflow` syscall — `run_workflow { file }` — NOT `bash .blitzos/blitz run`, and
   NOT your own built-in `Workflow` tool.** ONLY `run_workflow` is visible to BlitzOS — it tracks + manages the
   run (capturing every leaf to disk); the other two run invisibly, so BlitzOS can't see, manage, or recover
-  them. Narrate progress to the user with `say` — do NOT promise a live board or kanban (the in-chat board is
-  disabled right now). It returns a `runId` immediately; the run continues in the background and writes
-  `result.json` to `.blitzos/workflows/<runId>/` on completion. (`bash .blitzos/blitz run [--resume]
-  <workflow.js>` exists only for a quick local/manual run that BlitzOS can't see or recover — do not use it when
-  a user is watching.)
+  them. Narrate progress to the user with `say`; an in-chat kanban board also appears automatically while the
+  run executes (you do not summon or control it; it is durable and survives island reopen / app relaunch), but
+  narrate anyway — do not rely on the board alone. It returns a `runId` immediately; the run continues in the background and writes
+  `result.json` to `.blitzos/workflows/<runId>/` on completion AND wakes you via `/events` with a
+  `trigger:"workflow"` moment then — so keep running `wait.sh`; do NOT poll `result.json` in a loop. While the run
+  is live, that dir also holds a `skeleton.json` (the dry-preflight PLAN: all-zero-token STUB leaves) and only the
+  FINISHED leaves under `leaves/`. NEVER read `skeleton.json` as the result and never call a run "empty" from it —
+  the truth is `result.json` (and the per-leaf `leaves/<n>.json`, each tagged with `status` + `resultKind`; a
+  crashed run's `result.json` is `{ ok:false, error, resultKind:"error" }`, a real failure reason, not an empty run).
+  (`bash .blitzos/blitz run [--resume] <workflow.js>` exists only for a quick local/manual run that BlitzOS can't
+  see or recover — do not use it when a user is watching.)
 
 ## Guardrails (automatic + on you)
 
-- Concurrency + a per-run call cap are enforced automatically; a leaf must NOT itself author/run a workflow.
+- Concurrency is capped at **8** leaves running AT ONCE (`min(8, cores-2)`, fewer on a low-core box); a wider
+  fan-out just QUEUES (no speedup), and the board shows up to 8 in Doing with the rest as To-do — so size
+  `parallel`/`pipeline` width around ~8 and batch a huge fan-out. A per-run call cap also applies automatically.
+  A leaf must NOT itself author/run a workflow.
 - Act-vs-ask: do all reversible work freely (research, drafting, file/surface edits); ASK the user before any
   irreversible outward act (send, post, deploy, spend, delete, credentials).
 - Narrate: post a short plan and progress in the user's chat (`say`) as the workflow runs.

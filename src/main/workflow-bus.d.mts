@@ -9,5 +9,7 @@ export function publish(ev: Record<string, unknown> & { runId?: string | null })
 export function subscribe(runId: string, cb: (ev: StampedEvent) => void): () => void
 export function snapshot(runId: string | null | undefined): StampedEvent[]
 export function isDone(runId: string | null | undefined): boolean
+export function hydrate(runId: string | null | undefined, events: unknown[]): boolean
+export function subCount(runId: string | null | undefined): number
 export function clearRun(runId: string | null | undefined): void
 export function _runCount(): number

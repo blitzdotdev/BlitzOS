@@ -350,6 +350,15 @@ const api = {
   wfLeaf(runId: string, nodeId: string): Promise<{ ok: boolean; leaf?: Record<string, unknown> }> {
     return (ipcRenderer.invoke('os:wf-leaf', runId, nodeId) as Promise<{ ok: boolean; leaf?: Record<string, unknown> }>).catch(() => ({ ok: false }))
   },
+  /** Load an agent's persisted + live workflow boards on tab-open (durable disk index merged with the live
+   *  registry). Each entry is an IslandWfRun-shaped record; the renderer renders one inline kanban per run. */
+  wfLoadAgentRuns(agentId: string): Promise<Array<Record<string, unknown>>> {
+    return (ipcRenderer.invoke('os:wf-load-agent-runs', agentId) as Promise<Array<Record<string, unknown>>>).catch(() => [])
+  },
+  /** Tell main the user is viewing this agent's tab, so the board memory-eviction sweep keeps its runs cached. */
+  tabViewed(agentId: string): void {
+    try { ipcRenderer.send('os:tab-viewed', agentId) } catch { /* best-effort */ }
+  },
   // Item 3: the human answered a web guest's Allow/Block permission prompt (geolocation, camera, …).
   decidePermission(id: string, allow: boolean, remember: boolean): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('os:permission-decide', id, allow, remember)

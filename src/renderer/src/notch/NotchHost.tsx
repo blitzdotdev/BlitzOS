@@ -18,30 +18,7 @@ import { applyWfRun } from '../../../main/wf-run-state.mjs'
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
-const DEBUG_FAKE_HOME_AGENTS_KEY = 'blitzos.debug.showFakeHomeAgents'
-const HOME_DONE_AGENTS_KEY = 'blitzos.home.doneAgents'
-const HOME_SEEN_WORKING_AGENTS_KEY = 'blitzos.home.seenWorkingAgents'
 const AGENT_NAME_MAX = 24
-const isHomeActiveStatus = (value?: string): boolean => value === 'working' || value === 'starting'
-const isHomeWorkingStatus = (value?: string): boolean => value === 'working'
-const isHomeDoneReviewStatus = (value?: string): boolean => !!value && !isHomeActiveStatus(value) && value !== 'error'
-const FAKE_HOME_AGENTS: IslandSession[] = [
-  { id: 'fake-home-1', title: 'Research', status: 'working' },
-  { id: 'fake-home-2', title: 'Build pass', status: 'working' },
-  { id: 'fake-home-3', title: 'Review queue', status: 'idle' },
-  { id: 'fake-home-4', title: 'Browser QA', status: 'working' },
-  { id: 'fake-home-5', title: 'Docs sweep', status: 'watching' },
-  { id: 'fake-home-6', title: 'Deploy check', status: 'working' },
-  { id: 'fake-home-7', title: 'Inbox triage', status: 'idle' },
-  { id: 'fake-home-8', title: 'Data pull', status: 'working' },
-  { id: 'fake-home-9', title: 'Long agent name test', status: 'stopped' },
-  { id: 'fake-home-10', title: 'Fix pass', status: 'working' }
-]
-const FAKE_HOME_STATUS = FAKE_HOME_AGENTS.reduce<Record<string, string>>((acc, s) => {
-  acc[s.id] = s.status
-  return acc
-}, {})
-const FAKE_HOME_DONE_IDS = FAKE_HOME_AGENTS.filter((s) => !isHomeWorkingStatus(s.status)).map((s) => s.id)
 
 // peek toggle glyphs: compress (corners in → enter peek) / expand (corners out → back to chat).
 const PEEK_IN = 'M5 9h4a1 1 0 0 0 1-1V4M19 9h-4a1 1 0 0 1-1-1V4M5 15h4a1 1 0 0 1 1 1v4M19 15h-4a1 1 0 0 0-1 1v4'
@@ -95,57 +72,6 @@ function readDebugActiveTerminal(): boolean {
     return false
   }
 }
-function readDebugFakeHomeAgents(): boolean {
-  try {
-    return window.localStorage.getItem(DEBUG_FAKE_HOME_AGENTS_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-function readHomeDoneAgents(): Record<string, true> {
-  try {
-    const raw = window.sessionStorage.getItem(HOME_DONE_AGENTS_KEY)
-    const ids = JSON.parse(raw || '[]')
-    if (!Array.isArray(ids)) return {}
-    return ids.reduce<Record<string, true>>((acc, id) => {
-      if (id != null) acc[String(id)] = true
-      return acc
-    }, {})
-  } catch {
-    return {}
-  }
-}
-function writeHomeDoneAgents(value: Record<string, true>): void {
-  try {
-    const ids = Object.keys(value)
-    if (!ids.length) window.sessionStorage.removeItem(HOME_DONE_AGENTS_KEY)
-    else window.sessionStorage.setItem(HOME_DONE_AGENTS_KEY, JSON.stringify(ids))
-  } catch {
-    /* session persistence is best-effort */
-  }
-}
-function readHomeSeenWorkingAgents(): Record<string, true> {
-  try {
-    const raw = window.sessionStorage.getItem(HOME_SEEN_WORKING_AGENTS_KEY)
-    const ids = JSON.parse(raw || '[]')
-    if (!Array.isArray(ids)) return {}
-    return ids.reduce<Record<string, true>>((acc, id) => {
-      if (id != null) acc[String(id)] = true
-      return acc
-    }, {})
-  } catch {
-    return {}
-  }
-}
-function writeHomeSeenWorkingAgents(value: Record<string, true>): void {
-  try {
-    const ids = Object.keys(value)
-    if (!ids.length) window.sessionStorage.removeItem(HOME_SEEN_WORKING_AGENTS_KEY)
-    else window.sessionStorage.setItem(HOME_SEEN_WORKING_AGENTS_KEY, JSON.stringify(ids))
-  } catch {
-    /* session persistence is best-effort */
-  }
-}
 const cleanAgentName = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, AGENT_NAME_MAX)
 type MilestoneAction = { type: 'milestone'; agentId?: string; id?: unknown; ts?: unknown; kind?: string; text?: unknown }
 type WfRunAction = { type: 'workflow-run'; runId?: unknown; agentId?: unknown; file?: unknown; started?: unknown; done?: unknown; ok?: unknown; skeleton?: unknown[]; memDir?: unknown }
@@ -196,21 +122,11 @@ export function NotchHost({
   const [runs, setRuns] = useState<Record<string, IslandWfRun[]>>({}) // per-agent live workflow runs (inline kanban)
   const [terminals, setTerminals] = useState<Record<string, IslandTerminalMeta>>({})
   const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
-  const [debugFakeHomeAgents, setDebugFakeHomeAgents] = useState(readDebugFakeHomeAgents)
-  const [homeDoneAgents, setHomeDoneAgentsState] = useState<Record<string, true>>(() => readHomeDoneAgents())
-  const [homeSeenWorkingAgents, setHomeSeenWorkingAgentsState] = useState<Record<string, true>>(() => readHomeSeenWorkingAgents())
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
   const pendingJump = useRef<string | null>(null) // after a spawn, jump to the new session once it appears
   const activeIdRef = useRef('') // the active chat id, mirrored for the picker arm (computed below the effect)
-  const sessionsRef = useRef<IslandSession[]>([])
-  const viewRef = useRef(view)
-  const statusRef = useRef<Record<string, string>>({})
-  const homeDoneAgentsRef = useRef(homeDoneAgents)
-  const homeSeenWorkingAgentsRef = useRef(homeSeenWorkingAgents)
   const nRef = useRef(0)
   nRef.current = sessions.length
-  sessionsRef.current = sessions
-  viewRef.current = view
 
   // Report the island's view + tab up to App so reopening it (hover OR ⌥Space) restores where the user left off,
   // instead of resetting to Home. App stashes these and feeds them back as initialView/initialPage on the next open.
@@ -239,174 +155,10 @@ export function NotchHost({
       /* debug-only persistence */
     }
   }
-  const chooseDebugFakeHomeAgents = (on: boolean): void => {
-    setDebugFakeHomeAgents(on)
-    try {
-      window.localStorage.setItem(DEBUG_FAKE_HOME_AGENTS_KEY, on ? '1' : '0')
-    } catch {
-      /* debug-only persistence */
-    }
-  }
-  const updateHomeDoneAgents = (update: (prev: Record<string, true>) => Record<string, true>): void => {
-    const prev = homeDoneAgentsRef.current
-    const next = update(prev)
-    if (next === prev) return
-    homeDoneAgentsRef.current = next
-    writeHomeDoneAgents(next)
-    setHomeDoneAgentsState(next)
-  }
-  const clearHomeDoneAgents = (id?: string): void => {
-    updateHomeDoneAgents((prev) => {
-      if (!id) return {}
-      if (!prev[id]) return prev
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-  }
-  const updateHomeSeenWorkingAgents = (update: (prev: Record<string, true>) => Record<string, true>): void => {
-    const prev = homeSeenWorkingAgentsRef.current
-    const next = update(prev)
-    if (next === prev) return
-    homeSeenWorkingAgentsRef.current = next
-    writeHomeSeenWorkingAgents(next)
-    setHomeSeenWorkingAgentsState(next)
-  }
-  const clearHomeSeenWorkingAgents = (id?: string): void => {
-    updateHomeSeenWorkingAgents((prev) => {
-      if (!id) return {}
-      if (!prev[id]) return prev
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-  }
-  const clearHomeReviewAgents = (id?: string): void => {
-    clearHomeDoneAgents(id)
-    clearHomeSeenWorkingAgents(id)
-  }
-  const reconcileHomeAgentReviewState = (nextSessions = sessionsRef.current, nextStatus = statusRef.current): void => {
-    const liveStatus = nextSessions.reduce<Record<string, string>>((acc, session) => {
-      acc[session.id] = nextStatus[session.id] || session.status
-      return acc
-    }, {})
-    const liveIds = new Set(nextSessions.map((session) => session.id))
-    const seenPrev = homeSeenWorkingAgentsRef.current
-    let seenNext = seenPrev
-    const doneAdd: string[] = []
-    const doneClear: string[] = []
-
-    const ensureSeen = (id: string): void => {
-      if (seenNext[id]) return
-      if (seenNext === seenPrev) seenNext = { ...seenPrev }
-      seenNext[id] = true
-    }
-    const clearSeen = (id: string): void => {
-      if (!seenNext[id]) return
-      if (seenNext === seenPrev) seenNext = { ...seenPrev }
-      delete seenNext[id]
-    }
-
-    for (const session of nextSessions) {
-      const rawStatus = liveStatus[session.id]
-      if (isHomeActiveStatus(rawStatus)) doneClear.push(session.id)
-      if (viewRef.current === 'home' && isHomeWorkingStatus(rawStatus)) ensureSeen(session.id)
-    }
-    for (const id of Object.keys(seenPrev)) {
-      if (!liveIds.has(id)) {
-        clearSeen(id)
-        doneClear.push(id)
-        continue
-      }
-      const rawStatus = liveStatus[id]
-      if (isHomeDoneReviewStatus(rawStatus)) {
-        doneAdd.push(id)
-        clearSeen(id)
-      } else if (isHomeActiveStatus(rawStatus)) {
-        doneClear.push(id)
-      }
-    }
-    if (seenNext !== seenPrev) updateHomeSeenWorkingAgents(() => seenNext)
-    if (doneAdd.length || doneClear.length) {
-      updateHomeDoneAgents((prev) => {
-        let changed = false
-        const next = { ...prev }
-        for (const id of doneClear) {
-          if (next[id]) {
-            delete next[id]
-            changed = true
-          }
-        }
-        for (const id of Object.keys(next)) {
-          if (!liveIds.has(id)) {
-            delete next[id]
-            changed = true
-          }
-        }
-        for (const id of doneAdd) {
-          if (!next[id]) {
-            next[id] = true
-            changed = true
-          }
-        }
-        return changed ? next : prev
-      })
-    }
-  }
-  const applyStatus = (nextStatus: Record<string, string>): void => {
-    const prevStatus = statusRef.current
-    const doneIds: string[] = []
-    const activeIds: string[] = []
-    for (const [id, next] of Object.entries(nextStatus)) {
-      if (isHomeActiveStatus(next)) {
-        activeIds.push(id)
-        continue
-      }
-      if (viewRef.current === 'home' && isHomeWorkingStatus(prevStatus[id]) && isHomeDoneReviewStatus(next)) {
-        doneIds.push(id)
-      }
-    }
-    if (doneIds.length || activeIds.length) {
-      updateHomeDoneAgents((prev) => {
-        let changed = false
-        const next = { ...prev }
-        for (const id of activeIds) {
-          if (next[id]) {
-            delete next[id]
-            changed = true
-          }
-        }
-        for (const id of doneIds) {
-          if (!next[id]) {
-            next[id] = true
-            changed = true
-          }
-        }
-        return changed ? next : prev
-      })
-    }
-    statusRef.current = nextStatus
-    setStatus(nextStatus)
-    reconcileHomeAgentReviewState(sessionsRef.current, nextStatus)
-  }
 
   // Apply a roster update; if we just spawned a session and it now exists, jump to its tab.
   const applySessions = (arr: IslandSession[]): void => {
-    sessionsRef.current = arr
     setSessions(arr)
-    updateHomeSeenWorkingAgents((prev) => {
-      const live = new Set(arr.map((s) => s.id))
-      const next = { ...prev }
-      let changed = false
-      for (const id of Object.keys(next)) {
-        if (!live.has(id)) {
-          delete next[id]
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-    reconcileHomeAgentReviewState(arr, statusRef.current)
     if (pendingJump.current) {
       const idx = arr.findIndex((s) => s.id === pendingJump.current)
       if (idx >= 0) {
@@ -430,7 +182,7 @@ export function NotchHost({
         applySessions((snap.sessions || []).map(mapSession))
         applyArchivedSessions((snap.archivedSessions || []).map(mapSession))
         setThreads(mapThreads(snap.threads))
-        applyStatus(snap.status || {})
+        setStatus(snap.status || {})
         setMilestones((snap.milestones || {}) as Record<string, IslandMilestone[]>)
         setRuns((snap.runs || {}) as Record<string, IslandWfRun[]>)
       })
@@ -444,7 +196,7 @@ export function NotchHost({
         if (Array.isArray(act.sessions)) applySessions(act.sessions.map(mapSession))
         if (Array.isArray(act.archivedSessions)) applyArchivedSessions(act.archivedSessions.map(mapSession))
         if (act.threads) setThreads(mapThreads(act.threads))
-        if (act.status) applyStatus(act.status)
+        if (act.status) setStatus(act.status)
       } else if (act.type === 'milestone' && act.agentId) {
         const text = String(act.text || '').trim()
         if (!text) return
@@ -487,6 +239,53 @@ export function NotchHost({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // The active tab's agent id (mirrors the activeId computed in the render body below). Derived here so the load
+  // effect can key on this STRING — firing only on a real tab change, not on every chat broadcast (each makes a
+  // fresh `sessions` array, which would otherwise re-fire the IPC + reload on every message).
+  const activeTabIdx = clamp(page, 0, sessions.length)
+  const activeTabId = activeTabIdx === 0 ? '' : sessions[activeTabIdx - 1]?.id || ''
+  // Load an agent's persisted + live workflow boards whenever its tab becomes active, and ping "viewed" so the
+  // board memory-eviction sweep keeps it cached. Disk is the source of truth (index.json + events.jsonl), so this
+  // pulls back runs that were evicted from memory or survived a relaunch — finished boards never vanish. Merges
+  // (never clobbers) any in-flight run that arrived via a live broadcast but isn't yet in the loaded list.
+  useEffect(() => {
+    const id = activeTabId
+    if (!id) return
+    let live = true
+    try { window.agentOS?.tabViewed?.(id) } catch { /* best-effort */ }
+    window.agentOS
+      ?.wfLoadAgentRuns?.(id)
+      .then((list: Array<Record<string, unknown>>) => {
+        if (!live || !Array.isArray(list)) return
+        const loaded = list as unknown as IslandWfRun[]
+        setRuns((prev) => {
+          const byId = new Map<string, IslandWfRun>()
+          for (const r of prev[id] || []) byId.set(r.runId, r) // keep in-flight runs (live-broadcast race)
+          for (const r of loaded) {
+            const cur = byId.get(r.runId)
+            if (!cur) { byId.set(r.runId, r); continue }
+            // A `done`/skeleton-bearing broadcast can reach the RENDERER before main's osLoadAgentRuns read its
+            // registry, so the loaded (disk) row may be STALER than the live one. Merge with the same invariants
+            // applyWfRun enforces: a run never un-finishes, and a non-empty skeleton is never dropped. (A raw
+            // overwrite reintroduced exactly the "live board reverts to running / loses its TODO cards" class.)
+            byId.set(r.runId, {
+              ...r,
+              done: cur.done || r.done,
+              ok: cur.done ? cur.ok : r.ok,
+              skeleton: cur.skeleton && cur.skeleton.length ? cur.skeleton : r.skeleton,
+              startedAt: cur.startedAt || r.startedAt,
+              memDir: r.memDir || cur.memDir
+            })
+          }
+          return { ...prev, [id]: [...byId.values()].sort((a, b) => a.startedAt - b.startedAt) }
+        })
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [activeTabId])
 
   // Tell App when the attach panel opens/closes so it can pin the island open (the picker needs the cursor to roam
   // off the chassis onto other windows). Reset on unmount so a closed island never stays pinned.
@@ -658,7 +457,6 @@ export function NotchHost({
   const archiveAgent = (id: string): void => {
     if (id === '0') return
     if (!sessions.some((s) => s.id === id)) return
-    clearHomeReviewAgents(id)
     requestArchiveAgent(id)
       .then((r) => {
         if (r?.ok) {
@@ -764,32 +562,11 @@ export function NotchHost({
   const holdChassisHover = (): void => onChassisHoverChange?.(true)
   const openChat = (): void => {
     holdChassisHover()
-    clearHomeReviewAgents()
     setPage(0)
     setPeek(false)
     setAttachOpen(false)
     setView('session')
   }
-  const openAgentChat = (id: string): void => {
-    if (debugFakeHomeAgents && id.startsWith('fake-home-')) {
-      holdChassisHover()
-      return
-    }
-    holdChassisHover()
-    const idx = sessions.findIndex((s) => s.id === id)
-    if (idx < 0) {
-      openChat()
-      return
-    }
-    clearHomeReviewAgents(id)
-    setPage(idx + 1)
-    setPeek(false)
-    setAttachOpen(false)
-    setView('session')
-  }
-  const homeSessions = debugFakeHomeAgents ? FAKE_HOME_AGENTS : sessions
-  const homeStatus = debugFakeHomeAgents ? FAKE_HOME_STATUS : status
-  const homeDoneAgentIds = debugFakeHomeAgents ? FAKE_HOME_DONE_IDS : Object.keys(homeDoneAgents)
   return (
     <div className="nhost" data-view={dataView}>
       <div
@@ -849,19 +626,15 @@ export function NotchHost({
         {onHome ? (
           <IslandHome
             menuBarH={menuBarH}
-            sessions={homeSessions}
-            status={homeStatus}
-            doneAgentIds={homeDoneAgentIds}
+            sessions={sessions}
+            status={status}
             onOpenChat={openChat}
-            onOpenAgent={openAgentChat}
           />
         ) : view === 'settings' ? (
           <IslandSettings
             menuBarH={menuBarH}
             showActiveTerminal={debugActiveTerminal}
             onToggleActiveTerminal={chooseDebugActiveTerminal}
-            showFakeHomeAgents={debugFakeHomeAgents}
-            onToggleFakeHomeAgents={chooseDebugFakeHomeAgents}
             archivedSessions={archivedSessions}
             onRestoreAgent={restoreAgent}
             onDeleteAgent={deleteArchivedAgent}

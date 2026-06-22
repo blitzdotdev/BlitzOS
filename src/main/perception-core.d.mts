@@ -49,6 +49,8 @@ export function emitUserMessage(text: string, agentId?: string): void
 export function emitConnectorChange(provider: string, connected: boolean): void
 /** A connected external source (browser tab / macOS window) was connected, changed, or dropped. */
 export function emitConnectionMoment(surfaceId: string, info?: { connId?: string; sourceId?: string; status?: string; verb?: string; summary?: string }): void
+/** A hosted blitzscript workflow run finished (run:done) — wake the launching agent (agent-private). */
+export function emitWorkflowMoment(runId: string, agentId?: string, info?: { ok?: boolean; resultPath?: string }): void
 /** An OS-level event both inhabitants should know about (crash recovery, update, restore…). */
 export function emitSystemMoment(kind: string, line: string, detail?: Record<string, unknown>): void
 export function waitForEvents(since: number, maxMs: number, agentId?: string, workspace?: string | null): Promise<BlitzMoment[]>

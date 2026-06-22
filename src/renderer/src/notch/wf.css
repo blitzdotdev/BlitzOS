@@ -24,6 +24,7 @@
   font-family: Inter, -apple-system, system-ui, sans-serif;
   border-radius: 13px;
   overflow: hidden;
+  position: relative; /* containing block for the drill-in drawer overlay (.dr-scrim is absolute inside) */
   border: 1px solid var(--kb-line);
   background-color: var(--kb-bg);
   background-image: linear-gradient(180deg, rgba(20, 26, 34, 0.55), rgba(10, 14, 20, 0.2) 45%, rgba(12, 18, 26, 0.6)),
@@ -78,15 +79,16 @@
 .kc-error .kc-out { color: #ff9c95; }
 .kc-empty { opacity: 0.62; }
 
-/* drill-in detail — REPLACES the board grid IN PLACE (in normal flow, the run head stays above it), scoped to the
-   board width. Sized to its content: NO scrim dim, NO max-height, NO internal scrolling anywhere — the whole
-   Asked/Did/Returned shows at once and long lines / code soft-wrap (see .dr-prompt + .json-view). */
-.dr-scrim { display: block; animation: dr-fade 0.16s ease-out; }
-@keyframes dr-fade { from { opacity: 0; transform: translateY(6px); } }
-.dr { display: flex; flex-direction: column; background: #141416; border: 1px solid var(--kb-line); border-radius: 13px; overflow: hidden; }
-.dr-head { display: flex; align-items: center; gap: 9px; padding: 12px 14px; border-bottom: 1px solid var(--kb-line); }
+/* drill-in detail — an OVERLAY card that slides up to fill the BOTTOM 90% of the board frame (.kb is the
+   positioned ancestor and clips it to the rounded board). The grid stays mounted at its size BEHIND it (no
+   resize); the card HEAD is fixed and the BODY scrolls for overflow. Click the dimmed top strip / X to close. */
+.dr-scrim { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-end; background: rgba(8, 11, 15, 0.55); animation: dr-fade 0.16s ease-out; }
+@keyframes dr-fade { from { opacity: 0; } }
+.dr { width: 100%; height: 90%; display: flex; flex-direction: column; background: #141416; border-top: 1px solid var(--kb-line); border-radius: 13px 13px 0 0; overflow: hidden; box-shadow: 0 -10px 28px -10px rgba(0, 0, 0, 0.7); animation: dr-rise 0.18s ease-out; }
+@keyframes dr-rise { from { transform: translateY(16px); opacity: 0.35; } }
+.dr-head { flex: none; display: flex; align-items: center; gap: 9px; padding: 12px 14px; border-bottom: 1px solid var(--kb-line); }
 .dr-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--kb-dim); }
-.dr-running { background: var(--kb-blue); }
+.dr-running { background: var(--kb-blue); animation: isl-wf-pulse 1.3s ease-in-out infinite; }
 .dr-done { background: var(--kb-green); }
 .dr-error { background: var(--kb-red); }
 .dr-empty { background: var(--kb-dim); }
@@ -95,7 +97,7 @@
 .dr-model { font-size: 10px; color: var(--kb-muted); background: rgba(255, 255, 255, 0.06); border-radius: 5px; padding: 1px 6px; }
 .dr-stats { font-size: 11px; color: var(--kb-muted); font-variant-numeric: tabular-nums; }
 .dr-x { margin-left: auto; background: transparent; border: 0; color: var(--kb-muted); font-size: 20px; line-height: 1; cursor: pointer; }
-.dr-body { padding: 14px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.dr-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .dr-sec-h { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--kb-dim); margin-bottom: 6px; }
 .dr-card { border: 1px solid var(--kb-line); border-radius: 10px; background: rgba(255, 255, 255, 0.02); padding: 10px 12px; min-width: 0; }
 /* Asked prompt: show ALL, no scroll; long lines soft-wrap (word-break for unbroken tokens like paths/urls). */
@@ -119,8 +121,26 @@
 /* the inline board block in the chat feed. position:relative makes it the containing block for the drill-in
    drawer's absolutely-positioned scrim, so the detail view fills THIS board frame, not the whole chat. */
 .isl-wf-board { margin: 6px 0; position: relative; }
-.isl-wf-board-head { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--kb-muted); margin-bottom: 5px; padding: 0 2px; }
-.isl-wf-board-head .isl-wf-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--kb-blue); animation: kc-spark 1.3s ease-in-out infinite; }
+/* the run STATUS PILL — always visible; the kanban board below is COLLAPSED by default and toggled by clicking
+   this pill (the caret flips ▸/▾). Compact, rounded, hover-lit. */
+.isl-wf-board-head {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 100%;
+  font-family: inherit; font-size: 11px; color: var(--kb-muted); text-align: left;
+  margin: 0; padding: 4px 11px;
+  background: var(--kb-sheet); border: 1px solid var(--kb-line); border-radius: 999px;
+  cursor: grab; user-select: none; -webkit-user-select: none; transition: border-color 0.12s ease, background 0.12s ease;
+}
+.isl-wf-board-head:hover { border-color: var(--kb-faint); background: #1f252d; }
+.isl-wf-board-head:active { cursor: grabbing; }
+.isl-wf-status { font-weight: 600; color: var(--kb-text); white-space: nowrap; }
+.isl-wf-caret { flex: none; color: var(--kb-muted); font-size: 14px; line-height: 1; }
+/* the collapsible board body — hidden by default via the `hidden` attr (keeps IslandKanban mounted) */
+.isl-wf-board-body { margin-top: 6px; }
+.isl-wf-board-body[hidden] { display: none; }
+/* the running dot PULSES IN PLACE (opacity + scale) — it must NEVER translate. kc-spark is the sweeping
+   underline for doing cards, not a dot; using it here made the dot slide across. Done flips it green + still. */
+@keyframes isl-wf-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.72); } }
+.isl-wf-board-head .isl-wf-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--kb-blue); animation: isl-wf-pulse 1.3s ease-in-out infinite; }
 .isl-wf-file { color: var(--kb-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.isl-wf-stats { margin-left: auto; color: var(--kb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
+.isl-wf-stats { color: var(--kb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
 .isl-wf-board.isl-wf-done .isl-wf-dot { background: var(--kb-green); animation: none; }

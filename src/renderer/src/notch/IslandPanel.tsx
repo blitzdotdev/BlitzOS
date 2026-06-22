@@ -7,7 +7,7 @@
 // the original NotchShape are owned by NotchHost and are INVARIANT; this paints ONLY the interior.
 import './island.css'
 import './wf.css'
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
 import { AttachTray, type TrayGroup } from './attachTray'
@@ -16,7 +16,6 @@ import { IslandTerminalPane } from './IslandTerminalPane'
 import MarkdownMessage from './MarkdownMessage'
 import IslandKanban, { type WfStats } from './IslandKanban'
 import { fmtMs, fmtTok } from './wfShared'
-import { agentGradient } from './agentVisuals'
 import { matchingChoiceAnswer } from './messageParts'
 import type { IslandPanelProps, IslandWfRun } from './types'
 
@@ -27,16 +26,26 @@ const PEN_PATH =
   'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z'
 const ARCHIVE_PATH =
   'M4 7h16M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 11h6M5 3h14a1 1 0 0 1 1 1v3H4V4a1 1 0 0 1 1-1Z'
+// A stable, vibrant per-agent gradient (the peek "album art") derived from the agent id.
+function agentGradient(id: string): string {
+  // Spread hues by the GOLDEN ANGLE so sequential agent ids ('0','1','2'…) get maximally DIFFERENT, diverse colors
+  // (a plain char-hash put them ~1° apart, so every agent looked the same). Numeric ids use the number directly.
+  let n = 0
+  for (let i = 0; i < id.length; i++) n = (n * 33 + id.charCodeAt(i)) >>> 0
+  const base = /^\d+$/.test(id) ? parseInt(id, 10) : n
+  const h = (base * 137.508) % 360
+  return `radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.42) 0%, transparent 40%), linear-gradient(145deg, hsl(${h} 85% 60%), hsl(${(h + 50) % 360} 80% 56%) 45%, hsl(${(h + 110) % 360} 82% 60%))`
+}
 
-// Raw host status → status symbol: warming/reconnecting pulses blue, working spins, everything else is quiet.
-const dotStatus = (s: string): string => (s === 'starting' || s === 'reconnecting' ? 'warming' : s === 'working' ? 'working' : 'idle')
+// Raw host status → the dot (working + reconnecting pulse so a stuck/reviving agent never reads as a dead gray
+// 'Idle'; everything else is a gray dot).
+const dotStatus = (s: string): string => (s === 'working' || s === 'starting' || s === 'reconnecting' ? 'working' : 'idle')
 // Raw host status → a plain one-word label for the live status line.
 const statusLabel = (s: string): string => {
   switch (s) {
     case 'working':
-      return 'Working'
     case 'starting':
-      return 'Warming up'
+      return 'Working'
     case 'reconnecting': // the OS is reviving a deaf agent (wait-loop died, e.g. rate-limited) — see agent-wake-watchdog
       return 'Reconnecting'
     case 'waiting':
@@ -71,13 +80,10 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     onArchiveAgent,
     onRenameAgent
   } = props
-  // KANBAN BOARD HIDDEN (2026-06-21): the in-chat workflow board is unreliable — runs are ephemeral (dropped
-  // from memory 30s after done, no disk persistence, gone on relaunch), so a finished/long run shows nothing.
-  // Disabled at the render layer (run_workflow itself still runs and writes its journal to disk). The full
-  // persistence design that fixes this is in plans/blitzos-kanban-persistence.md. Flip KANBAN_HIDDEN to false to
-  // re-enable; the render path below (renderBoard / IslandKanban) is intact, just fed an empty run list.
-  const KANBAN_HIDDEN: boolean = true
-  const runs = KANBAN_HIDDEN ? [] : runsProp
+  // In-chat workflow boards are durable now: each run is event-sourced on disk (index.json + events.jsonl +
+  // skeleton.json), reloaded on tab-open (NotchHost.wfLoadAgentRuns), and evicted from memory only after 15 min
+  // of tab inactivity — so a finished or long-past board never vanishes. See plans/blitzos-kanban-persistence.md.
+  const runs = runsProp
   const top = Math.max(28, menuBarH) + 8
   const isNew = page === 0 // the pen tab
   const feedRef = useRef<HTMLDivElement>(null)
@@ -133,37 +139,76 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const handleRunStats = useCallback((runId: string, s: WfStats | null) => {
     setRunStats((prev) => (prev[runId] === s ? prev : { ...prev, [runId]: s }))
   }, [])
+  // The kanban board is COLLAPSED by default — each run shows just a compact status pill (dot + state + stats);
+  // clicking the pill expands/minimizes the full board. LAZY-MOUNT: the heavy IslandKanban (which subscribes to
+  // the bus + hydrates the run's full event stream from disk) is mounted ONLY once a run has been expanded, and
+  // then kept mounted (the add-only `mountedRuns` set) so re-expand is instant. This is what keeps a relaunch
+  // from freezing: opening a tab with N persisted runs renders N cheap pills, NOT N boards each replaying its
+  // backlog. The trade: a never-expanded done run's pill shows status only (no stats) until first expand.
+  const [expandedRuns, setExpandedRuns] = useState<Set<string>>(() => new Set())
+  const [mountedRuns, setMountedRuns] = useState<Set<string>>(() => new Set())
+  const toggleRun = useCallback((runId: string) => {
+    setMountedRuns((prev) => (prev.has(runId) ? prev : new Set(prev).add(runId))) // mount on first expand, stay mounted
+    setExpandedRuns((prev) => {
+      const next = new Set(prev)
+      if (next.has(runId)) next.delete(runId)
+      else next.add(runId)
+      return next
+    })
+  }, [])
   // Anchor each live workflow board AFTER the last message that preceded its run (the agent's "running…" line),
   // so the board sits in TIME ORDER in the transcript instead of stacking at the top. A run whose start predates
-  // every message (no preceding message) renders at the very top. Keyed by message index → the runs anchored there.
-  const runsByAnchor = new Map<number, IslandWfRun[]>()
-  const leadingRuns: IslandWfRun[] = []
-  for (const r of runs) {
-    let idx = -1
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if ((messages[i].ts || 0) <= r.startedAt) {
-        idx = i
-        break
+  // every message (no preceding message) renders at the very top. Keyed by message index → the runs anchored
+  // there. MEMOIZED on [runs, messages] so this O(runs × messages) walk doesn't re-run on every panel render
+  // (chat broadcasts, status ticks, steer-bar keystrokes) — only when the runs or transcript actually change.
+  const { runsByAnchor, leadingRuns } = useMemo(() => {
+    const byAnchor = new Map<number, IslandWfRun[]>()
+    const leading: IslandWfRun[] = []
+    for (const r of runs) {
+      let idx = -1
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if ((messages[i].ts || 0) <= r.startedAt) {
+          idx = i
+          break
+        }
+      }
+      if (idx < 0) leading.push(r)
+      else {
+        const arr = byAnchor.get(idx) || []
+        arr.push(r)
+        byAnchor.set(idx, arr)
       }
     }
-    if (idx < 0) leadingRuns.push(r)
-    else {
-      const arr = runsByAnchor.get(idx) || []
-      arr.push(r)
-      runsByAnchor.set(idx, arr)
-    }
-  }
+    return { runsByAnchor: byAnchor, leadingRuns: leading }
+  }, [runs, messages])
   const renderBoard = (r: IslandWfRun): JSX.Element => {
-    const s = runStats[r.runId]
+    // Prefer the LIVE stats a mounted board reports (freshest), else the final stats stored on the run record
+    // (index.json) — so a collapsed/never-expanded done board still shows "{ms} · {calls} agents · {tokens} tok"
+    // with no board mount. Both are null while a run is still running.
+    const s = runStats[r.runId] || r.stats || null
+    const open = expandedRuns.has(r.runId)
+    const statsLine = s ? `${fmtMs(s.ms)} · ${s.calls} agents · ${fmtTok(s.tokens)} tok` : r.done ? '' : 'running…'
     return (
-      <div className={`isl-wf-board${r.done ? ' isl-wf-done' : ''}`} key={r.runId}>
-        <div className="isl-wf-board-head">
+      <div className={`isl-wf-board${r.done ? ' isl-wf-done' : ''}${open ? ' isl-wf-open' : ''}`} key={r.runId}>
+        <button
+          type="button"
+          className="isl-wf-board-head"
+          aria-expanded={open}
+          onClick={() => toggleRun(r.runId)}
+          title={open ? 'Hide the board' : 'Show the board'}
+        >
+          <span className="isl-wf-caret" aria-hidden>{open ? '▾' : '▸'}</span>
           <span className="isl-wf-dot" aria-hidden />
-          <span>{r.done ? (r.ok ? 'workflow done' : 'workflow failed') : 'workflow running'}</span>
-          {r.file ? <span className="isl-wf-file">{r.file.replace(/^.*\//, '')}</span> : null}
-          <span className="isl-wf-stats">{s ? `${fmtMs(s.ms)} · ${s.calls} agents · ${fmtTok(s.tokens)} tok` : 'running…'}</span>
-        </div>
-        <IslandKanban runId={r.runId} skeleton={r.skeleton} onStats={handleRunStats} />
+          <span className="isl-wf-status">{r.done ? (r.ok ? 'workflow done' : 'workflow failed') : 'workflow running'}</span>
+          <span className="isl-wf-stats">{statsLine}</span>
+        </button>
+        {/* LAZY: mount the board only after the run has been expanded once; then keep it mounted (hidden when
+            collapsed) so re-expand is instant + a live run's onStats keeps feeding the pill. */}
+        {mountedRuns.has(r.runId) ? (
+          <div className="isl-wf-board-body" hidden={!open}>
+            <IslandKanban runId={r.runId} skeleton={r.skeleton} onStats={handleRunStats} />
+          </div>
+        ) : null}
       </div>
     )
   }

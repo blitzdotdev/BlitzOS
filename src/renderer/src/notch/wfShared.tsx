@@ -3,7 +3,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
 export const fmtMs = (ms: number): string => (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : Math.round(ms || 0) + 'ms')
-export const fmtTok = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'k' : String(t || 0))
+export const fmtTok = (t: number): string => {
+  const n = t || 0
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M' // 6,124,700 -> 6.1M
+  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n) // 612,470 -> 612.5k
+}
 
 // A card's `preview` is previewOf(out) = JSON.stringify(out) sliced to ~280 chars. Parse it back to the typed
 // value so summarize/cardHead can pick a HUMAN field instead of rendering the raw JSON string. A truncated (slice

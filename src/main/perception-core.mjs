@@ -75,7 +75,7 @@ function visibleTo(moment, agentId, workspace) {
   // source while chatting with THIS agent) are PRIVATE to the agent they target — only that agent is woken. So a
   // non-primary agent is woken when ITS item resolves / ITS source attaches (the moment carries agentId; an
   // untargeted one defaults to '0', so the primary watcher keeps its old behavior).
-  if (moment.trigger === 'message' || moment.trigger === 'action' || moment.trigger === 'connection') return String(moment.agentId || '0') === sid
+  if (moment.trigger === 'message' || moment.trigger === 'action' || moment.trigger === 'connection' || moment.trigger === 'workflow') return String(moment.agentId || '0') === sid
   return sid === '0'
 }
 
@@ -106,7 +106,7 @@ export function dropContentShare(surfaceId) {
 export function redactMoment(m) {
   // A 'message' (in-canvas chat) or 'connector' (the user wired/removed an integration) moment is
   // consent by construction, not scraped page content, so it crosses the relay intact.
-  if (m.trigger === 'message' || m.trigger === 'connector' || m.trigger === 'connection') return m
+  if (m.trigger === 'message' || m.trigger === 'connector' || m.trigger === 'connection' || m.trigger === 'workflow') return m
   // A 'tick' (supervisor heartbeat) carries only OS METADATA — agent status edges + terminal exits + counts —
   // never any scraped surface content. That metadata is consent-safe (the user can already see their own
   // agents/terminals), so it crosses the relay intact, with the `user` labels kept and the structured `diff`
@@ -509,6 +509,27 @@ export function emitConnectionMoment(surfaceId, info = {}) {
     signals: { connection: 1 },
     user: [`connection ${verb}: ${sourceId}`.trim()],
     connection: { connId: String(info.connId || ''), sourceId, status: String(info.status || 'live') }
+  })
+}
+
+/** A hosted blitzscript workflow run FINISHED (run:done) — wake the agent that LAUNCHED it, exactly like a
+ *  chat 'message', so it stops hand-rolling a result.json poll loop. Agent-private (visibleTo). Carries
+ *  METADATA ONLY (runId/ok + the result.json path), never scraped content, so it crosses the relay intact.
+ *  The run's result.json is already on disk before this fires (the runtime writes it before runWorkflow
+ *  resolves; the host wakes in the settle .then/.catch, after persistEvents). */
+export function emitWorkflowMoment(runId, agentId = '0', info = {}) {
+  const sid = String(agentId || '0')
+  const ok = info.ok !== false
+  emit({
+    seq: ++seq,
+    ts: Date.now(),
+    surfaceId: sid === '0' ? 'chat' : `chat-${sid}`,
+    agentId: sid, // visibleTo wakes ONLY this agent (the launcher)
+    trigger: 'workflow',
+    windowMs: 0,
+    signals: { workflow: 1 },
+    user: [`workflow ${runId} ${ok ? 'done' : 'failed'}`],
+    workflow: { runId: String(runId), ok, resultPath: String(info.resultPath || '') }
   })
 }
 
