@@ -388,6 +388,7 @@ export function createWorkspaceHost(a) {
   const chatStatuses = new Map()
   const chatQuietTimers = new Map()
   const chatTerminalActivityAt = new Map()
+  const pendingAutoTitles = new Set()
   /** The chat-bearing agents: always '0' (primary) + any .blitzos/terminals/<id> that is an AGENT (its
    *  terminal runs a BlitzOS agent backend → it has a chat thread). 'chat' is the legacy kind from before agents
    *  ran in terminals; 'agent' is the unified kind now. Plain 'terminal' shells are NOT agents.
@@ -521,10 +522,43 @@ export function createWorkspaceHost(a) {
   function agentTitleText(text) {
     return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 24)
   }
+  function defaultAgentTitle(id) {
+    return `Chat ${id}`
+  }
+  function isDefaultAgentTitle(id) {
+    const meta = readAgentMeta(id)
+    return agentTitleText(meta.title || defaultAgentTitle(id)) === defaultAgentTitle(id)
+  }
+  function shouldAutoTitleAgent(id) {
+    if (id === '0') return false
+    if (!/^[0-9]+$/.test(id)) return false
+    if (pendingAutoTitles.has(id)) return false
+    if (typeof a.generateAgentTitle !== 'function') return false
+    if (!isDefaultAgentTitle(id)) return false
+    const messages = readChatMessages(activeWorkspace, 10000, id)
+    return !messages.some((m) => m && m.role === 'user')
+  }
+  function scheduleAgentAutoTitle(id, text, workspacePath) {
+    if (pendingAutoTitles.has(id)) return
+    pendingAutoTitles.add(id)
+    Promise.resolve()
+      .then(() => a.generateAgentTitle({ agentId: id, text, workspacePath }))
+      .then((title) => {
+        const next = agentTitleText(title)
+        if (!next) return
+        if (activeWorkspace !== workspacePath) return
+        if (!isDefaultAgentTitle(id)) return
+        renameAgent(id, next)
+      })
+      .catch(() => {})
+      .finally(() => {
+        pendingAutoTitles.delete(id)
+      })
+  }
   function sessionSummary(id, meta, messages, sessionStatus) {
     return {
       id,
-      title: id === '0' ? 'Main' : agentTitleText(meta.title || `Chat ${id}`),
+      title: id === '0' ? 'Main' : agentTitleText(meta.title || defaultAgentTitle(id)),
       status: sessionStatus,
       updatedAt: Math.max(Number(messages[messages.length - 1]?.ts) || 0, Number(chatStatuses.get(id)?.updatedAt) || 0),
       lastMessagePreview: previewText(messages),
@@ -788,6 +822,8 @@ export function createWorkspaceHost(a) {
    *  role 'user' (the human typed) | 'agent' (a `say`). agentId defaults to '0' (the primary chat). */
   function appendChat(role, text, agentId = '0', meta) {
     const aid = String(agentId ?? '0')
+    const shouldAutoTitle = role === 'user' && shouldAutoTitleAgent(aid)
+    const workspacePath = activeWorkspace
     if (role === 'user') setChatStatusLocal(aid, 'working', 'user-message')
     if (role === 'agent') {
       const cur = chatStatuses.get(aid)
@@ -795,6 +831,7 @@ export function createWorkspaceHost(a) {
     }
     appendChatMessage(activeWorkspace, role, text, aid, meta)
     const props = updateChatHubState(aid, true)
+    if (shouldAutoTitle) scheduleAgentAutoTitle(aid, text, workspacePath)
     return props.threads?.[aid] || []
   }
   /** The agent customizes its widget UI by rewriting blitz-[<id>-]<name>.html, then we live-reload

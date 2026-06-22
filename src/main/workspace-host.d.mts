@@ -21,6 +21,8 @@ export interface WorkspaceHostAdapter {
   stopAgent?: (agentId: string) => void
   /** The authoritative action-items list (listActions()); the inbox surface's items are reconciled to it. */
   getActionItems?: () => unknown[]
+  /** Optional Electron-only V1 helper: generate a short title from an agent's first user message. */
+  generateAgentTitle?: (input: { agentId: string; text: string; workspacePath: string }) => Promise<string | null> | string | null
 }
 
 export interface WorkspaceHost {

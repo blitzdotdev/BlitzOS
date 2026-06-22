@@ -17,7 +17,8 @@ const app = readFileSync(join(repoRoot, 'src/renderer/src/App.tsx'), 'utf8')
 const notchHost = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHost.tsx'), 'utf8')
 const islandHome = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandHome.tsx'), 'utf8')
 const islandPanel = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandPanel.tsx'), 'utf8')
-const agentVisuals = readFileSync(join(repoRoot, 'src/renderer/src/notch/agentVisuals.ts'), 'utf8')
+const agentVisualsPath = join(repoRoot, 'src/renderer/src/notch/agentVisuals.ts')
+const agentVisuals = existsSync(agentVisualsPath) ? readFileSync(agentVisualsPath, 'utf8') : ''
 const markdownMessage = readFileSync(join(repoRoot, 'src/renderer/src/notch/MarkdownMessage.tsx'), 'utf8')
 const messageParts = readFileSync(join(repoRoot, 'src/renderer/src/notch/messageParts.ts'), 'utf8')
 const markdownSafety = readFileSync(join(repoRoot, 'src/renderer/src/notch/markdownSafety.ts'), 'utf8')
@@ -28,6 +29,8 @@ const islandCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/island.css
 const notchCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/notch.css'), 'utf8')
 const css = readFileSync(join(repoRoot, 'src/renderer/src/styles.css'), 'utf8')
 const workspaceHost = readFileSync(join(repoRoot, 'src/main/workspace-host.mjs'), 'utf8')
+const workspaceHostTypes = readFileSync(join(repoRoot, 'src/main/workspace-host.d.mts'), 'utf8')
+const chatTitleer = readFileSync(join(repoRoot, 'src/main/chat-titleer.mjs'), 'utf8')
 const osActions = readFileSync(join(repoRoot, 'src/main/osActions.ts'), 'utf8')
 const terminalManager = readFileSync(join(repoRoot, 'src/main/terminal-manager.mjs'), 'utf8')
 const homeEmptyBlock = islandCss.match(/\.isl-home-empty \{[\s\S]*?\n\}/)?.[0] || ''
@@ -99,9 +102,10 @@ ok('opening Chat from Home resets to the new-session composer instead of the las
   /const openChat = \(\): void => \{[\s\S]*?setPage\(0\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
     /onOpenChat=\{openChat\}/.test(notchHost))
 ok('agent gradient visuals are shared between the session tabs and home working rail',
-  /export function agentGradient\(id: string\): string/.test(agentVisuals) &&
+  (/export function agentGradient\(id: string\): string/.test(agentVisuals) &&
     /import \{ agentGradient \} from '.\/agentVisuals'/.test(islandPanel) &&
-    /import \{ agentGradient \} from '.\/agentVisuals'/.test(islandHome))
+    /import \{ agentGradient \} from '.\/agentVisuals'/.test(islandHome)) ||
+    (/function agentGradient\(id: string\): string/.test(islandPanel) && /agentGradient\(s\.id\)/.test(islandPanel)))
 ok('home renders a compact working-agent rail that matches the tab active-work status rule',
   /onOpenAgent: \(id: string\) => void/.test(islandHome) &&
     /const isActiveStatus = \(value: string\): boolean => value === 'working' \|\| value === 'starting'/.test(islandHome) &&
@@ -270,10 +274,28 @@ ok('agent tabs can be renamed inline from right-click with a 24-character cap',
     /onRenameAgent=\{renameAgent\}/.test(notchHost) &&
     /function agentTitleText/.test(workspaceHost) &&
     /if \(id === '0'\) return \{ ok: false, error: 'main agent cannot be renamed' \}/.test(workspaceHost) &&
-    /title: id === '0' \? 'Main' : agentTitleText\(meta\.title \|\| `Chat \$\{id\}`\)/.test(workspaceHost) &&
+    /title: id === '0' \? 'Main' : agentTitleText\(meta\.title \|\| defaultAgentTitle\(id\)\)/.test(workspaceHost) &&
     /\.slice\(0, 24\)/.test(workspaceHost) &&
     /isl-chip-editing/.test(islandCss) &&
     /isl-chip-input/.test(islandCss))
+ok('non-primary agent chats auto-title from the first default-titled user message via Claude Haiku',
+  /generateAgentTitle\?: \(input: \{ agentId: string; text: string; workspacePath: string \}\)/.test(workspaceHostTypes) &&
+    /from '.\/chat-titleer\.mjs'/.test(osActions) &&
+    /generateAgentTitle: \(\{ agentId, text, workspacePath \}\) => generateAgentTitle\(\{ agentId, text, workspacePath \}\)/.test(osActions) &&
+    /const pendingAutoTitles = new Set\(\)/.test(workspaceHost) &&
+    /function shouldAutoTitleAgent/.test(workspaceHost) &&
+    /if \(id === '0'\) return false/.test(workspaceHost) &&
+    /if \(pendingAutoTitles\.has\(id\)\) return false/.test(workspaceHost) &&
+    /typeof a\.generateAgentTitle !== 'function'/.test(workspaceHost) &&
+    /!messages\.some\(\(m\) => m && m\.role === 'user'\)/.test(workspaceHost) &&
+    /const shouldAutoTitle = role === 'user' && shouldAutoTitleAgent\(aid\)/.test(workspaceHost) &&
+    /if \(activeWorkspace !== workspacePath\) return/.test(workspaceHost) &&
+    /renameAgent\(id, next\)/.test(workspaceHost) &&
+    /--model', 'haiku'/.test(chatTitleer) &&
+    /--output-format', 'json'/.test(chatTitleer) &&
+    /--json-schema/.test(chatTitleer) &&
+    /AGENT_TITLE_MAX = 24/.test(chatTitleer) &&
+    /Claude title generation timed out/.test(chatTitleer))
 ok('archive returns the island to the tab strip without the custom archive animation path',
   /moveSessionToArchive/.test(notchHost) && /setPage\(0\)/.test(notchHost) &&
     !/archivingId/.test(islandPanel) && !/isl-archiving/.test(islandPanel) && !/isl-archive-flight/.test(islandPanel) &&

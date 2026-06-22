@@ -4,6 +4,7 @@ import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, pinchSurface, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
 import { emitSurfaceAction, emitUserMessage, setContentShare, dropContentShare, setWorkspaceProvider, setTickSource, resetTickBaseline, absorbTickEcho } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
+import { generateAgentTitle } from './chat-titleer.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
 import { readFileSync } from 'node:fs'
 import { sessionJsonlPath, readSessionEvents, toolLabel } from './agent-transcript.mjs'
@@ -193,6 +194,7 @@ export function initOsActions(opts: {
     },
     onSurfaces: () => {}, // Electron web surfaces are in-DOM <webview> guests (renderer-owned)
     getActionItems: () => (actionItemsProvider ? actionItemsProvider() : []), // authoritative inbox items (index.ts wires it)
+    generateAgentTitle: ({ agentId, text, workspacePath }) => generateAgentTitle({ agentId, text, workspacePath }),
     // An agent backend runs in a VISIBLE terminal; index.ts wires this from the shared agent-runtime
     // core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
     launchAgent: (id, home, title) => launchAgentHook?.(id, home, title),
