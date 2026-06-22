@@ -29,7 +29,7 @@ const ARCHIVE_PATH =
   'M4 7h16M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 11h6M5 3h14a1 1 0 0 1 1 1v3H4V4a1 1 0 0 1 1-1Z'
 
 // Raw host status → status symbol: warming/reconnecting pulses blue, working spins, everything else is quiet.
-const dotStatus = (s: string): string => (s === 'starting' || s === 'reconnecting' ? 'warming' : s === 'working' ? 'working' : 'idle')
+const dotStatus = (s: string): string => (s === 'starting' || s === 'reconnecting' ? 'warming' : s === 'working' ? 'working' : s === 'waiting' ? 'waiting' : 'idle')
 // Raw host status → a plain one-word label for the live status line.
 const statusLabel = (s: string): string => {
   switch (s) {
@@ -40,9 +40,9 @@ const statusLabel = (s: string): string => {
     case 'reconnecting': // the OS is reviving a deaf agent (wait-loop died, e.g. rate-limited) — see agent-wake-watchdog
       return 'Reconnecting'
     case 'waiting':
-      return 'Needs you'
+      return 'Response Needed'
     case 'stopped':
-      return 'Done'
+      return 'Idle'
     case 'error':
       return 'Problem'
     default:

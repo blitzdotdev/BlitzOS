@@ -48,6 +48,7 @@ import {
 import { writeRelayUrl } from './agent-runtime.mjs'
 // Agent settings ride the same terminal meta.json the manager owns.
 import { readTerminalMeta, setTerminalOrchestrators, writeTerminalMeta } from './terminal-manager.mjs'
+import { sessionJsonlPath, lastAssistantStop } from './agent-transcript.mjs'
 // The inbox is a runtime surface in osState; reconcileInboxItems keeps its items authoritative from the store.
 import { reconcileInboxItems } from './action-items.mjs'
 
@@ -385,9 +386,21 @@ export function createWorkspaceHost(a) {
   const CHAT_ACTIVE_STATUSES = new Set(['starting', 'working', 'waiting'])
   const CHAT_QUIET_MS = Math.max(0, Number(process.env.BLITZ_CHAT_STATUS_QUIET_MS) || 10000)
   const CHAT_TERMINAL_ACTIVITY_MS = Math.max(100, Number(process.env.BLITZ_CHAT_TERMINAL_ACTIVITY_THROTTLE_MS) || 1200)
+  const CHAT_TERMINAL_WORK_MS = Math.max(CHAT_QUIET_MS, Number(process.env.BLITZ_CHAT_TERMINAL_WORK_MS) || CHAT_QUIET_MS * 6)
+  const CHAT_POST_SAY_SETTLE_MS = Math.max(0, Number(process.env.BLITZ_CHAT_POST_SAY_SETTLE_MS) || 2500)
+  const CHAT_POST_SAY_TERMINAL_WORK_MS = Math.max(
+    CHAT_POST_SAY_SETTLE_MS,
+    Number(process.env.BLITZ_CHAT_POST_SAY_TERMINAL_WORK_MS) || Math.min(CHAT_TERMINAL_WORK_MS, 8000)
+  )
+  const CHAT_CLAUDE_END_TURN_POLL_MS = Math.max(10, Number(process.env.BLITZ_CHAT_CLAUDE_END_TURN_POLL_MS) || 150)
   const chatStatuses = new Map()
   const chatQuietTimers = new Map()
+  const chatPostSaySettleTimers = new Map()
   const chatTerminalActivityAt = new Map()
+  const chatTerminalWorkUntil = new Map()
+  const chatUserTurnAt = new Map()
+  const chatClaudeTurnStopOffset = new Map()
+  const chatWorkflowRuns = new Map()
   const pendingAutoTitles = new Set()
   /** The chat-bearing agents: always '0' (primary) + any .blitzos/terminals/<id> that is an AGENT (its
    *  terminal runs a BlitzOS agent backend → it has a chat thread). 'chat' is the legacy kind from before agents
@@ -441,11 +454,115 @@ export function createWorkspaceHost(a) {
     if (timer) clearTimeout(timer)
     chatQuietTimers.delete(id)
   }
+  function hasPostSaySettle(agentId) {
+    return chatPostSaySettleTimers.has(String(agentId ?? '0'))
+  }
+  function clearPostSaySettle(agentId) {
+    const id = String(agentId ?? '0')
+    const timer = chatPostSaySettleTimers.get(id)
+    if (timer) clearTimeout(timer)
+    chatPostSaySettleTimers.delete(id)
+  }
   function clearChatRuntimeState() {
     for (const timer of chatQuietTimers.values()) clearTimeout(timer)
+    for (const timer of chatPostSaySettleTimers.values()) clearTimeout(timer)
     chatQuietTimers.clear()
+    chatPostSaySettleTimers.clear()
     chatTerminalActivityAt.clear()
+    chatTerminalWorkUntil.clear()
+    chatUserTurnAt.clear()
+    chatClaudeTurnStopOffset.clear()
+    chatWorkflowRuns.clear()
     chatStatuses.clear()
+  }
+  function hasActiveWorkflow(agentId) {
+    const id = String(agentId ?? '0')
+    return (chatWorkflowRuns.get(id)?.size || 0) > 0
+  }
+  function terminalWorkActive(agentId, now = Date.now()) {
+    return (Number(chatTerminalWorkUntil.get(String(agentId ?? '0'))) || 0) > now
+  }
+  function clearTurnActivity(agentId) {
+    const id = String(agentId ?? '0')
+    chatUserTurnAt.delete(id)
+    chatTerminalWorkUntil.delete(id)
+    chatClaudeTurnStopOffset.delete(id)
+  }
+  function claudeAgentMeta(agentId) {
+    const meta = readAgentMeta(agentId)
+    if (!meta?.claudeSessionId) return null
+    if (meta.agentRuntime && meta.agentRuntime !== 'claude') return null
+    return meta
+  }
+  function claudeStopSignal(agentId) {
+    const meta = claudeAgentMeta(agentId)
+    if (!meta) return null
+    return lastAssistantStop(sessionJsonlPath(activeWorkspace, meta.claudeSessionId))
+  }
+  function rememberClaudeTurnBaseline(agentId) {
+    const id = String(agentId ?? '0')
+    if (!claudeAgentMeta(id)) {
+      chatClaudeTurnStopOffset.delete(id)
+      return
+    }
+    const stop = claudeStopSignal(id)
+    chatClaudeTurnStopOffset.set(id, Number.isFinite(stop?.offset) ? stop.offset : -1)
+  }
+  function hasClaudeTurnBaseline(agentId) {
+    return chatClaudeTurnStopOffset.has(String(agentId ?? '0'))
+  }
+  function claudeTurnEndedClean(agentId) {
+    const id = String(agentId ?? '0')
+    const baseline = chatClaudeTurnStopOffset.get(id)
+    if (baseline == null) return false
+    const stop = claudeStopSignal(id)
+    return !!(stop && stop.stopReason === 'end_turn' && Number(stop.offset) > baseline)
+  }
+  function isBlitzUiChoiceText(text) {
+    const trimmed = String(text || '').trim()
+    if (!trimmed) return false
+    const fenceMatch = /^```blitz-ui\s*\n([\s\S]*?)\n?```\s*$/i.exec(trimmed)
+    const jsonText = fenceMatch ? fenceMatch[1].trim() : trimmed.startsWith('{') && trimmed.endsWith('}') ? trimmed : ''
+    if (!jsonText) return false
+    try {
+      const spec = JSON.parse(jsonText)
+      return !!(spec && typeof spec === 'object' && String(spec.prompt || '').trim() && Array.isArray(spec.options) && spec.options.length)
+    } catch {
+      return false
+    }
+  }
+  function isIdleCompletionText(text) {
+    const cleaned = String(text || '').replace(/\s+/g, ' ').trim()
+    if (!cleaned || isBlitzUiChoiceText(cleaned)) return false
+    return /\b(?:i'?m|i am)\s+idle\b/i.test(cleaned) ||
+      /\b(?:watching|waiting)\s+for\s+your\s+next\s+(?:message|request|task)\b/i.test(cleaned) ||
+      /\bnothing\s+further\s+(?:needed|required)\b/i.test(cleaned) ||
+      /\bno\s+further\s+(?:action|work)\s+(?:needed|required)\b/i.test(cleaned) ||
+      /\bcomplete\s+and\s+delivered\b/i.test(cleaned)
+  }
+  function recentUserTurn(agentId, now = Date.now()) {
+    const at = Number(chatUserTurnAt.get(String(agentId ?? '0'))) || 0
+    return at > 0 && now - at <= CHAT_TERMINAL_WORK_MS
+  }
+  function extendTerminalWork(agentId, now = Date.now(), ms = CHAT_TERMINAL_WORK_MS) {
+    chatTerminalWorkUntil.set(String(agentId ?? '0'), now + Math.max(0, ms))
+  }
+  function shortenTerminalWorkAfterSay(agentId, now = Date.now()) {
+    if (terminalWorkActive(agentId, now)) extendTerminalWork(agentId, now, CHAT_POST_SAY_TERMINAL_WORK_MS)
+  }
+  function passiveChatStatus(agentId) {
+    const id = String(agentId ?? '0')
+    const meta = readAgentMeta(id)
+    if (meta && meta.kind === 'agent' && meta.status === 'running') return 'watching'
+    return 'idle'
+  }
+  function recomputeChatStatus(agentId, source = 'host') {
+    const id = String(agentId ?? '0')
+    const cur = chatStatuses.get(id)
+    if (cur?.status === 'error' || cur?.status === 'stopped' || cur?.status === 'waiting' || cur?.status === 'starting') return cur.status
+    if (hasActiveWorkflow(id)) return setChatStatusLocal(id, 'working', source)?.status || 'working'
+    if (terminalWorkActive(id)) return setChatStatusLocal(id, 'working', source)?.status || 'working'
+    return setChatStatusLocal(id, passiveChatStatus(id), source)?.status || 'idle'
   }
   function scheduleChatWatching(agentId, updatedAt) {
     const id = String(agentId ?? '0')
@@ -454,6 +571,22 @@ export function createWorkspaceHost(a) {
       chatQuietTimers.delete(id)
       const cur = chatStatuses.get(id)
       if (!cur || cur.updatedAt !== updatedAt || !CHAT_ACTIVE_STATUSES.has(cur.status)) return
+      if (hasActiveWorkflow(id)) {
+        setChatStatusLocal(id, 'working', 'workflow')
+        updateChatHubState(id, true)
+        return
+      }
+      if (claudeTurnEndedClean(id)) {
+        clearTurnActivity(id)
+        setChatStatusLocal(id, 'watching', 'claude-end-turn')
+        updateChatHubState(id, true)
+        return
+      }
+      if (terminalWorkActive(id) || hasPostSaySettle(id)) {
+        setChatStatusLocal(id, 'working', hasPostSaySettle(id) ? 'say-settle' : 'terminal-active')
+        updateChatHubState(id, true)
+        return
+      }
       chatStatuses.set(id, { status: 'watching', updatedAt: Date.now(), source: 'quiet' })
       updateChatHubState(id, true)
     }, CHAT_QUIET_MS)
@@ -466,17 +599,28 @@ export function createWorkspaceHost(a) {
     if (!CHAT_STATUSES.has(s)) return null
     const rec = { status: s, updatedAt: Date.now(), source }
     chatStatuses.set(id, rec)
-    if (CHAT_ACTIVE_STATUSES.has(s)) scheduleChatWatching(id, rec.updatedAt)
-    else clearChatQuietTimer(id)
+    if (s === 'working' || s === 'starting') scheduleChatWatching(id, rec.updatedAt)
+    else {
+      clearChatQuietTimer(id)
+      if (s === 'waiting') clearPostSaySettle(id)
+      if (s === 'idle' || s === 'stopped' || s === 'error') {
+        clearPostSaySettle(id)
+        chatUserTurnAt.delete(id)
+        chatTerminalWorkUntil.delete(id)
+        chatClaudeTurnStopOffset.delete(id)
+      }
+    }
     return rec
   }
   function chatStatus(agentId) {
     const id = String(agentId ?? '0')
     const v = chatStatuses.get(id)
+    if (v?.status === 'error' || v?.status === 'stopped' || v?.status === 'waiting') return v.status
+    if (hasActiveWorkflow(id)) return 'working'
+    if (v?.status === 'starting') return v.status
+    if (terminalWorkActive(id)) return 'working'
     if (CHAT_STATUSES.has(v?.status)) return v.status
-    const meta = readAgentMeta(id)
-    if (meta && meta.kind === 'agent' && meta.status === 'running') return 'watching'
-    return 'idle'
+    return passiveChatStatus(id)
   }
   /** A snapshot { id -> status } of EVERY chat-bearing agent's current status, for the W2 supervisor tick
    *  (plans/blitzos-tick-diff-steer.md). The transport (osActions/backend) feeds this to setTickSource so the
@@ -488,20 +632,80 @@ export function createWorkspaceHost(a) {
     for (const id of agentIds()) out[id] = chatStatus(id)
     return out
   }
+  function schedulePostSaySettle(agentId, text = '') {
+    const id = String(agentId ?? '0')
+    clearPostSaySettle(id)
+    if (isBlitzUiChoiceText(text)) {
+      clearTurnActivity(id)
+      setChatStatusLocal(id, 'waiting', 'ask')
+      return
+    }
+    if (hasActiveWorkflow(id)) {
+      setChatStatusLocal(id, 'working', 'say')
+      return
+    }
+    const cur = chatStatuses.get(id)
+    if (cur?.status === 'waiting') return
+    if (isIdleCompletionText(text)) {
+      clearTurnActivity(id)
+      setChatStatusLocal(id, 'watching', 'say-final')
+      return
+    }
+    if (claudeTurnEndedClean(id)) {
+      clearTurnActivity(id)
+      setChatStatusLocal(id, 'watching', 'claude-end-turn')
+      return
+    }
+    const keepWorking = cur?.status === 'working' || cur?.status === 'waiting' || terminalWorkActive(id) || recentUserTurn(id)
+    if (!keepWorking) {
+      clearTurnActivity(id)
+      setChatStatusLocal(id, 'watching', 'say')
+      return
+    }
+    shortenTerminalWorkAfterSay(id)
+    setChatStatusLocal(id, 'working', 'say')
+    const startedAt = Date.now()
+    const finishSettle = () => {
+      chatPostSaySettleTimers.delete(id)
+      if (hasActiveWorkflow(id)) {
+        setChatStatusLocal(id, 'working', 'workflow')
+      } else if (claudeTurnEndedClean(id)) {
+        clearTurnActivity(id)
+        setChatStatusLocal(id, 'watching', 'claude-end-turn')
+      } else if (hasClaudeTurnBaseline(id) && Date.now() - startedAt < CHAT_POST_SAY_SETTLE_MS) {
+        const nextDelay = Math.min(CHAT_CLAUDE_END_TURN_POLL_MS, Math.max(0, CHAT_POST_SAY_SETTLE_MS - (Date.now() - startedAt)))
+        const nextTimer = setTimeout(finishSettle, nextDelay)
+        if (typeof nextTimer.unref === 'function') nextTimer.unref()
+        chatPostSaySettleTimers.set(id, nextTimer)
+        return
+      } else if (terminalWorkActive(id)) {
+        setChatStatusLocal(id, 'working', 'terminal-post-say')
+      } else {
+        clearTurnActivity(id)
+        setChatStatusLocal(id, 'watching', 'say-settle')
+      }
+      updateChatHubState(id, true)
+    }
+    const initialDelay = hasClaudeTurnBaseline(id) ? Math.min(CHAT_CLAUDE_END_TURN_POLL_MS, CHAT_POST_SAY_SETTLE_MS) : CHAT_POST_SAY_SETTLE_MS
+    const timer = setTimeout(finishSettle, initialDelay)
+    if (typeof timer.unref === 'function') timer.unref()
+    chatPostSaySettleTimers.set(id, timer)
+  }
   function noteAgentActivity(agentId, source = 'activity') {
     const id = String(agentId ?? '0')
     if (!agentIds().includes(id)) return { ok: false, error: 'unknown agent id' }
     if (source === 'say') {
-      const cur = chatStatuses.get(id)
-      const next = cur?.status === 'working' || cur?.status === 'waiting' ? 'working' : 'watching'
-      setChatStatusLocal(id, next, source)
+      if (chatStatuses.get(id)?.status === 'waiting') return { ok: true, waiting: true }
+      schedulePostSaySettle(id)
       updateChatHubState(id, true)
       return { ok: true }
     }
+    if (chatStatuses.get(id)?.status === 'waiting') return { ok: true, waiting: true }
     if (source === 'terminal') {
       const now = Date.now()
+      const postSayPending = hasPostSaySettle(id)
       const prev = Number(chatTerminalActivityAt.get(id)) || 0
-      if (now - prev < CHAT_TERMINAL_ACTIVITY_MS) return { ok: true, throttled: true }
+      if (!postSayPending && now - prev < CHAT_TERMINAL_ACTIVITY_MS) return { ok: true, throttled: true }
       chatTerminalActivityAt.set(id, now)
       const cur = chatStatuses.get(id)
       if (cur?.status === 'starting') {
@@ -509,9 +713,37 @@ export function createWorkspaceHost(a) {
         updateChatHubState(id, true)
         return { ok: true, warmup: true }
       }
-      if (cur?.status !== 'working' && cur?.status !== 'waiting') return { ok: true, passive: true }
+      if (postSayPending) clearPostSaySettle(id)
+      const postSayTerminal = postSayPending || cur?.source === 'terminal-post-say'
+      if (hasActiveWorkflow(id) || postSayPending || cur?.status === 'working' || cur?.status === 'waiting' || terminalWorkActive(id, now) || recentUserTurn(id, now)) {
+        extendTerminalWork(id, now, postSayTerminal ? CHAT_POST_SAY_TERMINAL_WORK_MS : CHAT_TERMINAL_WORK_MS)
+      } else {
+        return { ok: true, passive: true }
+      }
+      if (postSayTerminal) source = 'terminal-post-say'
     }
+    if (source !== 'terminal') clearPostSaySettle(id)
     setChatStatusLocal(id, 'working', source)
+    updateChatHubState(id, true)
+    return { ok: true }
+  }
+  function noteWorkflowRun(agentId, runId, active) {
+    const id = String(agentId ?? '0')
+    const rid = String(runId || '')
+    if (!rid) return { ok: false, error: 'missing run id' }
+    if (!agentIds().includes(id)) return { ok: false, error: 'unknown agent id' }
+    const set = chatWorkflowRuns.get(id) || new Set()
+    if (active) {
+      clearPostSaySettle(id)
+      set.add(rid)
+      chatWorkflowRuns.set(id, set)
+      setChatStatusLocal(id, 'working', 'workflow')
+    } else {
+      set.delete(rid)
+      if (set.size) chatWorkflowRuns.set(id, set)
+      else chatWorkflowRuns.delete(id)
+      recomputeChatStatus(id, 'workflow')
+    }
     updateChatHubState(id, true)
     return { ok: true }
   }
@@ -689,7 +921,7 @@ export function createWorkspaceHost(a) {
       // new spawn. It is sticky: once set it is never unset via addAgent (the spread keeps it).
       writeFileSync(mp, JSON.stringify({ ...m, id, kind: 'agent', title: m.title || name, stage: 0, createdAt: m.createdAt || Date.now(), ...(opts.orchestrators ? { orchestrators: true } : {}) }, null, 2))
     } catch { /* best-effort: the surface still works in-memory this run */ }
-    setChatStatusLocal(id, 'starting')
+    setChatStatusLocal(id, 'idle')
     updateChatHubState(id, true)
     // Launch the agent in a VISIBLE terminal at home (only when a launcher is wired — BLITZ_AGENT on).
     try { a.launchAgent?.(id, 0, name) } catch (e) { console.error('[workspace] launchAgent failed:', e?.message || e) }
@@ -708,7 +940,10 @@ export function createWorkspaceHost(a) {
   function resumeAgentsOnBoot() {
     if (typeof a.launchAgent !== 'function') return
     for (const id of agentIds()) {
-      try { a.launchAgent(id, 0) } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) } // single home → stage 0
+      try {
+        setChatStatusLocal(id, 'starting', 'resume')
+        a.launchAgent(id, 0)
+      } catch (e) { console.error('[workspace] resumeAgent failed for', id, e?.message || e) } // single home → stage 0
     }
   }
   function setAgentArchived(agentId, archived) {
@@ -734,7 +969,12 @@ export function createWorkspaceHost(a) {
     if (archived) {
       try { a.pauseAgent?.(id) } catch (e) { console.error('[workspace] pauseAgent failed for', id, e?.message || e) }
       clearChatQuietTimer(id)
+      clearPostSaySettle(id)
       chatTerminalActivityAt.delete(id)
+      chatTerminalWorkUntil.delete(id)
+      chatUserTurnAt.delete(id)
+      chatClaudeTurnStopOffset.delete(id)
+      chatWorkflowRuns.delete(id)
       setChatStatusLocal(id, 'stopped', 'archive')
     } else {
       setChatStatusLocal(id, 'starting', 'restore')
@@ -764,7 +1004,12 @@ export function createWorkspaceHost(a) {
     try { a.stopAgent?.(id) } catch (e) { console.error('[workspace] stopAgent failed for', id, e?.message || e) } // sets stopping → no auto-restart
     removeAgentFiles(activeWorkspace, id) // delete the agent dir FIRST so agentIds() drops it
     clearChatQuietTimer(id)
+    clearPostSaySettle(id)
     chatTerminalActivityAt.delete(id)
+    chatTerminalWorkUntil.delete(id)
+    chatUserTurnAt.delete(id)
+    chatClaudeTurnStopOffset.delete(id)
+    chatWorkflowRuns.delete(id)
     chatStatuses.delete(id)
     const sid = chatSurfaceId(id)
     try {
@@ -824,10 +1069,14 @@ export function createWorkspaceHost(a) {
     const aid = String(agentId ?? '0')
     const shouldAutoTitle = role === 'user' && shouldAutoTitleAgent(aid)
     const workspacePath = activeWorkspace
-    if (role === 'user') setChatStatusLocal(aid, 'working', 'user-message')
+    if (role === 'user') {
+      clearPostSaySettle(aid)
+      rememberClaudeTurnBaseline(aid)
+      chatUserTurnAt.set(aid, Date.now())
+      setChatStatusLocal(aid, 'working', 'user-message')
+    }
     if (role === 'agent') {
-      const cur = chatStatuses.get(aid)
-      setChatStatusLocal(aid, cur?.status === 'working' || cur?.status === 'waiting' ? 'working' : 'watching', 'say')
+      schedulePostSaySettle(aid, text)
     }
     appendChatMessage(activeWorkspace, role, text, aid, meta)
     const props = updateChatHubState(aid, true)
@@ -1122,6 +1371,7 @@ export function createWorkspaceHost(a) {
     systemUiInfo,
     setChatStatus,
     noteAgentActivity,
+    noteWorkflowRun,
     chatStatusSnapshot,
     chatHubProps,
     agentIds,

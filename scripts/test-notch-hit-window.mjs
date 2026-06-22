@@ -30,6 +30,7 @@ const notchCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/notch.css')
 const css = readFileSync(join(repoRoot, 'src/renderer/src/styles.css'), 'utf8')
 const workspaceHost = readFileSync(join(repoRoot, 'src/main/workspace-host.mjs'), 'utf8')
 const workspaceHostTypes = readFileSync(join(repoRoot, 'src/main/workspace-host.d.mts'), 'utf8')
+const agentTranscript = readFileSync(join(repoRoot, 'src/main/agent-transcript.mjs'), 'utf8')
 const chatTitleer = readFileSync(join(repoRoot, 'src/main/chat-titleer.mjs'), 'utf8')
 const osActions = readFileSync(join(repoRoot, 'src/main/osActions.ts'), 'utf8')
 const terminalManager = readFileSync(join(repoRoot, 'src/main/terminal-manager.mjs'), 'utf8')
@@ -110,8 +111,9 @@ ok('home renders a compact working-agent rail that matches the tab active-work s
   /onOpenAgent: \(id: string\) => void/.test(islandHome) &&
     /const isActiveStatus = \(value: string\): boolean => value === 'working' \|\| value === 'starting'/.test(islandHome) &&
     /const isWorkingStatus = \(value: string\): boolean => value === 'working'/.test(islandHome) &&
+    /const isWaitingStatus = \(value: string\): boolean => value === 'waiting'/.test(islandHome) &&
     /doneAgentIds: string\[\]/.test(islandHome) &&
-    /const railSessions = sessions\.filter\(\(s\) => isWorkingStatus\(status\[s\.id\] \|\| s\.status\) \|\| doneAgents\.has\(s\.id\)\)/.test(islandHome) &&
+    /const railSessions = sessions\.filter\(\(s\) => \{[\s\S]*?isWorkingStatus\(rawStatus\) \|\| isWaitingStatus\(rawStatus\) \|\| doneAgents\.has\(s\.id\)/.test(islandHome) &&
     /const rawStatus = status\[s\.id\] \|\| s\.status/.test(islandHome) &&
     /className="isl-home-layout"/.test(islandHome) &&
     /className="isl-home-chat-zone"/.test(islandHome) &&
@@ -123,7 +125,8 @@ ok('home renders a compact working-agent rail that matches the tab active-work s
     !/isl-app-empty/.test(islandHome) &&
     /agentGradient\(s\.id\)/.test(islandHome) &&
     /isl-working-agent-dot/.test(islandHome) &&
-    /homeState === 'done' \? 'Done' : 'Working'/.test(islandHome) &&
+    /isl-working-agent-alert/.test(islandHome) &&
+    /homeState === 'done' \? 'Done' : homeState === 'waiting' \? 'Response Needed' : 'Working'/.test(islandHome) &&
     /onClick=\{\(\) => onOpenAgent\(s\.id\)\}/.test(islandHome) &&
     /\.nh-island\.isl-home\.has-working/.test(islandCss) &&
     /\.isl-home-layout \{[\s\S]*?grid-template-columns: minmax\(0, 220px\) minmax\(0, 220px\)/.test(islandCss) &&
@@ -131,7 +134,15 @@ ok('home renders a compact working-agent rail that matches the tab active-work s
     homeEmptyBlock.includes('padding: 12px 2px 0') &&
     !/background:|border:|border-radius:|min-height:|place-items:/.test(homeEmptyBlock) &&
     /\.isl-working-agent-main \{[\s\S]*?gap: 2px/.test(islandCss) &&
-    /\.isl-working-agent-dot \{[\s\S]*?border-top-color: var\(--isl-accent\)[\s\S]*?animation: isl-spin/.test(islandCss))
+    /\.isl-working-agent-dot \{[\s\S]*?border-top-color: var\(--isl-accent\)[\s\S]*?animation: isl-spin/.test(islandCss) &&
+    /\.isl-working-agent\[data-home-state='waiting'\]/.test(islandCss) &&
+    /\.isl-working-agent-alert/.test(islandCss))
+ok('notch renders one effective session-status list for tabs, active status, and Home',
+  /const displaySessions = sessions\.map\(\(s\) => \(\{ \.\.\.s, status: status\[s\.id\] \|\| s\.status \}\)\)/.test(notchHost) &&
+    /const N = displaySessions\.length/.test(notchHost) &&
+    /const activeSession = activeIndex >= 0 \? displaySessions\[activeIndex\] : null/.test(notchHost) &&
+    /sessions=\{displaySessions\}/.test(notchHost) &&
+    /const homeSessions = debugFakeHomeAgents \? FAKE_HOME_AGENTS : displaySessions/.test(notchHost))
 ok('settings can enable a fake 10-agent Home grid design preview',
   /DEBUG_FAKE_HOME_AGENTS_KEY = 'blitzos\.debug\.showFakeHomeAgents'/.test(notchHost) &&
     /const FAKE_HOME_AGENTS: IslandSession\[\] = \[/.test(notchHost) &&
@@ -140,7 +151,7 @@ ok('settings can enable a fake 10-agent Home grid design preview',
     /function readDebugFakeHomeAgents\(\): boolean/.test(notchHost) &&
     /const \[debugFakeHomeAgents, setDebugFakeHomeAgents\] = useState\(readDebugFakeHomeAgents\)/.test(notchHost) &&
     /const chooseDebugFakeHomeAgents = \(on: boolean\): void =>/.test(notchHost) &&
-    /const homeSessions = debugFakeHomeAgents \? FAKE_HOME_AGENTS : sessions/.test(notchHost) &&
+    /const homeSessions = debugFakeHomeAgents \? FAKE_HOME_AGENTS : displaySessions/.test(notchHost) &&
     /const homeStatus = debugFakeHomeAgents \? FAKE_HOME_STATUS : status/.test(notchHost) &&
     /const homeDoneAgentIds = debugFakeHomeAgents \? FAKE_HOME_DONE_IDS : Object\.keys\(homeDoneAgents\)/.test(notchHost) &&
     /sessions=\{homeSessions\}/.test(notchHost) &&
@@ -154,7 +165,8 @@ ok('settings can enable a fake 10-agent Home grid design preview',
 ok('home keeps a reviewable Done pseudo-status when an agent finishes while Home is open',
   /const isHomeActiveStatus = \(value\?: string\): boolean => value === 'working' \|\| value === 'starting'/.test(notchHost) &&
     /const isHomeWorkingStatus = \(value\?: string\): boolean => value === 'working'/.test(notchHost) &&
-    /const isHomeDoneReviewStatus = \(value\?: string\): boolean => !!value && !isHomeActiveStatus\(value\) && value !== 'error'/.test(notchHost) &&
+    /const isHomeWaitingStatus = \(value\?: string\): boolean => value === 'waiting'/.test(notchHost) &&
+    /const isHomeDoneReviewStatus = \(value\?: string\): boolean => !!value && !isHomeActiveStatus\(value\) && !isHomeWaitingStatus\(value\) && value !== 'error'/.test(notchHost) &&
     /HOME_DONE_AGENTS_KEY = 'blitzos\.home\.doneAgents'/.test(notchHost) &&
     /HOME_SEEN_WORKING_AGENTS_KEY = 'blitzos\.home\.seenWorkingAgents'/.test(notchHost) &&
     /function readHomeDoneAgents\(\): Record<string, true>/.test(notchHost) &&
@@ -174,13 +186,14 @@ ok('home keeps a reviewable Done pseudo-status when an agent finishes while Home
     /const reconcileHomeAgentReviewState = \(nextSessions = sessionsRef\.current, nextStatus = statusRef\.current\): void =>/.test(notchHost) &&
     /viewRef\.current === 'home' && isHomeWorkingStatus\(rawStatus\)/.test(notchHost) &&
     /isHomeDoneReviewStatus\(rawStatus\)[\s\S]*?doneAdd\.push\(id\)/.test(notchHost) &&
+    /isHomeWaitingStatus\(rawStatus\)[\s\S]*?doneClear\.push\(id\)/.test(notchHost) &&
     /reconcileHomeAgentReviewState\(arr, statusRef\.current\)/.test(notchHost) &&
     /reconcileHomeAgentReviewState\(sessionsRef\.current, nextStatus\)/.test(notchHost) &&
     /viewRef\.current === 'home' && isHomeWorkingStatus\(prevStatus\[id\]\) && isHomeDoneReviewStatus\(next\)/.test(notchHost) &&
     /clearHomeReviewAgents\(\)/.test(notchHost) &&
     /clearHomeReviewAgents\(id\)/.test(notchHost) &&
     /doneAgentIds=\{homeDoneAgentIds\}/.test(notchHost) &&
-    /homeState === 'done' \? 'Done' : 'Working'/.test(islandHome) &&
+    /homeState === 'done' \? 'Done' : homeState === 'waiting' \? 'Response Needed' : 'Working'/.test(islandHome) &&
     /isl-working-agent-check/.test(islandHome) &&
     /\.isl-working-agent\[data-home-state='done'\]/.test(islandCss) &&
     /\.isl-working-agent-check/.test(islandCss))
@@ -188,13 +201,74 @@ ok('home working-agent rail jumps directly to the selected agent chat',
   /const openAgentChat = \(id: string\): void => \{[\s\S]*?const idx = sessions\.findIndex\(\(s\) => s\.id === id\)[\s\S]*?setPage\(idx \+ 1\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
     /onOpenAgent=\{openAgentChat\}/.test(notchHost))
 ok('notch agent status text keeps the backend starting state visible as Warming up',
-  /s === 'starting' \|\| s === 'reconnecting' \? 'warming' : s === 'working' \? 'working' : 'idle'/.test(islandPanel) &&
+  /s === 'starting' \|\| s === 'reconnecting' \? 'warming' : s === 'working' \? 'working' : s === 'waiting' \? 'waiting' : 'idle'/.test(islandPanel) &&
     /case 'working':[\s\S]*?return 'Working'[\s\S]*?case 'starting':[\s\S]*?return 'Warming up'[\s\S]*?case 'reconnecting'/.test(islandPanel) &&
+    /case 'waiting':[\s\S]*?return 'Response Needed'/.test(islandPanel) &&
+    /case 'stopped':[\s\S]*?return 'Idle'/.test(islandPanel) &&
     /statusLabel\(status\)/.test(islandPanel) &&
     /\.isl-chip-dot\[data-status='warming'\] \{[\s\S]*?animation: isl-dot-pulse/.test(islandCss) &&
     /\.isl-chip-dot\[data-status='working'\] \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
+    /\.isl-chip-dot\[data-status='waiting'\]/.test(islandCss) &&
+    /\.isl-status\[data-status='waiting'\]/.test(islandCss) &&
     /\.isl-status\[data-status='working'\] \.isl-status-dot \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
     /@keyframes isl-spin/.test(islandCss))
+ok('workspace host derives working status from contextual terminal output and active workflow runs',
+  /chatWorkflowRuns = new Map/.test(workspaceHost) &&
+    /chatTerminalWorkUntil = new Map/.test(workspaceHost) &&
+    /chatUserTurnAt = new Map/.test(workspaceHost) &&
+    /function clearTurnActivity\(agentId\)/.test(workspaceHost) &&
+    /function noteWorkflowRun\(agentId, runId, active\)/.test(workspaceHost) &&
+    /hasActiveWorkflow\(id\)[\s\S]*?terminalWorkActive\(id\)/.test(workspaceHost) &&
+    /recentUserTurn\(id, now\)/.test(workspaceHost))
+ok('workflow-run broadcasts update chat status, not only the workflow registry',
+  /osNoteWfRun\(action\)[\s\S]*?wsHost\?\.noteWorkflowRun\(String\(action\.agentId\), String\(action\.runId\), true\)[\s\S]*?wsHost\?\.noteWorkflowRun\(String\(action\.agentId\), String\(action\.runId\), false\)/.test(osActions) &&
+    /noteWorkflowRun\(agentId: string, runId: string, active: boolean\)/.test(workspaceHostTypes))
+ok('new agents do not flash Warming up, while existing starting agents still can',
+  /setChatStatusLocal\(id, 'idle'\)[\s\S]*?updateChatHubState\(id, true\)[\s\S]*?a\.launchAgent\?/.test(workspaceHost) &&
+    /setChatStatusLocal\(id, 'starting', 'resume'\)/.test(workspaceHost) &&
+    /terminal\?\.kind === 'agent' && action\.id != null && wsHost\?\.chatStatusSnapshot\?\.\(\)\?\.\[String\(action\.id\)\] === 'starting'/.test(osActions))
+ok('agent replies use a soft post-reply settle window instead of hard-completing the turn',
+  /CHAT_POST_SAY_SETTLE_MS/.test(workspaceHost) &&
+    /chatPostSaySettleTimers = new Map/.test(workspaceHost) &&
+    /function schedulePostSaySettle\(agentId, text = ''\)/.test(workspaceHost) &&
+    /terminalWorkActive\(id\) \|\| recentUserTurn\(id\)/.test(workspaceHost) &&
+    /if \(source === 'say'\) \{[\s\S]*?schedulePostSaySettle\(id\)[\s\S]*?return \{ ok: true \}/.test(workspaceHost) &&
+    /if \(role === 'agent'\) \{[\s\S]*?schedulePostSaySettle\(aid, text\)/.test(workspaceHost) &&
+    !/if \(role === 'agent'\) \{[\s\S]*?clearTurnActivity\(aid\)[\s\S]*?setChatStatusLocal\(aid, hasActiveWorkflow\(aid\) \? 'working' : 'watching', 'say'\)/.test(workspaceHost))
+ok('terminal activity during the post-reply settle window keeps the agent working',
+  /const postSayPending = hasPostSaySettle\(id\)/.test(workspaceHost) &&
+    /if \(!postSayPending && now - prev < CHAT_TERMINAL_ACTIVITY_MS\)/.test(workspaceHost) &&
+    /if \(postSayPending\) clearPostSaySettle\(id\)/.test(workspaceHost) &&
+    /hasActiveWorkflow\(id\) \|\| postSayPending \|\| cur\?\.status === 'working'/.test(workspaceHost))
+ok('post-reply terminal activity uses a shorter continuation lease',
+  /CHAT_POST_SAY_TERMINAL_WORK_MS/.test(workspaceHost) &&
+    /function shortenTerminalWorkAfterSay\(agentId, now = Date\.now\(\)\)/.test(workspaceHost) &&
+    /shortenTerminalWorkAfterSay\(id\)/.test(workspaceHost) &&
+    /const postSayTerminal = postSayPending \|\| cur\?\.source === 'terminal-post-say'/.test(workspaceHost) &&
+    /extendTerminalWork\(id, now, postSayTerminal \? CHAT_POST_SAY_TERMINAL_WORK_MS : CHAT_TERMINAL_WORK_MS\)/.test(workspaceHost) &&
+    /if \(postSayTerminal\) source = 'terminal-post-say'/.test(workspaceHost))
+ok('Claude end_turn is used as a fresh backend turn-complete signal for status',
+  /export function lastAssistantStop\(jsonlPath\)/.test(agentTranscript) &&
+    /stopReason: String\(d\.message\.stop_reason\)/.test(agentTranscript) &&
+    /offset: offsets\[i\]/.test(agentTranscript) &&
+    /sessionJsonlPath, lastAssistantStop/.test(workspaceHost) &&
+    /chatClaudeTurnStopOffset = new Map/.test(workspaceHost) &&
+    /CHAT_CLAUDE_END_TURN_POLL_MS/.test(workspaceHost) &&
+    /function rememberClaudeTurnBaseline\(agentId\)/.test(workspaceHost) &&
+    /function hasClaudeTurnBaseline\(agentId\)/.test(workspaceHost) &&
+    /function claudeTurnEndedClean\(agentId\)/.test(workspaceHost) &&
+    /stop\.stopReason === 'end_turn' && Number\(stop\.offset\) > baseline/.test(workspaceHost) &&
+    /setTimeout\(finishSettle, nextDelay\)/.test(workspaceHost) &&
+    /claudeTurnEndedClean\(id\)[\s\S]*?setChatStatusLocal\(id, 'watching', 'claude-end-turn'\)/.test(workspaceHost))
+ok('blitz-ui choice prompts mark the agent response-needed until the user responds',
+  /function isBlitzUiChoiceText\(text\)/.test(workspaceHost) &&
+    /isBlitzUiChoiceText\(text\)[\s\S]*?setChatStatusLocal\(id, 'waiting', 'ask'\)/.test(workspaceHost) &&
+    /if \(chatStatuses\.get\(id\)\?\.status === 'waiting'\) return \{ ok: true, waiting: true \}/.test(workspaceHost) &&
+    /if \(s === 'working' \|\| s === 'starting'\) scheduleChatWatching/.test(workspaceHost) &&
+    /chatUserTurnAt\.set\(aid, Date\.now\(\)\)[\s\S]*?setChatStatusLocal\(aid, 'working', 'user-message'\)/.test(workspaceHost))
+ok('explicit idle final replies settle without waiting for the generic terminal-work lease',
+  /function isIdleCompletionText\(text\)/.test(workspaceHost) &&
+    /isIdleCompletionText\(text\)[\s\S]*?clearTurnActivity\(id\)[\s\S]*?setChatStatusLocal\(id, 'watching', 'say-final'\)/.test(workspaceHost))
 ok('renderer: the visual pill uses the REAL notch width + is gated on a real notch (no notch → no band, ⌥Space only)',
   /style=\{\{ width: notchWidth/.test(app) && /notchOn && hasNotch &&/.test(app) &&
     /notchClipFor\(notchState[\s\S]*?notchWidth\)/.test(app))

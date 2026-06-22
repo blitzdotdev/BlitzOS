@@ -360,7 +360,9 @@ export function osBroadcast(action: Record<string, unknown>): void {
   try {
     if (action?.type === 'terminal-spawn') {
       const terminal = action.terminal as { kind?: unknown } | undefined
-      if (terminal?.kind === 'agent' && action.id != null) wsHost?.setChatStatus(String(action.id), 'starting')
+      if (terminal?.kind === 'agent' && action.id != null && wsHost?.chatStatusSnapshot?.()?.[String(action.id)] === 'starting') {
+        wsHost.setChatStatus(String(action.id), 'starting')
+      }
     } else if (action?.type === 'terminal-data') {
       if (action.id != null) wsHost?.noteAgentActivity(String(action.id), 'terminal')
     } else if (action?.type === 'terminal-stop') {
@@ -370,6 +372,10 @@ export function osBroadcast(action: Record<string, unknown>): void {
     } else if (action?.type === 'workflow-run') {
       // record + re-broadcast to the island (started/done) for the in-chat kanban
       osNoteWfRun(action)
+      if (action.runId != null && action.agentId != null) {
+        if (action.started) wsHost?.noteWorkflowRun(String(action.agentId), String(action.runId), true)
+        if (action.done) wsHost?.noteWorkflowRun(String(action.agentId), String(action.runId), false)
+      }
     }
   } catch {
     /* status sync is best-effort; the terminal event itself must still publish */

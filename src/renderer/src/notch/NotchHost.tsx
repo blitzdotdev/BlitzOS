@@ -24,13 +24,14 @@ const HOME_SEEN_WORKING_AGENTS_KEY = 'blitzos.home.seenWorkingAgents'
 const AGENT_NAME_MAX = 24
 const isHomeActiveStatus = (value?: string): boolean => value === 'working' || value === 'starting'
 const isHomeWorkingStatus = (value?: string): boolean => value === 'working'
-const isHomeDoneReviewStatus = (value?: string): boolean => !!value && !isHomeActiveStatus(value) && value !== 'error'
+const isHomeWaitingStatus = (value?: string): boolean => value === 'waiting'
+const isHomeDoneReviewStatus = (value?: string): boolean => !!value && !isHomeActiveStatus(value) && !isHomeWaitingStatus(value) && value !== 'error'
 const FAKE_HOME_AGENTS: IslandSession[] = [
   { id: 'fake-home-1', title: 'Research', status: 'working' },
   { id: 'fake-home-2', title: 'Build pass', status: 'working' },
   { id: 'fake-home-3', title: 'Review queue', status: 'idle' },
   { id: 'fake-home-4', title: 'Browser QA', status: 'working' },
-  { id: 'fake-home-5', title: 'Docs sweep', status: 'watching' },
+  { id: 'fake-home-5', title: 'Docs sweep', status: 'waiting' },
   { id: 'fake-home-6', title: 'Deploy check', status: 'working' },
   { id: 'fake-home-7', title: 'Inbox triage', status: 'idle' },
   { id: 'fake-home-8', title: 'Data pull', status: 'working' },
@@ -41,7 +42,7 @@ const FAKE_HOME_STATUS = FAKE_HOME_AGENTS.reduce<Record<string, string>>((acc, s
   acc[s.id] = s.status
   return acc
 }, {})
-const FAKE_HOME_DONE_IDS = FAKE_HOME_AGENTS.filter((s) => !isHomeWorkingStatus(s.status)).map((s) => s.id)
+const FAKE_HOME_DONE_IDS = FAKE_HOME_AGENTS.filter((s) => isHomeDoneReviewStatus(s.status)).map((s) => s.id)
 
 // peek toggle glyphs: compress (corners in → enter peek) / expand (corners out → back to chat).
 const PEEK_IN = 'M5 9h4a1 1 0 0 0 1-1V4M19 9h-4a1 1 0 0 1-1-1V4M5 15h4a1 1 0 0 1 1 1v4M19 15h-4a1 1 0 0 0-1 1v4'
@@ -309,7 +310,7 @@ export function NotchHost({
 
     for (const session of nextSessions) {
       const rawStatus = liveStatus[session.id]
-      if (isHomeActiveStatus(rawStatus)) doneClear.push(session.id)
+      if (isHomeActiveStatus(rawStatus) || isHomeWaitingStatus(rawStatus)) doneClear.push(session.id)
       if (viewRef.current === 'home' && isHomeWorkingStatus(rawStatus)) ensureSeen(session.id)
     }
     for (const id of Object.keys(seenPrev)) {
@@ -321,6 +322,9 @@ export function NotchHost({
       const rawStatus = liveStatus[id]
       if (isHomeDoneReviewStatus(rawStatus)) {
         doneAdd.push(id)
+        clearSeen(id)
+      } else if (isHomeWaitingStatus(rawStatus)) {
+        doneClear.push(id)
         clearSeen(id)
       } else if (isHomeActiveStatus(rawStatus)) {
         doneClear.push(id)
@@ -358,7 +362,7 @@ export function NotchHost({
     const doneIds: string[] = []
     const activeIds: string[] = []
     for (const [id, next] of Object.entries(nextStatus)) {
-      if (isHomeActiveStatus(next)) {
+      if (isHomeActiveStatus(next) || isHomeWaitingStatus(next)) {
         activeIds.push(id)
         continue
       }
@@ -653,10 +657,11 @@ export function NotchHost({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [attachOpen])
 
-  const N = sessions.length
+  const displaySessions = sessions.map((s) => ({ ...s, status: status[s.id] || s.status }))
+  const N = displaySessions.length
   const safePage = clamp(page, 0, N)
   const activeIndex = safePage === 0 ? -1 : safePage - 1
-  const activeSession = activeIndex >= 0 ? sessions[activeIndex] : null
+  const activeSession = activeIndex >= 0 ? displaySessions[activeIndex] : null
   const activeId = activeSession?.id
   activeIdRef.current = activeId ?? '' // '' = the new-session composer; sources dropped there are reassigned on spawn
   const messages = activeId ? threads[activeId] || [] : []
@@ -834,7 +839,7 @@ export function NotchHost({
     setAttachOpen(false)
     setView('session')
   }
-  const homeSessions = debugFakeHomeAgents ? FAKE_HOME_AGENTS : sessions
+  const homeSessions = debugFakeHomeAgents ? FAKE_HOME_AGENTS : displaySessions
   const homeStatus = debugFakeHomeAgents ? FAKE_HOME_STATUS : status
   const homeDoneAgentIds = debugFakeHomeAgents ? FAKE_HOME_DONE_IDS : Object.keys(homeDoneAgents)
   return (
@@ -915,7 +920,7 @@ export function NotchHost({
           />
         ) : (
           <IslandPanel
-            sessions={sessions}
+            sessions={displaySessions}
             page={safePage}
             onSelectPage={goPage}
             messages={messages}
