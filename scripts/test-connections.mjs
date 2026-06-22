@@ -312,6 +312,13 @@ async function main() {
   const rops = makeConnectionOps({ getWorkspacePath: () => regWs, createSurface: () => 'rs', registryUrl: 'http://reg.test', fetchImpl: fakeFetch })
   const rconn = rops.connectionBind({ type: 'tab', sourceId: 'docs.google.com', title: 'Doc', adapter: stubAdapter() }).connId
 
+  // bind warms registryCache (fire-and-forget) so connection_list SURFACES available registry tools — the fix
+  // for the registry being invisible-until-queried (agents re-deriving because they never saw vetted tools).
+  await new Promise((r) => setTimeout(r, 60))
+  const briefing = rops.connectionList().connections.find((c) => c.connId === rconn)
+  ok('connection_list briefing SURFACES registryTools for the source', Array.isArray(briefing.registryTools) && briefing.registryTools.some((t) => t.name === 'read_text'))
+  ok('surfaced registryTools are metadata only (no code)', briefing.registryTools.every((t) => t.code === undefined))
+
   const search = await rops.connectionRegistrySearch({ connection: rconn })
   ok('registry_search returns entries for the connection sourceId', search.sourceId === 'docs.google.com' && search.entries.length === 1 && search.entries[0].name === 'read_text')
   ok('registry_search returns METADATA ONLY (no code)', search.entries[0].code === undefined)

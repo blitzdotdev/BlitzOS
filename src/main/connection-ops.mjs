@@ -92,6 +92,7 @@ export function makeConnectionOps({
   // connId -> { connId, type:'tab'|'window', sourceId, title, capabilities, status, surfaceId, adapter }
   const registry = new Map()
   const bySurface = new Map() // surfaceId -> connId (for per-connId widget scoping)
+  const registryCache = new Map() // sourceId -> [{name,description,kind}] available in the first-party registry
   const rec = (connId) => registry.get(String(connId)) || null
   let tabLink = null // the tab link (connection-tab-link.mjs) registers itself via setTabLink
   let windowLink = null // the window link (connection-window-link.ts, Electron-only) registers via setWindowLink
@@ -247,6 +248,10 @@ export function makeConnectionOps({
       }
     }
     emitConnectionMoment(surfaceId || 'system', { connId, sourceId: sid, status: 'live', verb: 'connected', agentId: record.agentId || '0' })
+    // Warm the registry-availability cache (fire-and-forget) so the agent's connection_list briefing SHOWS the
+    // vetted tools that exist for this source — instead of the registry being invisible-until-queried (the
+    // reason agents re-derive from scratch). If tools exist, it wakes the agent once with the names.
+    void refreshRegistryForSource(sid, connId)
     return { connId, surfaceId }
   }
 
@@ -270,6 +275,7 @@ export function makeConnectionOps({
       }
     }
     emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: sid, status: r.status, verb: `navigated: ${from} → ${sid}`, agentId: r.agentId || '0' })
+    void refreshRegistryForSource(sid, connId) // the new host may have its own vetted registry tools
     return { ok: true, changed: true, from, to: sid }
   }
 
@@ -358,6 +364,9 @@ export function makeConnectionOps({
           agentId: r.agentId || '',
           // the per-connection briefing (agents.md analog): a fresh session learns what this source already knows
           savedTools: readTools(r.sourceId).map((t) => ({ name: t.name, description: t.description, kind: t.kind })),
+          // vetted tools available in the first-party registry for this source (warmed on connect) — so the agent
+          // SEES them in its briefing and connection_registry_add's one, instead of re-deriving from scratch.
+          registryTools: registryCache.get(r.sourceId) || [],
           description: readDescription(r.sourceId) || undefined
         }))
     }
@@ -762,6 +771,27 @@ export function makeConnectionOps({
       return { body: await res.json() }
     } catch {
       return { error: 'tool registry returned invalid JSON' }
+    }
+  }
+
+  // Warm registryCache for a source (fire-and-forget on connect/rekey) so connection_list can SHOW vetted tools
+  // exist for it — the registry was pull-only/invisible-until-queried, which is why agents re-derived from
+  // scratch. If tools are found, wake the agent once with their names so it can connection_registry_add them.
+  // Best-effort; never throws (a missing/offline registry just means no hint).
+  async function refreshRegistryForSource(sourceId, connId) {
+    if (!registryUrl || !sourceId) return
+    try {
+      const r = await connectionRegistrySearch({ sourceId })
+      const tools = r && Array.isArray(r.entries) ? r.entries.map((e) => ({ name: e.name, description: e.description, kind: e.kind })) : []
+      registryCache.set(sourceId, tools)
+      if (tools.length && connId) {
+        const r0 = rec(connId)
+        if (r0 && r0.sourceId === sourceId) {
+          emitConnectionMoment(r0.surfaceId || 'system', { connId, sourceId, status: r0.status, verb: `${tools.length} vetted registry tool(s) available — connection_registry_add to use: ${tools.map((t) => t.name).join(', ')}`, agentId: r0.agentId || '0', registryTools: tools })
+        }
+      }
+    } catch {
+      /* registry offline — no hint, agents still work */
     }
   }
 
