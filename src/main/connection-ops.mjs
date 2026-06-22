@@ -618,15 +618,33 @@ export function makeConnectionOps({
     if (!tabLink && !safariLink) return { error: 'no tab link — install + connect the BlitzOS Connector extension (Chrome), or enable Safari Apple Events' }
     return { tabs: out }
   }
+  // Enrich a connect result with the source's BRIEFING — savedTools (banked here) + registryTools (vetted,
+  // available to add) — so the agent SEES reusable tools in the very response it gets on connect, before it
+  // decides to act. (connection_list also carries these, but the agent's connect→act flow can skip it.)
+  async function attachBriefing(res) {
+    if (!res || res.error || !res.connId) return res
+    const sid = res.sourceId || (rec(res.connId) && rec(res.connId).sourceId)
+    if (sid) {
+      try {
+        await refreshRegistryForSource(sid, res.connId) // await so registryTools is ready in the result
+      } catch {
+        /* registry offline */
+      }
+      res.savedTools = readTools(sid).map((t) => ({ name: t.name, description: t.description, kind: t.kind }))
+      res.registryTools = registryCache.get(sid) || []
+    }
+    return res
+  }
+
   async function connectionConnectTab(tabId, opts) {
     const safari = (opts && opts.browser === 'safari') || String(tabId).startsWith('safari:')
     if (safari) {
       if (!safariLink || typeof safariLink.connectTab !== 'function') return { error: 'Safari link not available' }
-      return safariLink.connectTab(String(tabId), opts || {})
+      return attachBriefing(await safariLink.connectTab(String(tabId), opts || {}))
     }
     if (!tabLink || typeof tabLink.connectTab !== 'function') return { error: 'no tab link — install + connect the BlitzOS Connector extension first' }
     if (tabId == null) return { error: 'tabId required' }
-    return tabLink.connectTab(Number(tabId), opts || {})
+    return attachBriefing(await tabLink.connectTab(Number(tabId), opts || {}))
   }
   // ---- the window link (connection-window-link.ts) registers itself the same way; window connect is
   // macOS-and-local-only (it needs the BlitzComputerUse helper's AX/CGEvent/ScreenCaptureKit). ----
@@ -640,7 +658,7 @@ export function makeConnectionOps({
   async function connectionConnectWindow(windowId, opts) {
     if (!windowLink || typeof windowLink.connectWindow !== 'function') return { error: 'no window link — window connect needs the BlitzComputerUse helper (macOS, local only)' }
     if (windowId == null) return { error: 'windowId required' }
-    return windowLink.connectWindow(Number(windowId), opts || {})
+    return attachBriefing(await windowLink.connectWindow(Number(windowId), opts || {}))
   }
   // Reconnect a source by its sourceId — the "Reconnect" affordance on a DISCONNECTED widget. Re-finds the
   // matching tab/window (by origin host for a tab, bundle id for a window) among what's currently connectable

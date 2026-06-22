@@ -427,7 +427,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_connect_tab',
       description:
-        "Connect a browser tab (a tabId from connection_list_tabs) into BlitzOS as a per-source tool provider, and spawn its representation widget. This is the agent-initiated 'connect the user's Gmail tab' path. Args: {tabId, title?}. Returns { connId, surfaceId, sourceId }.",
+        "Connect a browser tab (a tabId from connection_list_tabs) into BlitzOS as a per-source tool provider. Args: {tabId, title?}. Returns { connId, sourceId, savedTools, registryTools } — CHECK savedTools (already banked) and registryTools (vetted, available via connection_registry_add) BEFORE deriving JS: if one fits the task, call_tool/registry_add it instead of figuring it out from scratch.",
       input_schema: { type: 'object', required: ['tabId'], properties: { tabId: { type: ['number', 'string'] }, title: { type: 'string' }, agent: { type: 'string', description: 'your agent/session id — owns this connection (for connection_list scoping)' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionConnectTab !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
@@ -448,7 +448,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_connect_window',
       description:
-        "Connect a macOS app window (a windowId from connection_list_windows) into BlitzOS as a per-source tool provider, and spawn its representation widget. Read via its accessibility tree (or a screenshot when AX is thin); act via AXPress/set (background) or coordinate CGEvent (needs the window raised). Args: {windowId, title?}. Returns { connId, surfaceId, sourceId }.",
+        "Connect a macOS app window (a windowId from connection_list_windows) into BlitzOS as a per-source tool provider. Read via its accessibility tree (or a screenshot when AX is thin); act via AXPress/set (background) or coordinate CGEvent (needs the window raised). Args: {windowId, title?}. Returns { connId, sourceId, savedTools, registryTools } — check savedTools/registryTools before deriving.",
       input_schema: { type: 'object', required: ['windowId'], properties: { windowId: { type: 'number' }, title: { type: 'string' }, agent: { type: 'string', description: 'your agent/session id — owns this connection (for connection_list scoping)' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionConnectWindow !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
