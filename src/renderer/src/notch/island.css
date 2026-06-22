@@ -554,6 +554,65 @@ button.isl-app-chat:active .isl-app-icon {
   line-height: 1;
   margin-top: -1px;
 }
+.nh-island .isl-workflows {
+  height: 36px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-muted);
+  font-family: var(--isl-font);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+  padding: 0 11px 0 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.14s ease-out, border-color 0.14s ease-out, background 0.14s ease-out;
+}
+.nh-island .isl-workflows:hover {
+  color: var(--isl-text);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+.nh-island .isl-workflows.on {
+  color: #fff3c4;
+  border-color: rgba(255, 204, 64, 0.58);
+  background: rgba(255, 204, 64, 0.14);
+}
+.nh-island .isl-workflows:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+.nh-island .isl-workflows-switch {
+  width: 26px;
+  height: 16px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  padding: 2px;
+  transition: background 0.14s ease-out;
+}
+.nh-island .isl-workflows.on .isl-workflows-switch {
+  background: #ffcc40;
+}
+.nh-island .isl-workflows-knob {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.32);
+  transform: translateX(0);
+  transition: transform 0.14s ease-out, background 0.14s ease-out;
+}
+.nh-island .isl-workflows.on .isl-workflows-knob {
+  background: #14120a;
+  transform: translateX(10px);
+}
 /* the inline attachment panel: a grid-rows height animation (0fr → 1fr) so it grows/springs smoothly above the
    message bar (paired with the chassis width grow in notch.css). */
 .nh-island .isl-attach-wrap {

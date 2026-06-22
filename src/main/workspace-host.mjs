@@ -529,6 +529,7 @@ export function createWorkspaceHost(a) {
       updatedAt: Math.max(Number(messages[messages.length - 1]?.ts) || 0, Number(chatStatuses.get(id)?.updatedAt) || 0),
       lastMessagePreview: previewText(messages),
       unread: false,
+      orchestrators: !!meta.orchestrators,
       ...(meta.archived ? { archivedAt: Number(meta.archivedAt) || 0 } : {})
     }
   }
@@ -662,8 +663,8 @@ export function createWorkspaceHost(a) {
     return { id, title: name, focus: !!opts.focus }
   }
   /** Toggle the ORCHESTRATORS (dynamic-workflows) capability on an agent: set/clear the durable flag on its
-   *  meta.json. The boot-task provider reads it on every (re)launch (so the duty lands in bootstrap), and
-   *  spawnTerminal carries it across re-exec. The LIVE wake (delivery B) is the caller's job (osActions). */
+   *  meta.json. The boot-task provider reads it on every (re)launch, while the island queues a hidden one-shot
+   *  instruction for the next real user message so the visible transcript stays clean. */
   function setAgentOrchestrators(agentId, on) {
     return setTerminalOrchestrators(agentDir(), String(agentId), !!on)
   }

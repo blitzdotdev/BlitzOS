@@ -63,10 +63,12 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     debugTerminalEnabled,
     activeTerminal,
     onArchiveAgent,
-    onRenameAgent
+    onRenameAgent,
+    onSetWorkflows
   } = props
   const top = Math.max(28, menuBarH) + 8
   const isNew = page === 0 // the pen tab
+  const activeSession = activeId ? sessions.find((s) => s.id === activeId) : undefined
   const feedRef = useRef<HTMLDivElement>(null)
   const lyricsRef = useRef<HTMLDivElement>(null)
   // Attach mode in an AGENT chat: lock the island to the height it had BEFORE attach opened, so the attachment panel
@@ -82,6 +84,8 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const sentTray = useSentTray(activeId)
   const pendingNewSessionRef = useRef<TrayGroup[] | null>(null) // composer ('') tray, pinned to the spawned agent's msg 0
   const seenChatRef = useRef<Set<string>>(new Set())
+  const [newSessionWorkflows, setNewSessionWorkflows] = useState(false)
+  const [pendingWorkflowToggle, setPendingWorkflowToggle] = useState(false)
   // On first sight of a freshly spawned agent, pin the composer tray captured at its spawning send to its first message.
   useEffect(() => {
     if (!activeId) return
@@ -94,18 +98,31 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   // Freeze an EXACT copy of the live dropbox (getLiveTray) onto the message being sent, THEN send (NotchHost.onSend
   // clears the live tray). New-session composer ('') → stash it to pin onto the spawned agent's first message.
   const handleSend = (text: string): void => {
+    const workflows = isNew ? newSessionWorkflows : !!activeSession?.orchestrators
     if (activeId) {
       const groups = getLiveTray(activeId)
       if (groups.length) {
         const ord = messages.reduce((n, m) => n + (m.role === 'user' ? 1 : 0), 0) // ordinal of the user msg being sent
         recordSentTray(activeId, ord, groups)
       }
-      onSend(text)
+      onSend(text, { workflows })
       return
     }
     const groups = getLiveTray('')
     if (groups.length) pendingNewSessionRef.current = groups
-    onSend(text)
+    onSend(text, { workflows })
+  }
+  const workflowsOn = isNew ? newSessionWorkflows : !!activeSession?.orchestrators
+  const toggleWorkflows = (): void => {
+    const next = !workflowsOn
+    if (isNew || !activeId) {
+      setNewSessionWorkflows(next)
+      return
+    }
+    setPendingWorkflowToggle(true)
+    onSetWorkflows(activeId, next)
+      .catch(() => false)
+      .finally(() => setPendingWorkflowToggle(false))
   }
   // The frozen tray per transcript index (pinned to each user message's ordinal; undefined for agent rows / no tray).
   let userOrdinal = -1
@@ -227,6 +244,20 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           <span className="isl-attach-glyph" aria-hidden>
             {attachOpen ? '×' : '+'}
           </span>
+        </button>
+        <button
+          type="button"
+          className={`isl-workflows${workflowsOn ? ' on' : ''}`}
+          aria-label={`${workflowsOn ? 'Disable' : 'Enable'} Orchestration`}
+          aria-pressed={workflowsOn}
+          disabled={pendingWorkflowToggle}
+          onClick={toggleWorkflows}
+          title="Orchestration"
+        >
+          <span className="isl-workflows-switch" aria-hidden>
+            <span className="isl-workflows-knob" />
+          </span>
+          <span className="isl-workflows-label">Orchestration</span>
         </button>
         <ChatInput
           className="isl-bar"
@@ -459,7 +490,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                         <AttachTray groups={trayByIndex[i]!} readOnly />
                       </div>
                     )}
-                    <MarkdownMessage role={m.role} text={m.text} parts={m.parts} selectedAnswer={selectedAnswer} onChoose={(choice) => onSend(choice)} />
+                    <MarkdownMessage role={m.role} text={m.text} parts={m.parts} selectedAnswer={selectedAnswer} onChoose={(choice) => handleSend(choice)} />
                   </Fragment>
                 )
               })

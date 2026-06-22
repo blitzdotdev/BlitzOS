@@ -112,6 +112,10 @@ const api = {
   renameAgent(agentId: string, newTitle: string): Promise<{ ok: boolean; error?: string }> {
     return (ipcRenderer.invoke('os:rename-agent', { id: agentId, title: newTitle }) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
+  /** Toggle BlitzScript workflow capability for an agent. */
+  setAgentOrchestrators(agentId: string, on: boolean): Promise<{ ok: boolean; error?: string; orchestrators?: boolean }> {
+    return (ipcRenderer.invoke('os:agent-orchestrators', { id: agentId, on: !!on }) as Promise<{ ok: boolean; error?: string; orchestrators?: boolean }>).catch(() => ({ ok: false }))
+  },
   /** List every terminal in the active workspace (running + persisted) — for the Terminals & Agents tray. */
   terminalList(): Promise<unknown[]> {
     return (ipcRenderer.invoke('os:terminal-list') as Promise<unknown[]>).catch(() => [])
@@ -276,14 +280,14 @@ const api = {
     return ipcRenderer.invoke('os:wallpaper')
   },
   /** The user typed a message to an agent (agentId '0' = the primary chat). */
-  sendMessage(text: string, agentId = '0'): void {
-    ipcRenderer.send('os:user-message', { text, agentId })
+  sendMessage(text: string, agentId = '0', options?: { agentText?: string }): void {
+    ipcRenderer.send('os:user-message', { text, agentId, agentText: options?.agentText })
   },
   /** One-shot snapshot of all agent sessions for the dynamic island: roster + per-session transcripts +
    *  status. The island calls this on open, then rides the live `os:action {type:'chat'}` broadcast. */
   agents(): Promise<{
-    sessions: Array<{ id: string; title: string; status: string; updatedAt?: number; lastMessagePreview?: string }>
-    archivedSessions: Array<{ id: string; title: string; status: string; updatedAt?: number; lastMessagePreview?: string; archivedAt?: number }>
+    sessions: Array<{ id: string; title: string; status: string; updatedAt?: number; lastMessagePreview?: string; orchestrators?: boolean }>
+    archivedSessions: Array<{ id: string; title: string; status: string; updatedAt?: number; lastMessagePreview?: string; archivedAt?: number; orchestrators?: boolean }>
     threads: Record<string, Array<{ role: string; text: string; ts?: number }>>
     status: Record<string, string>
     milestones: Record<string, Array<{ id: string; ts: number; kind: string; text: string }>>

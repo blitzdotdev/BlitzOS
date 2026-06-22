@@ -275,12 +275,14 @@ export function initOsActions(opts: {
   ipcMain.on('os:content-share', (_e, m: { surfaceId?: unknown; on?: unknown }) => {
     if (m && typeof m.surfaceId === 'string') setContentShare(m.surfaceId, !!m.on)
   })
-  // The human typed a message to the agent in the in-canvas Chat.
+  // The human typed a message to the agent in chat. `agentText` is optional hidden context that wakes
+  // the agent but is not written to chat.md or rendered in the transcript.
   ipcMain.on('os:user-message', (_e, payload: unknown) => {
-    // payload is { text, agentId } (object) — tolerate a bare string (older renderer) → agent '0'.
+    // payload is { text, agentId, agentText } (object) - tolerate a bare string (older renderer) -> agent '0'.
     const text = typeof payload === 'string' ? payload : String((payload as { text?: unknown })?.text ?? '')
     const aid = payload && typeof payload === 'object' && (payload as { agentId?: unknown }).agentId != null ? String((payload as { agentId?: unknown }).agentId) : '0'
-    osUserMessage(text, aid)
+    const agentText = payload && typeof payload === 'object' && (payload as { agentText?: unknown }).agentText != null ? String((payload as { agentText?: unknown }).agentText) : undefined
+    osUserMessage(text, aid, { agentText })
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
   ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {
@@ -509,16 +511,18 @@ export function osSay(text: string, agentId = '0', workspace?: string): void {
   }
   wsHost?.appendChat('agent', text, agentId)
 }
-/** USER → agent: enter a chat message exactly as the human composer does (append '### user' to that
- *  agent's chat.md + echo to its widget, and wake that agent with a 'message' moment). The renderer
- *  IPC and the localhost-only `user_say` test syscall both land here, so programmatic user input is
- *  indistinguishable from typed input — the test rig's input path. (No spawn hook: agents are
+/** USER -> agent: enter a chat message exactly as the human composer does (append '### user' to that
+ *  agent's chat.md + echo to its widget, and wake that agent with a 'message' moment). Optional
+ *  agentText can include hidden instructions for the live agent; only visible text is persisted. The
+ *  renderer IPC and the localhost-only `user_say` test syscall both land here, so programmatic user
+ *  input is indistinguishable from typed input - the test rig's input path. (No spawn hook: agents are
  *  boot-resident / spawned via spawn_agent in the Terminal/Agent model.) */
-export function osUserMessage(text: string, agentId = '0'): void {
+export function osUserMessage(text: string, agentId = '0', options: { agentText?: string } = {}): void {
   if (!text.trim()) return
   const aid = String(agentId)
+  const agentText = options.agentText?.trim() ? options.agentText : text
   wsHost?.appendChat('user', text, aid) // write to that agent's chat.md + echo to its widget
-  emitUserMessage(text, aid) // wake ONLY that agent (trigger:'message')
+  emitUserMessage(agentText, aid) // wake ONLY that agent (trigger:'message')
   onUserMessage?.(aid)
 }
 
@@ -690,20 +694,12 @@ export function osSpawnAgent(title?: string, focus = false, orchestrators = fals
   wsHost.addAgent(id, title, opts)
   return { id, title: title || `Chat ${id}` }
 }
-/** Toggle the ORCHESTRATORS (dynamic-workflows) capability on an agent — delivery B (the plan): set the DURABLE
- *  meta flag (so every future launch bootstraps the orchestrator duty + spawnTerminal carries it across re-exec),
- *  then WAKE the live agent now with a short pointer to .blitzos/orchestrator.md so it gains the capability THIS
- *  session without a disruptive re-exec. The on=false path clears the flag + tells the agent to stop. */
+/** Toggle the ORCHESTRATORS (dynamic-workflows) capability on an agent. This only persists the durable
+ *  meta flag; the renderer queues a hidden one-shot instruction for the next real user message so the
+ *  visible transcript stays clean. */
 export function osSetOrchestrators(agentId: string, on = true): { ok: boolean; error?: string; orchestrators?: boolean } {
   if (!wsHost) return { ok: false, error: 'no workspace host' }
   const r = wsHost.setAgentOrchestrators(String(agentId), !!on)
-  if (!r.ok) return r
-  // Delivery B live-wake: the durable flag is already persisted; this message lands in the agent's chat and wakes
-  // ONLY it (osUserMessage = the steer path). Keep it short — the full how-to is the on-disk .blitzos/orchestrator.md.
-  const msg = on
-    ? 'Orchestrators ENABLED: you can now AUTHOR and RUN workflows (Claude Code workflow style) for genuinely hard, large, massively parallel, or adversarial tasks. Write a `workflow.js` that starts with `export const meta = {…}`, uses the injected globals `agent()`/`parallel`/`pipeline`/`phase`/`log` (NO imports), and ends with `return`; `agent({schema})` returns a validated object. The runner is `.blitzos/blitz` — run `bash .blitzos/blitz capabilities` FIRST, then `bash .blitzos/blitz check <wf.js>`, then `bash .blitzos/blitz run <wf.js>`; the full how-to is in `.blitzos/orchestrator.md`. For trivial/one-shot requests, just answer directly.'
-    : 'Orchestrators DISABLED: stop authoring/running workflows; handle requests directly in chat.'
-  try { osUserMessage(msg, String(agentId)) } catch { /* the flag still persisted; the duty lands on the next launch */ }
   return r
 }
 /** Close a non-primary agent (stop its backend + remove its widget and files). */

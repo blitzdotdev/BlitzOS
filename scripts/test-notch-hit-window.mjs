@@ -32,6 +32,8 @@ const css = readFileSync(join(repoRoot, 'src/renderer/src/styles.css'), 'utf8')
 const workspaceHost = readFileSync(join(repoRoot, 'src/main/workspace-host.mjs'), 'utf8')
 const osActions = readFileSync(join(repoRoot, 'src/main/osActions.ts'), 'utf8')
 const terminalManager = readFileSync(join(repoRoot, 'src/main/terminal-manager.mjs'), 'utf8')
+const osSetOrchestratorsBlock = osActions.match(/export function osSetOrchestrators[\s\S]*?\n}\n\/\*\* Close/)?.[0] || ''
+const osUserMessageBlock = osActions.match(/export function osUserMessage[\s\S]*?\n}\n\n\/\/ Missing-runtime/)?.[0] || ''
 const homeEmptyBlock = islandCss.match(/\.isl-home-empty \{[\s\S]*?\n\}/)?.[0] || ''
 
 let failures = 0
@@ -111,6 +113,39 @@ ok('attach window picker prompts once when Accessibility is missing and degrades
     /pickerNotice \? 'info'/.test(attachPanel) &&
     /\.nh-island \.att-drop\.unavailable/.test(attachCss) &&
     /\.nh-island \.att-drop-hint\[data-notice='info'\]/.test(attachCss))
+ok('island composer exposes the BlitzScript Orchestration toggle for new and active agents',
+  /orchestrators: !!meta\.orchestrators/.test(workspaceHost) &&
+    /setAgentOrchestrators\(agentId: string, on: boolean\)/.test(preload) &&
+    /ipcRenderer\.invoke\('os:agent-orchestrators'/.test(preload) &&
+    /orchestrators\?: boolean/.test(notchTypes) &&
+    /onSend: \(text: string, options\?: \{ workflows\?: boolean \}\) => void/.test(notchTypes) &&
+    /orchestrators\?: unknown/.test(notchHost) &&
+    /orchestrators: !!s\.orchestrators/.test(notchHost) &&
+    /className=\{`isl-workflows/.test(islandPanel) &&
+    />Orchestration<\/span>/.test(islandPanel) &&
+    /onSetWorkflows\(activeId, next\)/.test(islandPanel) &&
+    /notch\?\.send\?\.?/.test(notchHost) &&
+    /notch\?\.send\?\.\(text, !!options\?\.workflows\)/.test(notchHost) &&
+    /setAgentOrchestrators\?\.?\(id, on\)/.test(notchHost) &&
+    /\.nh-island \.isl-workflows/.test(islandCss))
+ok('Orchestration toggle is silent and queues hidden instructions for the next real user send',
+  !/osUserMessage/.test(osSetOrchestratorsBlock) &&
+    /sendMessage\(text: string, agentId = '0', options\?: \{ agentText\?: string \}\)/.test(preload) &&
+    /ipcRenderer\.send\('os:user-message', \{ text, agentId, agentText: options\?\.agentText \}\)/.test(preload) &&
+    /agentText/.test(osActions.match(/ipcMain\.on\('os:user-message'[\s\S]*?\n  \}\)/)?.[0] || '') &&
+    /osUserMessage\(text, aid, \{ agentText \}\)/.test(osActions) &&
+    /options: \{ agentText\?: string \} = \{\}/.test(osUserMessageBlock) &&
+    /wsHost\?\.appendChat\('user', text, aid\)/.test(osUserMessageBlock) &&
+    /emitUserMessage\(agentText, aid\)/.test(osUserMessageBlock) &&
+    /ORCHESTRATION_ENABLED_SUFFIX/.test(notchHost) &&
+    /ORCHESTRATION_DISABLED_SUFFIX/.test(notchHost) &&
+    /queuedOrchestrationInstructionsRef/.test(notchHost) &&
+    /setQueuedOrchestrationInstruction\(id, enabled === previous \? undefined : enabled \? ORCHESTRATION_ENABLED_SUFFIX : ORCHESTRATION_DISABLED_SUFFIX\)/.test(notchHost) &&
+    /sendMessage\(text, activeId, queuedInstruction \? \{ agentText: `\$\{text\}\\n\\n\$\{queuedInstruction\}` \} : undefined\)/.test(notchHost) &&
+    /if \(queuedInstruction\) setQueuedOrchestrationInstruction\(activeId\)/.test(notchHost) &&
+    />Orchestration<\/span>/.test(islandPanel) &&
+    /title="Orchestration"/.test(islandPanel) &&
+    /aria-label=\{`\$\{workflowsOn \? 'Disable' : 'Enable'\} Orchestration`\}/.test(islandPanel))
 ok('session tab strip has a real blank-space hit area and clear hover affordance',
   /min-height: 40px/.test(islandCss) && /width: 100%/.test(islandCss) &&
     /e\.target === e\.currentTarget/.test(islandPanel) && /e\.stopPropagation\(\)/.test(islandPanel) &&
@@ -349,7 +384,7 @@ ok('blitz-ui choice prompts render as typed tappable island parts instead of raw
     /className=\{`isl-ask-card \$\{part\.layout\}/.test(markdownMessage) &&
     /case 'choice':/.test(markdownMessage) &&
     /onChoose\?\.\(option\.label\)/.test(markdownMessage) &&
-    /onChoose=\{\(choice\) => onSend\(choice\)\}/.test(islandPanel) &&
+    /onChoose=\{\(choice\) => handleSend\(choice\)\}/.test(islandPanel) &&
     /\.isl-ask-card/.test(islandCss) &&
     /\.isl-ask-option/.test(islandCss))
 ok('submitted blitz-ui prompts collapse to prompt plus selected answer in history',

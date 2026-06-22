@@ -20,6 +20,7 @@ const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
 const DEBUG_FAKE_HOME_AGENTS_KEY = 'blitzos.debug.showFakeHomeAgents'
 const HOME_DONE_AGENTS_KEY = 'blitzos.home.doneAgents'
 const HOME_SEEN_WORKING_AGENTS_KEY = 'blitzos.home.seenWorkingAgents'
+const ORCHESTRATION_QUEUE_KEY = 'blitzos.orchestration.pendingAgentInstructions'
 const AGENT_NAME_MAX = 24
 const isHomeActiveStatus = (value?: string): boolean => value === 'working' || value === 'starting'
 const isHomeWorkingStatus = (value?: string): boolean => value === 'working'
@@ -47,12 +48,16 @@ const PEEK_IN = 'M5 9h4a1 1 0 0 0 1-1V4M19 9h-4a1 1 0 0 1-1-1V4M5 15h4a1 1 0 0 1
 const PEEK_OUT = 'M9 4H5a1 1 0 0 0-1 1v4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4M15 20h4a1 1 0 0 0 1-1v-4'
 const SETTINGS_PATH =
   'M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5ZM19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-.6a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 .6-1a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 .6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.18.35.39.68.6 1H20a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-.5 1Z'
+const ORCHESTRATION_ENABLED_SUFFIX =
+  '---\nOrchestrators ENABLED: you can now AUTHOR and RUN workflows (Claude Code workflow style) for genuinely hard, large, massively parallel, or adversarial tasks. Write a workflow.js that starts with export const meta = {…}, uses the injected globals agent()/parallel/pipeline/phase/log (NO imports), and ends with return; agent({schema}) returns a validated object. The runner is .blitzos/blitz — run bash .blitzos/blitz capabilities FIRST, then bash .blitzos/blitz check <wf.js>, then bash .blitzos/blitz run <wf.js>; the full how-to is in .blitzos/orchestrator.md. For trivial/one-shot requests, just answer directly.'
+const ORCHESTRATION_DISABLED_SUFFIX =
+  '---\nOrchestrators DISABLED: stop authoring/running workflows; handle requests directly in chat.'
 
 // The chat broadcast / snapshot shapes (subset we use). The host sends raw host statuses + role'd transcripts.
 type ChatAction = {
   type: 'chat'
-  sessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }>
-  archivedSessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }>
+  sessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown; orchestrators?: unknown }>
+  archivedSessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown; orchestrators?: unknown }>
   threads?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown }>>
   status?: Record<string, string>
 }
@@ -63,11 +68,12 @@ type TerminalAction = {
   exitCode?: unknown
   terminal?: { id?: unknown; title?: unknown; status?: unknown; kind?: unknown }
 }
-const mapSession = (s: { id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }): IslandSession => ({
+const mapSession = (s: { id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown; orchestrators?: unknown }): IslandSession => ({
   id: String(s.id),
   title: String(s.title || `Chat ${s.id}`),
   status: String(s.status || 'idle'),
   ...(s.lastMessagePreview ? { lastMessagePreview: String(s.lastMessagePreview) } : {}),
+  ...(s.orchestrators != null ? { orchestrators: !!s.orchestrators } : {}),
   ...(s.archivedAt ? { archivedAt: Number(s.archivedAt) || undefined } : {})
 })
 const mapTerminal = (t: { id?: unknown; title?: unknown; status?: unknown; kind?: unknown }): IslandTerminalMeta | null => {
@@ -145,6 +151,27 @@ function writeHomeSeenWorkingAgents(value: Record<string, true>): void {
     /* session persistence is best-effort */
   }
 }
+function readQueuedOrchestrationInstructions(): Record<string, string> {
+  try {
+    const raw = window.localStorage.getItem(ORCHESTRATION_QUEUE_KEY)
+    const parsed = JSON.parse(raw || '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.entries(parsed as Record<string, unknown>).reduce<Record<string, string>>((acc, [id, value]) => {
+      if (value === ORCHESTRATION_ENABLED_SUFFIX || value === ORCHESTRATION_DISABLED_SUFFIX) acc[id] = value
+      return acc
+    }, {})
+  } catch {
+    return {}
+  }
+}
+function writeQueuedOrchestrationInstructions(value: Record<string, string>): void {
+  try {
+    if (!Object.keys(value).length) window.localStorage.removeItem(ORCHESTRATION_QUEUE_KEY)
+    else window.localStorage.setItem(ORCHESTRATION_QUEUE_KEY, JSON.stringify(value))
+  } catch {
+    /* local persistence is best-effort */
+  }
+}
 const cleanAgentName = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, AGENT_NAME_MAX)
 type MilestoneAction = { type: 'milestone'; agentId?: string; id?: unknown; ts?: unknown; kind?: string; text?: unknown }
 // Strip the legacy "Attached before you started …" brief that older builds appended to the user's message text
@@ -204,10 +231,19 @@ export function NotchHost({
   const statusRef = useRef<Record<string, string>>({})
   const homeDoneAgentsRef = useRef(homeDoneAgents)
   const homeSeenWorkingAgentsRef = useRef(homeSeenWorkingAgents)
+  const queuedOrchestrationInstructionsRef = useRef<Record<string, string>>(readQueuedOrchestrationInstructions())
   const nRef = useRef(0)
   nRef.current = sessions.length
   sessionsRef.current = sessions
   viewRef.current = view
+
+  const setQueuedOrchestrationInstruction = (id: string, instruction?: string): void => {
+    const next = { ...queuedOrchestrationInstructionsRef.current }
+    if (instruction) next[id] = instruction
+    else delete next[id]
+    queuedOrchestrationInstructionsRef.current = next
+    writeQueuedOrchestrationInstructions(next)
+  }
 
   // Report the island's view + tab up to App so reopening it (hover OR ⌥Space) restores where the user left off,
   // instead of resetting to Home. App stashes these and feeds them back as initialView/initialPage on the next open.
@@ -707,7 +743,26 @@ export function NotchHost({
   }
 
   // page 0 (pen) = spawn a NEW session; an agent tab = steer that session. Both are real (no mock append).
-  const onSend = (text: string): void => {
+  const setAgentWorkflows = async (id: string, on: boolean): Promise<boolean> => {
+    const previous = !!sessionsRef.current.find((s) => s.id === id)?.orchestrators
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, orchestrators: on } : s)))
+    try {
+      const r = await window.agentOS?.setAgentOrchestrators?.(id, on)
+      if (!r?.ok) {
+        setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, orchestrators: previous } : s)))
+        return false
+      }
+      const enabled = r.orchestrators ?? on
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, orchestrators: enabled } : s)))
+      setQueuedOrchestrationInstruction(id, enabled === previous ? undefined : enabled ? ORCHESTRATION_ENABLED_SUFFIX : ORCHESTRATION_DISABLED_SUFFIX)
+      return true
+    } catch {
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, orchestrators: previous } : s)))
+      return false
+    }
+  }
+
+  const onSend = (text: string, options?: { workflows?: boolean }): void => {
     // Attachments ride the message now (shown as chips on the sent bubble), so close the staging IMMEDIATELY. This
     // also fixes the new-session break: leaving attach open across the page-switch to the spawned agent collided
     // with the agent-chat attach layout (the height-lock) and broke the island.
@@ -715,7 +770,7 @@ export function NotchHost({
     clearStaged(activeIdRef.current) // the staged sources rode this message (chips) → clear this chat's tray
     if (safePage === 0) {
       window.agentOS
-        ?.notch?.send?.(text, false)
+        ?.notch?.send?.(text, !!options?.workflows)
         .then((r) => {
           if (r?.ok && r.id != null) pendingJump.current = String(r.id)
         })
@@ -724,7 +779,12 @@ export function NotchHost({
         })
     } else if (activeId) {
       try {
-        window.agentOS?.sendMessage?.(text, activeId)
+        const queuedInstruction = queuedOrchestrationInstructionsRef.current[activeId]
+        const sendMessage = window.agentOS?.sendMessage
+        if (sendMessage) {
+          sendMessage(text, activeId, queuedInstruction ? { agentText: `${text}\n\n${queuedInstruction}` } : undefined)
+          if (queuedInstruction) setQueuedOrchestrationInstruction(activeId)
+        }
       } catch {
         /* no bridge */
       }
@@ -862,6 +922,7 @@ export function NotchHost({
             activeTerminal={activeId ? terminals[activeId] : undefined}
             onArchiveAgent={archiveAgent}
             onRenameAgent={renameAgent}
+            onSetWorkflows={setAgentWorkflows}
           />
         )}
       </div>
