@@ -414,7 +414,10 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
   const hash = _hashCall(harnessName, model, effort, agentType, schema, fullPrompt)
   // The externalization start event for this node (emitted on the real path AND on a resume fast-forward,
   // so the live viz stays complete across a resume). phaseId honors an explicit opts.phase, else the ambient.
-  const startEv = { type: 'agent:start', nodeId: i, label: opts.label != null ? String(opts.label) : null, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), model: model || undefined, harness: harnessName }
+  // Carry the leaf's prompt on agent:start so the board's drawer can show "Asked" while the leaf is still
+  // RUNNING (the captured leaf file, with the prompt, only exists once it FINISHES). The dry skeleton's prompt
+  // is unreliable for data-dependent leaves (its inputs are stubs) and can be missing if the preflight timed out.
+  const startEv = { type: 'agent:start', nodeId: i, label: opts.label != null ? String(opts.label) : null, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), model: model || undefined, harness: harnessName, prompt: fullPrompt }
   const cached = ctx.journalHit(i, hash)
   if (cached) {
     emitProgress(ctx, startEv)
