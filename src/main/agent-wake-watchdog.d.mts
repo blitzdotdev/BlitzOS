@@ -24,14 +24,27 @@ export interface WakeWatchdogDeps {
   submitDelayMs?: number
   /** A rate-limited agent: how long to hold between probe-nudges (don't hammer the throttled API). */
   rateLimitBackoffMs?: number
+  /** Wait this long PAST a parsed usage-limit reset time before resuming (so the limit is fully lifted). */
+  resumeBufferMs?: number
+  /** After a scheduled resume fires, how long to keep the sweep from re-arming the same agent (no storm). */
+  resumeCooldownMs?: number
 }
 
 export interface WakeWatchdog {
   /** Wire to perception-core.setUndeliveredWakeHook — a message reached no live waiter for this agent. */
   onUndelivered(moment: { agentId?: string; workspace?: string | null }): void
+  /** Periodic proactive peek: arm a scheduled resume for any live agent whose pane shows a usage limit with a
+   *  reset time (a self-inflicted stall no message would surface). Pass agent ids or { agentId, workspace }. */
+  sweep(agents: Array<string | { agentId: string; workspace?: string | null }>): void
   /** Tear down all timers (shutdown). */
   stop(): void
   _size(): number
 }
 
 export function createWakeWatchdog(deps: WakeWatchdogDeps): WakeWatchdog
+
+/** Parse a Claude usage/session-limit reset time off the pane ("resets 6:40pm"); epoch-ms or null. */
+export function parseResetAt(text: string, nowMs: number): number | null
+
+/** Matches a usage/session-limit pane (the kind with a stated reset time). */
+export const SESSION_LIMIT_RE: RegExp
