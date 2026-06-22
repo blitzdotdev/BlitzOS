@@ -1235,7 +1235,20 @@ app.whenReady().then(() => {
     log: (m) => console.log('[wake]', m)
   })
   setUndeliveredWakeHook((moment) => { try { wakeWatchdog.onUndelivered(moment) } catch { /* never break perception */ } })
-  app.on('before-quit', () => { try { wakeWatchdog.stop() } catch { /* ignore */ } })
+  // PROACTIVE sweep: a usage/session limit an agent hits on its OWN turn surfaces no undelivered message, so the
+  // reactive hook above never sees it. Every SWEEP_MS, peek each live agent's pane; a usage-limit-with-reset arms a
+  // scheduled resume (parse the reset time → type a resume directive once it lifts). Content-agnostic; the watchdog
+  // classifies. Enumerate the active workspace's agents (the same id->status map the island renders).
+  const SWEEP_MS = 45_000
+  const wakeSweep = setInterval(() => {
+    try {
+      const ws = islandActiveWs()
+      const ids = Object.keys(osAgentStatus() || {})
+      if (ids.length) wakeWatchdog.sweep(ids.map((id) => ({ agentId: id, workspace: ws })))
+    } catch { /* never break the sweep */ }
+  }, SWEEP_MS)
+  if (typeof wakeSweep.unref === 'function') wakeSweep.unref()
+  app.on('before-quit', () => { try { wakeWatchdog.stop(); clearInterval(wakeSweep) } catch { /* ignore */ } })
 
   // Local agent path: a localhost HTTP control API.
   startControlServer()

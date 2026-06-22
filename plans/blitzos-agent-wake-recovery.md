@@ -80,6 +80,24 @@ A second deaf agent (27, rate-limited) surfaced two bugs in the first cut; both 
 
 Tests: `test-wake-watchdog.mjs` now 18 assertions (submit = text + separate Enter; rate-limit holds-then-probes, never errors; rate-limit-clears recovers). Live-proven by reviving agent 27.
 
+## Usage/session-limit auto-resume (2026-06-21) — the self-inflicted-stall gap
+
+Two gaps surfaced on agent 31, which hit a **session limit** ("You've hit your session limit · resets 6:40pm") on its OWN turn while finishing a task, then idled. The watchdog never acted, because:
+
+1. **Arming was reactive-only.** It armed solely via `onUndelivered` (a message that reached no waiter). A self-inflicted limit produces NO undelivered message, so nothing armed it. A usage-limited agent can even keep a live `wait.sh` heartbeat (the background poll survives the dead turn), so the heartbeat check would have *cancelled* recovery anyway.
+2. **A session limit isn't a transient 429.** `RATE_LIMIT_RE` matched "usage limit" but not "session limit", and even the rate-limit path (probe every 90s, give up after `maxWatchMs` 10 min) is useless for a multi-hour reset. It never parsed the stated reset time and never typed a resume.
+
+**Fix (general, content-agnostic, OS-owned scheduler).**
+- **`parseResetAt(pane, now)`** parses the reset wall-clock ("resets 6:40pm") as the machine-local tz (Claude renders it local) and picks the occurrence closest to now (handles the after-midnight wrap + the already-passed→resume-now case). `SESSION_LIMIT_RE` confirms it IS a usage limit; a parseable reset time is what distinguishes it from a transient 429.
+- **Scheduled-resume branch** in `check()`: when the FROZEN pane shows a usage limit with a reset time (source-agnostic, highest priority), schedule ONE resume for `reset + RESUME_BUFFER_MS` (NOT bounded by `maxWatchMs` — a multi-hour wait is legitimate). At fire, submit the `RESUME` directive via the same two-step `nudgeSubmit` (text, then a separate Enter), then one recheck that clears the `reconnecting` override if the pane reacted. Never escalates to `error`.
+- **`sweep(agents)`** (new, PROACTIVE): the host calls it every 45s (`index.ts`, enumerating `osAgentStatus()` ids × active ws); it peeks each live agent's pane and arms a scheduled resume for any usage-limit-with-reset that no message would surface. A `RESUME_COOLDOWN_MS` (5 min) per-agent quiet window after a resume prevents a storm; the sweep is also the safety net that re-arms anything still stuck. Reactive `onUndelivered` is unchanged; a usage-limit pane reaching it routes through the same scheduled-resume branch instead of the old blind hold/probe.
+
+Tests: `test-wake-watchdog.mjs` now 33 assertions (parseResetAt edges; session limit → scheduled resume submits at reset, never errors; sweep arms a self-limited idle agent + ignores a healthy one; post-resume cooldown; limit-line-in-a-working-pane → no resume). `npm run check` green.
+
+**Live prototype proven on agent 31 (branched session 2136bc34):** a standalone watcher (`/tmp/blitz-autoresume/watch.mjs`, same regex+parser) detected the limit on the live `blitz:31` pane, parsed the 6:40pm reset, and a composer-probe confirmed the keystroke path lands + clears. It is armed (detached) to submit the resume at 6:40:20pm. The model turn itself cannot run before the account-wide limit lifts (a synthetic zero-token "No response requested." confirmed the block at 16:33); the watcher fires the moment it does. Same as the original watchdog, the in-app fix takes effect on the next BlitzOS launch.
+
+**Related gap (noted, not yet fixed):** `agent-interrupt.wasInterrupted` treats `stop_sequence` as a CLEAN stop, but the "You've hit your session limit" assistant message ends on `stop_sequence` — so a restart during a limit window would NOT auto-continue that agent via the boot seam. The sweep covers it instead (a resumed-then-re-limited agent shows the limit pane and gets re-armed), so this is belt-and-suspenders, not load-bearing.
+
 ## Open questions
 
 - GRACE exact value (20s vs 30s) — tune against the 25s poll boundary live.
