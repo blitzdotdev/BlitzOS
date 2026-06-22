@@ -1,23 +1,9 @@
 import './island.css'
-import { useEffect, useRef, useState } from 'react'
-import { subscribeTerminal } from '../terminalStream'
+import { useState } from 'react'
 
-const MAX_LOG_CHARS = 220_000
-const ANSI_PATTERN =
-  // eslint-disable-next-line no-control-regex
-  /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[PX^_][\s\S]*?(?:\x1B\\|\x07))/g
-
-function toVisibleTerminalText(chunk: string): string {
-  return chunk
-    .replace(ANSI_PATTERN, '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-}
-
-function trimLog(text: string): string {
-  return text.length > MAX_LOG_CHARS ? text.slice(text.length - MAX_LOG_CHARS) : text
-}
-
+// The DEBUG terminal view is a one-line handoff: NO embedded emulator (it stripped ANSI and garbled TUIs),
+// just an "Open in Terminal" button that attaches a real macOS Terminal window to the agent's live tmux
+// window — which renders the TUI correctly and is scrollable. See openTerminalExternal in src/main/index.ts.
 export function IslandTerminalPane({
   terminalId,
   title,
@@ -27,88 +13,38 @@ export function IslandTerminalPane({
   title: string
   status: string
 }): JSX.Element {
-  const logRef = useRef<HTMLPreElement>(null)
-  const [logText, setLogText] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [exitCode, setExitCode] = useState<number | null>(null)
+  const [launchErr, setLaunchErr] = useState<string | null>(null)
 
-  useEffect(() => {
-    let disposed = false
-
-    const scrollToBottom = (): void => {
-      requestAnimationFrame(() => {
-        const el = logRef.current
-        if (el) el.scrollTop = el.scrollHeight
+  const openInTerminal = (): void => {
+    setLaunchErr(null)
+    Promise.resolve(window.agentOS?.terminalOpenExternal?.(terminalId) ?? { ok: false, error: 'unavailable' })
+      .then((r) => {
+        if (!r?.ok) setLaunchErr(r?.error || 'could not open Terminal')
       })
-    }
-    const appendLog = (raw: string): void => {
-      const el = logRef.current
-      const stickToBottom = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 28
-      const visible = toVisibleTerminalText(raw)
-      if (!visible) return
-      setLogText((prev) => trimLog(prev + visible))
-      if (stickToBottom) scrollToBottom()
-    }
-
-    setLoading(true)
-    setError(null)
-    setExitCode(null)
-    setLogText('')
-
-    let unsubscribe: (() => void) | null = null
-    const startSubscription = (): void => {
-      if (disposed || unsubscribe) return
-      unsubscribe = subscribeTerminal(
-        terminalId,
-        appendLog,
-        ({ exitCode: code }) => {
-          setExitCode(code)
-        }
-      )
-    }
-
-    Promise.resolve(window.agentOS?.terminalRead?.(terminalId) ?? '')
-      .then((scrollback) => {
-        if (disposed) return
-        setLogText(trimLog(toVisibleTerminalText(scrollback || '')))
-        setLoading(false)
-        scrollToBottom()
-        startSubscription()
-      })
-      .catch(() => {
-        if (disposed) return
-        setLoading(false)
-        setError('Terminal unavailable')
-        startSubscription()
-      })
-
-    return () => {
-      disposed = true
-      unsubscribe?.()
-    }
-  }, [terminalId])
-
-  const shownStatus = exitCode == null ? status : `exited ${exitCode}`
+      .catch((e) => setLaunchErr(String(e?.message || e)))
+  }
 
   return (
     <div className="isl-terminal-debug" data-status={status || 'unknown'}>
       <div className="isl-terminal-head">
         <span className="isl-debug-flag">DEBUG</span>
         <span className="isl-terminal-title">{title}</span>
-        <span className="isl-terminal-status">{shownStatus || 'unknown'}</span>
+        <button
+          type="button"
+          className="isl-term-external"
+          onClick={openInTerminal}
+          title="Open this terminal in a macOS Terminal window (scrollable, interactive)"
+        >
+          Open in Terminal
+        </button>
+        {launchErr ? (
+          <span className="isl-terminal-status isl-term-err" title={launchErr}>
+            {launchErr}
+          </span>
+        ) : (
+          <span className="isl-terminal-status">{status || 'unknown'}</span>
+        )}
       </div>
-      <pre
-        className="isl-terminal-log"
-        ref={logRef}
-        aria-label={`Terminal ${terminalId} scrollback`}
-        role="region"
-        tabIndex={0}
-        onWheel={(e) => e.stopPropagation()}
-      >
-        {logText || (loading ? '' : 'No terminal output yet')}
-      </pre>
-      {(loading || error) && <div className="isl-terminal-overlay">{error || 'Loading terminal'}</div>}
     </div>
   )
 }

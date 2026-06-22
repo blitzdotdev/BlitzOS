@@ -91,6 +91,13 @@ export function makeTerminalOps({ getWorkspacePath, emit = () => {}, markWrite =
     const e = wsPath ? mgrs.get(wsPath) : null
     return e ? e.restorePromise : Promise.resolve([])
   }
+  /** The active workspace's { host, mgr } entry, or null — for the few ops that need the tmux host
+   *  directly (attachSpec) rather than the manager. mgrFor() first so the entry exists + stale ones evict. */
+  function activeEntry() {
+    mgrFor()
+    const wsPath = typeof getWorkspacePath === 'function' ? getWorkspacePath() : null
+    return wsPath ? mgrs.get(wsPath) || null : null
+  }
 
   return {
     spawnTerminal: (opts) => { const m = mgrFor(); return m ? m.spawnTerminal(opts) : Promise.resolve(null) },
@@ -109,6 +116,12 @@ export function makeTerminalOps({ getWorkspacePath, emit = () => {}, markWrite =
     /** Current RENDERED pane text (capture-pane -p) — the wake watchdog diffs it across a settle window to
      *  tell a frozen/idle pane from one actively producing output. '' when no manager/terminal. */
     captureTerminal: (id) => { const m = mgrFor(); return m ? m.capturePane(id) : '' },
+    /** External-terminal handoff: the `tmux attach` coordinates ({bin,socket,session,window}) for this
+     *  terminal's LIVE window, so it can be opened in a real terminal app (Ghostty) instead of the
+     *  read-only embedded pane. `window` is the unambiguous tmux window-id (@N). null when no live window.
+     *  Uses the SAME tmux binary + socket the host runs, so the external client's protocol version always
+     *  matches the server. */
+    attachSpec: (id) => { const e = activeEntry(); return e ? e.host.attachSpec(String(id)) : null },
     stopTerminal: (id) => { const m = mgrFor(); return m ? m.stopTerminal(id) : false },
     /** Permanently remove a terminal (kill if live + delete its persisted record) so it leaves the tray. Never '0'. */
     removeTerminal: (id) => { const m = mgrFor(); return m ? m.removeTerminal(id) : false },

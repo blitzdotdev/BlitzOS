@@ -140,42 +140,40 @@ export default function IslandKanban({ runId, skeleton, onStats }: IslandKanbanP
     return `92px minmax(0, ${w(t, 0.95)}fr) minmax(0, ${w(g, 1.35)}fr) minmax(0, ${w(d, 1.5)}fr)`
   }, [phases])
 
+  const openNode = openNodeId ? m.nodes[openNodeId] || null : null
+  // Drill-in REPLACES the board grid in the SAME frame (the run head stays above it), so the detail grows to its
+  // full content with NO internal scrolling, scoped to the board width. The close button (X) returns to the grid.
+  if (openNode) return <IslandLeafDrawer runId={runId} node={openNode} onClose={() => setOpenNodeId(null)} />
+
   if (!phases.length) {
     return <div className="kb-empty">{done ? 'workflow finished' : 'waiting for the first event…'}</div>
   }
 
-  const openNode = openNodeId ? m.nodes[openNodeId] || null : null
-
   return (
-    <>
-      <div className={`kb${done ? ' kb-done' : ''}`}>
-        <div className="kb-grid" style={{ gridTemplateColumns: gridCols }}>
-          <div className="kb-corner" />
-          <div className="kb-colh kb-h-todo">To do</div>
-          <div className="kb-colh kb-h-doing">Doing</div>
-          <div className="kb-colh kb-h-done">Done</div>
-          {phases.map((p) => (
-            <Fragment key={p.phaseId || '__setup'}>
-              <div className="kb-rowh">
-                <span className="kb-rowh-name">{p.title}</span>
-                <span className="kb-rowh-n">{p.todo.length + p.doing.length + p.done.length} agents</span>
-              </div>
-              <div className="kb-cell kb-cell-todo">
-                {p.todo.map((n) => (<TodoCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
-              </div>
-              <div className="kb-cell kb-cell-doing">
-                {p.doing.map((n) => (<DoingCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
-              </div>
-              <div className="kb-cell kb-cell-done">
-                {p.done.map((n) => (<DoneCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
-              </div>
-            </Fragment>
-          ))}
-        </div>
+    <div className={`kb${done ? ' kb-done' : ''}`}>
+      <div className="kb-grid" style={{ gridTemplateColumns: gridCols }}>
+        <div className="kb-corner" />
+        <div className="kb-colh kb-h-todo">To do</div>
+        <div className="kb-colh kb-h-doing">Doing</div>
+        <div className="kb-colh kb-h-done">Done</div>
+        {phases.map((p) => (
+          <Fragment key={p.phaseId || '__setup'}>
+            <div className="kb-rowh">
+              <span className="kb-rowh-name">{p.title}</span>
+              <span className="kb-rowh-n">{p.todo.length + p.doing.length + p.done.length} agents</span>
+            </div>
+            <div className="kb-cell kb-cell-todo">
+              {p.todo.map((n) => (<TodoCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
+            </div>
+            <div className="kb-cell kb-cell-doing">
+              {p.doing.map((n) => (<DoingCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
+            </div>
+            <div className="kb-cell kb-cell-done">
+              {p.done.map((n) => (<DoneCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
+            </div>
+          </Fragment>
+        ))}
       </div>
-      {openNode && (
-        <IslandLeafDrawer runId={runId} node={openNode} onClose={() => setOpenNodeId(null)} />
-      )}
-    </>
+    </div>
   )
 }

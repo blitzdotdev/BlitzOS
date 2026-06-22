@@ -52,6 +52,10 @@ export interface TmuxHost {
   has(id: string): boolean
   info(id: string): TmuxSessionInfo | null
   list(): TmuxSessionInfo[]
+  /** Coordinates for an external terminal app (Ghostty) to `tmux attach` this terminal's live window.
+   *  `window` is the unambiguous tmux window-id (@N) — numeric blitz ids collide with window indexes, so
+   *  a session:name target is unsafe. null when tmux is unavailable or the terminal isn't a live window. */
+  attachSpec(id: string): { bin: string; socket: string; session: string; window: string } | null
   /** Reattach-on-boot: adopt windows (named with ids) already live in the tmux server. Returns adopted ids. */
   adoptExisting(): Promise<string[]>
   /** Close the control client — terminals SURVIVE (the tmux server keeps running). */

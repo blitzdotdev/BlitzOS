@@ -67,7 +67,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     onSelectPage,
     messages,
     milestones,
-    runs,
+    runs: runsProp,
     status,
     activeId,
     peek,
@@ -80,6 +80,13 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     onArchiveAgent,
     onRenameAgent
   } = props
+  // KANBAN BOARD HIDDEN (2026-06-21): the in-chat workflow board is unreliable — runs are ephemeral (dropped
+  // from memory 30s after done, no disk persistence, gone on relaunch), so a finished/long run shows nothing.
+  // Disabled at the render layer (run_workflow itself still runs and writes its journal to disk). The full
+  // persistence design that fixes this is in plans/blitzos-kanban-persistence.md. Flip KANBAN_HIDDEN to false to
+  // re-enable; the render path below (renderBoard / IslandKanban) is intact, just fed an empty run list.
+  const KANBAN_HIDDEN: boolean = true
+  const runs = KANBAN_HIDDEN ? [] : runsProp
   const top = Math.max(28, menuBarH) + 8
   const isNew = page === 0 // the pen tab
   const feedRef = useRef<HTMLDivElement>(null)

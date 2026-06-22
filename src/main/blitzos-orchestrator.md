@@ -73,11 +73,13 @@ The `blitz` runner is at `.blitzos/blitz` in your workspace. Author + check with
   (agents return schema stubs / your fallbacks, no real spawns) under a timeout + call cap. Catches syntax,
   runtime, and infinite-loop errors for FREE. Fix until it PASSes.
 - **To RUN it: call the `run_workflow` syscall — `run_workflow { file }` — NOT `bash .blitzos/blitz run`, and
-  NOT your own built-in `Workflow` tool.** ONLY `run_workflow` streams the run LIVE into the user's chat as a
-  kanban board and manages it; the other two run invisibly to BlitzOS (no board, the user sees nothing). It
-  returns a `runId` immediately; the run continues in the background and writes `result.json` to
-  `.blitzos/workflows/<runId>/` on completion. (`bash .blitzos/blitz run [--resume] <workflow.js>` exists only
-  for a quick local/manual run with NO chat board — do not use it when a user is watching.)
+  NOT your own built-in `Workflow` tool.** ONLY `run_workflow` is visible to BlitzOS — it tracks + manages the
+  run (capturing every leaf to disk); the other two run invisibly, so BlitzOS can't see, manage, or recover
+  them. Narrate progress to the user with `say` — do NOT promise a live board or kanban (the in-chat board is
+  disabled right now). It returns a `runId` immediately; the run continues in the background and writes
+  `result.json` to `.blitzos/workflows/<runId>/` on completion. (`bash .blitzos/blitz run [--resume]
+  <workflow.js>` exists only for a quick local/manual run that BlitzOS can't see or recover — do not use it when
+  a user is watching.)
 
 ## Guardrails (automatic + on you)
 

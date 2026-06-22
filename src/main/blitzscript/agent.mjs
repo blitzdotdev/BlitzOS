@@ -328,6 +328,28 @@ function captureLeaf(memDir, rec) {
   }
 }
 
+// ── auto-wrap structured output with a human summary (the default meta seam) ──────────────────────
+// EVERY structured leaf (an agent() with a `schema`) is ALSO required to return a concise, human-readable
+// one-liner of what it did, under `meta.human_summary` — SEPARATE from the `output` it was meant to submit. The
+// kanban card + drawer show that summary (no JSON soup, no per-leaf prose parsing); agent() UNWRAPS and returns
+// just `output`, so workflow code is unchanged. The author's schema is nested under `output`; both are required.
+const HUMAN_SUMMARY_DESC =
+  "A concise, ONE-sentence, human-readable summary of what you just did and concluded — plain language for a person, NOT JSON or jargon. Shown to the user as this step's headline."
+function wrapSchemaWithSummary(schema) {
+  return {
+    type: 'object',
+    properties: {
+      meta: { type: 'object', properties: { human_summary: { type: 'string', description: HUMAN_SUMMARY_DESC } }, required: ['human_summary'] },
+      output: schema
+    },
+    required: ['meta', 'output']
+  }
+}
+// The prompt note injected for a structured leaf so it knows to produce the wrapper (belt-and-suspenders with the
+// schema's own required field + description). Kept OUT of the resume hash (the cache key uses the bare schema).
+const SUMMARY_WRAP_NOTE =
+  '\n\n[Response wrapper] Return a top-level object of EXACTLY this shape: { "meta": { "human_summary": "<one concise plain-language sentence describing what you just did and concluded, written for a human>" }, "output": <your actual result matching the required output schema> }. The human_summary is the user-facing headline for this step; `output` is your real deliverable.'
+
 export async function agent(prompt, opts = {}, fallback = undefined) {
   if (typeof prompt !== 'string') throw new Error('blitz agent: prompt must be a string')
   const ctx = getRunContext()
@@ -354,6 +376,9 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
   const effort = process.env.BLITZ_EFFORT || opts.effort
   const agentType = opts.agentType
   const schema = opts.schema
+  // The schema actually SENT to the leaf + validated: the author's schema auto-wrapped with meta.human_summary
+  // (see wrapSchemaWithSummary). agent() returns the unwrapped `output`; the hash/dry-stub use the bare `schema`.
+  const effectiveSchema = schema ? wrapSchemaWithSummary(schema) : null
 
   // Stable invocation index — assigned at the (deterministic, microtask-ordered) start of this agent()
   // body, the positional half of the journal key (G5).
@@ -407,10 +432,14 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
 
   let leafTokens = 0  // tokens parsed for THIS leaf (best-effort), surfaced on its agent:done event
   let leafStdout = '' // raw stdout of the last attempt (carries claude's session_id) — for BLITZ_CAPTURE_LEAVES
+  let leafHumanSummary = '' // the structured meta.human_summary (the card headline), set on a schema-success parse
   const runOnce = async (cwd, extraNote) => {
+    // A schema leaf gets the wrapper NOTE appended + the WRAPPED schema (meta.human_summary + output). Text leaves
+    // are unchanged. The note is OUTSIDE the resume hash (hash uses the bare schema/prompt).
+    const base = (schema ? fullPrompt + SUMMARY_WRAP_NOTE : fullPrompt) + (extraNote || '')
     const built = usingStructured
-      ? harness.buildStructured(extraNote ? fullPrompt + extraNote : fullPrompt, buildOpts, schema, ctx)
-      : harness.build(fullPrompt, buildOpts)
+      ? harness.buildStructured(base, buildOpts, effectiveSchema, ctx)
+      : harness.build(base, buildOpts)
     const childEnv = { ...(built.env || {}), BLITZ_DEPTH: String(depth) }
     const stdout = await _spawn(built.cmd, built.args, childEnv, cwd)
     leafStdout = stdout
@@ -436,9 +465,12 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
           try {
             const stdout = await runOnce(cwd, note)
             if (schema) {
-              const obj = usingStructured ? harness.parseStructured(stdout) : _coaxJson(harness.parse(stdout))
-              const v = validateSchema(obj, schema)
+              const wrapped = usingStructured ? harness.parseStructured(stdout) : _coaxJson(harness.parse(stdout))
+              const v = validateSchema(wrapped, effectiveSchema)
               if (!v.ok) { const e = new Error('schema validation failed'); e.schemaErrors = v.errors; lastErr = e; break } // re-prompt (outer loop)
+              // UNWRAP: agent() returns the author's `output`; meta.human_summary is the leaf's human headline.
+              const obj = wrapped && typeof wrapped === 'object' && 'output' in wrapped ? wrapped.output : wrapped
+              leafHumanSummary = wrapped && wrapped.meta && typeof wrapped.meta.human_summary === 'string' ? wrapped.meta.human_summary : ''
               ctx.journalRecord(i, hash, obj)
               return obj
             }
@@ -455,10 +487,9 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
     const out = opts.isolation === 'worktree'
       ? await _withWorktree(ctx, opts.label || `i${i}`, opts.cwd, exec)
       : await exec(opts.cwd)
-    // The leaf's human one-liner (the harness's final prose / the text result). Cheap (a parse already done for
-    // `out`), so emit it on agent:done too — the live kanban card shows it WITHOUT a per-card leaf fetch, instead
-    // of the raw JSON preview. Capture reuses the same value.
-    const leafSummary = _leafSummary(harness, leafStdout, out)
+    // The leaf's human one-liner for the card / capture: the STRUCTURED meta.human_summary when the leaf had a
+    // schema (authoritative, written by the agent for a human), else the harness's final prose (text leaves).
+    const leafSummary = leafHumanSummary || _leafSummary(harness, leafStdout, out)
     emitProgress(ctx, { type: 'agent:done', nodeId: i, status: (out === null && schema) ? 'null' : 'ok', ms: Date.now() - startedAt, tokens: leafTokens, preview: previewOf(out), summary: leafSummary })
     captureLeaf(ctx.memDir, { nodeId: i, label: opts.label != null ? String(opts.label) : null, prompt: fullPrompt, model: model || '', harness: harnessName, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), status: (out === null && schema) ? 'null' : 'ok', ms: Date.now() - startedAt, tokens: leafTokens, result: out === undefined ? null : out, summary: process.env.BLITZ_CAPTURE_LEAVES ? leafSummary : '', sessionId: _sessionIdFrom(leafStdout), ts: Date.now() })
     return out

@@ -16,10 +16,12 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓ ' + m) } else { fail+
 
 process.env.BLITZ_CAPTURE_LEAVES = '1' // index.ts sets this at boot; the lab/app default
 
-// Stub the leaf spawn: a claude-style json carrying a PROSE `result` (the "Did"), a `structured_output` object
-// (the schema leaf's "Returned"), a session_id, and usage. parse()→result, parseStructured()→structured_output.
+// Stub the leaf spawn: a claude-style json. A TEXT leaf reads `result` (the prose). A SCHEMA leaf reads
+// structured_output, which is now AUTO-WRAPPED as { meta:{human_summary}, output } — agent() unwraps to `output`
+// (the "Returned") and uses meta.human_summary as the leaf's summary (the "Did"). parse()→result, parseStructured()→wrapper.
 const PROSE = 'Picked the strongest option and verified it against the constraints.'
-_setSpawn(async () => JSON.stringify({ result: PROSE, structured_output: { choice: 'B', why: 'strongest' }, session_id: 'sess-abc', usage: { input_tokens: 5, output_tokens: 7 } }))
+const HSUM = 'Picked option B as the strongest choice.'
+_setSpawn(async () => JSON.stringify({ result: PROSE, structured_output: { meta: { human_summary: HSUM }, output: { choice: 'B', why: 'strongest' } }, session_id: 'sess-abc', usage: { input_tokens: 5, output_tokens: 7 } }))
 _resetJournal()
 
 const ws = mkdtempSync(join(tmpdir(), 'wf-leaf-ws-'))
@@ -61,7 +63,7 @@ ok(typeof r0.prompt === 'string' && r0.prompt.includes('plain leaf'), 'TEXT leaf
 ok(r0.summary === PROSE, 'TEXT leaf: Did = summary (the harness prose)')
 ok(r0.result === PROSE, 'TEXT leaf: Returned = result (prose for a text agent)')
 ok(r0.sessionId === 'sess-abc', 'leaf carries the claude session id (drill-in rollout)')
-ok(r1.summary === PROSE, 'SCHEMA leaf: Did = the prose ack (summary), NOT the JSON')
+ok(r1.summary === HSUM, 'SCHEMA leaf: Did = the structured meta.human_summary (auto-required), NOT the JSON')
 ok(r1.result && r1.result.choice === 'B' && r1.result.why === 'strongest', 'SCHEMA leaf: Returned = the typed object (JsonView)')
 
 // 4. the drawer resolver (osReadLeaf, osActions.ts:943-956) reads it by memDir+ids and BLOCKS path traversal.

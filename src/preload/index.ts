@@ -87,6 +87,13 @@ const api = {
   terminalRead(id: string): Promise<string> {
     return ipcRenderer.invoke('os:terminal-read', id) as Promise<string>
   },
+  /** Open a LIVE terminal in a real macOS Terminal window, interactive + scrollable — the embedded DEBUG
+   *  pane strips ANSI and garbles TUIs (claude/codex). Resolves { ok, error? }; never rejects. */
+  terminalOpenExternal(id: string): Promise<{ ok: boolean; error?: string }> {
+    return (ipcRenderer.invoke('os:terminal-open-external', id) as Promise<{ ok: boolean; error?: string }>).catch(
+      (e) => ({ ok: false, error: String(e?.message || e) })
+    )
+  },
   /** Open a new terminal from the UI (a "+ Terminal" button) — the backend emits terminal-spawn which auto-opens its terminal. */
   terminalSpawn(opts: { command?: string; title?: string }): void {
     ipcRenderer.send('os:terminal-spawn', opts)
