@@ -46,8 +46,10 @@ import { emitProgress, currentGroup, previewOf } from './progress.mjs'
 
 // ── concurrency cap (PROCESS-GLOBAL — bounds the resource across ALL runs) ───────────────────────
 // Each leaf is a heavy PROCESS (model/config startup costs seconds), not an API call, so a wide
-// fan-out must be bounded on the RESOURCE. min(16, max(2, cores-2)) — the Claude Code ceiling (G13).
-export const MAX_CONCURRENCY = Math.min(16, Math.max(2, os.cpus().length - 2))
+// fan-out must be bounded on the RESOURCE. Ceiling 8 (was 16): the real limit for live `claude` leaves is
+// the account's RATE LIMIT, not CPU cores — a wider burst just trips 429/overload (the bug-1 failure class).
+// Still scales DOWN on small machines via min(8, max(2, cores-2)) so a low-core box never oversubscribes.
+export const MAX_CONCURRENCY = Math.min(8, Math.max(2, os.cpus().length - 2))
 
 let _active = 0          // leaves currently running (across all runs)
 const _waiters = []      // FIFO queue of resolvers waiting for a free slot
@@ -450,9 +452,14 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
     return stdout
   }
 
+  // Win a concurrency slot FIRST, THEN show the leaf as "running" and start its clock. Emitting agent:start
+  // BEFORE _acquire painted EVERY leaf as running the instant it was created, so a 12-leaf fan-out looked like
+  // 12 ran at once when only MAX_CONCURRENCY actually spawned and the rest were queued. Now the board's Doing
+  // column reflects TRUE parallelism (<= MAX_CONCURRENCY); a leaf waiting for a slot stays 'queued' (the
+  // skeleton's To-do card) until it acquires. `ms` is now work time, not work + queue-wait.
+  await _acquire()
   emitProgress(ctx, startEv)
   const startedAt = Date.now()
-  await _acquire()
   try {
     const exec = async (cwd) => {
       let lastErr
@@ -480,8 +487,13 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
           } catch (e) { lastErr = e } // transient spawn failure -> retry inner; schema mismatch breaks to outer
         }
       }
-      // schema path exhausted retries -> null (never throw on a stubborn model). text path -> rethrow.
-      if (schema) return null
+      // A schema leaf soft-nulls ONLY on a genuine schema MISS — a model that RAN but could not emit a
+      // schema-valid object after re-prompts (lastErr carries `.schemaErrors`, tagged at the validate site
+      // above). A SPAWN/INFRA failure (a non-zero claude exit: a 404 for an inaccessible/over-capacity model,
+      // an overload, any crash) has NO `.schemaErrors` and must FAIL LOUDLY — rethrow so the catch records
+      // status:'error' with the real reason, instead of laundering it into the same status:'null'/result:null
+      // a stubborn-but-valid model produces (the bug that silently no-opped 7 sonnet scouts).
+      if (schema && lastErr && lastErr.schemaErrors) return null
       throw lastErr
     }
     const out = opts.isolation === 'worktree'
@@ -490,12 +502,17 @@ export async function agent(prompt, opts = {}, fallback = undefined) {
     // The leaf's human one-liner for the card / capture: the STRUCTURED meta.human_summary when the leaf had a
     // schema (authoritative, written by the agent for a human), else the harness's final prose (text leaves).
     const leafSummary = leafHumanSummary || _leafSummary(harness, leafStdout, out)
+    // Self-describing terminal state for the captured leaf (bug 6): the engine KNOWS the result kind at this
+    // exit, so TAG it once instead of making every reader sniff `typeof` + guess how many JSON.parse passes a
+    // payload needs. A text leaf that emitted JSON also carries the pre-parsed object under `resultJson`.
+    const resultKind = (out === null && schema) ? 'null' : (typeof out === 'string' ? 'text' : 'object')
+    const resultJson = resultKind === 'text' ? _tryJson(out) : null
     emitProgress(ctx, { type: 'agent:done', nodeId: i, status: (out === null && schema) ? 'null' : 'ok', ms: Date.now() - startedAt, tokens: leafTokens, preview: previewOf(out), summary: leafSummary })
-    captureLeaf(ctx.memDir, { nodeId: i, label: opts.label != null ? String(opts.label) : null, prompt: fullPrompt, model: model || '', harness: harnessName, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), status: (out === null && schema) ? 'null' : 'ok', ms: Date.now() - startedAt, tokens: leafTokens, result: out === undefined ? null : out, summary: process.env.BLITZ_CAPTURE_LEAVES ? leafSummary : '', sessionId: _sessionIdFrom(leafStdout), ts: Date.now() })
+    captureLeaf(ctx.memDir, { nodeId: i, label: opts.label != null ? String(opts.label) : null, prompt: fullPrompt, model: model || '', harness: harnessName, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), status: (out === null && schema) ? 'null' : 'ok', resultKind, ms: Date.now() - startedAt, tokens: leafTokens, result: out === undefined ? null : out, ...(resultJson != null ? { resultJson } : {}), summary: process.env.BLITZ_CAPTURE_LEAVES ? leafSummary : '', sessionId: _sessionIdFrom(leafStdout), ts: Date.now() })
     return out
   } catch (e) {
     emitProgress(ctx, { type: 'agent:done', nodeId: i, status: 'error', ms: Date.now() - startedAt, tokens: leafTokens, message: e && e.message ? e.message : String(e) })
-    captureLeaf(ctx.memDir, { nodeId: i, label: opts.label != null ? String(opts.label) : null, prompt: fullPrompt, model: model || '', harness: harnessName, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), status: 'error', ms: Date.now() - startedAt, tokens: leafTokens, result: null, error: e && e.message ? e.message : String(e), sessionId: _sessionIdFrom(leafStdout), ts: Date.now() })
+    captureLeaf(ctx.memDir, { nodeId: i, label: opts.label != null ? String(opts.label) : null, prompt: fullPrompt, model: model || '', harness: harnessName, phaseId: opts.phase != null ? String(opts.phase) : ctx.phase, groupId: currentGroup(), status: 'error', resultKind: 'error', ms: Date.now() - startedAt, tokens: leafTokens, result: null, error: e && e.message ? e.message : String(e), sessionId: _sessionIdFrom(leafStdout), ts: Date.now() })
     throw e
   } finally {
     _release()

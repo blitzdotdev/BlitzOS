@@ -256,6 +256,16 @@ export async function runWorkflow(file, { args, memDir, budget, depth = 0, runId
       result = await fn(...bindGlobals(runCtx), ...shadowValues())
     } catch (e) {
       emitProgress(runCtx, { type: 'run:done', ok: false, ms: Date.now() - startedAt, calls: runCtx.calls, tokens: runCtx.tokensSpent, preview: previewOf(e && e.message ? e.message : e) })
+      // ALWAYS leave a typed result.json, even when the body THREW (e.g. a standalone schema leaf that now
+      // fails loud after the bug-1 rethrow). Without this a thrown body writes NO artifact at all, so a
+      // completion waiter's resultPath dangles and recovery finds an empty run dir. This crash envelope is a
+      // NEW shape (ok:false/error/resultKind:'error'); the success-path result.json below stays byte-identical.
+      if (memDir) {
+        try {
+          mkdirSync(memDir, { recursive: true })
+          writeFileSync(join(memDir, 'result.json'), JSON.stringify({ result: null, ok: false, error: e && e.message ? e.message : String(e), resultKind: 'error', meta, stats: runCtx.stats() }, null, 2))
+        } catch { /* best-effort persistence */ }
+      }
       throw e
     }
     emitProgress(runCtx, { type: 'run:done', ok: true, ms: Date.now() - startedAt, calls: runCtx.calls, tokens: runCtx.tokensSpent, preview: previewOf(result) })
