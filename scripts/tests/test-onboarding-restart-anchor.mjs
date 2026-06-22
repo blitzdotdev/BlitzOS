@@ -79,18 +79,6 @@ try {
     '- Confirmation boundary: Ask before account writes.',
     '- Current priority: Make onboarding reliable.'
   ].join('\n'))
-  writeFileSync(join(dir, 'initiative.md'), [
-    '# Active Initiative',
-    '',
-    '## Focus',
-    '',
-    'Restart handoff audit.',
-    '',
-    '## Current Next Step',
-    '',
-    'Run a focused restart-anchor regression.'
-  ].join('\n'))
-
   refreshRestartAnchor(ws)
   const updated = readFileSync(join(ws, 'notepad.md'), 'utf8')
   assert.match(updated, /Human note/)
@@ -98,8 +86,9 @@ try {
   assert.match(updated, /- Autonomy: Reversible checks can proceed\./)
   assert.match(updated, /- Confirm before: Ask before account writes\./)
   assert.match(updated, /- Priority: Make onboarding reliable\./)
-  assert.match(updated, /- Active initiative: Restart handoff audit\./)
-  assert.match(updated, /- Next reversible action: Run a focused restart-anchor regression\./)
+  // The active initiative is intentionally NOT persisted, so the anchor must not carry it.
+  assert.doesNotMatch(updated, /Active initiative/)
+  assert.doesNotMatch(updated, /Next reversible action/)
 
   refreshRestartAnchor(ws)
   const second = readFileSync(join(ws, 'notepad.md'), 'utf8')

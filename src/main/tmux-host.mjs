@@ -219,9 +219,25 @@ export function createTmuxHost(cfg) {
     rec.exitL.add(cb); return () => rec.exitL.delete(cb)
   }
   const scrollback = (id) => { const r = terminals.get(id); return r ? r.ring.join('') : '' }
+  // Current RENDERED pane text (capture-pane -p, no escapes) — the wake watchdog diffs this across a settle
+  // window to tell a frozen/idle pane from one actively producing output, without parsing TUI semantics.
+  function capture(id) { const r = terminals.get(id); if (!r) return ''; try { return tmuxSync(['capture-pane', '-p', '-t', r.pane]) } catch { return '' } }
   const has = (id) => terminals.has(id)
   const info = (id) => { const r = terminals.get(id); return r ? { id: r.id, pid: r.pid, window: r.window, pane: r.pane, cols: r.cols, rows: r.rows, exited: r.exited, exitCode: r.exitCode, startedAt: r.startedAt, endedAt: r.endedAt || null } : null }
   const list = () => [...terminals.values()].map((r) => info(r.id))
+
+  /** Coordinates for an EXTERNAL terminal app (e.g. Ghostty) to `tmux attach` this terminal's live
+   *  window. Returns the unambiguous tmux window-id (@N) as `window` — NEVER a session:name target:
+   *  blitz ids are numeric and a numeric tmux target is read as a window INDEX, so `blitz:0` resolves to
+   *  whatever sits at index 0 (the __blitzroot__ window), never the agent window NAMED '0' (verified on
+   *  tmux 3.5a). null when tmux is unavailable or the terminal isn't a live window (exited/unknown) — the
+   *  caller shows a clean "not live" message instead of attaching onto a dead/missing pane. */
+  function attachSpec(id) {
+    if (!TMUX) return null
+    const rec = terminals.get(id)
+    if (!rec || rec.exited) return null
+    return { bin: TMUX, socket: SOCK, session: SESSION, window: rec.window }
+  }
 
   /** Reattach-on-boot: query the live tmux server for windows (named with blitz ids) and re-register them. */
   async function adoptExisting() {
@@ -245,7 +261,7 @@ export function createTmuxHost(cfg) {
   function killServer() { try { tmuxSync(['kill-server']) } catch { /* ignore */ } } // terminals DIE
   function stopAll() { for (const id of [...terminals.keys()]) kill(id) }
 
-  return { start, spawn, write, resize, kill, remove, onData, onExit, scrollback, has, info, list, adoptExisting, stop, killServer, stopAll }
+  return { start, spawn, write, resize, kill, remove, onData, onExit, scrollback, capture, has, info, list, attachSpec, adoptExisting, stop, killServer, stopAll }
 }
 
 // Minimal shell-arg quoting for control-mode command lines (single-quote, escape embedded quotes).

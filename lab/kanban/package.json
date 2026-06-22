@@ -1,0 +1,9 @@
+{
+  "name": "blitz-kanban-lab",
+  "private": true,
+  "type": "module",
+  "description": "Prototyping lab for the inline workflow kanban board. Runs REAL blitzscripts (../../src/main/blitzscript) and streams their live WfEvents into the board so we can iterate on the look. Deps resolve UP to agent-os/node_modules (react/vite/@vitejs/plugin-react are already there) — no install needed.",
+  "scripts": {
+    "dev": "vite"
+  }
+}

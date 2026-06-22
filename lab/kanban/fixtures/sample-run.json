@@ -1,0 +1,30 @@
+{
+  "meta": { "script": "wf-demo (synthetic seed)", "runId": "fixture-sample" },
+  "events": [
+    { "seq": 0, "ts": 0, "type": "run:start", "name": "Name the Island", "description": "brainstorm app names in parallel, verify them, then pick the best" },
+    { "seq": 1, "ts": 120, "type": "phase", "phaseId": "brainstorm", "title": "brainstorm" },
+    { "seq": 2, "ts": 160, "type": "group:start", "groupId": "g0", "kind": "parallel", "phaseId": "brainstorm", "size": 4 },
+    { "seq": 3, "ts": 200, "type": "agent:start", "nodeId": 0, "label": "coiner · evocative", "phaseId": "brainstorm", "groupId": "g0", "model": "haiku", "harness": "claude" },
+    { "seq": 4, "ts": 210, "type": "agent:start", "nodeId": 1, "label": "coiner · playful", "phaseId": "brainstorm", "groupId": "g0", "model": "haiku", "harness": "claude" },
+    { "seq": 5, "ts": 220, "type": "agent:start", "nodeId": 2, "label": "coiner · elegant", "phaseId": "brainstorm", "groupId": "g0", "model": "haiku", "harness": "claude" },
+    { "seq": 6, "ts": 230, "type": "agent:start", "nodeId": 3, "label": "coiner · bold", "phaseId": "brainstorm", "groupId": "g0", "model": "haiku", "harness": "claude" },
+    { "seq": 7, "ts": 2100, "type": "agent:done", "nodeId": 0, "status": "ok", "ms": 1900, "tokens": 320, "preview": "Driftwood" },
+    { "seq": 8, "ts": 2400, "type": "agent:done", "nodeId": 2, "status": "ok", "ms": 2180, "tokens": 300, "preview": "Lumen" },
+    { "seq": 9, "ts": 2650, "type": "agent:done", "nodeId": 1, "status": "ok", "ms": 2440, "tokens": 280, "preview": "Pebble" },
+    { "seq": 10, "ts": 2900, "type": "agent:done", "nodeId": 3, "status": "ok", "ms": 2670, "tokens": 360, "preview": "Forge" },
+    { "seq": 11, "ts": 2950, "type": "group:done", "groupId": "g0", "ok": 4, "failed": 0 },
+    { "seq": 12, "ts": 3000, "type": "phase", "phaseId": "verify", "title": "verify" },
+    { "seq": 13, "ts": 3050, "type": "group:start", "groupId": "g1", "kind": "parallel", "phaseId": "verify", "size": 3 },
+    { "seq": 14, "ts": 3100, "type": "agent:start", "nodeId": 4, "label": "check · Lumen", "phaseId": "verify", "groupId": "g1", "model": "haiku", "harness": "claude" },
+    { "seq": 15, "ts": 3110, "type": "agent:start", "nodeId": 5, "label": "check · Driftwood", "phaseId": "verify", "groupId": "g1", "model": "haiku", "harness": "claude" },
+    { "seq": 16, "ts": 3120, "type": "agent:start", "nodeId": 6, "label": "check · Forge", "phaseId": "verify", "groupId": "g1", "model": "haiku", "harness": "claude" },
+    { "seq": 17, "ts": 5200, "type": "agent:done", "nodeId": 4, "status": "ok", "ms": 2100, "tokens": 410, "preview": "Lumen: domain free, no trademark conflicts, clean .com." },
+    { "seq": 18, "ts": 5500, "type": "agent:done", "nodeId": 6, "status": "ok", "ms": 2380, "tokens": 390, "preview": "Forge: very common in dev tooling; meaningful collision risk." },
+    { "seq": 19, "ts": 5800, "type": "agent:done", "nodeId": 5, "status": "error", "ms": 2680, "tokens": 0, "message": "domain lookup timed out after 3 retries" },
+    { "seq": 20, "ts": 5850, "type": "group:done", "groupId": "g1", "ok": 2, "failed": 1 },
+    { "seq": 21, "ts": 5900, "type": "phase", "phaseId": "judge", "title": "judge" },
+    { "seq": 22, "ts": 5960, "type": "agent:start", "nodeId": 7, "label": "judge", "phaseId": "judge", "model": "sonnet", "harness": "claude" },
+    { "seq": 23, "ts": 9100, "type": "agent:done", "nodeId": 7, "status": "ok", "ms": 3140, "tokens": 540, "preview": "Lumen — calm, short, memorable, and it cleared verification." },
+    { "seq": 24, "ts": 9200, "type": "run:done", "ok": true, "ms": 9200, "calls": 8, "tokens": 2600, "preview": "Lumen" }
+  ]
+}

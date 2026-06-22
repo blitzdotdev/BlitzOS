@@ -18,7 +18,7 @@
 .nh-chassis {
   pointer-events: auto;
   box-sizing: border-box;
-  width: 580px;
+  width: 696px; /* base island width (was 580px, +20%) */
   max-width: 84vw;
   background: #000;
   color: #ededed;
@@ -37,7 +37,7 @@
   transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .nh-chassis.nh-wide {
-  width: 740px;
+  width: 888px; /* attach-panel-open width (was 740px, +20%) */
 }
 
 /* the PEEK toggle: a macOS-menu-bar-style control pinned to the very top (the notch band), top-right, ALWAYS

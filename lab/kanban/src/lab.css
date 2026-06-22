@@ -1,0 +1,183 @@
+/* lab shell — split-pane (A | B). Each pane is an independent column with its own controls + board. Dark, to read
+   like the BlitzOS island. */
+* {
+  box-sizing: border-box;
+}
+:root {
+  --isl-text: #fff;
+  --isl-muted: #ffffff99;
+  --isl-dim: #ffffff66;
+  --isl-faint: #ffffff14;
+  --isl-surface: #0e0e10;
+  --isl-surface2: #17171a;
+  --isl-accent: #0a84ff;
+  --wk-green: #30d158;
+  --wk-red: #ff453a;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+}
+body {
+  margin: 0;
+  background: #08080a;
+  color: var(--isl-text);
+  font-family: var(--font);
+}
+.lab {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.lab-titlebar {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 9px 16px;
+  background: #121215;
+  border-bottom: 1px solid var(--isl-faint);
+  flex: none;
+}
+.lab-brand {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+.lab-hint {
+  font-size: 11.5px;
+  color: var(--isl-dim);
+}
+.lab-split {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.lab-divider {
+  width: 1px;
+  background: var(--isl-faint);
+  flex: none;
+}
+.pane {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* pane chrome */
+.pane-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 4px;
+}
+.pane-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--isl-muted);
+}
+.pane-status {
+  margin-left: auto;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--isl-dim);
+}
+.pane-status-running,
+.pane-status-replaying {
+  color: var(--isl-accent);
+}
+.pane-status-done {
+  color: var(--wk-green);
+}
+.pane-status-error {
+  color: var(--wk-red);
+}
+.pane-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 8px;
+  flex-wrap: wrap;
+}
+.pane-bar select,
+.pane-bar button,
+.lab-tools select,
+.lab-tools button {
+  font-family: inherit;
+  font-size: 12px;
+  color: #fff;
+  background: #1d1d21;
+  border: 1px solid var(--isl-faint);
+  border-radius: 7px;
+  padding: 5px 8px;
+  cursor: pointer;
+  max-width: 210px;
+}
+.pane-go {
+  background: var(--isl-accent);
+  border-color: var(--isl-accent);
+  font-weight: 600;
+}
+.pane-go:disabled {
+  opacity: 0.5;
+}
+.pane-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--isl-faint);
+  margin: 2px 4px;
+}
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px 8px;
+}
+.pane-name {
+  font-size: 14px;
+  font-weight: 650;
+}
+.pane-stats {
+  font-size: 11.5px;
+  color: var(--isl-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pane-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--isl-dim);
+}
+.pane-dot-running {
+  background: var(--isl-accent);
+  animation: wk-pulse 1.4s ease-out infinite;
+}
+.pane-dot-done {
+  background: var(--wk-green);
+}
+.pane-dot-error {
+  background: var(--wk-red);
+}
+@keyframes wk-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(10, 132, 255, 0);
+  }
+}
+.pane-board {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 12px 16px;
+}
+.pane-note {
+  flex: none;
+  font-size: 11px;
+  color: var(--isl-dim);
+  padding: 5px 14px;
+  border-top: 1px solid var(--isl-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

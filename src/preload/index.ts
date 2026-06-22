@@ -87,6 +87,13 @@ const api = {
   terminalRead(id: string): Promise<string> {
     return ipcRenderer.invoke('os:terminal-read', id) as Promise<string>
   },
+  /** Open a LIVE terminal in a real macOS Terminal window, interactive + scrollable — the embedded DEBUG
+   *  pane strips ANSI and garbles TUIs (claude/codex). Resolves { ok, error? }; never rejects. */
+  terminalOpenExternal(id: string): Promise<{ ok: boolean; error?: string }> {
+    return (ipcRenderer.invoke('os:terminal-open-external', id) as Promise<{ ok: boolean; error?: string }>).catch(
+      (e) => ({ ok: false, error: String(e?.message || e) })
+    )
+  },
   /** Open a new terminal from the UI (a "+ Terminal" button) — the backend emits terminal-spawn which auto-opens its terminal. */
   terminalSpawn(opts: { command?: string; title?: string }): void {
     ipcRenderer.send('os:terminal-spawn', opts)
@@ -287,6 +294,7 @@ const api = {
     threads: Record<string, Array<{ role: string; text: string; ts?: number }>>
     status: Record<string, string>
     milestones: Record<string, Array<{ id: string; ts: number; kind: string; text: string }>>
+    runs: Record<string, Array<{ runId: string; agentId: string; file: string; startedAt: number; done: boolean; ok: boolean; skeleton: unknown[]; memDir: string | null }>>
   }> {
     return ipcRenderer.invoke('os:agents-snapshot')
   },
@@ -336,6 +344,11 @@ const api = {
     const listener = (_e: unknown, payload: { runId: string; ev: unknown }): void => { try { cb(payload) } catch { /* ignore */ } }
     ipcRenderer.on('os:wf-event', listener as never)
     return () => ipcRenderer.removeListener('os:wf-event', listener as never)
+  },
+  /** Read one terminal leaf's captured record (Asked/Did/Returned) for the kanban drill-in drawer. Lazy on-click.
+   *  Main resolves the run's absolute memDir by runId (no path crosses the boundary), so this takes only ids. */
+  wfLeaf(runId: string, nodeId: string): Promise<{ ok: boolean; leaf?: Record<string, unknown> }> {
+    return (ipcRenderer.invoke('os:wf-leaf', runId, nodeId) as Promise<{ ok: boolean; leaf?: Record<string, unknown> }>).catch(() => ({ ok: false }))
   },
   // Item 3: the human answered a web guest's Allow/Block permission prompt (geolocation, camera, …).
   decidePermission(id: string, allow: boolean, remember: boolean): Promise<{ ok: boolean }> {

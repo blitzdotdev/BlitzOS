@@ -36,6 +36,20 @@ let seq = 0
 const MAX = 1000
 const waiters = []
 
+// LIVENESS HEARTBEAT (agent-wake recovery — plans/blitzos-agent-wake-recovery.md): every /events long-poll a
+// healthy agent runs stamps lastPoll[key]. A healthy agent keeps a background wait.sh polling continuously, so
+// the absence of any poll for a grace window is the OS-side signal that its wait-loop died (the agent went deaf
+// mid-turn, e.g. a rate-limit). Keyed per (workspace, agentId) since agent ids repeat across workspaces. This
+// module stays PURE (no timers/tmux/electron) — it only EXPOSES the signal; the Electron watchdog owns the action.
+const lastPoll = new Map()
+const pollKey = (agentId, workspace) => `${workspace == null ? '' : String(workspace)}/${String(agentId == null ? '0' : agentId)}`
+// Fired when a 'message' moment (island chat or steer) reaches NO live waiter — nobody is listening for that
+// agent, so the OS may need to physically wake it. No-op until the Electron host registers the watchdog.
+let undeliveredWakeHook = null
+export function setUndeliveredWakeHook(fn) { undeliveredWakeHook = typeof fn === 'function' ? fn : null }
+/** Last epoch-ms agent N (in `workspace`) ran a /events long-poll — its wait-loop heartbeat. 0 = never seen. */
+export function lastPollAt(agentId, workspace = null) { return lastPoll.get(pollKey(agentId, workspace)) || 0 }
+
 // WORKSPACE scoping (v2 of the cross-workspace bleed fix): every moment is stamped with the workspace
 // that was ACTIVE when it was emitted (the provider is registered by each transport's host wiring), and
 // a waiter that declares its workspace only sees that workspace's moments. Agent ids repeat across
@@ -203,8 +217,10 @@ function emit(moment) {
   // Wake ONLY the waiters that can SEE this moment — the rest keep sleeping (an invisible moment
   // must not early-resolve a pinned agent's long-poll with an empty slice).
   const keep = []
+  let deliveredToWaiter = 0
   for (const w of waiters.splice(0)) {
     if (visibleTo(moment, w.agentId, w.workspace)) {
+      deliveredToWaiter++
       clearTimeout(w.timer)
       w.resolve(LOG.filter((m) => m.seq > w.since && visibleTo(m, w.agentId, w.workspace)))
     } else {
@@ -212,6 +228,12 @@ function emit(moment) {
     }
   }
   waiters.push(...keep)
+  // A direct 'message' (island chat or steer) that reached NO live waiter means the target agent's wait-loop is
+  // not listening (likely died mid-turn). Hand it to the host so it can wake the agent out-of-band. The message
+  // is already in the LOG, so a re-poll still delivers it — this only covers the case where no re-poll comes.
+  if (moment.trigger === 'message' && deliveredToWaiter === 0 && undeliveredWakeHook) {
+    try { undeliveredWakeHook(moment) } catch { /* the hook must never break perception */ }
+  }
 }
 
 function flush(surfaceId, trigger) {
@@ -511,6 +533,7 @@ export function emitSystemMoment(kind, line, detail) {
  *  `since`, else wait up to maxMs. Each agent only sees its own messages (+ activity for the primary).
  *  `workspace` (optional) pins the waiter: it then sees ONLY that workspace's moments. */
 export function waitForEvents(since, maxMs, agentId = '0', workspace = null) {
+  lastPoll.set(pollKey(agentId, workspace), Date.now()) // heartbeat: this agent's wait-loop is alive (agent-wake recovery)
   const have = LOG.filter((m) => m.seq > since && visibleTo(m, agentId, workspace))
   if (have.length > 0 || maxMs <= 0) return Promise.resolve(have)
   return new Promise((resolve) => {

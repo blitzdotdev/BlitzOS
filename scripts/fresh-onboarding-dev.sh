@@ -1,20 +1,26 @@
 #!/bin/bash
-# Reset the local onboarding workspace and relaunch BlitzOS in dev.
+# Reset the local onboarding state and relaunch BlitzOS in dev.
 #
 # Usage:
 #   scripts/fresh-onboarding-dev.sh --yes
 #   scripts/fresh-onboarding-dev.sh --yes --background
 #
-# Destructive by design: deletes ~/Blitz/case-file unless BLITZ_CASE_FILE is set.
+# Onboarding now runs in the single default workspace (Home) — there is no throwaway case-file. By
+# default this does a SAFE reset: it removes only the onboarding artifacts + agent runtime state inside
+# the workspace (.blitzos/onboarding and .blitzos/terminals) so a fresh scan + interview runs, while
+# PRESERVING your workspace layout, documents, notepad, and chat. Pass --nuke-workspace to delete the
+# entire workspace dir (the old behavior) — dangerous now that Home holds real data.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 YES=0
 BACKGROUND=0
 RESET_PERMS=0
+NUKE=0
 LOG_FILE="${BLITZ_DEV_LOG:-/tmp/blitzos-fresh-onboarding.log}"
-CASE_FILE="${BLITZ_CASE_FILE:-$HOME/Blitz/case-file}"
-ROOT_DIR="$(dirname "$CASE_FILE")"
+# Default to the single Home workspace. BLITZ_CASE_FILE is kept as a back-compat alias for BLITZ_ONBOARDING_WS.
+WORKSPACE="${BLITZ_ONBOARDING_WS:-${BLITZ_CASE_FILE:-$HOME/Blitz/Home}}"
+ROOT_DIR="$(dirname "$WORKSPACE")"
 ROOT_STATE="$ROOT_DIR/.blitzos/state.json"
 # Dev userData (Electron app name from package.json) holds preboard.json; dev runs as the Electron
 # binary, whose bundle id TCC attributes grants to. Both overridable for packaged/renamed builds.
@@ -23,21 +29,25 @@ TCC_BUNDLE_ID="${BLITZ_TCC_BUNDLE_ID:-com.github.Electron}"
 
 usage() {
   cat <<EOF
-Usage: $0 --yes [--background]
+Usage: $0 --yes [--background] [--nuke-workspace] [--reset-permissions]
 
-Deletes the onboarding workspace, kills the current dev Electron/BlitzOS and tmux
+Resets onboarding state in the workspace, kills the current dev Electron/BlitzOS and tmux
 agents, then starts npm run dev.
 
 Options:
-  --yes                 Required. Confirms deletion of: $CASE_FILE
+  --yes                 Required. Confirms the reset of: $WORKSPACE
   --background          Start npm run dev with nohup and return immediately.
+  --nuke-workspace      DELETE THE ENTIRE workspace dir ($WORKSPACE), not just onboarding
+                        state. Dangerous: Home holds your real surfaces/docs/chat. The
+                        default is a safe reset that preserves them.
   --reset-permissions   ALSO clear the pre-board sequence so it runs from zero:
                         delete preboard.json + revoke FDA/Automation via tccutil
                         (so the pre-board FDA + browser steps reappear).
   --help                Show this help.
 
 Env:
-  BLITZ_CASE_FILE     Override the case-file path. Default: $HOME/Blitz/case-file
+  BLITZ_ONBOARDING_WS Override the workspace path. Default: \$HOME/Blitz/Home
+  BLITZ_CASE_FILE     Back-compat alias for BLITZ_ONBOARDING_WS.
   BLITZ_DEV_LOG       Background log path. Default: /tmp/blitzos-fresh-onboarding.log
   BLITZ_PREBOARD_FILE Override preboard.json. Default: ~/Library/Application Support/agent-os/preboard.json
   BLITZ_TCC_BUNDLE_ID TCC bundle id to reset. Default: com.github.Electron (dev Electron)
@@ -48,6 +58,7 @@ for arg in "$@"; do
   case "$arg" in
     --yes) YES=1 ;;
     --background) BACKGROUND=1 ;;
+    --nuke-workspace) NUKE=1 ;;
     --reset-permissions) RESET_PERMS=1 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown argument: $arg" >&2; usage >&2; exit 2 ;;
@@ -55,7 +66,7 @@ for arg in "$@"; do
 done
 
 if [[ "$YES" != "1" ]]; then
-  echo "Refusing to delete without --yes: $CASE_FILE" >&2
+  echo "Refusing to reset without --yes: $WORKSPACE" >&2
   usage >&2
   exit 2
 fi
@@ -71,17 +82,25 @@ for _ in $(seq 1 50); do
 done
 
 echo "[fresh-onboarding] killing BlitzOS tmux agents"
-pkill -f "$CASE_FILE/.blitzos/tmux" 2>/dev/null || true
+pkill -f "$WORKSPACE/.blitzos/tmux" 2>/dev/null || true
 pkill -f "vendor/bin/tmux -S" 2>/dev/null || true
 for _ in $(seq 1 50); do
-  if ! pgrep -f "$CASE_FILE/.blitzos/tmux|vendor/bin/tmux -S" >/dev/null 2>&1; then
+  if ! pgrep -f "$WORKSPACE/.blitzos/tmux|vendor/bin/tmux -S" >/dev/null 2>&1; then
     break
   fi
   sleep 0.2
 done
 
-echo "[fresh-onboarding] deleting $CASE_FILE"
-rm -rf "$CASE_FILE"
+if [[ "$NUKE" == "1" ]]; then
+  echo "[fresh-onboarding] --nuke-workspace: deleting ENTIRE workspace $WORKSPACE"
+  rm -rf "$WORKSPACE"
+else
+  echo "[fresh-onboarding] safe reset: clearing onboarding state in $WORKSPACE (preserving your surfaces/docs/chat)"
+  # context.md/profile.md/scan.json/interview.* → start() re-scans + re-runs the interview when these are gone.
+  rm -rf "$WORKSPACE/.blitzos/onboarding"
+  # agent runtime (bootstrap/meta/transcript) → fresh agent sessions on relaunch.
+  rm -rf "$WORKSPACE/.blitzos/terminals"
+fi
 
 echo "[fresh-onboarding] resetting root boot state to Home"
 mkdir -p "$(dirname "$ROOT_STATE")"

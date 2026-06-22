@@ -306,6 +306,7 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
   }
 
   const scrollback = (id) => host.scrollback(id)
+  const capturePane = (id) => host.capture(id) // current rendered pane text (wake watchdog frozen-check)
   const getTerminal = (id) => { const r = live.get(id); if (r) return publicMeta(r.meta); const m = readMeta(id); return m ? publicMeta(m) : null }
   // ACTUALLY live = wired to a tmux window in THIS run (a survivor adopted by restore(), or a fresh spawn).
   // Distinct from getTerminal().status, which is a stale 'running' on disk for a terminal that died while the
@@ -339,5 +340,5 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     }
   }
 
-  return { spawnTerminal, sendToTerminal, resizeTerminal, stopTerminal, removeTerminal, restartTerminal, clearAgentContext, restore, scrollback, getTerminal, isLive, listTerminals, stopAll, flushAll }
+  return { spawnTerminal, sendToTerminal, resizeTerminal, stopTerminal, removeTerminal, restartTerminal, clearAgentContext, restore, scrollback, capturePane, getTerminal, isLive, listTerminals, stopAll, flushAll }
 }
