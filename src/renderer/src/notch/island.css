@@ -1247,8 +1247,8 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-msg.user {
   align-self: flex-end;
-  background: #fff;
-  color: #000;
+  background: var(--isl-accent);
+  color: #fff;
 }
 .nh-island .isl-msg.agent {
   align-self: flex-start;
@@ -1278,7 +1278,7 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-msg.user::before {
   right: -7px;
   width: 18px;
-  background: #fff;
+  background: var(--isl-accent);
   border-bottom-left-radius: 16px 14px;
 }
 .nh-island .isl-msg.user::after {
@@ -1349,25 +1349,25 @@ button.isl-app-chat:active .isl-app-icon {
   text-underline-offset: 2px;
 }
 .nh-island .isl-msg.user a {
-  color: var(--isl-accent);
+  color: #fff;
 }
-/* the user bubble is white → flip its markdown chrome to dark-on-white so code / quotes / tables stay readable */
+/* user bubbles are blue; keep markdown chrome light enough to read without punching white holes through the pill. */
 .nh-island .isl-msg.user.isl-md-msg :not(pre) > code {
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.2);
 }
 .nh-island .isl-msg.user.isl-md-msg pre {
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.16);
+  border-color: rgba(255, 255, 255, 0.16);
 }
 .nh-island .isl-msg.user.isl-md-msg blockquote {
-  border-left-color: rgba(0, 0, 0, 0.22);
-  color: rgba(0, 0, 0, 0.6);
+  border-left-color: rgba(255, 255, 255, 0.34);
+  color: rgba(255, 255, 255, 0.84);
 }
 .nh-island .isl-msg.user.isl-md-msg :where(th, td) {
-  border-color: rgba(0, 0, 0, 0.18);
+  border-color: rgba(255, 255, 255, 0.24);
 }
 .nh-island .isl-msg.user.isl-md-msg th {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.14);
 }
 .nh-island .isl-md-link.inert {
   color: currentColor;
