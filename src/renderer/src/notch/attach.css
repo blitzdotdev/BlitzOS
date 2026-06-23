@@ -467,6 +467,17 @@
   border-radius: 4px;
   font: 700 9px/1 var(--isl-round);
 }
+/* bundled vector browser logo (Chrome/Safari) — fills its tile (16px row, 44px pill/chip) regardless of the helper. */
+.nh-island .att-brand-icon {
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+.nh-island .att-brand-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 /* a CONNECTED (selected) row = solid accent-blue highlight. A run of ADJACENT connected rows flattens the joined
    edges so they merge into ONE rounded block (iOS grouped-selection look). :has() is supported in our Chromium. */
 .nh-island .att-tab.connected {

@@ -398,7 +398,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
                   >
                     {isExp ? '▾' : '▸'}
                   </span>
-                  <AppIcon src={groupIcon(g.tabs[0]?.browser)} name={g.label} />
+                  <AppIcon src={groupIcon(g.tabs[0]?.browser)} name={g.label} brand={g.tabs[0]?.browser} />
                   <span className="att-app-name">{g.label}</span>
                   {connCount > 0 && <span className="att-app-conn">{connCount}</span>}
                   <span className="att-app-count">{g.tabs.length}</span>
