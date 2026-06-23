@@ -628,6 +628,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                         text={m.text}
                         parts={m.parts}
                         selectedAnswer={selectedAnswer}
+                        showDivider={m.role === 'agent' && i > 0}
                         onChoose={(choice) => {
                           setPendingChoiceSelections((prev) => ({ ...prev, [askKey]: choice }))
                           onSend(choice)

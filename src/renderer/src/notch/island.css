@@ -1404,6 +1404,11 @@ button.isl-app-chat:active .isl-app-icon {
   background: transparent;
   color: var(--isl-text);
 }
+.nh-island .isl-msg.agent.isl-md-msg.isl-say-divider {
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
 .nh-island .isl-msg::before,
 .nh-island .isl-msg::after {
   content: '';

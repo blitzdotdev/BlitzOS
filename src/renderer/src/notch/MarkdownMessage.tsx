@@ -10,6 +10,7 @@ const remarkPlugins = [remarkGfm]
 type MarkdownMessageProps = Pick<IslandMessage, 'role' | 'text' | 'parts'> & {
   onChoose?: (choice: string) => void
   selectedAnswer?: string
+  showDivider?: boolean
 }
 
 type Fence = { char: '`' | '~'; size: number }
@@ -226,12 +227,12 @@ function renderMessagePart(part: IslandMessagePart, index: number, onChoose?: (c
   }
 }
 
-function MarkdownMessage({ role, text, parts: providedParts, onChoose, selectedAnswer }: MarkdownMessageProps): JSX.Element {
+function MarkdownMessage({ role, text, parts: providedParts, onChoose, selectedAnswer, showDivider }: MarkdownMessageProps): JSX.Element {
   const parts = useMemo(() => messagePartsFor({ role, text, parts: providedParts }), [role, text, providedParts])
   const hasChoice = parts.some((part) => part.type === 'choice')
 
   return (
-    <div className={`isl-msg ${role} isl-md-msg${hasChoice ? ' isl-ask-msg' : ''}`}>
+    <div className={`isl-msg ${role} isl-md-msg${hasChoice ? ' isl-ask-msg' : ''}${showDivider ? ' isl-say-divider' : ''}`}>
       {parts.map((part, index) => renderMessagePart(part, index, onChoose, selectedAnswer))}
     </div>
   )

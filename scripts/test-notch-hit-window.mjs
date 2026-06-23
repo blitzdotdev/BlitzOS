@@ -413,10 +413,13 @@ ok('island chat renders markdown with react-markdown + GFM and no raw HTML path'
     /import MarkdownMessage from '.\/MarkdownMessage'/.test(islandPanel) &&
     /import \{ matchingChoiceAnswerForMessage \} from '.\/messageParts'/.test(islandPanel) &&
     /<MarkdownMessage[\s\S]*?role=\{m\.role\}[\s\S]*?text=\{m\.text\}/.test(islandPanel) &&
+    /showDivider=\{m\.role === 'agent' && i > 0\}/.test(islandPanel) &&
     /from 'react-markdown'/.test(markdownMessage) &&
     /from 'remark-gfm'/.test(markdownMessage) &&
     /remarkPlugins=\{remarkPlugins\}/.test(markdownMessage) &&
     /skipHtml/.test(markdownMessage) &&
+    /isl-say-divider/.test(markdownMessage) &&
+    /\.isl-msg\.agent\.isl-md-msg\.isl-say-divider/.test(islandCss) &&
     !/dangerouslySetInnerHTML/.test(markdownMessage) &&
     !/rehypeRaw/.test(markdownMessage))
 ok('markdown links use the safe external-url bridge and unsafe schemes become inert',
