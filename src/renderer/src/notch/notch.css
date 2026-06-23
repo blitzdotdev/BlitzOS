@@ -22,6 +22,11 @@
   max-width: 84vw;
   background: #000;
   color: #ededed;
+  /* obsidian-glass rim tokens (ported from lab/choice-cards, "obsidian" preset). The fill stays pure black and
+     the NotchShape is invariant — these drive ONLY the 1px outline (::before) + the outer lift below. */
+  --isl-rim-top: rgba(198, 217, 255, 0.6);
+  --isl-rim-mid: rgba(150, 172, 212, 0.14);
+  --isl-rim-bot: rgba(140, 176, 255, 0.34);
   border-radius: 0 0 28px 28px;
   overflow: hidden;
   position: relative; /* positioning context for the peek toggle in the notch band */
@@ -30,12 +35,42 @@
      edge, so this strip is normally clipped off by the physical display edge (invisible). But while the entry
      transform settles onto y=0, the chassis's GPU layer can land a sub-pixel low for a frame, exposing ~1px of
      desktop between the screen edge and the island top. The bleed is part of the chassis's OWN layer (no seam) and
-     fills that gap. box-shadow, not a child, so overflow:hidden can't clip it and it adds no layout. */
-  box-shadow: 0 -4px 0 0 #000;
+     fills that gap. box-shadow, not a child, so overflow:hidden can't clip it and it adds no layout. The 2nd +
+     3rd layers are the obsidian outer LIFT: a faint cool-blue ambient so the island floats off a black backdrop
+     (a black website) instead of merging — visible on the sides/bottom, clipped by the screen at the top. */
+  box-shadow: 0 -4px 0 0 #000, 0 12px 44px -10px rgba(30, 64, 140, 0.24), 0 1px 5px rgba(120, 160, 255, 0.1);
   animation: nhost-in 0.28s cubic-bezier(0.32, 0.72, 0, 1);
   /* the island EXPANDS sideways when the attachment panel opens (NotchHost adds .nh-wide). */
   transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
+
+/* ── OBSIDIAN-GLASS RIM — the "liquid-glass" OUTLINE (the only thing separating the all-black island from a black
+   backdrop). A 1px gradient hairline on the LEFT, RIGHT, and BOTTOM edges only — the TOP edge is deliberately
+   UNPAINTED (`padding-top: 0`, so the exclude-mask leaves no strip there): the chassis top is flush to the bezel
+   and gets no outline. Masked to a hairline (mask-composite: exclude), ported from lab/choice-cards. The gradient
+   stays brightest at the top of the side rails and fades into the signature rounded-bottom curve. pointer-events:
+   none so it never eats clicks; sits at the border-box so overflow:hidden keeps the full hairline. NEVER fill the
+   interior here — the black background + NotchShape are invariant; this is edge light only. */
+.nh-chassis::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border-radius: inherit;
+  padding: 0 1px 1px; /* top:0 → no rim on the top edge; only left/right/bottom */
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    var(--isl-rim-top) 0%,
+    var(--isl-rim-mid) 24%,
+    rgba(255, 255, 255, 0.03) 60%,
+    var(--isl-rim-bot) 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
 .nh-chassis.nh-wide {
   width: 888px; /* attach-panel-open width (was 740px, +20%) */
 }
