@@ -349,7 +349,7 @@ ok('active chat view moves status/details into a Claude-like inline transcript r
     /const inlineDetails = showInlineDetails \? \(/.test(islandPanel) &&
     /className=\{`isl-inline-details/.test(islandPanel) &&
     /data-status=\{dotStatus\(status\)\}/.test(islandPanel) &&
-    /i === lastUserIndex && inlineDetails/.test(islandPanel) &&
+    /i === lastVisibleTurnIndex && inlineDetails/.test(islandPanel) &&
     /className="isl-inline-detail-rows"/.test(islandPanel) &&
     !/className="isl-actions"/.test(islandPanel) &&
     /\.nh-island \.isl-inline-details \{/.test(islandCss) &&
@@ -411,7 +411,7 @@ ok('permanent archived-agent delete goes through closeAgent only after settings 
 ok('island chat renders markdown with react-markdown + GFM and no raw HTML path',
   pkg.dependencies?.['react-markdown'] && pkg.dependencies?.['remark-gfm'] &&
     /import MarkdownMessage from '.\/MarkdownMessage'/.test(islandPanel) &&
-    /import \{ matchingChoiceAnswer \} from '.\/messageParts'/.test(islandPanel) &&
+    /import \{ matchingChoiceAnswerForMessage \} from '.\/messageParts'/.test(islandPanel) &&
     /<MarkdownMessage[\s\S]*?role=\{m\.role\}[\s\S]*?text=\{m\.text\}/.test(islandPanel) &&
     /from 'react-markdown'/.test(markdownMessage) &&
     /from 'remark-gfm'/.test(markdownMessage) &&
@@ -438,7 +438,7 @@ ok('island chat has a typed message-parts adapter before rendering markdown or p
     /parts\?: IslandMessagePart\[\]/.test(notchTypes) &&
     /messagePartsFor/.test(messageParts) &&
     /parseBlitzUiChoicePart/.test(messageParts) &&
-    /matchingChoiceAnswer/.test(messageParts) &&
+    /matchingChoiceAnswerForMessage/.test(messageParts) &&
     /messagePartsFor\(\{ role, text, parts: providedParts \}\)/.test(markdownMessage))
 ok('blitz-ui choice prompts render as typed tappable island parts instead of raw JSON',
   /```blitz-ui/.test(messageParts) &&
@@ -447,18 +447,29 @@ ok('blitz-ui choice prompts render as typed tappable island parts instead of raw
     /className=\{`isl-ask-card \$\{part\.layout\}/.test(markdownMessage) &&
     /case 'choice':/.test(markdownMessage) &&
     /onChoose\?\.\(option\.label\)/.test(markdownMessage) &&
-    /onChoose=\{\(choice\) => onSend\(choice\)\}/.test(islandPanel) &&
+    /disabled=\{answered \|\| !onChoose\}/.test(markdownMessage) &&
+    /setPendingChoiceSelections/.test(islandPanel) &&
+    /onSend\(choice\)/.test(islandPanel) &&
     /\.isl-ask-card/.test(islandCss) &&
-    /\.isl-ask-option/.test(islandCss))
-ok('submitted blitz-ui prompts collapse to prompt plus selected answer in history',
+    /\.isl-ask-option/.test(islandCss) &&
+    /\.isl-ask-card::before/.test(islandCss) &&
+    /backdrop-filter: blur\(40px\) saturate\(1\.35\)/.test(islandCss))
+ok('submitted blitz-ui prompts show the selected answer in the original prompt UI and hide the duplicate user bubble',
   /selectedAnswer/.test(markdownMessage) &&
     /isl-ask-selected/.test(markdownMessage) &&
+    /isl-ask-selected-mark/.test(markdownMessage) &&
+    /isl-ask-option\$\{selected \? ' selected' : ''\}/.test(markdownMessage) &&
     /className=\{`isl-ask-card \$\{part\.layout\}\$\{answered \? ' answered' : ''\}`\}/.test(markdownMessage) &&
-    /matchingChoiceAnswer/.test(islandPanel) &&
+    /pendingChoiceSelections/.test(islandPanel) &&
+    /matchingChoiceAnswerForMessage/.test(islandPanel) &&
+    /lastVisibleTurnIndex/.test(islandPanel) &&
+    /return i - 1/.test(islandPanel) &&
     /isSubmittedAskAnswer/.test(islandPanel) &&
     /if \(isSubmittedAskAnswer\) return null/.test(islandPanel) &&
     /\.isl-ask-card\.answered/.test(islandCss) &&
-    /\.isl-ask-selected-answer/.test(islandCss))
+    /\.isl-ask-card\.answered \.isl-ask-option/.test(islandCss) &&
+    /\.isl-ask-selected-answer/.test(islandCss) &&
+    /\.isl-ask-selected-mark/.test(islandCss))
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)
 process.exit(failures === 0 ? 0 : 1)

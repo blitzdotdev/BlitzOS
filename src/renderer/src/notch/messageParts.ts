@@ -61,8 +61,12 @@ export function messagePartsFor(message: Pick<IslandMessage, 'role' | 'text' | '
 }
 
 export function matchingChoiceAnswer(promptText: string, answerText?: string): string | undefined {
+  return matchingChoiceAnswerForMessage({ role: 'agent', text: promptText }, answerText)
+}
+
+export function matchingChoiceAnswerForMessage(message: Pick<IslandMessage, 'role' | 'text' | 'parts'>, answerText?: string): string | undefined {
   if (!answerText) return undefined
-  const choice = parseBlitzUiChoicePart(promptText)
+  const choice = messagePartsFor(message).find((part): part is IslandChoicePart => part.type === 'choice')
   if (!choice) return undefined
   const cleanAnswer = answerText.trim()
   return choice.options.some((option) => option.label === cleanAnswer) ? cleanAnswer : undefined
