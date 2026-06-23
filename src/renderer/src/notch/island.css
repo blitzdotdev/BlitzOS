@@ -619,16 +619,16 @@ button.isl-app-chat:active .isl-app-icon {
   min-height: 0;
 }
 
-/* ── active-agent meta row below tabs: current state + compact archive action ───────────────────────────────── */
+/* ── active-agent chrome below tabs: compact archive action; live status now lives in the transcript. ────────── */
 .nh-island .isl-agent-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   flex: none;
-  min-height: 34px;
+  min-height: 30px;
   box-sizing: border-box;
-  padding: 8px 2px 4px;
+  padding: 6px 2px 2px;
 }
 .nh-island .isl-status {
   display: flex;
@@ -779,6 +779,140 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-detail-empty {
   color: var(--isl-dim);
+}
+
+/* ── Option A: Claude-like inline activity details inside the transcript. ──────────────────────────────────── */
+.nh-island .isl-inline-details {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 100%;
+  margin: 2px 0 3px;
+  color: var(--isl-muted);
+  animation: isl-rise 0.18s ease-out both;
+}
+.nh-island .isl-inline-details-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 600 13px/18px var(--isl-font);
+  text-align: left;
+  cursor: pointer;
+}
+.nh-island .isl-inline-details-summary:hover {
+  color: var(--isl-text);
+}
+.nh-island .isl-inline-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--isl-dim);
+}
+.nh-island .isl-inline-details[data-status='warming'] .isl-inline-status-dot {
+  background: var(--isl-accent);
+  animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-inline-details[data-status='working'] .isl-inline-status-dot {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  background: transparent;
+  animation: isl-spin 0.8s linear infinite;
+}
+.nh-island .isl-inline-details[data-status='waiting'] .isl-inline-status-dot {
+  background: #ffd60a;
+  box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.14);
+}
+.nh-island .isl-inline-details[data-status='error'] .isl-inline-status-dot {
+  background: #ff453a;
+  box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.14);
+}
+.nh-island .isl-inline-details-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-inline-details[data-status='working'] .isl-inline-details-text,
+.nh-island .isl-inline-details[data-status='warming'] .isl-inline-details-text {
+  animation: isl-detail-fade 2.4s ease-in-out infinite;
+}
+.nh-island .isl-inline-details[data-status='waiting'] {
+  color: #ffe27a;
+}
+.nh-island .isl-inline-details[data-status='error'] {
+  color: #ffb4ad;
+}
+.nh-island .isl-inline-details-caret {
+  flex: none;
+  color: currentColor;
+  font-size: 15px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+.nh-island .isl-inline-detail-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 132px;
+  overflow-y: auto;
+  margin-left: 3px;
+  padding: 2px 0 3px 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+.nh-island .isl-inline-detail-row,
+.nh-island .isl-inline-detail-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.72);
+  font: 500 12px/16px var(--isl-font);
+}
+.nh-island .isl-inline-detail-row span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-inline-detail-row.latest {
+  color: var(--isl-text);
+}
+.nh-island .isl-inline-detail-bullet {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.32);
+}
+.nh-island .isl-inline-detail-row.latest .isl-inline-detail-bullet {
+  background: var(--isl-accent);
+}
+.nh-island .isl-inline-detail-empty {
+  color: var(--isl-dim);
+}
+@keyframes isl-detail-fade {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  45% {
+    opacity: 1;
+  }
 }
 
 /* ── the PEEK view: the active agent's "now playing" BELOW the kept tab bar (the toggle is .nh-peek-toggle) ─────── */
@@ -1040,6 +1174,12 @@ button.isl-app-chat:active .isl-app-icon {
   height: 8px;
   background: #ffd60a;
   box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.14);
+}
+.nh-island .isl-chip-dot[data-status='error'] {
+  width: 8px;
+  height: 8px;
+  background: #ff453a;
+  box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.14);
 }
 
 /* Album-pill tabs: each agent chip carries a mini gradient "album", then its name, then the status dot. */

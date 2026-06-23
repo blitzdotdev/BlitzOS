@@ -201,7 +201,7 @@ ok('home working-agent rail jumps directly to the selected agent chat',
   /const openAgentChat = \(id: string\): void => \{[\s\S]*?const idx = sessions\.findIndex\(\(s\) => s\.id === id\)[\s\S]*?setPage\(idx \+ 1\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
     /onOpenAgent=\{openAgentChat\}/.test(notchHost))
 ok('notch agent status text keeps the backend starting state visible as Warming up',
-  /s === 'starting' \|\| s === 'reconnecting' \? 'warming' : s === 'working' \? 'working' : s === 'waiting' \? 'waiting' : 'idle'/.test(islandPanel) &&
+  /s === 'starting' \|\| s === 'reconnecting' \? 'warming' : s === 'working' \? 'working' : s === 'waiting' \? 'waiting' : s === 'error' \? 'error' : 'idle'/.test(islandPanel) &&
     /case 'working':[\s\S]*?return 'Working'[\s\S]*?case 'starting':[\s\S]*?return 'Warming up'[\s\S]*?case 'reconnecting'/.test(islandPanel) &&
     /case 'waiting':[\s\S]*?return 'Response Needed'/.test(islandPanel) &&
     /case 'stopped':[\s\S]*?return 'Idle'/.test(islandPanel) &&
@@ -209,8 +209,9 @@ ok('notch agent status text keeps the backend starting state visible as Warming 
     /\.isl-chip-dot\[data-status='warming'\] \{[\s\S]*?animation: isl-dot-pulse/.test(islandCss) &&
     /\.isl-chip-dot\[data-status='working'\] \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
     /\.isl-chip-dot\[data-status='waiting'\]/.test(islandCss) &&
-    /\.isl-status\[data-status='waiting'\]/.test(islandCss) &&
-    /\.isl-status\[data-status='working'\] \.isl-status-dot \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
+    /\.isl-chip-dot\[data-status='error'\]/.test(islandCss) &&
+    /\.isl-inline-details\[data-status='waiting'\]/.test(islandCss) &&
+    /\.isl-inline-details\[data-status='working'\] \.isl-inline-status-dot \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
     /@keyframes isl-spin/.test(islandCss))
 ok('workspace host derives working status from contextual terminal output and active workflow runs',
   /chatWorkflowRuns = new Map/.test(workspaceHost) &&
@@ -343,10 +344,16 @@ ok('active chat view offers archive only for non-primary agents while reserving 
     /disabled=\{activeId === '0'\}/.test(islandPanel) &&
     /if \(activeId !== '0'\) onArchiveAgent\(activeId\)/.test(islandPanel) &&
     /\.nh-island \.isl-archive\.placeholder \{[\s\S]*?visibility: hidden[\s\S]*?pointer-events: none/.test(islandCss))
-ok('active chat view shows status and archive in a padded meta row below the tabs',
-  /className="isl-agent-meta"[\s\S]*?className="isl-status"[\s\S]*?className=\{`isl-archive/.test(islandPanel) &&
-    /\.nh-island \.isl-agent-meta \{[\s\S]*?justify-content: space-between[\s\S]*?padding: 8px 2px 4px/.test(islandCss) &&
-    /\.nh-island \.isl-actions \{[\s\S]*?justify-content: flex-start/.test(islandCss))
+ok('active chat view moves status/details into a Claude-like inline transcript row',
+  /const showInlineDetails = Boolean\(activeId && \(latestDetail \|\| dotStatus\(status\) !== 'idle' \|\| detailsOpen\)\)/.test(islandPanel) &&
+    /const inlineDetails = showInlineDetails \? \(/.test(islandPanel) &&
+    /className=\{`isl-inline-details/.test(islandPanel) &&
+    /data-status=\{dotStatus\(status\)\}/.test(islandPanel) &&
+    /i === lastUserIndex && inlineDetails/.test(islandPanel) &&
+    /className="isl-inline-detail-rows"/.test(islandPanel) &&
+    !/className="isl-actions"/.test(islandPanel) &&
+    /\.nh-island \.isl-inline-details \{/.test(islandCss) &&
+    /\.nh-island \.isl-agent-meta \{[\s\S]*?justify-content: flex-end[\s\S]*?padding: 6px 2px 2px/.test(islandCss))
 ok('agent tabs can be renamed inline from right-click with a 24-character cap',
   /renameAgent\(agentId: string, newTitle: string\)[\s\S]*?'os:rename-agent'/.test(preload) &&
     /ipcMain\.handle\('os:rename-agent'/.test(index) &&

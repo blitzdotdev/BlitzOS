@@ -30,7 +30,8 @@ const ARCHIVE_PATH =
   'M4 7h16M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 11h6M5 3h14a1 1 0 0 1 1 1v3H4V4a1 1 0 0 1 1-1Z'
 
 // Raw host status → status symbol: warming/reconnecting pulses blue, working spins, everything else is quiet.
-const dotStatus = (s: string): string => (s === 'starting' || s === 'reconnecting' ? 'warming' : s === 'working' ? 'working' : s === 'waiting' ? 'waiting' : 'idle')
+const dotStatus = (s: string): string =>
+  s === 'starting' || s === 'reconnecting' ? 'warming' : s === 'working' ? 'working' : s === 'waiting' ? 'waiting' : s === 'error' ? 'error' : 'idle'
 // Raw host status → a plain one-word label for the live status line.
 const statusLabel = (s: string): string => {
   switch (s) {
@@ -265,18 +266,31 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     el.select()
   }, [editingId])
 
+  const loadDetails = useCallback((): void => {
+    if (!activeId) return
+    window.agentOS
+      ?.agentDetails?.(activeId)
+      .then((r) => setDetailRows(r?.rows || []))
+      .catch(() => {
+        /* best-effort */
+      })
+  }, [activeId])
+
   const toggleDetails = (): void => {
     const next = !detailsOpen
     setDetailsOpen(next)
-    if (next && activeId) {
-      window.agentOS
-        ?.agentDetails?.(activeId)
-        .then((r) => setDetailRows(r?.rows || []))
-        .catch(() => {
-          /* best-effort */
-        })
-    }
+    if (next) loadDetails()
   }
+
+  // Keep the inline activity row fresh while the agent is doing something. This is the same raw tool-row source
+  // the old bottom Details section used; the redesign changes placement first, not the backend contract.
+  useEffect(() => {
+    if (!activeId) return
+    loadDetails()
+    if (dotStatus(status) === 'idle') return
+    const timer = window.setInterval(loadDetails, 2500)
+    return () => window.clearInterval(timer)
+  }, [activeId, loadDetails, status])
 
   const startRename = (sessionId: string, title: string): void => {
     setEditingId(sessionId)
@@ -508,6 +522,38 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   // is locked to what it was, so the attachment panel rises only as tall as its own content and the feed shrinks to
   // fit (still scrollable + bottom-pinned). The new-session tab has no chat, so it just sizes to the composer + attach.
   const lockHeight = attachOpen && !isNew ? closedHeightRef.current ?? undefined : undefined
+  const lastUserIndex = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user') return i
+    return -1
+  })()
+  const latestDetail = detailRows[detailRows.length - 1]?.label
+  const inlineDetailText = latestDetail || (dotStatus(status) === 'idle' ? statusLabel(status) : `${statusLabel(status)}…`)
+  const showInlineDetails = Boolean(activeId && (latestDetail || dotStatus(status) !== 'idle' || detailsOpen))
+  const inlineDetails = showInlineDetails ? (
+    <div className={`isl-inline-details${detailsOpen ? ' open' : ''}`} data-status={dotStatus(status)}>
+      <button type="button" className="isl-inline-details-summary" onClick={toggleDetails}>
+        <span className="isl-inline-status-dot" aria-hidden />
+        <span className="isl-inline-details-text">{inlineDetailText}</span>
+        <span className="isl-inline-details-caret" aria-hidden>
+          {detailsOpen ? '▾' : '›'}
+        </span>
+      </button>
+      {detailsOpen && (
+        <div className="isl-inline-detail-rows">
+          {detailRows.length === 0 ? (
+            <div className="isl-inline-detail-empty">No steps recorded</div>
+          ) : (
+            detailRows.slice(-40).map((r, i, rows) => (
+              <div key={`${i}:${r.label}`} className={`isl-inline-detail-row${i === rows.length - 1 ? ' latest' : ''}`}>
+                <span className="isl-inline-detail-bullet" aria-hidden />
+                <span>{r.label}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  ) : null
   return (
     <div
       ref={panelRef}
@@ -518,13 +564,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
         <div className="isl-tabwrap-inner">{tabStrip}</div>
       </div>
       {!isNew && (
-        // Agent tab: a PURE chat (the agent's real messages only) + Details + a live status line — KEPT in attach mode.
+        // Agent tab: a PURE chat (the agent's real messages only) + inline activity details — KEPT in attach mode.
         <>
           <div className="isl-agent-meta">
-            <div className="isl-status" data-status={dotStatus(status)}>
-              <span className="isl-status-dot" aria-hidden />
-              {statusLabel(status)}
-            </div>
             {activeId && (
               <button
                 type="button"
@@ -567,6 +609,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                         </div>
                       )}
                       <MarkdownMessage role={m.role} text={m.text} parts={m.parts} selectedAnswer={selectedAnswer} onChoose={(choice) => onSend(choice)} />
+                      {i === lastUserIndex && inlineDetails}
                       {/* live workflow board(s) anchored right after THIS message (the agent's "running…" line) */}
                       {(runsByAnchor.get(i) || []).map((r) => renderBoard(r))}
                     </Fragment>
@@ -581,27 +624,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               title={activeTerminal?.title || `Agent ${activeId}`}
               status={activeTerminal?.status || 'unknown'}
             />
-          )}
-          <div className="isl-actions">
-            <button type="button" className={`isl-details${detailsOpen ? ' open' : ''}`} onClick={toggleDetails}>
-              <span className="isl-details-caret" aria-hidden>
-                {detailsOpen ? '▾' : '▸'}
-              </span>
-              Details
-            </button>
-          </div>
-          {detailsOpen && (
-            <div className="isl-detail-rows">
-              {detailRows.length === 0 ? (
-                <div className="isl-detail-empty">No steps recorded</div>
-              ) : (
-                detailRows.map((r, i) => (
-                  <div key={i} className="isl-detail-row">
-                    {r.label}
-                  </div>
-                ))
-              )}
-            </div>
           )}
         </>
       )}
