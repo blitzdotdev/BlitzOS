@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BlitzOS · Mac-native choice cards</title>
+<!--
+  The obsidian-glass idea, stripped to a native macOS feel.
+
+  Kept from the obsidian pass: the glass is read from a top gleam + depth (no displacement), a single
+  cool accent. CUT from it: the bright full-top rim ring, the bottom-center bloom blob, the drifting
+  aurora scene, the dramatic 60px shadow. In their place: a mac sheet/popover material — one hairline
+  border, ONE soft top inner-light (the gleam, ~26px tall, clipped to the top edge), a moderate 2-stop
+  shadow, tighter spacing, SwiftUI-ish controls, a quiet flat ambient. The reference "Permission
+  Required" card is on top; representative choice/confirm cards below (PII scrubbed).
+
+  Single file. Tune in the inspector, then port. Sibling of lab/choice-cards/index.html.
+-->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    background: #0a0a0c; color: #fff; overflow: hidden; user-select: none;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  }
+
+  /* the world behind the glass. Flat near-black with ONE quiet ambient, no drift. */
+  .scene { position: fixed; inset: 0; z-index: 0; background: #0a0a0c;
+    background-image: radial-gradient(120% 80% at 50% -8%, rgba(30,32,36,.7), #0a0a0c 70%); }
+  .scene .glow { position: absolute; border-radius: 50%; filter: blur(120px); }
+  .scene .g1 { left: 10%; top: 6%; width: 46vw; height: 46vh; background: #1f3a5e; opacity: .12; }
+  .scene .g2 { right: 6%; bottom: 2%; width: 40vw; height: 40vh; background: #2a2350; opacity: .07; }
+
+  /* the card canvas (scrolls; masonry columns) */
+  .stage {
+    position: absolute; inset: 0; z-index: 1; overflow-y: auto; overflow-x: hidden;
+    padding: 64px 296px 64px 48px;
+    column-width: 340px; column-gap: 28px;
+    /* mac material tokens, driven by the inspector */
+    --blur: 40px; --r: 14px;
+    --fill-top: rgba(32,32,36,0.72); --fill-bot: rgba(20,20,22,0.80);
+    --hair: rgba(255,255,255,0.10);
+    --gleam: rgba(255,255,255,0.22);
+    --accent: #0a84ff; --accent-deep: #0a6fff;
+  }
+  .stage::-webkit-scrollbar { width: 9px; }
+  .stage::-webkit-scrollbar-thumb { background: rgba(255,255,255,.10); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+  .canvas-title { column-span: all; margin: 0 0 24px; }
+  .canvas-title h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+  .canvas-title p { margin: 5px 0 0; font-size: 12px; color: rgba(255,255,255,.46); }
+
+  /* the mac-glass card chassis */
+  .glass-card[data-ref] { column-span: all; width: 580px; max-width: 100%; margin: 0 auto 32px; }
+  .glass-card {
+    position: relative; width: 340px; margin: 0 0 28px; padding: 14px;
+    border-radius: var(--r); isolation: isolate; break-inside: avoid; overflow: hidden;
+    -webkit-backdrop-filter: blur(var(--blur)) saturate(1.35);
+    backdrop-filter: blur(var(--blur)) saturate(1.35);
+    border: 1px solid var(--hair);
+    background: linear-gradient(180deg, var(--fill-top), var(--fill-bot));
+    box-shadow: 0 24px 48px rgba(0,0,0,.46), 0 4px 12px rgba(0,0,0,.30), inset 0 1px 0 rgba(255,255,255,.06);
+  }
+  /* THE gleam — one soft top inner light, clipped to the top edge (~26px). It folds over the hairline
+     so the top reads as a single bright line that feathers into matte. Everything below is flat. */
+  .glass-card::before {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 26px; z-index: 1; pointer-events: none;
+    background: linear-gradient(180deg, var(--gleam), transparent);
+    border-radius: var(--r) var(--r) 0 0;
+  }
+  .glass-content { position: relative; z-index: 2; }
+
+  /* reference card header */
+  .card-head { display: flex; gap: 12px; align-items: center; }
+  .card-head-main { flex: 1; min-width: 0; }
+  .perm-icon { flex: none; width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center;
+    background: rgba(10,132,255,.14); border: 1px solid rgba(10,132,255,.30);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.12); }
+  .perm-icon svg { width: 19px; height: 19px; stroke: #6bb2ff; fill: none; stroke-width: 1.6; }
+  .card-title { font-size: 14px; font-weight: 600; letter-spacing: -.005em; }
+  .card-body { font-size: 12.5px; line-height: 1.4; color: rgba(255,255,255,.56); margin: 4px 0 0; }
+
+  /* choice content */
+  .isl-ask-prompt { font: 500 13.75px/1.42 inherit; color: rgba(255,255,255,.96); margin: 1px 0 12px; letter-spacing: .002em; }
+  .isl-ask-options { display: flex; flex-direction: column; gap: 6px; }
+  .glass-card.confirm .isl-ask-options { flex-flow: row wrap; justify-content: flex-end; }
+
+  /* SwiftUI-ish control. Ghost + accent. Restraint: no lift on hover, fast 120ms. */
+  .isl-ask-option {
+    position: relative; display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 12px; border-radius: 8px; cursor: pointer; text-align: left; color: #fff; font: inherit;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.10);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+    transition: background .12s ease, border-color .12s ease, transform .06s ease;
+  }
+  .glass-card.confirm .isl-ask-option { flex: 0 1 auto; min-width: 104px; align-items: center; text-align: center; }
+  .isl-ask-option:hover { background: rgba(255,255,255,.105); border-color: rgba(255,255,255,.16); }
+  .isl-ask-option:active { transform: translateY(.5px); background: rgba(255,255,255,.05); }
+  .isl-ask-option:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(10,132,255,.6), inset 0 1px 0 rgba(255,255,255,.08); }
+  .isl-ask-option.primary {
+    background: linear-gradient(180deg, var(--accent), var(--accent-deep));
+    border-color: rgba(255,255,255,.12);
+    box-shadow: 0 1px 2px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.28);
+  }
+  .isl-ask-option.primary:hover { background: linear-gradient(180deg, #1a92ff, #0a7aff); }
+  .isl-ask-option.primary:active { background: var(--accent-deep); }
+  .isl-ask-option.primary .isl-ask-sub { color: rgba(255,255,255,.82); }
+  .isl-ask-label { font-weight: 500; font-size: 13px; letter-spacing: -.003em; }
+  .isl-ask-sub { font-size: 11px; color: rgba(255,255,255,.50); line-height: 1.3; }
+
+  /* answered state — native: small accent check row, no glow blob */
+  .glass-card.answered .isl-ask-options { opacity: .45; pointer-events: none; }
+  .isl-ask-selected { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 7px 10px;
+    border-radius: 8px; background: rgba(10,132,255,.10); border: 1px solid rgba(10,132,255,.28);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.10); }
+  .isl-ask-selected-kicker { font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: rgba(120,180,255,.86); flex: none; }
+  .isl-ask-selected-answer { font-size: 12.5px; font-weight: 500; color: rgba(255,255,255,.92); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .isl-ask-selected-mark { margin-left: auto; flex: none; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); }
+  .isl-ask-selected-mark svg { width: 10px; height: 10px; stroke: #fff; fill: none; stroke-width: 2.6; }
+
+  /* inspector panel (mac sidebar material) */
+  .panel {
+    position: fixed; top: 16px; right: 16px; bottom: 16px; width: 264px; z-index: 5;
+    display: flex; flex-direction: column; gap: 10px; padding: 14px; overflow-y: auto;
+    background: rgba(24,24,27,.62); -webkit-backdrop-filter: blur(36px) saturate(1.4); backdrop-filter: blur(36px) saturate(1.4);
+    border: 1px solid rgba(255,255,255,.08); border-radius: 12px;
+    box-shadow: 0 20px 44px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);
+    font-size: 12px;
+  }
+  .panel::-webkit-scrollbar { width: 8px; } .panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,.10); border-radius: 5px; }
+  .panel h2 { margin: 0; font-size: 12.5px; }
+  .panel h2 small { display: block; margin-top: 3px; font-size: 10px; font-weight: 400; color: rgba(255,255,255,.42); }
+  .panel h3 { margin: 6px 0 2px; font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.36); }
+  .row { display: grid; grid-template-columns: 74px 1fr 38px; align-items: center; gap: 8px; }
+  .row label { color: rgba(255,255,255,.62); }
+  .row input[type="range"] { width: 100%; accent-color: #0a84ff; height: 4px; }
+  .row .v { text-align: right; color: rgba(255,255,255,.40); font-variant-numeric: tabular-nums; }
+  .row.full { grid-template-columns: 74px 1fr; }
+  .row select, .row input[type="color"] { width: 100%; height: 24px; border-radius: 6px; border: 1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.05); color: #e6e9ef; padding: 0 6px; font-size: 11px; }
+  .row input[type="color"] { padding: 2px; cursor: pointer; }
+  .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+  .presets button { padding: 6px; border: 1px solid rgba(255,255,255,.08); border-radius: 7px; cursor: pointer; color: rgba(255,255,255,.8); background: rgba(255,255,255,.05); font: 500 11px inherit; }
+  .presets button:hover { background: rgba(255,255,255,.10); }
+  .presets button.on { background: var(--accent); border-color: rgba(255,255,255,.18); color: #fff; }
+  .chk { display: flex; align-items: center; gap: 8px; color: rgba(255,255,255,.62); cursor: pointer; }
+  .chk input { accent-color: #0a84ff; }
+  .actions button { width: 100%; padding: 7px; border: 1px solid rgba(255,255,255,.10); border-radius: 7px; cursor: pointer; color: #fff; background: linear-gradient(180deg, var(--accent), var(--accent-deep)); font: 600 11.5px inherit; box-shadow: inset 0 1px 0 rgba(255,255,255,.22); }
+  .actions button:hover { background: linear-gradient(180deg, #1a92ff, #0a7aff); }
+  .out { width: 100%; height: 100px; resize: none; border-radius: 7px; border: 1px solid rgba(255,255,255,.10); background: rgba(0,0,0,.3); color: #8fd0ff; font: 10.5px/1.5 "SF Mono", ui-monospace, Menlo, monospace; padding: 7px; }
+  .hint { color: rgba(255,255,255,.36); font-size: 10.5px; line-height: 1.4; }
+</style>
+</head>
+<body>
+  <div class="scene" id="scene">
+    <div class="glow g1" id="glow1"></div>
+    <div class="glow g2" id="glow2"></div>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="canvas-title">
+      <h1>Mac-native choice &amp; approval cards</h1>
+      <p>Same obsidian idea, quieter: one top gleam, a hairline border, mac controls, no bloom. Reference card on top.</p>
+    </div>
+
+    <div class="glass-card confirm" data-ref="1">
+      <div class="glass-content">
+        <div class="card-head">
+          <div class="perm-icon"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.4-3 8.2-7 9-4-0.8-7-4.6-7-9V6l7-3z"/></svg></div>
+          <div class="card-head-main">
+            <div class="card-title">Permission Required</div>
+            <div class="card-body">Create a new BlitzOS workspace and import issues from your Google doc.</div>
+            <div class="isl-ask-options" style="margin-top:12px">
+              <button class="isl-ask-option"><span class="isl-ask-label">Cancel</span></button>
+              <button class="isl-ask-option primary"><span class="isl-ask-label">Approve</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Mac material<small>quieter than obsidian — one gleam, one hairline</small></h2>
+
+    <h3>Material</h3>
+    <div class="row"><label>Blur</label><input id="blur" type="range" min="0" max="60" step="1"><span class="v" id="blur-v"></span></div>
+    <div class="row"><label>Fill</label><input id="fill" type="range" min="0.4" max="0.95" step="0.01"><span class="v" id="fill-v"></span></div>
+    <div class="row"><label>Gleam</label><input id="gleam" type="range" min="0" max="0.5" step="0.01"><span class="v" id="gleam-v"></span></div>
+    <div class="row"><label>Radius</label><input id="radius" type="range" min="8" max="22" step="1"><span class="v" id="radius-v"></span></div>
+
+    <h3>Color</h3>
+    <div class="row full"><label>Hairline</label><input id="hairColor" type="color" /></div>
+    <div class="row full"><label>Gleam</label><input id="gleamColor" type="color" /></div>
+    <div class="row full"><label>Accent</label><input id="accentColor" type="color" /></div>
+
+    <h3>Presets</h3>
+    <div class="presets" id="presets">
+      <button data-p="native">Native</button>
+      <button data-p="flat">Flat</button>
+      <button data-p="frosted">Frosted</button>
+      <button data-p="quiet">Quiet</button>
+    </div>
+
+    <h3>Export</h3>
+    <div class="actions"><button id="copy">Copy CSS tokens</button></div>
+    <textarea class="out" id="out" readonly></textarea>
+    <p class="hint">Native mac glass = blur + one top gleam + one hairline border + a 2-stop shadow. No rim ring, no bloom.</p>
+  </div>
+
+<script>
+const stage = document.getElementById('stage');
+function esc(s) { return String(s).replace(/[&<>"]/g, ch => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[ch])); }
+
+const SAMPLE_CARDS = [
+  { type: 'choice', prompt: 'I can see two clusters in what you have open: fundraising (investor docs, testers list, lead pipeline) and product (backend, agent runtime, app code). Where should I focus first?',
+    options: [ { label: 'Fundraising track', sub: 'Investor docs, growth pipeline' }, { label: 'Product', sub: 'Backend, agent runtime, dev work' }, { label: 'Both equally', sub: 'Switch based on what I am doing' }, { label: 'Something else', sub: 'I will tell you' } ] },
+  { type: 'choice', prompt: 'While that runs: how proactively should BlitzOS act? (This sets how much I do on my own vs. check first.)',
+    options: [ { label: 'High autonomy', sub: 'Act freely, surface results, ask only before sends or deletes' }, { label: 'Ask on big moves', sub: 'Research and read freely, confirm before writing to accounts' }, { label: 'Ask before most things', sub: 'Narrate plans and wait for a go-ahead each time' } ] },
+  { type: 'choice', prompt: 'One hard line: what actions should always need your explicit OK, no matter what?',
+    options: [ { label: 'Sending messages or emails', sub: 'Any outbound comms to people' }, { label: 'Pushes, deploys, or publishes', sub: 'Anything that goes live or public' }, { label: 'Deletes and destructive ops', sub: 'Remove files, drop data, cancel things' }, { label: 'All of the above', sub: 'Confirm before any of these three' } ] },
+  { type: 'choice', prompt: 'Which of these should BlitzOS be able to read and act in?',
+    options: [ { label: 'Google Docs / Drive', sub: 'Docs, Sheets, Drive files' }, { label: 'Cloudflare Dashboard', sub: 'D1, Workers, deployments' }, { label: 'Claude.ai', sub: 'Chat sessions' }, { label: 'All of these', sub: 'Open them all as signed-in surfaces' } ] },
+  { type: 'confirm', prompt: 'Want me to draft a reply to Alex? I would say you are interested in hearing more while keeping your options open.',
+    options: [ { label: 'Draft the reply' }, { label: 'Just the basics, no extras' }, { label: 'Not now' } ] },
+  { type: 'confirm', prompt: 'Send the draft to Alex now?',
+    options: [ { label: 'Send it' }, { label: 'Leave it as a draft' } ] },
+  { type: 'choice', prompt: 'All 40 drafts are staged, personalized per person. Two honest things first: only 7 of the 40 addresses are verified, and to send from Gmail I need it connected once. How do you want to proceed?',
+    options: [ { label: 'Connect Gmail, then send', sub: 'One tap and I fire them from your account' }, { label: 'Send via my browser Gmail', sub: 'No setup. Slower but works now' }, { label: 'Verify more addresses first', sub: 'Confirm real emails before any send' }, { label: 'Champions only, hold the rest', sub: 'Send the 27 warm ones, hold 13' } ] },
+  { type: 'choice', prompt: 'Native speech-to-text — the spec is ready. Next step?',
+    options: [ { label: 'Build it now', sub: 'Hand the spec to the coding agent' }, { label: 'I will review the spec first', sub: '' }, { label: 'Tweak the spec', sub: 'I will tell you what' } ] },
+  { type: 'confirm', prompt: 'To get quotes I would DM the 3 most openly-for-hire accounts first. Send the DMs?',
+    options: [ { label: 'Send the 3 DMs' }, { label: 'Change targets or wording' }, { label: 'Just save drafts, do not send' } ] },
+  { type: 'choice', prompt: 'I read the testing-log doc — about 30 issues across Bugs, UX, and a Top 5. In Linear, where should they go?',
+    options: [ { label: 'New team in your workspace', sub: 'Recommended — clean, stays where you are' }, { label: 'Brand-new separate workspace', sub: 'Its own URL and billing, fully split off' } ] },
+  { type: 'confirm', prompt: 'Open the support server in your desktop Discord, then tap below and I will read #support.',
+    options: [ { label: 'Done — read #support now' }, { label: 'It is a different account' }, { label: 'Just find it yourself' } ] },
+  { type: 'choice', prompt: 'Designs are on your canvas, scored on expressiveness / reliability / speed. My rec: ship A. Want me to start?',
+    options: [ { label: 'Build A now + the 3 quick fixes', sub: 'Recommended' }, { label: 'Go straight to C', sub: 'Doc + artifacts' }, { label: 'Just the 3 quick fixes', sub: 'For now' }, { label: 'Hold — let us discuss', sub: '' } ] },
+];
+
+SAMPLE_CARDS.forEach(card => {
+  const el = document.createElement('div');
+  el.className = `glass-card ${card.type}`;
+  let opts = card.options.map((o, i) => ({ ...o, primary: false, i }));
+  if (card.type === 'confirm' && opts.length) { const aff = opts.shift(); aff.primary = true; opts.push(aff); }
+  const optHtml = opts.map(o =>
+    `<button class="isl-ask-option${o.primary ? ' primary' : ''}" data-i="${o.i}"><span class="isl-ask-label">${esc(o.label)}</span>${o.sub ? `<span class="isl-ask-sub">${esc(o.sub)}</span>` : ''}</button>`
+  ).join('');
+  el.innerHTML =
+    `<div class="glass-content">` +
+      `<div class="isl-ask-prompt">${esc(card.prompt)}</div>` +
+      `<div class="isl-ask-options">${optHtml}</div>` +
+      `<div class="isl-ask-selected" hidden><span class="isl-ask-selected-kicker">Selected</span><span class="isl-ask-selected-answer"></span><span class="isl-ask-selected-mark"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span></div>` +
+    `</div>`;
+  stage.appendChild(el);
+  el.addEventListener('click', e => {
+    const btn = e.target.closest('.isl-ask-option'); if (!btn || el.classList.contains('answered')) return;
+    const chosen = card.options[parseInt(btn.dataset.i, 10)].label;
+    el.classList.add('answered');
+    const sel = el.querySelector('.isl-ask-selected');
+    sel.querySelector('.isl-ask-selected-answer').textContent = chosen;
+    sel.hidden = false;
+  });
+});
+
+const P = { blur: 40, fill: 0.74, gleam: 0.22, radius: 14,
+            hairColor: '#ffffff', gleamColor: '#ffffff', accent: '#0a84ff' };
+const PRESETS = {
+  native:  { blur: 40, fill: 0.74, gleam: 0.22, radius: 14, hairColor: '#ffffff', gleamColor: '#ffffff', accent: '#0a84ff' },
+  flat:    { blur: 24, fill: 0.86, gleam: 0.10, radius: 12, hairColor: '#ffffff', gleamColor: '#ffffff', accent: '#0a84ff' },
+  frosted: { blur: 56, fill: 0.55, gleam: 0.30, radius: 16, hairColor: '#ffffff', gleamColor: '#ffffff', accent: '#0a84ff' },
+  quiet:   { blur: 30, fill: 0.82, gleam: 0.14, radius: 12, hairColor: '#ffffff', gleamColor: '#ffffff', accent: '#0a84ff' },
+};
+function hexToRgb(h){const n=parseInt(h.slice(1),16);return [n>>16&255,n>>8&255,n&255];}
+function rgba(hex,a){const [r,g,b]=hexToRgb(hex);return `rgba(${r},${g},${b},${a.toFixed(3)})`;}
+function shade(hex){const [r,g,b]=hexToRgb(hex);return `rgba(${Math.round(r*0.72)},${Math.round(g*0.72)},${Math.round(b*0.98)},1)`;} // deep variant: slightly darker, hold blue
+function deep(hex){const [r,g,b]=hexToRgb(hex);return `rgb(${Math.max(0,Math.round(r*0.78))},${Math.max(0,Math.round(g*0.66))},${Math.min(255,Math.round(b*0.98))}`;}
+function applyVars(){
+  const s=stage.style;
+  s.setProperty('--blur',P.blur+'px');
+  s.setProperty('--r',P.radius+'px');
+  s.setProperty('--fill-top',`rgba(32,32,36,${P.fill.toFixed(3)})`);
+  s.setProperty('--fill-bot',`rgba(20,20,22,${Math.min(1,P.fill+0.06).toFixed(3)})`);
+  s.setProperty('--hair',rgba(P.hairColor,0.10));
+  s.setProperty('--gleam',rgba(P.gleamColor,P.gleam));
+  s.setProperty('--accent',P.accent);
+  s.setProperty('--accent-deep',deep(P.accent));
+}
+function writeOut(){
+  document.getElementById('out').value =
+`/* mac-native card tokens */
+backdrop-filter: blur(${P.blur}px) saturate(1.35);
+border-radius: ${P.radius}px;
+fill: linear-gradient(180deg, rgba(32,32,36,${P.fill}), rgba(20,20,22,${Math.min(1,P.fill+0.06).toFixed(2)}));
+hairline: ${rgba(P.hairColor,0.10)};
+gleam (top): ${rgba(P.gleamColor,P.gleam)};
+accent: ${P.accent};
+accent-deep: ${deep(P.accent)};`;
+}
+function reflect(){
+  for(const k of ['blur','fill','gleam','radius']){
+    const el=document.getElementById(k); if(el)el.value=P[k];
+    const out=document.getElementById(k+'-v'); if(out)out.textContent=P[k];
+  }
+  document.getElementById('hairColor').value=P.hairColor;
+  document.getElementById('gleamColor').value=P.gleamColor;
+  document.getElementById('accentColor').value=P.accent;
+  applyVars(); writeOut();
+}
+['blur','fill','gleam','radius'].forEach(k=>{
+  const el=document.getElementById(k),out=document.getElementById(k+'-v');
+  el.addEventListener('input',()=>{ P[k]=parseFloat(el.value); out.textContent=el.value; applyVars(); writeOut(); });
+});
+['hairColor','gleamColor','accent'].forEach(k=>{
+  document.getElementById(k==='accent'?'accentColor':k).addEventListener('input',e=>{ P[k]=e.target.value; applyVars(); writeOut(); });
+});
+document.getElementById('presets').addEventListener('click',e=>{
+  const p=e.target.dataset.p; if(!p)return; Object.assign(P,PRESETS[p]); reflect();
+  [...document.querySelectorAll('#presets button')].forEach(b=>b.classList.toggle('on',b.dataset.p===p));
+});
+document.getElementById('copy').addEventListener('click',async()=>{
+  try{ await navigator.clipboard.writeText(document.getElementById('out').value);
+    const b=document.getElementById('copy'); b.textContent='Copied ✓'; setTimeout(()=>b.textContent='Copy CSS tokens',1200);
+  }catch{}
+});
+reflect();
+document.querySelector('#presets button[data-p="native"]').classList.add('on');
+</script>
+</body>
+</html>
