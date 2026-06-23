@@ -1916,8 +1916,8 @@ button.isl-app-chat:active .isl-app-icon {
   align-self: center; /* vertically center in the bar (was flex-end, which biased it low on a single line) */
   border: 0;
   border-radius: 50%;
-  background: #fff; /* white send circle */
-  color: #000; /* dark arrow so it stays visible on white */
+  background: var(--isl-accent); /* send circle = the island's one accent (Apple system blue) */
+  color: #fff; /* light arrow on the accent */
   font-size: 17px;
   line-height: 1;
   display: inline-flex;
