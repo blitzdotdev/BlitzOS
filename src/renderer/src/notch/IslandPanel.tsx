@@ -15,6 +15,7 @@ import { useSentTray, recordSentTray, getLiveTray } from './sentTrayStore'
 import { IslandTerminalPane } from './IslandTerminalPane'
 import MarkdownMessage from './MarkdownMessage'
 import IslandKanban, { type WfStats } from './IslandKanban'
+import { isSubagentEvents } from './wfReduce'
 import { fmtMs, fmtTok } from './wfShared'
 import { matchingChoiceAnswer } from './messageParts'
 import type { IslandPanelProps, IslandWfRun } from './types'
@@ -182,6 +183,20 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     return { runsByAnchor: byAnchor, leadingRuns: leading }
   }, [runs, messages])
   const renderBoard = (r: IslandWfRun): JSX.Element => {
+    // SINGLE-PHASE fan-out ("subagents"): each leaf is already its own row pill, so the run-level "workflow
+    // running" pill is redundant — drop it and render the rows directly (always mounted; a fan-out board is small,
+    // not the heavy multi-phase grid the lazy-mount guards). Detected from the dry-preflight skeleton alone, so no
+    // board mount is needed to decide. Before the skeleton lands it reads false → the normal pill shows, then this
+    // switches to the headless rows once the plan is known.
+    if (isSubagentEvents(r.skeleton as unknown[])) {
+      return (
+        <div className={`isl-wf-board isl-wf-subagents${r.done ? ' isl-wf-done' : ''}`} key={r.runId}>
+          <div className="isl-wf-board-body">
+            <IslandKanban runId={r.runId} skeleton={r.skeleton} onStats={handleRunStats} />
+          </div>
+        </div>
+      )
+    }
     // Prefer the LIVE stats a mounted board reports (freshest), else the final stats stored on the run record
     // (index.json) — so a collapsed/never-expanded done board still shows "{ms} · {calls} agents · {tokens} tok"
     // with no board mount. Both are null while a run is still running.

@@ -6,6 +6,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { mergeSkeleton, type WfNode } from './wfReduce'
 import { eventCardHead, fmtMs, fmtTok } from './wfShared'
 import IslandLeafDrawer from './IslandLeafDrawer'
+import IslandSubagents from './IslandSubagents'
 
 // Insert <wbr> after : / - _ so a long id wraps at delimiters instead of mid-word, staying fully visible.
 function labelBreaks(s: string): ReactNode[] {
@@ -58,6 +59,54 @@ function DoneCard({ n, onOpen }: { n: WfNode; onOpen: (id: string) => void }): J
         </span>
       ) : null}
     </button>
+  )
+}
+
+// One phase's nodes, partitioned into the three columns. Built by IslandKanban and consumed by KanbanGrid; the
+// single-edge subagent expansion builds a one-node PhaseView from the SAME shape so it renders identically.
+export interface PhaseView {
+  phaseId: string
+  title: string
+  todo: WfNode[]
+  doing: WfNode[]
+  done: WfNode[]
+}
+
+// Dynamic column widths: empty columns shrink; populated To do / Doing take a full share, Done the largest.
+export function gridColsFor(phases: PhaseView[]): string {
+  let t = 0, g = 0, d = 0
+  for (const p of phases) { t += p.todo.length; g += p.doing.length; d += p.done.length }
+  const w = (count: number, full: number): number => (count === 0 ? 0.4 : full)
+  return `92px minmax(0, ${w(t, 0.95)}fr) minmax(0, ${w(g, 1.35)}fr) minmax(0, ${w(d, 1.5)}fr)`
+}
+
+// The phase-row kanban grid: a phase column + To do / Doing / Done, one card per leaf. Extracted from IslandKanban
+// so BOTH the full multi-phase board AND a single subagent's one-edge expansion (one phase, one card) reuse it.
+export function KanbanGrid({ phases, onOpen }: { phases: PhaseView[]; onOpen: (id: string) => void }): JSX.Element {
+  return (
+    <div className="kb-grid" style={{ gridTemplateColumns: gridColsFor(phases) }}>
+      <div className="kb-corner" />
+      <div className="kb-colh kb-h-todo">To do</div>
+      <div className="kb-colh kb-h-doing">Doing</div>
+      <div className="kb-colh kb-h-done">Done</div>
+      {phases.map((p) => (
+        <Fragment key={p.phaseId || '__setup'}>
+          <div className="kb-rowh">
+            <span className="kb-rowh-name">{p.title}</span>
+            <span className="kb-rowh-n">{p.todo.length + p.doing.length + p.done.length} agents</span>
+          </div>
+          <div className="kb-cell kb-cell-todo">
+            {p.todo.map((n) => (<TodoCard n={n} key={n.nodeId} onOpen={onOpen} />))}
+          </div>
+          <div className="kb-cell kb-cell-doing">
+            {p.doing.map((n) => (<DoingCard n={n} key={n.nodeId} onOpen={onOpen} />))}
+          </div>
+          <div className="kb-cell kb-cell-done">
+            {p.done.map((n) => (<DoneCard n={n} key={n.nodeId} onOpen={onOpen} />))}
+          </div>
+        </Fragment>
+      ))}
+    </div>
   )
 }
 
@@ -132,8 +181,8 @@ export default function IslandKanban({ runId, skeleton, onStats }: IslandKanbanP
     onStats?.(runId, m.stats)
   }, [runId, m.stats, onStats])
 
-  const phases = useMemo(() => {
-    const isDone = (s: string) => s === 'done' || s === 'error' || s === 'empty'
+  const phases = useMemo<PhaseView[]>(() => {
+    const isDone = (s: string): boolean => s === 'done' || s === 'error' || s === 'empty'
     return m.phaseOrder
       .map((phaseId) => {
         const nodes = m.nodeOrder.map((id) => m.nodes[id]).filter((n) => n.phaseId === phaseId)
@@ -148,47 +197,28 @@ export default function IslandKanban({ runId, skeleton, onStats }: IslandKanbanP
       .filter((p) => p.todo.length || p.doing.length || p.done.length)
   }, [m])
 
-  // Dynamic column widths: empty columns shrink; populated To do / Doing take a full share, Done the largest.
-  const gridCols = useMemo(() => {
-    let t = 0, g = 0, d = 0
-    for (const p of phases) { t += p.todo.length; g += p.doing.length; d += p.done.length }
-    const w = (count: number, full: number) => (count === 0 ? 0.4 : full)
-    return `92px minmax(0, ${w(t, 0.95)}fr) minmax(0, ${w(g, 1.35)}fr) minmax(0, ${w(d, 1.5)}fr)`
-  }, [phases])
-
   const openNode = openNodeId ? m.nodes[openNodeId] || null : null
-  // Drill-in is an OVERLAY card that slides up over the BOTTOM 90% of THIS board frame (rendered below, inside
-  // .kb). The grid stays mounted at its size behind it (no resize); the card body scrolls internally.
+  // Drill-in is an OVERLAY card that slides up over the BOTTOM 90% of THIS board frame (rendered below). The
+  // board stays mounted at its size behind it (no resize); the card body scrolls internally.
 
   if (!phases.length) {
     return <div className="kb-empty">{done ? 'workflow finished' : 'waiting for the first event…'}</div>
   }
 
+  // SINGLE PHASE = a "subagents" fan-out (N independent leaves, no stage consuming another's output). Render one
+  // ROW per subagent instead of the kanban grid; expanding a row drops that one leaf's one-edge KanbanGrid
+  // underneath. Detection is STRUCTURAL: the merged skeleton carries the full planned phase set, so a genuinely
+  // multi-phase run shows >1 phase as soon as its dry-preflight lands and never collapses to this view.
+  const single = phases.length === 1
+  const subNodes = single ? m.nodeOrder.map((id) => m.nodes[id]) : []
+
   return (
-    <div className={`kb${done ? ' kb-done' : ''}`}>
-      <div className="kb-grid" style={{ gridTemplateColumns: gridCols }}>
-        <div className="kb-corner" />
-        <div className="kb-colh kb-h-todo">To do</div>
-        <div className="kb-colh kb-h-doing">Doing</div>
-        <div className="kb-colh kb-h-done">Done</div>
-        {phases.map((p) => (
-          <Fragment key={p.phaseId || '__setup'}>
-            <div className="kb-rowh">
-              <span className="kb-rowh-name">{p.title}</span>
-              <span className="kb-rowh-n">{p.todo.length + p.doing.length + p.done.length} agents</span>
-            </div>
-            <div className="kb-cell kb-cell-todo">
-              {p.todo.map((n) => (<TodoCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
-            </div>
-            <div className="kb-cell kb-cell-doing">
-              {p.doing.map((n) => (<DoingCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
-            </div>
-            <div className="kb-cell kb-cell-done">
-              {p.done.map((n) => (<DoneCard n={n} key={n.nodeId} onOpen={setOpenNodeId} />))}
-            </div>
-          </Fragment>
-        ))}
-      </div>
+    <div className={`${single ? 'kb-sub' : 'kb'}${done ? ' kb-done' : ''}`}>
+      {single ? (
+        <IslandSubagents nodes={subNodes} onOpen={setOpenNodeId} />
+      ) : (
+        <KanbanGrid phases={phases} onOpen={setOpenNodeId} />
+      )}
       {openNode ? (
         <IslandLeafDrawer runId={runId} node={openNode} onClose={() => setOpenNodeId(null)} />
       ) : null}

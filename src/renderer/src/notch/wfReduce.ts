@@ -111,6 +111,20 @@ export function reduce(events: unknown[]): WfModel {
   return m
 }
 
+// Whether a model is a SINGLE-PHASE fan-out — ≤1 phase actually containing nodes (the "subagents" shape rendered
+// as one row per leaf, not the kanban grid). Requires ≥1 node so an empty/not-yet-loaded stream is NOT mistaken
+// for single-phase. Shared so IslandKanban (merged events) and IslandPanel (the skeleton alone, to drop the
+// redundant run-level pill) decide it identically.
+export function isSubagentModel(m: WfModel): boolean {
+  if (!m.nodeOrder.length) return false
+  const phases = new Set<string>()
+  for (const id of m.nodeOrder) phases.add(m.nodes[id].phaseId)
+  return phases.size <= 1
+}
+export function isSubagentEvents(events: unknown[]): boolean {
+  return isSubagentModel(reduce(events || []))
+}
+
 // Merge the dry-run SKELETON (the full planned structure: every leaf with its label + phase, instant) with the REAL
 // run's live events. Result: a reduced model where every planned leaf is present — real ones carry their live state
 // (running/done + output), and not-yet-run ones are 'queued' (TODO). So phase 2 sits in TODO while phase 1 runs.

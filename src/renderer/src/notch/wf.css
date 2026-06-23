@@ -142,6 +142,8 @@
 /* the collapsible board body — hidden by default via the `hidden` attr (keeps IslandKanban mounted) */
 .isl-wf-board-body { margin-top: 6px; }
 .isl-wf-board-body[hidden] { display: none; }
+/* single-phase "subagents" runs drop the run-level pill, so the rows sit flush (no head to offset from) */
+.isl-wf-subagents > .isl-wf-board-body { margin-top: 0; }
 /* the running dot PULSES IN PLACE (opacity + scale) — it must NEVER translate. kc-spark is the sweeping
    underline for doing cards, not a dot; using it here made the dot slide across. Done flips it green + still. */
 @keyframes isl-wf-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.72); } }
@@ -149,3 +151,30 @@
 .isl-wf-file { color: var(--kb-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .isl-wf-stats { color: var(--kb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
 .isl-wf-board.isl-wf-done .isl-wf-dot { background: var(--kb-green); animation: none; }
+
+/* SINGLE-PHASE "subagents" fan-out view (IslandSubagents). One row pill per subagent, stacked; an expanded row
+   drops that leaf's one-edge kanban (.kb.kb-edge) underneath. .kb-sub is the positioned ancestor for the shared
+   drill-in drawer (the scrim overlays the whole subagent list, mirroring how it overlays the full board). */
+.kb-sub { position: relative; }
+.isl-sub { display: flex; flex-direction: column; gap: 6px; }
+.isl-sub-item { display: flex; flex-direction: column; }
+.kb-edge { margin-top: 6px; }
+.isl-sub-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  font-family: inherit; font-size: 12px; color: var(--kb-muted);
+  margin: 0; padding: 7px 11px;
+  background: var(--kb-sheet); border: 1px solid var(--kb-line); border-radius: 10px;
+  cursor: pointer; transition: border-color 0.12s ease, background 0.12s ease;
+}
+.isl-sub-row:hover { border-color: var(--kb-faint); background: #1f252d; }
+.isl-sub-open > .isl-sub-row { border-color: rgba(47, 155, 255, 0.55); }
+.isl-sub-caret { flex: none; color: var(--kb-muted); font-size: 12px; line-height: 1; }
+.isl-sub-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--kb-dim); }
+.isl-sub-dot.isl-sub-running { background: var(--kb-blue); animation: isl-wf-pulse 1.3s ease-in-out infinite; }
+.isl-sub-dot.isl-sub-done { background: var(--kb-green); }
+.isl-sub-dot.isl-sub-error { background: var(--kb-red); }
+.isl-sub-dot.isl-sub-empty { background: var(--kb-dim); }
+.isl-sub-dot.isl-sub-queued { background: var(--kb-yellow); }
+.isl-sub-label { font-weight: 600; color: var(--kb-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.isl-sub-model { flex: none; font-size: 9.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--kb-muted); background: rgba(255, 255, 255, 0.07); border-radius: 5px; padding: 1px 5px; }
+.isl-sub-stat { margin-left: auto; flex: none; color: var(--kb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }

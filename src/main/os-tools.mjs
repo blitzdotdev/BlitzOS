@@ -226,7 +226,7 @@ export function makeOsTools(ops) {
     {
       path: '/spawn_agent',
       description:
-        "Spawn a NEW agent — a fresh peer agent with its own chat thread in the shared Chat hub (`chat-<id>.md`) and its own visible terminal, reachable over this same relay. The new agent is independent: messages sent to its thread go only to it, and its `say`s land only in that thread (no cross-talk with you or other agents). Use this to spin up a parallel agent for a separate task/conversation. Args: {title?}. Returns { agent:{id,title} }.",
+        "Spawn a NEW agent — a fresh peer agent with its own chat thread in the shared Chat hub (`chat-<id>.md`) and its own visible terminal, reachable over this same relay. The new agent is independent: messages sent to its thread go only to it, and its `say`s land only in that thread (no cross-talk with you or other agents). Use this to spin up a parallel agent for a separate task/conversation. NOTE: for \"spawn N subagents to <task>\" (many ephemeral workers fanning out over chunked work in parallel), do NOT make N peer agents — author a single-phase `run_workflow` fan-out instead (one `parallel([...])` of `agent()` leaves); use spawn_agent only for a persistent peer that owns its own chat tab. Args: {title?}. Returns { agent:{id,title} }.",
       input_schema: { type: 'object', properties: { title: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)
@@ -254,7 +254,7 @@ export function makeOsTools(ops) {
     {
       path: '/run_workflow',
       description:
-        "Run a blitzscript workflow you authored, reporting its progress in chat as it runs. Use this INSTEAD of `bash .blitzos/blitz run` when you want the run managed for you. Returns IMMEDIATELY with { runId } — the run continues in the background, and writes its result to <workspace>/.blitzos/workflows/<runId>/result.json on completion. You are WOKEN via /events when the run finishes (no need to poll result.json — it is on disk before the wake), so read it then and `say` progress and the final synthesis to the user as it lands. Args: {file (path to a Claude-shaped workflow .js you authored + `blitz check`ed), args? (the workflow's `args` input), title?}.",
+        "Run a blitzscript workflow you authored, reporting its progress in chat as it runs. Use this INSTEAD of `bash .blitzos/blitz run` when you want the run managed for you. This is also the right tool for a \"spawn N subagents\" fan-out: author a SINGLE-PHASE workflow (one `parallel([...])` of `agent()` leaves, no `phase()`) and run it here — it renders as one row per subagent. Returns IMMEDIATELY with { runId } — the run continues in the background, and writes its result to <workspace>/.blitzos/workflows/<runId>/result.json on completion. You are WOKEN via /events when the run finishes (no need to poll result.json — it is on disk before the wake), so read it then and `say` progress and the final synthesis to the user as it lands. Args: {file (path to a Claude-shaped workflow .js you authored + `blitz check`ed), args? (the workflow's `args` input), title?}.",
       input_schema: { type: 'object', required: ['file'], properties: { file: { type: 'string' }, args: {}, title: { type: 'string' }, agent: { type: 'string' } } },
       handler: async ({ body }) => {
         if (typeof ops.runWorkflow !== 'function') return { status: 501, body: { error: 'run_workflow not supported on this transport' } }
