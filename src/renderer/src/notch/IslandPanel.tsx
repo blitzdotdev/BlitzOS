@@ -178,6 +178,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     return { runsByAnchor: byAnchor, leadingRuns: leading }
   }, [runs, messages])
   const renderBoard = (r: IslandWfRun): JSX.Element => {
+    // Finished-state class, mutually exclusive: green 'done' ONLY when ok, red 'fail' when not. A failed run
+    // must never read as a green done dot (the status text already says "workflow failed").
+    const doneClass = r.done ? (r.ok ? ' isl-wf-done' : ' isl-wf-fail') : ''
     // SINGLE-PHASE fan-out ("subagents"): each leaf is already its own row pill, so the run-level "workflow
     // running" pill is redundant — drop it and render the rows directly (always mounted; a fan-out board is small,
     // not the heavy multi-phase grid the lazy-mount guards). Detected from the dry-preflight skeleton alone, so no
@@ -185,7 +188,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     // switches to the headless rows once the plan is known.
     if (isSubagentEvents(r.skeleton as unknown[])) {
       return (
-        <div className={`isl-wf-board isl-wf-subagents${r.done ? ' isl-wf-done' : ''}`} key={r.runId}>
+        <div className={`isl-wf-board isl-wf-subagents${doneClass}`} key={r.runId}>
           <div className="isl-wf-board-body">
             <IslandKanban runId={r.runId} skeleton={r.skeleton} onStats={handleRunStats} />
           </div>
@@ -199,7 +202,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     const open = expandedRuns.has(r.runId)
     const statsLine = s ? `${fmtMs(s.ms)} · ${s.calls} agents · ${fmtTok(s.tokens)} tok` : r.done ? '' : 'running…'
     return (
-      <div className={`isl-wf-board${r.done ? ' isl-wf-done' : ''}${open ? ' isl-wf-open' : ''}`} key={r.runId}>
+      <div className={`isl-wf-board${doneClass}${open ? ' isl-wf-open' : ''}`} key={r.runId}>
         <button
           type="button"
           className="isl-wf-board-head"
