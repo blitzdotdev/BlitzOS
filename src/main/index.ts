@@ -4,7 +4,7 @@ import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { spawn, execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
 import { emitSystemMoment, emitWorkflowMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
 import { createWakeWatchdog } from './agent-wake-watchdog.mjs'
 import { openBootJournal, chatFileName } from './workspace.mjs'
@@ -83,10 +83,42 @@ process.stderr.on('error', () => {})
 // TODO(view-cleanup): the detached view-<id> grouped sessions linger until the workspace tmux server dies;
 // reap them on terminal close/remove if they ever accumulate.
 const shq = (s: string): string => `'` + String(s).replace(/'/g, `'\\''`) + `'`
+type TerminalRecordLike = {
+  kind?: string | null
+  title?: string | null
+  command?: unknown
+  status?: string | null
+  agentRuntime?: unknown
+  agentSessionId?: unknown
+}
+let reviveAgentBackend: ((id: string, title?: string | null) => void) | null = null
+const isRestartableAgentTerminal = (terminal: TerminalRecordLike | null | undefined): boolean =>
+  !!terminal && terminal.kind === 'agent' && !!(terminal.command || terminal.agentRuntime || terminal.agentSessionId)
+const isRecoverableAgentPane = (id: string): boolean => {
+  const terminal = electronTerminalOps.getTerminal(id) as TerminalRecordLike | null
+  return electronTerminalOps.isTerminalLive(id) && isRestartableAgentTerminal(terminal)
+}
+function reviveOrRestartAgentBackend(id: string, terminal?: TerminalRecordLike | null): void {
+  const current = terminal || (electronTerminalOps.getTerminal(id) as TerminalRecordLike | null)
+  if (isRestartableAgentTerminal(current)) void electronTerminalOps.restartTerminal(id)
+  else if (reviveAgentBackend) reviveAgentBackend(id, current?.title || undefined)
+  else osKickBrain(id)
+}
 function openTerminalExternal(id: string): { ok: boolean; error?: string } {
   if (process.platform !== 'darwin') return { ok: false, error: 'Open in Terminal is macOS-only' }
+  const terminal = electronTerminalOps.getTerminal(id) as TerminalRecordLike | null
+  if (terminal?.kind === 'agent' && terminal.status !== 'stopped' && !isRestartableAgentTerminal(terminal)) {
+    reviveOrRestartAgentBackend(id, terminal)
+    return { ok: false, error: 'agent terminal is starting; try again in a moment' }
+  }
   const spec = electronTerminalOps.attachSpec(id)
-  if (!spec) return { ok: false, error: 'terminal is not a live tmux window' }
+  if (!spec) {
+    if (terminal?.kind === 'agent' && terminal.status !== 'stopped') {
+      reviveOrRestartAgentBackend(id, terminal)
+      return { ok: false, error: 'agent terminal is starting; try again in a moment' }
+    }
+    return { ok: false, error: 'terminal is not a live tmux window' }
+  }
   const grp = `view-${id}`
   const t = (...a: string[]): string[] => ['-S', spec.socket, ...a]
   try {
@@ -1239,7 +1271,7 @@ app.whenReady().then(() => {
     lastPollAt,
     sendToTerminal: (id, data) => electronTerminalOps.sendToTerminal(String(id), String(data)),
     captureTerminal: (id) => electronTerminalOps.captureTerminal(String(id)),
-    isLive: (id) => electronTerminalOps.isTerminalLive(String(id)),
+    isLive: (id) => isRecoverableAgentPane(String(id)),
     setStatus: (id, ws, st) => {
       const k = wakeKey(String(id), ws)
       if (st) wakeOverride.set(k, { status: st, since: Date.now(), ws })
@@ -1546,21 +1578,22 @@ app.whenReady().then(() => {
     if (!resolveTmuxBin()) m.push('tmux — run `brew install tmux` (my agent terminals run inside it)')
     return m
   }
+  const lastRuntimeNotice = new Map<string, number>()
+  const runtimeNotice = (sid: string): void => {
+    const missing = missingRuntime()
+    if (!missing.length) return
+    const now = Date.now()
+    if (now - (lastRuntimeNotice.get(sid) || 0) < 60_000) return
+    lastRuntimeNotice.set(sid, now)
+    setTimeout(() => {
+      osSay(`I can't respond yet — this Mac is missing what my brain runs on:\n${missing.map((x) => `- ${x}`).join('\n')}\n\nInstall the above, then relaunch BlitzOS and I'll pick your messages up.`, sid)
+    }, 400) // after their message lands in the thread
+  }
   {
     const missing = missingRuntime()
     if (missing.length) {
       console.error('[brain] runtime prerequisites missing:', missing.join(' | '))
-      const notice = (sid: string): void =>
-        osSay(`I can't respond yet — this Mac is missing what my brain runs on:\n${missing.map((x) => `- ${x}`).join('\n')}\n\nInstall the above, then relaunch BlitzOS and I'll pick your messages up.`, sid)
-      setTimeout(() => notice('0'), 7000) // after the workspace + chat hub hydrate
-      // Answer (throttled) every message sent while broken — silence is never an acceptable reply.
-      const lastNotice = new Map<string, number>()
-      setOnUserMessage((sid) => {
-        const now = Date.now()
-        if (now - (lastNotice.get(sid) || 0) < 60_000) return
-        lastNotice.set(sid, now)
-        setTimeout(() => notice(sid), 400) // after their message lands in the thread
-      })
+      setTimeout(() => runtimeNotice('0'), 7000) // after the workspace + chat hub hydrate
     }
   }
   {
@@ -1640,9 +1673,10 @@ app.whenReady().then(() => {
         /* tape best-effort */
       }
     }
+    reviveAgentBackend = (id, title) => launchAgent(String(id), 0, title || undefined)
     setLaunchAgent(launchAgent)
     setPauseAgent((id) => { electronTerminalOps.stopTerminal(id) }) // archive parks the agent but keeps meta/transcript for restore
-    setRestartAgent((id) => { void electronTerminalOps.restartTerminal(id) }) // restore wakes the parked agent from its preserved terminal record
+    setRestartAgent((id) => { void electronTerminalOps.restartTerminal(id).then((t) => { if (!t) launchAgent(String(id), 0) }) }) // restore wakes the parked agent from its preserved terminal record
     setStopAgent((id) => { electronTerminalOps.removeTerminal(id) }) // closing an agent fully removes its terminal record (no auto-restart, no exited ghost)
     setClearBrainContext((id) => { void electronTerminalOps.clearAgentContext(id) }) // interview→resident HANDOFF: rotate the session (fresh context) so the resident rebuilds from the .md files + chat.md at resident (xhigh) effort
     setActionItemsProvider(() => electronActionItems.listActions()) // host reconciles the inbox surface against the authoritative store
@@ -1650,6 +1684,25 @@ app.whenReady().then(() => {
     // terminal exits + agent add/close. osActions can't import electronTerminalOps (terminal-ops lives here,
     // and it imports osActions); this DI seam mirrors setActionItemsProvider / setLaunchAgent.
     setTerminalStatusProvider(() => electronTerminalOps.listTerminals().map((t) => ({ id: String(t.id), status: t.status, exitCode: t.exitCode ?? null })))
+    // A real user message is the strongest signal that this specific chat needs a live backend now. Claude Code
+    // can cleanly exit after a bootstrap/listener turn on newer CLIs, leaving the supervisor in backoff; without
+    // this nudge the island briefly shows Working, then settles with no reply because no tmux pane is listening.
+    const lastMessageRevive = new Map<string, number>()
+    setOnUserMessage((sid) => {
+      const id = String(sid || '0')
+      if (missingRuntime().length) {
+        runtimeNotice(id)
+        return
+      }
+      if (isRecoverableAgentPane(id)) return
+      const now = Date.now()
+      if (now - (lastMessageRevive.get(id) || 0) < 2500) return
+      lastMessageRevive.set(id, now)
+      console.warn(`[brain] agent ${id} was not live on user message; restarting`)
+      const terminal = electronTerminalOps.getTerminal(id)
+      if (terminal?.kind === 'agent') reviveOrRestartAgentBackend(id, terminal)
+      else osKickBrain(id)
+    })
     // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
     let resumed = false
     const resumeAll = async (): Promise<void> => {

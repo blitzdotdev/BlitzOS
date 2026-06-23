@@ -252,6 +252,9 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     // not the stale one baked at create. A plain shell or unmanaged agent command re-runs verbatim.
     const rebuilt = (isManagedAgent(meta) && rebuildAgentCommand && rebuildAgentCommand(meta)) || null
     const command = (rebuilt && rebuilt.command) || meta.command
+    // A just-created chat writes a lightweight kind:'agent' record before launchAgent overwrites it with the
+    // real Claude/Codex command. Restarting that placeholder must not open a plain shell and call it an agent.
+    if (meta.kind === 'agent' && !command) return null
     const claudeSessionId = rebuilt ? rebuilt.claudeSessionId : meta.claudeSessionId
     const claudeEstablished = rebuilt ? rebuilt.established : meta.claudeEstablished
     const agentRuntime = rebuilt ? rebuilt.agentRuntime : meta.agentRuntime

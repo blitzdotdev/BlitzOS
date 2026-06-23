@@ -4,6 +4,7 @@ import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, pinchSurface, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
 import { emitSurfaceAction, emitUserMessage, setContentShare, dropContentShare, setWorkspaceProvider, setTickSource, resetTickBaseline, absorbTickEcho } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
+import { generateAgentTitle } from './chat-titleer.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
 import { readFileSync } from 'node:fs'
 import { sessionJsonlPath, readSessionEvents, toolLabel } from './agent-transcript.mjs'
@@ -193,6 +194,7 @@ export function initOsActions(opts: {
     },
     onSurfaces: () => {}, // Electron web surfaces are in-DOM <webview> guests (renderer-owned)
     getActionItems: () => (actionItemsProvider ? actionItemsProvider() : []), // authoritative inbox items (index.ts wires it)
+    generateAgentTitle: ({ agentId, text, workspacePath }) => generateAgentTitle({ agentId, text, workspacePath }),
     // An agent backend runs in a VISIBLE terminal; index.ts wires this from the shared agent-runtime
     // core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
     launchAgent: (id, home, title) => launchAgentHook?.(id, home, title),
@@ -358,7 +360,9 @@ export function osBroadcast(action: Record<string, unknown>): void {
   try {
     if (action?.type === 'terminal-spawn') {
       const terminal = action.terminal as { kind?: unknown } | undefined
-      if (terminal?.kind === 'agent' && action.id != null) wsHost?.setChatStatus(String(action.id), 'starting')
+      if (terminal?.kind === 'agent' && action.id != null && wsHost?.chatStatusSnapshot?.()?.[String(action.id)] === 'starting') {
+        wsHost.setChatStatus(String(action.id), 'starting')
+      }
     } else if (action?.type === 'terminal-data') {
       if (action.id != null) wsHost?.noteAgentActivity(String(action.id), 'terminal')
     } else if (action?.type === 'terminal-stop') {
@@ -368,6 +372,10 @@ export function osBroadcast(action: Record<string, unknown>): void {
     } else if (action?.type === 'workflow-run') {
       // record + re-broadcast to the island (started/done) for the in-chat kanban
       osNoteWfRun(action)
+      if (action.runId != null && action.agentId != null) {
+        if (action.started) wsHost?.noteWorkflowRun(String(action.agentId), String(action.runId), true)
+        if (action.done) wsHost?.noteWorkflowRun(String(action.agentId), String(action.runId), false)
+      }
     }
   } catch {
     /* status sync is best-effort; the terminal event itself must still publish */

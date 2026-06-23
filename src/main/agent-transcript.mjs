@@ -23,10 +23,9 @@ export function sessionJsonlPath(wsRoot, claudeSessionId) {
 
 const STOP_TAIL_BYTES = 256 * 1024 // these transcripts get huge — read only the tail to find the last turn
 
-/** The `stop_reason` of the LAST assistant message in a Claude session JSONL (or null if none / unreadable).
- *  Used to tell a turn that ended cleanly (end_turn/stop_sequence) from one cut off mid-turn (tool_use/truncated).
+/** The LAST assistant stop signal in a Claude session JSONL (or null if none / unreadable).
  *  Bounded tail read so a multi-MB transcript stays cheap; a torn final line just fails to parse and is skipped. */
-export function lastAssistantStopReason(jsonlPath) {
+export function lastAssistantStop(jsonlPath) {
   if (!jsonlPath) return null
   let fd = null
   try {
@@ -38,6 +37,12 @@ export function lastAssistantStopReason(jsonlPath) {
     closeSync(fd)
     fd = null
     const lines = buf.toString('utf8').split('\n')
+    const offsets = []
+    let running = 0
+    for (const line of lines) {
+      offsets.push(start + running)
+      running += Buffer.byteLength(line, 'utf8') + 1
+    }
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i]
       if (!line || line.indexOf('"assistant"') < 0) continue // cheap prefilter before JSON.parse
@@ -47,7 +52,13 @@ export function lastAssistantStopReason(jsonlPath) {
       } catch {
         continue // a partial/torn tail line (or a non-JSON line) — skip
       }
-      if (d.type === 'assistant' && d.message && d.message.stop_reason != null) return String(d.message.stop_reason)
+      if (d.type === 'assistant' && d.message && d.message.stop_reason != null) {
+        return {
+          stopReason: String(d.message.stop_reason),
+          offset: offsets[i],
+          timestamp: d.timestamp ? Date.parse(d.timestamp) || null : null
+        }
+      }
     }
     return null
   } catch {
@@ -58,6 +69,12 @@ export function lastAssistantStopReason(jsonlPath) {
     }
     return null
   }
+}
+
+/** The `stop_reason` of the LAST assistant message in a Claude session JSONL (or null if none / unreadable).
+ *  Used to tell a turn that ended cleanly (end_turn/stop_sequence) from one cut off mid-turn (tool_use/truncated). */
+export function lastAssistantStopReason(jsonlPath) {
+  return lastAssistantStop(jsonlPath)?.stopReason || null
 }
 
 const clip = (s, n) => {

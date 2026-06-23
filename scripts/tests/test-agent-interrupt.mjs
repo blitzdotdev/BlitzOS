@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { lastAssistantStopReason } from '../../src/main/agent-transcript.mjs'
+import { lastAssistantStop, lastAssistantStopReason } from '../../src/main/agent-transcript.mjs'
 import { wasInterrupted } from '../../src/main/agent-interrupt.mjs'
 
 let passed = 0
@@ -32,6 +32,12 @@ function jsonl(name, lines) {
 // ---- lastAssistantStopReason (the Claude signal) ----
 t('end_turn is read as the last stop_reason', () => {
   assert.equal(lastAssistantStopReason(jsonl('a.jsonl', [user('q'), asst('end_turn')])), 'end_turn')
+})
+t('lastAssistantStop returns the stop_reason with its file offset', () => {
+  const stop = lastAssistantStop(jsonl('a-stop.jsonl', [user('q'), asst('tool_use', toolUse), asst('end_turn')]))
+  assert.equal(stop.stopReason, 'end_turn')
+  assert.equal(typeof stop.offset, 'number')
+  assert.ok(stop.offset > 0)
 })
 t('tool_use is read as the last stop_reason', () => {
   assert.equal(lastAssistantStopReason(jsonl('b.jsonl', [user('q'), asst('tool_use', toolUse)])), 'tool_use')
