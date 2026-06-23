@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Building glass for the web — Aave technique, implemented</title>
+<!--
+  A faithful implementation of Aave's "Building glass for the web"
+  (https://aave.com/design/building-glass-for-the-web). The article gives the method, not raw
+  numbers, so the ALGORITHM is ported exactly and the constants are tunable in the panel.
+
+  What the article specifies, and how it's implemented here:
+  · "The effect rests on a single SVG filter primitive, feDisplacementMap" — two inputs: the painted
+     content (a CLONE of the scene behind the glass) and a displacement map we generate.   [buildAaveMap + applyFilter]
+  · The map is "a small PNG we build on the fly from the glass's shape and size": RED = horizontal
+     displacement, GREEN = vertical, and "outside the lens area, neutral values mean no displacement"
+     (128).                                                                                  [buildAaveMap]
+  · Their optimization: "compute only the top-left quadrant and write each pixel into all four,
+     negating the X displacement across the vertical axis and the Y across the horizontal one."
+     Implemented literally — one quadrant computed, three mirrored with sign flips.           [buildAaveMap put()]
+  · "A faint color fringe along the edges" (chromatic aberration) + "a specular highlight that keeps
+     the glass legible".                                                  [applyFilter fringe pass + CSS .g-spec]
+  · Safari cache-buster: "give the filter a fresh ID on every update".                        [applyFilter version++]
+  · "Making it work everywhere": for surfaces Safari won't SVG-filter (video, QR), "the same
+     displacement map feeds a WebGL shader instead".                                          [WebGL fallback tile]
+-->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    background: #05060a; color: #fff; overflow: hidden; user-select: none;
+  }
+
+  /* ---- the world that refracts (a vivid wallpaper so the lensing is obvious) ---- */
+  .scene { position: fixed; inset: 0; overflow: hidden; z-index: 0; }
+  .world {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(38% 50% at 20% 24%, #ff7eb6 0%, transparent 58%),
+      radial-gradient(40% 46% at 82% 18%, #ffd166 0%, transparent 60%),
+      radial-gradient(48% 52% at 78% 80%, #34e0c8 0%, transparent 58%),
+      radial-gradient(44% 50% at 16% 84%, #6a8bff 0%, transparent 58%),
+      radial-gradient(60% 60% at 50% 50%, #b06bff 0%, transparent 70%),
+      linear-gradient(150deg, #1a1140, #0b1838 55%, #07101f);
+  }
+  /* big text + a grid so the displacement is legible as it bends straight lines */
+  .world::after {
+    content: ""; position: absolute; inset: 0; opacity: .5;
+    background-image:
+      linear-gradient(rgba(255,255,255,.10) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px);
+    background-size: 46px 46px;
+  }
+  .world-word {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font: 900 clamp(90px, 17vw, 260px)/1 -apple-system, system-ui, sans-serif;
+    letter-spacing: -.04em; color: rgba(255,255,255,.16); text-transform: uppercase;
+  }
+
+  /* ---- shared glass-surface layers (Aave: clone behind + displacement + fringe + specular) ---- */
+  .glass { position: relative; isolation: isolate; }
+  .g-lens { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; z-index: 0; }
+  .g-clip { position: absolute; inset: 0; }
+  .g-refraction { position: absolute; pointer-events: none; will-change: filter; }
+  .g-tint { position: absolute; inset: 0; pointer-events: none; }
+  .g-spec {                                   /* specular highlight — keeps glass legible (CSS bevel) */
+    position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+    box-shadow:
+      inset 2px 2px 3px rgba(255,255,255,.75),
+      inset -1.5px -1.5px 4px rgba(0,0,0,.30),
+      inset 0 0 0 1px rgba(255,255,255,.14);
+  }
+  .g-content { position: relative; z-index: 1; }
+
+  /* ---- the hero draggable lens ("How it works") ---- */
+  .hero {
+    position: absolute; top: 200px; left: 360px; width: 280px; height: 190px;
+    border-radius: 30px; cursor: grab;
+    box-shadow: 0 26px 60px rgba(0,0,0,.5), 0 3px 10px rgba(0,0,0,.4);
+  }
+  .hero:active { cursor: grabbing; }
+  .hero .g-content { height: 100%; display: grid; place-items: center; text-align: center; }
+  .hero .g-content b { font-size: 15px; font-weight: 600; text-shadow: 0 1px 8px rgba(0,0,0,.5); }
+  .hero .g-content span { display: block; margin-top: 4px; font-size: 11.5px; color: rgba(255,255,255,.7); }
+
+  /* ---- the family of components ("A family of components") ---- */
+  .dock {
+    position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 14px; z-index: 2;
+  }
+  .g-pill { height: 54px; border-radius: 27px; box-shadow: 0 14px 34px rgba(0,0,0,.42); }
+  .g-btn { width: 54px; }
+  .g-btn .g-content { height: 100%; display: grid; place-items: center; }
+  .g-btn svg { width: 22px; height: 22px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 1px 3px rgba(0,0,0,.5)); }
+  .g-seg { padding: 5px; }
+  .g-seg .g-content { display: flex; gap: 4px; height: 100%; align-items: center; }
+  .g-seg button { border: 0; background: transparent; color: rgba(255,255,255,.78); font: 600 12.5px inherit; padding: 8px 14px; border-radius: 22px; cursor: pointer; }
+  .g-seg button.on { background: rgba(255,255,255,.22); color: #fff; box-shadow: inset 0 1px 0 rgba(255,255,255,.4); }
+  .g-search { width: 220px; padding: 0 18px; }
+  .g-search .g-content { height: 100%; display: flex; align-items: center; gap: 9px; color: rgba(255,255,255,.7); font-size: 13.5px; }
+  .g-search svg { width: 16px; height: 16px; fill: none; stroke: rgba(255,255,255,.8); stroke-width: 2; }
+
+  /* floating glass card top-left */
+  .g-card { position: absolute; top: 30px; left: 30px; width: 250px; padding: 16px; border-radius: 22px; z-index: 2;
+    box-shadow: 0 18px 44px rgba(0,0,0,.4); }
+  .g-card h4 { margin: 0 0 4px; font-size: 14px; text-shadow: 0 1px 6px rgba(0,0,0,.5); }
+  .g-card p { margin: 0; font-size: 12px; line-height: 1.45; color: rgba(255,255,255,.74); }
+
+  /* WebGL fallback tile ("Making it work everywhere") */
+  .fallback { position: absolute; top: 30px; right: 320px; width: 168px; z-index: 2; text-align: center; }
+  .fallback canvas { width: 168px; height: 168px; border-radius: 22px; display: block; box-shadow: 0 16px 40px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.16); }
+  .fallback .cap { margin-top: 8px; font-size: 10.5px; letter-spacing: .04em; color: rgba(255,255,255,.6); line-height: 1.4; }
+
+  .tag { position: absolute; font: 700 10px/1 inherit; letter-spacing: .16em; text-transform: uppercase; color: rgba(255,255,255,.5); z-index: 3; }
+  .tag.hero-t { top: 168px; left: 362px; }
+  .tag.dock-t { left: 50%; bottom: 96px; transform: translateX(-50%); }
+
+  /* ---- control panel ---- */
+  .panel {
+    position: fixed; top: 16px; right: 16px; bottom: 16px; width: 288px; z-index: 9;
+    display: flex; flex-direction: column; gap: 10px; padding: 16px; overflow-y: auto;
+    background: rgba(16,18,26,.82); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4);
+    border: 1px solid rgba(255,255,255,.1); border-radius: 16px; box-shadow: 0 14px 40px rgba(0,0,0,.5); font-size: 12.5px;
+  }
+  .panel h2 { margin: 0; font-size: 13px; }
+  .panel h2 small { display: block; margin-top: 3px; font-size: 10.5px; font-weight: 400; color: #7f8694; letter-spacing: .02em; }
+  .panel h3 { margin: 6px 0 2px; font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #7f8694; }
+  .row { display: grid; grid-template-columns: 78px 1fr 38px; align-items: center; gap: 9px; }
+  .row label { color: #c9ced8; }
+  .row input[type="range"] { width: 100%; accent-color: #34e0c8; }
+  .row .v { text-align: right; color: #9aa0ac; font-variant-numeric: tabular-nums; }
+  .chk { display: flex; align-items: center; gap: 8px; color: #c9ced8; cursor: pointer; }
+  .mapview { margin-top: 4px; }
+  .mapview img { width: 100%; image-rendering: pixelated; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); background: #181a22; }
+  .mapview .lbl { font-size: 10.5px; color: #6b7280; margin: 4px 0 0; }
+  .hint { color: #6b7280; font-size: 11px; line-height: 1.45; }
+</style>
+</head>
+<body>
+  <div class="scene" id="scene">
+    <div class="world"></div>
+    <div class="world-word">glass</div>
+  </div>
+
+  <!-- How it works: a draggable lens -->
+  <div class="tag hero-t">How it works · drag me</div>
+  <div class="glass hero" id="hero">
+    <div class="g-content"><div><b>feDisplacementMap</b><span>painted clone × generated map</span></div></div>
+  </div>
+
+  <!-- A family of components -->
+  <div class="glass g-card" id="card">
+    <div class="g-content"><h4>One primitive, many parts</h4><p>The same displacement map drives every glass surface — cards, buttons, pills, fields.</p></div>
+  </div>
+
+  <div class="tag dock-t">A family of components</div>
+  <div class="dock" id="dock">
+    <div class="glass g-pill g-btn"><div class="g-content"><svg viewBox="0 0 24 24"><polygon points="7 5 19 12 7 19 7 5"/></svg></div></div>
+    <div class="glass g-pill g-btn"><div class="g-content"><svg viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9A5 5 0 0 1 12 6a5 5 0 0 1 9.5 6c-2.5 4.5-9.5 9-9.5 9z"/></svg></div></div>
+    <div class="glass g-pill g-seg"><div class="g-content"><button class="on">Day</button><button>Week</button><button>Month</button></div></div>
+    <div class="glass g-pill g-search"><div class="g-content"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>Search</div></div>
+  </div>
+
+  <!-- Making it work everywhere: WebGL fallback for a surface Safari won't SVG-filter -->
+  <div class="fallback" id="fallback">
+    <canvas id="gl" width="336" height="336"></canvas>
+    <div class="cap">Everywhere · same map → WebGL<br/>(video / QR Safari won't filter)</div>
+  </div>
+
+  <!-- control panel -->
+  <div class="panel">
+    <h2>Building glass for the web<small>Aave technique, implemented · tune &amp; port</small></h2>
+    <h3>Displacement</h3>
+    <div class="row"><label>Depth</label><input id="depth" type="range" min="0" max="180" step="1" value="78"><span class="v" id="depth-v"></span></div>
+    <div class="row"><label>Edge band</label><input id="edge" type="range" min="4" max="80" step="1" value="34"><span class="v" id="edge-v"></span></div>
+    <div class="row"><label>Radius</label><input id="radius" type="range" min="0" max="60" step="1" value="30"><span class="v" id="radius-v"></span></div>
+    <div class="row"><label>Fringe</label><input id="fringe" type="range" min="0" max="0.3" step="0.01" value="0.06"><span class="v" id="fringe-v"></span></div>
+    <h3>Light</h3>
+    <div class="row"><label>Specular</label><input id="spec" type="range" min="0" max="1" step="0.01" value="0.85"><span class="v" id="spec-v"></span></div>
+    <div class="row"><label>Blur</label><input id="blur" type="range" min="0" max="8" step="0.1" value="0"><span class="v" id="blur-v"></span></div>
+    <div class="row"><label>Tint</label><input id="tint" type="range" min="0" max="0.6" step="0.01" value="0.06"><span class="v" id="tint-v"></span></div>
+    <label class="chk"><input type="checkbox" id="showmap" /> Show the generated map</label>
+    <div class="mapview" id="mapview" style="display:none"><img id="mapimg" alt="displacement map" /><p class="lbl">R = x displace · G = y displace · neutral outside. One quadrant computed, three mirrored.</p></div>
+    <p class="hint">Drag the hero lens over the wallpaper to watch straight grid lines bend at the rim. Every surface here is the same primitive at a different size.</p>
+  </div>
+
+<script>
+// ===== Aave displacement map: R = x, G = y, neutral (128) outside; one quadrant, three mirrored =====
+const mapCache = new Map();
+const MAXD = 112; // peak encoded amplitude; real px depth is set by feDisplacementMap `scale`
+function buildAaveMap(W, H, radius, edge) {
+  const key = `${W}:${H}:${radius}:${edge}`;
+  if (mapCache.has(key)) return mapCache.get(key);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(W, H), px = img.data;
+  const hw = W / 2, hh = H / 2;
+  const r = Math.min(radius, hw, hh);
+  // signed distance to the rounded-rect edge (negative inside)
+  const sdf = (x, y) => {
+    const qx = Math.abs(x - hw) - (hw - r);
+    const qy = Math.abs(y - hh) - (hh - r);
+    const ox = Math.max(qx, 0), oy = Math.max(qy, 0);
+    return Math.hypot(ox, oy) + Math.min(Math.max(qx, qy), 0) - r;
+  };
+  const enc = v => v < 0 ? 0 : v > 255 ? 255 : v | 0;
+  const put = (x, y, dx, dy) => {
+    const i = (y * W + x) * 4;
+    px[i] = enc(128 + dx); px[i + 1] = enc(128 + dy); px[i + 2] = 128; px[i + 3] = 255;
+  };
+  // AAVE OPTIMIZATION — compute only the top-left quadrant; mirror into the other three,
+  // negating X across the vertical axis and Y across the horizontal one.
+  const qw = Math.ceil(hw), qh = Math.ceil(hh);
+  for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) {
+    const cx = x + 0.5, cy = y + 0.5;
+    const s = sdf(cx, cy);
+    const gx = sdf(cx + 1, cy) - sdf(cx - 1, cy);   // outward edge normal
+    const gy = sdf(cx, cy + 1) - sdf(cx, cy - 1);
+    const len = Math.hypot(gx, gy) || 1;
+    const nx = gx / len, ny = gy / len;
+    // displace ONLY in the band just inside the rim; neutral deep inside and everywhere outside
+    let amt = s > 0 ? 0 : Math.max(0, 1 - (-s) / edge);
+    amt = amt * amt * (3 - 2 * amt);                 // smoothstep
+    const dx = Math.round(-nx * amt * MAXD), dy = Math.round(-ny * amt * MAXD);
+    const X2 = W - 1 - x, Y2 = H - 1 - y;
+    put(x, y, dx, dy);                 // top-left
+    put(X2, y, -dx, dy);               // top-right  → negate X
+    put(x, Y2, dx, -dy);               // bottom-left → negate Y
+    put(X2, Y2, -dx, -dy);             // bottom-right → negate both
+  }
+  ctx.putImageData(img, 0, 0);
+  const res = { url: cv.toDataURL('image/png'), canvas: cv, W, H };
+  if (mapCache.size > 240) mapCache.delete(mapCache.keys().next().value);
+  mapCache.set(key, res); return res;
+}
+
+// ===== params + state =====
+const P = { depth: 78, edge: 34, radius: 30, fringe: 0.06, spec: 0.85, blur: 0, tint: 0.06 };
+let version = 0;
+const PAD = 24;
+const scene = document.getElementById('scene');
+
+// ===== wrap any element as a glass surface =====
+function makeGlass(el) {
+  el.classList.add('glass');
+  const lens = document.createElement('div'); lens.className = 'g-lens';
+  const clip = document.createElement('div'); clip.className = 'g-clip';
+  const refraction = document.createElement('div'); refraction.className = 'g-refraction';
+  const clone = document.createElement('div'); clone.className = 'g-clone'; clone.style.position = 'absolute';
+  const tint = document.createElement('div'); tint.className = 'g-tint';
+  const spec = document.createElement('div'); spec.className = 'g-spec';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', '0'); svg.setAttribute('height', '0'); svg.style.position = 'absolute';
+  refraction.appendChild(clone); clip.append(refraction, tint, spec); lens.append(clip, svg);
+  el.insertBefore(lens, el.firstChild);
+  const g = { el, lens, clip, refraction, clone, tint, spec, svg, idx: ++version, mw: 0, mh: 0, mapUrl: '' };
+  syncClone(g); return g;
+}
+function syncClone(g) { g.clone.innerHTML = scene.querySelector('.world').outerHTML + scene.querySelector('.world-word').outerHTML; }
+
+// fresh-id cache-buster: re-mint the filter every update so Safari can't serve a stale frame
+function applyFilter(g) {
+  const id = `aave-${g.idx}-v${++version}`;
+  const sc = P.depth;
+  let disp;
+  if (P.fringe > 0) { // faint colour fringe along edges: red displaces more than green/blue
+    const sR = sc * (1 + P.fringe), sB = sc * (1 - P.fringe);
+    disp = `
+      <feDisplacementMap in="SourceGraphic" in2="m" scale="${sR}" xChannelSelector="R" yChannelSelector="G" result="dR"/>
+      <feDisplacementMap in="SourceGraphic" in2="m" scale="${sB}" xChannelSelector="R" yChannelSelector="G" result="dGB"/>
+      <feColorMatrix in="dR"  type="matrix" values="1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0" result="cR"/>
+      <feColorMatrix in="dGB" type="matrix" values="0 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0" result="cGB"/>
+      <feComposite in="cR" in2="cGB" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/>`;
+  } else {
+    disp = `<feDisplacementMap in="SourceGraphic" in2="m" scale="${sc}" xChannelSelector="R" yChannelSelector="G"/>`;
+  }
+  g.svg.innerHTML = `<defs>
+    <filter id="${id}" x="0" y="0" width="100%" height="100%" filterUnits="objectBoundingBox" color-interpolation-filters="sRGB">
+      <feImage href="${g.mapUrl}" xlink:href="${g.mapUrl}" x="0" y="0" width="${g.mw}" height="${g.mh}" preserveAspectRatio="none" result="m"/>
+      ${disp}
+    </filter></defs>`;
+  g.refraction.style.filter = `url(#${id})`;
+}
+
+function placeGlass(g) {
+  const r = g.el.getBoundingClientRect();
+  const W = Math.max(1, Math.round(r.width)), H = Math.max(1, Math.round(r.height));
+  g.mw = W + 2 * PAD; g.mh = H + 2 * PAD;
+  g.refraction.style.width = g.mw + 'px'; g.refraction.style.height = g.mh + 'px';
+  g.refraction.style.left = -PAD + 'px';  g.refraction.style.top = -PAD + 'px';
+  const rad = Math.min(P.radius, W / 2, H / 2);
+  g.refraction.style.clipPath = `inset(${PAD}px round ${rad}px)`;
+  g.clip.style.clipPath = `inset(0 round ${rad}px)`;
+  g.clone.style.width = window.innerWidth + 'px'; g.clone.style.height = window.innerHeight + 'px';
+  g.clone.style.left = `${-(r.left - PAD)}px`; g.clone.style.top = `${-(r.top - PAD)}px`;
+  g.spec.style.opacity = P.spec;
+  // frost = blur the cloned source BEFORE it is displaced (nested under the url() filter)
+  g.clone.style.filter = P.blur > 0 ? `blur(${P.blur}px)` : 'none';
+  g.tint.style.background = '#bcd8ff'; g.tint.style.opacity = P.tint; g.tint.style.mixBlendMode = 'soft-light';
+  g.mapUrl = buildAaveMap(g.mw, g.mh, rad + PAD, P.edge).url;
+  applyFilter(g);
+}
+
+// ===== build all glass surfaces =====
+const surfaces = [
+  ...document.querySelectorAll('#hero, #card, #dock .glass')
+].map(makeGlass);
+const hero = surfaces[0];
+function placeAll() { surfaces.forEach(placeGlass); drawFallback(); }
+
+// ===== hero drag — re-register + re-mint each move (live refraction) =====
+(() => {
+  const el = hero.el; let drag = false, ox, oy, sx, sy, raf = 0;
+  el.addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return;
+    drag = true; sx = e.clientX; sy = e.clientY; ox = el.offsetLeft; oy = el.offsetTop;
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', e => {
+    if (!drag) return;
+    el.style.left = Math.max(0, Math.min(window.innerWidth - el.offsetWidth, ox + e.clientX - sx)) + 'px';
+    el.style.top = Math.max(0, Math.min(window.innerHeight - el.offsetHeight, oy + e.clientY - sy)) + 'px';
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; placeGlass(hero); });
+  });
+  el.addEventListener('pointerup', () => drag = false);
+})();
+
+// segmented toggle interaction
+document.querySelectorAll('.g-seg').forEach(seg => seg.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+}));
+
+// ===== WebGL fallback: same map → a fragment shader displaces a "video/QR" source =====
+let gl, glProg, glTex = {}, glReady = false;
+function initGL() {
+  const cv = document.getElementById('gl');
+  gl = cv.getContext('webgl'); if (!gl) return;
+  const vs = `attribute vec2 p; varying vec2 uv; void main(){ uv = vec2(p.x*0.5+0.5, 0.5-p.y*0.5); gl_Position = vec4(p,0.0,1.0); }`;
+  const fs = `precision highp float; varying vec2 uv; uniform sampler2D src, map; uniform float scale, fringe;
+    void main(){
+      vec2 d = (texture2D(map, uv).rg - 0.5) * 2.0 * scale;
+      float r = texture2D(src, uv + d*(1.0+fringe)).r;
+      vec2 gb = texture2D(src, uv + d*(1.0-fringe)).gb;
+      gl_FragColor = vec4(r, gb, 1.0);
+    }`;
+  const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; };
+  glProg = gl.createProgram(); gl.attachShader(glProg, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(glProg, sh(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(glProg); gl.useProgram(glProg);
+  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(glProg, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  // source texture = a "video/QR-ish" canvas Safari would refuse to SVG-filter
+  const sc = document.createElement('canvas'); sc.width = sc.height = 168; const c = sc.getContext('2d');
+  const grd = c.createLinearGradient(0,0,168,168); grd.addColorStop(0,'#34e0c8'); grd.addColorStop(1,'#6a8bff');
+  c.fillStyle = grd; c.fillRect(0,0,168,168);
+  c.fillStyle = '#0b0c12'; for (let y=0;y<11;y++) for (let x=0;x<11;x++) if ((x*7+y*5+((x*y)%3))%2===0) c.fillRect(14+x*14, 14+y*14, 12, 12);
+  c.fillStyle = '#fff'; c.font = '700 13px system-ui'; c.fillText('VIDEO / QR', 40, 158);
+  glTex.src = mkTex(sc);
+  glReady = true;
+}
+function mkTex(srcEl) {
+  const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcEl);
+  return t;
+}
+function drawFallback() {
+  if (!glReady && gl !== null) initGL();
+  if (!glReady) return;
+  const m = buildAaveMap(168, 168, P.radius + 8, P.edge); // same generator, a round-rect QR lens
+  const mi = new Image(); mi.onload = () => {
+    glTex.map = glTex.map || gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, glTex.map);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mi);
+    gl.useProgram(glProg);
+    gl.uniform1f(gl.getUniformLocation(glProg, 'scale'), P.depth / 336);
+    gl.uniform1f(gl.getUniformLocation(glProg, 'fringe'), P.fringe);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, glTex.src); gl.uniform1i(gl.getUniformLocation(glProg, 'src'), 0);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, glTex.map); gl.uniform1i(gl.getUniformLocation(glProg, 'map'), 1);
+    gl.viewport(0, 0, 336, 336); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  };
+  mi.src = m.url;
+}
+
+// ===== panel wiring =====
+for (const k of ['depth','edge','radius','fringe','spec','blur','tint']) {
+  const el = document.getElementById(k), out = document.getElementById(k + '-v');
+  out.textContent = P[k];
+  el.addEventListener('input', () => { P[k] = parseFloat(el.value); out.textContent = el.value; placeAll(); updateMapView(); });
+}
+const showmap = document.getElementById('showmap'), mapview = document.getElementById('mapview');
+showmap.addEventListener('change', () => { mapview.style.display = showmap.checked ? 'block' : 'none'; updateMapView(); });
+function updateMapView() { if (showmap.checked) document.getElementById('mapimg').src = buildAaveMap(hero.mw, hero.mh, Math.min(P.radius, hero.el.offsetWidth/2) + PAD, P.edge).url; }
+
+// ===== boot =====
+gl = undefined; // lazy
+placeAll();
+window.addEventListener('resize', placeAll);
+window.addEventListener('scroll', placeAll, { passive: true });
+</script>
+</body>
+</html>

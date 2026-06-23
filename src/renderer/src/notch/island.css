@@ -87,12 +87,20 @@ button.isl-app {
   height: 38px;
   display: block;
 }
-/* the one functional widget — a vivid Apple-blue app icon that pops against the black island */
+/* the one functional widget — its tile is the actual Blitz macOS app icon (a dark pre-masked squircle PNG), so
+   no blue gradient here. A neutral drop-shadow + a faint rim keep it from dissolving into the island black. */
 .isl-app-chat .isl-app-icon {
-  color: #fff;
-  background: linear-gradient(160deg, #2a93ff 0%, #0a84ff 52%, #0066d6 100%);
-  box-shadow: 0 6px 18px rgba(10, 132, 255, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  background: transparent;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
   transition: transform 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.isl-app-chat .isl-app-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
 }
 button.isl-app-chat:hover .isl-app-icon {
   transform: translateY(-2px);

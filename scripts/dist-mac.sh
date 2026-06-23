@@ -30,7 +30,7 @@ fi
 
 npm run build
 
-ARGS=(--mac zip --arm64 --publish never)
+ARGS=(--mac dmg zip --arm64 --publish never)
 if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
   # electron-builder env names differ from the tauri-style ones in ~/.zshrc — map them.
   export CSC_NAME="${APPLE_SIGNING_IDENTITY#Developer ID Application: }"
@@ -38,6 +38,7 @@ if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
     export APPLE_API_KEY_ID="${APPLE_API_KEY}"   # ~/.zshrc's APPLE_API_KEY holds the KEY ID
     export APPLE_API_KEY="${APPLE_API_KEY_PATH}" # electron-builder wants the .p8 PATH here
     ARGS+=(-c.mac.notarize=true)
+    NOTARIZE_DMG=1   # post-step below: electron-builder notarizes the .app (the .zip carries it) but leaves the .dmg CONTAINER unsigned/unstapled — a downloaded dmg would warn on mount. Sign+notarize+staple it ourselves.
     echo "[dist] signing as ${CSC_NAME} + notarizing"
   else
     echo "[dist] signing as ${CSC_NAME} (no notarization creds)"
@@ -48,4 +49,20 @@ else
 fi
 
 npx electron-builder "${ARGS[@]}"
-ls -lh release/*.zip
+
+# Notarize + staple the DMG container itself (Apple's recommended dmg-distribution flow). electron-builder
+# only notarizes the .app (which the .zip carries), so without this a downloaded .dmg is quarantined +
+# unsigned and Gatekeeper warns on mount even though the app inside is fine. APPLE_API_KEY/_KEY_ID/_ISSUER
+# were remapped to electron-builder's names above (APPLE_API_KEY now holds the .p8 PATH).
+if [[ "${NOTARIZE_DMG:-0}" == "1" ]]; then
+  for dmg in release/*.dmg; do
+    [[ -e "$dmg" ]] || continue
+    echo "[dist] notarizing dmg: $dmg"
+    codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$dmg"
+    xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+    xcrun stapler staple "$dmg"
+    xcrun stapler validate "$dmg"
+  done
+fi
+
+ls -lh release/*.dmg release/*.zip 2>/dev/null

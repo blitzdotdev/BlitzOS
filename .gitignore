@@ -56,3 +56,6 @@ release/
 electron.vite.config.*.mjs
 # reference repos cloned for porting/RE (Blender, three.js, etc.) — local only, can be huge, never commit
 .repos/
+
+# demo video assets + plan (own local repo, not part of BlitzOS)
+demo-video/

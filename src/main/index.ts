@@ -440,24 +440,24 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  installAppMenu() // restores ⌃⌘F / View → Toggle Full Screen (pair-level; see installAppMenu)
-  createWindow()
-
   // macOS QOL: in notch mode the window is a faceless overlay (showInactive, never a normal window), so without
-  // this there's no Dock icon to right-click → Quit — you'd have to hunt the pid + kill. Force a Dock icon, branded
-  // with the BlitzOS bubble so it's recognizable. Best-effort (any failure keeps the default icon).
+  // this there's no Dock icon to right-click → Quit — you'd have to hunt the pid + kill. Brand the Dock with the
+  // Blitz app icon. Best-effort (any failure keeps the default icon). Done FIRST so the icon lands before
+  // createWindow's work.
   if (process.platform === 'darwin' && notchGated && app.dock) {
     void app.dock.show().catch(() => {})
     try {
       const iconPath = app.isPackaged
-        ? join(process.resourcesPath, 'aqua-bubble.png')
-        : join(__dirname, '..', '..', 'src', 'renderer', 'src', 'assets', 'aqua-bubble.png')
+        ? join(process.resourcesPath, 'blitz-app-icon.png')
+        : join(__dirname, '..', '..', 'src', 'renderer', 'src', 'assets', 'blitz-app-icon.png')
       const icon = nativeImage.createFromPath(iconPath)
       if (!icon.isEmpty()) app.dock.setIcon(icon)
     } catch {
       /* keep the default Dock icon */
     }
   }
+  installAppMenu() // restores ⌃⌘F / View → Toggle Full Screen (pair-level; see installAppMenu)
+  createWindow()
 
   // Durably flush cookies + localStorage to disk (web surfaces persist their logins;
   // otherwise the freshest auth token is lost on quit and sites log you back out).

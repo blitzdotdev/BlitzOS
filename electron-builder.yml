@@ -35,6 +35,10 @@ extraResources:
   # `open`s it. Without this copy the packaged candidate never exists and the HUD never starts in prod.
   - from: native/island-helper/build/BlitzIsland.app
     to: BlitzIsland.app
+  # The runtime Dock-icon source for dev/notch-mode branding (index.ts app.dock.setIcon). Shipped UNPACKED
+  # so the packaged build can read it at process.resourcesPath/blitz-app-icon.png (the in-asset is hashed).
+  - from: src/renderer/src/assets/blitz-app-icon.png
+    to: blitz-app-icon.png
   # The notch-geometry CLI: reads the EXACT physical notch from NSScreen so the always-interactive notch hit-window
   # sits over the real cutout (src/main/notch-overlay.ts readNotchGeometry resolves it at process.resourcesPath/
   # notch-geometry). No notch => hasNotch:false and BlitzOS draws no band. Plain binary, no TCC/entitlement needed.
@@ -52,6 +56,7 @@ asarUnpack:
   - src/main/blitzos-interview.md
 mac:
   category: public.app-category.productivity
+  icon: src/renderer/src/assets/blitz-app-icon.png # the Blitz macOS app icon (1024 pre-masked squircle) — electron-builder generates the .icns from it
   target:
     - target: zip
       arch: [arm64]
