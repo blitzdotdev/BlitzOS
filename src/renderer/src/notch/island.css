@@ -1191,7 +1191,7 @@ button.isl-app-chat:active .isl-app-icon {
   width: 24px;
   height: 24px;
   flex: none;
-  border-radius: 7px;
+  border-radius: 50%;
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
 }
 
