@@ -56,7 +56,6 @@ import { withActivity } from '../src/main/activity.mjs'
 import { makeTerminalOps } from '../src/main/terminal-ops.mjs'
 import { makeActionItems } from '../src/main/action-items.mjs'
 import { makeConnectionOps } from '../src/main/connection-ops.mjs'
-import { makeTabLink } from '../src/main/connection-tab-link.mjs'
 import { makeSafariLink } from '../src/main/connection-safari-link.mjs'
 import { createWorkspaceHost } from '../src/main/workspace-host.mjs'
 import { fileURLToPath } from 'node:url'
@@ -663,17 +662,6 @@ const serverConnections = makeConnectionOps({
 })
 Object.assign(serverOps, serverConnections)
 
-// The BlitzOS Connector extension links here too (a self-hosted LOCAL server = localhost, same as Electron).
-// A connected tab becomes a per-source tool provider. (Remote-server tab pairing over an authenticated WSS is
-// a later refinement; the localhost path covers the co-located case the feature targets.)
-const serverTabLink = makeTabLink({ connectionOps: serverConnections, token: process.env.BLITZ_CONNECTOR_TOKEN || '' })
-serverConnections.setTabLink(serverTabLink)
-serverTabLink
-  .start()
-  .then((r) => {
-    if (r.ok) console.log('[agent-os backend] connector link on 127.0.0.1:' + r.port)
-  })
-  .catch(() => {})
 // Safari tabs via Apple Events (only works when the server is co-located on a Mac with Safari; harmless else).
 serverConnections.setSafariLink(makeSafariLink({ connectionOps: serverConnections }))
 

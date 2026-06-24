@@ -11,12 +11,10 @@ import {
   setOnbStep,
   setPreboard,
   refreshPreboard,
-  setOnbBrowserResult,
   markPreboardGranted,
   resetOnboardingProgress,
   type DragKind,
   type StepKey,
-  type Outcome,
   type PreboardState
 } from './onboardingStore'
 
@@ -87,13 +85,7 @@ const INTRO_SLIDES: IntroSlide[] = [
     title: 'Open Blitz whenever you need it',
     copy: 'to show or hide the island anytime — or glide your cursor up to the notch to peek in, and away to tuck it back. You can rebind the shortcut in Settings.',
     shortcut: 'Alt+Space',
-    visual: 'final'
-  },
-  {
-    eyebrow: 'You stay in control',
-    title: 'A few permissions make it useful',
-    copy: 'Blitz only uses the Mac access you grant — and you can skip anything or change it later.',
-    visual: 'final'
+    visual: 'notch'
   },
 ]
 
@@ -119,7 +111,6 @@ function nextStep(state: PreboardState, permissionsDone: boolean): StepKey {
   if (!permissionsDone && permissionPending(state)) return 'permissions'
   // Chrome JS bridge sits immediately after the Mac permissions (it depends on the Automation/AX grants).
   if (wantsChromeJs(state) && !state.steps.chromejs) return 'chromejs'
-  if (state.browser && state.steps.browser == null) return 'browser'
   return 'done'
 }
 
@@ -136,9 +127,8 @@ export function IslandOnboarding({
   const top = Math.max(28, menuBarH) + 8
   // Progress lives in a module store so a hide+reopen (which remounts this component) resumes where the user was,
   // instead of snapping back to the first intro slide. Transient UI (drag/connect/error) is fine as local state.
-  const { introIndex, introDone, permissionsDone, step, preboard: state, browserResult } = useOnboardingProgress()
+  const { introIndex, introDone, permissionsDone, step, preboard: state } = useOnboardingProgress()
   const [activeKind, setActiveKind] = useState<DragKind | null>(null)
-  const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Claude Code (the agent engine) install check for the Requirements slide. null = still checking.
   const [claude, setClaude] = useState<{ installed: boolean; path: string | null } | null>(null)
@@ -152,10 +142,12 @@ export function IslandOnboarding({
     }
   }
 
-  const goNext = (nextState: PreboardState, permsDone = permissionsDone): void => {
+  // The gate defaults to the LIVE store value (default params evaluate per call), NOT the render-closure
+  // `permissionsDone` — so an event listener registered with [] deps (e.g. onChromeJsGranted) can never recompute the
+  // step from a stale first-render gate and bounce the user back to a step they already passed.
+  const goNext = (nextState: PreboardState, permsDone = getOnboardingProgress().permissionsDone): void => {
     clearAdvance()
     setActiveKind(null)
-    setConnecting(false)
     setError(null)
     setOnbStep(nextStep(nextState, permsDone))
   }
@@ -329,37 +321,10 @@ export function IslandOnboarding({
   }
 
   const continuePermissions = (): void => {
+    if (!state || permissionPending(state)) return
     setPermissionsDone(true)
     void api?.closePermissionDrag?.()
-    if (state) goNext(state, true)
-  }
-
-  const skipBrowser = (): void => {
-    if (!state) return
-    void api?.preboardMark?.('browser', 'skipped')
-    const next: PreboardState = { ...state, steps: { ...state.steps, browser: 'skipped' } }
-    setPreboard(next)
-    goNext(next)
-  }
-
-  const connectBrowser = (): void => {
-    if (!api?.requestAutomation || connecting || !state) return
-    setConnecting(true)
-    setError(null)
-    api
-      .requestAutomation()
-      .then((result) => {
-        setOnbBrowserResult(result)
-        const outcome: Outcome = result.status === 'granted' ? 'granted' : result.status === 'denied' ? 'denied' : 'skipped'
-        void api.preboardMark?.('browser', outcome)
-        const next: PreboardState = { ...state, steps: { ...state.steps, browser: outcome } }
-        setPreboard(next)
-        scheduleAdvance(next, result.status === 'granted' ? 1100 : 800)
-      })
-      .catch(() => {
-        setConnecting(false)
-        setError('Could not connect your browser.')
-      })
+    goNext(state, true)
   }
 
   const grantedCount = state ? PERMISSIONS.filter((permission) => isGranted(state, permission.key)).length : 0
@@ -480,7 +445,7 @@ export function IslandOnboarding({
             <div className="isl-onb-head intro">
               <span className="isl-onb-kicker">Setup</span>
               <h1 className="isl-onb-title">Set up Blitz</h1>
-              <p className="isl-onb-copy">A few Mac permissions make Blitz useful. You can skip anything and change it later.</p>
+              <p className="isl-onb-copy">Blitz needs all three to work. Grant each one to continue.</p>
             </div>
             {error && <div className="isl-onb-error">{error}</div>}
             {step === 'permissions' && state && (
@@ -496,26 +461,26 @@ export function IslandOnboarding({
               const granted = isGranted(state, permission.key)
               const active = activeKind === permission.key && !granted
               return (
-                <div key={permission.key} className={`isl-onb-row${granted ? ' granted' : ''}${active ? ' active' : ''}`}>
-                  <span className="isl-onb-check" aria-hidden>
-                    {granted ? (
-                      <svg viewBox="0 0 24 24" focusable="false">
-                        <path d={CHECK_PATH} />
-                      </svg>
-                    ) : null}
-                  </span>
+                <button
+                  key={permission.key}
+                  type="button"
+                  className={`isl-onb-row${granted ? ' granted' : ''}${active ? ' active' : ''}`}
+                  onClick={granted ? undefined : () => openPermission(permission.key)}
+                  disabled={granted}
+                >
                   <span className="isl-onb-row-copy">
                     <span className="isl-onb-row-title">{permission.name}</span>
                     <span className="isl-onb-row-note">{permission.why}</span>
                   </span>
                   {granted ? (
-                    <span className="isl-onb-row-status">Granted</span>
+                    <span className="isl-onb-row-tag" aria-hidden>
+                      <svg viewBox="0 0 24 24" width="10" height="10" focusable="false"><path d={CHECK_PATH} /></svg>
+                      Granted
+                    </span>
                   ) : (
-                    <button type="button" className="isl-onb-secondary" onClick={() => openPermission(permission.key)}>
-                      {active ? 'Reopen' : 'Enable'}
-                    </button>
+                    <span className="isl-onb-row-cta">{active ? 'Reopen' : 'Enable'}</span>
                   )}
-                </div>
+                </button>
               )
             })}
           </div>
@@ -523,7 +488,7 @@ export function IslandOnboarding({
             <div className="isl-onb-hint">Settings is open. Drag the BlitzOS icon into the permission list, then flip it on.</div>
           )}
           <div className="isl-onb-actions">
-            <button type="button" className="isl-onb-primary" onClick={continuePermissions}>
+            <button type="button" className="isl-onb-primary" onClick={continuePermissions} disabled={!state || permissionPending(state)}>
               Continue
             </button>
           </div>
@@ -546,30 +511,6 @@ export function IslandOnboarding({
               Reopen menu
             </button>
             <button type="button" className="isl-onb-quiet" onClick={skipChromeJs}>
-              Not now
-            </button>
-          </div>
-        </div>
-            )}
-            {step === 'browser' && state && (
-        <div className="isl-onb-card">
-          <div className="isl-onb-card-head">
-            <span>Share tabs</span>
-            <span>{state.browser?.name || 'Browser'}</span>
-          </div>
-          <p className="isl-onb-inline-copy">Blitz can use your open tabs as setup context for what you are already doing.</p>
-          {browserResult?.status === 'granted' && (
-            <div className="isl-onb-hint good">
-              Connected. {browserResult.windows ?? 0} window{(browserResult.windows ?? 0) === 1 ? '' : 's'}, {browserResult.tabs ?? 0} tab
-              {(browserResult.tabs ?? 0) === 1 ? '' : 's'}.
-            </div>
-          )}
-          {browserResult && browserResult.status !== 'granted' && <div className="isl-onb-hint">No problem. You can connect it later.</div>}
-          <div className="isl-onb-actions">
-            <button type="button" className="isl-onb-primary" disabled={connecting || browserResult?.status === 'granted'} onClick={connectBrowser}>
-              {connecting ? 'Waiting for macOS...' : `Connect ${state.browser?.name || 'browser'}`}
-            </button>
-            <button type="button" className="isl-onb-quiet" onClick={skipBrowser}>
               Not now
             </button>
           </div>

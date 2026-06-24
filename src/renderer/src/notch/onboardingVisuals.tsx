@@ -8,11 +8,11 @@ import { useEffect, useState } from 'react'
 import blitzAppIcon from '../assets/blitz-app-icon.png'
 import { agentGradient } from './agentVisuals'
 
-export type IntroVisual = 'home' | 'tabs' | 'connect' | 'workflow' | 'final' | 'requirement'
+export type IntroVisual = 'home' | 'tabs' | 'connect' | 'workflow' | 'final' | 'requirement' | 'notch'
 
 const CHECK = 'm5 12 4 4L19 6'
 const ALERT = 'M12 7v6M12 17h.01'
-const PEN = 'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z'
+const PLUS = 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z'
 
 // Loop a step index through `durations` (ms spent AT each step), restarting at 0. One timer, cleaned on unmount.
 function useSequence(durations: number[]): number {
@@ -51,49 +51,61 @@ const Alert = (): JSX.Element => (
   </span>
 )
 
-// ── Slide 1: the home grid — Blitz chat icon + a live "Active agents" rail. ───────────────────────────────────
-const HOME_TOOLS = ['Reading your inbox…', 'Summarizing the thread…', 'Drafting a reply…', 'Checking your calendar…']
+// ── Slide 1: island hover → expands to reveal a multi-agent working session ───────────────────────────────────
+// steps: 0 resting · 1 cursor moving up · 2 island open (working agents) · 3 cursor retreating
+const H_SEQ = [1400, 750, 2100, 650]
+// Two peer agents chosen for hue variety: '5' ≈ pink/rose, '2' ≈ violet
+const HOME_AGENTS = [
+  { id: '0', name: 'Blitz', dot: 'working' as const },
+  { id: '5', name: 'Aria', dot: 'done' as const },
+]
 
 function HomeVisual(): JSX.Element {
-  const t = useSequence([1700, 1700, 1700, 1700])
+  const step = useSequence(H_SEQ)
+  const open = step === 2
+  const cursorUp = step === 1 || step === 2
   return (
-    <div className="oba-home" aria-hidden>
-      <div className="oba-home-chat">
-        <div className="oba-home-icon">
-          <img src={blitzAppIcon} alt="" draggable={false} />
-          <span className="oba-home-badge" />
-        </div>
-        <span className="oba-home-name">Blitz</span>
+    <div className="oba-notch-scene" aria-hidden>
+      <div className="oba-notch-menubar">
+        <span className="oba-notch-mb-left">
+          <span className="oba-notch-mb-dot" /><span className="oba-notch-mb-dot" /><span className="oba-notch-mb-dot" />
+        </span>
+        <span className="oba-notch-mb-right">
+          <span className="oba-notch-mb-item">11:41</span>
+          <span className="oba-notch-mb-icon" /><span className="oba-notch-mb-icon" />
+        </span>
       </div>
-      <div className="oba-home-agents">
-        <div className="oba-home-agents-title">Active agents</div>
-        <div className="oba-home-list">
-          <div className="oba-agent" data-state="working">
-            <span className="oba-agent-icon" style={{ background: agentGradient('3') }} />
-            <span className="oba-agent-body">
-              <span className="oba-agent-name">Inbox triage</span>
-              <span className="oba-agent-status">{HOME_TOOLS[t]}</span>
-            </span>
-            <Spin />
+      <div className={`oba-notch-chassis${open ? ' open' : ''}`}>
+        {open && (
+          <div className="oba-notch-chat" style={{ animation: 'oba-rise 0.2s ease-out 0.12s both' }}>
+            <div className="oba-notch-tabs">
+              <div className="oba-notch-tab-rail">
+                {HOME_AGENTS.map((a) => (
+                  <span key={a.id} className={`oba-notch-tab${a.id === '0' ? ' on' : ''}`}>
+                    <span className="oba-notch-tab-album" style={{ background: agentGradient(a.id) }} />
+                    <span className="oba-notch-tab-label">{a.name}</span>
+                    <span className={`oba-dot oba-dot-${a.dot}`} style={{ width: 7, height: 7 }} />
+                  </span>
+                ))}
+              </div>
+              <span className="oba-notch-tab-new">
+                <svg viewBox="0 0 24 24" width="11" height="11" focusable="false"><path d={PLUS} fill="currentColor" /></svg>
+              </span>
+            </div>
+            <div className="oba-notch-feed">
+              <div className="oba-notch-bubble">Planning your product launch…</div>
+            </div>
+            <div className="oba-notch-composer-bar">
+              <span className="oba-notch-attach-btn">+</span>
+              <span className="oba-notch-input-pill"><span className="oba-notch-ph">Message Blitz…</span></span>
+            </div>
           </div>
-          <div className="oba-agent" data-state="done">
-            <span className="oba-agent-icon" style={{ background: agentGradient('6') }} />
-            <span className="oba-agent-body">
-              <span className="oba-agent-name">Launch plan</span>
-              <span className="oba-agent-status">Done</span>
-            </span>
-            <Check />
-          </div>
-          <div className="oba-agent" data-state="waiting">
-            <span className="oba-agent-icon" style={{ background: agentGradient('9') }} />
-            <span className="oba-agent-body">
-              <span className="oba-agent-name">CRM research</span>
-              <span className="oba-agent-status">Response needed</span>
-            </span>
-            <Alert />
-          </div>
-        </div>
+        )}
       </div>
+      <div className="oba-notch-desktop" />
+      <svg className={`oba-notch-cursor${cursorUp ? ' up' : ''}`} viewBox="0 0 14 20" width="14" height="20" aria-hidden>
+        <path d="M1 1 L1 17 L4.4 13 L7 19.2 L9.2 18.2 L6.6 12 L12.4 12 Z" fill="#fff" stroke="rgba(0,0,0,0.45)" strokeWidth="1.2" strokeLinejoin="round" />
+      </svg>
     </div>
   )
 }
@@ -136,18 +148,18 @@ function TabsVisual(): JSX.Element {
   return (
     <div className="oba-chat" aria-hidden>
       <div className="oba-tabs">
+        <div className="oba-tab-rail">
+          {TABS.map((x, i) => (
+            <span key={x.id} className={`oba-tab${i === active ? ' on' : ''}`}>
+              <span className="oba-tab-album" style={{ background: agentGradient(x.id) }} />
+              <span className="oba-tab-label">{x.name}</span>
+              <span className={`oba-dot oba-dot-${x.dot}`} />
+            </span>
+          ))}
+        </div>
         <span className="oba-tab-new">
-          <svg viewBox="0 0 24 24" focusable="false">
-            <path d={PEN} />
-          </svg>
+          <svg viewBox="0 0 24 24" focusable="false"><path d={PLUS} /></svg>
         </span>
-        {TABS.map((x, i) => (
-          <span key={x.id} className={`oba-tab${i === active ? ' on' : ''}`}>
-            <span className="oba-tab-album" style={{ background: agentGradient(x.id) }} />
-            <span className="oba-tab-label">{x.name}</span>
-            <span className={`oba-dot oba-dot-${x.dot}`} />
-          </span>
-        ))}
       </div>
       <div className="oba-feed" key={active}>
         {tab.msgs.map((m, i) => (
@@ -187,44 +199,6 @@ function ConnectVisual(): JSX.Element {
   return (
     <div className="oba-connect" aria-hidden>
       <div className="oba-connect-body">
-        {step <= 2 && (
-          <div className={`oba-attach${step >= 2 ? ' collapsed' : ''}`}>
-            <div className="oba-attach-grid">
-              <div className={`oba-drop${connected ? ' filled' : ''}`}>
-                {connected ? (
-                  <span className="oba-conn-pill">
-                    <span className="oba-fav" data-c="g">G</span>
-                    Gmail · Inbox
-                  </span>
-                ) : (
-                  <span className="oba-drop-hint">Drag a tab or app here</span>
-                )}
-              </div>
-              <div className="oba-apps">
-                <div className="oba-app">
-                  <span className="oba-twisty">▾</span>
-                  <span className="oba-chrome" />
-                  <span className="oba-app-name">Chrome</span>
-                  <span className="oba-app-count">3</span>
-                </div>
-                <div className="oba-srctabs">
-                  <div className={`oba-srctab${connected ? ' connected' : ''}`}>
-                    <span className="oba-fav" data-c="g">G</span>
-                    Gmail · Inbox
-                  </div>
-                  <div className="oba-srctab">
-                    <span className="oba-fav" data-c="a">A</span>
-                    Acme · Pricing
-                  </div>
-                  <div className="oba-srctab">
-                    <span className="oba-fav" data-c="c">C</span>
-                    Calendar · June
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
         {step >= 4 && (
           <div className="oba-feed bottom" key="sent">
             <div className="oba-msg oba-msg-user">{C_PROMPT}</div>
@@ -266,6 +240,44 @@ function ConnectVisual(): JSX.Element {
           <span className={`oba-send${showSend ? '' : ' hide'}`}>↑</span>
         </div>
       </div>
+      {step <= 2 && (
+        <div className={`oba-attach${step >= 2 ? ' collapsed' : ''}`}>
+          <div className="oba-attach-grid">
+            <div className={`oba-drop${connected ? ' filled' : ''}`}>
+              {connected ? (
+                <span className="oba-conn-pill">
+                  <span className="oba-fav" data-c="g">G</span>
+                  Gmail · Inbox
+                </span>
+              ) : (
+                <span className="oba-drop-hint">Drag a tab or app here</span>
+              )}
+            </div>
+            <div className="oba-apps">
+              <div className="oba-app">
+                <span className="oba-twisty">▾</span>
+                <span className="oba-chrome" />
+                <span className="oba-app-name">Chrome</span>
+                <span className="oba-app-count">3</span>
+              </div>
+              <div className="oba-srctabs">
+                <div className={`oba-srctab${connected ? ' connected' : ''}`}>
+                  <span className="oba-fav" data-c="g">G</span>
+                  Gmail · Inbox
+                </div>
+                <div className="oba-srctab">
+                  <span className="oba-fav" data-c="a">A</span>
+                  Acme · Pricing
+                </div>
+                <div className="oba-srctab">
+                  <span className="oba-fav" data-c="c">C</span>
+                  Calendar · June
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -339,6 +351,58 @@ function WorkflowVisual(): JSX.Element {
   )
 }
 
+// ── Slide 6: cursor glides up to the notch → island expands → retreats ───────────────────────────────────────
+// steps: 0 resting · 1 cursor moving up (transition fires) · 2 cursor arrived + island open · 3 cursor retreating
+const N_SEQ = [1400, 750, 2100, 650]
+
+function NotchVisual(): JSX.Element {
+  const step = useSequence(N_SEQ)
+  const open = step === 2
+  const cursorUp = step === 1 || step === 2
+  return (
+    <div className="oba-notch-scene" aria-hidden>
+      <div className="oba-notch-menubar">
+        <span className="oba-notch-mb-left">
+          <span className="oba-notch-mb-dot" /><span className="oba-notch-mb-dot" /><span className="oba-notch-mb-dot" />
+        </span>
+        <span className="oba-notch-mb-right">
+          <span className="oba-notch-mb-item">11:41</span>
+          <span className="oba-notch-mb-icon" /><span className="oba-notch-mb-icon" />
+        </span>
+      </div>
+      <div className={`oba-notch-chassis${open ? ' open' : ''}`}>
+        {open && (
+          <div className="oba-notch-chat" style={{ animation: 'oba-rise 0.2s ease-out 0.12s both' }}>
+            <div className="oba-notch-tabs">
+              <div className="oba-notch-tab-rail">
+                <span className="oba-notch-tab on">
+                  <span className="oba-notch-tab-album" style={{ background: agentGradient('0') }} />
+                  <span className="oba-notch-tab-label">Blitz</span>
+                  <span className="oba-dot oba-dot-working" style={{ width: 7, height: 7 }} />
+                </span>
+              </div>
+              <span className="oba-notch-tab-new">
+                <svg viewBox="0 0 24 24" width="11" height="11" focusable="false"><path d={PLUS} fill="currentColor" /></svg>
+              </span>
+            </div>
+            <div className="oba-notch-empty">
+              <span className="oba-notch-ph">Message Blitz…</span>
+            </div>
+            <div className="oba-notch-composer-bar">
+              <span className="oba-notch-attach-btn">+</span>
+              <span className="oba-notch-input-pill"><span className="oba-notch-ph">Message Blitz…</span></span>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="oba-notch-desktop" />
+      <svg className={`oba-notch-cursor${cursorUp ? ' up' : ''}`} viewBox="0 0 14 20" width="14" height="20" aria-hidden>
+        <path d="M1 1 L1 17 L4.4 13 L7 19.2 L9.2 18.2 L6.6 12 L12.4 12 Z" fill="#fff" stroke="rgba(0,0,0,0.45)" strokeWidth="1.2" strokeLinejoin="round" />
+      </svg>
+    </div>
+  )
+}
+
 // The completion hero — same framed stage + Blitz icon language as the intro slides, with a "ready"
 // pulse and a green confirmation badge, so the finish reads as part of the same sequence.
 export function OnboardingDoneHero(): JSX.Element {
@@ -367,6 +431,7 @@ export function OnboardingVisual({ kind }: { kind: IntroVisual }): JSX.Element |
       {kind === 'tabs' && <TabsVisual />}
       {kind === 'connect' && <ConnectVisual />}
       {kind === 'workflow' && <WorkflowVisual />}
+      {kind === 'notch' && <NotchVisual />}
     </div>
   )
 }

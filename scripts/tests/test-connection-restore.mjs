@@ -50,7 +50,7 @@ async function main() {
     { tabId: 222, url: 'https://calendar.google.com/calendar', title: 'Calendar' }
   ]
   const tabConnectCalls = []
-  ops.setTabLink({
+  ops.setChromeAsLink({
     listTabs: async () => openTabs,
     connectTab: async (tabId, opts) => {
       tabConnectCalls.push({ tabId, opts })

@@ -1,6 +1,6 @@
 // The WINDOW adapter (Electron + macOS-local only): connects a macOS app WINDOW into BlitzOS through the
 // BlitzOS helper — AX read/act on BACKGROUND windows, plus per-window ScreenCaptureKit screenshots
-// and CGEvent coordinate input for apps AX can't read. Mirrors connection-tab-link: list → connect → bind a
+// and CGEvent coordinate input for apps AX can't read. Mirrors the browser tab links: list → connect → bind a
 // connection whose ADAPTER forwards verbs to the helper. The helper holds the Accessibility + Screen-Recording
 // TCC grants. Window connect is intentionally Electron+local only (a remote server would need a local
 // companion on the user's Mac — deferred per the design).

@@ -939,14 +939,38 @@ button.isl-app-chat:active .isl-app-icon {
   flex: none;
 }
 .nh-island .isl-onb-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.045);
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(150, 175, 220, 0.46);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 86% 10%, rgba(46, 147, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(31, 35, 48, 0.82), rgba(12, 14, 21, 0.9));
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.46),
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  -webkit-backdrop-filter: blur(40px) saturate(1.35);
+  backdrop-filter: blur(40px) saturate(1.35);
   animation: isl-rise 0.24s ease-out 0.04s both;
+}
+.nh-island .isl-onb-card::before {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 0;
+  height: 34px;
+  content: '';
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+  pointer-events: none;
+}
+.nh-island .isl-onb-card > * {
+  position: relative;
+  z-index: 1;
 }
 .nh-island .isl-onb-card-head {
   display: flex;
@@ -954,63 +978,64 @@ button.isl-app-chat:active .isl-app-icon {
   justify-content: space-between;
   gap: 10px;
   color: var(--isl-text);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 18px;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 20px;
 }
 .nh-island .isl-onb-card-head span:last-child {
   flex: none;
-  color: var(--isl-dim);
+  color: rgba(77, 190, 255, 0.8);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 .nh-island .isl-onb-perms {
   display: flex;
   flex-direction: column;
   gap: 7px;
 }
+/* Permission row — styled as isl-ask-option: faint glass pill, clickable */
 .nh-island .isl-onb-row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  min-height: 50px;
-  padding: 8px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 13px;
-  background: rgba(255, 255, 255, 0.03);
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 rgba(0, 0, 0, 0.2);
+  color: var(--isl-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.12s ease;
+  box-sizing: border-box;
 }
+.nh-island .isl-onb-row:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.052));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 10px 20px rgba(0, 0, 0, 0.22);
+  transform: translateY(-1px);
+}
+.nh-island .isl-onb-row:active:not(:disabled) {
+  transform: translateY(0);
+}
+/* "active" = System Settings opened for this row */
 .nh-island .isl-onb-row.active {
-  border-color: rgba(10, 132, 255, 0.34);
-  background: rgba(10, 132, 255, 0.08);
+  border-color: rgba(10, 132, 255, 0.4);
+  background: linear-gradient(180deg, rgba(10, 132, 255, 0.12), rgba(10, 132, 255, 0.06));
 }
+/* "granted" = isl-ask-option.selected: light blue tint */
 .nh-island .isl-onb-row.granted {
-  border-color: rgba(48, 209, 88, 0.24);
-  background: rgba(48, 209, 88, 0.07);
+  border-color: rgba(77, 190, 255, 0.24);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.09), rgba(255, 255, 255, 0.028));
+  cursor: default;
 }
-.nh-island .isl-onb-check {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  flex: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
-  color: #000;
-}
-.nh-island .isl-onb-row.granted .isl-onb-check {
-  background: #30d158;
-}
-.nh-island .isl-onb-check svg {
-  width: 13px;
-  height: 13px;
-  display: block;
-}
-.nh-island .isl-onb-check path {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.nh-island .isl-onb-row:disabled {
+  cursor: default;
+  transform: none;
 }
 .nh-island .isl-onb-row-copy {
   display: flex;
@@ -1030,11 +1055,35 @@ button.isl-app-chat:active .isl-app-icon {
   font-size: 11px;
   line-height: 15px;
 }
-.nh-island .isl-onb-row-status {
+/* "Enable" / "Reopen" label on the right of each non-granted row */
+.nh-island .isl-onb-row-cta {
   flex: none;
-  color: #8ff0a4;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+  font-weight: 600;
+}
+.nh-island .isl-onb-row.active .isl-onb-row-cta {
+  color: rgba(77, 190, 255, 0.85);
+}
+/* Granted badge */
+.nh-island .isl-onb-row-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  color: #4dbfff;
   font-size: 11px;
   font-weight: 700;
+}
+.nh-island .isl-onb-row-tag svg {
+  display: block;
+}
+.nh-island .isl-onb-row-tag path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .nh-island .isl-onb-hint {
   padding: 9px 10px;

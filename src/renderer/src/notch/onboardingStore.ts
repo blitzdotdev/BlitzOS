@@ -83,9 +83,14 @@ export const refreshPreboard = (ps: PreboardState): void => {
     set({ preboard: ps })
     return
   }
-  const KINDS: DragKind[] = ['fda', 'accessibility', 'screen']
-  const steps = { ...ps.steps }
-  for (const k of KINDS) if (prev.steps[k] === 'granted' && steps[k] !== 'granted') steps[k] = 'granted'
+  // Downgrade-proof by RULE, not by a hardcoded list: a refresh may UPGRADE (add a newly-detected grant) but must
+  // never DOWNGRADE a step the user already settled. Preserve any terminal step (granted/skipped) across ALL steps
+  // (fda/accessibility/screen/chromejs/browser/anything added later), and OR-merge the three boolean TCC grants. New
+  // steps are protected automatically, so a hide+reopen (or forced/dev mode, which returns empty steps) never resets one.
+  const steps: Record<string, Outcome | undefined> = { ...ps.steps }
+  for (const [k, v] of Object.entries(prev.steps)) {
+    if ((v === 'granted' || v === 'skipped') && steps[k] !== 'granted') steps[k] = v
+  }
   set({
     preboard: {
       ...ps,

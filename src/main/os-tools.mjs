@@ -518,7 +518,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_list_tabs',
       description:
-        "List the user's open browser tabs that CAN be connected (via the BlitzOS Connector extension). Returns { tabs:[{tabId,title,url}] }. Then connection_connect_tab one of them. Errors if the extension isn't installed/connected yet.",
+        "List the user's open browser tabs that CAN be connected — Chrome + Safari, via Apple Events (extension-free). Returns { tabs:[{tabId,title,url,browser}] }. Then connection_connect_tab one of them. Needs \"Allow JavaScript from Apple Events\" enabled (Chrome: View ▸ Developer; Safari: Develop menu).",
       handler: async () => {
         if (typeof ops.connectionListTabs !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
         return mapConnResult(await ops.connectionListTabs())
@@ -612,20 +612,9 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/connection_open_browser',
-      description:
-        "Open (or get) THIS agent's own browsing window in the dedicated BlitzOS AI Chrome — an isolated profile (shared login across agents) driven via CDP: TRUSTED input (canvas apps like Google Docs/Figma + background tabs, no focus steal), screenshots, and the accessibility tree. Returns a tab connection { connId, ... } you then drive with connection_navigate / connection_read (pass {screenshot:true} or {ax:true}) / connection_act (pass {trusted:true} or {x,y} for the trusted path) / connection_run_js. If the AI Chrome's connector isn't loaded yet it returns { needsSetup:true } with the one-time setup hint. Args: {agent, url?}.",
-      input_schema: { type: 'object', properties: { agent: { type: 'string', description: 'your agent/session id — owns this window' }, url: { type: 'string' } } },
-      handler: async ({ body }) => {
-        if (typeof ops.connectionOpenBrowser !== 'function') return { status: 501, body: { error: 'the AI browser is available only in the BlitzOS app (macOS, local)' } }
-        const a = parse(body)
-        return mapConnResult(await ops.connectionOpenBrowser(a.agent != null ? String(a.agent) : '', { url: a.url, title: a.title }))
-      }
-    },
-    {
       path: '/connection_navigate',
       description:
-        'Navigate a connected TAB to a URL — the AI-browser window, or any connected Chrome tab. Args: {connection, url}. Returns { ok, effect }.',
+        'Navigate a connected TAB to a URL — a Blitz Chrome window or any connected Chrome/Safari tab. Args: {connection, url}. Returns { ok, effect }.',
       input_schema: { type: 'object', required: ['connection', 'url'], properties: { connection: { type: 'string' }, url: { type: 'string' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionNavigate !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
@@ -636,9 +625,8 @@ export function makeOsTools(ops) {
       }
     },
 
-    // ---- Blitz Chrome (blitz-chrome.ts): the SECOND, extension-free browsing path. A dedicated Chrome WE
-    // launch, driven over --remote-debugging-port (CDP) with NO extension and NO manual setup. Separate from
-    // the connection_* / AI-Chrome (extension) path. Each agent gets its own window in the shared "Blitz"
+    // ---- Blitz Chrome (blitz-chrome.ts): a dedicated Chrome WE launch, driven over --remote-debugging-port
+    // (CDP) with NO extension and NO manual setup. Each agent gets its own window in the shared "Blitz"
     // profile. Electron-only — these return 501 on the headless server transport.
     {
       path: '/blitz_chrome_open',

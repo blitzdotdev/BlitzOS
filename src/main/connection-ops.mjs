@@ -104,12 +104,9 @@ export function makeConnectionOps({
   const bySurface = new Map() // surfaceId -> connId (for per-connId widget scoping)
   const registryCache = new Map() // sourceId -> [{name,description,kind}] available in the first-party registry
   const rec = (connId) => registry.get(String(connId)) || null
-  let tabLink = null // the tab link (connection-tab-link.mjs) registers itself via setTabLink
   let windowLink = null // the window link (connection-window-link.ts, Electron-only) registers via setWindowLink
   let safariLink = null // the Safari link (connection-safari-link.mjs, Apple Events) registers via setSafariLink
-  let chromeAsLink = null // the Chrome Apple-Events link (connection-chrome-applescript-link.mjs) — the Chrome tab path now that the connector extension is deprecated
-  let installer = null // the extension force-install (connection-install.ts, Electron-only) registers via setInstaller
-  let browserLauncher = null // ensures the dedicated AI Chrome is running (ai-browser.ts, Electron-only) via setBrowserLauncher
+  let chromeAsLink = null // the Chrome Apple-Events link (connection-chrome-applescript-link.mjs) — Chrome tabs, extension-free
 
   // ---- per-source tool store: <workspace>/.blitzos/connections/<sourceId>/{tools.json, description} ----
   function storeDir(sourceId) {
@@ -1156,18 +1153,15 @@ export function makeConnectionOps({
     emitConnectionMoment('system', { connId, sourceId: r.sourceId, status: 'dropped', verb: 'disconnected (widget closed)', agentId: r.agentId || '0' })
   }
 
-  // ---- the tab link (connection-tab-link.mjs) registers itself here so the agent tools can list +
-  // connect the user's browser tabs transport-agnostically (Electron + server bind the link the same way). ----
-  function setTabLink(link) {
-    tabLink = link
-  }
+  // ---- the browser links (Safari + Chrome, both Apple Events) register themselves here so the agent tools can
+  // list + connect the user's browser tabs transport-agnostically (Electron + server bind the same way). ----
   function setSafariLink(link) {
     safariLink = link
   }
   function setChromeAsLink(link) {
     chromeAsLink = link
   }
-  // Connectable tabs = Chrome (the extension) + Safari (Apple Events), tagged by `browser`.
+  // Connectable tabs = Chrome + Safari, both via Apple Events, tagged by `browser`.
   async function connectionListTabs() {
     const out = []
     if (chromeAsLink && typeof chromeAsLink.listTabs === 'function') {
@@ -1324,42 +1318,7 @@ export function makeConnectionOps({
       restoreInFlight = false
     }
   }
-  function setInstaller(fn) {
-    installer = fn
-  }
-  async function connectionInstallExtension() {
-    if (typeof installer !== 'function') return { error: 'extension install is available only in the BlitzOS app (macOS, local)' }
-    return installer()
-  }
-  // The AI-browser launcher (ai-browser.ts, Electron-only): ensures the dedicated AI Chrome process is running
-  // so the connector inside it can connect, before we try to open the agent's window.
-  function setBrowserLauncher(fn) {
-    browserLauncher = fn
-  }
-  // Open (or get) THIS agent's dedicated browsing window in the BlitzOS AI Chrome — an isolated profile (shared
-  // login across agents) driven via CDP (trusted input + screenshots + canvas apps). Ensures the AI Chrome is
-  // running first; if its connector isn't loaded yet, returns a navigable setup hint instead of a hard failure.
-  async function connectionOpenBrowser(agentId, opts = {}) {
-    if (typeof browserLauncher === 'function') {
-      try {
-        await browserLauncher()
-      } catch {
-        /* launch is best-effort; the connected-check below is the real gate */
-      }
-    }
-    if (!tabLink || typeof tabLink.openAgentWindow !== 'function') {
-      return { error: 'the AI browser is available only in the BlitzOS app (macOS, local)' }
-    }
-    if (typeof tabLink.isConnected === 'function' && !tabLink.isConnected()) {
-      return {
-        error:
-          'the BlitzOS AI Chrome is starting, but its connector isn’t loaded yet. Finish the one-time setup in the AI Chrome window (chrome://extensions → Developer mode → drag the connector folder), then try again.',
-        needsSetup: true
-      }
-    }
-    return attachBriefing(await tabLink.openAgentWindow(agentId != null ? String(agentId) : '', opts || {}))
-  }
-  // Navigate a connected TAB (the AI-browser window, or any connected Chrome tab) to a URL.
+  // Navigate a connected TAB to a URL.
   async function connectionNavigate(connId, url) {
     const r = rec(connId)
     if (!r) return { error: `no connection ${connId}` }
@@ -1474,7 +1433,6 @@ export function makeConnectionOps({
 
   return {
     // tab + window link registration + the user/agent connect entries
-    setTabLink,
     setSafariLink,
     setChromeAsLink,
     connectionListTabs,
@@ -1484,10 +1442,6 @@ export function makeConnectionOps({
     connectionConnectWindow,
     connectionReconnectSource,
     connectionRestoreAll,
-    setInstaller,
-    connectionInstallExtension,
-    setBrowserLauncher,
-    connectionOpenBrowser,
     connectionNavigate,
     // adapter / registry API (used by the tab + window adapters and by tests)
     connectionIsLive,

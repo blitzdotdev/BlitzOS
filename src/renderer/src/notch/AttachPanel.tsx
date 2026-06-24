@@ -20,7 +20,6 @@ type ConnBridge = {
   connectTab(id: number | string, agentId?: string): Promise<{ error?: string }>
   connectWindow(id: number, agentId?: string): Promise<{ error?: string }>
   disconnect(connId: string): Promise<{ error?: string }>
-  installExtension(): Promise<{ error?: string; note?: string; extensionDir?: string }>
 }
 
 const bridge = (): ConnBridge | undefined =>
@@ -372,10 +371,8 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     }
   }
 
-  // The connector extension is DEPRECATED. Chrome is driven extension-free via Apple Events now, so "Connect Chrome"
-  // no longer installs anything; it just shows the ONE-TIME toggle Chrome needs before its tabs surface here.
-  // TODO(extension-deprecated): installExtension() is now a no-op (no installer wired in main); drop this button +
-  // the install plumbing once the Apple-Events path is the only Chrome path everywhere.
+  // Chrome is driven extension-free via Apple Events, so "Connect Chrome" installs nothing — it just shows the
+  // ONE-TIME toggle Chrome needs (View ▸ Developer ▸ Allow JavaScript from Apple Events) before its tabs surface here.
   function install(): void {
     setInstallNote('To connect Chrome, turn on Chrome ▸ View ▸ Developer ▸ “Allow JavaScript from Apple Events” once, then open a tab. Its tabs then appear here automatically.')
   }

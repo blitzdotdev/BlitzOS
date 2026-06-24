@@ -14,7 +14,6 @@ type ConnBridge = {
   listWindows(): Promise<{ windows?: Win[]; error?: string }>
   connectTab(id: number | string): Promise<{ error?: string }>
   connectWindow(id: number): Promise<{ error?: string }>
-  installExtension(): Promise<{ error?: string; note?: string }>
 }
 
 export function ConnectPicker({ onClose }: { onClose: () => void }): JSX.Element {
@@ -33,7 +32,7 @@ export function ConnectPicker({ onClose }: { onClose: () => void }): JSX.Element
     const notes: string[] = []
     if (t.error) notes.push('tabs: ' + t.error)
     if (w.error) notes.push('windows: ' + w.error)
-    setStatus(notes.join('   ') || ((t.tabs?.length || 0) + (w.windows?.length || 0) === 0 ? 'Nothing connectable yet — install the Connector or open the helper.' : ''))
+    setStatus(notes.join('   ') || ((t.tabs?.length || 0) + (w.windows?.length || 0) === 0 ? 'Nothing connectable yet — open a tab in Chrome/Safari, or a macOS app window.' : ''))
   }
   useEffect(() => {
     void refresh()
@@ -59,31 +58,9 @@ export function ConnectPicker({ onClose }: { onClose: () => void }): JSX.Element
     if (r && !r.error) onClose()
     else setStatus(r?.error || 'connect failed')
   }
-  async function install(): Promise<void> {
-    setBusy('install')
-    const r = (await conn?.installExtension()) as { error?: string; note?: string; extensionDir?: string } | undefined
-    if (r?.error) {
-      setStatus(r.error + (r.extensionDir ? ` — or load it manually: chrome://extensions → Developer mode → Load unpacked → ${r.extensionDir}` : ''))
-      setBusy(null)
-      return
-    }
-    // Don't claim success on the optimistic note — POLL for the connector actually connecting, so the user is
-    // never stranded staring at "it'll appear soon" when a force-install silently didn't take.
-    setStatus('Installing the connector… waiting for Chrome to pick it up (relaunch Chrome if it stalls).')
-    for (let i = 0; i < 12; i++) {
-      await new Promise((res) => setTimeout(res, 2000))
-      const t = await conn?.listTabs()
-      if (Array.isArray(t?.tabs) && t.tabs.some((x) => (x as Tab).browser === 'chrome')) {
-        setBusy(null)
-        await refresh()
-        return
-      }
-    }
-    setBusy(null)
-    setStatus(
-      'The connector didn’t connect automatically. Relaunch Chrome and click ↻. Still nothing? Some Chrome setups block policy-installed extensions' +
-        (r?.extensionDir ? ` — load it manually: chrome://extensions → enable Developer mode → Load unpacked → ${r.extensionDir}` : '.')
-    )
+  // Chrome is driven extension-free via Apple Events — nothing to install. Show the one-time toggle Chrome needs.
+  function showChromeSetup(): void {
+    setStatus('To connect Chrome, turn on Chrome ▸ View ▸ Developer ▸ “Allow JavaScript from Apple Events” once, then open a tab and click ↻. Its tabs then appear here.')
   }
 
   return (
@@ -109,10 +86,10 @@ export function ConnectPicker({ onClose }: { onClose: () => void }): JSX.Element
               </button>
             ))}
             {/* Chrome path is ALWAYS available (not hidden when Safari/other tabs exist): if no Chrome tab is
-                connected, offer to install the connector extension. */}
+                connected, show the one-time Apple-Events toggle Chrome needs. */}
             {!tabs.some((t) => t.browser === 'chrome') && (
-              <button className="connect-picker-install" disabled={busy === 'install'} onClick={() => void install()}>
-                {busy === 'install' ? 'Installing…' : '+ Connect Chrome (install the connector)'}
+              <button className="connect-picker-install" onClick={showChromeSetup}>
+                + Connect Chrome
               </button>
             )}
           </section>

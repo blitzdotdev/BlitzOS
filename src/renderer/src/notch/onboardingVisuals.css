@@ -411,6 +411,16 @@
   align-items: center;
   gap: 6px;
 }
+/* scrollable agent-tab rail — tabs live here, "+" is a sibling pinned right */
+.oba-tab-rail {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 6px;
+  overflow: hidden;
+}
+/* "+" new-chat circle, pinned to the right of the rail (Chrome-style) */
 .oba-tab-new {
   display: grid;
   place-items: center;
@@ -421,6 +431,7 @@
   border-radius: 50%;
   background: var(--isl-surface);
   color: var(--isl-muted);
+  margin-left: auto;
 }
 .oba-tab-new svg {
   width: 14px;
@@ -478,15 +489,18 @@
   flex-direction: column;
   justify-content: flex-end;
 }
+/* Attach panel sits BELOW the composer (real island order: feed → composer → attach) */
 .oba-attach {
   position: relative;
   overflow: hidden;
   max-height: 150px;
+  margin-top: 8px;
   transition: max-height 0.5s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.35s ease;
 }
 .oba-attach.collapsed {
   max-height: 0;
   opacity: 0;
+  margin-top: 0;
 }
 .oba-attach-grid {
   display: flex;
@@ -1019,4 +1033,259 @@
   100% {
     transform: translateX(350%);
   }
+}
+
+/* ── slide 6: notch hover → island expands ─────────────────────────────────────────────────────────────────── */
+.oba-notch-scene {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* macOS-style menu bar */
+.oba-notch-menubar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  background: rgba(22, 22, 26, 0.9);
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.07);
+  z-index: 5;
+}
+.oba-notch-mb-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.oba-notch-mb-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.oba-notch-mb-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+}
+.oba-notch-mb-item {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.oba-notch-mb-icon {
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Desktop wallpaper */
+.oba-notch-desktop {
+  position: absolute;
+  inset: 26px 0 0;
+  background:
+    radial-gradient(ellipse at 65% 55%, rgba(15, 40, 80, 0.7), transparent 60%),
+    radial-gradient(ellipse at 25% 80%, rgba(30, 15, 60, 0.5), transparent 50%),
+    #060810;
+}
+
+/* The island chassis — sits at top-center, starts as the glance-bar pill, expands on hover */
+.oba-notch-chassis {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 118px;
+  height: 30px;
+  background: #000;
+  border-radius: 0 0 20px 20px;
+  z-index: 10;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* obsidian-glass rim tokens — matches .nh-chassis */
+  --isl-rim-top: rgba(198, 217, 255, 0.6);
+  --isl-rim-mid: rgba(150, 172, 212, 0.14);
+  --isl-rim-bot: rgba(140, 176, 255, 0.34);
+  box-shadow: 0 8px 28px -6px rgba(30, 64, 140, 0.22), 0 1px 4px rgba(120, 160, 255, 0.08);
+  transition:
+    width 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    height 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Obsidian-glass hairline rim — left/right/bottom only, same technique as .nh-chassis::before */
+.oba-notch-chassis::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border-radius: inherit;
+  padding: 0 1px 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    var(--isl-rim-top) 0%,
+    var(--isl-rim-mid) 24%,
+    rgba(255, 255, 255, 0.03) 60%,
+    var(--isl-rim-bot) 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.oba-notch-chassis.open {
+  width: 284px;
+  height: 138px;
+  border-radius: 0 0 26px 26px;
+}
+
+/* ── Island tab strip — scrollable rail + "+" pinned right (mirrors isl-tabs / isl-tab-rail / isl-chip-new) */
+.oba-notch-chat {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+.oba-notch-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px 5px;
+  flex: none;
+}
+.oba-notch-tab-rail {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 5px;
+  overflow: hidden;
+}
+.oba-notch-tab-new {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.35);
+  margin-left: auto;
+}
+.oba-notch-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 3px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 10.5px;
+  flex: none;
+}
+.oba-notch-tab.on {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+}
+.oba-notch-tab-album {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+}
+.oba-notch-tab-label {
+  white-space: nowrap;
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* message body / empty placeholder */
+.oba-notch-feed {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 0 12px 4px;
+  overflow: hidden;
+}
+.oba-notch-bubble {
+  align-self: flex-start;
+  max-width: 86%;
+  padding: 5px 9px;
+  border-radius: 12px 12px 12px 3px;
+  background: rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 10px;
+  line-height: 14px;
+  animation: oba-rise 0.22s ease-out 0.28s both;
+}
+.oba-notch-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.oba-notch-ph {
+  color: rgba(255, 255, 255, 0.18);
+  font-size: 10.5px;
+  font-style: italic;
+}
+/* composer bar at the bottom of the expanded island */
+.oba-notch-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 7px;
+  flex: none;
+}
+.oba-notch-attach-btn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 14px;
+  font-weight: 300;
+}
+.oba-notch-input-pill {
+  flex: 1;
+  min-height: 22px;
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+}
+
+/* Mouse cursor — starts in the middle of the desktop, glides up to the notch */
+.oba-notch-cursor {
+  position: absolute;
+  /* resting: roughly centered horizontally, two-thirds down */
+  top: 138px;
+  left: calc(50% + 18px);
+  z-index: 20;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+  transition: top 0.72s cubic-bezier(0.22, 1, 0.36, 1), left 0.72s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* at-notch: cursor tip lands just below the notch center */
+.oba-notch-cursor.up {
+  top: 19px;
+  left: calc(50% + 4px);
 }

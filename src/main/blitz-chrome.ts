@@ -1,8 +1,9 @@
-// BlitzOS "Blitz" Chrome — a SECOND, fully independent AI-browsing path that drives a dedicated Chrome over
-// the DevTools Protocol via --remote-debugging-port, with NO extension and NO manual load step. This lives
-// ALONGSIDE the extension/chrome.debugger path (ai-browser.ts + connection-tab-link.mjs); it does not replace
-// or modify it. The extension path still earns its keep for attaching to the user's ALREADY-RUNNING real
-// Chrome (which can't be given a debug port without relaunching it). This path is for a browser WE launch.
+// BlitzOS "Blitz" Chrome — the agent's own AI-browsing path: a dedicated Chrome WE launch, driven over the
+// DevTools Protocol via --remote-debugging-port, with NO extension and NO manual load step. It is separate
+// from the user's OWN browser, which the agent reaches extension-free via Apple Events (Chrome/Safari tabs —
+// connection-chrome-applescript-link / connection-safari-link). Blitz Chrome is for a browser WE launch; the
+// Apple-Events path is for the user's ALREADY-RUNNING real browser (which can't be given a debug port without
+// relaunching it).
 //
 // Why a separate instance and not a profile in the user's Chrome: --remote-debugging-port is BROWSER-WIDE
 // (it would expose every profile, including the user's logged-in one), can't be added to an already-running
@@ -133,6 +134,12 @@ class BlitzChrome {
   private nextId = 0
   private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
   private readonly eventWaiters: Array<{ sessionId?: string; method: string; resolve: (o: Record<string, unknown>) => void }> = []
+  // The LAUNCH tab (the about:blank Chrome opens) — captured once at connect so the FIRST agent reuses THAT specific
+  // window instead of spawning a new one or adopting a tab the user later opens. Single-use: cleared the instant it is
+  // claimed (so a concurrent acquire spawns a fresh window instead) or when it is closed.
+  private launchTargetId: string | null = null
+  // Per-agent single-flight for window acquisition, so two concurrent session() calls for one agent never make two windows.
+  private readonly sessionInFlight = new Map<string, Promise<string>>()
   private readonly windows = new Map<string, AgentWindow>() // agentId -> its window
   private connectionOps: ConnectionOps | null = null
 
@@ -282,6 +289,15 @@ class BlitzChrome {
       } catch {
         /* non-fatal: lifecycle unbinds still happen via close()/shutdown */
       }
+      // Capture the LAUNCH tab now — right after connect, before any agent acts or the user opens a tab — so the
+      // first agent reuses exactly that window. Only ever this one id is reusable, so a user-opened blank is never hijacked.
+      try {
+        const got = (await this.send('Target.getTargets', {})) as { targetInfos?: Array<{ targetId: string; type: string }> }
+        const page = (got.targetInfos || []).find((t) => t.type === 'page')
+        this.launchTargetId = page ? page.targetId : null
+      } catch {
+        this.launchTargetId = null
+      }
     })()
     try {
       await this.wsConnecting
@@ -319,8 +335,8 @@ class BlitzChrome {
   }
 
   // A bound window navigated its MAIN frame → re-key the connection's sourceId to the new host (so per-source banked
-  // tools track the page it's actually on, never the prior site's), and wake the agent. Mirrors the extension path's
-  // connectionRekey/connectionNotify in connection-tab-link.onTabEvent.
+  // tools track the page it's actually on, never the prior site's), and wake the agent via
+  // connectionRekey/connectionNotify.
   private onMainFrameNav(sessionId: string | undefined, params: Record<string, unknown> | undefined): void {
     if (!sessionId || !params || !this.connectionOps) return
     const frame = params.frame as { url?: string; parentId?: string } | undefined
@@ -336,18 +352,20 @@ class BlitzChrome {
   // A window's target was destroyed (the user closed it) → unbind its connection and forget the window.
   private onTargetGone(targetId: string | undefined): void {
     if (!targetId) return
-    for (const [key, w] of this.windows) {
-      if (w.targetId === targetId) {
-        if (w.connId && this.connectionOps) {
-          try {
-            this.connectionOps.connectionUnbind(w.connId)
-          } catch {
-            /* registry gone */
-          }
+    if (this.launchTargetId === targetId) this.launchTargetId = null // the launch tab was closed → never reuse it
+    // Clear EVERY window bound to this target, not just the first: cleanup must be exhaustive so a destroyed target
+    // can never leave a stale ready entry behind (which session() would then hand back as a dead session). Snapshot
+    // before mutating the map.
+    for (const [key, w] of [...this.windows]) {
+      if (w.targetId !== targetId) continue
+      if (w.connId && this.connectionOps) {
+        try {
+          this.connectionOps.connectionUnbind(w.connId)
+        } catch {
+          /* registry gone */
         }
-        this.windows.delete(key)
-        break
       }
+      this.windows.delete(key)
     }
   }
 
@@ -459,21 +477,27 @@ class BlitzChrome {
     const key = agentId || 'default'
     const existing = this.windows.get(key)
     if (existing && existing.ready) return existing.sessionId
-    // FOCUS INVARIANT: open/adopt the agent's window in the BACKGROUND, and NEVER call Page.bringToFront /
-    // Target.activateTarget from here, from act(), or any automatic path — CDP Input.* drives an unfocused window
-    // fine. Foreground is opt-in only (the blitz_chrome_show tool).
-    // REUSE the window Chrome already opened (the launch `about:blank`) instead of spawning a new one, so a single
-    // agent's work stays in ONE window and the launch tab is not orphaned. Adopt ONLY a blank tab not already bound
-    // to another agent (never clobber a real page); spawn a fresh background window only when there is none.
-    let targetId: string | null = null
-    try {
-      const got = (await this.send('Target.getTargets', {})) as { targetInfos?: Array<{ targetId: string; type: string; url?: string }> }
-      const bound = new Set([...this.windows.values()].map((w) => w.targetId))
-      const isBlank = (u?: string): boolean => !u || u === 'about:blank' || u.startsWith('chrome://newtab') || u.startsWith('chrome://new-tab')
-      const free = (got.targetInfos || []).find((t) => t.type === 'page' && !bound.has(t.targetId) && isBlank(t.url))
-      if (free) targetId = free.targetId
-    } catch {
-      /* getTargets failed — fall back to creating a window */
+    // Single-flight per agent: concurrent session() calls for the SAME key share ONE acquisition, never two windows.
+    const inflight = this.sessionInFlight.get(key)
+    if (inflight) return inflight
+    const p = this.acquireWindow(key).finally(() => this.sessionInFlight.delete(key))
+    this.sessionInFlight.set(key, p)
+    return p
+  }
+
+  // Attach (or create) THIS agent's window. FOCUS INVARIANT: stay in the BACKGROUND — never Page.bringToFront /
+  // Target.activateTarget here (CDP Input.* drives an unfocused window fine; foreground is opt-in via blitz_chrome_show).
+  private async acquireWindow(key: string): Promise<string> {
+    // Reuse the LAUNCH tab exactly once, so a single agent's work stays in the window Chrome already opened and that
+    // tab is not orphaned. Read+null is synchronous = an atomic single-use claim: a concurrent acquire (a different
+    // agent) sees null and createTargets instead, so two agents can NEVER adopt the same target. Only ever the launch
+    // tab is reused, so a tab the user opened later is never hijacked.
+    let targetId: string | null = this.launchTargetId
+    this.launchTargetId = null
+    if (targetId) {
+      // Confirm the launch tab still exists as a page (the user may have closed it); else spawn a fresh window.
+      const got = (await this.send('Target.getTargets', {}).catch(() => null)) as { targetInfos?: Array<{ targetId: string; type: string }> } | null
+      if (!got || !(got.targetInfos || []).some((t) => t.targetId === targetId && t.type === 'page')) targetId = null
     }
     if (!targetId) {
       const created = (await this.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true })) as { targetId: string }
@@ -532,8 +556,8 @@ class BlitzChrome {
   }
 
   // The CDP-backed connection adapter for an agent's window: the registry calls call(verb,args); we ride the
-  // window's flattened CDP session. Return shapes MATCH the extension tab adapter (connection-tab-link.buildAdapter)
-  // so connection_run_js/read/act/navigate behave identically whichever browser backs the tab.
+  // window's flattened CDP session. Return shapes MATCH the Apple-Events tab adapter so connection_run_js/read/
+  // act/navigate behave identically whichever browser backs the tab.
   private buildAdapter(agentId: string): ConnectionAdapter {
     const key = agentId || 'default'
     return {
@@ -717,11 +741,18 @@ class BlitzChrome {
           /* best-effort */
         }
       }
-      // Bring the Chrome app frontmost (LaunchServices activate — no -g this time; the user asked to see it).
-      const bin = findChromeBin()
-      if (bin) {
-        const appBundle = bin.replace(/\/Contents\/MacOS\/[^/]+$/, '')
-        spawn('open', ['-a', appBundle], { stdio: 'ignore' }).on('error', () => {})
+      // Bring the Blitz Chrome process frontmost. Use the PID we resolved at launch so we target THIS Chrome
+      // instance specifically — `open -a <bundle>` is ambiguous when the user's own Chrome is also open and
+      // macOS would focus their window instead of ours.
+      if (this.chromePid) {
+        spawn('osascript', ['-e', `tell application "System Events" to set frontmost of (first process whose unix id is ${this.chromePid}) to true`], { stdio: 'ignore' }).on('error', () => {})
+      } else {
+        // PID not yet resolved (rare: CDP up but lsof hasn't run yet) — fall back to app-level activate.
+        const bin = findChromeBin()
+        if (bin) {
+          const appBundle = bin.replace(/\/Contents\/MacOS\/[^/]+$/, '')
+          spawn('open', ['-a', appBundle], { stdio: 'ignore' }).on('error', () => {})
+        }
       }
       return { ok: true, shown: true, agentWindow: !!w }
     } catch (e) {

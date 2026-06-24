@@ -198,9 +198,6 @@ const api = {
     connectWindow(windowId: number, agentId?: string): Promise<Record<string, unknown>> {
       return (ipcRenderer.invoke('os:conn-connect-window', windowId, agentId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
     },
-    installExtension(): Promise<Record<string, unknown>> {
-      return (ipcRenderer.invoke('os:conn-install') as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
-    },
     // The live connections OWNED by `agentId` (this chat) so the picker can mark + un-mark per source. Omit = all.
     list(agentId?: string): Promise<{ connections?: unknown[]; error?: string }> {
       return (ipcRenderer.invoke('os:conn-list', agentId) as Promise<{ connections?: unknown[]; error?: string }>).catch(() => ({ error: 'unavailable' }))

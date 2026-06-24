@@ -238,7 +238,7 @@ async function main() {
     listTabs: async () => [{ tabId: 99, url: 'https://reconnect.example.com/x', title: 'R' }],
     connectTab: async (tabId) => ({ connId: 'conn_reconnected', surfaceId: 'sfc_re', tabId })
   }
-  ops.setTabLink(reconnTabLink)
+  ops.setChromeAsLink(reconnTabLink)
   const rr = await ops.connectionReconnectSource('reconnect.example.com', 'tab')
   ok('connectionReconnectSource finds + connects a matching open tab', rr && rr.connId === 'conn_reconnected')
   const rrMiss = await ops.connectionReconnectSource('notopen.example.com', 'tab')
@@ -321,7 +321,7 @@ async function main() {
   ok('surfaced registryTools are metadata only (no code)', briefing.registryTools.every((t) => t.code === undefined))
 
   // the CONNECT RESULT itself must carry the briefing — the agent's connect→act flow can skip connection_list
-  rops.setTabLink({ listTabs: async () => [{ tabId: 9, url: 'https://docs.google.com/x', title: 'D' }], connectTab: async (id) => { const b = rops.connectionBind({ type: 'tab', sourceId: 'docs.google.com', title: 'D', adapter: stubAdapter(), ref: id }); return { connId: b.connId, surfaceId: b.surfaceId, sourceId: 'docs.google.com' } } })
+  rops.setChromeAsLink({ listTabs: async () => [{ tabId: 9, url: 'https://docs.google.com/x', title: 'D' }], connectTab: async (id) => { const b = rops.connectionBind({ type: 'tab', sourceId: 'docs.google.com', title: 'D', adapter: stubAdapter(), ref: id }); return { connId: b.connId, surfaceId: b.surfaceId, sourceId: 'docs.google.com' } } })
   const cres = await rops.connectionConnectTab(9, {})
   ok('connect_tab RESULT carries registryTools (unmissable briefing)', Array.isArray(cres.registryTools) && cres.registryTools.some((t) => t.name === 'read_text'))
   ok('connect_tab RESULT carries savedTools', Array.isArray(cres.savedTools))
