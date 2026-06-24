@@ -11,7 +11,7 @@ import { execFileSync, execFile, spawn } from 'node:child_process'
 // (no asar fs), so electron-builder.yml ships scripts/onboarding-scan.mjs + the prompt .md files
 // asarUnpack'd and we resolve them there.
 const appRoot = (): string => app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked')
-import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
+import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { osCreateWorkspace, osSwitchWorkspace, osWorkspaceContext, osGoToPrimary, osSay, osKickBrain, osClearBrainContext } from './osActions'
@@ -364,33 +364,72 @@ function startDragPoll(kind: DragPerm): void {
 // poll), constructed identically so it behaves the same over a frontmost Chrome. Reused per (re)open.
 let chromeJsHelper: BrowserWindow | null = null
 let chromeJsPollTimer: ReturnType<typeof setInterval> | null = null
-const CHROME_JS_HELPER_W = 320
+let chromeJsMemProbeTimer: ReturnType<typeof setInterval> | null = null
+let chromeJsWindowPoller: ReturnType<typeof setInterval> | null = null
+let chromeJsOpening = false
+// True once a flow session is LIVE (menu navigated + helper shown + polling). Auto-open re-entry while
+// this is true is a no-op (idempotency), so React StrictMode / island remounts never re-navigate the menu.
+let chromeJsActive = false
+// Debounced teardown timer: the renderer's close fires on every unmount (incl. StrictMode's throwaway one),
+// so we defer the actual teardown and cancel it if a re-open lands within the window — no close→open thrash.
+let chromeJsTeardownTimer: ReturnType<typeof setTimeout> | null = null
+// fs.watch handles on the OFF-at-snapshot profile dirs — fire the instant Chrome rewrites Preferences.
+let chromeJsWatchers: FSWatcher[] = []
+// Monotonically-incremented on each close/cancel so any in-flight openChromeJsPhase2 can detect it
+// was superseded and exit without showing the helper or re-activating Chrome.
+let chromeJsGeneration = 0
+const CHROME_JS_HELPER_W = 400
 const CHROME_JS_HELPER_H = 92
+const CHROME_JS_TEARDOWN_DEBOUNCE_MS = 600
+
+/** Returns the number of open Chrome windows (0 if Chrome is not running or has no windows). */
+function countChromeWindows(): Promise<number> {
+  return new Promise((resolve) => {
+    const script = 'if application "Google Chrome" is running then\n  tell application "Google Chrome" to return count of windows\nelse\n  return 0\nend if'
+    execFile('/usr/bin/osascript', ['-e', script], { timeout: 5000 }, (err, stdout) => {
+      if (err) return resolve(0)
+      resolve(parseInt(String(stdout).trim(), 10) || 0)
+    })
+  })
+}
+
+function stopChromeWindowPoll(): void {
+  if (chromeJsWindowPoller) {
+    clearInterval(chromeJsWindowPoller)
+    chromeJsWindowPoller = null
+  }
+}
 
 /** The helper card content. `pointed` (the Developer row's screen rect was read) → a LEFT-pointing arrow on
  *  the card's left edge + the short "Click ..." copy; the card sits just right of the row so the arrow lands
  *  on it. Not pointed (menu could not be opened/read) → no arrow + a manual instruction, so we never point an
- *  arrow at nothing. Same frosted chrome + CSP as the drag helper; this step is a click, not a drag. */
-function chromeJsHelperHtml(pointed: boolean): string {
+ *  arrow at nothing. `iconUrl` — BlitzOS brand icon as a data URL; shown on the left so the user knows this
+ *  popup is from Blitz (falls back to a "B" circle). Same frosted chrome + CSP as the drag helper. */
+function chromeJsHelperHtml(pointed: boolean, iconUrl: string | null): string {
   const arrow = pointed ? '<div class="arrow" aria-hidden="true"></div>' : ''
   const copy = pointed
     ? 'Click &ldquo;Allow JavaScript from Apple Events&rdquo;'
     : 'In Chrome, open View &rsaquo; Developer and tick &ldquo;Allow JavaScript from Apple Events&rdquo;'
+  const icon = iconUrl ? `<img src="${iconUrl}" alt="" draggable="false">` : '<span class="fallback">B</span>'
   return `<!doctype html><html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
 <style>
   :root { color-scheme: light dark; }
   html,body { margin:0; height:100%; overflow:hidden; -webkit-user-select:none; user-select:none; font-family:-apple-system,system-ui,sans-serif; }
-  .h { height:100%; display:flex; align-items:center; gap:12px; padding:0 16px; box-sizing:border-box;
+  .h { height:100%; display:flex; align-items:center; gap:10px; padding:0 16px; box-sizing:border-box;
        background:rgba(245,245,247,0.86); border-radius:16px; border:1px solid rgba(0,0,0,0.10);
        -webkit-backdrop-filter:saturate(1.3) blur(20px); backdrop-filter:saturate(1.3) blur(20px);
        box-shadow:0 8px 30px rgba(0,0,0,0.22); }
   @media (prefers-color-scheme: dark){ .h{ background:rgba(40,42,46,0.86); border-color:rgba(255,255,255,0.12); color:#f5f5f7; } }
+  .icon { flex:0 0 auto; width:30px; height:30px; display:grid; place-items:center; }
+  .icon img { width:30px; height:30px; border-radius:7px; pointer-events:none; }
+  .fallback { width:30px; height:30px; display:grid; place-items:center; border-radius:7px;
+    background:linear-gradient(150deg,#2a93ff,#0066d6 60%,#05060a); color:#fff; font-weight:800; font-size:15px; }
   /* The arrow points LEFT toward the menu row (the card sits just to the row's right). */
-  .arrow { position:relative; width:40px; height:24px; flex:0 0 auto; color:#0a84ff; animation:chromeArrowHint 1.65s cubic-bezier(.22,1,.36,1) infinite; }
-  .arrow:before { content:''; position:absolute; left:6px; top:11px; width:30px; height:2px; border-radius:999px; background:currentColor; }
-  .arrow:after { content:''; position:absolute; left:4px; top:6px; width:12px; height:12px; border-bottom:2px solid currentColor; border-left:2px solid currentColor; transform:rotate(45deg); }
-  .c { min-width:0; color:inherit; font-size:15px; line-height:1.25; font-weight:700; letter-spacing:-0.01em; }
+  .arrow { position:relative; width:36px; height:24px; flex:0 0 auto; color:#0a84ff; animation:chromeArrowHint 1.65s cubic-bezier(.22,1,.36,1) infinite; }
+  .arrow:before { content:''; position:absolute; left:4px; top:11px; width:28px; height:2px; border-radius:999px; background:currentColor; }
+  .arrow:after { content:''; position:absolute; left:2px; top:6px; width:11px; height:11px; border-bottom:2px solid currentColor; border-left:2px solid currentColor; transform:rotate(45deg); }
+  .c { min-width:0; color:inherit; font-size:14px; line-height:1.25; font-weight:700; letter-spacing:-0.01em; }
   @keyframes chromeArrowHint {
     0%,62%,100% { opacity:.42; transform:translateX(0); }
     32% { opacity:1; transform:translateX(-6px); }
@@ -399,6 +438,7 @@ function chromeJsHelperHtml(pointed: boolean): string {
 <div class="h">
   ${arrow}
   <div class="c">${copy}</div>
+  <div class="icon" aria-hidden="true">${icon}</div>
 </div></body></html>`
 }
 
@@ -419,6 +459,8 @@ async function openChromeJsRow(): Promise<{ x: number; y: number; w: number; h: 
     'tell application "Google Chrome" to activate',
     'delay 0.25',
     'tell application "System Events" to tell process "Google Chrome"',
+    '  key code 53', // dismiss any menu already open, so navigation always starts from a clean slate
+    '  delay 0.12',
     '  set out to ""',
     '  try',
     '    click menu bar item "View" of menu bar 1',
@@ -447,37 +489,71 @@ async function openChromeJsRow(): Promise<{ x: number; y: number; w: number; h: 
   return row
 }
 
-/** Probe whether Chrome's Apple-Events JavaScript bridge is ON: run a trivial `1` against the front
- *  window's active tab. The decisive signal is the EXACT "turned off / through AppleScript" error
- *  (connection-chrome-applescript-link.mjs documents it); 'on' = the probe ran (returned a value).
- *  'unknown' = no front window or a non-toggle failure (e.g. the Automation prompt is still pending) —
- *  we do NOT advance on unknown, so there is never a false auto-advance. */
-function probeChromeAppleEventsJs(): Promise<'on' | 'off' | 'unknown'> {
-  return new Promise((resolve) => {
-    const script = 'tell application "Google Chrome" to execute front window\'s active tab javascript "1"'
-    execFile('/usr/bin/osascript', ['-e', script], { timeout: 8000 }, (err, stdout, stderr) => {
-      if (!err) {
-        // Chrome returns the evaluated value ("1") when the bridge is on AND a window/tab exists.
-        return resolve(String(stdout || '').trim() === '1' ? 'on' : 'unknown')
-      }
-      const msg = String(stderr || '')
-      // The bridge being off has one exact message: "Executing JavaScript through AppleScript is turned off."
-      if (/JavaScript through AppleScript|Allow JavaScript from Apple Events|is turned off/i.test(msg)) return resolve('off')
-      // Anything else (no front window, Automation prompt pending / denied) is indeterminate.
-      resolve('unknown')
-    })
-  })
+// Detecting the bridge toggle WITHOUT Apple Events. Sending ANY Apple Event to Chrome from the frontmost
+// app dismisses Chrome's open menus, so a polling AE probe would slam the very menu the user is trying to
+// click shut every cycle. Instead we read Chrome's on-disk prefs: each profile's Preferences JSON carries
+// `browser.allow_javascript_apple_events`, written when the user ticks View ▸ Developer ▸ that row. Pure
+// file reads never touch the menu. `last_used` (Local State) is UNRELIABLE — it flips to whatever Chrome
+// window is frontmost (our own `activate` can change it) and the user often has several profiles already
+// on — so the poll watches for a false→TRUE transition across ALL profiles, never "is some profile on".
+
+const chromeDataDir = (): string => join(homedir(), 'Library', 'Application Support', 'Google', 'Chrome')
+
+/** One profile's Apple-Events JS bridge pref (false if unreadable/absent). Pure file read. */
+function readChromeAeJsPref(dir: string): boolean {
+  try {
+    const prefs = JSON.parse(readFileSync(join(chromeDataDir(), dir, 'Preferences'), 'utf8')) as {
+      browser?: { allow_javascript_apple_events?: boolean }
+    }
+    return prefs.browser?.allow_javascript_apple_events === true
+  } catch {
+    return false // unreadable/locked profile, or non-standard install
+  }
 }
 
-async function openChromeJsHelper(): Promise<void> {
-  if (process.platform !== 'darwin') return
-  // First: is the bridge already on? Then the step is already satisfied — auto-advance without showing
-  // the helper (e.g. a relaunch after the user ticked it on a prior run).
-  if ((await probeChromeAppleEventsJs()) === 'on') {
+/** Map every Chrome profile dir → whether its bridge pref is on. Pure file reads. */
+function readChromeAeJsPrefs(): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  try {
+    for (const dir of readdirSync(chromeDataDir())) {
+      if (dir !== 'Default' && !/^Profile /.test(dir)) continue
+      out[dir] = readChromeAeJsPref(dir)
+    }
+  } catch {
+    /* Chrome data dir absent — caller treats {} as "nothing on yet" */
+  }
+  return out
+}
+
+/** Best-effort "is the bridge already on for the profile the user is most likely in?" — the last-used
+ *  profile's pref. Used ONLY to skip opening the menu on relaunch (e.g. they ticked it last run). The
+ *  poll never uses this (last_used is unstable); it uses the transition snapshot below. */
+function chromeAeJsAlreadyOn(): boolean {
+  try {
+    const state = JSON.parse(readFileSync(join(chromeDataDir(), 'Local State'), 'utf8')) as { profile?: { last_used?: string } }
+    const lu = state.profile?.last_used
+    return !!lu && readChromeAeJsPrefs()[lu] === true
+  } catch {
+    return false
+  }
+}
+
+/** Phase 2: Chrome has windows open — open View ▸ Developer and show the floating helper at the row. */
+async function openChromeJsPhase2(): Promise<void> {
+  const gen = chromeJsGeneration
+  // Re-check the bridge first: the user may have ticked it while we were waiting for their profile.
+  if (chromeAeJsAlreadyOn()) {
     send('onboarding:chromejs-granted', {})
     return
   }
-  const row = await openChromeJsRow()
+  if (gen !== chromeJsGeneration) return // step was closed/skipped while checking
+  const [row, iconUrl] = await Promise.all([openChromeJsRow(), blitzVisualIconDataUrl()])
+  // Check cancellation: the step may have been closed/skipped during the 12s openChromeJsRow script.
+  // If so, the menu may have opened — closeChromeJsHelper already sent an Escape. Exit without showing
+  // the helper (which would steal focus from whatever the user switched to).
+  if (gen !== chromeJsGeneration) return
+  // Tell the renderer the profile step is done and we're now pointing at the menu row.
+  send('onboarding:chromejs-ready', {})
   if (!chromeJsHelper || chromeJsHelper.isDestroyed()) {
     chromeJsHelper = new BrowserWindow({
       width: CHROME_JS_HELPER_W,
@@ -516,36 +592,217 @@ async function openChromeJsHelper(): Promise<void> {
   x = Math.min(Math.max(disp.x + 8, x), disp.x + disp.width - CHROME_JS_HELPER_W - 8)
   y = Math.min(Math.max(disp.y + 8, y), disp.y + disp.height - CHROME_JS_HELPER_H - 8)
   win.setBounds({ x: Math.round(x), y: Math.round(y), width: CHROME_JS_HELPER_W, height: CHROME_JS_HELPER_H })
-  await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(chromeJsHelperHtml(!!row)))
+  try {
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(chromeJsHelperHtml(!!row, iconUrl)))
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code ?? ''
+    // ERR_ABORTED: the window was closed or re-navigated before this load completed — harmless.
+    if (code !== 'ERR_ABORTED' && code !== '') throw e
+    return
+  }
   win.showInactive()
   startChromeJsPoll()
+  // Session is live. openChromeJsRow already activated Chrome before opening the menu and the helper is a
+  // non-activating panel, so Chrome stays frontmost — no post-show re-activate (it disrupted the open menu).
+  chromeJsActive = true
+}
+
+async function openChromeJsHelper(force = false): Promise<void> {
+  if (process.platform !== 'darwin') return
+  // The permission-drag step and this step SHARE the one computer-use helper. A drag poll that outlived the
+  // permission step calls relaunchForGrant() (quit+reopen the helper) every 1.5s — which kills the System
+  // Events session holding our menu open. Take ownership of the helper: stop any leaked drag poll first.
+  if (dragPollTimer) closeDragHelper()
+  // (Re)opening — cancel any debounced teardown so a StrictMode/remount close→open never tears us down.
+  if (chromeJsTeardownTimer) { clearTimeout(chromeJsTeardownTimer); chromeJsTeardownTimer = null }
+  // Idempotency: auto-open (force=false) must NOT re-run the System Events menu navigation. Re-navigating
+  // snaps Chrome's submenu highlight back to its top item ("View Source") and flickers the helper — the
+  // exact "stuck at View Source" bug. StrictMode double-invokes effects and the island can remount, so
+  // open-chromejs fires repeatedly; converge them to ONE navigation. Only "Reopen menu" (force) renavigates.
+  if (!force) {
+    if (chromeJsActive && chromeJsHelper && !chromeJsHelper.isDestroyed()) { chromeJsHelper.showInactive(); return }
+    if (chromeJsWindowPoller) return // already launched Chrome and waiting on the profile pick
+  }
+  // Guard against concurrent full-flow runs (the await windows below).
+  if (chromeJsOpening) return
+  chromeJsOpening = true
+  const gen = ++chromeJsGeneration // each open owns its generation; closeChromeJsHelper invalidates it
+  // Stop any existing probe poll so it doesn't race with the fresh flow.
+  if (chromeJsPollTimer) { clearInterval(chromeJsPollTimer); chromeJsPollTimer = null }
+  try {
+    if (gen !== chromeJsGeneration) return // immediately invalidated
+    // First: is the bridge already on? Then the step is already satisfied — auto-advance without showing
+    // the helper (e.g. a relaunch after the user ticked it on a prior run).
+    if (chromeAeJsAlreadyOn()) {
+      send('onboarding:chromejs-granted', {})
+      return
+    }
+    stopChromeWindowPoll()
+    const windowCount = await countChromeWindows()
+    if (windowCount === 0) {
+      // Chrome is quit or has no windows — when Chrome launches it shows a "Who's using Chrome?" profile
+      // picker before the menu bar becomes accessible. Launch Chrome and wait for the user to pick a profile
+      // (window count > 0) before attempting to open View ▸ Developer.
+      await new Promise<void>((r) => execFile('/usr/bin/open', ['-a', 'Google Chrome'], { timeout: 5000 }, () => r()))
+      send('onboarding:chromejs-waiting-profile', {})
+      // Poll until Chrome has a window (profile chosen), then run phase 2.
+      chromeJsWindowPoller = setInterval(async () => {
+        const count = await countChromeWindows()
+        if (count > 0) {
+          stopChromeWindowPoll()
+          // Route through the gated entry point so concurrent "Reopen menu" clicks can't race phase2 directly.
+          void openChromeJsHelper()
+        }
+      }, 1000)
+      return
+    }
+    await openChromeJsPhase2()
+  } finally {
+    chromeJsOpening = false
+  }
+}
+
+/** Close any open Chrome View ▸ Developer menu via the computer-use helper (which holds Accessibility).
+ *  Fire-and-forget — used when skipping/cancelling the step so the menu doesn't stay open forever. */
+function closeChromeMenuAsync(): void {
+  if (process.platform !== 'darwin' || !computerUseHelper().available() || !computerUseHelper().connected()) return
+  const esc = 'try\n  tell application "System Events" to tell process "Google Chrome" to key code 53\nend try'
+  void computerUseHelper()
+    .runScan({ node: '/usr/bin/osascript', script: '-e', args: [esc], env: {} }, () => {}, 3000)
+    .catch(() => {})
+}
+
+function stopChromeJsWatch(): void {
+  for (const w of chromeJsWatchers) {
+    try {
+      w.close()
+    } catch {
+      /* already closed */
+    }
+  }
+  chromeJsWatchers = []
 }
 
 function closeChromeJsHelper(): void {
+  chromeJsGeneration++ // invalidate any in-flight openChromeJsPhase2 so it exits on next check
+  chromeJsActive = false
+  stopChromeJsWatch()
+  if (chromeJsTeardownTimer) { clearTimeout(chromeJsTeardownTimer); chromeJsTeardownTimer = null }
+  stopChromeWindowPoll()
   if (chromeJsPollTimer) {
     clearInterval(chromeJsPollTimer)
     chromeJsPollTimer = null
   }
+  if (chromeJsMemProbeTimer) {
+    clearInterval(chromeJsMemProbeTimer)
+    chromeJsMemProbeTimer = null
+  }
   if (chromeJsHelper && !chromeJsHelper.isDestroyed()) chromeJsHelper.close()
   chromeJsHelper = null
+  chromeJsOpening = false
+  closeChromeMenuAsync()
 }
 
-// Poll the bridge; the moment the probe reports 'on' (the user ticked the row), tear down the helper and
-// tell the card to advance. 'off'/'unknown' keep polling — never a false auto-advance (see the probe).
-let chromeJsPolling = false
+/** Renderer-driven close. The auto-open effect's cleanup fires on EVERY unmount — including StrictMode's
+ *  throwaway first mount and any island remount — so tearing down immediately would kill a still-active
+ *  session, then the re-mount re-navigates the menu (the thrash). Debounce it: a re-open within the window
+ *  cancels the teardown. An explicit user skip passes immediate=true for an instant, clean exit. */
+function requestCloseChromeJs(immediate: boolean): void {
+  if (chromeJsTeardownTimer) { clearTimeout(chromeJsTeardownTimer); chromeJsTeardownTimer = null }
+  if (immediate) { closeChromeJsHelper(); return }
+  chromeJsTeardownTimer = setTimeout(() => {
+    chromeJsTeardownTimer = null
+    closeChromeJsHelper()
+  }, CHROME_JS_TEARDOWN_DEBOUNCE_MS)
+}
+
+/** Read Chrome's IN-MEMORY bridge state via the helper: run a trivial `1` against the front tab. Returns 'on'
+ *  the instant the user ticks the row — no waiting for Chrome's slow Preferences flush to disk (which the log
+ *  showed can take ~10s). The Apple Event targets a TAB (page content), not the browser UI, so it neither
+ *  steals focus nor dismisses the open menu — `execute … javascript` is documented focus-safe and is exactly
+ *  what the Chrome connection adapter uses on background tabs (connection-chrome-applescript-link.mjs). 'off' =
+ *  bridge still off; 'unknown' = no front tab / automation not permitted (the disk-watch path covers that). */
+async function probeBridge(): Promise<'on' | 'off' | 'unknown'> {
+  if (process.platform !== 'darwin' || !computerUseHelper().available() || !computerUseHelper().connected()) return 'unknown'
+  const script = [
+    'try',
+    '  tell application "Google Chrome" to execute front window\'s active tab javascript "1"',
+    '  log "BLITZBRIDGE on"',
+    'on error errMsg',
+    '  if errMsg contains "turned off" then',
+    '    log "BLITZBRIDGE off"',
+    '  else',
+    '    log "BLITZBRIDGE unknown"',
+    '  end if',
+    'end try'
+  ].join('\n')
+  let result: 'on' | 'off' | 'unknown' = 'unknown'
+  await computerUseHelper()
+    .runScan(
+      { node: '/usr/bin/osascript', script: '-e', args: [script], env: {} },
+      (line: string) => {
+        const m = line.match(/BLITZBRIDGE (on|off|unknown)/)
+        if (m) result = m[1] as typeof result
+      },
+      5000
+    )
+    .catch(() => {})
+  return result
+}
+
+// Detect the toggle two ways, racing whichever lands first. FAST path (in-memory): once the menu closes (the
+// user clicked the row), an AX-gated Apple Event reads Chrome's live bridge state — no waiting on Chrome's
+// lazy ~3-5s Preferences flush. SAFE/fallback path (zero Apple Events): fs.watch + an interval on the
+// OFF-at-snapshot profile dirs catch the eventual disk write. Only a profile that was OFF when the helper
+// appeared can grant, so the user's already-on profiles never false-trip it.
 function startChromeJsPoll(): void {
   if (chromeJsPollTimer) clearInterval(chromeJsPollTimer)
-  chromeJsPollTimer = setInterval(async () => {
-    if (chromeJsPolling) return
-    chromeJsPolling = true
+  stopChromeJsWatch()
+  const baseline = readChromeAeJsPrefs()
+  const watchDirs = Object.keys(baseline).filter((p) => baseline[p] === false)
+  if (watchDirs.length === 0) {
+    // Every profile is already on (rare — the up-front check usually catches this). Nothing to wait for.
+    closeChromeJsHelper()
+    send('onboarding:chromejs-granted', {})
+    return
+  }
+  let done = false
+  const grant = (): void => {
+    if (done) return
+    done = true
+    closeChromeJsHelper()
+    send('onboarding:chromejs-granted', {})
+  }
+  const fileCheck = (): void => {
+    if (done) return
+    if (watchDirs.some((p) => readChromeAeJsPref(p) === true)) grant()
+  }
+  // Disk path: fs.watch fires on Chrome's write; a fast file-only poll backs it up. NEVER blocked by the
+  // (slow) helper probe below — they run on independent timers so neither throttles the other.
+  for (const dir of watchDirs) {
     try {
-      if ((await probeChromeAppleEventsJs()) !== 'on') return
-      closeChromeJsHelper()
-      send('onboarding:chromejs-granted', {})
-    } finally {
-      chromeJsPolling = false
+      chromeJsWatchers.push(
+        watch(join(chromeDataDir(), dir), { persistent: false }, (_evt, file) => {
+          if (!file || String(file).includes('Preferences')) fileCheck()
+        })
+      )
+    } catch {
+      /* watch unsupported for this dir — the interval below still covers it */
     }
-  }, 1500)
+  }
+  chromeJsPollTimer = setInterval(fileCheck, 300)
+  // In-memory path (the fast one): probe the live bridge state via the helper on its OWN timer + guard. The
+  // probe Apple Event is focus-safe and never touches the open menu, so we can probe straight through.
+  let probing = false
+  chromeJsMemProbeTimer = setInterval(async () => {
+    if (done || probing) return
+    probing = true
+    try {
+      if ((await probeBridge()) === 'on') grant()
+    } finally {
+      probing = false
+    }
+  }, 400)
 }
 
 /** Machine-level pre-board outcomes (userData/preboard.json) — which steps are settled, so the
@@ -1035,12 +1292,12 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
   })
   // Chrome "Allow JavaScript from Apple Events" step: open View ▸ Developer, float the helper at the row,
   // and poll the bridge until the user ticks it (→ chromejs-granted). Mirrors the drag-helper handlers.
-  ipcMain.handle('onboarding:open-chromejs', async () => {
-    await openChromeJsHelper()
+  ipcMain.handle('onboarding:open-chromejs', async (_e, force?: boolean) => {
+    await openChromeJsHelper(!!force)
     return { ok: true }
   })
-  ipcMain.handle('onboarding:close-chromejs', () => {
-    closeChromeJsHelper()
+  ipcMain.handle('onboarding:close-chromejs', (_e, immediate?: boolean) => {
+    requestCloseChromeJs(!!immediate)
     return { ok: true }
   })
   ipcMain.handle('onboarding:request-automation', () => requestAutomation())

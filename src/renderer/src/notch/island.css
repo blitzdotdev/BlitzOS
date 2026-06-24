@@ -767,8 +767,7 @@ button.isl-app-chat:active .isl-app-icon {
   font-weight: 720;
   line-height: 23px;
 }
-.nh-island .isl-onb-copy,
-.nh-island .isl-onb-inline-copy {
+.nh-island .isl-onb-copy {
   margin: 0;
   color: var(--isl-muted);
   font-size: 12px;
@@ -1084,6 +1083,35 @@ button.isl-app-chat:active .isl-app-icon {
   stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+/* Big bold one-line CTA for the Chrome step — the single "do this now" instruction (pick a profile, or
+   tick the Apple-Events row). One simple bold line, no supporting copy. */
+.nh-island .isl-onb-profile-cta {
+  margin: 6px 0 2px;
+  color: var(--isl-text);
+  font-size: 18px;
+  font-weight: 720;
+  letter-spacing: -0.025em;
+  line-height: 1.22;
+}
+/* Positive "connected" confirmation shown once the Chrome toggle is detected. */
+.nh-island .isl-onb-connected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  color: var(--isl-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.nh-island .isl-onb-connected-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #30d158; /* Apple system green */
+  box-shadow: 0 0 0 4px rgba(48, 209, 88, 0.18);
 }
 .nh-island .isl-onb-hint {
   padding: 9px 10px;

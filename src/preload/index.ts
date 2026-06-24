@@ -522,18 +522,33 @@ const api = {
       return () => ipcRenderer.removeListener('onboarding:permission-granted', listener)
     },
     /** Open the Chrome "Allow JavaScript from Apple Events" step: main opens View, Developer and raises a
-     *  floating helper pointing at the row, then polls until the toggle takes effect. */
-    openChromeJsStep(): Promise<{ ok: boolean }> {
-      return ipcRenderer.invoke('onboarding:open-chromejs')
+     *  floating helper pointing at the row, then polls until the toggle takes effect. `force` re-navigates
+     *  the menu even if a session is live (the "Reopen menu" button); auto-open passes nothing (idempotent). */
+    openChromeJsStep(force?: boolean): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:open-chromejs', force)
     },
-    closeChromeJsStep(): Promise<{ ok: boolean }> {
-      return ipcRenderer.invoke('onboarding:close-chromejs')
+    /** `immediate` tears down now (user skip); omitted, the teardown is debounced so a StrictMode/remount
+     *  unmount→remount does not thrash the helper + menu. */
+    closeChromeJsStep(immediate?: boolean): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:close-chromejs', immediate)
     },
     /** Fired when main's poll detects Chrome Apple-Events JS is now enabled (the user ticked the row). */
     onChromeJsGranted(cb: () => void): () => void {
       const listener = (): void => cb()
       ipcRenderer.on('onboarding:chromejs-granted', listener)
       return () => ipcRenderer.removeListener('onboarding:chromejs-granted', listener)
+    },
+    /** Fired when Chrome was quit and needs the user to pick a Chrome profile before the menu is accessible. */
+    onChromeJsWaitingProfile(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on('onboarding:chromejs-waiting-profile', listener)
+      return () => ipcRenderer.removeListener('onboarding:chromejs-waiting-profile', listener)
+    },
+    /** Fired when Chrome has a window (profile chosen) and the View ▸ Developer helper is now showing. */
+    onChromeJsReady(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on('onboarding:chromejs-ready', listener)
+      return () => ipcRenderer.removeListener('onboarding:chromejs-ready', listener)
     },
     /** Ask for Automation (AppleEvents) consent to the detected browser — raises the macOS prompt
      *  on first call; resolves AFTER the user answers, with live window/tab counts on grant. */

@@ -100,9 +100,11 @@ const wantsChromeJs = (state: PreboardState): boolean => state.browser?.id === C
 // src/preload/index.ts; access them through an optional-typed cast so this stays robust even if a build lacks
 // them (no-ops rather than failing to compile). NOT a hack — the methods are genuinely optional.
 type OnboardingChromeJsApi = {
-  openChromeJsStep?: () => Promise<{ ok: boolean }>
-  closeChromeJsStep?: () => Promise<{ ok: boolean }>
+  openChromeJsStep?: (force?: boolean) => Promise<{ ok: boolean }>
+  closeChromeJsStep?: (immediate?: boolean) => Promise<{ ok: boolean }>
   onChromeJsGranted?: (cb: () => void) => () => void
+  onChromeJsWaitingProfile?: (cb: () => void) => () => void
+  onChromeJsReady?: (cb: () => void) => () => void
 }
 const chromeJsApi = (api: NonNullable<typeof window.agentOS>['onboarding'] | undefined): OnboardingChromeJsApi | undefined =>
   api as (OnboardingChromeJsApi & typeof api) | undefined
@@ -130,6 +132,12 @@ export function IslandOnboarding({
   const { introIndex, introDone, permissionsDone, step, preboard: state } = useOnboardingProgress()
   const [activeKind, setActiveKind] = useState<DragKind | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // When Chrome is quit, main launches it (profile picker appears) and fires chromejs-waiting-profile.
+  // We show a "click your profile" prompt until chromejs-ready fires (Chrome has a window, helper is showing).
+  const [chromeJsWaiting, setChromeJsWaiting] = useState(false)
+  // Flips true the moment main detects the toggle — the card shows a "connected" signal and a Next button
+  // (we DON'T auto-advance, so the user sees the positive confirmation and continues on their own).
+  const [chromeJsGranted, setChromeJsGranted] = useState(false)
   // Claude Code (the agent engine) install check for the Requirements slide. null = still checking.
   const [claude, setClaude] = useState<{ installed: boolean; path: string | null } | null>(null)
   const [claudeRechecking, setClaudeRechecking] = useState(false)
@@ -235,9 +243,9 @@ export function IslandOnboarding({
 
   // ---- Chrome "Allow JavaScript from Apple Events" step (Chrome-only; sits right after the Mac permissions) ----
   // Open View ▸ Developer + float the helper at the row; main's probe pushes chromejs-granted once the user ticks it.
-  const openChromeJs = (): void => {
+  const openChromeJs = (force = false): void => {
     setError(null)
-    const request = chromeJsApi(api)?.openChromeJsStep?.()
+    const request = chromeJsApi(api)?.openChromeJsStep?.(force)
     if (!request) {
       // Bindings absent (or non-macOS): let the user move past rather than trapping them here.
       setError('Could not open the Chrome helper. You can enable this later in Chrome ▸ View ▸ Developer.')
@@ -251,31 +259,54 @@ export function IslandOnboarding({
   }
   const skipChromeJs = (): void => {
     if (!state) return
-    void chromeJsApi(api)?.closeChromeJsStep?.()
+    void chromeJsApi(api)?.closeChromeJsStep?.(true) // user skip → tear down immediately
     void api?.preboardMark?.('chromejs', 'skipped')
     const next: PreboardState = { ...state, steps: { ...state.steps, chromejs: 'skipped' } }
     setPreboard(next)
     goNext(next)
   }
-  // Main pushes chromejs-granted the moment its probe sees Chrome's Apple-Events JS turn on → mark done + advance
-  // off the freshest store snapshot (the handler must not wait for a re-render).
+  // User clicks Next on the "connected" card → advance off the freshest (granted) state.
+  const continueFromChromeJs = (): void => {
+    const cur = getOnboardingProgress().preboard ?? state
+    if (!cur) return
+    goNext(cur)
+  }
+  // Main pushes chromejs-granted the moment its file-watch sees the toggle land. We DON'T auto-advance: mark
+  // it granted in the store and flip the card to a "connected" signal so the user gets clear positive feedback,
+  // then they click Next. The island is hover-locked open through this step, so this is always visible.
   useEffect(() => {
     const onGranted = chromeJsApi(api)?.onChromeJsGranted
     if (!onGranted) return undefined
     return onGranted(() => {
       void api?.preboardMark?.('chromejs', 'granted')
       const cur = getOnboardingProgress().preboard
-      if (!cur) return
-      const next: PreboardState = { ...cur, steps: { ...cur.steps, chromejs: 'granted' } }
-      setPreboard(next)
-      goNext(next)
+      if (cur) setPreboard({ ...cur, steps: { ...cur.steps, chromejs: 'granted' } })
+      setChromeJsWaiting(false)
+      setChromeJsGranted(true)
     })
+  }, [])
+  // Chrome was quit — profile picker is showing. Tell the user to click a profile.
+  useEffect(() => {
+    const onWaiting = chromeJsApi(api)?.onChromeJsWaitingProfile
+    if (!onWaiting) return undefined
+    return onWaiting(() => setChromeJsWaiting(true))
+  }, [])
+  // Profile was chosen and Chrome has a window — helper window is now showing at View > Developer.
+  useEffect(() => {
+    const onReady = chromeJsApi(api)?.onChromeJsReady
+    if (!onReady) return undefined
+    return onReady(() => setChromeJsWaiting(false))
   }, [])
   // Auto-open the Chrome helper on entry to the chromejs step (one row, so open it for them); close it on leave.
   useEffect(() => {
-    if (step !== 'chromejs') return undefined
+    if (step !== 'chromejs') {
+      setChromeJsWaiting(false)
+      setChromeJsGranted(false)
+      return undefined
+    }
     openChromeJs()
     return () => {
+      setChromeJsWaiting(false)
       void chromeJsApi(api)?.closeChromeJsStep?.()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -286,7 +317,10 @@ export function IslandOnboarding({
   useEffect(() => {
     // Lock ONLY on the actual 3-reqs card: the store defaults step to 'permissions' during the intro carousel too,
     // so gate on introDone or the whole intro would wrongly lock hover.
-    setOnboardingHoverLock(introDone && step === 'permissions')
+    // Lock the island open for BOTH steps where the user must act OUTSIDE it: the permission drag AND the
+    // Chrome menu step (cursor goes up to the menu bar). Without this the island retracts on hover-away,
+    // unmounts NotchHost, and the cleanup tears down the open Chrome menu (the disappearing-menu bug).
+    setOnboardingHoverLock(introDone && (step === 'permissions' || step === 'chromejs'))
     return () => setOnboardingHoverLock(false)
   }, [introDone, step])
 
@@ -497,22 +531,40 @@ export function IslandOnboarding({
             {step === 'chromejs' && state && (
         <div className="isl-onb-card">
           <div className="isl-onb-card-head">
-            <span>Let Blitz drive Chrome</span>
+            <span>{chromeJsGranted ? 'Chrome connected' : 'Let Blitz drive Chrome'}</span>
             <span>{state.browser?.name || 'Chrome'}</span>
           </div>
-          <p className="isl-onb-inline-copy">
-            Blitz works your Chrome without an extension. Turn on one Chrome setting so it can read and act in your tabs.
-          </p>
-          <div className="isl-onb-hint">
-            Chrome is open at View, Developer. Tick &ldquo;Allow JavaScript from Apple Events&rdquo; and Blitz continues on its own.
-          </div>
+          {chromeJsGranted ? (
+            <p className="isl-onb-connected">
+              <span className="isl-onb-connected-dot" aria-hidden="true" />
+              Connected. Blitz can now read and act in your Chrome tabs.
+            </p>
+          ) : chromeJsWaiting ? (
+            <p className="isl-onb-profile-cta">
+              Click your Chrome profile in the window that just opened.
+            </p>
+          ) : (
+            <p className="isl-onb-profile-cta">
+              Tick &ldquo;Allow JavaScript from Apple Events&rdquo; in the Chrome menu.
+            </p>
+          )}
           <div className="isl-onb-actions">
-            <button type="button" className="isl-onb-secondary" onClick={openChromeJs}>
-              Reopen menu
-            </button>
-            <button type="button" className="isl-onb-quiet" onClick={skipChromeJs}>
-              Not now
-            </button>
+            {chromeJsGranted ? (
+              <button type="button" className="isl-onb-primary" onClick={continueFromChromeJs}>
+                Next
+              </button>
+            ) : (
+              <>
+                {!chromeJsWaiting && (
+                  <button type="button" className="isl-onb-secondary" onClick={() => openChromeJs(true)}>
+                    Reopen menu
+                  </button>
+                )}
+                <button type="button" className="isl-onb-quiet" onClick={skipChromeJs}>
+                  Not now
+                </button>
+              </>
+            )}
           </div>
         </div>
             )}
