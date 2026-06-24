@@ -662,11 +662,25 @@ async function openChromeJsHelper(force = false): Promise<void> {
   }
 }
 
-/** Close any open Chrome View ▸ Developer menu via the computer-use helper (which holds Accessibility).
- *  Fire-and-forget — used when skipping/cancelling the step so the menu doesn't stay open forever. */
+/** Dismiss any open Chrome View ▸ Developer menu via the computer-use helper, fire-and-forget — used when
+ *  tearing the step down so a half-open menu doesn't linger.
+ *
+ *  GUARDED ON CHROME BEING FRONTMOST. `key code 53` posts to whatever app is frontmost, not to the scoped
+ *  process, so an ungated Escape leaked to BlitzOS the instant the step was granted (BlitzOS, not Chrome, is
+ *  frontmost then) and tripped the island's Esc-to-close handler — the island vanished right after connecting.
+ *  A Chrome menu can only be open while Chrome is frontmost, so gating on that makes the Escape both correct
+ *  (it only fires when there's actually a menu to close) and safe (it can never land on the island). */
 function closeChromeMenuAsync(): void {
   if (process.platform !== 'darwin' || !computerUseHelper().available() || !computerUseHelper().connected()) return
-  const esc = 'try\n  tell application "System Events" to tell process "Google Chrome" to key code 53\nend try'
+  const esc = [
+    'try',
+    '  tell application "System Events"',
+    '    if (name of first application process whose frontmost is true) is "Google Chrome" then',
+    '      tell process "Google Chrome" to key code 53',
+    '    end if',
+    '  end tell',
+    'end try'
+  ].join('\n')
   void computerUseHelper()
     .runScan({ node: '/usr/bin/osascript', script: '-e', args: [esc], env: {} }, () => {}, 3000)
     .catch(() => {})
