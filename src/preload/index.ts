@@ -532,6 +532,11 @@ const api = {
     send(prompt: string, deep: boolean): Promise<{ ok: boolean; id?: string | null; error?: string }> {
       return ipcRenderer.invoke('os:notch-send', { prompt, deep: !!deep }) as Promise<{ ok: boolean; id?: string | null; error?: string }>
     },
+    // Spawn a brand-new agent immediately (no prompt) and return its id; the renderer jumps to its tab. Used by the
+    // pen "new session" button — distinct from send (which seeds a prompt). Attachments happen in the live chat after.
+    newAgent(): Promise<{ ok: boolean; id?: string | null; error?: string }> {
+      return ipcRenderer.invoke('os:notch-new-agent') as Promise<{ ok: boolean; id?: string | null; error?: string }>
+    },
     // Sent BY the notch hit-window (the tiny always-interactive transparent window placed exactly over the physical
     // notch). Main forwards them to the overlay renderer as os:notch-handle-click / os:notch-handle-hover.
     click(): void {

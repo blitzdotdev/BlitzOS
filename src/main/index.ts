@@ -898,6 +898,17 @@ app.whenReady().then(() => {
         return { ok: false, error: (e as Error)?.message || 'send threw' }
       }
     })
+    // Pen "new session" button: spawn a fresh agent IMMEDIATELY (no prompt seeded) and return its id; the renderer
+    // jumps to its tab. The user then types/attaches in the live chat — attachments scope to this agent, so there
+    // is no pre-spawn '' bucket to reassign (unlike the retired type-to-spawn composer).
+    ipcMain.handle('os:notch-new-agent', () => {
+      try {
+        const a = (electronOps.spawnAgent as unknown as (title?: string) => { id: string; title: string })(undefined)
+        return { ok: true, id: a.id }
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || 'spawn threw' }
+      }
+    })
     // Push the notch geometry (the menu-bar height the renderer uses as the notch height) once the renderer is up
     // and on display changes; the renderer already knows the screen size from its own full-display window.
     // The BULLETPROOF notch toggle: a tiny always-interactive transparent window placed EXACTLY over the physical
