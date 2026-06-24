@@ -1705,6 +1705,9 @@ app.whenReady().then(() => {
       const bounds = { x: Number(m.x) || 0, y: Number(m.y) || 0, w: Number(m.w) || 0, h: Number(m.h) || 0 }
       const app = String(m.app || '')
       const bundleId = String(m.bundleId || '')
+      // Show the dropped app's icon in the dropbox INSTANTLY (optimistic), before the async tab-resolve + connect
+      // (a Chrome bounds-match can take a beat). The `connected` event below firms up the real connId.
+      mainWindow?.webContents.send('os:pick-event', { kind: 'dropped', windowId: m.windowId, app, icon: m.icon, title: String(m.title || '') })
       void (async () => {
         // A browser drop should resolve to its active TAB so the agent gets the real page. Google Chrome resolves via
         // Apple Events (extension-free); other Chromium browsers still try the (dormant) connector-extension match.

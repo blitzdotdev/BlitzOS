@@ -151,8 +151,30 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     const off = window.agentOS?.pick?.onEvent?.((m) => {
       if (m.kind === 'pick_over') setDragOver(!!m.inside)
       else if (m.kind === 'pick_cancel') setDragOver(false)
+      else if (m.kind === 'dropped') {
+        // OPTIMISTIC: show the dropped app's icon in the dropbox INSTANTLY, before main resolves the tab + connects
+        // (a Chrome bounds-match takes a beat). Mirrors the window-list connect's pending pattern; the `connected`
+        // event below swaps in the real connId (and refresh() drops this placeholder).
+        setDragOver(false)
+        const wid = Number(m.windowId)
+        if (!Number.isFinite(wid)) return
+        markStaged('window:' + wid)
+        setConnections((prev) => (prev.some((c) => c.type === 'window' && String(c.ref) === String(wid)) ? prev : [...prev, { connId: 'pending:w' + wid, type: 'window', ref: wid }]))
+        setDropped((prev) => ({ ...prev, ['pending:w' + wid]: { connId: 'pending:w' + wid, app: String(m.app || 'Window'), icon: typeof m.icon === 'string' && m.icon ? m.icon : undefined, title: String(m.title || '') } }))
+      }
       else if (m.kind === 'connected') {
         setDragOver(false)
+        // Clear the optimistic placeholder (connection + icon); the real connId replaces it below, refresh() drops the rest.
+        const wid = Number(m.windowId)
+        if (Number.isFinite(wid)) {
+          setConnections((prev) => prev.filter((c) => c.connId !== 'pending:w' + wid))
+          setDropped((prev) => {
+            if (!prev['pending:w' + wid]) return prev
+            const n = { ...prev }
+            delete n['pending:w' + wid]
+            return n
+          })
+        }
         if (!m.ok) {
           // Prefer the specific reason from main (e.g. "Chrome connector not connected") over a generic label.
           setNotice({ ok: false, text: String(m.error || `Couldn't add ${String(m.app || 'window')}`) })
