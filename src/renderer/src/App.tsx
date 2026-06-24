@@ -143,7 +143,12 @@ export default function App(): JSX.Element {
   // like ⌥Space) so the cursor can leave the chassis to hover/drag other windows without the island retracting.
   const notchAttachOpenRef = useRef(false)
   const glanceOverRef = useRef(false) // cursor in the glance-bar zone (the menu-bar band near the notch) — keeps the island open
+  // VEIL (onboarding drag step): the island is hidden (opacity 0 via body.island-veiled) but stays MOUNTED, so the
+  // drag-helper window it owns is never torn down. While veiled it must be fully click-through so System Settings is
+  // usable through it, so this is the chokepoint that forces interactive off regardless of what any hover path wants.
+  const notchVeiledRef = useRef(false)
   const setNotchInteractive = (on: boolean): void => {
+    if (notchVeiledRef.current) on = false
     if (notchLastIRef.current === on) return
     notchLastIRef.current = on
     try {
@@ -219,6 +224,11 @@ export default function App(): JSX.Element {
     const now = performance.now()
     if (now - notchToggleAtRef.current < 120) return
     notchToggleAtRef.current = now
+    // A deliberate ⌥Space always clears the onboarding veil: the user wants the island back, visible + interactive.
+    if (notchVeiledRef.current) {
+      notchVeiledRef.current = false
+      document.body.classList.remove('island-veiled')
+    }
     if (notchStateRef.current === 'closed') {
       setNotchPinnedBoth(true) // a keyboard-opened panel stays open regardless of the mouse
       setNotchInteractive(true)
@@ -245,6 +255,10 @@ export default function App(): JSX.Element {
   )
   // Collapse the island (panel → closed). Shared by Esc and the main-driven os:notch-close.
   const closeIsland = (): void => {
+    if (notchVeiledRef.current) {
+      notchVeiledRef.current = false
+      document.body.classList.remove('island-veiled')
+    }
     if (notchStateRef.current === 'closed') return
     setNotchPinnedBoth(false)
     setNotchAnimating(true) // freeze widget motion during the collapse (smooth)
@@ -256,6 +270,18 @@ export default function App(): JSX.Element {
   useEffect(() => window.agentOS?.notch?.onToggle?.(() => toggleIsland()), [])
   // Main asks us to collapse — an outbound link in an app preview just opened in the real browser.
   useEffect(() => window.agentOS?.notch?.onClose?.(() => closeIsland()), [])
+  // Main asks us to VEIL the island (onboarding drag step) or unveil it. Veil = invisible + click-through but still
+  // MOUNTED (a collapse here would unmount onboarding and close its drag-helper). On veil, immediately go
+  // click-through; on unveil, the next hover restores interactivity.
+  useEffect(
+    () =>
+      window.agentOS?.notch?.onVeil?.((on) => {
+        notchVeiledRef.current = on
+        document.body.classList.toggle('island-veiled', on)
+        if (on) setNotchInteractive(false)
+      }),
+    []
+  )
   // The notch HIT-WINDOW (the always-interactive transparent window over the physical notch) drives the toggle +
   // hover, so the notch is clickable in EVERY state with no click-through→arm race. CLICK → toggle the island panel.
   // Brandon's guard (only fire when closed → a stray click can't toggle the open panel shut) + the generic

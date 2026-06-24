@@ -95,10 +95,15 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   // resolve AFTER a newer one. Without this guard a stale snapshot (captured before a just-dropped connection
   // existed) clobbers the fresh one → the prune effect then culls the new icon. Stamp each run; apply only the latest.
   const refreshSeq = useRef(0)
+  // connSeq tracks refreshConnections() calls so refresh()'s stale connection snapshot can't clobber a newer
+  // result. Safari's listTabs osascript is slower than connectTab, so refresh() can finish AFTER
+  // refreshConnections() has already applied the new connection — without this guard it overwrites and deselects.
+  const connSeq = useRef(0)
   const refresh = useCallback(async (): Promise<void> => {
     const conn = bridge()
     if (!conn) return
     const seq = ++refreshSeq.current
+    const connSeqAtStart = connSeq.current
     // Fault-tolerant: fetch each source independently so ONE missing/throwing bridge method (e.g. list() — a new
     // preload export — before the running dev has reloaded the preload) can't blank the whole list.
     const get = (fn: unknown): Promise<Record<string, unknown>> =>
@@ -112,7 +117,10 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     if (seq !== refreshSeq.current) return // a newer refresh superseded this one — don't apply stale data
     setTabs(Array.isArray(t.tabs) ? (t.tabs as Tab[]) : [])
     setWindows(Array.isArray(w.windows) ? (w.windows as Win[]) : [])
-    setConnections(Array.isArray(c.connections) ? (c.connections as Conn[]) : [])
+    // Only apply connections if no refreshConnections() ran while we were fetching — that call has newer data.
+    if (connSeq.current === connSeqAtStart) {
+      setConnections(Array.isArray(c.connections) ? (c.connections as Conn[]) : [])
+    }
   }, [activeSessionId])
 
   // Light reconcile after a toggle: re-fetch ONLY the connection set (cheap), NOT tabs/windows — those re-pull
@@ -120,7 +128,9 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   const refreshConnections = useCallback(async (): Promise<void> => {
     const conn = bridge()
     if (!conn || typeof conn.list !== 'function') return
+    const seq = ++connSeq.current
     const c = (await conn.list(activeSessionId).then((x) => x || {}).catch(() => ({}))) as { connections?: Conn[] }
+    if (seq !== connSeq.current) return // a newer refreshConnections superseded this one
     setConnections(Array.isArray(c.connections) ? c.connections : [])
   }, [activeSessionId])
 

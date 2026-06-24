@@ -44,6 +44,15 @@
   transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.12s ease, transform 0.12s ease;
 }
 
+/* VEIL (onboarding drag step): hide the island WITHOUT collapsing it (it stays mounted so its drag-helper window is
+   not torn down) and make it click-through, so System Settings shows through while the user drags the icon in. The
+   window-level click-through is enforced separately (setNotchInteractive forced off while veiled). */
+body.island-veiled .nh-chassis,
+body.island-veiled .notch-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .nh-chassis.nh-parked {
   pointer-events: none;
   opacity: 0;

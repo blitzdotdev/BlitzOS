@@ -504,6 +504,11 @@ const api = {
     preboardDrag(): void {
       ipcRenderer.send('onboarding:preboard-drag')
     },
+    /** Hovering the floating drag-helper window (the user is heading to grab the icon) — main hides the island
+     *  so the full Settings window is visible to drop into; the grant poll brings it back. */
+    dragHover(): void {
+      ipcRenderer.send('onboarding:drag-hover')
+    },
     /** Open a drag-list permission step (fda|accessibility|screen): main navigates Settings to the
      *  pane + raises the floating drag-helper window over it + polls until granted. */
     openPermissionDrag(kind: 'fda' | 'accessibility' | 'screen'): Promise<{ ok: boolean; appName?: string }> {
@@ -616,6 +621,14 @@ const api = {
       const listener = (): void => cb()
       ipcRenderer.on('os:notch-close', listener)
       return () => ipcRenderer.removeListener('os:notch-close', listener)
+    },
+    // Main asks the island to VEIL (hide visually) or unveil, WITHOUT collapsing it — used for the onboarding
+    // drag step so the island gets out of the way of System Settings while staying mounted (so the drag-helper
+    // window it owns is not torn down). `on` true = veil (invisible + click-through), false = restore.
+    onVeil(cb: (on: boolean) => void): () => void {
+      const listener = (_e: unknown, on: boolean): void => cb(!!on)
+      ipcRenderer.on('os:island-veil', listener)
+      return () => ipcRenderer.removeListener('os:island-veil', listener)
     },
     // Listened to BY the overlay renderer: the hit-window's click toggles fullscreen, its hover opens/closes the panel.
     onHandleClick(cb: () => void): () => void {

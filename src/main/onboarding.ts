@@ -234,6 +234,11 @@ function dragHelperHtml(kind: DragPerm, iconUrl: string | null): string {
     e.preventDefault();
     try { window.agentOS && window.agentOS.onboarding && window.agentOS.onboarding.preboardDrag(); } catch (_) {}
   });
+  // Hovering this helper window = the user is heading to grab the icon, so tell main to hide the island and reveal
+  // the full Settings window to drop into. Main re-shows the island when the permission is granted.
+  document.body.addEventListener('mouseenter', function(){
+    try { window.agentOS && window.agentOS.onboarding && window.agentOS.onboarding.dragHover(); } catch (_) {}
+  });
 </script></body></html>`
 }
 
@@ -321,6 +326,8 @@ function closeDragHelper(): void {
   }
   if (dragHelper && !dragHelper.isDestroyed()) dragHelper.close()
   dragHelper = null
+  // The drag helper is gone (granted, skipped, or step left), so restore the island if it was veiled on hover.
+  send('os:island-veil', false)
 }
 
 // Poll the helper's grant for this permission; the moment it lands, relaunch the HELPER (so the grant
@@ -338,7 +345,7 @@ function startDragPoll(kind: DragPerm): void {
       const tcc = await computerUseHelper().status()
       if (!computerUseHelper().grantedFor(kind, tcc)) return
       await computerUseHelper().relaunchForGrant() // quit+reopen the HELPER so the grant applies
-      closeDragHelper()
+      closeDragHelper() // also unveils the island (the helper is gone)
       send('onboarding:permission-granted', { kind })
     } finally {
       dragPolling = false
@@ -1011,6 +1018,9 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
       }
     })
   })
+  // Hovering the floating drag-helper (the user is heading to grab the icon) HIDES the island so the full Settings
+  // window is visible to drop into; the grant poll (startDragPoll) re-shows it via os:notch-open.
+  ipcMain.on('onboarding:drag-hover', () => send('os:island-veil', true))
   // Open a drag-list permission step (FDA / Accessibility / Screen Recording): navigate Settings to
   // the pane + raise the floating drag-helper over it + poll until granted (→ permission-granted).
   ipcMain.handle('onboarding:open-permission-drag', async (_e, kind: DragPerm) => {
