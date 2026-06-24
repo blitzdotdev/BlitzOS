@@ -11,6 +11,7 @@ import { agentGradient } from './agentVisuals'
 export interface GlancePeek {
   working: number
   attn: number
+  err: number
   total: number
   agents: Array<{ id: string; status: string }>
 }
@@ -28,20 +29,23 @@ export function GlanceBar({
   menuBarH: number
   open: boolean
 }): JSX.Element {
-  const h = Math.max(28, menuBarH) + 2
+  // EXACTLY the physical notch height — the same Math.max(28, menuBarH) the notch handle uses, with NO extra px.
+  // Any overshoot (the old +2) drops the bar's bottom edge below the menu-bar line, where it paints over the top
+  // edge of other open-but-not-fullscreen windows (a visible black artifact). One value drives BOTH halves below.
+  const h = Math.max(28, menuBarH)
   // Each bar's FILL extends to the notch CENTER (the two overlap there) so together they form ONE continuous black
   // bar that COVERS the notch — giving a continuous bottom rim with NO dead-zone gap at the notch's rounded corners.
   // The CONTENT is padded back out (sidePad) so the icon/stats + avatars still sit to the SIDES of the notch.
   const toCenter = 'calc(50% - 4px)'
   const sidePad = notchWidth / 2 + 16
-  // Avatars (RIGHT) = EVERY agent that is actively working or waiting on approval — INCLUDING the Blitz main agent
-  // '0', so it shows on the right while working. Idle/done agents get NO icon. The left BlitzOS icon is the brand.
+  // Avatars (RIGHT) = EVERY agent that is actively working, waiting on approval, errored, or reconnecting —
+  // INCLUDING the Blitz main agent '0'. Idle/done agents get NO icon. The left BlitzOS icon is the brand.
   const active = peek.agents.filter(
-    (a) => a.status === 'working' || a.status === 'starting' || a.status === 'waiting'
+    (a) => a.status === 'working' || a.status === 'starting' || a.status === 'waiting' || a.status === 'error' || a.status === 'reconnecting'
   )
   const shown = active.slice(0, MAX_AVATARS)
   const extra = active.length - shown.length
-  const hasSummary = peek.working > 0 || peek.attn > 0
+  const hasSummary = peek.working > 0 || peek.attn > 0 || peek.err > 0
   return (
     <>
       {/* LEFT bar — circled BlitzOS icon (pulses while Blitz '0' works) + status summary. Grows left from the notch. */}
@@ -51,8 +55,10 @@ export function GlanceBar({
         </span>
         {hasSummary && (
           <span className="glance-sum">
+            {peek.err > 0 && <span className="gl-error">{peek.err} error</span>}
+            {peek.err > 0 && peek.working > 0 && <span className="gl-sep"> · </span>}
             {peek.working > 0 && <span className="gl-working">{peek.working} working</span>}
-            {peek.working > 0 && peek.attn > 0 && <span className="gl-sep"> · </span>}
+            {(peek.err > 0 || peek.working > 0) && peek.attn > 0 && <span className="gl-sep"> · </span>}
             {peek.attn > 0 && <span className="gl-attn">{peek.attn} needs you</span>}
           </span>
         )}
@@ -65,7 +71,7 @@ export function GlanceBar({
             {shown.map((a) => (
               <span
                 key={a.id}
-                className={`glance-ava${a.status === 'working' || a.status === 'starting' ? ' working' : a.status === 'waiting' ? ' attn' : ''}`}
+                className={`glance-ava${a.status === 'error' ? ' error' : a.status === 'working' || a.status === 'starting' || a.status === 'reconnecting' ? ' working' : a.status === 'waiting' ? ' attn' : ''}`}
                 style={{ background: agentGradient(a.id) }}
               />
             ))}

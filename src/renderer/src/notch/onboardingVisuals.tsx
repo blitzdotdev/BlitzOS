@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react'
 import blitzAppIcon from '../assets/blitz-app-icon.png'
 import { agentGradient } from './agentVisuals'
 
-export type IntroVisual = 'home' | 'tabs' | 'connect' | 'workflow' | 'final'
+export type IntroVisual = 'home' | 'tabs' | 'connect' | 'workflow' | 'final' | 'requirement'
 
 const CHECK = 'm5 12 4 4L19 6'
 const ALERT = 'M12 7v6M12 17h.01'
@@ -360,7 +360,7 @@ export function OnboardingDoneHero(): JSX.Element {
 }
 
 export function OnboardingVisual({ kind }: { kind: IntroVisual }): JSX.Element | null {
-  if (kind === 'final') return null
+  if (kind === 'final' || kind === 'requirement') return null
   return (
     <div className="oba-stage" aria-hidden>
       {kind === 'home' && <HomeVisual />}

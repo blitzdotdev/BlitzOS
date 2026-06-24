@@ -159,6 +159,14 @@ button {
 .notch-peek[data-state='idle'] .notch-peek-dot {
   background: #cfd0d2;
 }
+/* error = a steady red dot that breathes (an agent hit a problem; matches the chat chip-dot/inline #ff453a). */
+.notch-peek[data-state='error'] .notch-peek-dot {
+  background: #ff453a;
+  animation: notch-peek-breathe 2.4s ease-in-out infinite;
+}
+.notch-peek[data-state='error'] .notch-peek-count {
+  color: #fff;
+}
 @keyframes notch-peek-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.5);
@@ -181,7 +189,8 @@ button {
 }
 @media (prefers-reduced-motion: reduce) {
   .notch-peek[data-state='working'] .notch-peek-dot,
-  .notch-peek[data-state='attn'] .notch-peek-dot {
+  .notch-peek[data-state='attn'] .notch-peek-dot,
+  .notch-peek[data-state='error'] .notch-peek-dot {
     animation: none;
   }
 }
@@ -288,6 +297,9 @@ button {
 .glance-sum .gl-attn {
   color: #ffcf6b;
 }
+.glance-sum .gl-error {
+  color: #ff8a80;
+}
 .glance-sum .gl-sep {
   color: rgba(255, 255, 255, 0.42);
 }
@@ -309,6 +321,10 @@ button {
 }
 .glance-ava.working {
   animation: glance-ava-pulse 1.5s ease-in-out infinite;
+}
+/* errored agent avatar — a steady red ring (no pulse), distinct from the blue working pulse. */
+.glance-ava.error {
+  box-shadow: 0 0 0 2px #000, 0 0 0 3.5px rgba(255, 69, 58, 0.9);
 }
 @keyframes glance-ava-pulse {
   0%,

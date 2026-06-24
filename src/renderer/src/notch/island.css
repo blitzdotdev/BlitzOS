@@ -219,6 +219,16 @@ button.isl-app-chat:active .isl-app-icon {
   border-color: rgba(255, 214, 10, 0.38);
   background: rgba(255, 214, 10, 0.12);
 }
+/* error → a red-tinted card (mirrors the chat chip-dot + inline-detail error language, #ff453a) so a failed
+   agent never reads as a green 'Done'. reconnecting → the same neutral surface as working (it IS reviving). */
+.isl-working-agent[data-home-state='error'] {
+  border-color: rgba(255, 69, 58, 0.26);
+  background: rgba(255, 69, 58, 0.09);
+}
+.isl-working-agent[data-home-state='error']:hover {
+  border-color: rgba(255, 69, 58, 0.4);
+  background: rgba(255, 69, 58, 0.13);
+}
 .isl-working-agent:active {
   transform: scale(0.98);
 }
@@ -320,6 +330,13 @@ button.isl-app-chat:active .isl-app-icon {
 .isl-working-agent[data-home-state='waiting'] .isl-working-agent-status {
   color: #ffe27a;
 }
+.isl-working-agent[data-home-state='error'] .isl-working-agent-status {
+  color: #ffb4ad;
+}
+/* the shared alert glyph turns red for an error card (it stays yellow for 'waiting'). */
+.isl-working-agent[data-home-state='error'] .isl-working-agent-alert {
+  background: #ff453a;
+}
 
 /* ── SETTINGS SCREEN: debug-only controls surfaced in the notch home flow. ─────────────────────────────────── */
 .nh-island.isl-settings {
@@ -389,6 +406,41 @@ button.isl-app-chat:active .isl-app-icon {
   color: var(--isl-muted);
   font-size: 12px;
   line-height: 15px;
+}
+/* Debug "Simulate agent status" row: stack the segmented control under its label (it isn't a tappable row). */
+.nh-island .isl-setting-row.isl-setting-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  cursor: default;
+}
+.nh-island .isl-debug-seg {
+  display: flex;
+  flex-wrap: wrap; /* 8 cause options wrap to ~2 rows instead of squeezing into one */
+  gap: 6px;
+}
+.nh-island .isl-debug-seg-btn {
+  flex: 1 1 auto;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.14s ease-out, background 0.14s ease-out, border-color 0.14s ease-out;
+}
+.nh-island .isl-debug-seg-btn:hover {
+  color: var(--isl-text);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.nh-island .isl-debug-seg-btn.active {
+  color: var(--isl-text);
+  background: var(--isl-surface2);
+  border-color: #ffffff2e;
 }
 /* Rebind control: a tappable chip of key caps; arms (sky tint) while capturing the next combo. */
 .nh-island .isl-keybind {
@@ -484,6 +536,54 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-settings-disclosure.open {
   border-color: rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.07);
+}
+/* Quit row — a disclosure-shaped button that closes the app; reads red on hover since it's destructive. */
+.nh-island .isl-settings-quit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+  animation: isl-rise 0.24s ease-out 0.07s both;
+}
+.nh-island .isl-settings-quit:hover {
+  border-color: rgba(255, 69, 58, 0.4);
+  background: rgba(255, 69, 58, 0.1);
+}
+.nh-island .isl-settings-quit:hover .isl-setting-name {
+  color: #ffb4ad;
+}
+.nh-island .isl-settings-quit-glyph {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: var(--isl-dim);
+  transition: color 0.14s ease;
+}
+.nh-island .isl-settings-quit:hover .isl-settings-quit-glyph {
+  color: #ffb4ad;
+}
+.nh-island .isl-settings-quit-glyph svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+.nh-island .isl-settings-quit-glyph svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .nh-island .isl-settings-count {
   min-width: 22px;
@@ -623,6 +723,25 @@ button.isl-app-chat:active .isl-app-icon {
   gap: 14px;
   animation: isl-rise 0.22s ease-out both;
 }
+/* Every intro slide is the SAME fixed height so navigating between them never resizes the island. The body
+   (visual/card + head) is vertically centred and fills; the footer (dots + Back/Next) is pinned at the bottom. */
+.nh-island .isl-onb-slide {
+  height: 430px;
+  min-height: 0;
+}
+.nh-island .isl-onb-slide-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+}
+.nh-island .isl-onb-slide-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .nh-island .isl-onb-head.intro {
   gap: 7px;
   animation: none;
@@ -647,17 +766,30 @@ button.isl-app-chat:active .isl-app-icon {
   font-size: 12px;
   line-height: 17px;
 }
-.nh-island .isl-onb-intro .isl-onb-title {
+.nh-island .isl-onb-slide .isl-onb-title {
   max-width: 430px;
   font-size: 24px;
   line-height: 29px;
   letter-spacing: -0.02em;
 }
-.nh-island .isl-onb-intro .isl-onb-copy {
+.nh-island .isl-onb-slide .isl-onb-copy {
   max-width: 410px;
   color: rgba(245, 245, 247, 0.68);
   font-size: 13px;
   line-height: 18px;
+}
+.nh-island .isl-onb-copy .isl-shortcut-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: middle;
+  margin: 0 1px;
+}
+.nh-island .isl-onb-copy .isl-kbd {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  font-size: 11px;
 }
 /* The per-slide intro visual is now an animated mockup (onboardingVisuals.tsx / .css), not a static card. */
 .nh-island .isl-onb-progress {
@@ -687,6 +819,116 @@ button.isl-app-chat:active .isl-app-icon {
   color: #ffb4ad;
   font-size: 12px;
   line-height: 16px;
+}
+/* Requirements slide: the Claude Code (+ Codex) install-status rows. green = installed, yellow = missing. */
+.nh-island .isl-onb-req {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: isl-rise 0.24s ease-out 0.04s both;
+}
+.nh-island .isl-onb-req-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 52px;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.nh-island .isl-onb-req-row.ok {
+  border-color: rgba(48, 209, 88, 0.3);
+  background: rgba(48, 209, 88, 0.07);
+}
+.nh-island .isl-onb-req-row.warn {
+  border-color: rgba(255, 214, 10, 0.32);
+  background: rgba(255, 214, 10, 0.07);
+}
+.nh-island .isl-onb-req-row.soon {
+  opacity: 0.62;
+}
+.nh-island .isl-onb-req-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--isl-dim);
+}
+.nh-island .isl-onb-req-row.ok .isl-onb-req-icon {
+  background: #30d158;
+  color: #000;
+}
+.nh-island .isl-onb-req-row.warn .isl-onb-req-icon {
+  background: #ffd60a;
+  color: #000;
+}
+.nh-island .isl-onb-req-icon svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+.nh-island .isl-onb-req-icon svg path,
+.nh-island .isl-onb-req-icon svg circle {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.nh-island .isl-onb-req-spin {
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--isl-text);
+  border-radius: 50%;
+  animation: isl-spin 0.8s linear infinite;
+}
+.nh-island .isl-onb-req-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.nh-island .isl-onb-req-name {
+  color: var(--isl-text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.nh-island .isl-onb-req-note {
+  color: var(--isl-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+.nh-island .isl-onb-req-row.ok .isl-onb-req-note {
+  color: #8ff0a4;
+}
+.nh-island .isl-onb-req-row.warn .isl-onb-req-note {
+  color: #ffe27a;
+}
+.nh-island .isl-onb-req-status {
+  flex: none;
+  font-size: 11px;
+  font-weight: 650;
+}
+.nh-island .isl-onb-req-status.ok {
+  color: #8ff0a4;
+}
+.nh-island .isl-onb-req-status.soon {
+  color: var(--isl-dim);
+}
+.nh-island .isl-onb-req-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
 }
 .nh-island .isl-onb-card {
   display: flex;
@@ -1246,6 +1488,39 @@ button.isl-app-chat:active .isl-app-icon {
   border-left: 1px solid rgba(255, 255, 255, 0.12);
   scrollbar-width: thin;
   scrollbar-color: #ffffff26 transparent;
+}
+/* The error sub-row under the inline status: the "what to do" hint + an optional Retry. Shown whenever the active
+   agent carries an error detail, independent of the steps expand — so a problem is never silent. */
+.nh-island .isl-inline-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 5px 0 1px 17px; /* indent under the status text, past the dot */
+  padding-right: 2px;
+}
+.nh-island .isl-inline-error-hint {
+  flex: 1;
+  min-width: 0;
+  color: rgba(255, 180, 173, 0.86);
+  font: 500 12px/16px var(--isl-font);
+}
+.nh-island .isl-inline-retry {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px solid rgba(255, 69, 58, 0.42);
+  border-radius: 8px;
+  background: rgba(255, 69, 58, 0.12);
+  color: #ffd9d4;
+  font: 600 12px/1 var(--isl-font);
+  cursor: pointer;
+  transition: background 0.14s ease-out, border-color 0.14s ease-out;
+}
+.nh-island .isl-inline-retry:hover {
+  background: rgba(255, 69, 58, 0.2);
+  border-color: rgba(255, 69, 58, 0.62);
+}
+.nh-island .isl-inline-retry:active {
+  transform: scale(0.97);
 }
 .nh-island .isl-inline-detail-row,
 .nh-island .isl-inline-detail-empty {

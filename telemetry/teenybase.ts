@@ -73,6 +73,7 @@ const activitySessions = {
     tableField('version', 'text', 'text', {}),
     tableField('branch', 'text', 'text', {}),
     tableField('run', 'integer', 'integer', { default: sql`0` }),
+    tableField('channel', 'text', 'text', {}),
     tableField('platform', 'text', 'text', {}),
     tableField('events', 'integer', 'integer', { default: sql`0` }),
     tableField('t0', 'integer', 'integer', { default: sql`0` }),

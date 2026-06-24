@@ -85,6 +85,15 @@ export interface IslandTerminalMeta {
   kind: string
 }
 
+// The active agent's last problem, as reported by Claude Code (classifyApiError) → a human-facing read the island
+// shows in the inline status line: a short title, a one-line "what to do" hint, and whether a plain Retry applies.
+export interface AgentError {
+  cause: string
+  title: string
+  hint: string
+  retryable: boolean
+}
+
 export interface IslandPanelProps {
   sessions: IslandSession[]
   page: number // 1..N = the agent at page-1 (Blitz '0' is page 1); the pen is a spawn button, not a page
@@ -94,6 +103,8 @@ export interface IslandPanelProps {
   milestones: IslandMilestone[] // the active session's summarized step timeline (narrator)
   runs: IslandWfRun[] // the active session's live workflow runs (inline kanban boards)
   status: string // the active session's raw host status (process view)
+  errorDetail?: AgentError // the active session's last problem (only present while its status is 'error')
+  onRetry?: () => void // nudge the active agent to retry after a (retryable) error
   activeId?: string // the active session id (the Details expand + the peek now-playing)
   peek: boolean // peek: keep the tab bar, but the area BELOW becomes the active agent's "now playing"
   onSend: (text: string) => void // send to the ACTIVE agent (Blitz '0' or a peer); never spawns

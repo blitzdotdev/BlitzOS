@@ -64,7 +64,7 @@ export interface WorkspaceHost {
   customizeWidget(name: string, html: string, agentId?: string, lang?: 'html' | 'jsx' | 'tsx'): { ok: boolean; rel?: string; lang?: string; error?: string }
   systemUi(name: string): string | null
   systemUiInfo(name: string): { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null
-  setChatStatus(agentId: string, status: 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error'): { ok: boolean }
+  setChatStatus(agentId: string, status: 'idle' | 'starting' | 'working' | 'watching' | 'waiting' | 'stopped' | 'error', cause?: string): { ok: boolean }
   noteAgentActivity(agentId: string, source?: string): { ok: boolean; throttled?: boolean; error?: string }
   noteWorkflowRun(agentId: string, runId: string, active: boolean): { ok: boolean; error?: string }
   /** Snapshot { agentId -> status } of every chat-bearing agent — the W2 supervisor tick's agent-state input. */
@@ -76,6 +76,7 @@ export interface WorkspaceHost {
     archivedSessions: Array<{ id: string; title: string; status: string; updatedAt: number; lastMessagePreview: string; unread: boolean; archivedAt?: number }>
     threads: Record<string, Array<{ role: string; text: string; ts?: number; parts?: unknown[] }>>
     status: Record<string, string>
+    errors: Record<string, { cause: string; title: string; hint: string; retryable: boolean }>
     activeAgentId: string
     messages: Array<{ role: string; text: string; ts?: number; parts?: unknown[] }>
     agentId: string

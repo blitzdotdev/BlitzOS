@@ -3,14 +3,8 @@
    teaser matches the product. Tokens (--isl-*) cascade from the .nh-island ancestor; --kb-* are redeclared
    locally on the board. Stage carve-color for bubble tails is the stage base (#050608). */
 
-/* slide 5 is text-only (no stage) — center the copy in the space the stage would occupy. */
-.nh-island .isl-onb-intro.visual-final {
-  justify-content: center;
-  gap: 20px;
-}
-.nh-island .isl-onb-intro.visual-final .isl-onb-head.intro {
-  gap: 9px;
-}
+/* (Text-only slides used to special-case centring here; the fixed-height .isl-onb-slide body now centres every
+   intro slide uniformly, so no per-visual override is needed.) */
 
 .oba-stage {
   position: relative;

@@ -18,7 +18,29 @@ import {
   type PreboardState
 } from './onboardingStore'
 
-type IntroSlide = { eyebrow: string; title: string; copy: string; visual: IntroVisual }
+type IntroSlide = { eyebrow: string; title: string; copy: string; visual: IntroVisual; shortcut?: string }
+
+const accelCaps = (accel: string): string[] =>
+  accel.split('+').map((p) => {
+    if (p === 'Command' || p === 'Cmd' || p === 'Meta' || p === 'Super') return '⌘'
+    if (p === 'Control' || p === 'Ctrl') return '⌃'
+    if (p === 'Alt' || p === 'Option') return '⌥'
+    if (p === 'Shift') return '⇧'
+    return p
+  })
+
+function ShortcutKeys({ accel }: { accel: string }): JSX.Element {
+  const caps = accelCaps(accel)
+  return (
+    <span className="isl-shortcut-keys" aria-label={caps.join(' ')}>
+      {caps.map((cap, i) => (
+        <kbd key={i} className="isl-kbd">
+          {cap}
+        </kbd>
+      ))}
+    </span>
+  )
+}
 
 const PERMISSIONS: Array<{ key: DragKind; name: string; why: string }> = [
   { key: 'fda', name: 'Full Disk Access', why: 'Lets Blitz build local context from your Mac.' },
@@ -26,6 +48,7 @@ const PERMISSIONS: Array<{ key: DragKind; name: string; why: string }> = [
   { key: 'screen', name: 'Screen Recording', why: 'Lets Blitz see enough of the screen to click accurately.' }
 ]
 const CHECK_PATH = 'm5 12 4 4L19 6'
+const ALERT_PATH = 'M12 8v5M12 16h.01'
 const INTRO_SLIDES: IntroSlide[] = [
   {
     eyebrow: 'Welcome',
@@ -52,10 +75,17 @@ const INTRO_SLIDES: IntroSlide[] = [
     visual: 'workflow'
   },
   {
+    eyebrow: 'Requirements',
+    title: 'Blitz runs on Claude Code',
+    copy: 'Blitz uses Claude Code as its agent engine — make sure it’s installed to continue. Codex support is coming soon.',
+    visual: 'requirement'
+  },
+  {
     eyebrow: 'Quick access',
-  title: 'Open Blitz whenever you need it',
-  copy: 'Press ⌥Space to show or hide the island anytime — or glide your cursor up to the notch to peek in, and away to tuck it back. You can rebind the shortcut in Settings.',
-  visual: 'final'
+    title: 'Open Blitz whenever you need it',
+    copy: 'to show or hide the island anytime — or glide your cursor up to the notch to peek in, and away to tuck it back. You can rebind the shortcut in Settings.',
+    shortcut: 'Alt+Space',
+    visual: 'final'
   },
   {
     eyebrow: 'You stay in control',
@@ -91,6 +121,9 @@ export function IslandOnboarding({
   const [activeKind, setActiveKind] = useState<DragKind | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Claude Code (the agent engine) install check for the Requirements slide. null = still checking.
+  const [claude, setClaude] = useState<{ installed: boolean; path: string | null } | null>(null)
+  const [claudeRechecking, setClaudeRechecking] = useState(false)
   // The browser step auto-advances after a short delay; hold the timer so a manual nav (skip) or unmount cancels it.
   const advanceTimer = useRef<number | null>(null)
   const clearAdvance = (): void => {
@@ -171,6 +204,34 @@ export function IslandOnboarding({
     })
   }, [introDone, introIndex, step])
 
+  // Probe Claude Code on open (cached, cheap) for the Requirements slide.
+  useEffect(() => {
+    if (!api?.claudeStatus) {
+      setClaude({ installed: false, path: null })
+      return
+    }
+    api
+      .claudeStatus()
+      .then((s) => {
+        if (s) setClaude(s)
+      })
+      .catch(() => setClaude({ installed: false, path: null }))
+  }, [])
+  const recheckClaude = (): void => {
+    if (!api?.claudeStatus || claudeRechecking) return
+    setClaudeRechecking(true)
+    api
+      .claudeStatus(true) // bust the cache — the user may have just installed it
+      .then((s) => {
+        if (s) setClaude(s)
+      })
+      .catch(() => {})
+      .finally(() => setClaudeRechecking(false))
+  }
+  const downloadClaude = (): void => {
+    void window.agentOS?.openExternalUrl?.('https://claude.com/claude-code')
+  }
+
   const openPermission = (kind: DragKind): void => {
     setActiveKind(kind)
     setError(null)
@@ -235,13 +296,72 @@ export function IslandOnboarding({
   return (
     <div className="nh-island isl-onboarding" style={{ paddingTop: top }}>
       {!introDone && (
-        <div className={`isl-onb-intro visual-${introSlide.visual}`}>
-          {introSlide.visual !== 'final' && <OnboardingVisual key={introIndex} kind={introSlide.visual} />}
+        <div className={`isl-onb-intro isl-onb-slide visual-${introSlide.visual}`}>
+          <div className="isl-onb-slide-body">
+            {introSlide.visual !== 'final' && introSlide.visual !== 'requirement' && (
+              <OnboardingVisual key={introIndex} kind={introSlide.visual} />
+            )}
           <div className="isl-onb-head intro">
             <span className="isl-onb-kicker">{introSlide.eyebrow}</span>
             <h1 className="isl-onb-title">{introSlide.title}</h1>
-            <p className="isl-onb-copy">{introSlide.copy}</p>
+            <p className="isl-onb-copy">
+              {introSlide.shortcut ? (
+                <>
+                  Press <ShortcutKeys accel={introSlide.shortcut} /> {introSlide.copy}
+                </>
+              ) : (
+                introSlide.copy
+              )}
+            </p>
           </div>
+          {introSlide.visual === 'requirement' && (
+            <div className="isl-onb-req">
+              <div className={`isl-onb-req-row${claude == null ? '' : claude.installed ? ' ok' : ' warn'}`}>
+                <span className="isl-onb-req-icon" aria-hidden>
+                  {claude == null ? (
+                    <span className="isl-onb-req-spin" />
+                  ) : (
+                    <svg viewBox="0 0 24 24" focusable="false">
+                      <path d={claude.installed ? CHECK_PATH : ALERT_PATH} />
+                    </svg>
+                  )}
+                </span>
+                <span className="isl-onb-req-copy">
+                  <span className="isl-onb-req-name">Claude Code</span>
+                  <span className="isl-onb-req-note">
+                    {claude == null ? 'Checking…' : claude.installed ? 'Installed and ready' : 'Not found — install it to run agents'}
+                  </span>
+                </span>
+                {claude == null ? null : claude.installed ? (
+                  <span className="isl-onb-req-status ok">Ready</span>
+                ) : (
+                  <span className="isl-onb-req-actions">
+                    <button type="button" className="isl-onb-secondary" onClick={downloadClaude}>
+                      Download
+                    </button>
+                    <button type="button" className="isl-onb-quiet" onClick={recheckClaude} disabled={claudeRechecking}>
+                      {claudeRechecking ? 'Checking…' : 'Re-check'}
+                    </button>
+                  </span>
+                )}
+              </div>
+              <div className="isl-onb-req-row soon">
+                <span className="isl-onb-req-icon" aria-hidden>
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <circle cx="12" cy="12" r="8" />
+                    <path d="M12 8v4l2.5 1.5" />
+                  </svg>
+                </span>
+                <span className="isl-onb-req-copy">
+                  <span className="isl-onb-req-name">Codex</span>
+                  <span className="isl-onb-req-note">Coming soon</span>
+                </span>
+                <span className="isl-onb-req-status soon">Soon</span>
+              </div>
+            </div>
+          )}
+          </div>
+          <div className="isl-onb-slide-foot">
           <div className="isl-onb-progress" aria-label={`Intro slide ${introIndex + 1} of ${INTRO_SLIDES.length}`}>
             {INTRO_SLIDES.map((_slide, index) => (
               <button
@@ -270,17 +390,19 @@ export function IslandOnboarding({
               {introIndex >= INTRO_SLIDES.length - 1 ? 'Start setup' : 'Next'}
             </button>
           </div>
+          </div>
         </div>
       )}
       {introDone && step !== 'done' && (
-        <div className="isl-onb-head">
-          <span className="isl-onb-kicker">Setup</span>
-          <h1 className="isl-onb-title">Set up Blitz</h1>
-          <p className="isl-onb-copy">A few Mac permissions make Blitz useful. You can skip anything and change it later.</p>
-        </div>
-      )}
-      {error && <div className="isl-onb-error">{error}</div>}
-      {introDone && step === 'permissions' && state && (
+        <div className="isl-onb-slide isl-onb-setup">
+          <div className="isl-onb-slide-body">
+            <div className="isl-onb-head intro">
+              <span className="isl-onb-kicker">Setup</span>
+              <h1 className="isl-onb-title">Set up Blitz</h1>
+              <p className="isl-onb-copy">A few Mac permissions make Blitz useful. You can skip anything and change it later.</p>
+            </div>
+            {error && <div className="isl-onb-error">{error}</div>}
+            {step === 'permissions' && state && (
         <div className="isl-onb-card">
           <div className="isl-onb-card-head">
             <span>Mac access</span>
@@ -326,7 +448,7 @@ export function IslandOnboarding({
           </div>
         </div>
       )}
-      {introDone && step === 'browser' && state && (
+            {step === 'browser' && state && (
         <div className="isl-onb-card">
           <div className="isl-onb-card-head">
             <span>Share tabs</span>
@@ -349,19 +471,26 @@ export function IslandOnboarding({
             </button>
           </div>
         </div>
+            )}
+          </div>
+        </div>
       )}
       {introDone && step === 'done' && (
-        <div className="isl-onb-intro visual-done">
-          <OnboardingDoneHero />
-          <div className="isl-onb-head intro">
-            <span className="isl-onb-kicker">All set</span>
-            <h1 className="isl-onb-title">Blitz is ready</h1>
-            <p className="isl-onb-copy">Your agents are standing by. You can change setup anytime from Settings.</p>
+        <div className="isl-onb-intro isl-onb-slide visual-done">
+          <div className="isl-onb-slide-body">
+            <OnboardingDoneHero />
+            <div className="isl-onb-head intro">
+              <span className="isl-onb-kicker">All set</span>
+              <h1 className="isl-onb-title">Blitz is ready</h1>
+              <p className="isl-onb-copy">Your agents are standing by. You can change setup anytime from Settings.</p>
+            </div>
           </div>
-          <div className="isl-onb-actions">
-            <button type="button" className="isl-onb-primary" onClick={finishOnboarding}>
-              Open Blitz
-            </button>
+          <div className="isl-onb-slide-foot">
+            <div className="isl-onb-actions">
+              <button type="button" className="isl-onb-primary" onClick={finishOnboarding}>
+                Open Blitz
+              </button>
+            </div>
           </div>
         </div>
       )}

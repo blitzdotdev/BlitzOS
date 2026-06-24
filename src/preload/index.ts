@@ -73,6 +73,10 @@ const api = {
   openExternalUrl(url: string): Promise<{ ok: boolean; error?: string }> {
     return (ipcRenderer.invoke('os:open-external-url', url) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
+  /** Quit BlitzOS (from the Settings panel) — a graceful app.quit() in main. */
+  quit(): Promise<{ ok: boolean }> {
+    return (ipcRenderer.invoke('os:quit') as Promise<{ ok: boolean }>).catch(() => ({ ok: false }))
+  },
   /** Privacy-safe product activity logging: main validates event names and drops unknown props. */
   activity: {
     track(name: string, props?: Record<string, unknown>): void {
@@ -313,6 +317,13 @@ const api = {
   sendMessage(text: string, agentId = '0'): void {
     ipcRenderer.send('os:user-message', { text, agentId })
   },
+  /** DEBUG (Settings → Simulate agent status): force a fake status onto an agent so the four status surfaces +
+   *  the inline error detail can be eyeballed without a real failure. `kind` is 'reconnecting' (the self-healing
+   *  override) or a classifyApiError cause (connection / usage-limit / server-error / rate-limit / auth / crash),
+   *  which maps to the sticky red Error status with that cause's specific message + hint. 'off' clears. */
+  debugForceStatus(agentId: string, kind: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('os:debug-force-status', { agentId, kind })
+  },
   /** One-shot snapshot of all agent sessions for the dynamic island: roster + per-session transcripts +
    *  status. The island calls this on open, then rides the live `os:action {type:'chat'}` broadcast. */
   agents(): Promise<{
@@ -320,6 +331,7 @@ const api = {
     archivedSessions: Array<{ id: string; title: string; status: string; updatedAt?: number; lastMessagePreview?: string; archivedAt?: number }>
     threads: Record<string, Array<{ role: string; text: string; ts?: number }>>
     status: Record<string, string>
+    errors: Record<string, { cause: string; title: string; hint: string; retryable: boolean }>
     milestones: Record<string, Array<{ id: string; ts: number; kind: string; text: string }>>
     runs: Record<string, Array<{ runId: string; agentId: string; file: string; startedAt: number; done: boolean; ok: boolean; skeleton: unknown[]; memDir: string | null }>>
   }> {
@@ -454,6 +466,12 @@ const api = {
     forceVisible: process.env.BLITZ_FORCE_ONBOARDING === '1',
     start(): Promise<{ ok: boolean; cached?: boolean }> {
       return ipcRenderer.invoke('onboarding:start')
+    },
+    /** Is the Claude Code CLI installed? `recheck` busts the cached probe (after the user just installed it). */
+    claudeStatus(recheck?: boolean): Promise<{ installed: boolean; path: string | null }> {
+      return (ipcRenderer.invoke('onboarding:claude-status', { recheck: !!recheck }) as Promise<{ installed: boolean; path: string | null }>).catch(
+        () => ({ installed: false, path: null })
+      )
     },
     fdaStatus(): Promise<{ fda: boolean; appName: string }> {
       return ipcRenderer.invoke('onboarding:fda-status')

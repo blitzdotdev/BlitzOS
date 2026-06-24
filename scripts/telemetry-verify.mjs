@@ -93,6 +93,7 @@ const actBatch = await postJson('activity', {
   version: '0.0.1',
   branch: 'verify',
   run: 999,
+  channel: 'production',
   platform: 'darwin',
   t0: t0 + 7000,
   t1: t0 + 9000,
@@ -117,6 +118,7 @@ const actSes = (ad.sessions || []).find((s) => s.sid === activitySid)
 const actEvents = (ad.events || []).filter((e) => e.sid === activitySid)
 ok('activity session in /dash/activity/data', !!actSes)
 ok('activity counters aggregate', actSes && +actSes.events === 3, actSes && `events=${actSes.events}`)
+ok('activity channel stored', actSes && actSes.channel === 'production', actSes && `channel=${actSes.channel}`)
 ok('activity events roundtrip', actEvents.length === 3, `got ${actEvents.length}`)
 ok('activity counts aggregate', ad.counts && +ad.counts['chat.message_sent'] >= 1)
 ok(
@@ -133,6 +135,9 @@ ok(
   actEvents.some((e) => String(e.props || '').includes('"messageLengthBucket":"1001+"')) &&
     actEvents.some((e) => String(e.props || '').includes('"msBucket":"<100ms"'))
 )
+const activityDash = await fetch(`${URL_}/activity`)
+const activityDashTxt = await activityDash.text()
+ok('activity dashboard HTML serves', activityDash.ok && activityDashTxt.includes('BlitzOS Activity') && activityDashTxt.includes('/dash/activity/data'))
 
 // 6. session detail + object roundtrips
 const sd = await (await get(`/dash/sdata/${sid}`)).json()

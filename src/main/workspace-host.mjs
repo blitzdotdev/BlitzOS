@@ -394,6 +394,10 @@ export function createWorkspaceHost(a) {
   )
   const CHAT_CLAUDE_END_TURN_POLL_MS = Math.max(10, Number(process.env.BLITZ_CHAT_CLAUDE_END_TURN_POLL_MS) || 150)
   const chatStatuses = new Map()
+  // Per-agent error DETAIL (id -> { cause, title, hint, retryable }) — the human-facing read of the last problem an
+  // agent hit, so the island can show "Network error" + what to do instead of a bare "Problem". Kept in lockstep
+  // with the 'error' chat status: set when we flip to 'error' (with a known cause), cleared on any move off 'error'.
+  const chatErrors = new Map()
   const chatQuietTimers = new Map()
   const chatPostSaySettleTimers = new Map()
   const chatTerminalActivityAt = new Map()
@@ -531,15 +535,49 @@ export function createWorkspaceHost(a) {
     const err = lastAssistantError(sessionJsonlPath(activeWorkspace, meta.claudeSessionId))
     return err && Number(err.offset) > baseline ? err : null
   }
-  // Surface a fresh API-error turn as the sticky 'error' chat status (red dot). Returns true if it set it, so the
-  // settle paths can short-circuit. The status clears naturally on the next user message (setChatStatusLocal
-  // 'working' at the message handler). The wake-watchdog's island override still presents 'reconnecting' on top
-  // while it is actively reviving a deaf/rate-limited agent.
+  // Map a classifyApiError() cause (connection / usage-limit / rate-limit / server-error / auth / …) to the
+  // human-facing presentation the island shows: a short TITLE, a one-line HINT on what to do, and whether a plain
+  // Retry makes sense (transient API failures) vs. needing a user action (auth, usage limit, full context). The
+  // cause itself comes straight from Claude Code's own error text, so this is the agent reporting its real problem.
+  function errorPresentation(cause) {
+    switch (String(cause || 'error')) {
+      case 'connection':
+        return { title: 'Network error', hint: "Can't reach the API — check your connection. It retries on its own.", retryable: true }
+      case 'usage-limit':
+        return { title: 'Usage limit reached', hint: 'This account hit its Claude usage limit. It resumes when the limit resets.', retryable: false }
+      case 'rate-limit':
+        return { title: 'Rate limited', hint: 'Too many requests right now — it backs off and retries automatically.', retryable: true }
+      case 'overloaded':
+        return { title: 'Service overloaded', hint: "Anthropic's API is busy. Retrying shortly.", retryable: true }
+      case 'server-error':
+        return { title: 'Server error', hint: 'A temporary server-side error (5xx). Try again.', retryable: true }
+      case 'auth':
+        return { title: 'Not signed in', hint: "The agent's Claude login needs attention (re-auth or credits).", retryable: false }
+      case 'input':
+        return { title: 'Conversation too long', hint: 'The context is full — start a new chat or clear context.', retryable: false }
+      case 'model':
+        return { title: 'Model unavailable', hint: 'There is an issue with the selected model.', retryable: true }
+      case 'refusal':
+        return { title: 'Request declined', hint: 'The model declined to respond to the last request.', retryable: false }
+      case 'crash':
+        return { title: 'Agent stopped', hint: 'The agent process exited unexpectedly. Retry to wake it.', retryable: true }
+      default:
+        return { title: 'Problem', hint: 'Something went wrong on the last turn. Try again.', retryable: true }
+    }
+  }
+  function agentErrorFor(cause) {
+    return { cause: String(cause || 'error'), ...errorPresentation(cause) }
+  }
+  // Surface a fresh API-error turn as the sticky 'error' chat status (red dot) + its human-facing detail. Returns
+  // true if it set it, so the settle paths can short-circuit. The status + detail clear naturally on the next user
+  // message (setChatStatusLocal 'working' at the message handler). The wake-watchdog's island override still
+  // presents 'reconnecting' on top while it is actively reviving a deaf/rate-limited agent.
   function applyClaudeTurnError(agentId) {
     const id = String(agentId ?? '0')
     const err = claudeTurnEndedError(id)
     if (!err) return false
     clearTurnActivity(id)
+    chatErrors.set(id, agentErrorFor(err.cause))
     setChatStatusLocal(id, 'error', `api-error:${err.cause || 'error'}`)
     return true
   }
@@ -629,6 +667,7 @@ export function createWorkspaceHost(a) {
     const previousStatus = chatStatus(id)
     const rec = { status: s, updatedAt: Date.now(), source }
     chatStatuses.set(id, rec)
+    if (s !== 'error') chatErrors.delete(id) // the error DETAIL lives only while the status is 'error'
     if (previousStatus !== s) {
       try { a.onChatStatusTransition?.({ agentId: id, previousStatus, status: s, source }) } catch { /* observers must not affect status */ }
     }
@@ -840,11 +879,14 @@ export function createWorkspaceHost(a) {
     const archivedIds = archivedAgentIds()
     const threads = {}
     const status = {}
+    const errors = {} // id -> { cause, title, hint, retryable } for any agent currently in 'error' (else absent)
     const sessions = ids.map((id) => {
       const meta = readAgentMeta(id)
       const messages = readChatMessages(activeWorkspace, 400, id)
       threads[id] = messages
       status[id] = chatStatus(id)
+      const err = chatErrors.get(id)
+      if (err) errors[id] = err
       return sessionSummary(id, meta, messages, status[id])
     })
     const archivedSessions = archivedIds.map((id) => {
@@ -859,6 +901,7 @@ export function createWorkspaceHost(a) {
       archivedSessions,
       threads,
       status,
+      errors,
       activeAgentId: active,
       // Back-compat for old/custom chat UIs that still render a single messages array.
       messages: threads[active] || threads['0'] || [],
@@ -1153,9 +1196,12 @@ export function createWorkspaceHost(a) {
   function systemUiInfo(name) {
     return readSystemRendererInfo(activeWorkspace, name)
   }
-  function setChatStatus(agentId, status) {
-    setChatStatusLocal(agentId, status, 'terminal')
-    updateChatHubState(agentId, true)
+  function setChatStatus(agentId, status, cause) {
+    const id = String(agentId ?? '0')
+    // Stamp the human-facing detail BEFORE flipping the status (setChatStatusLocal only CLEARS it for non-error).
+    if (status === 'error') chatErrors.set(id, agentErrorFor(cause))
+    setChatStatusLocal(id, status, 'terminal')
+    updateChatHubState(id, true)
     return { ok: true }
   }
   /** Make an EMPTY real folder ('New Folder') or '.board' on-canvas folder ('New Board'), then reconcile

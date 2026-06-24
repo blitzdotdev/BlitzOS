@@ -372,7 +372,10 @@ export function osBroadcast(action: Record<string, unknown>): void {
     } else if (action?.type === 'terminal-stop') {
       if (action.id != null) wsHost?.setChatStatus(String(action.id), 'stopped')
     } else if (action?.type === 'terminal-exit') {
-      if (action.id != null) wsHost?.setChatStatus(String(action.id), Number(action.exitCode) ? 'error' : 'stopped')
+      if (action.id != null) {
+        if (Number(action.exitCode)) wsHost?.setChatStatus(String(action.id), 'error', 'crash')
+        else wsHost?.setChatStatus(String(action.id), 'stopped')
+      }
     } else if (action?.type === 'workflow-run') {
       // record + re-broadcast to the island (started/done) for the in-chat kanban
       osNoteWfRun(action)
@@ -668,6 +671,13 @@ export function setTerminalStatusProvider(fn: () => Array<{ id: string; status?:
 export function osAgentStatus(): Record<string, string> {
   return wsHost ? wsHost.chatStatusSnapshot() : {}
 }
+/** DEBUG ONLY (Settings → Simulate agent status): set a real chat status on an agent through the SAME path a
+ *  terminal-exit/api-error uses (setChatStatus → updateChatHubState broadcasts the full status map), so the
+ *  injected status flows to every surface. 'reconnecting' is NOT a chat status — index.ts routes that to the
+ *  wake-watchdog override instead. */
+export function osDebugSetChatStatus(agentId: string, status: 'error' | 'waiting' | 'watching' | 'idle', cause?: string): { ok: boolean } {
+  return wsHost?.setChatStatus(String(agentId), status, cause) || { ok: false }
+}
 export function osClearBrainContext(agentId = '0'): void {
   clearBrainContextHook?.(String(agentId))
 }
@@ -853,10 +863,11 @@ export function osAgentsSnapshot(): {
   archivedSessions: Array<Record<string, unknown>>
   threads: Record<string, Array<Record<string, unknown>>>
   status: Record<string, string>
+  errors: Record<string, { cause: string; title: string; hint: string; retryable: boolean }>
   milestones: Record<string, IslandMilestone[]>
   runs: Record<string, IslandWfRun[]>
 } {
-  const empty = { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {}, runs: {} }
+  const empty = { sessions: [], archivedSessions: [], threads: {}, status: {}, errors: {}, milestones: {}, runs: {} }
   if (!wsHost) return empty
   try {
     const p = wsHost.chatHubProps() as {
@@ -864,6 +875,7 @@ export function osAgentsSnapshot(): {
       archivedSessions?: Array<Record<string, unknown>>
       threads?: Record<string, Array<Record<string, unknown>>>
       status?: Record<string, string>
+      errors?: Record<string, { cause: string; title: string; hint: string; retryable: boolean }>
     }
     const sessions = p.sessions || []
     const milestones: Record<string, IslandMilestone[]> = {}
@@ -885,7 +897,7 @@ export function osAgentsSnapshot(): {
         /* per-agent best-effort */
       }
     }
-    return { sessions, archivedSessions: p.archivedSessions || [], threads: p.threads || {}, status: p.status || {}, milestones, runs }
+    return { sessions, archivedSessions: p.archivedSessions || [], threads: p.threads || {}, status: p.status || {}, errors: p.errors || {}, milestones, runs }
   } catch {
     return empty
   }

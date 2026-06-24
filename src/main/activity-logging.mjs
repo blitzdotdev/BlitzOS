@@ -72,7 +72,7 @@ let spool = ''
 let seq = 0
 let lines = 0
 let t0 = 0
-let meta = { version: '0', branch: 'dev', run: 0, platform: process.platform }
+let meta = { version: '0', branch: 'dev', run: 0, platform: process.platform, channel: 'development' }
 
 function now() {
   return Date.now()
@@ -229,6 +229,7 @@ async function postBatch(events) {
         version: meta.version,
         branch: meta.branch,
         run: meta.run,
+        channel: meta.channel,
         platform: meta.platform,
         t0: events[0]?.t || now(),
         t1: events[events.length - 1]?.t || now(),
@@ -314,6 +315,7 @@ export function initActivityLogging(opts = {}) {
     version: String(opts.appVersion || '0'),
     branch: String(opts.branch || 'dev'),
     run: Number(opts.run) || 0,
+    channel: safeToken(opts.channel, new Set(['production', 'preview', 'development'])) || 'development',
     platform: process.platform
   }
   dir = join(String(opts.userDataDir || join(homedir(), '.blitzos')), 'activity-logging')

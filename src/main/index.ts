@@ -4,7 +4,7 @@ import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osDebugSetChatStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
 import { emitSystemMoment, emitWorkflowMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
 import { createWakeWatchdog } from './agent-wake-watchdog.mjs'
 import { openBootJournal, chatFileName } from './workspace.mjs'
@@ -147,6 +147,22 @@ function openTerminalExternal(id: string): { ok: boolean; error?: string } {
   } catch (e) {
     return { ok: false, error: (e as Error)?.message || 'failed to open Terminal' }
   }
+}
+
+function activityBuildMeta(): { branch: string; run: number; channel: 'production' | 'preview' | 'development' } {
+  let branch = process.env.BLITZ_BUILD_BRANCH || ''
+  let run = Number(process.env.BLITZ_BUILD_RUN) || 0
+  try {
+    const pkg = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) as { buildBranch?: string; buildRun?: number }
+    if (pkg.buildBranch) branch = String(pkg.buildBranch)
+    if (pkg.buildRun) run = Number(pkg.buildRun) || run
+  } catch {
+    /* dev run / pre-CI build */
+  }
+  if (!branch) branch = app.isPackaged ? 'unknown' : 'dev'
+  const normalized = branch.toLowerCase()
+  const channel = !app.isPackaged ? 'development' : (normalized === 'main' || normalized === 'master' || normalized === 'production' ? 'production' : 'preview')
+  return { branch, run, channel }
 }
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
@@ -534,7 +550,7 @@ app.whenReady().then(() => {
   // a wired control plane; before everything else so boot-time errors are captured.
   initTelemetry(() => mainWindow)
   // Privacy-safe product activity logging: separate from replay/tape, config-gated, and strictly allowlisted.
-  initActivityLogging({ userDataDir: app.getPath('userData'), appVersion: app.getVersion() })
+  initActivityLogging({ userDataDir: app.getPath('userData'), appVersion: app.getVersion(), ...activityBuildMeta() })
   setToolTap((info) => trackToolActivity(info as Record<string, unknown>))
   // Session tape (plans/blitzos-logging.md): the local model-loop spool. Multi-subscriber taps, so it
   // coexists with telemetry. Local-only, never uploads. DEFAULT-OFF (the plan's M0 posture: no config =
@@ -687,6 +703,21 @@ app.whenReady().then(() => {
   ipcMain.handle('os:group', (_e, name: string, ids: string[], kind?: string) =>
     osGroupIntoFolder(String(name), Array.isArray(ids) ? ids : [], undefined, undefined, kind === 'board' ? 'board' : 'folder')
   )
+  // Quit BlitzOS from the Settings panel — app.quit() runs the before-quit handlers (workspace flush, markClean).
+  // Belt-and-suspenders: if a stray async before-quit ever defers the normal quit, force the process down shortly
+  // after (the synchronous cleanup + markClean have already run by then).
+  ipcMain.handle('os:quit', () => {
+    console.log('[quit] os:quit IPC received — app.quit()')
+    app.quit()
+    setTimeout(() => {
+      try {
+        app.exit(0)
+      } catch {
+        /* already gone */
+      }
+    }, 600)
+    return { ok: true }
+  })
   // Drag-drop real files/folders from the OS onto the canvas (folders copy recursively → one tile).
   ipcMain.handle('os:ingest-paths', (_e, paths: string[], x: number, y: number) =>
     osIngestPaths(Array.isArray(paths) ? paths : [], Number(x) || 0, Number(y) || 0)
@@ -772,7 +803,7 @@ app.whenReady().then(() => {
   ipcMain.handle('os:agent-orchestrators', (_e, p: { id: string; on?: boolean }) => { try { return osSetOrchestrators(String(p?.id), p?.on === undefined ? true : !!p.on) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   // One-shot snapshot for the dynamic island on open: the session roster + transcripts + status. The island
   // then rides the live `os:action {type:'chat'}` broadcast for updates.
-  ipcMain.handle('os:agents-snapshot', () => { try { const s = osAgentsSnapshot(); return { ...s, status: applyWakeOverride(s.status || {}, islandActiveWs()) } } catch { return { sessions: [], archivedSessions: [], threads: {}, status: {}, milestones: {}, runs: {} } } })
+  ipcMain.handle('os:agents-snapshot', () => { try { const s = osAgentsSnapshot(); return { ...s, status: applyWakeOverride(s.status || {}, islandActiveWs()) } } catch { return { sessions: [], archivedSessions: [], threads: {}, status: {}, errors: {}, milestones: {}, runs: {} } } })
   // The island's per-session "Details" expand: the agent's recent raw tool calls (Grep/Edit/Run …), read from
   // its canonical transcript. Deterministic, no LLM.
   ipcMain.handle('os:agent-details', (_e, p: { id?: string }) => { try { return osAgentDetails(String(p?.id ?? '0')) } catch { return { rows: [] } } })
@@ -1447,18 +1478,48 @@ app.whenReady().then(() => {
   const pushIslandStatus = (): void => {
     try { osBroadcast({ type: 'chat', status: applyWakeOverride(osAgentStatus() || {}, islandActiveWs()) }) } catch { /* best-effort */ }
   }
+  // Set (or clear) an agent's island status OVERRIDE (e.g. 'reconnecting'). Used by the wake-watchdog while it
+  // revives a deaf agent, and by the debug status-simulation handler below. Self-clears once the agent's heartbeat
+  // advances past `since` (see applyWakeOverride).
+  const setWakeStatus = (id: string, ws: string | null, st: string | null): void => {
+    const k = wakeKey(String(id), ws)
+    if (st) wakeOverride.set(k, { status: st, since: Date.now(), ws })
+    else wakeOverride.delete(k)
+    pushIslandStatus()
+  }
   const wakeWatchdog = createWakeWatchdog({
     lastPollAt,
     sendToTerminal: (id, data) => electronTerminalOps.sendToTerminal(String(id), String(data)),
     captureTerminal: (id) => electronTerminalOps.captureTerminal(String(id)),
     isLive: (id) => isRecoverableAgentPane(String(id)),
-    setStatus: (id, ws, st) => {
-      const k = wakeKey(String(id), ws)
-      if (st) wakeOverride.set(k, { status: st, since: Date.now(), ws })
-      else wakeOverride.delete(k)
-      pushIslandStatus()
-    },
+    setStatus: setWakeStatus,
     log: (m) => console.log('[wake]', m)
+  })
+  // DEBUG (Settings → Simulate agent status): inject a fake status onto an agent so the four status surfaces (home
+  // card, glance bar, chat chip, inline detail) can be eyeballed without a real failure. A genuine failure
+  // ('error') goes through the REAL setChatStatus path (sticky red, clears on the next real user message); a
+  // transient throttle ('reconnecting') uses the same wake-override the watchdog drives. No persistence — it's a
+  // live status push only, so a relaunch starts clean.
+  ipcMain.handle('os:debug-force-status', (_e, payload: { agentId?: unknown; kind?: unknown }) => {
+    try {
+      const id = String(payload?.agentId ?? '0')
+      const kind = String(payload?.kind ?? '') // 'off' | 'reconnecting' | a classifyApiError cause (connection/usage-limit/…)
+      const ws = islandActiveWs()
+      if (kind === 'reconnecting') {
+        setWakeStatus(id, ws, 'reconnecting')
+      } else if (kind && kind !== 'off') {
+        // any cause → the real sticky 'error' status + that cause's detail (mirrors applyClaudeTurnError).
+        setWakeStatus(id, ws, null) // drop any stale override so the real 'error' shows through
+        osDebugSetChatStatus(id, 'error', kind)
+      } else {
+        // 'off' → clear back to a live state
+        setWakeStatus(id, ws, null)
+        osDebugSetChatStatus(id, 'watching')
+      }
+      return { ok: true }
+    } catch {
+      return { ok: false }
+    }
   })
   setUndeliveredWakeHook((moment) => { try { wakeWatchdog.onUndelivered(moment) } catch { /* never break perception */ } })
   // PROACTIVE sweep: a usage/session limit an agent hits on its OWN turn surfaces no undelivered message, so the

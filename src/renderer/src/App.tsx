@@ -126,7 +126,7 @@ export default function App(): JSX.Element {
   const notchPinnedRef = useRef(false)
   // Aggregate agent activity for the COLLAPSED notch's live compact presentation (working / needs-you / total).
   // GlancePeek also carries the per-agent list so the glance bar shows one avatar per active agent.
-  const [notchPeek, setNotchPeek] = useState<GlancePeek>({ working: 0, attn: 0, total: 0, agents: [] })
+  const [notchPeek, setNotchPeek] = useState<GlancePeek>({ working: 0, attn: 0, err: 0, total: 0, agents: [] })
   const setNotchPinnedBoth = (on: boolean): void => {
     notchPinnedRef.current = on
     setNotchPinned(on)
@@ -661,9 +661,10 @@ export default function App(): JSX.Element {
               ? Object.entries(statusMap).map(([id, status]) => ({ id: String(id), status: String(status) }))
               : []
           if (agents.length || sessions) {
-            const working = agents.filter((x) => x.status === 'working' || x.status === 'starting').length
+            const working = agents.filter((x) => x.status === 'working' || x.status === 'starting' || x.status === 'reconnecting').length
             const attn = agents.filter((x) => x.status === 'waiting').length
-            setNotchPeek({ working, attn, total: agents.length, agents })
+            const err = agents.filter((x) => x.status === 'error').length
+            setNotchPeek({ working, attn, err, total: agents.length, agents })
           }
         }
         const chat = st.surfaces.find((s) => s.id === 'chat') || st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
@@ -910,7 +911,15 @@ export default function App(): JSX.Element {
             <div
               className="notch-peek"
               data-state={
-                notchPeek.working > 0 ? 'working' : notchPeek.attn > 0 ? 'attn' : notchPeek.total > 0 ? 'idle' : 'empty'
+                notchPeek.err > 0
+                  ? 'error'
+                  : notchPeek.working > 0
+                    ? 'working'
+                    : notchPeek.attn > 0
+                      ? 'attn'
+                      : notchPeek.total > 0
+                        ? 'idle'
+                        : 'empty'
               }
               aria-hidden
             >

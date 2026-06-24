@@ -13,14 +13,15 @@ import { clearStaged } from './stagingStore'
 import { clearLiveTray } from './sentTrayStore'
 import IslandPanel from './IslandPanel'
 import IslandHome from './IslandHome'
-import IslandSettings from './IslandSettings'
+import IslandSettings, { type SimStatus } from './IslandSettings'
 import IslandOnboarding from './IslandOnboarding'
-import type { IslandAppMessagePart, IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta, IslandWfRun, IslandView } from './types'
+import type { AgentError, IslandAppMessagePart, IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta, IslandWfRun, IslandView } from './types'
 import { applyWfRun } from '../../../main/wf-run-state.mjs'
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
 const DEBUG_FAKE_HOME_AGENTS_KEY = 'blitzos.debug.showFakeHomeAgents'
+const DEBUG_SIMULATE_STATUS_KEY = 'blitzos.debug.simulateStatus' // armed fake status injected on the next send (debug)
 // Real (non-debug) preference: workflow kanban boards render expanded by default instead of the collapsed pill.
 // Defaults ON (unset key reads true) so workflow always shows; the user can toggle it off in Settings.
 const WORKFLOW_ALWAYS_SHOW_KEY = 'blitzos.workflowAlwaysShow'
@@ -61,6 +62,7 @@ type ChatAction = {
   archivedSessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }>
   threads?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown; parts?: unknown }>>
   status?: Record<string, string>
+  errors?: Record<string, AgentError>
 }
 type AgentMutationResult = { ok?: boolean; error?: string; archived?: boolean; title?: string }
 type TerminalAction = {
@@ -105,6 +107,15 @@ function readDebugFakeHomeAgents(): boolean {
     return window.localStorage.getItem(DEBUG_FAKE_HOME_AGENTS_KEY) === '1'
   } catch {
     return false
+  }
+}
+const SIM_STATUS_VALUES: readonly SimStatus[] = ['off', 'connection', 'usage-limit', 'server-error', 'rate-limit', 'auth', 'crash', 'reconnecting']
+function readDebugSimulateStatus(): SimStatus {
+  try {
+    const v = window.localStorage.getItem(DEBUG_SIMULATE_STATUS_KEY) as SimStatus | null
+    return v && SIM_STATUS_VALUES.includes(v) ? v : 'off'
+  } catch {
+    return 'off'
   }
 }
 function readWorkflowAlwaysShow(): boolean {
@@ -222,11 +233,15 @@ export function NotchHost({
   const [archivedSessions, setArchivedSessions] = useState<IslandSession[]>([])
   const [threads, setThreads] = useState<Record<string, IslandMessage[]>>({})
   const [status, setStatus] = useState<Record<string, string>>({})
+  const [errors, setErrors] = useState<Record<string, AgentError>>({}) // per-agent last-problem detail (id -> AgentError)
   const [milestones, setMilestones] = useState<Record<string, IslandMilestone[]>>({})
   const [runs, setRuns] = useState<Record<string, IslandWfRun[]>>({}) // per-agent live workflow runs (inline kanban)
   const [terminals, setTerminals] = useState<Record<string, IslandTerminalMeta>>({})
   const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
   const [debugFakeHomeAgents, setDebugFakeHomeAgents] = useState(readDebugFakeHomeAgents)
+  const [debugSimStatus, setDebugSimStatus] = useState<SimStatus>(readDebugSimulateStatus)
+  const debugSimStatusRef = useRef<SimStatus>(debugSimStatus)
+  debugSimStatusRef.current = debugSimStatus
   const [workflowAlwaysShow, setWorkflowAlwaysShow] = useState(readWorkflowAlwaysShow)
   const [activeApp, setActiveApp] = useState<IslandAppMessagePart | null>(initialActiveApp)
   const [appViewerOpen, setAppViewerOpen] = useState(Boolean(initialActiveApp))
@@ -276,6 +291,14 @@ export function NotchHost({
     setDebugFakeHomeAgents(on)
     try {
       window.localStorage.setItem(DEBUG_FAKE_HOME_AGENTS_KEY, on ? '1' : '0')
+    } catch {
+      /* debug-only persistence */
+    }
+  }
+  const chooseDebugSimStatus = (kind: SimStatus): void => {
+    setDebugSimStatus(kind)
+    try {
+      window.localStorage.setItem(DEBUG_SIMULATE_STATUS_KEY, kind)
     } catch {
       /* debug-only persistence */
     }
@@ -475,6 +498,7 @@ export function NotchHost({
         applyArchivedSessions((snap.archivedSessions || []).map(mapSession))
         setThreads(mapThreads(snap.threads))
         applyStatus(snap.status || {})
+        setErrors((snap.errors || {}) as Record<string, AgentError>)
         setMilestones((snap.milestones || {}) as Record<string, IslandMilestone[]>)
         setRuns((snap.runs || {}) as Record<string, IslandWfRun[]>)
       })
@@ -489,6 +513,9 @@ export function NotchHost({
         if (Array.isArray(act.archivedSessions)) applyArchivedSessions(act.archivedSessions.map(mapSession))
         if (act.threads) setThreads(mapThreads(act.threads))
         if (act.status) applyStatus(act.status)
+        // errors rides the same chat broadcast as status (host updateChatHubState). An override-only push (the wake
+        // watchdog's status map) omits it, so a missing field LEAVES the current detail; an empty {} CLEARS it.
+        if (act.errors) setErrors(act.errors)
       } else if (act.type === 'milestone' && act.agentId) {
         const text = String(act.text || '').trim()
         if (!text) return
@@ -709,6 +736,17 @@ export function NotchHost({
   const activeMilestones = activeId ? milestones[activeId] || [] : []
   const activeRuns = activeId ? runs[activeId] || [] : []
   const activeStatus = activeId ? status[activeId] || activeSession?.status || 'idle' : 'idle'
+  const activeError = activeId ? errors[activeId] : undefined
+  // Retry after a (retryable) error: a gentle nudge re-wakes the agent and, being a user message, clears the sticky
+  // 'error' status. Goes through the normal send path (NOT the debug intercept), so a simulated error clears too.
+  const onRetryAgent = (): void => {
+    if (!activeId) return
+    try {
+      window.agentOS?.sendMessage?.('Please try that again.', activeId)
+    } catch {
+      /* no bridge */
+    }
+  }
 
   const goPage = (next: number): void => {
     const nextPage = N === 0 ? 0 : clamp(next, 1, N)
@@ -832,6 +870,17 @@ export function NotchHost({
     if (!activeId) return // no live agent yet (transient, pre-boot) — never blind-spawn on a send
     clearStaged(activeId)
     clearLiveTray(activeId) // IslandPanel already froze the tray onto this message; drop the mirror so it can't re-attach next send
+    // DEBUG: while a fake status is armed (Settings → Simulate agent status), the send injects that status onto the
+    // active agent instead of reaching it — so the four status surfaces can be eyeballed. Pick Off to resume normal.
+    const sim = debugSimStatusRef.current
+    if (sim !== 'off') {
+      try {
+        window.agentOS?.debugForceStatus?.(activeId, sim)
+      } catch {
+        /* debug-only bridge */
+      }
+      return
+    }
     try {
       window.agentOS?.sendMessage?.(text, activeId)
     } catch {
@@ -996,6 +1045,8 @@ export function NotchHost({
             onToggleWorkflowAlwaysShow={chooseWorkflowAlwaysShow}
             showActiveTerminal={debugActiveTerminal}
             onToggleActiveTerminal={chooseDebugActiveTerminal}
+            simulateStatus={debugSimStatus}
+            onSimulateStatus={chooseDebugSimStatus}
             archivedSessions={archivedSessions}
             onRestoreAgent={restoreAgent}
             onDeleteAgent={deleteArchivedAgent}
@@ -1035,6 +1086,8 @@ export function NotchHost({
             milestones={activeMilestones}
             runs={activeRuns}
             status={activeStatus}
+            errorDetail={activeError}
+            onRetry={onRetryAgent}
             activeId={activeId}
             peek={peek}
             onSend={onSend}

@@ -64,6 +64,8 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     milestones,
     runs: runsProp,
     status,
+    errorDetail,
+    onRetry,
     activeId,
     peek,
     onSend,
@@ -657,10 +659,12 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     return -1
   })()
   const latestDetail = detailRows[detailRows.length - 1]?.label
-  const inlineDetailText = latestDetail || (dotStatus(status) === 'idle' ? statusLabel(status) : `${statusLabel(status)}…`)
-  const showInlineDetails = Boolean(activeId && (latestDetail || dotStatus(status) !== 'idle' || detailsOpen))
+  // On error, the SPECIFIC problem Claude reported ("Network error" / "Usage limit reached") wins over a stale
+  // tool-row label or the generic "Problem", so the user sees what actually broke.
+  const inlineDetailText = errorDetail?.title || latestDetail || (dotStatus(status) === 'idle' ? statusLabel(status) : `${statusLabel(status)}…`)
+  const showInlineDetails = Boolean(activeId && (errorDetail || latestDetail || dotStatus(status) !== 'idle' || detailsOpen))
   const inlineDetails = showInlineDetails ? (
-    <div className={`isl-inline-details${detailsOpen ? ' open' : ''}`} data-status={dotStatus(status)}>
+    <div className={`isl-inline-details${detailsOpen ? ' open' : ''}${errorDetail ? ' has-error' : ''}`} data-status={dotStatus(status)}>
       <button type="button" className="isl-inline-details-summary" onClick={toggleDetails}>
         <span className="isl-inline-status-dot" aria-hidden />
         <span className="isl-inline-details-text">{inlineDetailText}</span>
@@ -668,6 +672,19 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           {detailsOpen ? '▾' : '›'}
         </span>
       </button>
+      {/* On error: a one-line "what to do" hint + a Retry (only when a plain retry makes sense — not for auth /
+          usage-limit / full-context, where retrying won't help). Always visible (not gated by the steps expand) so
+          the user is never left in the dark about a problem. */}
+      {errorDetail && (errorDetail.hint || (errorDetail.retryable && onRetry)) && (
+        <div className="isl-inline-error">
+          {errorDetail.hint && <span className="isl-inline-error-hint">{errorDetail.hint}</span>}
+          {errorDetail.retryable && onRetry && (
+            <button type="button" className="isl-inline-retry" onClick={onRetry}>
+              Retry
+            </button>
+          )}
+        </div>
+      )}
       {detailsOpen && (
         <div className="isl-inline-detail-rows">
           {detailRows.length === 0 ? (
@@ -763,7 +780,10 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           </div>
           <div className="isl-feed" ref={feedRef}>
             {messages.length === 0 && runs.length === 0 ? (
-              <div className="isl-empty">No messages yet</div>
+              // BRAND-NEW / pre-transcript agent: there's no message bubble to anchor the inline status under yet, but
+              // the agent already has a status (warming up, or an error hit during startup). Show that standalone so a
+              // fresh chat is never blank+silent — otherwise the user sends a message and sees nothing happening.
+              inlineDetails || <div className="isl-empty">No messages yet</div>
             ) : (
               <>
                 {/* runs that started before any message render at the top; the rest are interleaved below */}
@@ -816,6 +836,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                     </Fragment>
                   )
                 })}
+                {/* No user turn to anchor under (e.g. an agent-only transcript that then errored): trail the inline
+                    status at the bottom so a problem still surfaces. (When a user turn exists it renders above.) */}
+                {lastVisibleTurnIndex < 0 && inlineDetails}
               </>
             )}
           </div>

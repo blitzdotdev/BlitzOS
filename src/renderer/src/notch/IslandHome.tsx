@@ -11,6 +11,14 @@ import blitzAppIcon from '../assets/blitz-app-icon.png'
 const isActiveStatus = (value: string): boolean => value === 'working' || value === 'starting'
 const isWorkingStatus = (value: string): boolean => value === 'working'
 const isWaitingStatus = (value: string): boolean => value === 'waiting'
+const isErrorStatus = (value: string): boolean => value === 'error'
+// 'reconnecting' is the wake-watchdog's island override (a transient self-healing state), not a raw chat status.
+const isReconnectingStatus = (value: string): boolean => value === 'reconnecting'
+// The home card's visual bucket. Error/reconnecting must rank ABOVE 'done' so a failed agent never reads as a
+// green "Done" success (it shares the not-working/not-waiting shape with a finished agent otherwise).
+type HomeState = 'waiting' | 'working' | 'reconnecting' | 'error' | 'done'
+const homeStateFor = (value: string): HomeState =>
+  isErrorStatus(value) ? 'error' : isReconnectingStatus(value) ? 'reconnecting' : isWaitingStatus(value) ? 'waiting' : isWorkingStatus(value) ? 'working' : 'done'
 const CHECK_PATH = 'm5 12 4 4L19 6'
 const ALERT_PATH = 'M12 7v6M12 17h.01'
 
@@ -38,7 +46,8 @@ export function IslandHome({
   })
   const railSessions = sessions.filter((s) => {
     const rawStatus = status[s.id] || s.status
-    return isWorkingStatus(rawStatus) || isWaitingStatus(rawStatus) || doneAgents.has(s.id)
+    // An errored / reconnecting agent always belongs in the rail — it needs the user's eye, not hiding behind 'done'.
+    return isWorkingStatus(rawStatus) || isWaitingStatus(rawStatus) || isErrorStatus(rawStatus) || isReconnectingStatus(rawStatus) || doneAgents.has(s.id)
   })
   return (
     <div className={`nh-island isl-home${railSessions.length ? ' has-working has-home-rail' : ''}`} style={{ paddingTop: top }}>
@@ -59,7 +68,7 @@ export function IslandHome({
               <div className="isl-home-working">
                 {railSessions.map((s) => {
                   const rawStatus = status[s.id] || s.status
-                  const homeState = isWaitingStatus(rawStatus) ? 'waiting' : isWorkingStatus(rawStatus) ? 'working' : 'done'
+                  const homeState = homeStateFor(rawStatus)
                   return (
                     <button
                       type="button"
@@ -79,7 +88,7 @@ export function IslandHome({
                                 <path d={CHECK_PATH} />
                               </svg>
                             </span>
-                          ) : homeState === 'waiting' ? (
+                          ) : homeState === 'waiting' || homeState === 'error' ? (
                             <span className="isl-working-agent-alert" aria-hidden>
                               <svg viewBox="0 0 24 24" focusable="false">
                                 <path d={ALERT_PATH} />
@@ -88,7 +97,15 @@ export function IslandHome({
                           ) : (
                             <span className="isl-working-agent-dot" aria-hidden />
                           )}
-                          {homeState === 'done' ? 'Done' : homeState === 'waiting' ? 'Response Needed' : 'Working'}
+                          {homeState === 'done'
+                            ? 'Done'
+                            : homeState === 'waiting'
+                              ? 'Response Needed'
+                              : homeState === 'error'
+                                ? 'Problem'
+                                : homeState === 'reconnecting'
+                                  ? 'Reconnecting'
+                                  : 'Working'}
                         </span>
                       </span>
                     </button>

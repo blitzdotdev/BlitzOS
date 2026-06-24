@@ -75,6 +75,7 @@ const ACTIVITY_PROPS = new Set([
 ])
 const LENGTH_BUCKETS = new Set(['0', '1-80', '81-280', '281-1000', '1001+'])
 const MS_BUCKETS = new Set(['<100ms', '100-500ms', '500ms-2s', '2s-10s', '10s+'])
+const ACTIVITY_CHANNELS = new Set(['production', 'preview', 'development', 'unknown'])
 
 async function gate(c: any): Promise<any | null> {
   const db = c.get('$db')
@@ -83,6 +84,17 @@ async function gate(c: any): Promise<any | null> {
   if (!want || !k || k !== want) return null
   db.auth = { uid: 'ingest', role: 'superadmin', superadmin: true }
   return db
+}
+
+async function activityDashboardGate(c: any): Promise<any | null> {
+  const db = c.get('$db')
+  const p = c.req.header('x-dashboard-password') || c.req.query('p') || c.req.query('password') || ''
+  const want = await db.secretResolver.resolve('$ACTIVITY_DASH_PASSWORD').catch(() => '')
+  if (want && p && p === want) {
+    db.auth = { uid: 'activity-dashboard', role: 'superadmin', superadmin: true }
+    return db
+  }
+  return gate(c)
 }
 
 async function readMultipart(c: any): Promise<{ values: any; file: ArrayBuffer | null }> {
@@ -129,6 +141,29 @@ function cleanActivityProps(props: any): Record<string, unknown> {
     }
   }
   return out
+}
+
+function cleanActivityChannel(value: unknown, branch = '', run = 0): string {
+  const explicit = String(value || '').trim()
+  if (ACTIVITY_CHANNELS.has(explicit)) return explicit
+  const b = String(branch || '').toLowerCase()
+  if (b === 'main' || b === 'master' || b === 'production') return 'production'
+  if (b === 'dev' || b === 'development' || b === 'verify') return 'development'
+  return Number(run) > 0 ? 'preview' : 'unknown'
+}
+
+function activitySessionChannel(session: any): string {
+  return cleanActivityChannel(session?.channel, session?.branch, session?.run)
+}
+
+function parseActivityProps(props: any): Record<string, unknown> {
+  if (props && typeof props === 'object' && !Array.isArray(props)) return props as Record<string, unknown>
+  try {
+    const parsed = JSON.parse(String(props || '{}'))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
 }
 
 userApp.get('/ping', (c) => c.json({ ok: true, t: Date.now() }))
@@ -245,6 +280,7 @@ userApp.post('/ingest/activity', async (c) => {
     version: String(v.version || '').slice(0, 64),
     branch: String(v.branch || '').slice(0, 64),
     run: Number(v.run) || 0,
+    channel: cleanActivityChannel(v.channel, v.branch, v.run),
     platform: String(v.platform || '').slice(0, 32),
     events: events.length,
     t0,
@@ -255,9 +291,9 @@ userApp.post('/ingest/activity', async (c) => {
     await db
       .rawSQL({
         q:
-          'UPDATE activity_sessions SET install=?, version=?, branch=?, run=?, platform=?, events=events+?, ' +
+          'UPDATE activity_sessions SET install=?, version=?, branch=?, run=?, channel=?, platform=?, events=events+?, ' +
           't0=CASE WHEN t0=0 OR t0>? THEN ? ELSE t0 END, t1=CASE WHEN t1<? THEN ? ELSE t1 END WHERE sid=?',
-        v: [session.install, session.version, session.branch, session.run, session.platform, session.events, t0, t0, t1, t1, sid]
+        v: [session.install, session.version, session.branch, session.run, session.channel, session.platform, session.events, t0, t0, t1, t1, sid]
       })
       .run()
   } else {
@@ -298,15 +334,107 @@ userApp.get('/dash/sdata/:sid', async (c) => {
   return c.json({ session: ses?.[0] || null, segments: segs || [], frames: frames || [] })
 })
 
-userApp.get('/dash/activity/data', async (c) => {
-  const db = await gate(c)
+async function activityData(c: any) {
+  const db = await activityDashboardGate(c)
   if (!db) return c.json({ error: 'forbidden' }, 403)
-  const sessions = await db.table('activity_sessions').select({ order: '-updated', limit: 200 })
-  const events = await db.table('activity_events').select({ order: '-created', limit: 500 })
+  const daysRaw = String(c.req.query('days') || '30')
+  const days = daysRaw === 'all' ? 0 : Math.max(1, Math.min(365, Number(daysRaw) || 30))
+  const cutoff = days ? Date.now() - days * 86_400_000 : 0
+  const channelRaw = String(c.req.query('channel') || 'production')
+  const channel = channelRaw === 'all' || ACTIVITY_CHANNELS.has(channelRaw) ? channelRaw : 'production'
+  const eventName = String(c.req.query('event') || 'all')
+  const eventFilter = eventName !== 'all' && ACTIVITY_EVENT_NAMES.has(eventName) ? eventName : ''
+  const q = String(c.req.query('q') || '').trim().toLowerCase().slice(0, 80)
+  const before = Number(c.req.query('before')) || 0
+  const sessionLimit = Math.max(1, Math.min(5000, Number(c.req.query('sessionLimit')) || 2000))
+  const eventLimit = Math.max(1, Math.min(100, Number(c.req.query('eventLimit')) || 25))
+  const scanLimit = Math.max(250, Math.min(5000, Number(c.req.query('scanLimit')) || eventLimit * 40))
+
+  const allSessions = await db.table('activity_sessions').select({ order: '-updated', limit: sessionLimit })
+  const sessions = (allSessions || []).filter((session: any) => {
+    if (cutoff && Math.max(Number(session.t1) || 0, Number(session.t0) || 0, Date.parse(String(session.updated || session.created || '')) || 0) < cutoff) return false
+    const ch = activitySessionChannel(session)
+    return channel === 'all' || ch === channel
+  }).map((session: any) => ({ ...session, channel: activitySessionChannel(session) }))
+  const sessionBySid = new Map(sessions.map((session: any) => [String(session.sid || ''), session]))
+  const where: string[] = []
+  if (cutoff) where.push(`t >= ${Math.floor(cutoff)}`)
+  if (before) where.push(`t < ${Math.floor(before)}`)
+  if (eventFilter) where.push(`name == "${eventFilter}"`)
+  const rawEvents = await db.table('activity_events').select({
+    order: '-created',
+    limit: scanLimit,
+    ...(where.length ? { where: where.join(' && ') } : {})
+  })
+
   const counts: Record<string, number> = {}
-  for (const ev of events || []) counts[String(ev.name || '')] = (counts[String(ev.name || '')] || 0) + 1
-  return c.json({ sessions: sessions || [], events: events || [], counts })
-})
+  const onboarding = {
+    introSeen: new Set<string>(),
+    introAdvanced: new Set<string>(),
+    permissions: new Set<string>(),
+    browser: new Set<string>(),
+    done: new Set<string>(),
+    completed: new Set<string>()
+  }
+  const activation = {
+    agentSpawned: new Set<string>(),
+    chatSent: new Set<string>(),
+    connectorConnected: new Set<string>(),
+    choiceAnswered: new Set<string>(),
+    appCardOpened: new Set<string>()
+  }
+  const events: any[] = []
+  let scanned = 0
+  let nextBefore = 0
+  for (const ev of rawEvents || []) {
+    scanned++
+    nextBefore = Number(ev.t) || nextBefore
+    const session = sessionBySid.get(String(ev.sid || ''))
+    if (!session) continue
+    const props = parseActivityProps(ev.props)
+    const haystack = `${ev.name || ''} ${ev.sid || ''} ${JSON.stringify(props)}`.toLowerCase()
+    if (q && !haystack.includes(q)) continue
+    counts[String(ev.name || '')] = (counts[String(ev.name || '')] || 0) + 1
+    const install = String((session as any).install || ev.sid || '')
+    if (ev.name === 'onboarding.step_viewed') {
+      if (props.step === 'intro' && (!props.count || Number(props.count) <= 1)) onboarding.introSeen.add(install)
+      if (props.step === 'intro' && Number(props.count) > 1) onboarding.introAdvanced.add(install)
+      if (props.step === 'permissions') onboarding.permissions.add(install)
+      if (props.step === 'browser') onboarding.browser.add(install)
+      if (props.step === 'done') onboarding.done.add(install)
+    } else if (ev.name === 'onboarding.completed') {
+      onboarding.completed.add(install)
+    } else if (ev.name === 'agent.spawned') {
+      activation.agentSpawned.add(install)
+    } else if (ev.name === 'chat.message_sent') {
+      activation.chatSent.add(install)
+    } else if (ev.name === 'connector.connected' && props.success !== false) {
+      activation.connectorConnected.add(install)
+    } else if (ev.name === 'choice.answered') {
+      activation.choiceAnswered.add(install)
+    } else if (ev.name === 'app_card.opened') {
+      activation.appCardOpened.add(install)
+    }
+    if (events.length < eventLimit) events.push(ev)
+  }
+  return c.json({
+    generatedAt: Date.now(),
+    filters: { days: daysRaw, channel, event: eventFilter || 'all', q, eventLimit, before },
+    sessions,
+    events,
+    counts,
+    summary: {
+      scanned,
+      hasMore: scanned >= scanLimit,
+      nextBefore,
+      onboarding: Object.fromEntries(Object.entries(onboarding).map(([key, value]) => [key, value.size])),
+      activation: Object.fromEntries(Object.entries(activation).map(([key, value]) => [key, value.size]))
+    }
+  })
+}
+
+userApp.get('/dash/activity/data', activityData)
+userApp.get('/activity/data', activityData)
 
 async function serveObject(c: any, table: string, contentType: string): Promise<Response> {
   const db = await gate(c)
@@ -327,6 +455,191 @@ userApp.get('/seg/:id', (c) => serveObject(c, 'segments', 'application/gzip'))
 userApp.get('/frame/:id', (c) => serveObject(c, 'frames', 'image/jpeg'))
 
 // ---- dashboard UI (public shell; all data calls above are key-gated) ----
+
+const ACTIVITY_DASH_HTML = `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>BlitzOS Activity</title>
+<style>
+:root{--bg:#050608;--panel:#101317;--panel2:#151a20;--line:#242b35;--tx:#eef4fb;--muted:#8d98a7;--soft:#b5becb;--blue:#2f8cff;--cyan:#52d5ff;--green:#50df83;--yellow:#ffd45c;--red:#ff6574;--violet:#a78bfa}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 18% -12%,rgba(47,140,255,.24),transparent 32%),radial-gradient(circle at 88% 8%,rgba(80,223,131,.10),transparent 28%),var(--bg);color:var(--tx);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif}
+button,input,select{font:inherit}button{border:0;border-radius:10px;padding:9px 13px;background:var(--blue);color:white;font-weight:700;cursor:pointer}button.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--tx)}button:disabled{opacity:.42;cursor:default}input,select{background:#080a0d;color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:9px 11px}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.muted{color:var(--muted)}.row{display:flex;align-items:center;flex-wrap:wrap}
+.shell{max-width:1320px;margin:0 auto;padding:22px}.top{display:flex;align-items:flex-start;gap:18px;margin-bottom:20px}.brand{display:flex;gap:14px;align-items:center;min-width:0}.logo{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#35d7ff,#2f8cff 55%,#9b5cff);box-shadow:0 16px 50px rgba(47,140,255,.25)}h1{font-size:27px;line-height:1.05;margin:0 0 5px}.top p{margin:0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{background:rgba(16,19,23,.86);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 24px 70px rgba(0,0,0,.22)}.metric{grid-column:span 2;min-height:116px}.metric .label{text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-size:11px;font-weight:800}.metric .value{font-size:34px;font-weight:800;margin:9px 0 2px}.metric .sub{color:var(--muted);font-size:12px}.wide{grid-column:span 7}.side{grid-column:span 5}.full{grid-column:span 12}.section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.section-title h2{font-size:15px;margin:0}.bars{display:flex;flex-direction:column;gap:10px}.barrow{display:grid;grid-template-columns:145px 1fr 68px;gap:10px;align-items:center}.barlabel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--soft);font-weight:650}.bartrack{height:12px;background:#090c10;border:1px solid var(--line);border-radius:999px;overflow:hidden}.barfill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--cyan))}.barfill.green{background:linear-gradient(90deg,#2bd97f,#9afcab)}.barfill.yellow{background:linear-gradient(90deg,#f7b733,#ffd45c)}.barfill.red{background:linear-gradient(90deg,#ff6574,#ff9aa3)}.barval{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px}.chips{display:flex;gap:8px;flex-wrap:wrap}.chip{border:1px solid var(--line);background:var(--panel2);border-radius:999px;padding:5px 9px;color:var(--soft);font-size:12px}.chip b{color:var(--tx);margin-left:5px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:14px}table{width:100%;border-collapse:collapse;background:rgba(12,15,19,.7)}th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:12px;vertical-align:top}th{position:sticky;top:0;background:#11161c;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:10px;z-index:1}tr:hover td{background:rgba(47,140,255,.06)}.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--panel2);border-radius:999px;padding:3px 8px;color:var(--soft);font-size:11px}.dot{width:7px;height:7px;border-radius:50%;background:var(--blue)}.dot.green{background:var(--green)}.dot.yellow{background:var(--yellow)}.dot.red{background:var(--red)}.dot.violet{background:var(--violet)}.props{max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.login{max-width:430px;margin:110px auto;background:rgba(16,19,23,.92);border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:0 30px 100px rgba(0,0,0,.35)}.login h1{font-size:22px}.login input{width:100%;margin:14px 0}.empty{padding:28px;text-align:center;color:var(--muted)}
+.loading{max-width:520px;margin:110px auto;background:linear-gradient(180deg,rgba(21,26,32,.94),rgba(10,13,17,.94));border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:0 32px 120px rgba(0,0,0,.36)}.load-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}.load-dot{width:48px;height:48px;border-radius:16px;background:linear-gradient(135deg,#35d7ff,#2f8cff 55%,#9b5cff);box-shadow:0 0 0 0 rgba(82,213,255,.38);animation:pulse 1.4s infinite}.load-title{font-weight:850;font-size:20px}.load-bar{height:10px;border-radius:999px;background:#080a0d;border:1px solid var(--line);overflow:hidden}.load-bar span{display:block;width:42%;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--cyan));animation:sweep 1.25s ease-in-out infinite}.load-steps{display:grid;gap:8px;margin-top:16px;color:var(--muted);font-size:13px}.load-steps span:before{content:'•';color:var(--cyan);margin-right:8px}@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(82,213,255,.30)}50%{box-shadow:0 0 0 12px rgba(82,213,255,0)}}@keyframes sweep{0%{transform:translateX(-110%)}100%{transform:translateX(250%)}}
+@media(max-width:980px){.metric{grid-column:span 4}.wide,.side{grid-column:span 12}.split{grid-template-columns:1fr}.top{flex-direction:column}.controls{margin-left:0;justify-content:flex-start}}@media(max-width:620px){.metric{grid-column:span 6}.shell{padding:14px}.barrow{grid-template-columns:1fr}.barval{text-align:left}}
+</style></head><body>
+<div id="app"></div>
+<script>
+const PASS_KEY='blitzActivityDashboardPassword'
+const EVENT_NAMES=['app.started','app.focused','app.quit','island.opened','island.closed','island.view_changed','settings.opened','onboarding.step_viewed','onboarding.completed','agent.spawned','agent.selected','agent.status_changed','agent.archived','agent.restored','agent.deleted','agent.renamed','chat.message_sent','choice.shown','choice.answered','app_card.opened','app_card.closed','connector.picker_opened','connector.connected','connector.disconnected','tool.called']
+const state={range:'30',channel:'production',q:'',event:'all',eventLimit:'25',before:0,pageStack:[],data:null,password:new URLSearchParams(location.search).get('p')||localStorage.getItem(PASS_KEY)||''}
+if(new URLSearchParams(location.search).get('p')){localStorage.setItem(PASS_KEY,state.password);history.replaceState(null,'',location.pathname)}
+const app=document.getElementById('app')
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+const fmt=n=>Number(n||0).toLocaleString()
+const fmtT=t=>t?new Date(+t).toLocaleString():'-'
+const short=s=>String(s||'').slice(0,8)||'-'
+const parseProps=e=>{try{return typeof e.props==='string'?JSON.parse(e.props||'{}'):(e.props||{})}catch{return {}}}
+const cutoff=days=>days==='all'?0:Date.now()-Number(days)*86400000
+const rowTime=r=>Math.max(+r.t1||0,+r.t0||0,new Date(r.updated||r.created||0).getTime()||0)
+const evTime=e=>+e.t||new Date(e.created||0).getTime()||0
+function byInstall(rows){const s=new Set();for(const r of rows){if(r.install)s.add(r.install)}return s}
+function loading(){
+  app.innerHTML='<div class="loading"><div class="load-head"><div class="load-dot"></div><div><div class="load-title">Loading activity</div><div class="muted">Fetching production-safe usage data.</div></div></div><div class="load-bar"><span></span></div><div class="load-steps"><span>Applying build and time filters</span><span>Aggregating onboarding and activation</span><span>Loading the latest event page</span></div></div>'
+}
+function login(msg=''){
+  app.innerHTML='<div class="login"><div class="logo"></div><h1>BlitzOS Activity</h1><p class="muted">Enter the dashboard password to view privacy-safe product logging.</p>'+(msg?'<p style="color:var(--red)">'+esc(msg)+'</p>':'')+'<input id="pw" type="password" placeholder="Dashboard password" autofocus/><button id="open">Open dashboard</button></div>'
+  document.getElementById('open').onclick=()=>{state.password=document.getElementById('pw').value.trim();localStorage.setItem(PASS_KEY,state.password);load()}
+  document.getElementById('pw').onkeydown=e=>{if(e.key==='Enter')document.getElementById('open').click()}
+}
+async function load(){
+  if(!state.password)return login()
+  loading()
+  const params=new URLSearchParams({p:state.password,days:state.range,channel:state.channel,event:state.event,q:state.q,eventLimit:state.eventLimit,sessionLimit:'5000'})
+  if(state.before)params.set('before',String(state.before))
+  const res=await fetch('/dash/activity/data?'+params.toString())
+  if(res.status===403){localStorage.removeItem(PASS_KEY);state.password='';return login('Wrong password.')}
+  if(!res.ok){app.innerHTML='<div class="shell"><p style="color:var(--red)">Failed to load: '+esc(res.status)+'</p></div>';return}
+  state.data=await res.json()
+  render()
+}
+function current(){
+  return {sessions:state.data.sessions||[],events:state.data.events||[]}
+}
+function metric(label,value,sub){return '<div class="card metric"><div class="label">'+esc(label)+'</div><div class="value">'+esc(value)+'</div><div class="sub">'+esc(sub||'')+'</div></div>'}
+function render(){
+  const allS=state.data.sessions||[], now=Date.now()
+  const dau=byInstall(allS.filter(s=>rowTime(s)>=now-86400000)).size
+  const wau=byInstall(allS.filter(s=>rowTime(s)>=now-7*86400000)).size
+  const mau=byInstall(allS.filter(s=>rowTime(s)>=now-30*86400000)).size
+  const {sessions,events}=current()
+  const installs=byInstall(sessions).size
+  const sent=state.data.counts&&state.data.counts['chat.message_sent']||0
+  app.innerHTML='<div class="shell">'+renderHeader(EVENT_NAMES)+'<div class="grid">'+
+    metric('DAU',dau,'active installs, 24h')+
+    metric('WAU',wau,'active installs, 7d')+
+    metric('MAU',mau,'active installs, 30d')+
+    metric('Sessions',fmt(sessions.length),fmt(installs)+' installs in range')+
+    metric('Events',fmt(events.length),'current event page')+
+    metric('Chats sent',fmt(sent),'message metadata only')+
+    onboardingCard(events,sessions)+activationCard(events,sessions)+eventsCard(events)+sessionsCard(sessions)+
+    '</div></div>'
+  bindControls()
+}
+function renderHeader(uniqueEvents){
+  return '<div class="top"><div class="brand"><div class="logo"></div><div><h1>BlitzOS Activity</h1><p>Privacy-safe product overview. No chat text, titles, URLs, paths, args, results, or terminal output.</p></div></div><div class="controls">'+
+    '<select id="range"><option value="1">Last 24h</option><option value="7">Last 7d</option><option value="30">Last 30d</option><option value="all">All loaded</option></select>'+
+    '<select id="channel"><option value="production">Production only</option><option value="all">All builds</option><option value="preview">Preview builds</option><option value="development">Dev builds</option><option value="unknown">Unknown builds</option></select>'+
+    '<select id="event"><option value="all">All events</option>'+uniqueEvents.map(e=>'<option value="'+esc(e)+'">'+esc(e)+'</option>').join('')+'</select>'+
+    '<select id="eventLimit"><option value="25">25 recent</option><option value="50">50 recent</option><option value="100">100 recent</option></select>'+
+    '<input id="q" placeholder="Search safe props"/><button class="ghost" id="refresh">Refresh</button><button class="ghost" id="logout">Lock</button></div></div>'
+}
+function bindControls(){
+  document.getElementById('range').value=state.range
+  document.getElementById('channel').value=state.channel
+  document.getElementById('event').value=state.event
+  document.getElementById('eventLimit').value=state.eventLimit
+  document.getElementById('q').value=state.q
+  const resetAndLoad=()=>{state.before=0;state.pageStack=[];load()}
+  document.getElementById('range').onchange=e=>{state.range=e.target.value;resetAndLoad()}
+  document.getElementById('channel').onchange=e=>{state.channel=e.target.value;resetAndLoad()}
+  document.getElementById('event').onchange=e=>{state.event=e.target.value;resetAndLoad()}
+  document.getElementById('eventLimit').onchange=e=>{state.eventLimit=e.target.value;resetAndLoad()}
+  let qTimer=0
+  document.getElementById('q').oninput=e=>{state.q=e.target.value;clearTimeout(qTimer);qTimer=setTimeout(resetAndLoad,250)}
+  document.getElementById('refresh').onclick=()=>load()
+  document.getElementById('logout').onclick=()=>{localStorage.removeItem(PASS_KEY);state.password='';login()}
+  const older=document.getElementById('older')
+  if(older)older.onclick=()=>{const next=state.data&&state.data.summary&&state.data.summary.nextBefore;if(!next)return;state.pageStack.push(state.before||0);state.before=next;load()}
+  const newer=document.getElementById('newer')
+  if(newer)newer.onclick=()=>{state.before=state.pageStack.pop()||0;load()}
+}
+function countInstalls(events,name,pred=()=>true,sessionsBySid=new Map()){
+  const set=new Set()
+  for(const e of events){if(e.name!==name)continue;const p=parseProps(e);if(!pred(p))continue;const s=sessionsBySid.get(e.sid);if(s&&s.install)set.add(s.install)}
+  return set.size
+}
+function bar(label,n,max,cls=''){return '<div class="barrow"><div class="barlabel">'+esc(label)+'</div><div class="bartrack"><div class="barfill '+cls+'" style="width:'+Math.max(2,Math.round(100*n/Math.max(1,max)))+'%"></div></div><div class="barval">'+fmt(n)+'</div></div>'}
+function onboardingCard(events,sessions){
+  const summary=state.data.summary&&state.data.summary.onboarding
+  if(summary){
+    const rows=[
+      ['Intro seen',summary.introSeen||0,''],
+      ['Intro advanced',summary.introAdvanced||0,''],
+      ['Permissions step',summary.permissions||0,'yellow'],
+      ['Browser step',summary.browser||0,'yellow'],
+      ['Done step',summary.done||0,'green'],
+      ['Completed',summary.completed||0,'green']
+    ]
+    const max=Math.max(1,...rows.map(r=>r[1]))
+    return '<div class="card wide"><div class="section-title"><h2>Onboarding funnel</h2><span class="muted">unique installs · filtered</span></div><div class="bars">'+rows.map(r=>bar(r[0],r[1],max,r[2])).join('')+'</div></div>'
+  }
+  const bySid=new Map(sessions.map(s=>[s.sid,s]))
+  const rows=[
+    ['Intro seen',countInstalls(events,'onboarding.step_viewed',p=>p.step==='intro'&&(!p.count||p.count===1),bySid),''],
+    ['Intro advanced',countInstalls(events,'onboarding.step_viewed',p=>p.step==='intro'&&Number(p.count)>1,bySid),''],
+    ['Permissions step',countInstalls(events,'onboarding.step_viewed',p=>p.step==='permissions',bySid),'yellow'],
+    ['Browser step',countInstalls(events,'onboarding.step_viewed',p=>p.step==='browser',bySid),'yellow'],
+    ['Done step',countInstalls(events,'onboarding.step_viewed',p=>p.step==='done',bySid),'green'],
+    ['Completed',countInstalls(events,'onboarding.completed',()=>true,bySid),'green']
+  ]
+  const max=Math.max(1,...rows.map(r=>r[1]))
+  return '<div class="card wide"><div class="section-title"><h2>Onboarding funnel</h2><span class="muted">unique installs</span></div><div class="bars">'+rows.map(r=>bar(r[0],r[1],max,r[2])).join('')+'</div></div>'
+}
+function activationCard(events,sessions){
+  const summary=state.data.summary&&state.data.summary.activation
+  if(summary){
+    const rows=[
+      ['Agent spawned',summary.agentSpawned||0,''],
+      ['Chat sent',summary.chatSent||0,'green'],
+      ['Connector connected',summary.connectorConnected||0,'yellow'],
+      ['Choice answered',summary.choiceAnswered||0,'violet'],
+      ['App card opened',summary.appCardOpened||0,'violet']
+    ]
+    const max=Math.max(1,...rows.map(r=>r[1]))
+    const counts=state.data.counts||{}
+    const top=Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>'<span class="chip">'+esc(k)+'<b>'+fmt(v)+'</b></span>').join('')
+    return '<div class="card side"><div class="section-title"><h2>Activation & adoption</h2><span class="muted">unique installs · filtered</span></div><div class="bars">'+rows.map(r=>bar(r[0],r[1],max,r[2])).join('')+'</div><div class="section-title" style="margin-top:16px"><h2>Top events</h2><span class="muted">scanned '+fmt(state.data.summary.scanned||0)+'</span></div><div class="chips">'+top+'</div></div>'
+  }
+  const bySid=new Map(sessions.map(s=>[s.sid,s]))
+  const rows=[
+    ['Agent spawned',countInstalls(events,'agent.spawned',()=>true,bySid),''],
+    ['Chat sent',countInstalls(events,'chat.message_sent',()=>true,bySid),'green'],
+    ['Connector connected',countInstalls(events,'connector.connected',p=>p.success!==false,bySid),'yellow'],
+    ['Choice answered',countInstalls(events,'choice.answered',()=>true,bySid),'violet'],
+    ['App card opened',countInstalls(events,'app_card.opened',()=>true,bySid),'violet']
+  ]
+  const max=Math.max(1,...rows.map(r=>r[1]))
+  const counts={}
+  for(const e of events)counts[e.name]=(counts[e.name]||0)+1
+  const top=Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>'<span class="chip">'+esc(k)+'<b>'+fmt(v)+'</b></span>').join('')
+  return '<div class="card side"><div class="section-title"><h2>Activation & adoption</h2><span class="muted">unique installs</span></div><div class="bars">'+rows.map(r=>bar(r[0],r[1],max,r[2])).join('')+'</div><div class="section-title" style="margin-top:16px"><h2>Top events</h2></div><div class="chips">'+top+'</div></div>'
+}
+function eventTone(name){
+  if(name.includes('completed')||name.includes('connected'))return 'green'
+  if(name.includes('waiting')||name.includes('choice'))return 'yellow'
+  if(name.includes('error')||name.includes('deleted'))return 'red'
+  if(name.includes('app_card'))return 'violet'
+  return ''
+}
+function eventsCard(events){
+  const rows=events.slice(0,800).map(e=>{
+    const p=parseProps(e), tone=eventTone(e.name)
+    return '<tr><td>'+fmtT(e.t)+'</td><td><span class="pill"><span class="dot '+tone+'"></span>'+esc(e.name)+'</span></td><td><code>'+esc(short(e.sid))+'</code></td><td class="props">'+esc(JSON.stringify(p))+'</td></tr>'
+  }).join('')
+  const summary=state.data.summary||{}
+  const pager='<div class="row" style="gap:8px"><button class="ghost" id="newer" '+(state.pageStack.length?'':'disabled')+'>Newer</button><button class="ghost" id="older" '+(summary.nextBefore?'':'disabled')+'>Older</button></div>'
+  return '<div class="card full"><div class="section-title"><h2>Recent events</h2><span class="muted">'+fmt(events.length)+' shown · '+fmt(summary.scanned||0)+' scanned</span>'+pager+'</div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Event</th><th>Session</th><th>Safe props</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+(events.length?'':'<div class="empty">No matching events.</div>')+'</div>'
+}
+function sessionsCard(sessions){
+  const rows=sessions.slice(0,500).map(s=>'<tr><td><code>'+esc(short(s.install))+'</code></td><td><code>'+esc(short(s.sid))+'</code></td><td>'+fmtT(s.t0)+'</td><td>'+fmtT(s.t1)+'</td><td>'+fmt(s.events)+'</td><td>'+esc(s.channel||'-')+'</td><td>'+esc(s.version||'-')+'</td><td>'+esc(s.platform||'-')+'</td></tr>').join('')
+  return '<div class="card full"><div class="section-title"><h2>Recent activity sessions</h2><span class="muted">'+fmt(sessions.length)+' loaded</span></div><div class="table-wrap"><table><thead><tr><th>Install</th><th>Session</th><th>First event</th><th>Last event</th><th>Events</th><th>Channel</th><th>Version</th><th>Platform</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'
+}
+load()
+</script></body></html>`
 
 const DASH_HTML = `<!doctype html>
 <html lang="en"><head>
@@ -518,6 +831,8 @@ document.addEventListener('keydown',e=>{if(!R||!location.hash.startsWith('#/s/')
 render()
 </script></body></html>`
 
+userApp.get('/activity', (c) => c.html(ACTIVITY_DASH_HTML))
+userApp.get('/dash/activity', (c) => c.html(ACTIVITY_DASH_HTML))
 userApp.get('/', (c) => c.redirect('/dash'))
 userApp.get('/dash', (c) => c.html(DASH_HTML))
 

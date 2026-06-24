@@ -134,6 +134,17 @@ ok('activity backend has separate key-gated tables and ingest/data routes',
     /userApp\.post\('\/ingest\/activity'[\s\S]*?const db = await gate\(c\)/.test(telemetryWorker) &&
     /cleanActivityProps/.test(telemetryWorker) &&
     /userApp\.get\('\/dash\/activity\/data'/.test(telemetryWorker))
+ok('activity dashboard is password-gated and exposes product overview UI',
+  /ACTIVITY_DASH_PASSWORD/.test(telemetryWorker) &&
+    /activityDashboardGate/.test(telemetryWorker) &&
+    /const ACTIVITY_DASH_HTML = `<!doctype html>/.test(telemetryWorker) &&
+    /DAU/.test(telemetryWorker) &&
+    /WAU/.test(telemetryWorker) &&
+    /MAU/.test(telemetryWorker) &&
+    /Onboarding funnel/.test(telemetryWorker) &&
+    /Activation & adoption/.test(telemetryWorker) &&
+    /userApp\.get\('\/activity'/.test(telemetryWorker) &&
+    /userApp\.get\('\/dash\/activity'/.test(telemetryWorker))
 ok('renderer: hit-window CLICK opens the island panel when closed, HOVER → open/close the panel',
   /onHandleClick\?\.\(\(\) => \{[\s\S]*?notchStateRef\.current === 'closed'[\s\S]*?toggleIsland\(\)/.test(app) &&
     /onHandleHover\?\.\(\(on\) =>/.test(app))

@@ -624,6 +624,15 @@ export function codexCliPath(): string | null {
   return codexPath
 }
 
+// Onboarding "is Claude Code installed?" check. `recheck` busts the memoised probe so the re-check button reflects
+// reality right after the user installs it (otherwise claudeCliPath returns the cached null). Path is returned so
+// the UI can show where it found it.
+export function claudeCliStatus(recheck = false): { installed: boolean; path: string | null } {
+  if (recheck) claudePath = undefined
+  const path = claudeCliPath()
+  return { installed: !!path, path }
+}
+
 let interviewAgentAvailable = false
 export function setInterviewAgentAvailable(available: boolean): void {
   interviewAgentAvailable = !!available
@@ -743,6 +752,7 @@ async function start(): Promise<{ ok: boolean; cached?: boolean }> {
 export function registerOnboarding(getWindow: () => BrowserWindow | null): void {
   mainWindow = getWindow
   ipcMain.handle('onboarding:start', () => start())
+  ipcMain.handle('onboarding:claude-status', (_e, opts?: { recheck?: boolean }) => claudeCliStatus(!!opts?.recheck))
   ipcMain.handle('onboarding:fda-status', async () => ({ fda: await fdaGrantedEffective(), appName: fdaAppName() }))
   ipcMain.handle('onboarding:open-fda-settings', () => {
     void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')
