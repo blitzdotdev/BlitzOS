@@ -729,12 +729,20 @@ button.isl-app-chat:active .isl-app-icon {
   height: 430px;
   min-height: 0;
 }
+/* The setup phase (permissions / chrome-js / browser steps) hugs its card instead of the fixed 430px the intro
+ * carousel needs, so the island shrinks to the card and whatever is behind it (e.g. Chrome's Developer menu in
+ * the Allow-JavaScript-from-Apple-Events step) shows fully instead of being covered by dead space. */
+.nh-island .isl-onb-slide.isl-onb-setup {
+  height: auto;
+}
 .nh-island .isl-onb-slide-body {
   display: flex;
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  justify-content: center;
+  /* top-align, not center: every slide's content (the visual or the QUICK ACCESS-style head) begins at the same
+   * height from the top, instead of floating to a different Y per slide based on how tall its content is. */
+  justify-content: flex-start;
   gap: 14px;
 }
 .nh-island .isl-onb-slide-foot {

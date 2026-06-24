@@ -8,6 +8,7 @@ import { isRuntimePanel } from './types'
 import { NotchHost } from './notch/NotchHost'
 import { GlanceBar, type GlancePeek } from './notch/GlanceBar'
 import { applyHandoffAction } from './notch/handoffStore'
+import { isOnboardingHoverLocked } from './notch/onboardingHoverLock'
 import type { IslandAppMessagePart, IslandView } from './notch/types'
 import { ConnectPicker } from './components/ConnectPicker'
 import { IconCheck } from './components/Icons'
@@ -161,7 +162,11 @@ export default function App(): JSX.Element {
     if (notchHoverGraceRef.current) clearTimeout(notchHoverGraceRef.current)
     notchHoverGraceRef.current = window.setTimeout(() => {
       notchHoverGraceRef.current = 0
-      if (notchPinnedRef.current || notchAttachOpenRef.current || notchStateRef.current !== 'panel') return
+      // Onboarding TCC permission step locks hover retraction at the CHOKEPOINT: every hover-close caller (the
+      // notch hit-window hover-out, the glance bar, the mousemove handler) funnels through here, so checking the
+      // lock here is what actually keeps the island open while the user drags the icon out to Settings. ⌥Space /
+      // Esc close directly (not via this path), so they still work.
+      if (notchPinnedRef.current || notchAttachOpenRef.current || isOnboardingHoverLocked() || notchStateRef.current !== 'panel') return
       if (notchOverRef.current || overChassisRef.current || glanceOverRef.current) return
       const holdRemaining = notchHoldUntilRef.current - performance.now()
       if (holdRemaining > 0) {
@@ -275,7 +280,7 @@ export default function App(): JSX.Element {
             notchHoverGraceRef.current = 0
           }
           notchHoldUntilRef.current = performance.now() + NOTCH_HOVER_OPEN_GRACE_MS
-          if (notchStateRef.current === 'closed') {
+          if (notchStateRef.current === 'closed' && !isOnboardingHoverLocked()) {
             applyNotchState('panel') // restores the LAST view+tab (islandViewRef/islandPageRef), not always Home
           }
           setNotchInteractive(true)
@@ -337,13 +342,14 @@ export default function App(): JSX.Element {
         clearTimeout(notchHoverGraceRef.current)
         notchHoverGraceRef.current = 0
       }
-      if ((overHandle || notchOverRef.current) && st === 'closed') {
+      if ((overHandle || notchOverRef.current) && st === 'closed' && !isOnboardingHoverLocked()) {
         applyNotchState('panel') // hovering the notch opens the panel (restores the LAST view+tab, not always Home)
       } else if (st === 'panel' && !want) {
-        // The cursor left the island. RETRACT only if nothing is holding it open: a ⌥Space pin, the attach panel, or
-        // the post-resize / attach-close grace window. A held panel stays VISIBLE but still goes click-through
-        // (setNotchInteractive(want) below), so the Dock / menu bar / other apps stay clickable off the island.
-        const heldOpen = notchPinnedRef.current || notchAttachOpenRef.current || performance.now() < notchHoldUntilRef.current
+        // The cursor left the island. RETRACT only if nothing is holding it open: a ⌥Space pin, the attach panel, the
+        // post-resize / attach-close grace window, or the onboarding TCC permission step (the user drags the icon out
+        // to Settings, so hover must not retract the island there). A held panel stays VISIBLE but still goes
+        // click-through (setNotchInteractive(want) below), so the Dock / menu bar / other apps stay clickable off it.
+        const heldOpen = notchPinnedRef.current || notchAttachOpenRef.current || performance.now() < notchHoldUntilRef.current || isOnboardingHoverLocked()
         if (!heldOpen) scheduleNotchHoverClose(120)
       }
       setNotchInteractive(want)
@@ -376,7 +382,7 @@ export default function App(): JSX.Element {
           notchHoverGraceRef.current = 0
         }
         notchHoldUntilRef.current = performance.now() + NOTCH_HOVER_OPEN_GRACE_MS
-        applyNotchState('panel')
+        if (!isOnboardingHoverLocked()) applyNotchState('panel')
         setNotchInteractive(true)
         return
       }

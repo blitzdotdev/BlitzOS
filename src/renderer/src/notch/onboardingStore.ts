@@ -73,6 +73,30 @@ export const markPreboardGranted = (kind: DragKind): void => {
   set({ preboard: { ...p, [kind]: true, steps: { ...p.steps, [kind]: 'granted' } } })
 }
 
+/** Apply a fresh preboardState() read on island (re)open. It may ADD newly-detected grants, but it must NEVER
+ *  downgrade a TCC permission the user already cleared: the live macOS grant check can lag a just-granted
+ *  permission (the granted app has to be re-seen), so a plain overwrite makes a hide+reopen revert a green
+ *  checkmark to incomplete. Merge instead, so toggling the island never loses progress. */
+export const refreshPreboard = (ps: PreboardState): void => {
+  const prev = snap.preboard
+  if (!prev) {
+    set({ preboard: ps })
+    return
+  }
+  const KINDS: DragKind[] = ['fda', 'accessibility', 'screen']
+  const steps = { ...ps.steps }
+  for (const k of KINDS) if (prev.steps[k] === 'granted' && steps[k] !== 'granted') steps[k] = 'granted'
+  set({
+    preboard: {
+      ...ps,
+      fda: ps.fda || prev.fda,
+      accessibility: ps.accessibility || prev.accessibility,
+      screen: ps.screen || prev.screen,
+      steps
+    }
+  })
+}
+
 export const resetOnboardingProgress = (): void => set({ ...INITIAL })
 
 /** Read the freshest progress synchronously (for handlers that must not wait for a re-render). */

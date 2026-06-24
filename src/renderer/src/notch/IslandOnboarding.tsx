@@ -1,6 +1,7 @@
 import './island.css'
 import { useEffect, useRef, useState } from 'react'
 import { OnboardingVisual, OnboardingDoneHero, type IntroVisual } from './onboardingVisuals'
+import { setOnboardingHoverLock } from './onboardingHoverLock'
 import {
   useOnboardingProgress,
   getOnboardingProgress,
@@ -9,6 +10,7 @@ import {
   setPermissionsDone,
   setOnbStep,
   setPreboard,
+  refreshPreboard,
   setOnbBrowserResult,
   markPreboardGranted,
   resetOnboardingProgress,
@@ -179,8 +181,11 @@ export function IslandOnboarding({
       .then((nextState) => {
         if (!alive) return
         const ps = nextState as PreboardState
-        setPreboard(ps)
-        setOnbStep(nextStep(ps, getOnboardingProgress().permissionsDone))
+        refreshPreboard(ps)
+        // Recompute the step from the MERGED state (refreshPreboard never downgrades a granted permission), not the
+        // raw fetch, so a lagging live grant check can't bounce the user to an earlier step when the island reopens.
+        const merged = getOnboardingProgress().preboard ?? ps
+        setOnbStep(nextStep(merged, getOnboardingProgress().permissionsDone))
       })
       .catch(() => {
         if (!alive) return
@@ -283,6 +288,15 @@ export function IslandOnboarding({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step])
+
+  // The TCC permission step (3 reqs) locks the island's hover open/close: the user drags the BlitzOS icon out to
+  // System Settings, so only ⌥Space should toggle it (App's hover handler reads this lock). Cleared on leave/unmount.
+  useEffect(() => {
+    // Lock ONLY on the actual 3-reqs card: the store defaults step to 'permissions' during the intro carousel too,
+    // so gate on introDone or the whole intro would wrongly lock hover.
+    setOnboardingHoverLock(introDone && step === 'permissions')
+    return () => setOnboardingHoverLock(false)
+  }, [introDone, step])
 
   const recheckClaude = (): void => {
     if (!api?.claudeStatus || claudeRechecking) return
