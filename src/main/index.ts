@@ -700,6 +700,14 @@ app.whenReady().then(() => {
       return { ok: false, error: (e as Error)?.message || 'open failed' }
     }
   })
+  // The handoff card's tap → bring the surface behind a connection to the foreground (instant, no agent round-trip).
+  ipcMain.handle('os:reveal-connection', async (_e, connId: string) => {
+    try {
+      return await electronConnections.connectionReveal(String(connId || ''))
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message || 'reveal failed' }
+    }
+  })
   // File-manager listing for a normal folder tile (the Electron counterpart of server /api/os/dir).
   ipcMain.handle('os:dir', (_e, rel: string) => osListDir(String(rel || '')))
   // Close = delete the closed window's backing content file (so it doesn't pop back up on reconcile).

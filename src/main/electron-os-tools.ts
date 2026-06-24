@@ -35,6 +35,8 @@ import {
   osSystemUiInfo,
   osGroupIntoFolder,
   osBroadcast,
+  osHandoffCreate,
+  osHandoffResolve,
   osSetTheme,
   type SurfaceDescriptor
 } from './osActions'
@@ -179,6 +181,29 @@ Object.assign(electronOps, electronConnections)
 // so the blitz_chrome_* tool handlers in os-tools.mjs find these ops. The headless server transport simply
 // omits them and those tools return 501 (guarded), exactly like the other Electron-only ops.
 Object.assign(electronOps, blitzChromeOps)
+// Handoff cards (request_handoff / resolve_handoff): a human-in-the-loop step (login, 2FA, captcha, consent) in a
+// connected surface. requestHandoff screenshots the connection, banks it in the runtime handoff map (osHandoffCreate
+// broadcasts it; the screenshot rides the store, NOT chat.md) and posts a tiny {type:'handoff',cardId} fence into the
+// agent's chat. The card's tap reveals the real surface (os:reveal-connection → connectionReveal). resolveHandoff
+// marks it done and PURGES the screenshot.
+Object.assign(electronOps, {
+  requestHandoff: async (connId: string, opts: { reason?: string; agentId?: string } = {}) => {
+    const id = String(connId || '')
+    if (!id) return { error: 'connection (connId) required' }
+    const reason = String(opts.reason || 'Requires user login')
+    let img = ''
+    try {
+      const r = (await electronConnections.connectionRead(id, { screenshot: true })) as { image?: string }
+      if (r && r.image) img = `data:image/png;base64,${r.image}`
+    } catch {
+      /* no screenshot — the card still works as a labelled tap-to-open affordance */
+    }
+    const cardId = osHandoffCreate({ connId: id, reason, img })
+    osSay('```blitz-ui\n' + JSON.stringify({ type: 'handoff', cardId }) + '\n```', opts.agentId != null ? String(opts.agentId) : '0')
+    return { ok: true, cardId }
+  },
+  resolveHandoff: (cardId: string) => osHandoffResolve(String(cardId || ''))
+})
 // Closing a connection's representation widget drops the connection (no leaked adapter/socket).
 onSurfaceClosed((id) => void electronConnections.handleSurfaceClosed(id))
 // On (re)hydrate, repaint persisted connection widgets whose connection isn't live → "disconnected".

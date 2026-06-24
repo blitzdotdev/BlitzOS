@@ -10,7 +10,7 @@ export interface AgentRuntimeStatus {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme'
+  type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme' | 'handoff'
   [k: string]: unknown
 }
 
@@ -158,6 +158,10 @@ const api = {
   },
   actionClear(id: string): void {
     ipcRenderer.send('os:action-clear', id)
+  },
+  /** The handoff card's tap → bring the surface behind a connection to the foreground (instant, no agent round-trip). */
+  revealConnection(connId: string): Promise<{ ok?: boolean; error?: string }> {
+    return (ipcRenderer.invoke('os:reveal-connection', connId) as Promise<{ ok?: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
   /** Connections — connect a browser tab / macOS window into BlitzOS (the radial "Connect" entry). */
   connections: {

@@ -7,6 +7,7 @@ import type { Surface } from './types'
 import { isRuntimePanel } from './types'
 import { NotchHost } from './notch/NotchHost'
 import { GlanceBar, type GlancePeek } from './notch/GlanceBar'
+import { applyHandoffAction } from './notch/handoffStore'
 import type { IslandAppMessagePart, IslandView } from './notch/types'
 import { ConnectPicker } from './components/ConnectPicker'
 import { IconCheck } from './components/Icons'
@@ -630,6 +631,9 @@ export default function App(): JSX.Element {
           saveTheme(theme as Theme)
           st.setOsAccent(theme.accent)
         }
+      } else if (a.type === 'handoff') {
+        // A handoff card create/resolve broadcast → the runtime handoffStore (the card looks itself up by cardId).
+        applyHandoffAction(a as { cardId?: unknown; connId?: unknown; reason?: unknown; img?: unknown; status?: unknown })
       } else if (a.type === 'chat') {
         // The OS owns every agent transcript and sends the hub props to the ONE primary Chat surface.
         // Legacy messages-only payloads are still accepted for older transports.

@@ -384,6 +384,38 @@ export function osBroadcast(action: Record<string, unknown>): void {
   sendToRenderer('os:action', action)
 }
 
+// ---- Handoff cards: a human-in-the-loop step in a connected surface (login, 2FA, captcha, consent). The screenshot
+// rides this runtime map (broadcast to the renderer's handoffStore), NEVER the chat transcript (the fence carries only
+// the cardId). On resolve we DELETE the screenshot so a login page never lingers in memory. ----
+const handoffs = new Map<string, { connId: string; reason: string; img: string; status: 'awaiting' | 'done' }>()
+let handoffSeq = 0
+
+/** Create a handoff entry + broadcast it to the renderer (the card looks it up by cardId). Returns the cardId. */
+export function osHandoffCreate(opts: { connId: string; reason: string; img?: string }): string {
+  const cardId = `hf_${(++handoffSeq).toString(36)}${Date.now().toString(36)}`
+  const entry = {
+    connId: String(opts.connId || ''),
+    reason: String(opts.reason || 'Requires user login'),
+    img: String(opts.img || ''),
+    status: 'awaiting' as const
+  }
+  handoffs.set(cardId, entry)
+  sendToRenderer('os:action', { type: 'handoff', cardId, connId: entry.connId, reason: entry.reason, img: entry.img, status: entry.status })
+  return cardId
+}
+
+/** Mark a handoff done: PURGE the screenshot (it was a login page) and tell the renderer to collapse the card to ✓. */
+export function osHandoffResolve(cardId: string): { ok: boolean } {
+  const id = String(cardId || '')
+  const entry = handoffs.get(id)
+  if (entry) {
+    entry.img = '' // delete the screenshot the instant it's resolved — never keep a login page around
+    handoffs.delete(id) // the runtime map no longer needs it; the renderer keeps the collapsed ✓ card
+  }
+  sendToRenderer('os:action', { type: 'handoff', cardId: id, status: 'done' })
+  return { ok: true }
+}
+
 export function osNoteAgentActivity(agentId = '0', source = 'activity'): void {
   try { wsHost?.noteAgentActivity(String(agentId ?? '0'), source) } catch { /* best-effort */ }
 }

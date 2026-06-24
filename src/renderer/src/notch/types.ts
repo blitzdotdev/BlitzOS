@@ -49,9 +49,13 @@ export type IslandMessagePart =
   | { type: 'attachment'; title: string; sourceType?: string }
   | { type: 'status'; text: string; tone?: 'info' | 'working' | 'warning' | 'error' }
   | { type: 'error'; text: string }
+  // A human-takeover handoff (login / 2FA / captcha / consent). The fence carries ONLY the cardId; the screenshot +
+  // reason + status live in the runtime handoffStore (fed by the os:action {type:'handoff'} broadcast).
+  | { type: 'handoff'; cardId: string }
 
 export type IslandChoicePart = Extract<IslandMessagePart, { type: 'choice' }>
 export type IslandAppMessagePart = Extract<IslandMessagePart, { type: 'app' }>
+export type IslandHandoffPart = Extract<IslandMessagePart, { type: 'handoff' }>
 
 // A summarized step from the narrator (Haiku): one plain past-tense line of what the agent did.
 export interface IslandMilestone {

@@ -4,7 +4,8 @@ import remarkGfm from 'remark-gfm'
 import { AppEmbedIcon, blitzAppSubtitle, normalizedBlitzAppPart, normalizeAppTone } from './appEmbeds'
 import { markdownUrlTransform, normalizedExternalUrl, normalizedImageSrc } from './markdownSafety'
 import { messagePartsFor } from './messageParts'
-import type { IslandAppMessagePart, IslandChoicePart, IslandMessage, IslandMessagePart } from './types'
+import { useHandoff } from './handoffStore'
+import type { IslandAppMessagePart, IslandChoicePart, IslandHandoffPart, IslandMessage, IslandMessagePart } from './types'
 
 const remarkPlugins = [remarkGfm]
 
@@ -240,6 +241,39 @@ function AppPartMessage({ part, onOpenApp }: { part: IslandAppMessagePart; onOpe
   )
 }
 
+// A human-takeover handoff (login / 2FA / captcha / consent). Looks up its live entry in handoffStore by cardId. While
+// AWAITING it's a tappable card: title (the reason) + the page screenshot + a hint; tapping reveals the real surface
+// instantly (window.agentOS.revealConnection → os:reveal-connection, no agent round-trip). Persistent — tap again to
+// return. DONE (or no live entry after a reload, since the screenshot is ephemeral) collapses to a slim ✓ line.
+function HandoffPartMessage({ part }: { part: IslandHandoffPart }): JSX.Element {
+  const entry = useHandoff(part.cardId)
+  if (!entry || entry.status === 'done') {
+    return (
+      <div className="isl-handoff-card done" role="group" aria-label={entry?.reason ? `${entry.reason} — done` : 'Done'}>
+        <span className="isl-handoff-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M5 12.5l4.2 4.2L19 7" />
+          </svg>
+        </span>
+        <span className="isl-handoff-done-label">{entry?.reason || 'Done'}</span>
+      </div>
+    )
+  }
+  const img = normalizedImageSrc(entry.img)
+  return (
+    <button
+      type="button"
+      className="isl-handoff-card"
+      onClick={() => void window.agentOS?.revealConnection?.(entry.connId)}
+      aria-label={`${entry.reason} — tap to open the tab`}
+    >
+      <span className="isl-handoff-title">{entry.reason}</span>
+      {img && <img className="isl-handoff-shot" src={img} alt="" loading="lazy" decoding="async" />}
+      <span className="isl-handoff-hint">Tap to open the tab and finish</span>
+    </button>
+  )
+}
+
 function renderMessagePart(
   part: IslandMessagePart,
   index: number,
@@ -250,6 +284,8 @@ function renderMessagePart(
   switch (part.type) {
     case 'choice':
       return <ChoicePartMessage key={`choice:${index}:${part.prompt}`} part={part} onChoose={onChoose} selectedAnswer={selectedAnswer} />
+    case 'handoff':
+      return <HandoffPartMessage key={`handoff:${index}:${part.cardId}`} part={part} />
     case 'app':
       return <AppPartMessage key={`app:${index}:${part.url}:${part.title}`} part={part} onOpenApp={onOpenApp} />
     case 'error':

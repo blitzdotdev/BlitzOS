@@ -876,6 +876,17 @@ export function makeConnectionOps({
     return out && typeof out === 'object' && 'effect' in out ? { ok: true, effect: cap(out.effect) } : { ok: true, ...(out && typeof out === 'object' ? out : {}) }
   }
 
+  // Bring the surface BEHIND a connection to the foreground (the handoff card's tap, or connection_reveal). Each
+  // adapter implements the 'reveal' verb its own way (Blitz Chrome → its window; a real tab → activate the tab; a
+  // macOS window → bring the app forward). Adapters that don't handle it just return the dispatcher's error.
+  async function connectionReveal(connId) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    const out = await dispatch(r, 'reveal', {})
+    if (out && out.error) return out
+    return { ok: true, ...(out && typeof out === 'object' ? out : {}) }
+  }
+
   async function connectionRunJs(connId, args) {
     const r = rec(connId)
     if (!r) return { error: `no connection ${connId}` }
@@ -1483,6 +1494,7 @@ export function makeConnectionOps({
     connectionSetOwner,
     connectionRead,
     connectionAct,
+    connectionReveal,
     connectionRunJs,
     connectionSaveTool,
     connectionListTools,

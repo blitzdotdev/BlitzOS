@@ -1,5 +1,5 @@
 import { normalizedImageSrc } from './markdownSafety'
-import type { IslandChoiceOption, IslandChoicePart, IslandMessage, IslandMessagePart } from './types'
+import type { IslandChoiceOption, IslandChoicePart, IslandHandoffPart, IslandMessage, IslandMessagePart } from './types'
 
 const ASK_CARD_MAX_OPTIONS = 12
 
@@ -53,10 +53,35 @@ export function parseBlitzUiChoicePart(text: string): IslandChoicePart | null {
   return { type: 'choice', layout, prompt, options }
 }
 
+// A handoff card: a tiny ```blitz-ui fence `{type:'handoff', cardId}` (the screenshot + reason live in handoffStore,
+// keyed by cardId — never in the transcript). Recognized alongside the choice card.
+export function parseBlitzUiHandoffPart(text: string): IslandHandoffPart | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  const fenceMatch = /^```blitz-ui\s*\n([\s\S]*?)\n?```\s*$/i.exec(trimmed)
+  const jsonText = fenceMatch ? fenceMatch[1].trim() : trimmed.startsWith('{') && trimmed.endsWith('}') ? trimmed : ''
+  if (!jsonText) return null
+  let raw: unknown
+  try {
+    raw = JSON.parse(jsonText)
+  } catch {
+    return null
+  }
+  if (!raw || typeof raw !== 'object') return null
+  const spec = raw as Record<string, unknown>
+  if (cleanPartText(spec.type || spec.kind, 32) !== 'handoff') return null
+  const cardId = cleanPartText(spec.cardId, 64)
+  return cardId ? { type: 'handoff', cardId } : null
+}
+
 export function messagePartsFor(message: Pick<IslandMessage, 'role' | 'text' | 'parts'>): IslandMessagePart[] {
   if (Array.isArray(message.parts) && message.parts.length) return message.parts
-  const choice = message.role === 'agent' ? parseBlitzUiChoicePart(message.text) : null
-  if (choice) return [choice]
+  if (message.role === 'agent') {
+    const handoff = parseBlitzUiHandoffPart(message.text)
+    if (handoff) return [handoff]
+    const choice = parseBlitzUiChoicePart(message.text)
+    if (choice) return [choice]
+  }
   return [{ type: 'text', text: message.text }]
 }
 
