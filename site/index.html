@@ -18,7 +18,7 @@
     --color-stone-300:#d6d7db;          /* marquee text */
     --ease:cubic-bezier(.4,0,.2,1);
 
-    --paper:#070b18;   /* deep blue-black page (our surface) */
+    --paper:#060e26;   /* deep blue base — the desktop the island lives on */
     --ink:#f4f4f5;     /* near-white ink */
 
     /* BlitzOS accents: gold brand mark + Apple-blue live signal */
@@ -39,16 +39,22 @@
   html{scroll-behavior:smooth}
   html,body{margin:0}
   body{
-    background:
-      radial-gradient(80% 50% at 50% -8%, rgba(38,104,224,.18) 0%, rgba(38,104,224,0) 60%),
-      radial-gradient(60% 40% at 85% 8%, rgba(10,132,255,.10) 0%, rgba(10,132,255,0) 55%),
-      var(--paper);
-    background-repeat:no-repeat;
+    background:var(--paper);
     color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,system-ui,sans-serif;
     -webkit-font-smoothing:antialiased;
     text-rendering:optimizeLegibility;
     min-height:100vh;
+  }
+  /* The macOS "desktop" the BlitzOS island lives on: a viewport-locked blue aurora wallpaper (fixed, so it
+     stays put while the page scrolls — you feel like you're looking at one continuous Mac screen). */
+  body::before{
+    content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+    background:
+      radial-gradient(1100px 760px at 6% -10%, rgba(72,138,255,.30), transparent 56%),
+      radial-gradient(980px 700px at 98% -4%, rgba(36,176,255,.20), transparent 54%),
+      radial-gradient(1300px 1000px at 50% 118%, rgba(26,72,196,.34), transparent 60%),
+      linear-gradient(180deg, #0b1f53 0%, #0a1742 48%, #060e26 100%);
   }
   ::selection{background:var(--ink);color:var(--paper)}
 
@@ -94,10 +100,10 @@
   }
   .btn:active{transform:scale(.96)}
   .btn--primary{
-    background:var(--gold);color:#1c1500;font-weight:800;
-    box-shadow:0 2px 12px -3px rgba(255,216,77,.5);
+    background:#fff;color:#0a1330;font-weight:700;letter-spacing:-.01em;
+    box-shadow:0 2px 16px -4px rgba(180,210,255,.45);
   }
-  .btn--primary:hover{box-shadow:0 12px 32px -10px rgba(255,216,77,.62)}
+  .btn--primary:hover{box-shadow:0 16px 40px -14px rgba(180,210,255,.55);transform:translateY(-1px)}
   .btn--secondary{
     background:color-mix(in srgb,var(--ink) 5%,transparent);
     color:var(--ink);font-weight:600;
@@ -127,8 +133,10 @@
   }
   .hero__btns{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:4px}
   .hero__micro{
-    margin:2px 0 0;font-size:13px;font-weight:500;
-    color:color-mix(in srgb,var(--ink) 55%,transparent);
+    margin:6px 0 0;font-size:11.5px;font-weight:500;
+    font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    text-transform:uppercase;letter-spacing:.12em;
+    color:color-mix(in srgb,var(--ink) 48%,transparent);
   }
 
   /* ============================================================
@@ -309,9 +317,12 @@
   @keyframes prog{0%{width:8%;transform:translateX(0)}60%{width:62%}100%{width:96%;transform:translateX(0)}}
 
   .caption{
-    margin:14px 0 0;text-align:center;font-size:13px;font-weight:500;
-    color:color-mix(in srgb,var(--ink) 55%,transparent);
+    margin:16px 0 0;text-align:center;font-size:11.5px;font-weight:500;
+    font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    text-transform:uppercase;letter-spacing:.1em;
+    color:color-mix(in srgb,var(--ink) 50%,transparent);
   }
+  .caption b{color:var(--accent);font-weight:600}
   .caption b{color:color-mix(in srgb,var(--ink) 80%,transparent);font-weight:700}
 
   /* ============================================================
@@ -568,7 +579,7 @@
       </div>
     </div>
 
-    <p class="caption"><b>Psst… it's interactive!</b> — tap the island. Every state is real BlitzOS agent work.</p>
+    <p class="caption"><b>Live demo</b> — tap the island. Every state is real BlitzOS agent work.</p>
   </header>
 
   <!-- ===================== FEATURE SHOWCASES ===================== -->
