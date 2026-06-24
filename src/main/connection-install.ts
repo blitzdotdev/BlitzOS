@@ -109,12 +109,6 @@ export async function installConnector(): Promise<{ ok: boolean; error?: string;
     : { ...r, extensionDir: connectorDir() }
 }
 
-/** Remove the force-install policy (admin prompt) → Chrome uninstalls the connector. */
-export async function uninstallConnector(): Promise<{ ok: boolean; error?: string }> {
-  if (process.platform !== 'darwin') return { ok: false, error: 'macOS only' }
-  return adminRun(`/usr/bin/defaults delete '${CHROME_DOMAIN}' ExtensionInstallForcelist`)
-}
-
 export function isConnectorPolicyInstalled(): boolean {
   try {
     return existsSync(CHROME_POLICY) && readFileSync(CHROME_POLICY).includes(CONNECTOR_EXTENSION_ID)

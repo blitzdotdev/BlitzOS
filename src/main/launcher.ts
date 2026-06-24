@@ -383,11 +383,6 @@ export function hideLauncher(): void {
   if (launcherWin && !launcherWin.isDestroyed() && launcherWin.isVisible()) launcherWin.hide()
 }
 
-export function toggleLauncher(): void {
-  if (launcherWin && !launcherWin.isDestroyed() && launcherWin.isVisible()) hideLauncher()
-  else showLauncher()
-}
-
 // Wire the Send IPC + register the global hotkey. Call once from app.whenReady AFTER wireLauncher.
 export function registerLauncher(): void {
   // Send → start a WORKFLOW (spawn an orchestrator agent seeded with the prompt). Accepts { prompt, attachments }

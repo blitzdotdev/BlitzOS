@@ -1079,14 +1079,6 @@ export async function osSwitchWorkspace(name: string): Promise<{ ok: boolean; ac
   if (newWorkspaceAgentStarts.delete(active)) osKickBrain('0')
   return { ok: true, active }
 }
-/** #53: per-workspace consent persistence for the Electron transports (widget grants + sensitive-read
- *  providers), via the shared host. Load on boot, persist (merge) on each grant. */
-export function osLoadConsent(): { surfaces: string[]; providers: string[] } {
-  return wsHost ? wsHost.consent() : { surfaces: [], providers: [] }
-}
-export function osPersistConsent(c: { surfaces?: string[]; providers?: string[] }): void {
-  wsHost?.persistConsent(c)
-}
 /** The workspaces root this process runs on (set by initOsActions; '' before init). */
 export function osWorkspacesRoot(): string {
   return wsRoot
