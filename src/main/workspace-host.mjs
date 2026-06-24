@@ -440,8 +440,8 @@ export function createWorkspaceHost(a) {
   function readAgentMeta(agentId) {
     const id = String(agentId ?? '0')
     const m = readAgentMetaFile(id)
-    if (m && typeof m === 'object') return { id, ...(id === '0' ? { title: 'Main', kind: 'agent' } : {}), ...m, ...(m.title ? { title: agentTitleText(m.title) } : {}) }
-    if (id === '0') return { id, title: 'Main', kind: 'agent' }
+    if (id === '0') return { id, ...(m && typeof m === 'object' ? m : {}), title: 'Blitz', kind: 'agent' }
+    if (m && typeof m === 'object') return { id, ...m, ...(m.title ? { title: agentTitleText(m.title) } : {}) }
     return { id }
   }
   function writeAgentMeta(agentId, next) {
@@ -755,11 +755,14 @@ export function createWorkspaceHost(a) {
     return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 24)
   }
   function defaultAgentTitle(id) {
-    return `Chat ${id}`
+    return 'New Agent'
   }
   function isDefaultAgentTitle(id) {
     const meta = readAgentMeta(id)
-    return agentTitleText(meta.title || defaultAgentTitle(id)) === defaultAgentTitle(id)
+    const t = agentTitleText(meta.title || defaultAgentTitle(id))
+    // 'New Agent' is the live default; also treat the legacy `Chat N` / `Agent N` defaults as un-named so
+    // existing pre-rename sessions still get auto-titled by the haiku titler.
+    return t === defaultAgentTitle(id) || t === `Chat ${id}` || t === `Agent ${id}`
   }
   function shouldAutoTitleAgent(id) {
     if (id === '0') return false
@@ -790,7 +793,7 @@ export function createWorkspaceHost(a) {
   function sessionSummary(id, meta, messages, sessionStatus) {
     return {
       id,
-      title: id === '0' ? 'Main' : agentTitleText(meta.title || defaultAgentTitle(id)),
+      title: id === '0' ? 'Blitz' : agentTitleText(meta.title || defaultAgentTitle(id)),
       status: sessionStatus,
       updatedAt: Math.max(Number(messages[messages.length - 1]?.ts) || 0, Number(chatStatuses.get(id)?.updatedAt) || 0),
       lastMessagePreview: previewText(messages),
@@ -863,7 +866,7 @@ export function createWorkspaceHost(a) {
       role: 'chat',
       pinned: primary,
       agentId: String(agentId),
-      title: 'Chat',
+      title: 'Blitz',
       x: -700,
       y: -210,
       w,
@@ -904,7 +907,7 @@ export function createWorkspaceHost(a) {
    *  its managed terminal. Idempotent — re-adding an existing agent just refreshes the hub/thread. */
   function addAgent(agentId, title, opts = {}) {
     const id = String(agentId)
-    const name = title || (id === '0' ? 'Chat' : `Chat ${id}`)
+    const name = title || (id === '0' ? 'Blitz' : defaultAgentTitle(id))
     // Persist the agent RECORD up front (kind:'agent') so the agent survives a restart even when no
     // backend is auto-launched. launchAgent (below) will overwrite this with the full live
     // meta when it spawns the terminal; both keep the same id/kind/title, so agentIds() finds it.

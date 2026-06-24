@@ -19,6 +19,9 @@ import { applyWfRun } from '../../../main/wf-run-state.mjs'
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
 const DEBUG_FAKE_HOME_AGENTS_KEY = 'blitzos.debug.showFakeHomeAgents'
+// Real (non-debug) preference: workflow kanban boards render expanded by default instead of the collapsed pill.
+// Defaults ON (unset key reads true) so workflow always shows; the user can toggle it off in Settings.
+const WORKFLOW_ALWAYS_SHOW_KEY = 'blitzos.workflowAlwaysShow'
 const HOME_DONE_AGENTS_KEY = 'blitzos.home.doneAgents'
 const HOME_SEEN_WORKING_AGENTS_KEY = 'blitzos.home.seenWorkingAgents'
 const AGENT_NAME_MAX = 24
@@ -67,7 +70,7 @@ type TerminalAction = {
 }
 const mapSession = (s: { id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }): IslandSession => ({
   id: String(s.id),
-  title: String(s.title || `Chat ${s.id}`),
+  title: String(s.title || (String(s.id) === '0' ? 'Blitz' : 'New Agent')),
   status: String(s.status || 'idle'),
   ...(s.lastMessagePreview ? { lastMessagePreview: String(s.lastMessagePreview) } : {}),
   ...(s.archivedAt ? { archivedAt: Number(s.archivedAt) || undefined } : {})
@@ -76,7 +79,7 @@ const mapTerminal = (t: { id?: unknown; title?: unknown; status?: unknown; kind?
   if (t.id == null) return null
   return {
     id: String(t.id),
-    title: String(t.title || `Agent ${t.id}`),
+    title: String(t.title || (String(t.id) === '0' ? 'Blitz' : 'New Agent')),
     status: String(t.status || 'unknown'),
     kind: String(t.kind || 'terminal')
   }
@@ -101,6 +104,14 @@ function readDebugFakeHomeAgents(): boolean {
     return window.localStorage.getItem(DEBUG_FAKE_HOME_AGENTS_KEY) === '1'
   } catch {
     return false
+  }
+}
+function readWorkflowAlwaysShow(): boolean {
+  try {
+    const v = window.localStorage.getItem(WORKFLOW_ALWAYS_SHOW_KEY)
+    return v === null ? true : v === '1' // default ON: an unset preference means workflow boards always show
+  } catch {
+    return true
   }
 }
 function readHomeDoneAgents(): Record<string, true> {
@@ -198,6 +209,7 @@ export function NotchHost({
   const [terminals, setTerminals] = useState<Record<string, IslandTerminalMeta>>({})
   const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
   const [debugFakeHomeAgents, setDebugFakeHomeAgents] = useState(readDebugFakeHomeAgents)
+  const [workflowAlwaysShow, setWorkflowAlwaysShow] = useState(readWorkflowAlwaysShow)
   const [homeDoneAgents, setHomeDoneAgentsState] = useState<Record<string, true>>(() => readHomeDoneAgents())
   const [homeSeenWorkingAgents, setHomeSeenWorkingAgentsState] = useState<Record<string, true>>(() => readHomeSeenWorkingAgents())
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
@@ -246,6 +258,14 @@ export function NotchHost({
       window.localStorage.setItem(DEBUG_FAKE_HOME_AGENTS_KEY, on ? '1' : '0')
     } catch {
       /* debug-only persistence */
+    }
+  }
+  const chooseWorkflowAlwaysShow = (on: boolean): void => {
+    setWorkflowAlwaysShow(on)
+    try {
+      window.localStorage.setItem(WORKFLOW_ALWAYS_SHOW_KEY, on ? '1' : '0')
+    } catch {
+      /* preference persistence is best-effort */
     }
   }
   const updateHomeDoneAgents = (update: (prev: Record<string, true>) => Record<string, true>): void => {
@@ -910,6 +930,8 @@ export function NotchHost({
         ) : view === 'settings' ? (
           <IslandSettings
             menuBarH={menuBarH}
+            workflowAlwaysShow={workflowAlwaysShow}
+            onToggleWorkflowAlwaysShow={chooseWorkflowAlwaysShow}
             showActiveTerminal={debugActiveTerminal}
             onToggleActiveTerminal={chooseDebugActiveTerminal}
             showFakeHomeAgents={debugFakeHomeAgents}
@@ -937,6 +959,7 @@ export function NotchHost({
             activeTerminal={activeId ? terminals[activeId] : undefined}
             onArchiveAgent={archiveAgent}
             onRenameAgent={renameAgent}
+            alwaysShowWorkflow={workflowAlwaysShow}
           />
         )}
       </div>

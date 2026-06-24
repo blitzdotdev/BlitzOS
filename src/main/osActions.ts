@@ -866,7 +866,7 @@ export function osSpawnAgent(title?: string, focus = false, orchestrators = fals
   const opts: { focus: boolean; orchestrators?: boolean } = { focus }
   if (orchestrators) opts.orchestrators = true
   wsHost.addAgent(id, title, opts)
-  return { id, title: title || `Chat ${id}` }
+  return { id, title: title || 'New Agent' }
 }
 /** Toggle the ORCHESTRATORS (dynamic-workflows) capability on an agent — delivery B (the plan): set the DURABLE
  *  meta flag (so every future launch bootstraps the orchestrator duty + spawnTerminal carries it across re-exec),

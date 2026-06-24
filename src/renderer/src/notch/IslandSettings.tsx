@@ -13,6 +13,8 @@ const archivedMessagePreview = (session: IslandSession): string => {
 
 export function IslandSettings({
   menuBarH,
+  workflowAlwaysShow,
+  onToggleWorkflowAlwaysShow,
   showActiveTerminal,
   onToggleActiveTerminal,
   showFakeHomeAgents,
@@ -22,6 +24,8 @@ export function IslandSettings({
   onDeleteAgent
 }: {
   menuBarH: number
+  workflowAlwaysShow: boolean
+  onToggleWorkflowAlwaysShow: (on: boolean) => void
   showActiveTerminal: boolean
   onToggleActiveTerminal: (on: boolean) => void
   showFakeHomeAgents: boolean
@@ -37,10 +41,24 @@ export function IslandSettings({
   return (
     <div className="nh-island isl-settings" style={{ paddingTop: top }}>
       <div className="isl-settings-head">
-        <span className="isl-debug-flag">DEBUG</span>
         <span className="isl-settings-title">Settings</span>
       </div>
       <div className="isl-settings-list">
+        <label className="isl-setting-row">
+          <span className="isl-setting-copy">
+            <span className="isl-setting-name">Always show workflow board</span>
+            <span className="isl-setting-note">Expand each run instead of a collapsed pill</span>
+          </span>
+          <input
+            className="isl-setting-input"
+            type="checkbox"
+            checked={workflowAlwaysShow}
+            onChange={(e) => onToggleWorkflowAlwaysShow(e.currentTarget.checked)}
+          />
+          <span className="isl-setting-toggle" aria-hidden>
+            <span />
+          </span>
+        </label>
         <label className="isl-setting-row">
           <span className="isl-setting-copy">
             <span className="isl-setting-name">Show active agent terminal</span>

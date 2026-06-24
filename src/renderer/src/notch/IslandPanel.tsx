@@ -73,7 +73,8 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     debugTerminalEnabled,
     activeTerminal,
     onArchiveAgent,
-    onRenameAgent
+    onRenameAgent,
+    alwaysShowWorkflow
   } = props
   // In-chat workflow boards are durable now: each run is event-sourced on disk (index.json + events.jsonl +
   // skeleton.json), reloaded on tab-open (NotchHost.wfLoadAgentRuns), and evicted from memory only after 15 min
@@ -152,6 +153,28 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       return next
     })
   }, [])
+  // "Always show workflow board" setting: when ON, each run renders EXPANDED by default instead of the collapsed
+  // status pill. We seed every NOT-yet-seen run id into both sets (mounted + expanded) exactly once — so a freshly
+  // started run opens itself, while the per-run caret still lets the user collapse an individual board afterward (we
+  // only auto-open ids we have not seen, so a manual collapse sticks). When the setting is OFF we touch nothing,
+  // preserving the lazy-mount default (N persisted runs render as cheap pills, not N boards each replaying backlog).
+  const autoOpenedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!alwaysShowWorkflow) return
+    const fresh = runs.map((r) => r.runId).filter((id) => !autoOpenedRef.current.has(id))
+    if (!fresh.length) return
+    fresh.forEach((id) => autoOpenedRef.current.add(id))
+    setMountedRuns((prev) => {
+      const next = new Set(prev)
+      fresh.forEach((id) => next.add(id))
+      return next
+    })
+    setExpandedRuns((prev) => {
+      const next = new Set(prev)
+      fresh.forEach((id) => next.add(id))
+      return next
+    })
+  }, [alwaysShowWorkflow, runs])
   // Anchor each live workflow board AFTER the last message that preceded its run (the agent's "running…" line),
   // so the board sits in TIME ORDER in the transcript instead of stacking at the top. A run whose start predates
   // every message (no preceding message) renders at the very top. Keyed by message index → the runs anchored
@@ -461,7 +484,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               onSelectPage(i + 1)
               startRename(s.id, s.title)
             }}
-            title={s.id === '0' ? 'Main' : 'Right-click to rename'}
+            title={s.id === '0' ? 'Blitz' : 'Right-click to rename'}
           >
             <span className="isl-chip-album" style={{ background: agentGradient(s.id) }} aria-hidden />
             <span className="isl-chip-label">{s.title}</span>
@@ -649,7 +672,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           {debugTerminalEnabled && activeId && (
             <IslandTerminalPane
               terminalId={activeId}
-              title={activeTerminal?.title || `Agent ${activeId}`}
+              title={activeTerminal?.title || (String(activeId) === '0' ? 'Blitz' : 'New Agent')}
               status={activeTerminal?.status || 'unknown'}
             />
           )}

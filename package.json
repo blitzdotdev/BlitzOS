@@ -6,7 +6,7 @@
   "author": "",
   "license": "MIT",
   "scripts": {
-    "predev": "bash scripts/ensure-helper.sh",
+    "predev": "node scripts/rebrand-dev-electron.mjs && bash scripts/ensure-helper.sh",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
@@ -18,7 +18,8 @@
     "onboard": "node scripts/onboarding-scan.mjs --no-fda --prompt src/main/blitzos-onboarding.md --out -",
     "onboard:fda": "node scripts/onboarding-scan.mjs --prompt src/main/blitzos-onboarding.md --out -",
     "onboard:scan": "node scripts/onboarding-scan.mjs --out -",
-    "dist": "bash scripts/dist-mac.sh"
+    "dist": "bash scripts/dist-mac.sh",
+    "build:app": "bash scripts/build-local-app.sh"
   },
   "dependencies": {
     "@agent-socket/sdk": "file:./vendor/agent-socket-sdk",

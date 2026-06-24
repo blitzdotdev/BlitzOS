@@ -346,7 +346,13 @@ final class PickPanel: NSPanel {
         ignoresMouseEvents = true
         self.level = level
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        sharingType = .none // never appear in any screen capture (incl. our own window_screenshot)
+        // .readOnly (the default) = the overlay IS captureable, so the hover-highlight glow + the
+        // dragged app icon show up in the user's screen recording (Screen Studio / ScreenCaptureKit /
+        // QuickTime). `.none` excludes a window from ALL screen capture by design, which used to hide
+        // these picker overlays from the recorder too — fatal for filming the attach-drag demo. The
+        // picker is a transient attach-gesture UI; the rare overlap with a computer-use window_screenshot
+        // (which would now include the glow ring for the moment it is up) is acceptable.
+        sharingType = .readOnly
     }
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }

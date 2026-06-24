@@ -156,6 +156,14 @@ process.env.BLITZ_WIDGETS_DIR = process.env.BLITZ_WIDGETS_DIR || join(app.getApp
 // ||, so an explicit '0'/'' the operator set is preserved instead of being coerced back to '1'.
 process.env.BLITZ_CAPTURE_LEAVES = process.env.BLITZ_CAPTURE_LEAVES ?? '1'
 
+// In dev (`npm run dev`) the running binary is Electron, so the menu-bar app-menu (role:'appMenu'), the
+// app name, and the userData dir would read "Electron". Force it to "BlitzOS" — matches the packaged
+// build (productName in electron-builder.yml), so dev + packaged share the same menu name AND the same
+// userData dir (~/Library/Application Support/BlitzOS). Must run before any getPath('userData')/
+// installAppMenu(). Note: switching dev's userData to BlitzOS means existing dev cookies/sessions
+// under the old Electron dir are not carried over (re-login once in dev).
+app.setName('BlitzOS')
+
 // ONE BlitzOS per machine: a second launch focuses the first instead of fighting it for the browser
 // partition + the workspace watchers (observed live: partition LOCK errors, two hosts persisting over
 // each other, "Object has been destroyed" 500s). app.exit is immediate — the duplicate runs no
@@ -273,6 +281,13 @@ const notchGated =
 function installAppMenu(): void {
   const isMac = process.platform === 'darwin'
   const template: MenuItemConstructorOptions[] = [
+    // role:'appMenu' titles the app menu from app.name (set to 'BlitzOS' via app.setName at module
+    // load) so the inner items read 'About BlitzOS' / 'Quit BlitzOS'. The OS-level bold app-menu title
+    // + the ⌘Tab App Switcher read the BUNDLE name, not app.name (Electron docs: setName 'does not
+    // affect the name that the OS uses'), so in dev scripts/rebrand-dev-electron.mjs (predev) patches the
+    // prebuilt Electron.app's CFBundleName/CFBundleDisplayName to 'BlitzOS'. Only the executable process
+    // name (Activity Monitor / ps) still reads 'Electron' in dev — the Mach-O isn't renamed. Packaged
+    // builds brand everything via productName (electron-builder.yml).
     ...(isMac ? ([{ role: 'appMenu' }] as MenuItemConstructorOptions[]) : []),
     { role: 'fileMenu' },
     { role: 'editMenu' },
@@ -448,8 +463,8 @@ app.whenReady().then(() => {
     void app.dock.show().catch(() => {})
     try {
       const iconPath = app.isPackaged
-        ? join(process.resourcesPath, 'blitz-app-icon.png')
-        : join(__dirname, '..', '..', 'src', 'renderer', 'src', 'assets', 'blitz-app-icon.png')
+        ? join(process.resourcesPath, 'blitz-dock-icon.png')
+        : join(__dirname, '..', '..', 'src', 'renderer', 'src', 'assets', 'blitz-dock-icon.png')
       const icon = nativeImage.createFromPath(iconPath)
       if (!icon.isEmpty()) app.dock.setIcon(icon)
     } catch {
@@ -986,12 +1001,12 @@ app.whenReady().then(() => {
   // "watching"), the rest pass through.
   const islandStatusToState = (s: unknown): string =>
     ({ starting: 'new', watching: 'idle', working: 'working', waiting: 'waiting', idle: 'idle', stopped: 'stopped', error: 'error' } as Record<string, string>)[String(s || 'idle')] || 'idle'
-  // The title for an agent id from the live state: the chat surface carries the agent's title; '0' is 'Main'.
+  // The title for an agent id from the live state: the chat surface carries the agent's title; '0' is 'Blitz'.
   // There is no automatic re-titling in the host today (titles are 'Chat'/'Chat N' or an explicit rename) —
   // titleForAgent reflects the CURRENT title and the tail emits a process.upsert{title} only on an EDGE, so
   // an auto-naming feature would flow through unchanged without inventing a transition the host never emits.
   const titleForAgent = (id: string): string => {
-    if (String(id) === '0') return 'Main'
+    if (String(id) === '0') return 'Blitz'
     try {
       const s = osGetState().surfaces || []
       const hit = s.find((x) => String(x.agentId ?? '') === String(id) && (x.component === 'chat' || x.id === `chat-${id}`))
@@ -999,7 +1014,7 @@ app.whenReady().then(() => {
     } catch {
       /* fall through */
     }
-    return `Chat ${id}`
+    return 'New Agent'
   }
   // Prepended ONCE to the SPAWN seed (NOT on every message — context bloat). Concise island persona.
   const ISLAND_PREAMBLE = 'You are running in the BlitzOS notch island. Answer concisely — short status lines the user can read at a glance in a small HUD.'
@@ -1650,7 +1665,7 @@ app.whenReady().then(() => {
         command: launch.command,
         cwd: ws,
         stage,
-        title: title || (id === '0' ? 'Agent' : `Agent ${id}`),
+        title: title || (id === '0' ? 'Blitz' : 'New Agent'),
         agentRuntime: launch.agentRuntime,
         agentSessionId: launch.agentSessionId,
         claudeSessionId: launch.claudeSessionId,

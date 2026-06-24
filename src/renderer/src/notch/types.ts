@@ -82,4 +82,5 @@ export interface IslandPanelProps {
   activeTerminal?: IslandTerminalMeta // metadata for activeId's managed terminal; activeId remains the terminal id
   onArchiveAgent: (id: string) => void
   onRenameAgent: (id: string, title: string) => Promise<boolean>
+  alwaysShowWorkflow: boolean // when on, each workflow run renders EXPANDED by default (vs the collapsed status pill)
 }

@@ -2,6 +2,8 @@
 # Local prod build: signed + notarized when your shell has the Apple creds (~/.zshrc exports
 # APPLE_SIGNING_IDENTITY / APPLE_API_KEY (key id) / APPLE_API_KEY_PATH (.p8) / APPLE_API_ISSUER),
 # plain unsigned zip otherwise. Output: release/BlitzOS-<version>-arm64-mac.zip
+# Set BLITZ_NO_NOTARIZE=1 to force a fast signed-ONLY build (skips the ~10 min notarize step) even when
+# full creds are present — handy for a local demo build you only run on this Mac.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -30,21 +32,31 @@ fi
 
 npm run build
 
-ARGS=(--mac dmg zip --arm64 --publish never)
+# Targets: default dmg+zip; BLITZ_DIST_TARGET=dir builds ONLY the signed .app (fast — no dmg/zip),
+# used by the local rebuild-and-pin loop (scripts/build-local-app.sh). Intentional word-split, do not quote.
+TARGETS=( ${BLITZ_DIST_TARGET:-dmg zip} )
+ARGS=(--mac "${TARGETS[@]}" --arm64 --publish never)
 if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
   # electron-builder env names differ from the tauri-style ones in ~/.zshrc — map them.
   export CSC_NAME="${APPLE_SIGNING_IDENTITY#Developer ID Application: }"
-  if [[ -n "${APPLE_API_KEY_PATH:-}" && -n "${APPLE_API_ISSUER:-}" ]]; then
+  # BLITZ_NO_NOTARIZE=1 forces the fast signed-ONLY path even when full creds exist.
+  if [[ "${BLITZ_NO_NOTARIZE:-0}" != "1" && -n "${APPLE_API_KEY_PATH:-}" && -n "${APPLE_API_ISSUER:-}" ]]; then
     export APPLE_API_KEY_ID="${APPLE_API_KEY}"   # ~/.zshrc's APPLE_API_KEY holds the KEY ID
     export APPLE_API_KEY="${APPLE_API_KEY_PATH}" # electron-builder wants the .p8 PATH here
     ARGS+=(-c.mac.notarize=true)
     NOTARIZE_DMG=1   # post-step below: electron-builder notarizes the .app (the .zip carries it) but leaves the .dmg CONTAINER unsigned/unstapled — a downloaded dmg would warn on mount. Sign+notarize+staple it ourselves.
     echo "[dist] signing as ${CSC_NAME} + notarizing"
   else
-    echo "[dist] signing as ${CSC_NAME} (no notarization creds)"
+    # Signed-only. electron-builder AUTO-attempts notarization if it sees ANY notary cred in the env
+    # (~/.zshrc exports APPLE_API_KEY = the key id) and HARD-ERRORS on a partial API-key trio, so strip
+    # every notary cred here to make it cleanly SKIP notarization instead of failing the build.
+    unset APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+    echo "[dist] signing as ${CSC_NAME} (signed-only, notarization skipped)"
   fi
 else
   export CSC_IDENTITY_AUTO_DISCOVERY=false
+  # Same electron-builder auto-notarize guard as the signed-only branch above.
+  unset APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
   echo "[dist] UNSIGNED build (no APPLE_SIGNING_IDENTITY in env)"
 fi
 
@@ -65,4 +77,4 @@ if [[ "${NOTARIZE_DMG:-0}" == "1" ]]; then
   done
 fi
 
-ls -lh release/*.dmg release/*.zip 2>/dev/null
+ls -lhd release/*.dmg release/*.zip release/mac-arm64/*.app 2>/dev/null || true
