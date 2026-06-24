@@ -18,18 +18,18 @@
     --color-stone-300:#d6d7db;          /* marquee text */
     --ease:cubic-bezier(.4,0,.2,1);
 
-    --paper:#060e26;   /* deep blue base — the desktop the island lives on */
+    --paper:#0a0a0a;   /* near-black page (our surface) */
     --ink:#f4f4f5;     /* near-white ink */
 
-    /* BlitzOS accents: gold brand mark + Apple-blue live signal */
-    --gold:#ffd84d;        /* brand / bolt / primary action */
-    --gold-deep:#f5b300;
+    /* BlitzOS accent: Apple-blue, used for EVERYTHING (brand mark, buttons, highlights). */
+    --gold:#0a84ff;        /* brand / bolt / primary action (was gold → now blue) */
+    --gold-deep:#0066d6;
     --accent:#0a84ff;      /* live / working (--isl-accent) */
     --accent-2:#2a93ff;
     --accent-deep:#0066d6;
-    --amber:#ffd84d;       /* repoint → brand gold highlight */
-    --amber-2:#ffd84d;     /* repoint → gold gradient start */
-    --terra:#f5b300;       /* repoint → gold gradient end */
+    --amber:#0a84ff;       /* highlight → blue */
+    --amber-2:#2a93ff;     /* gradient start → blue */
+    --terra:#0066d6;       /* gradient end → blue */
     --green:#3fb950;       /* done */
     --purple:#9db8ff;      /* lock text: cool tint */
     --marquee-duration:7s;
@@ -46,15 +46,13 @@
     text-rendering:optimizeLegibility;
     min-height:100vh;
   }
-  /* The macOS "desktop" the BlitzOS island lives on: a viewport-locked blue aurora wallpaper (fixed, so it
-     stays put while the page scrolls — you feel like you're looking at one continuous Mac screen). */
+  /* Near-black page with just a whisper of blue glow at the top (viewport-locked), so the dark surface has a
+     little depth and echoes the blue accent without becoming a blue background. */
   body::before{
     content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
     background:
-      radial-gradient(1100px 760px at 6% -10%, rgba(72,138,255,.30), transparent 56%),
-      radial-gradient(980px 700px at 98% -4%, rgba(36,176,255,.20), transparent 54%),
-      radial-gradient(1300px 1000px at 50% 118%, rgba(26,72,196,.34), transparent 60%),
-      linear-gradient(180deg, #0b1f53 0%, #0a1742 48%, #060e26 100%);
+      radial-gradient(900px 520px at 50% -12%, rgba(10,132,255,.10), transparent 60%),
+      var(--paper);
   }
   ::selection{background:var(--ink);color:var(--paper)}
 
@@ -100,10 +98,10 @@
   }
   .btn:active{transform:scale(.96)}
   .btn--primary{
-    background:#fff;color:#0a1330;font-weight:700;letter-spacing:-.01em;
-    box-shadow:0 2px 16px -4px rgba(180,210,255,.45);
+    background:var(--accent);color:#fff;font-weight:700;letter-spacing:-.01em;
+    box-shadow:0 2px 18px -4px rgba(10,132,255,.55);
   }
-  .btn--primary:hover{box-shadow:0 16px 40px -14px rgba(180,210,255,.55);transform:translateY(-1px)}
+  .btn--primary:hover{background:var(--accent-2);box-shadow:0 16px 44px -12px rgba(10,132,255,.65);transform:translateY(-1px)}
   .btn--secondary{
     background:color-mix(in srgb,var(--ink) 5%,transparent);
     color:var(--ink);font-weight:600;
@@ -292,7 +290,7 @@
     width:30px;height:30px;flex:none;border-radius:9px;
     background:linear-gradient(150deg,var(--amber-2),var(--terra));
     display:flex;align-items:center;justify-content:center;
-    box-shadow:0 2px 8px -2px rgba(255,216,77,.7);
+    box-shadow:0 2px 8px -2px rgba(10,132,255,.7);
   }
   .island__peek .glyph svg{width:16px;height:16px;fill:#1c1500}
   .island__peek .txt{display:flex;flex-direction:column;line-height:1.12;min-width:0;flex:1}
@@ -1064,7 +1062,7 @@ MINI.threads = function(host){
   custom.style.justifyContent='center';custom.style.padding='10px 4px';
   var data = [
     {hue:'#0a84ff', title:'Inbox triage', state:'work'},
-    {hue:'#ffd84d', title:'Q3 deck',      state:'think'},
+    {hue:'#0a84ff', title:'Q3 deck',      state:'think'},
     {hue:'#3fb950', title:'Refactor auth', state:'done'}
   ];
   function chip(state){
@@ -1134,7 +1132,7 @@ MINI.apps = function(host){
   function light(){
     var t = tiles[k%tiles.length];
     t.style.borderColor='var(--amber)';
-    t.style.boxShadow='0 0 0 1px var(--amber),0 6px 16px -8px rgba(255,216,77,.8)';
+    t.style.boxShadow='0 0 0 1px var(--amber),0 6px 16px -8px rgba(10,132,255,.8)';
     var c=t.querySelector('.t-check'); c.style.opacity='1';c.style.transform='scale(1)';
     setTimeout(function(){
       t.style.borderColor='rgba(255,255,255,.16)'; t.style.boxShadow='none';
@@ -1266,7 +1264,7 @@ MINI.deploy = function(host){
   custom.innerHTML =
     '<span class="glyph js-globe" style="width:34px;height:34px;flex:none;border-radius:10px;'+
       'background:linear-gradient(150deg,var(--amber-2),var(--terra));display:flex;align-items:center;justify-content:center;'+
-      'box-shadow:0 2px 8px -2px rgba(255,216,77,.7);position:relative">'+
+      'box-shadow:0 2px 8px -2px rgba(10,132,255,.7);position:relative">'+
       '<svg viewBox="0 0 24 24" style="width:17px;height:17px;fill:none;stroke:#1c1500;stroke-width:2;stroke-linecap:round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg>'+
     '</span>'+
     '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">'+
@@ -1297,7 +1295,7 @@ MINI.deploy = function(host){
     t.push(setTimeout(function(){
       statusEl.innerHTML='<span style="color:var(--green)">✓ deployed · live</span>';
       bar.style.background='var(--green)';
-      url.style.textShadow='0 0 12px rgba(255,216,77,.9)'; url.style.color='var(--amber)';
+      url.style.textShadow='0 0 12px rgba(10,132,255,.9)'; url.style.color='var(--amber)';
       open.style.opacity='1';
     }, 2100));
     t.push(setTimeout(loop, 4400));
@@ -1325,7 +1323,7 @@ MINI.veto = function(host){
       '<div style="display:flex;align-items:center;gap:10px">'+
         '<span class="glyph" style="width:28px;height:28px;flex:none;border-radius:8px;'+
           'background:linear-gradient(150deg,var(--amber-2),var(--terra));display:flex;align-items:center;justify-content:center;'+
-          'box-shadow:0 2px 8px -2px rgba(255,216,77,.7)"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:#1c1500"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg></span>'+
+          'box-shadow:0 2px 8px -2px rgba(10,132,255,.7)"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:#1c1500"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg></span>'+
         '<div style="flex:1;min-width:0">'+
           '<div style="font-size:13px;font-weight:700;color:var(--color-orange-25)">'+a.q+'</div>'+
           '<div style="font-size:11px;font-weight:500;color:color-mix(in oklab,var(--color-stone-300) 85%,transparent)">'+a.sub+'</div>'+
