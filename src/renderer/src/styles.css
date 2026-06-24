@@ -188,6 +188,169 @@ button {
 .notch-handle.is-open .notch-peek {
   opacity: 0;
 }
+/* The glance bar IS the closed-state indicator now, so hide the old notch-peek dot/count in the closed state too
+   (the bars cover the notch; a peek dot would float over them). */
+.notch-handle:not(.is-open) .notch-peek {
+  opacity: 0;
+}
+
+/* ── The GLANCE BAR — the at-rest island: two BLACK bars that EXTEND the notch sideways along the menu-bar line,
+   split by the physical notch (it reads as the notch growing wider). Pure-black fill + the SAME 1px obsidian rim as
+   the island chassis (.nh-chassis). LEFT bar = circled BlitzOS icon + status summary; RIGHT bar = peer avatars.
+   Always mounted; .is-open collapses each bar INTO the notch (slide + fade) so the island grows out of / shrinks
+   to it. Display-only (pointer-events:none) — App's mousemove (the overlay forwards moves while click-through)
+   drives hover-to-open. Inner edge tucks ~8px UNDER the black notch-handle so there is no seam. */
+.glance-half {
+  position: fixed;
+  top: 0;
+  z-index: 2147482900; /* above the canvas, just under the notch-handle pill (2147483001) */
+  display: inline-flex;
+  align-items: center;
+  background: #000;
+  /* obsidian-glass rim tokens — identical to .nh-chassis so the bar reads as the island's material. */
+  --isl-rim-top: rgba(198, 217, 255, 0.6);
+  --isl-rim-mid: rgba(150, 172, 212, 0.14);
+  --isl-rim-bot: rgba(140, 176, 255, 0.34);
+  /* Pure flat notch-black: only the top-edge bleed (like the notch-handle), NO blue lift/aura so the fill reads as
+     the exact same black as the physical notch, not a floating panel. */
+  box-shadow: 0 -4px 0 0 #000;
+  pointer-events: none;
+  transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.26s ease;
+}
+.glance-left {
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 0 14px 0 13px;
+  border-radius: 0 0 0 13px; /* rounded bottom-LEFT (outer); square against the notch on the right */
+  transform-origin: right center;
+}
+.glance-right {
+  justify-content: flex-start;
+  padding: 0 13px 0 14px;
+  border-radius: 0 0 13px 0; /* rounded bottom-RIGHT (outer); square against the notch on the left */
+  transform-origin: left center;
+}
+/* the obsidian 1px rim, only on the OUTER edges + bottom (flush, no rim, where the bar meets the notch). */
+.glance-half::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--isl-rim-top) 0%, var(--isl-rim-mid) 30%, rgba(255, 255, 255, 0.03) 62%, var(--isl-rim-bot) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.glance-left::before {
+  padding: 0 0 1.3px 1.3px; /* outline +30% (1px → 1.3px) */
+}
+.glance-right::before {
+  padding: 0 1.3px 1.3px 0;
+}
+.glance-half > * {
+  position: relative;
+  z-index: 2;
+}
+/* OPEN → collapse INTO the notch (slide toward center) + fade, so the island appears to grow out of the bar. */
+.glance-left.is-open {
+  transform: translateX(18px);
+  opacity: 0;
+}
+.glance-right.is-open {
+  transform: translateX(-18px);
+  opacity: 0;
+}
+/* circled BlitzOS app icon (clipped to a circle, like the mock's chat tile). */
+.glance-logo {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #0d0f14;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+.glance-logo img {
+  width: 100%; /* blitz-glance-icon.png is ALREADY the centered circular crop, so display it 1:1 */
+  height: 100%;
+  object-fit: cover;
+  -webkit-user-drag: none;
+}
+/* the BlitzOS icon pulses (blue glow) while the Blitz main agent '0' is working. */
+.glance-logo.working {
+  animation: glance-logo-pulse 1.6s ease-in-out infinite;
+}
+@keyframes glance-logo-pulse {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 0 rgba(56, 189, 248, 0);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 11px rgba(56, 189, 248, 0.75);
+  }
+}
+.glance-sum {
+  font: 600 12px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  color: rgba(255, 255, 255, 0.82);
+  white-space: nowrap;
+}
+.glance-sum .gl-working {
+  color: #7db9ff;
+}
+.glance-sum .gl-attn {
+  color: #ffcf6b;
+}
+.glance-sum .gl-sep {
+  color: rgba(255, 255, 255, 0.42);
+}
+.glance-avas {
+  display: flex;
+  align-items: center;
+}
+.glance-ava {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-left: -7px;
+  border-radius: 50%;
+  background-size: cover;
+  box-shadow: 0 0 0 2px #000;
+}
+.glance-ava:first-child {
+  margin-left: 0;
+}
+.glance-ava.working {
+  animation: glance-ava-pulse 1.5s ease-in-out infinite;
+}
+@keyframes glance-ava-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px #000, 0 0 0 rgba(125, 185, 255, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 2px #000, 0 0 9px rgba(125, 185, 255, 0.85);
+  }
+}
+.glance-ava-more {
+  display: grid;
+  place-items: center;
+  background: rgba(38, 42, 50, 0.96);
+  color: rgba(255, 255, 255, 0.82);
+  font: 800 9px/1 -apple-system, system-ui, sans-serif;
+}
+@media (prefers-reduced-motion: reduce) {
+  .glance-half {
+    transition: opacity 0.18s;
+  }
+  .glance-ava.working,
+  .glance-logo.working {
+    animation: none;
+  }
+}
 .notch-entry {
   position: fixed;
   top: 0;

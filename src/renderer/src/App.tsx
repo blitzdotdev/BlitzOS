@@ -6,6 +6,7 @@ import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface } from './types'
 import { isRuntimePanel } from './types'
 import { NotchHost } from './notch/NotchHost'
+import { GlanceBar, type GlancePeek } from './notch/GlanceBar'
 import type { IslandAppMessagePart, IslandView } from './notch/types'
 import { ConnectPicker } from './components/ConnectPicker'
 import { IconCheck } from './components/Icons'
@@ -118,7 +119,8 @@ export default function App(): JSX.Element {
   const [notchPinned, setNotchPinned] = useState(false)
   const notchPinnedRef = useRef(false)
   // Aggregate agent activity for the COLLAPSED notch's live compact presentation (working / needs-you / total).
-  const [notchPeek, setNotchPeek] = useState({ working: 0, attn: 0, total: 0 })
+  // GlancePeek also carries the per-agent list so the glance bar shows one avatar per active agent.
+  const [notchPeek, setNotchPeek] = useState<GlancePeek>({ working: 0, attn: 0, total: 0, agents: [] })
   const setNotchPinnedBoth = (on: boolean): void => {
     notchPinnedRef.current = on
     setNotchPinned(on)
@@ -133,6 +135,7 @@ export default function App(): JSX.Element {
   // The attach panel (the macOS window picker) is open → keep the island OPEN + interactive (an extra pin source,
   // like ⌥Space) so the cursor can leave the chassis to hover/drag other windows without the island retracting.
   const notchAttachOpenRef = useRef(false)
+  const glanceOverRef = useRef(false) // cursor in the glance-bar zone (the menu-bar band near the notch) — keeps the island open
   const setNotchInteractive = (on: boolean): void => {
     if (notchLastIRef.current === on) return
     notchLastIRef.current = on
@@ -151,7 +154,7 @@ export default function App(): JSX.Element {
     notchHoverGraceRef.current = window.setTimeout(() => {
       notchHoverGraceRef.current = 0
       if (notchPinnedRef.current || notchAttachOpenRef.current || notchStateRef.current !== 'panel') return
-      if (notchOverRef.current || overChassisRef.current) return
+      if (notchOverRef.current || overChassisRef.current || glanceOverRef.current) return
       const holdRemaining = notchHoldUntilRef.current - performance.now()
       if (holdRemaining > 0) {
         scheduleNotchHoverClose(Math.min(holdRemaining + NOTCH_HOVER_RESCHEDULE_PAD_MS, NOTCH_HOVER_OPEN_GRACE_MS))
@@ -340,6 +343,50 @@ export default function App(): JSX.Element {
     window.addEventListener('mousemove', onMove, true)
     return () => window.removeEventListener('mousemove', onMove, true)
   }, [notchOn])
+  // HOVER-TO-OPEN from the GLANCE BAR: the overlay forwards mousemove even while closed/click-through, so when the
+  // cursor enters either glance bar (the menu-bar band hugging the notch) we open the island — same as hovering the
+  // notch. Registered AFTER the notch-hover effect so its setNotchInteractive(true) wins while over a bar; the close
+  // path is held off by glanceOverRef (set here, checked in scheduleNotchHoverClose). Bail unless in the top band.
+  useEffect(() => {
+    if (!notchOn) return
+    const onMove = (e: MouseEvent): void => {
+      const inZone =
+        e.clientY <= Math.max(28, notchMenuBarH) + 6 && Math.abs(e.clientX - window.innerWidth / 2) <= notchWidth / 2 + 300
+      glanceOverRef.current = inZone
+      if (notchStateRef.current === 'closed') {
+        if (!inZone) return
+        // OPEN only when actually over a visible bar (not the empty zone / the notch itself, which the hit-window owns).
+        const x = e.clientX
+        const y = e.clientY
+        const overBar = ['.glance-left', '.glance-right'].some((sel) => {
+          const r = document.querySelector(sel)?.getBoundingClientRect()
+          return !!r && x >= r.left - 4 && x <= r.right + 4 && y >= r.top && y <= r.bottom + 6
+        })
+        if (!overBar) return
+        if (notchHoverGraceRef.current) {
+          clearTimeout(notchHoverGraceRef.current)
+          notchHoverGraceRef.current = 0
+        }
+        notchHoldUntilRef.current = performance.now() + NOTCH_HOVER_OPEN_GRACE_MS
+        applyNotchState('panel')
+        setNotchInteractive(true)
+        return
+      }
+      // Already open: keep it alive while anywhere in the zone; leaving it schedules a close (overChassisRef wins).
+      if (inZone) {
+        if (notchHoverGraceRef.current) {
+          clearTimeout(notchHoverGraceRef.current)
+          notchHoverGraceRef.current = 0
+        }
+        notchHoldUntilRef.current = performance.now() + NOTCH_HOVER_OPEN_GRACE_MS
+        setNotchInteractive(true)
+      } else {
+        scheduleNotchHoverClose()
+      }
+    }
+    window.addEventListener('mousemove', onMove, true)
+    return () => window.removeEventListener('mousemove', onMove, true)
+  }, [notchOn, notchMenuBarH, notchWidth])
   const notchClip = notchOn
     ? notchClipFor(notchState, viewport.w || window.innerWidth, viewport.h || window.innerHeight, notchMenuBarH, notchWidth)
     : undefined
@@ -590,17 +637,18 @@ export default function App(): JSX.Element {
         // Keep the collapsed notch's live compact glance current: tally working / needs-you across the roster.
         // Computed BEFORE the chat-surface guard so the closed-notch dot stays live even with no Chat surface open.
         {
-          const statuses =
-            a.status && typeof a.status === 'object'
-              ? Object.values(a.status as Record<string, string>).map(String)
-              : Array.isArray(a.sessions)
-                ? (a.sessions as Array<{ status?: unknown }>).map((s) => String(s?.status ?? 'idle'))
-                : []
-          if (statuses.length || Array.isArray(a.sessions)) {
-            const working = statuses.filter((s) => s === 'working' || s === 'starting').length
-            const attn = statuses.filter((s) => s === 'waiting').length
-            const total = Array.isArray(a.sessions) ? a.sessions.length : statuses.length
-            setNotchPeek({ working, attn, total })
+          const sessions = Array.isArray(a.sessions) ? (a.sessions as Array<{ id?: unknown; status?: unknown }>) : null
+          const statusMap = a.status && typeof a.status === 'object' ? (a.status as Record<string, string>) : null
+          // Build the per-agent {id,status} list so the glance bar can render one avatar per active agent.
+          const agents = sessions
+            ? sessions.map((s) => ({ id: String(s?.id ?? ''), status: String(s?.status ?? 'idle') })).filter((x) => x.id)
+            : statusMap
+              ? Object.entries(statusMap).map(([id, status]) => ({ id: String(id), status: String(status) }))
+              : []
+          if (agents.length || sessions) {
+            const working = agents.filter((x) => x.status === 'working' || x.status === 'starting').length
+            const attn = agents.filter((x) => x.status === 'waiting').length
+            setNotchPeek({ working, attn, total: agents.length, agents })
           }
         }
         const chat = st.surfaces.find((s) => s.id === 'chat') || st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))
@@ -855,6 +903,15 @@ export default function App(): JSX.Element {
               {notchPeek.total > 0 && <span className="notch-peek-count">{notchPeek.total}</span>}
             </div>
           </div>,
+          document.body
+        )}
+      {/* The GLANCE BAR — the at-rest, menu-bar-line summary flanking the notch (BlitzOS icon + statuses LEFT, agent
+          avatars RIGHT). Always mounted while overlay+notch; `open` collapses the bars INTO the notch when the island
+          opens, so the island appears to grow out of / shrink back to the bar. Body portal, display-only — App's
+          mousemove drives hover-to-open. */}
+      {notchOn && hasNotch &&
+        createPortal(
+          <GlanceBar peek={notchPeek} notchWidth={notchWidth} menuBarH={notchMenuBarH} open={notchState === 'panel'} />,
           document.body
         )}
       {/* The island chassis (the locked NotchHost design) — also a body portal so it ESCAPES the #root-canvas clip
