@@ -23,6 +23,34 @@ export function sessionJsonlPath(wsRoot, claudeSessionId) {
 
 const STOP_TAIL_BYTES = 256 * 1024 // these transcripts get huge — read only the tail to find the last turn
 
+/** The first text block of an assistant message (content is either a string or a content-block array). */
+function firstTextBlock(message) {
+  const c = message && message.content
+  if (typeof c === 'string') return c
+  if (Array.isArray(c)) {
+    for (const b of c) if (b && b.type === 'text' && typeof b.text === 'string') return b.text
+  }
+  return ''
+}
+
+/** Classify a Claude Code API-error message (the text of an `isApiErrorMessage` record) into a coarse cause,
+ *  for the island's error label. Order matters — more specific patterns first. */
+export function classifyApiError(text) {
+  const s = String(text || '')
+  if (/issue with the selected model/i.test(s)) return 'model'
+  // Rate-limit BEFORE usage-limit: the rate-limit text reads "...temporarily limiting requests (not your usage
+  // limit)", so a usage-limit check would otherwise false-match on that negation.
+  if (/temporarily limiting requests|rate[ _-]?limit/i.test(s)) return 'rate-limit'
+  if (/session limit|weekly limit|hit your (?:usage )?limit/i.test(s)) return 'usage-limit'
+  if (/overloaded|\b529\b/i.test(s)) return 'overloaded'
+  if (/internal server error|server-side issue|\b50[0-9]\b/i.test(s)) return 'server-error'
+  if (/unable to connect|connectionrefused|failedtoopensocket|socket connection|idle timeout|timed out|timeout/i.test(s)) return 'connection'
+  if (/not logged in|run \/login|credits required/i.test(s)) return 'auth'
+  if (/prompt is too long/i.test(s)) return 'input'
+  if (/unable to respond to this request/i.test(s)) return 'refusal'
+  return 'error'
+}
+
 /** The LAST assistant stop signal in a Claude session JSONL (or null if none / unreadable).
  *  Bounded tail read so a multi-MB transcript stays cheap; a torn final line just fails to parse and is skipped. */
 export function lastAssistantStop(jsonlPath) {
@@ -53,10 +81,17 @@ export function lastAssistantStop(jsonlPath) {
         continue // a partial/torn tail line (or a non-JSON line) — skip
       }
       if (d.type === 'assistant' && d.message && d.message.stop_reason != null) {
+        // Claude Code records an API failure as an assistant record with `isApiErrorMessage:true` — but it still
+        // carries a CLEAN stop_reason (stop_sequence/refusal), so callers keying on stop_reason alone miss it.
+        const isApiError = d.isApiErrorMessage === true
+        const errorText = isApiError ? firstTextBlock(d.message) : ''
         return {
           stopReason: String(d.message.stop_reason),
           offset: offsets[i],
-          timestamp: d.timestamp ? Date.parse(d.timestamp) || null : null
+          timestamp: d.timestamp ? Date.parse(d.timestamp) || null : null,
+          isApiError,
+          errorText,
+          cause: isApiError ? classifyApiError(errorText) : null
         }
       }
     }
@@ -75,6 +110,14 @@ export function lastAssistantStop(jsonlPath) {
  *  Used to tell a turn that ended cleanly (end_turn/stop_sequence) from one cut off mid-turn (tool_use/truncated). */
 export function lastAssistantStopReason(jsonlPath) {
   return lastAssistantStop(jsonlPath)?.stopReason || null
+}
+
+/** The last assistant turn's API error, or null if the last turn was a normal turn. Keys on Claude Code's
+ *  `isApiErrorMessage:true` record. Returns the same shape as lastAssistantStop (with isApiError/cause/errorText),
+ *  so the caller gets the byte offset to compare against a per-agent turn baseline. */
+export function lastAssistantError(jsonlPath) {
+  const stop = lastAssistantStop(jsonlPath)
+  return stop && stop.isApiError ? stop : null
 }
 
 const clip = (s, n) => {

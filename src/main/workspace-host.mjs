@@ -48,7 +48,7 @@ import {
 import { writeRelayUrl } from './agent-runtime.mjs'
 // Agent settings ride the same terminal meta.json the manager owns.
 import { readTerminalMeta, setTerminalOrchestrators, writeTerminalMeta } from './terminal-manager.mjs'
-import { sessionJsonlPath, lastAssistantStop } from './agent-transcript.mjs'
+import { sessionJsonlPath, lastAssistantStop, lastAssistantError } from './agent-transcript.mjs'
 // The inbox is a runtime surface in osState; reconcileInboxItems keeps its items authoritative from the store.
 import { reconcileInboxItems } from './action-items.mjs'
 
@@ -518,6 +518,31 @@ export function createWorkspaceHost(a) {
     const stop = claudeStopSignal(id)
     return !!(stop && stop.stopReason === 'end_turn' && Number(stop.offset) > baseline)
   }
+  // The agent's LAST turn (after the current baseline) ended on a Claude Code API error — returns the error
+  // signal { cause, errorText, offset, … } or null. Keys on `isApiErrorMessage`, NOT stop_reason: an API error
+  // record carries a CLEAN stop_reason, so claudeTurnEndedClean can't see it (the BLI-40 gap). Offset-gated to
+  // the current turn so a stale error from a prior turn never re-fires (a new user message re-baselines at 1079).
+  function claudeTurnEndedError(agentId) {
+    const id = String(agentId ?? '0')
+    const baseline = chatClaudeTurnStopOffset.get(id)
+    if (baseline == null) return null
+    const meta = claudeAgentMeta(id)
+    if (!meta) return null
+    const err = lastAssistantError(sessionJsonlPath(activeWorkspace, meta.claudeSessionId))
+    return err && Number(err.offset) > baseline ? err : null
+  }
+  // Surface a fresh API-error turn as the sticky 'error' chat status (red dot). Returns true if it set it, so the
+  // settle paths can short-circuit. The status clears naturally on the next user message (setChatStatusLocal
+  // 'working' at the message handler). The wake-watchdog's island override still presents 'reconnecting' on top
+  // while it is actively reviving a deaf/rate-limited agent.
+  function applyClaudeTurnError(agentId) {
+    const id = String(agentId ?? '0')
+    const err = claudeTurnEndedError(id)
+    if (!err) return false
+    clearTurnActivity(id)
+    setChatStatusLocal(id, 'error', `api-error:${err.cause || 'error'}`)
+    return true
+  }
   function isBlitzUiChoiceText(text) {
     const trimmed = String(text || '').trim()
     if (!trimmed) return false
@@ -573,6 +598,10 @@ export function createWorkspaceHost(a) {
       if (!cur || cur.updatedAt !== updatedAt || !CHAT_ACTIVE_STATUSES.has(cur.status)) return
       if (hasActiveWorkflow(id)) {
         setChatStatusLocal(id, 'working', 'workflow')
+        updateChatHubState(id, true)
+        return
+      }
+      if (applyClaudeTurnError(id)) {
         updateChatHubState(id, true)
         return
       }
@@ -646,6 +675,7 @@ export function createWorkspaceHost(a) {
     }
     const cur = chatStatuses.get(id)
     if (cur?.status === 'waiting') return
+    if (applyClaudeTurnError(id)) return
     if (isIdleCompletionText(text)) {
       clearTurnActivity(id)
       setChatStatusLocal(id, 'watching', 'say-final')
