@@ -40,6 +40,18 @@ function mapConnResult(out) {
   return out
 }
 
+// Connecting / enumerating a NEW source (list_tabs/list_windows/connect_tab/connect_window) is USER-INITIATED:
+// it must be reachable ONLY from the BlitzOS Connect UI (localhost), never the untrusted relay/server — else a
+// remote/prompt-injected agent could connect the user's logged-in Gmail itself and read it with no consent.
+// Driving an ALREADY-connected source (read/act/run_js) stays relay-reachable: the user consented by connecting.
+const CONNECT_RELAY_DENIED = {
+  status: 403,
+  body: {
+    error:
+      'connecting a source is user-initiated — do it from the BlitzOS Connect UI (localhost), not over the relay. Once connected, you can read/act/run_js on it from here.'
+  }
+}
+
 // Telemetry/tape seam: observers see every tool call across every transport. MULTI-subscriber (telemetry
 // AND the session tape both bind it); each is a no-op until a host registers; must never break a tool call.
 // The payload now carries the full args + result (the parsed ctx.body and the handler's out) so a recording
@@ -519,7 +531,8 @@ export function makeOsTools(ops) {
       path: '/connection_list_tabs',
       description:
         "List the user's open browser tabs that CAN be connected — Chrome + Safari, via Apple Events (extension-free). Returns { tabs:[{tabId,title,url,browser}] }. Then connection_connect_tab one of them. Needs \"Allow JavaScript from Apple Events\" enabled (Chrome: View ▸ Developer; Safari: Develop menu).",
-      handler: async () => {
+      handler: async ({ transport }) => {
+        if (transport !== 'localhost') return CONNECT_RELAY_DENIED
         if (typeof ops.connectionListTabs !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
         return mapConnResult(await ops.connectionListTabs())
       }
@@ -529,7 +542,8 @@ export function makeOsTools(ops) {
       description:
         "Connect a browser tab (a tabId from connection_list_tabs) into BlitzOS as a per-source tool provider. Args: {tabId, title?}. Returns { connId, sourceId, savedTools, registryTools } — CHECK savedTools (already banked) and registryTools (vetted, available via connection_registry_add) BEFORE deriving JS: if one fits the task, call_tool/registry_add it instead of figuring it out from scratch.",
       input_schema: { type: 'object', required: ['tabId'], properties: { tabId: { type: ['number', 'string'] }, title: { type: 'string' }, agent: { type: 'string', description: 'your agent/session id — owns this connection (for connection_list scoping)' } } },
-      handler: async ({ body }) => {
+      handler: async ({ body, transport }) => {
+        if (transport !== 'localhost') return CONNECT_RELAY_DENIED
         if (typeof ops.connectionConnectTab !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
         const a = parse(body)
         if (a.tabId == null) return { status: 400, body: { error: 'tabId required' } }
@@ -540,7 +554,8 @@ export function makeOsTools(ops) {
       path: '/connection_list_windows',
       description:
         "List the user's open macOS app windows that CAN be connected (via the BlitzOS helper — macOS + local only). Returns { windows:[{windowId,pid,app,bundleId,title}] }. Then connection_connect_window one of them.",
-      handler: async () => {
+      handler: async ({ transport }) => {
+        if (transport !== 'localhost') return CONNECT_RELAY_DENIED
         if (typeof ops.connectionListWindows !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
         return mapConnResult(await ops.connectionListWindows())
       }
@@ -550,7 +565,8 @@ export function makeOsTools(ops) {
       description:
         "Connect a macOS app window (a windowId from connection_list_windows) into BlitzOS as a per-source tool provider. Read via its accessibility tree (or a screenshot when AX is thin); act via AXPress/set (background) or coordinate CGEvent (needs the window raised). Args: {windowId, title?}. Returns { connId, sourceId, savedTools, registryTools } — check savedTools/registryTools before deriving.",
       input_schema: { type: 'object', required: ['windowId'], properties: { windowId: { type: 'number' }, title: { type: 'string' }, agent: { type: 'string', description: 'your agent/session id — owns this connection (for connection_list scoping)' } } },
-      handler: async ({ body }) => {
+      handler: async ({ body, transport }) => {
+        if (transport !== 'localhost') return CONNECT_RELAY_DENIED
         if (typeof ops.connectionConnectWindow !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
         const a = parse(body)
         if (a.windowId == null) return { status: 400, body: { error: 'windowId required' } }
