@@ -24,6 +24,9 @@ import { join } from 'node:path'
 import http from 'node:http'
 import net from 'node:net'
 import { WebSocket } from 'ws'
+// We register each opened window as a FIRST-CLASS connection through these ops, so the whole connection_* toolset
+// (run_js / read / act / navigate / save_tool / registry / call_tool) drives it — no parallel API, no extension.
+import type { ConnectionOps, ConnectionAdapter } from './connection-ops.d.mts'
 
 const PROFILE_NAME = 'Blitz'
 const PROFILE_AVATAR_INDEX = 26 // a built-in Chrome avatar (the "robot"/"ninja" set) — best-effort branding
@@ -79,6 +82,16 @@ interface AgentWindow {
   targetId: string
   sessionId: string
   ready: boolean
+  connId?: string // the registry connection this window is bound to (so connection_* drives it)
+}
+
+// A page url → its source identity (host), the per-source key the registry's banked tools are keyed on.
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host || 'blitz-chrome'
+  } catch {
+    return 'blitz-chrome'
+  }
 }
 
 export interface BlitzChromeStatus {
@@ -105,6 +118,12 @@ class BlitzChrome {
   private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
   private readonly eventWaiters: Array<{ sessionId?: string; method: string; resolve: (o: Record<string, unknown>) => void }> = []
   private readonly windows = new Map<string, AgentWindow>() // agentId -> its window
+  private connectionOps: ConnectionOps | null = null
+
+  /** Wire the connection registry (index.ts) so an opened window registers as a first-class connection. */
+  setConnectionOps(ops: ConnectionOps): void {
+    this.connectionOps = ops
+  }
 
   available(): boolean {
     return process.platform === 'darwin' && !!findChromeBin()
@@ -181,6 +200,7 @@ class BlitzChrome {
           if (this.child === child) {
             this.child = null
             this.port = null
+            this.unbindAll()
             this.windows.clear()
             try {
               this.ws?.close()
@@ -240,6 +260,12 @@ class BlitzChrome {
         ws.once('error', (e: Error) => reject(e))
       })
       this.ws = ws
+      // Discover target lifecycle so a window the user closes (Target.targetDestroyed) unbinds its connection.
+      try {
+        await this.send('Target.setDiscoverTargets', { discover: true })
+      } catch {
+        /* non-fatal: lifecycle unbinds still happen via close()/shutdown */
+      }
     })()
     try {
       await this.wsConnecting
@@ -268,6 +294,56 @@ class BlitzChrome {
         if (w.method === o.method && (!w.sessionId || w.sessionId === o.sessionId)) {
           this.eventWaiters.splice(i, 1)
           w.resolve(o)
+        }
+      }
+      // Persistent (not one-shot) bridges to the connection registry, so a bound window's connection tracks the page.
+      if (o.method === 'Page.frameNavigated') this.onMainFrameNav(typeof o.sessionId === 'string' ? o.sessionId : undefined, o.params as Record<string, unknown> | undefined)
+      else if (o.method === 'Target.targetDestroyed') this.onTargetGone((o.params as { targetId?: string } | undefined)?.targetId)
+    }
+  }
+
+  // A bound window navigated its MAIN frame → re-key the connection's sourceId to the new host (so per-source banked
+  // tools track the page it's actually on, never the prior site's), and wake the agent. Mirrors the extension path's
+  // connectionRekey/connectionNotify in connection-tab-link.onTabEvent.
+  private onMainFrameNav(sessionId: string | undefined, params: Record<string, unknown> | undefined): void {
+    if (!sessionId || !params || !this.connectionOps) return
+    const frame = params.frame as { url?: string; parentId?: string } | undefined
+    if (!frame || frame.parentId) return // main frame only (subframe navs aren't the source identity)
+    let win: AgentWindow | undefined
+    for (const w of this.windows.values()) if (w.sessionId === sessionId) { win = w; break }
+    if (!win || !win.connId) return
+    const r = this.connectionOps.connectionRekey(win.connId, hostOf(String(frame.url || '')))
+    if (r && r.changed) return // the re-key emits its own moment
+    this.connectionOps.connectionNotify(win.connId, { significant: true, summary: 'navigated' })
+  }
+
+  // A window's target was destroyed (the user closed it) → unbind its connection and forget the window.
+  private onTargetGone(targetId: string | undefined): void {
+    if (!targetId) return
+    for (const [key, w] of this.windows) {
+      if (w.targetId === targetId) {
+        if (w.connId && this.connectionOps) {
+          try {
+            this.connectionOps.connectionUnbind(w.connId)
+          } catch {
+            /* registry gone */
+          }
+        }
+        this.windows.delete(key)
+        break
+      }
+    }
+  }
+
+  // Unbind every bound window's connection (Chrome died / app quitting). Leaves window bookkeeping to the caller.
+  private unbindAll(): void {
+    if (!this.connectionOps) return
+    for (const w of this.windows.values()) {
+      if (w.connId) {
+        try {
+          this.connectionOps.connectionUnbind(w.connId)
+        } catch {
+          /* registry gone */
         }
       }
     }
@@ -325,17 +401,118 @@ class BlitzChrome {
 
   // ---- high-level ops (exposed as blitz_chrome_* tools) ----
 
+  // Launch (if needed) THIS agent's extension-free Blitz Chrome window and register it as a first-class TAB
+  // connection, so the agent drives it with the whole connection_* toolset (run_js / read / act / navigate /
+  // save_tool / registry / call_tool). Returns the { connId } to drive — no parallel blitz_chrome_* driving API.
   async open(agentId: string, opts: { url?: string } = {}): Promise<Record<string, unknown>> {
     if (!this.available()) return { error: 'the Blitz browser is available only on macOS with Google Chrome installed' }
     try {
       const sid = await this.session(agentId)
-      if (opts.url) return await this.navigate(agentId, opts.url)
+      if (opts.url) {
+        const nav = await this.navigate(agentId, opts.url)
+        if (nav.error) return nav
+      }
       const title = await this.evalString(sid, 'document.title')
       const url = await this.evalString(sid, 'location.href')
-      return { ok: true, agent: agentId || 'default', port: this.port, url, title }
+      const key = agentId || 'default'
+      const w = this.windows.get(key)
+      if (!w) return { ok: true, agent: key, port: this.port, url, title }
+      if (this.connectionOps) {
+        const live = !!w.connId && (typeof this.connectionOps.connectionIsLive !== 'function' || this.connectionOps.connectionIsLive(w.connId))
+        if (!live) {
+          const bound = this.connectionOps.connectionBind({
+            type: 'tab',
+            sourceId: hostOf(url),
+            title: title || 'Blitz Chrome',
+            capabilities: { run_js: true, act: true, cdp: true },
+            adapter: this.buildAdapter(agentId),
+            ref: w.targetId,
+            agentId: agentId || ''
+          })
+          w.connId = bound.connId
+        }
+        return { ok: true, agent: key, port: this.port, connId: w.connId, sourceId: hostOf(url), url, title }
+      }
+      // connection registry not wired (headless/test transport) — fall back to the bare lifecycle result.
+      return { ok: true, agent: key, port: this.port, url, title }
     } catch (e) {
       return { error: String((e as Error)?.message || e) }
     }
+  }
+
+  // The CDP-backed connection adapter for an agent's window: the registry calls call(verb,args); we ride the
+  // window's flattened CDP session. Return shapes MATCH the extension tab adapter (connection-tab-link.buildAdapter)
+  // so connection_run_js/read/act/navigate behave identically whichever browser backs the tab.
+  private buildAdapter(agentId: string): ConnectionAdapter {
+    const key = agentId || 'default'
+    return {
+      call: async (verb: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+        try {
+          const sid = await this.session(agentId)
+          if (verb === 'run_js') return await this.adapterRunJs(sid, args)
+          if (verb === 'read') return await this.adapterRead(sid, args)
+          if (verb === 'navigate') {
+            const r = await this.navigate(agentId, String(args.url || ''))
+            return r.error ? r : { effect: (r as { effect?: unknown }).effect }
+          }
+          if (verb === 'act') {
+            const r = await this.act(agentId, args as { action?: string; text?: string; key?: string; selector?: string; x?: number; y?: number })
+            return r.error ? r : { effect: (r as { effect?: unknown }).effect }
+          }
+          if (verb === 'cdp') return { result: await this.send(String(args.method || ''), (args.params as Record<string, unknown>) || {}, sid) }
+          return { error: `the Blitz Chrome connection does not support '${verb}'` }
+        } catch (e) {
+          return { error: String((e as Error)?.message || e) }
+        }
+      },
+      drop: () => {
+        const w = this.windows.get(key)
+        if (w) w.connId = undefined
+      }
+    }
+  }
+
+  // connection_read on a Blitz Chrome tab: DOM text/html (default), a screenshot, or the AX tree (opt-in for canvas).
+  // Same return shapes as the extension's fnRead/cdpRead: { url, title, text, html? } | { png } | { text }.
+  private async adapterRead(sid: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (args.screenshot) {
+      const shot = (await this.send('Page.captureScreenshot', { format: 'png' }, sid)) as { data?: string }
+      return { png: shot && shot.data }
+    }
+    if (args.ax) {
+      const ax = (await this.send('Accessibility.getFullAXTree', {}, sid)) as { nodes?: Array<{ role?: { value?: unknown }; name?: { value?: unknown } }> }
+      const lines = (ax.nodes || [])
+        .map((n) => {
+          const role = (n.role && (n.role.value as string)) || ''
+          const name = (n.name && (n.name.value as string)) || ''
+          return name ? (role ? `${role}: ${name}` : name) : ''
+        })
+        .filter(Boolean)
+      return { text: lines.join('\n').slice(0, Number(args.max) || 8000) }
+    }
+    const max = Number(args.max) || 8000
+    const sel = args.selector ? JSON.stringify(String(args.selector)) : null
+    const rootExpr = sel ? `document.querySelector(${sel})` : 'document.body'
+    const htmlLine = args.html ? `out.html=(root.outerHTML||'').slice(0,${max});` : ''
+    const expr = `(()=>{const root=${rootExpr};if(!root)return {error:'no match for selector '+${sel || '""'}};const out={url:location.href,title:document.title,text:(root.innerText||'').slice(0,${max})};${htmlLine}return out})()`
+    const r = (await this.send('Runtime.evaluate', { expression: expr, returnByValue: true }, sid)) as { result?: { value?: unknown } }
+    const v = r.result && r.result.value
+    return v && typeof v === 'object' ? (v as Record<string, unknown>) : { url: '', title: '', text: String(v ?? '') }
+  }
+
+  // connection_run_js on a Blitz Chrome tab: run the agent's code as a (args)=>{…} body, return-by-value, awaiting a
+  // returned promise. Matches the extension's runUserScript contract: { result } on success, { error } on a throw.
+  private async adapterRunJs(sid: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const code = String(args.code || '')
+    const callArgs = JSON.stringify(args.args || {})
+    const expr = `(function(args){\n${code}\n})(${callArgs})`
+    const r = (await this.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }, sid)) as {
+      result?: { value?: unknown }
+      exceptionDetails?: { exception?: { description?: string }; text?: string }
+    }
+    if (r.exceptionDetails) return { error: String(r.exceptionDetails.exception?.description || r.exceptionDetails.text || 'run_js threw') }
+    const v = r.result ? r.result.value : undefined
+    return { result: v === undefined ? null : v }
   }
 
   async navigate(agentId: string, url: string): Promise<Record<string, unknown>> {
@@ -348,61 +525,6 @@ class BlitzChrome {
       const title = await this.evalString(sid, 'document.title')
       const finalUrl = await this.evalString(sid, 'location.href')
       return { ok: true, effect: { url: finalUrl, title } }
-    } catch (e) {
-      return { error: String((e as Error)?.message || e) }
-    }
-  }
-
-  async screenshot(agentId: string, opts: { path?: string } = {}): Promise<Record<string, unknown>> {
-    try {
-      const sid = await this.session(agentId)
-      const shot = (await this.send('Page.captureScreenshot', { format: 'png' }, sid)) as { data: string }
-      const out = opts.path || join(this.shotDir, `shot-${(agentId || 'default').replace(/[^a-z0-9_-]/gi, '_')}-${Date.now()}.png`)
-      const buf = Buffer.from(shot.data, 'base64')
-      writeFileSync(out, buf)
-      return { ok: true, path: out, bytes: buf.length }
-    } catch (e) {
-      return { error: String((e as Error)?.message || e) }
-    }
-  }
-
-  async read(agentId: string, opts: { mode?: string; selector?: string; max?: number } = {}): Promise<Record<string, unknown>> {
-    // Page content is read from the REAL DOM via injected JS (Runtime.evaluate) — NOT the accessibility tree.
-    // 'text' (default) = visible innerText, 'html' = serialized DOM markup, 'title' = document.title.
-    // 'ax' is kept only as an explicit opt-in for canvas apps (Docs/Figma) that have no meaningful DOM text.
-    const mode = (opts.mode || 'text').toLowerCase()
-    const max = Math.max(256, Math.min(Number(opts.max) || 12000, 200000))
-    const sel = opts.selector ? JSON.stringify(opts.selector) : null
-    const cap = (text: string): Record<string, unknown> => ({
-      ok: true,
-      mode,
-      result: text.length > max ? text.slice(0, max) + `\n…(+${text.length - max} bytes)` : text
-    })
-    try {
-      const sid = await this.session(agentId)
-      if (mode === 'title') return { ok: true, mode, result: await this.evalString(sid, 'document.title') }
-      if (mode === 'html') {
-        const expr = sel
-          ? `(()=>{const el=document.querySelector(${sel});return el?el.outerHTML:'(no match for selector)'})()`
-          : '(document.documentElement?document.documentElement.outerHTML:"")'
-        return cap(await this.evalString(sid, expr))
-      }
-      if (mode === 'ax') {
-        // explicit opt-in: flatten the accessibility tree to name/role lines (for canvas apps with no DOM text)
-        const ax = (await this.send('Accessibility.getFullAXTree', {}, sid)) as { nodes?: Array<Record<string, any>> }
-        const lines: string[] = []
-        for (const n of ax.nodes || []) {
-          const role = n.role && n.role.value
-          const name = n.name && n.name.value
-          if (name || (role && role !== 'none' && role !== 'GenericContainer')) lines.push(`${role || '?'}: ${name || ''}`.trim())
-        }
-        return { ...cap(lines.join('\n')), nodes: (ax.nodes || []).length }
-      }
-      // default 'text': visible text straight from the DOM, scoped by selector when given
-      const expr = sel
-        ? `(()=>{const el=document.querySelector(${sel});return el?(el.innerText||el.textContent||''):'(no match for selector)'})()`
-        : '(()=>{const el=document.body||document.documentElement;return el?(el.innerText||el.textContent||""):""})()'
-      return cap(await this.evalString(sid, expr))
     } catch (e) {
       return { error: String((e as Error)?.message || e) }
     }
@@ -453,7 +575,24 @@ class BlitzChrome {
         const url = await this.evalString(sid, 'location.href')
         return { ok: true, effect: { clicked: { x, y }, url } }
       }
-      return { error: `unknown action '${action}' (use type | click | key)` }
+      if (action === 'set') {
+        if (!a.selector) return { error: 'set needs {selector}' }
+        const sel = JSON.stringify(a.selector)
+        const val = JSON.stringify(String(a.text ?? ''))
+        // Set the field's value through the native setter (so React/controlled inputs see it) + fire input/change.
+        const r = (await this.send(
+          'Runtime.evaluate',
+          {
+            expression: `(()=>{const el=document.querySelector(${sel});if(!el)return null;el.focus&&el.focus();const d=Object.getOwnPropertyDescriptor(el.__proto__||{},'value');if(d&&d.set){d.set.call(el,${val})}else{el.value=${val}}el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return ('value' in el)?el.value:(el.textContent||'')})()`,
+            returnByValue: true
+          },
+          sid
+        )) as { result?: { value?: unknown } }
+        const v = r.result && r.result.value
+        if (v == null) return { error: `no element matched selector ${a.selector}` }
+        return { ok: true, effect: { set: String(v) } }
+      }
+      return { error: `unknown action '${action}' (use type | click | set | key)` }
     } catch (e) {
       return { error: String((e as Error)?.message || e) }
     }
@@ -480,6 +619,13 @@ class BlitzChrome {
       const key = (agentId || 'default')
       const w = this.windows.get(key)
       if (!w) return { ok: true, closed: false }
+      if (w.connId && this.connectionOps) {
+        try {
+          this.connectionOps.connectionUnbind(w.connId)
+        } catch {
+          /* registry gone */
+        }
+      }
       try {
         if (this.isWsOpen()) await this.send('Target.closeTarget', { targetId: w.targetId })
       } catch {
@@ -502,6 +648,7 @@ class BlitzChrome {
       /* ignore */
     }
     this.ws = null
+    this.unbindAll()
     this.windows.clear()
     try {
       this.child?.kill()
@@ -530,12 +677,10 @@ export function blitzChrome(): BlitzChrome {
 }
 
 // The ops bundle injected into electronOps (electron-os-tools.ts) so the blitz_chrome_* tool handlers resolve.
+// Only the LIFECYCLE is a blitz_chrome_* tool now (open returns a connId; status/close manage it). Driving the
+// page — navigate / read / run_js / act / save_tool / registry / call_tool — is the unified connection_* toolset.
 export const blitzChromeOps = {
   blitzChromeOpen: (agentId: string, opts?: { url?: string }) => blitzChrome().open(agentId, opts || {}),
-  blitzChromeNavigate: (agentId: string, url: string) => blitzChrome().navigate(agentId, url),
-  blitzChromeScreenshot: (agentId: string, opts?: { path?: string }) => blitzChrome().screenshot(agentId, opts || {}),
-  blitzChromeRead: (agentId: string, opts?: { mode?: string; selector?: string; max?: number }) => blitzChrome().read(agentId, opts || {}),
-  blitzChromeAct: (agentId: string, a?: { action?: string; text?: string; key?: string; selector?: string; x?: number; y?: number }) => blitzChrome().act(agentId, a || {}),
   blitzChromeStatus: (agentId?: string) => blitzChrome().status(agentId),
   blitzChromeClose: (agentId?: string, opts?: { quit?: boolean }) => blitzChrome().close(agentId, opts || {})
 }

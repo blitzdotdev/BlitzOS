@@ -1432,6 +1432,10 @@ app.whenReady().then(() => {
   // agent gets its own background window (connection_open_browser). connectionOpenBrowser ensures it's running
   // first via this launcher; the connector inside it connects to the SAME tab-link above. macOS + local only.
   electronConnections.setBrowserLauncher(() => aiBrowser().ensure())
+  // The extension-free Blitz Chrome (blitz-chrome.ts) registers each opened window as a first-class TAB connection
+  // through this same registry, so the whole connection_* toolset (run_js / read / act / save_tool / registry) drives
+  // it with no parallel API and no extension. blitz_chrome_open returns the { connId } the agent then drives.
+  blitzChrome().setConnectionOps(electronConnections)
   app.on('before-quit', () => {
     try {
       aiBrowser().shutdown()
