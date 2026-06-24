@@ -93,6 +93,8 @@ export interface IslandPanelProps {
   menuBarH: number // notch height in px, for top alignment under the physical notch
   attachOpen: boolean // the attach "+" toggles the attachment panel INLINE (island grows)
   onToggleAttach: () => void
+  activeApp: IslandAppMessagePart | null // generated app currently opened in the expanded island preview
+  onActiveAppChange: (app: IslandAppMessagePart | null) => void
   onAppViewerToggle?: (open: boolean) => void
   debugTerminalEnabled: boolean // debug-only: show the active agent's tmux terminal inside the chat app
   activeTerminal?: IslandTerminalMeta // metadata for activeId's managed terminal; activeId remains the terminal id

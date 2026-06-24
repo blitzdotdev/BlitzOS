@@ -6,6 +6,7 @@ import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface } from './types'
 import { isRuntimePanel } from './types'
 import { NotchHost } from './notch/NotchHost'
+import type { IslandAppMessagePart } from './notch/types'
 import { ConnectPicker } from './components/ConnectPicker'
 import { IconCheck } from './components/Icons'
 import { OnboardingFlow } from './onboarding/OnboardingFlow'
@@ -94,10 +95,19 @@ export default function App(): JSX.Element {
   // Also remember the attach panel (open/closed) so reopening the island restores it, not just the view+tab. (The
   // per-chat staging TRAY lives in stagingStore — a module store that survives the remount on its own.)
   const islandAttachOpenRef = useRef(false)
-  const onIslandStateChange = (view: 'home' | 'settings' | 'session', page: number, attachOpen: boolean): void => {
+  const islandActiveAppRef = useRef<IslandAppMessagePart | null>(null)
+  const [islandKeepMounted, setIslandKeepMounted] = useState(false)
+  const onIslandStateChange = (
+    view: 'home' | 'settings' | 'session',
+    page: number,
+    attachOpen: boolean,
+    activeApp: IslandAppMessagePart | null
+  ): void => {
     islandViewRef.current = view
     islandPageRef.current = page
     islandAttachOpenRef.current = attachOpen
+    islandActiveAppRef.current = activeApp
+    setIslandKeepMounted(Boolean(activeApp))
   }
   const overChassisRef = useRef(false) // cursor over the chat chassis (overlay mousemove) — keeps the panel open
   const notchOverRef = useRef(false) // cursor over the physical notch (reported by the hit-window's hover)
@@ -218,8 +228,19 @@ export default function App(): JSX.Element {
       }),
     []
   )
+  // Collapse the island (panel → closed). Shared by Esc and the main-driven os:notch-close.
+  const closeIsland = (): void => {
+    if (notchStateRef.current === 'closed') return
+    setNotchPinnedBoth(false)
+    setNotchAnimating(true) // freeze widget motion during the collapse (smooth)
+    applyNotchState('closed')
+    notchLastIRef.current = null
+    setNotchInteractive(false)
+  }
   // ⌥Space toggles the island show/hide (closed ↔ panel), restoring the last view+tab.
   useEffect(() => window.agentOS?.notch?.onToggle?.(() => toggleIsland()), [])
+  // Main asks us to collapse — an outbound link in an app preview just opened in the real browser.
+  useEffect(() => window.agentOS?.notch?.onClose?.(() => closeIsland()), [])
   // The notch HIT-WINDOW (the always-interactive transparent window over the physical notch) drives the toggle +
   // hover, so the notch is clickable in EVERY state with no click-through→arm race. CLICK → toggle the island panel.
   // Brandon's guard (only fire when closed → a stray click can't toggle the open panel shut) + the generic
@@ -261,9 +282,7 @@ export default function App(): JSX.Element {
       if (notchStateRef.current === 'closed') return
       if (e.key === 'Escape') {
         e.preventDefault()
-        setNotchPinnedBoth(false)
-        applyNotchState('closed')
-        setNotchInteractive(false)
+        closeIsland()
       }
     }
     window.addEventListener('keydown', onKey, true)
@@ -816,15 +835,18 @@ export default function App(): JSX.Element {
         )}
       {/* The island chassis (the locked NotchHost design) — also a body portal so it ESCAPES the #root-canvas clip
           + the hide-canvas-at-rest rule. Shown while the island is in the panel/opening state; the handle above
-          sits ON TOP of it (higher z) so the notch stays clickable while the chat is open. */}
+          sits ON TOP of it (higher z) so the notch stays clickable while the chat is open. App previews stay mounted
+          while hidden so their iframe does not reload on hover-away / hover-back. */}
       {notchOn &&
-        notchState === 'panel' &&
+        (notchState === 'panel' || islandKeepMounted) &&
         createPortal(
           <NotchHost
             menuBarH={notchMenuBarH}
+            visible={notchState === 'panel'}
             initialView={islandViewRef.current}
             initialPage={islandPageRef.current}
             initialAttachOpen={islandAttachOpenRef.current}
+            initialActiveApp={islandActiveAppRef.current}
             onStateChange={onIslandStateChange}
             onChassisHoverChange={setChassisHover}
             onChassisResize={() => {

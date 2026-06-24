@@ -226,6 +226,17 @@ function safeExternalUrl(raw: unknown): string | null {
   }
 }
 
+// A Blitz app preview is served from *.app.blitz.dev. Navigation that STAYS on that host is the app
+// routing itself and belongs in the preview iframe; anything leaving it is an outbound link the user
+// clicked and must open in the real browser (see the will-frame-navigate handler below).
+function isBlitzAppHost(raw: string): boolean {
+  try {
+    return new URL(raw).hostname.endsWith('.app.blitz.dev')
+  } catch {
+    return false
+  }
+}
+
 // Gather the user's small durable app state for a state.snapshot: workspace.json + content/memory files +
 // onboarding + the root journal's permissions/bookmarks. All small text; the tape content-addresses each so
 // unchanged files dedupe. Never the heavy stuff, never tokens (the tape scrubs on write).
@@ -374,6 +385,33 @@ function createWindow(): void {
       if (forwardTileKeybind(input)) ev.preventDefault()
     })
     attachGuestWindowPolicy(guest, { openSurface: () => {}, logPlan: () => {} })
+  })
+  // Blitz app preview = a sandboxed <iframe> (allow-popups) inside THIS renderer. Outbound links the
+  // user clicks in a preview must open in their default browser, never hijack/replace the preview.
+  //  - target=_blank / window.open -> the window-open handler (deny + openExternal).
+  //  - a plain <a> navigating the preview frame off its own host -> will-frame-navigate.
+  // We scope the frame case to the DIRECT app iframe leaving *.app.blitz.dev, so in-app routing and
+  // nested embeds (an app embedding e.g. a video iframe) keep loading inline.
+  // Hand a URL to the real browser and collapse the island out of the way (the user is leaving for it).
+  const mainWc = mainWindow.webContents
+  const openExternalAndCollapse = (safe: string): void => {
+    void shell.openExternal(safe)
+    if (!mainWc.isDestroyed()) mainWc.send('os:notch-close')
+  }
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const safe = safeExternalUrl(url)
+    if (safe) openExternalAndCollapse(safe)
+    return { action: 'deny' }
+  })
+  mainWindow.webContents.on('will-frame-navigate', (event) => {
+    if (event.isMainFrame) return // never the island UI's own top frame
+    const frame = event.frame
+    if (!frame?.parent || frame.parent.parent) return // only an iframe directly under the renderer
+    if (isBlitzAppHost(event.url)) return // app routing within itself stays in the preview
+    const safe = safeExternalUrl(event.url)
+    if (!safe) return
+    event.preventDefault()
+    openExternalAndCollapse(safe)
   })
   // Bare-Option hold → the radial create menu, same focus-proof route as the keybinds above: the
   // host webContents sees the key even when an app/srcdoc iframe holds focus (the renderer's own

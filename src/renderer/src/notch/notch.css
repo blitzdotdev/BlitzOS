@@ -41,7 +41,14 @@
   box-shadow: 0 -4px 0 0 #000, 0 12px 44px -10px rgba(30, 64, 140, 0.24), 0 1px 5px rgba(120, 160, 255, 0.1);
   animation: nhost-in 0.28s cubic-bezier(0.32, 0.72, 0, 1);
   /* the island EXPANDS sideways when the attachment panel opens (NotchHost adds .nh-wide). */
-  transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.12s ease, transform 0.12s ease;
+}
+
+.nh-chassis.nh-parked {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-8px) scale(0.985);
+  animation: none;
 }
 
 /* ── OBSIDIAN-GLASS RIM — the "liquid-glass" OUTLINE (the only thing separating the all-black island from a black
@@ -73,6 +80,11 @@
 
 .nh-chassis.nh-wide {
   width: 888px; /* attach-panel-open width (was 740px, +20%) */
+}
+
+.nh-chassis.nh-app-viewing {
+  width: min(1200px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
 }
 
 /* the PEEK toggle: a macOS-menu-bar-style control pinned to the very top (the notch band), top-right, ALWAYS

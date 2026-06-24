@@ -13,7 +13,7 @@ import { clearStaged } from './stagingStore'
 import IslandPanel from './IslandPanel'
 import IslandHome from './IslandHome'
 import IslandSettings from './IslandSettings'
-import type { IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta, IslandWfRun } from './types'
+import type { IslandAppMessagePart, IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta, IslandWfRun } from './types'
 import { applyWfRun } from '../../../main/wf-run-state.mjs'
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
@@ -187,22 +187,26 @@ const mapThreads = (raw?: Record<string, Array<{ role?: unknown; text?: unknown;
 
 export function NotchHost({
   menuBarH,
+  visible = true,
   onChassisResize,
   onChassisHoverChange,
   onAttachChange,
   onStateChange,
   initialView = 'home',
   initialPage = 1,
-  initialAttachOpen = false
+  initialAttachOpen = false,
+  initialActiveApp = null
 }: {
   menuBarH: number
+  visible?: boolean // false parks the mounted island off visually so app iframes survive hover-close
   onChassisResize?: () => void
   onChassisHoverChange?: (on: boolean) => void
   onAttachChange?: (open: boolean) => void // attach panel (the macOS window picker) opened/closed → App pins the island open
-  onStateChange?: (view: 'home' | 'settings' | 'session', page: number, attachOpen: boolean) => void // report view+page+attach so App restores it on the next open
+  onStateChange?: (view: 'home' | 'settings' | 'session', page: number, attachOpen: boolean, activeApp: IslandAppMessagePart | null) => void // report state so App restores it on the next open
   initialView?: 'home' | 'settings' | 'session' // the view to open into — RESTORED from the last open (NotchHost remounts per open)
   initialPage?: number // the tab to open into (0 = composer, 1..N = agent) — also restored from the last open
   initialAttachOpen?: boolean // the attach panel's open/closed state — also restored from the last open
+  initialActiveApp?: IslandAppMessagePart | null // generated app preview restored after hover-close/remount
 }): JSX.Element {
   // 'home' = the icon grid; 'settings' = debug settings; 'session' = today's agent chat/session UI.
   const [view, setView] = useState<'home' | 'settings' | 'session'>(initialView)
@@ -218,7 +222,8 @@ export function NotchHost({
   const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
   const [debugFakeHomeAgents, setDebugFakeHomeAgents] = useState(readDebugFakeHomeAgents)
   const [workflowAlwaysShow, setWorkflowAlwaysShow] = useState(readWorkflowAlwaysShow)
-  const [appViewerOpen, setAppViewerOpen] = useState(false)
+  const [activeApp, setActiveApp] = useState<IslandAppMessagePart | null>(initialActiveApp)
+  const [appViewerOpen, setAppViewerOpen] = useState(Boolean(initialActiveApp))
   const [homeDoneAgents, setHomeDoneAgentsState] = useState<Record<string, true>>(() => readHomeDoneAgents())
   const [homeSeenWorkingAgents, setHomeSeenWorkingAgentsState] = useState<Record<string, true>>(() => readHomeSeenWorkingAgents())
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
@@ -237,9 +242,9 @@ export function NotchHost({
   // Report the island's view + tab up to App so reopening it (hover OR ⌥Space) restores where the user left off,
   // instead of resetting to Home. App stashes these and feeds them back as initialView/initialPage on the next open.
   useEffect(() => {
-    onStateChange?.(view, page, attachOpen)
+    onStateChange?.(view, page, attachOpen, activeApp)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, page, attachOpen])
+  }, [view, page, attachOpen, activeApp])
 
   // Tell the host whenever the chassis SIZE changes (attach panel opens/closes, peek toggles) so its hover-close
   // grace timer holds the island open: a shrink otherwise pulls the chassis out from under the cursor and the
@@ -826,6 +831,11 @@ export function NotchHost({
     setPeek((v) => !v)
     setAttachOpen(false)
   }
+  const handleActiveAppChange = (app: IslandAppMessagePart | null): void => {
+    setActiveApp(app)
+    setAppViewerOpen(Boolean(app))
+    onStateChange?.(view, page, attachOpen, app)
+  }
   const handleAppViewerToggle = (open: boolean): void => {
     setAppViewerOpen(open)
     holdChassisHover()
@@ -899,10 +909,11 @@ export function NotchHost({
   const homeStatus = debugFakeHomeAgents ? FAKE_HOME_STATUS : status
   const homeDoneAgentIds = debugFakeHomeAgents ? FAKE_HOME_DONE_IDS : Object.keys(homeDoneAgents)
   return (
-    <div className="nhost" data-view={dataView}>
+    <div className="nhost" data-view={dataView} data-visible={visible ? 'true' : 'false'}>
       <div
-        className={`nh-chassis${attachOpen && !onHome ? ' nh-wide' : ''}`}
+        className={`nh-chassis${!visible ? ' nh-parked' : ''}${attachOpen && !onHome ? ' nh-wide' : ''}${appViewerOpen ? ' nh-app-viewing' : ''}`}
         data-view={dataView}
+        aria-hidden={!visible}
         onPointerEnter={holdChassisHover}
         onPointerMove={holdChassisHover}
         onPointerDownCapture={holdChassisHover}
@@ -992,6 +1003,8 @@ export function NotchHost({
             menuBarH={menuBarH}
             attachOpen={attachOpen}
             onToggleAttach={() => setAttachOpen((v) => !v)}
+            activeApp={activeApp}
+            onActiveAppChange={handleActiveAppChange}
             onAppViewerToggle={handleAppViewerToggle}
             debugTerminalEnabled={debugActiveTerminal}
             activeTerminal={activeId ? terminals[activeId] : undefined}

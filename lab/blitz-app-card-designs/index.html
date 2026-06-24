@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blitz App Card — Design Options</title>
+    <style>
+      /* ---- island tokens (mirrored from notch/island.css) ---- */
+      :root {
+        --isl-text: #ffffff;
+        --isl-muted: #ffffff99;
+        --isl-dim: #ffffff66;
+        --isl-faint: #ffffff14;
+        --isl-surface: #0a0a0a;
+        --isl-surface2: #161616;
+        --isl-accent: #0a84ff;
+        --isl-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', Helvetica,
+          Arial, sans-serif;
+        --isl-round: ui-rounded, 'SF Pro Rounded', system-ui, var(--isl-font);
+
+        /* default tone = amber (matches the screenshot) */
+        --isl-app-a: #ffd247;
+        --isl-app-b: #ff6f5f;
+      }
+
+      [data-tone='sky'] {
+        --isl-app-a: #31c6ff;
+        --isl-app-b: #426dff;
+      }
+      [data-tone='mint'] {
+        --isl-app-a: #5ef0a6;
+        --isl-app-b: #43d1d8;
+      }
+      [data-tone='amber'] {
+        --isl-app-a: #ffd247;
+        --isl-app-b: #ff6f5f;
+      }
+      [data-tone='violet'] {
+        --isl-app-a: #9b7cff;
+        --isl-app-b: #ed4ac8;
+      }
+      [data-tone='lime'] {
+        --isl-app-a: #a9ff5c;
+        --isl-app-b: #33df6a;
+      }
+      [data-tone='rose'] {
+        --isl-app-a: #ff66c4;
+        --isl-app-b: #ff8361;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: #000;
+        color: var(--isl-text);
+        font-family: var(--isl-font);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .page {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 40px 28px 100px;
+      }
+
+      header h1 {
+        margin: 0 0 6px;
+        font: 800 26px/1.1 var(--isl-round);
+        letter-spacing: -0.01em;
+      }
+      header p {
+        margin: 0;
+        color: var(--isl-muted);
+        font-size: 14px;
+        max-width: 640px;
+      }
+
+      /* ---- global controls ---- */
+      .controls {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 14px;
+        margin: 24px 0 36px;
+        padding: 14px 16px;
+        border: 1px solid var(--isl-faint);
+        border-radius: 16px;
+        background: rgba(20, 20, 20, 0.82);
+        backdrop-filter: blur(18px);
+      }
+      .controls .label {
+        font: 700 11px/1 var(--isl-round);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--isl-dim);
+      }
+      .swatches {
+        display: flex;
+        gap: 8px;
+      }
+      .swatch {
+        width: 26px;
+        height: 26px;
+        border-radius: 9px;
+        border: 2px solid transparent;
+        cursor: pointer;
+        padding: 0;
+        outline: none;
+        transition: transform 0.12s ease, border-color 0.12s ease;
+      }
+      .swatch:hover {
+        transform: translateY(-1px);
+      }
+      .swatch.active {
+        border-color: #fff;
+      }
+      .seg {
+        display: inline-flex;
+        gap: 4px;
+        padding: 3px;
+        border-radius: 11px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .seg button {
+        border: 0;
+        background: transparent;
+        color: var(--isl-muted);
+        font: 600 12px/1 var(--isl-font);
+        padding: 7px 11px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .seg button.active {
+        background: rgba(255, 255, 255, 0.12);
+        color: var(--isl-text);
+      }
+
+      /* ---- gallery grid ---- */
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+        gap: 28px;
+      }
+      .cell {
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 20px;
+        background: linear-gradient(180deg, #0d0d0d, #060606);
+        overflow: hidden;
+      }
+      .cell-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 18px 0;
+      }
+      .cell-head h2 {
+        margin: 0;
+        font: 700 15px/1.2 var(--isl-round);
+      }
+      .cell-head .num {
+        font: 700 12px/1 var(--isl-round);
+        color: var(--isl-dim);
+      }
+      .cell-note {
+        margin: 6px 18px 0;
+        color: var(--isl-muted);
+        font-size: 12.5px;
+        line-height: 1.45;
+      }
+
+      /* the faux chat context each card sits in */
+      .stage {
+        margin: 16px;
+        padding: 18px 16px 20px;
+        border-radius: 16px;
+        background:
+          radial-gradient(120% 80% at 50% -10%, rgba(255, 255, 255, 0.04), transparent 60%),
+          var(--isl-surface);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      .agent-line {
+        max-width: 84%;
+        margin-bottom: 4px;
+        padding: 9px 13px;
+        border-radius: 16px 16px 16px 5px;
+        background: var(--isl-surface2);
+        color: var(--isl-text);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      /* =================================================================
+         SHARED ICON
+         ================================================================= */
+      .icn svg {
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      /* =================================================================
+         OPTION 1 — CURRENT (baseline, faithful to island.css)
+         ================================================================= */
+      .v-current {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) 22px;
+        align-items: center;
+        gap: 11px;
+        width: min(100%, 390px);
+        min-height: 64px;
+        padding: 10px 11px;
+        border: 1px solid rgba(255, 255, 255, 0.13);
+        border-radius: 15px;
+        background:
+          linear-gradient(90deg, color-mix(in srgb, var(--isl-app-a) 14%, transparent), transparent 48%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.072), rgba(255, 255, 255, 0.035));
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 12px 24px rgba(0, 0, 0, 0.22);
+        color: var(--isl-text);
+        text-align: left;
+        cursor: pointer;
+        transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+      }
+      .v-current:hover {
+        transform: translateY(-1px);
+        border-color: color-mix(in srgb, var(--isl-app-a) 44%, rgba(255, 255, 255, 0.18));
+      }
+      .v-current .icn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 11px;
+        background: linear-gradient(135deg, var(--isl-app-a), var(--isl-app-b));
+        color: #fff;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+      }
+      .v-current .icn svg {
+        width: 19px;
+        height: 19px;
+      }
+      .v-current .copy {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+      }
+      .v-current .kicker {
+        color: var(--isl-app-a);
+        font-size: 13px;
+        font-weight: 850;
+        line-height: 17px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .v-current .sub {
+        color: var(--isl-muted);
+        font-size: 11.5px;
+        font-weight: 560;
+        line-height: 15px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .v-current .open {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.68);
+        font-size: 19px;
+        line-height: 1;
+      }
+
+      /* =================================================================
+         OPTION 2 — APP STORE ROW (squircle icon + Open pill)
+         ================================================================= */
+      .v-store {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 13px;
+        width: min(100%, 400px);
+        padding: 11px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.025));
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 14px 30px rgba(0, 0, 0, 0.3);
+        cursor: pointer;
+        transition: transform 0.14s ease, background 0.14s ease;
+      }
+      .v-store:hover {
+        transform: translateY(-1px);
+      }
+      .v-store .icn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        border-radius: 13px;
+        background: linear-gradient(140deg, var(--isl-app-a), var(--isl-app-b));
+        color: #fff;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 4px 12px color-mix(in srgb, var(--isl-app-b) 30%, transparent);
+      }
+      .v-store .icn svg {
+        width: 23px;
+        height: 23px;
+      }
+      .v-store .copy {
+        min-width: 0;
+      }
+      .v-store .kicker {
+        color: var(--isl-text);
+        font-size: 14px;
+        font-weight: 750;
+        line-height: 18px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .v-store .sub {
+        color: var(--isl-muted);
+        font-size: 11.5px;
+        font-weight: 500;
+        line-height: 15px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .v-store .pill {
+        flex: none;
+        padding: 7px 16px;
+        border-radius: 999px;
+        border: 0;
+        background: color-mix(in srgb, var(--isl-app-a) 22%, rgba(255, 255, 255, 0.1));
+        color: #fff;
+        font: 800 12px/1 var(--isl-round);
+        letter-spacing: 0.02em;
+        cursor: pointer;
+      }
+      .v-store:hover .pill {
+        background: color-mix(in srgb, var(--isl-app-a) 38%, rgba(255, 255, 255, 0.12));
+      }
+
+      /* =================================================================
+         OPTION 3 — HERO BANNER (gradient wash, "open app" footer)
+         ================================================================= */
+      .v-hero {
+        width: min(100%, 400px);
+        border-radius: 18px;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: var(--isl-surface2);
+        cursor: pointer;
+        transition: transform 0.14s ease;
+      }
+      .v-hero:hover {
+        transform: translateY(-2px);
+      }
+      .v-hero .wash {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        padding: 16px 15px;
+        background:
+          radial-gradient(130% 100% at 0% 0%, color-mix(in srgb, var(--isl-app-a) 40%, transparent), transparent 55%),
+          radial-gradient(130% 120% at 100% 100%, color-mix(in srgb, var(--isl-app-b) 32%, transparent), transparent 55%);
+      }
+      .v-hero .icn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.28);
+        color: #fff;
+        backdrop-filter: blur(6px);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+      }
+      .v-hero .icn svg {
+        width: 22px;
+        height: 22px;
+      }
+      .v-hero .kicker {
+        color: #fff;
+        font-size: 15px;
+        font-weight: 800;
+        line-height: 19px;
+        text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+      }
+      .v-hero .sub {
+        color: rgba(255, 255, 255, 0.82);
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 16px;
+      }
+      .v-hero .foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 9px 15px;
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
+        color: var(--isl-app-a);
+        font: 800 12px/1 var(--isl-round);
+      }
+      .v-hero .foot svg {
+        width: 15px;
+        height: 15px;
+        stroke: currentColor;
+      }
+
+      /* =================================================================
+         OPTION 4 — QUIET / MINIMAL (flat, monochrome, tinted dot)
+         ================================================================= */
+      .v-quiet {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) 18px;
+        align-items: center;
+        gap: 11px;
+        width: min(100%, 360px);
+        padding: 11px 13px;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 13px;
+        background: rgba(255, 255, 255, 0.035);
+        cursor: pointer;
+        transition: background 0.14s ease, border-color 0.14s ease;
+      }
+      .v-quiet:hover {
+        background: rgba(255, 255, 255, 0.06);
+        border-color: rgba(255, 255, 255, 0.16);
+      }
+      .v-quiet .icn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--isl-app-a) 16%, rgba(255, 255, 255, 0.04));
+        color: var(--isl-app-a);
+      }
+      .v-quiet .icn svg {
+        width: 17px;
+        height: 17px;
+      }
+      .v-quiet .kicker {
+        color: var(--isl-text);
+        font-size: 13px;
+        font-weight: 650;
+        line-height: 17px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .v-quiet .sub {
+        color: var(--isl-dim);
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 14px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .v-quiet .open {
+        color: var(--isl-dim);
+        font-size: 16px;
+      }
+
+      /* =================================================================
+         OPTION 5 — GRADIENT BORDER (conic edge, dark core)
+         ================================================================= */
+      .v-edge {
+        position: relative;
+        display: grid;
+        grid-template-columns: 36px minmax(0, 1fr) 22px;
+        align-items: center;
+        gap: 12px;
+        width: min(100%, 390px);
+        padding: 12px 13px;
+        border-radius: 16px;
+        background: #0c0c0c;
+        cursor: pointer;
+        transition: transform 0.14s ease;
+      }
+      .v-edge::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        padding: 1.4px;
+        background: linear-gradient(135deg, var(--isl-app-a), var(--isl-app-b), transparent 80%);
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        opacity: 0.7;
+        transition: opacity 0.14s ease;
+      }
+      .v-edge:hover {
+        transform: translateY(-1px);
+      }
+      .v-edge:hover::before {
+        opacity: 1;
+      }
+      .v-edge .icn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 11px;
+        background: linear-gradient(135deg, var(--isl-app-a), var(--isl-app-b));
+        color: #fff;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+      }
+      .v-edge .icn svg {
+        width: 20px;
+        height: 20px;
+      }
+      .v-edge .kicker {
+        background: linear-gradient(90deg, var(--isl-app-a), var(--isl-app-b));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        font-size: 13.5px;
+        font-weight: 850;
+        line-height: 17px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .v-edge .sub {
+        color: var(--isl-muted);
+        font-size: 11.5px;
+        font-weight: 540;
+        line-height: 15px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .v-edge .open {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 18px;
+      }
+
+      /* =================================================================
+         OPTION 6 — GLASS NOTIFICATION (matches the screenshot vibe)
+         ================================================================= */
+      .v-glass {
+        display: grid;
+        grid-template-columns: 46px minmax(0, 1fr) 30px;
+        align-items: center;
+        gap: 13px;
+        width: min(100%, 410px);
+        padding: 13px 14px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 20px;
+        background:
+          linear-gradient(180deg, rgba(40, 40, 40, 0.7), rgba(18, 18, 18, 0.7));
+        backdrop-filter: blur(24px) saturate(1.3);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 18px 40px rgba(0, 0, 0, 0.45);
+        cursor: pointer;
+        transition: transform 0.14s ease, border-color 0.14s ease;
+      }
+      .v-glass:hover {
+        transform: translateY(-1px);
+        border-color: rgba(255, 255, 255, 0.2);
+      }
+      .v-glass .icn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 46px;
+        height: 46px;
+        border-radius: 14px;
+        background: linear-gradient(140deg, var(--isl-app-a), var(--isl-app-b));
+        color: #fff;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 6px 16px color-mix(in srgb, var(--isl-app-b) 34%, transparent);
+      }
+      .v-glass .icn svg {
+        width: 24px;
+        height: 24px;
+      }
+      .v-glass .kicker {
+        color: #fff;
+        font-size: 14.5px;
+        font-weight: 800;
+        line-height: 18px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .v-glass .sub {
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 16px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .v-glass .open {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 17px;
+      }
+
+      footer {
+        margin-top: 60px;
+        color: var(--isl-dim);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body data-tone="amber">
+    <div class="page">
+      <header>
+        <h1>Blitz App Card — Design Options</h1>
+        <p>
+          Six directions for the compact app card the agent drops into the island chat. Switch the tone and icon
+          globally to preview each against the real palette. All cards sit in a faux chat stage so you see them in
+          context.
+        </p>
+      </header>
+
+      <div class="controls">
+        <span class="label">Tone</span>
+        <div class="swatches" id="swatches"></div>
+        <span class="label" style="margin-left: 12px">Icon</span>
+        <div class="seg" id="iconseg"></div>
+      </div>
+
+      <div class="grid" id="grid"></div>
+
+      <footer>Mirrored from <code>src/renderer/src/notch/island.css</code> + <code>appEmbeds.tsx</code>. Read-only mockup — nothing here is wired into the app.</footer>
+    </div>
+
+    <script>
+      // ---- icon SVGs (mirrored from appEmbeds.tsx) ----
+      const ICONS = {
+        dashboard: '<path d="M4 13h7V4H4v9Z"/><path d="M13 20h7V4h-7v16Z"/><path d="M4 20h7v-5H4v5Z"/>',
+        report: '<path d="M7 3h7l5 5v13H7V3Z"/><path d="M14 3v6h5"/><path d="M9 14h7"/><path d="M9 18h5"/>',
+        table: '<path d="M4 5h16v14H4V5Z"/><path d="M4 11h16"/><path d="M10 5v14"/><path d="M16 5v14"/>',
+        checklist: '<path d="m4 7 2 2 4-4"/><path d="M13 7h7"/><path d="m4 15 2 2 4-4"/><path d="M13 15h7"/>',
+        form: '<path d="M5 4h14v16H5V4Z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>',
+        share: '<path d="M16 6 8 12l8 6"/><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>',
+        browser: '<path d="M4 5h16v14H4V5Z"/><path d="M4 9h16"/><path d="M8 7h.01"/><path d="M11 7h.01"/>',
+        file: '<path d="M7 3h7l5 5v13H7V3Z"/><path d="M14 3v6h5"/>'
+      }
+      const TONES = ['sky', 'mint', 'amber', 'violet', 'lime', 'rose']
+      const TONE_HEX = {
+        sky: ['#31c6ff', '#426dff'], mint: ['#5ef0a6', '#43d1d8'], amber: ['#ffd247', '#ff6f5f'],
+        violet: ['#9b7cff', '#ed4ac8'], lime: ['#a9ff5c', '#33df6a'], rose: ['#ff66c4', '#ff8361']
+      }
+
+      let curIcon = 'dashboard'
+      const svg = (icon) => `<svg viewBox="0 0 24 24" aria-hidden>${ICONS[icon]}</svg>`
+      const chev = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>'
+
+      const TITLE = 'HN Blitz Radar'
+      const SUB = 'Current Hacker News, scored for what matters to you'
+
+      // ---- the six card templates ----
+      const VARIANTS = [
+        {
+          name: 'Current',
+          note: 'Today’s card — faithful baseline. Tinted left wash, small gradient icon, accent-colored title, round chevron.',
+          render: () => `
+            <div class="v-current">
+              <span class="icn">${svg(curIcon)}</span>
+              <span class="copy"><span class="kicker">${TITLE}</span><span class="sub">${SUB}</span></span>
+              <span class="open">›</span>
+            </div>`
+        },
+        {
+          name: 'App Store row',
+          note: 'Bigger squircle icon, white title (name reads first), and an explicit “Open” pill so the tap target is obvious.',
+          render: () => `
+            <div class="v-store">
+              <span class="icn">${svg(curIcon)}</span>
+              <span class="copy"><div class="kicker">${TITLE}</div><div class="sub">${SUB}</div></span>
+              <button class="pill">Open</button>
+            </div>`
+        },
+        {
+          name: 'Hero banner',
+          note: 'Full tone wash as a header with a glassy icon, then a separated “Open app →” footer. Most expressive / most space.',
+          render: () => `
+            <div class="v-hero">
+              <div class="wash">
+                <span class="icn">${svg(curIcon)}</span>
+                <span class="copy"><div class="kicker">${TITLE}</div><div class="sub">${SUB}</div></span>
+              </div>
+              <div class="foot"><span>Open app</span>${chev}</div>
+            </div>`
+        },
+        {
+          name: 'Quiet / minimal',
+          note: 'Flat, monochrome, tinted-only icon. Recedes into the transcript — good if cards appear often and shouldn’t shout.',
+          render: () => `
+            <div class="v-quiet">
+              <span class="icn">${svg(curIcon)}</span>
+              <span class="copy"><div class="kicker">${TITLE}</div><div class="sub">${SUB}</div></span>
+              <span class="open">›</span>
+            </div>`
+        },
+        {
+          name: 'Gradient edge',
+          note: 'Dark core with a conic gradient border + gradient-text title. Lights up fully on hover. Sleek, distinctly “Blitz”.',
+          render: () => `
+            <div class="v-edge">
+              <span class="icn">${svg(curIcon)}</span>
+              <span class="copy"><div class="kicker">${TITLE}</div><div class="sub">${SUB}</div></span>
+              <span class="open">›</span>
+            </div>`
+        },
+        {
+          name: 'Glass notification',
+          note: 'Heavy frosted glass, large icon, white title — closest to a native macOS notification (and to your screenshot).',
+          render: () => `
+            <div class="v-glass">
+              <span class="icn">${svg(curIcon)}</span>
+              <span class="copy"><div class="kicker">${TITLE}</div><div class="sub">${SUB}</div></span>
+              <span class="open">›</span>
+            </div>`
+        }
+      ]
+
+      // ---- build gallery ----
+      const grid = document.getElementById('grid')
+      function build() {
+        grid.innerHTML = VARIANTS.map((v, i) => `
+          <div class="cell">
+            <div class="cell-head"><h2>${v.name}</h2><span class="num">0${i + 1}</span></div>
+            <div class="cell-note">${v.note}</div>
+            <div class="stage">
+              <div class="agent-line">Done — I built you a live Hacker News radar. Tap to open it.</div>
+              ${v.render()}
+            </div>
+          </div>`).join('')
+      }
+
+      // ---- tone swatches ----
+      const sw = document.getElementById('swatches')
+      sw.innerHTML = TONES.map((t) => {
+        const [a, b] = TONE_HEX[t]
+        return `<button class="swatch${t === 'amber' ? ' active' : ''}" data-t="${t}" title="${t}"
+          style="background:linear-gradient(135deg,${a},${b})"></button>`
+      }).join('')
+      sw.addEventListener('click', (e) => {
+        const btn = e.target.closest('.swatch')
+        if (!btn) return
+        document.body.dataset.tone = btn.dataset.t
+        sw.querySelectorAll('.swatch').forEach((s) => s.classList.toggle('active', s === btn))
+      })
+
+      // ---- icon segmented control ----
+      const seg = document.getElementById('iconseg')
+      seg.innerHTML = Object.keys(ICONS).map((k) =>
+        `<button data-i="${k}"${k === curIcon ? ' class="active"' : ''}>${k}</button>`).join('')
+      seg.addEventListener('click', (e) => {
+        const btn = e.target.closest('button')
+        if (!btn) return
+        curIcon = btn.dataset.i
+        seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn))
+        build()
+      })
+
+      build()
+    </script>
+  </body>
+</html>

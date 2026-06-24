@@ -500,30 +500,59 @@ ok('generated app message parts render compact cards and open the island iframe 
     !/isl-app-card-kicker">Blitz app/.test(markdownMessage) &&
     /onOpenApp\?: \(app: IslandAppMessagePart\) => void/.test(markdownMessage) &&
     /onOpenApp=\{showAppViewer\}/.test(islandPanel) &&
-    /const \[openApp, setOpenApp\] = useState<IslandAppMessagePart \| null>\(null\)/.test(islandPanel) &&
+    /const islandActiveAppRef = useRef<IslandAppMessagePart \| null>\(null\)/.test(app) &&
+    /const \[islandKeepMounted, setIslandKeepMounted\] = useState\(false\)/.test(app) &&
+    /setIslandKeepMounted\(Boolean\(activeApp\)\)/.test(app) &&
+    /\(notchState === 'panel' \|\| islandKeepMounted\)/.test(app) &&
+    /visible=\{notchState === 'panel'\}/.test(app) &&
+    /initialActiveApp=\{islandActiveAppRef\.current\}/.test(app) &&
+    /initialActiveApp = null/.test(notchHost) &&
+    /visible = true/.test(notchHost) &&
+    /const \[activeApp, setActiveApp\] = useState<IslandAppMessagePart \| null>\(initialActiveApp\)/.test(notchHost) &&
+    /const \[openApp, setOpenApp\] = useState<IslandAppMessagePart \| null>\(\(\) => activeApp\)/.test(islandPanel) &&
+    /const \[appFrameLoaded, setAppFrameLoaded\] = useState\(false\)/.test(islandPanel) &&
     /const appReturnScrollTopRef = useRef<number \| null>\(null\)/.test(islandPanel) &&
+    /const previousActiveIdRef = useRef<string \| undefined>\(activeId\)/.test(islandPanel) &&
+    /const previousActiveId = previousActiveIdRef\.current/.test(islandPanel) &&
+    /if \(previousActiveId === activeId\) return/.test(islandPanel) &&
+    /if \(!previousActiveId && activeApp\) return/.test(islandPanel) &&
     /appReturnScrollTopRef\.current = feedRef\.current\?\.scrollTop \?\? null/.test(islandPanel) &&
+    /setAppFrameLoaded\(false\)[\s\S]*?setOpenApp\(normalized\)[\s\S]*?onActiveAppChange\(normalized\)/.test(islandPanel) &&
+    /setOpenApp\(null\)[\s\S]*?setAppFrameLoaded\(false\)/.test(islandPanel) &&
     /if \(feedRef\.current\) feedRef\.current\.scrollTop = restoreTop/.test(islandPanel) &&
     /\{!openApp && \([\s\S]*?className=\{`isl-tabwrap/.test(islandPanel) &&
     !/isl-app-viewer-head/.test(islandPanel) &&
     !/isl-app-viewer-kicker/.test(islandPanel) &&
     /aria-label="Close generated app"/.test(islandPanel) &&
-    /<>\s*<button type="button" className="isl-app-viewer-close"/.test(islandPanel) &&
-    /<div className="isl-app-viewer" data-tone=\{openApp\.tone\}>[\s\S]*?<iframe/.test(islandPanel) &&
-    /<iframe[\s\S]*?className="isl-app-frame"[\s\S]*?src=\{openApp\.url\}[\s\S]*?sandbox="allow-scripts allow-forms allow-popups allow-same-origin"/.test(islandPanel) &&
+    /<div className="isl-app-viewer" data-tone=\{openApp\.tone\} data-loaded=\{appFrameLoaded \? 'true' : 'false'\}>[\s\S]*?<div className="isl-app-scroll">[\s\S]*?<iframe/.test(islandPanel) &&
+    /<\/div>\s*\{!appFrameLoaded && \([\s\S]*?className="isl-app-loading"[\s\S]*?\)\}\s*<\/div>\s*<button type="button" className="isl-app-viewer-close"/.test(islandPanel) &&
+    /<iframe[\s\S]*?className="isl-app-frame"[\s\S]*?src=\{openApp\.url\}[\s\S]*?scrolling="no"[\s\S]*?sandbox="allow-scripts allow-forms allow-popups allow-same-origin"[\s\S]*?onLoad=\{\(\) => setAppFrameLoaded\(true\)\}/.test(islandPanel) &&
+    /className="isl-app-loading"/.test(islandPanel) &&
     /style=\{lockHeight && !openApp/.test(islandPanel) &&
-    /const \[appViewerOpen, setAppViewerOpen\] = useState\(false\)/.test(notchHost) &&
+    /const \[appViewerOpen, setAppViewerOpen\] = useState\(Boolean\(initialActiveApp\)\)/.test(notchHost) &&
+    /onActiveAppChange=\{handleActiveAppChange\}/.test(notchHost) &&
     /setAppViewerOpen\(open\)/.test(notchHost) &&
+    /nh-parked/.test(notchHost) &&
+    /nh-app-viewing/.test(notchHost) &&
     /\{!onHome && !appViewerOpen && \(/.test(notchHost) &&
     /onAppViewerToggle=\{handleAppViewerToggle\}/.test(notchHost) &&
     /\.isl-app-card/.test(islandCss) &&
     /\.isl-app-viewer/.test(islandCss) &&
-    /\.nh-island\.isl-app-viewing \{[\s\S]*?min-height: min\(820px, calc\(100vh - 22px\)\)/.test(islandCss) &&
+    /\.nh-island\.isl-process\.isl-app-viewing \{[\s\S]*?max-height: none/.test(islandCss) &&
+    /\.nh-island\.isl-app-viewing \{[\s\S]*?width: min\(1200px, calc\(100vw - 32px\)\)[\s\S]*?height: min\(800px, calc\(100vh - 22px\)\)[\s\S]*?overflow: hidden/.test(islandCss) &&
     /\.nh-island\.isl-app-viewing \{[\s\S]*?padding-right: 8px[\s\S]*?padding-bottom: 8px[\s\S]*?padding-left: 8px/.test(islandCss) &&
+    /\.nh-chassis\.nh-app-viewing \{[\s\S]*?width: min\(1200px, calc\(100vw - 32px\)\)[\s\S]*?max-width: calc\(100vw - 32px\)/.test(notchCss) &&
+    /\.nh-chassis\.nh-parked \{[\s\S]*?pointer-events: none[\s\S]*?opacity: 0/.test(notchCss) &&
     /\.nh-island \.isl-app-viewer \{[\s\S]*?border: 0/.test(islandCss) &&
-    /\.nh-island\.isl-app-viewing > \.isl-app-viewer-close \{[\s\S]*?position: absolute[\s\S]*?width: 28px[\s\S]*?height: 28px/.test(islandCss) &&
+    /\.nh-island \.isl-app-scroll \{[\s\S]*?overflow-x: auto[\s\S]*?overflow-y: auto[\s\S]*?scrollbar-color: rgba\(255, 255, 255, 0\.24\) rgba\(0, 0, 0, 0\.42\)/.test(islandCss) &&
+    /\.nh-island \.isl-app-scroll::-webkit-scrollbar \{[\s\S]*?width: 10px[\s\S]*?height: 10px/.test(islandCss) &&
+    /\.nh-island \.isl-app-scroll::-webkit-scrollbar-thumb/.test(islandCss) &&
+    /\.nh-island \.isl-app-viewer\[data-loaded='false'\] \.isl-app-frame \{[\s\S]*?opacity: 0/.test(islandCss) &&
+    /\.nh-island \.isl-app-loading \{[\s\S]*?position: absolute[\s\S]*?place-items: center/.test(islandCss) &&
+    /\.nh-island \.isl-app-loading-mark::after \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
+    /\.nh-island\.isl-app-viewing > \.isl-app-viewer-close \{[\s\S]*?position: absolute[\s\S]*?z-index: 40[\s\S]*?width: 28px[\s\S]*?height: 28px/.test(islandCss) &&
     /\.isl-app-frame/.test(islandCss) &&
-    /\.nh-island \.isl-app-frame \{[\s\S]*?color-scheme: dark/.test(islandCss) &&
+    /\.nh-island \.isl-app-frame \{[\s\S]*?height: 2400px[\s\S]*?color-scheme: dark[\s\S]*?overflow: hidden/.test(islandCss) &&
     !/openExternalUrl/.test(appEmbeds))
 ok('agents can share generated Blitz apps as typed island app cards',
   /path: '\/share_app'/.test(osTools) &&

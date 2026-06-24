@@ -72,6 +72,8 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     menuBarH,
     attachOpen,
     onToggleAttach,
+    activeApp,
+    onActiveAppChange,
     onAppViewerToggle,
     debugTerminalEnabled,
     activeTerminal,
@@ -92,10 +94,12 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const panelRef = useRef<HTMLDivElement>(null)
   const closedHeightRef = useRef<number | null>(null)
   const appReturnScrollTopRef = useRef<number | null>(null)
+  const previousActiveIdRef = useRef<string | undefined>(activeId)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [detailRows, setDetailRows] = useState<Array<{ label: string }>>([])
   const [pendingChoiceSelections, setPendingChoiceSelections] = useState<Record<string, string>>({})
-  const [openApp, setOpenApp] = useState<IslandAppMessagePart | null>(null)
+  const [openApp, setOpenApp] = useState<IslandAppMessagePart | null>(() => activeApp)
+  const [appFrameLoaded, setAppFrameLoaded] = useState(false)
   // Attachment SNAPSHOT: a frozen, read-only copy of the dropbox shown above the user message it rode on. PERSISTED
   // (sentTrayStore → disk) so it survives island reopen AND a full quit/restart. Keyed by the user-message ORDINAL —
   // the dropbox clears on send, so each message's snapshot is exactly what was staged at THAT send.
@@ -285,14 +289,26 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     if (el) el.scrollTop = el.scrollHeight
   }, [milestones.length, peek])
 
-  // Reset the Details expand when switching sessions.
+  // Reset the Details expand when switching sessions. Skip the initial mount so an app preview restored by App
+  // after a hover-close/remount is not immediately cleared before the iframe can reopen.
   useEffect(() => {
+    const previousActiveId = previousActiveIdRef.current
+    if (previousActiveId === activeId) return
+    previousActiveIdRef.current = activeId
+    if (!previousActiveId && activeApp) return
     setDetailsOpen(false)
     setDetailRows([])
     setPendingChoiceSelections({})
     setOpenApp(null)
+    setAppFrameLoaded(false)
+    onActiveAppChange(null)
     onAppViewerToggle?.(false)
-  }, [activeId])
+  }, [activeId, onActiveAppChange, onAppViewerToggle])
+
+  useEffect(() => {
+    setOpenApp(activeApp)
+    setAppFrameLoaded(false)
+  }, [activeApp])
 
   useEffect(() => {
     if (!editingId) return
@@ -417,12 +433,16 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     const normalized = normalizedBlitzAppPart(part)
     if (!normalized) return
     appReturnScrollTopRef.current = feedRef.current?.scrollTop ?? null
+    setAppFrameLoaded(false)
     setOpenApp(normalized)
+    onActiveAppChange(normalized)
     if (attachOpen) onToggleAttach()
     onAppViewerToggle?.(true)
   }
   const closeAppViewer = (): void => {
     setOpenApp(null)
+    setAppFrameLoaded(false)
+    onActiveAppChange(null)
     onAppViewerToggle?.(false)
   }
 
@@ -623,19 +643,32 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   ) : null
   const appViewer = openApp ? (
     <>
+      <div className="isl-app-viewer" data-tone={openApp.tone} data-loaded={appFrameLoaded ? 'true' : 'false'}>
+        <div className="isl-app-scroll">
+          <iframe
+            className="isl-app-frame"
+            title={`${openApp.title} generated app`}
+            src={openApp.url}
+            scrolling="no"
+            sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
+            onLoad={() => setAppFrameLoaded(true)}
+          />
+        </div>
+        {!appFrameLoaded && (
+          <div className="isl-app-loading" role="status" aria-live="polite">
+            <span className="isl-app-loading-mark" aria-hidden />
+            <span className="isl-app-loading-copy">
+              <span>Opening app</span>
+              <span>{openApp.title}</span>
+            </span>
+          </div>
+        )}
+      </div>
       <button type="button" className="isl-app-viewer-close" aria-label="Close generated app" onClick={closeAppViewer}>
         <svg viewBox="0 0 24 24" aria-hidden focusable="false">
           <path d="M18 6 6 18M6 6l12 12" />
         </svg>
       </button>
-      <div className="isl-app-viewer" data-tone={openApp.tone}>
-        <iframe
-          className="isl-app-frame"
-          title={`${openApp.title} generated app`}
-          src={openApp.url}
-          sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
-        />
-      </div>
     </>
   ) : null
   return (

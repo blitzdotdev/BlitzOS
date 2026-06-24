@@ -34,6 +34,9 @@
   min-height: 288px;
   max-height: 72vh;
 }
+.nh-island.isl-process.isl-app-viewing {
+  max-height: none;
+}
 
 /* ── HOME SCREEN: Chat + Settings chrome + active agents. V1 has no widget placeholders. ─────────────────────── */
 .nh-island.isl-home {
@@ -1865,33 +1868,30 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-app-card {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 22px;
+  grid-template-columns: 46px minmax(0, 1fr) 30px;
   align-items: center;
-  gap: 11px;
-  width: min(100%, 390px);
-  min-height: 64px;
+  gap: 13px;
+  width: min(100%, 410px);
+  min-height: 72px;
   margin-top: 9px;
-  padding: 10px 11px;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 15px;
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--isl-app-a) 14%, transparent), transparent 48%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.072), rgba(255, 255, 255, 0.035));
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(40, 40, 40, 0.7), rgba(18, 18, 18, 0.7));
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.09),
-    0 12px 24px rgba(0, 0, 0, 0.22);
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 18px 40px rgba(0, 0, 0, 0.45);
   color: var(--isl-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+  transition: transform 0.14s ease, border-color 0.14s ease;
 }
 .nh-island .isl-app-card:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--isl-app-a) 44%, rgba(255, 255, 255, 0.18));
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--isl-app-a) 20%, transparent), transparent 50%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.045));
+  border-color: rgba(255, 255, 255, 0.2);
 }
 .nh-island .isl-app-card:active {
   transform: translateY(0);
@@ -1906,19 +1906,21 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-app-card.invalid:hover {
   transform: none;
-  border-color: rgba(255, 255, 255, 0.13);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 .nh-island .isl-app-card-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
-  background: linear-gradient(135deg, var(--isl-app-a), var(--isl-app-b));
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: linear-gradient(140deg, var(--isl-app-a), var(--isl-app-b));
   color: #fff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 6px 16px color-mix(in srgb, var(--isl-app-b) 34%, transparent);
 }
 .nh-island .isl-app-card-icon svg {
   fill: none;
@@ -1926,8 +1928,8 @@ button.isl-app-chat:active .isl-app-icon {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
-  width: 19px;
-  height: 19px;
+  width: 24px;
+  height: 24px;
 }
 .nh-island .isl-app-card-copy {
   display: flex;
@@ -1935,10 +1937,10 @@ button.isl-app-chat:active .isl-app-icon {
   flex-direction: column;
 }
 .nh-island .isl-app-card-kicker {
-  color: var(--isl-app-a);
-  font-size: 13px;
-  font-weight: 850;
-  line-height: 17px;
+  color: #fff;
+  font-size: 14.5px;
+  font-weight: 800;
+  line-height: 18px;
   letter-spacing: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1947,10 +1949,10 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-app-card-sub {
   min-width: 0;
   overflow: hidden;
-  color: var(--isl-muted);
-  font-size: 11.5px;
-  font-weight: 560;
-  line-height: 15px;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1958,20 +1960,23 @@ button.isl-app-chat:active .isl-app-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 30px;
+  height: 30px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.68);
-  font-size: 19px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 17px;
   line-height: 1;
 }
 
 .nh-island.isl-app-viewing {
-  min-height: min(820px, calc(100vh - 22px));
+  width: min(1200px, calc(100vw - 32px));
+  height: min(800px, calc(100vh - 22px));
+  min-height: 0;
   padding-right: 8px;
   padding-bottom: 8px;
   padding-left: 8px;
+  overflow: hidden;
   animation: isl-rise 0.18s ease-out both;
 }
 .nh-island .isl-app-viewer {
@@ -1984,17 +1989,49 @@ button.isl-app-chat:active .isl-app-icon {
   overflow: hidden;
   border: 0;
   border-radius: 20px;
-  background: transparent;
+  background:
+    radial-gradient(circle at 50% 24%, color-mix(in srgb, var(--isl-app-a) 13%, transparent), transparent 34%),
+    #050608;
   box-shadow:
     0 24px 48px rgba(0, 0, 0, 0.46),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
   animation: isl-app-viewer-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+.nh-island .isl-app-scroll {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  border-radius: inherit;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.24) rgba(0, 0, 0, 0.42);
+}
+.nh-island .isl-app-viewer[data-loaded='false'] .isl-app-scroll {
+  pointer-events: none;
+}
+.nh-island .isl-app-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.nh-island .isl-app-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.42);
+}
+.nh-island .isl-app-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(0, 0, 0, 0.42);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.nh-island .isl-app-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
 .nh-island.isl-app-viewing > .isl-app-viewer-close {
   position: absolute;
   top: 12px;
   right: 14px;
-  z-index: 3;
+  z-index: 40;
   width: 28px;
   height: 28px;
   display: inline-flex;
@@ -2009,6 +2046,7 @@ button.isl-app-chat:active .isl-app-icon {
     inset 0 1px 0 rgba(255, 255, 255, 0.12);
   cursor: pointer;
   backdrop-filter: blur(14px);
+  pointer-events: auto;
 }
 .nh-island.isl-app-viewing > .isl-app-viewer-close:hover {
   background: rgba(30, 33, 40, 0.86);
@@ -2025,12 +2063,71 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-app-frame {
   display: block;
   width: 100%;
+  height: 2400px;
   min-height: 0;
-  flex: 1 1 auto;
   border: 0;
   background: #fff;
   border-radius: 0;
   color-scheme: dark;
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 0.18s ease-out;
+}
+.nh-island .isl-app-viewer[data-loaded='false'] .isl-app-frame {
+  opacity: 0;
+}
+.nh-island .isl-app-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  gap: 14px;
+  align-content: center;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.06), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
+  color: var(--isl-text);
+  text-align: center;
+  animation: isl-app-loading-in 0.16s ease-out both;
+}
+.nh-island .isl-app-loading-mark {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  border-radius: 15px;
+  background: linear-gradient(135deg, var(--isl-app-a), var(--isl-app-b));
+  box-shadow:
+    0 16px 32px color-mix(in srgb, var(--isl-app-a) 24%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+.nh-island .isl-app-loading-mark::after {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.34);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: isl-spin 0.78s linear infinite;
+}
+.nh-island .isl-app-loading-copy {
+  display: grid;
+  gap: 4px;
+}
+.nh-island .isl-app-loading-copy span:first-child {
+  font-size: 13px;
+  font-weight: 780;
+  letter-spacing: 0;
+}
+.nh-island .isl-app-loading-copy span:last-child {
+  max-width: 300px;
+  overflow: hidden;
+  color: var(--isl-muted);
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 @keyframes isl-app-viewer-in {
   from {
@@ -2040,6 +2137,14 @@ button.isl-app-chat:active .isl-app-icon {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+@keyframes isl-app-loading-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 

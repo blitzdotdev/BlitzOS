@@ -550,6 +550,13 @@ const api = {
       ipcRenderer.on('os:notch-toggle', listener)
       return () => ipcRenderer.removeListener('os:notch-toggle', listener)
     },
+    // Main asks the island to collapse (e.g. an outbound link in an app preview opened in the real
+    // browser, so the island should get out of the way).
+    onClose(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on('os:notch-close', listener)
+      return () => ipcRenderer.removeListener('os:notch-close', listener)
+    },
     // Listened to BY the overlay renderer: the hit-window's click toggles fullscreen, its hover opens/closes the panel.
     onHandleClick(cb: () => void): () => void {
       const listener = (): void => cb()
