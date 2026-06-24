@@ -1703,6 +1703,15 @@ app.whenReady().then(() => {
       if (!ws || !terminalsDir || !url) return // not ready (no workspace / relay url yet) — boot resume retries
       const agentRuntime = currentAgentRuntime
       if (!agentRuntime) return
+      const persistedTitle = (() => {
+        try {
+          const value = readTerminalMeta(terminalsDir, String(id))?.title
+          return typeof value === 'string' && value.trim() ? value.trim() : null
+        } catch {
+          return null
+        }
+      })()
+      const launchTitle = title || persistedTitle || (id === '0' ? 'Blitz' : 'New Agent')
       const existing = electronTerminalOps.getTerminal(String(id))
       if (existing?.kind === 'agent' && existing.status === 'stopped') return // user intentionally stopped it; Resume restarts it
       // `sessionsDir` is the agent-runtime contract for persisted backend metadata; we point it at
@@ -1714,7 +1723,7 @@ app.whenReady().then(() => {
         command: launch.command,
         cwd: ws,
         stage,
-        title: title || (id === '0' ? 'Blitz' : 'New Agent'),
+        title: launchTitle,
         agentRuntime: launch.agentRuntime,
         agentSessionId: launch.agentSessionId,
         claudeSessionId: launch.claudeSessionId,

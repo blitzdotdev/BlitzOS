@@ -376,6 +376,9 @@ ok('agent tabs can be renamed inline from right-click with a 24-character cap',
     /function agentTitleText/.test(workspaceHost) &&
     /if \(id === '0'\) return \{ ok: false, error: 'main agent cannot be renamed' \}/.test(workspaceHost) &&
     /title: id === '0' \? 'Blitz' : agentTitleText\(meta\.title \|\| defaultAgentTitle\(id\)\)/.test(workspaceHost) &&
+    /const persistedTitle = \(\(\) => \{[\s\S]*?readTerminalMeta\(terminalsDir, String\(id\)\)\?\.title[\s\S]*?\}\)\(\)/.test(index) &&
+    /const launchTitle = title \|\| persistedTitle \|\| \(id === '0' \? 'Blitz' : 'New Agent'\)/.test(index) &&
+    /title: launchTitle/.test(index) &&
     /\.slice\(0, 24\)/.test(workspaceHost) &&
     /isl-chip-editing/.test(islandCss) &&
     /isl-chip-input/.test(islandCss))
