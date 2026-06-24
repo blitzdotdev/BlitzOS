@@ -350,6 +350,7 @@ function ensureWindow(): BrowserWindow {
   // (the reported bug). Dismiss is explicit: Esc, Send, or the ⌥Space toggle.
   win.setAlwaysOnTop(true, 'floating')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
+  win.setHiddenInMissionControl(true) // overlay chrome, not a real app window — keep it out of Mission Control / Exposé
   win.setMenuBarVisibility(false)
   void win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(launcherHtml()))
   launcherWin = win

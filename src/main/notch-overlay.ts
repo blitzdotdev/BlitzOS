@@ -22,6 +22,13 @@ export function notchOverlayWindowOptions(): Electron.BrowserWindowConstructorOp
     hasShadow: false,
     enableLargerThanScreen: true,
     skipTaskbar: true,
+    // Keep the island OUT of Mission Control / Exposé. It's system chrome (the dynamic island), not a real app
+    // window, so it must not appear as a window tile when the user swipes up into Mission Control (the "Agent OS"
+    // tile bug). Electron maps this to NSWindowCollectionBehaviorTransient ("floats in Spaces, hidden in Mission
+    // Control"); the bit is OR'd in, so it preserves the all-Spaces (canJoinAllSpaces) behavior applyNotchOverlay
+    // sets via setVisibleOnAllWorkspaces. The native island/computer-use helpers use .stationary (stays pinned and
+    // visible like the menu bar); we want it GONE during Mission Control, which is .transient instead.
+    hiddenInMissionControl: true,
     backgroundColor: '#00000000',
     // Native fullscreen/resize would fight an all-Spaces overlay; the only "fullscreen" is the renderer clip-grow.
     fullscreenable: false,
@@ -149,6 +156,8 @@ export function notchHitWindowOptions(
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
+    // Same as the overlay: this transparent notch catcher is system chrome, so hide it from Mission Control / Exposé.
+    hiddenInMissionControl: true,
     backgroundColor: '#00000000',
     acceptFirstMouse: true,
     webPreferences: { preload: preloadPath, contextIsolation: true, sandbox: false, backgroundThrottling: false }

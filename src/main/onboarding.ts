@@ -304,6 +304,7 @@ async function openDragHelper(kind: DragPerm): Promise<void> {
   // Float over Settings on every Space (Codex's overlay policy: 'floating' + visibleOnFullScreen).
   win.setAlwaysOnTop(true, 'floating')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
+  win.setHiddenInMissionControl(true) // overlay chrome, not a real app window — keep it out of Mission Control / Exposé
   win.setMenuBarVisibility(false)
   // bottom-center of the display under the cursor (where the user is heading — the Settings window)
   const disp = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
