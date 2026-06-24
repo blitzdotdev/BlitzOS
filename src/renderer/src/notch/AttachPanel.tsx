@@ -99,6 +99,16 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   // result. Safari's listTabs osascript is slower than connectTab, so refresh() can finish AFTER
   // refreshConnections() has already applied the new connection — without this guard it overwrites and deselects.
   const connSeq = useRef(0)
+  // Apply a BACKEND connection list but PRESERVE optimistic `pending:` placeholders until the backend actually
+  // reports the real connection for that source (matched by type+ref). A drop's placeholder (and thus its dropbox
+  // icon) therefore survives every refresh until it is reconciled, so no refresh can blank an in-flight drop.
+  const applyBackendConns = (backend: Conn[]): void =>
+    setConnections((prev) => {
+      const stillPending = prev.filter(
+        (c) => String(c.connId).startsWith('pending:') && !backend.some((b) => b.type === c.type && String(b.ref) === String(c.ref))
+      )
+      return stillPending.length ? [...backend, ...stillPending] : backend
+    })
   const refresh = useCallback(async (): Promise<void> => {
     const conn = bridge()
     if (!conn) return
@@ -119,7 +129,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     setWindows(Array.isArray(w.windows) ? (w.windows as Win[]) : [])
     // Only apply connections if no refreshConnections() ran while we were fetching — that call has newer data.
     if (connSeq.current === connSeqAtStart) {
-      setConnections(Array.isArray(c.connections) ? (c.connections as Conn[]) : [])
+      applyBackendConns(Array.isArray(c.connections) ? (c.connections as Conn[]) : [])
     }
   }, [activeSessionId])
 
@@ -131,7 +141,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     const seq = ++connSeq.current
     const c = (await conn.list(activeSessionId).then((x) => x || {}).catch(() => ({}))) as { connections?: Conn[] }
     if (seq !== connSeq.current) return // a newer refreshConnections superseded this one
-    setConnections(Array.isArray(c.connections) ? c.connections : [])
+    applyBackendConns(Array.isArray(c.connections) ? c.connections : [])
   }, [activeSessionId])
 
   // Poll-friendly: just the available tabs (listTabs is cheap — NO icons), so the Chrome group appears the moment
@@ -174,23 +184,22 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
       }
       else if (m.kind === 'connected') {
         setDragOver(false)
-        // Clear the optimistic placeholder (connection + icon); the real connId replaces it below, refresh() drops the rest.
         const wid = Number(m.windowId)
-        if (Number.isFinite(wid)) {
-          setConnections((prev) => prev.filter((c) => c.connId !== 'pending:w' + wid))
-          setDropped((prev) => {
-            if (!prev['pending:w' + wid]) return prev
-            const n = { ...prev }
-            delete n['pending:w' + wid]
-            return n
-          })
-        }
+        const pendingId = Number.isFinite(wid) ? 'pending:w' + wid : ''
         if (!m.ok) {
-          // Prefer the specific reason from main (e.g. "Chrome connector not connected") over a generic label.
+          // Failed connect: drop the optimistic placeholder (connection + icon), then surface the reason.
+          if (pendingId) {
+            setConnections((prev) => prev.filter((c) => c.connId !== pendingId))
+            setDropped((prev) => {
+              if (!prev[pendingId]) return prev
+              const n = { ...prev }
+              delete n[pendingId]
+              return n
+            })
+          }
           setNotice({ ok: false, text: String(m.error || `Couldn't add ${String(m.app || 'window')}`) })
           return
         }
-        void refresh() // a window was dropped in → reflect it in the connectors list too
         const connId = String(m.connId || '')
         if (!connId) return
         markStaged('conn:' + connId) // a macOS-window drop = the user staging it
@@ -200,7 +209,22 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
           icon: typeof m.icon === 'string' && m.icon ? m.icon : undefined,
           title: String(m.title || '')
         }
-        setDropped((prev) => ({ ...prev, [connId]: { ...prev[connId], ...src } }))
+        // ATOMIC swap: replace the optimistic placeholder with the REAL connId IN PLACE, and re-key its icon in the
+        // SAME commit. There is never a render where `dropped` holds an id that `connections` lacks, so the prune
+        // effect cannot wipe the icon. refreshConnections() (cheap) then loads the accurate conn; the heavy refresh()
+        // is deliberately NOT used here (it blanked the dropbox to the empty hint for its whole duration).
+        setConnections((prev) => {
+          if (pendingId && prev.some((c) => c.connId === pendingId)) return prev.map((c) => (c.connId === pendingId ? { ...c, connId } : c))
+          if (prev.some((c) => c.connId === connId)) return prev
+          return [...prev, { connId, type: 'window', ref: Number.isFinite(wid) ? wid : connId }]
+        })
+        setDropped((prev) => {
+          const n = { ...prev }
+          if (pendingId && n[pendingId]) delete n[pendingId]
+          n[connId] = { ...prev[connId], ...src }
+          return n
+        })
+        void refreshConnections() // accurate conn list; preserve-pending keeps any other in-flight drops
       } else if (m.kind === 'error') setNotice({ ok: false, text: String(m.error || 'window picker unavailable') })
     })
     return () => {
@@ -210,7 +234,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
         /* best-effort */
       }
     }
-  }, [refresh])
+  }, [refreshConnections])
 
   useEffect(() => {
     if (!notice) return

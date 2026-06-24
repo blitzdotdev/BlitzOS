@@ -762,9 +762,12 @@ app.whenReady().then(() => {
       return { ok: false, error: (e as Error)?.message || 'open failed' }
     }
   })
-  // The handoff card's tap → bring the surface behind a connection to the foreground (instant, no agent round-trip).
+  // The handoff card's tap → collapse the island first (it superimposes on every window), then bring the
+  // connection's surface to the foreground. Without the collapse the island stays on top and the user
+  // can't interact with the revealed tab.
   ipcMain.handle('os:reveal-connection', async (_e, connId: string) => {
     try {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('os:notch-close')
       return await electronConnections.connectionReveal(String(connId || ''))
     } catch (e) {
       return { ok: false, error: (e as Error)?.message || 'reveal failed' }
@@ -875,8 +878,8 @@ app.whenReady().then(() => {
   // Per-message attachment snapshots (the frozen in-chat dropbox), persisted under <ws>/.blitzos/attachments/<chat>.json.
   const attachmentStore = makeAttachmentStore({ getWorkspacePath: () => osWorkspaceContext().workspace_path || null })
   ipcMain.handle('os:attach-get', (_e, chat: string) => attachmentStore.listAttachments(String(chat ?? '')))
-  ipcMain.handle('os:attach-record', (_e, chat: string, ordinal: number, groups: unknown) =>
-    attachmentStore.recordAttachments(String(chat ?? ''), Number(ordinal) || 0, Array.isArray(groups) ? groups : [])
+  ipcMain.handle('os:attach-record', (_e, chat: string, msgKey: string, groups: unknown) =>
+    attachmentStore.recordAttachments(String(chat ?? ''), String(msgKey ?? ''), Array.isArray(groups) ? groups : [])
   )
   // Window picker: arm the CU helper's hover-highlight-and-drag overlay over the user's REAL macOS windows.
   // dropZone is the attach drop-zone's on-screen rect (global, top-left points); dropping a window there connects
@@ -1769,6 +1772,11 @@ app.whenReady().then(() => {
       // Show the dropped app's icon in the dropbox INSTANTLY (optimistic), before the async tab-resolve + connect
       // (a Chrome bounds-match can take a beat). The `connected` event below firms up the real connId.
       mainWindow?.webContents.send('os:pick-event', { kind: 'dropped', windowId: m.windowId, app, icon: m.icon, title: String(m.title || '') })
+      // ONE terminal-event emit point: it ALWAYS stamps windowId (+ the drop's identity), so the renderer can clear
+      // its optimistic placeholder no matter which branch ends the drop (success, loud error, or a thrown connect).
+      const finish = (extra: Record<string, unknown>): void => {
+        mainWindow?.webContents.send('os:pick-event', { kind: 'connected', windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon, ...extra })
+      }
       void (async () => {
         // A browser drop should resolve to its active TAB so the agent gets the real page. Google Chrome resolves via
         // Apple Events (extension-free); other Chromium browsers still try the (dormant) connector-extension match.
@@ -1787,10 +1795,7 @@ app.whenReady().then(() => {
         if (action === 'error') {
           // A non-Chrome Chromium browser whose extension tab stayed unavailable. Fail LOUDLY, never a misleading whole-window grab.
           console.warn(`[blitzos] ${app || 'browser'} drop: tab connector unavailable, not attaching (windowId ${m.windowId})`)
-          mainWindow?.webContents.send('os:pick-event', {
-            kind: 'connected', ok: false, windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon,
-            error: `${app || 'Browser'} connector not connected. Load the BlitzOS Connector, then drop again.`
-          })
+          finish({ ok: false, error: `${app || 'Browser'} connector not connected. Load the BlitzOS Connector, then drop again.` })
           return
         }
         const tabIdForConnect: number | string | null = chromeTabId ?? extTabId
@@ -1801,10 +1806,8 @@ app.whenReady().then(() => {
         const ok = !!res && !res.error
         const connId = typeof res?.connId === 'string' ? res.connId : ''
         console.log(`[blitzos] drop → ${action}${action === 'tab' ? ` tab=${tabIdForConnect}` : ''} ok=${ok} (${app || bundleId})`)
-        mainWindow?.webContents.send('os:pick-event', {
-          kind: 'connected', ok, connId, windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon, error: res?.error
-        })
-      })().catch((err) => mainWindow?.webContents.send('os:pick-event', { kind: 'connected', ok: false, error: String(err) }))
+        finish({ ok, connId, error: res?.error })
+      })().catch((err) => finish({ ok: false, error: String(err) }))
     } else if (kind === 'pick_over' || kind === 'pick_hover' || kind === 'pick_cancel') {
       mainWindow?.webContents.send('os:pick-event', m)
     }

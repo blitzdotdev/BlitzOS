@@ -2002,6 +2002,9 @@ export function readChatMessages(dir, cap = 400, sessionId = '0') {
   let m
   while ((m = re.exec(raw))) marks.push({ role: m[1], ts: Number(m[2]) || 0, metaB64: m[3] || null, start: m.index, end: re.lastIndex })
   const msgs = []
+  // absUserIdx counts user messages across the FULL transcript (before the cap slice) so attachment-snapshot
+  // keys survive the 400-message window: the windowed slice preserves userIdx, the positional ordinal does not.
+  let absUserIdx = 0
   for (let i = 0; i < marks.length; i++) {
     const body = raw.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].start : raw.length).replace(/^\n+|\n+$/g, '')
     const msg = { role: marks[i].role, text: body, ts: marks[i].ts }
@@ -2014,6 +2017,7 @@ export function readChatMessages(dir, cap = 400, sessionId = '0') {
         /* corrupt ref — fall back to a plain message */
       }
     }
+    if (msg.role === 'user') msg.userIdx = absUserIdx++
     msgs.push(msg)
   }
   return msgs.slice(-cap)

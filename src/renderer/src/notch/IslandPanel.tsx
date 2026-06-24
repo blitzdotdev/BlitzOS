@@ -139,7 +139,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     seenChatRef.current.add(activeId)
     const pending = pendingNewSessionRef.current
     pendingNewSessionRef.current = null
-    if (pending && pending.length) recordSentTray(activeId, 0, pending)
+    if (pending && pending.length) recordSentTray(activeId, '0', pending) // first user msg has userIdx 0
   }, [activeId])
   useEffect(() => {
     if (!activeId) return
@@ -160,8 +160,13 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     if (activeId) {
       const groups = getLiveTray(activeId)
       if (groups.length) {
-        const ord = messages.reduce((n, m) => n + (m.role === 'user' ? 1 : 0), 0) // ordinal of the user msg being sent
-        recordSentTray(activeId, ord, groups)
+        // Use the absolute user-message index from the last user message; the next message is idx+1.
+        // Falls back to the windowed count if userIdx isn't present (old messages before this field existed).
+        const lastUserMsg = messages.slice().reverse().find((m) => m.role === 'user')
+        const newUserIdx = lastUserMsg?.userIdx != null
+          ? lastUserMsg.userIdx + 1
+          : messages.filter((m) => m.role === 'user').length
+        recordSentTray(activeId, String(newUserIdx), groups)
       }
       onSend(text)
       return
@@ -170,12 +175,14 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     if (groups.length) pendingNewSessionRef.current = groups
     onSend(text)
   }
-  // The frozen tray per transcript index (pinned to each user message's ordinal; undefined for agent rows / no tray).
+  // The frozen tray per transcript index. Keyed by m.userIdx (absolute, survives the 400-message window cap);
+  // falls back to positional ordinal for messages that predate userIdx (old transcripts without the field).
   let userOrdinal = -1
   const trayByIndex = messages.map((m) => {
     if (m.role !== 'user') return undefined
     userOrdinal++
-    return sentTray[userOrdinal]
+    const key = m.userIdx != null ? String(m.userIdx) : String(userOrdinal)
+    return sentTray[key]
   })
   // Per-run rolled-up stats for the board caption (reported up by each IslandKanban on run:done). The callback is
   // STABLE (useCallback) and no-ops when the value is unchanged, so it never loops the child's reporting effect.

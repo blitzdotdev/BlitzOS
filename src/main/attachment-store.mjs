@@ -1,8 +1,9 @@
 // Per-message attachment SNAPSHOTS, persisted beside the chat file so the frozen dropbox copy shown above a sent
-// message survives a full quit/restart. One JSON per chat: `<ws>/.blitzos/attachments/<chat>.json = { "<ordinal>":
-// TrayGroup[] }`, keyed by the user-message ordinal (restart-stable — the transcript reloads in the same order from
-// chat.md / chat-N.md). Base64 icons are inlined (a few KB each; chat-scale). Renderer reaches this over IPC only
-// (os:attach-get / os:attach-record), like the connection ops.
+// message survives a full quit/restart. One JSON per chat: `<ws>/.blitzos/attachments/<chat>.json = { "<msgKey>":
+// TrayGroup[] }`, keyed by String(sendTs) — the timestamp the renderer generates at send time and passes to main so
+// both sides use the exact same value. Using the timestamp instead of a positional ordinal makes lookups stable
+// across the sliding 400-message display window. Base64 icons are inlined (a few KB each; chat-scale). Renderer
+// reaches this over IPC only (os:attach-get / os:attach-record), like the connection ops.
 
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -28,17 +29,17 @@ export function makeAttachmentStore({ getWorkspacePath = () => null, markWrite =
       return {}
     }
   }
-  // All frozen snapshots for a chat: { "<ordinal>": TrayGroup[] }. Missing workspace/file → empty (never throws).
+  // All frozen snapshots for a chat: { "<msgKey>": TrayGroup[] }. Missing workspace/file → empty (never throws).
   function listAttachments(chat) {
     const f = fileFor(chat)
     return { attachments: f ? read(f.file) : {} }
   }
-  // Freeze one message's tray. Merges into the chat's file (other ordinals untouched).
-  function recordAttachments(chat, ordinal, groups) {
+  // Freeze one message's tray. Merges into the chat's file (other keys untouched).
+  function recordAttachments(chat, msgKey, groups) {
     const f = fileFor(chat)
     if (!f) return { error: 'no active workspace to persist attachments into' }
     const cur = read(f.file)
-    cur[String(ordinal)] = Array.isArray(groups) ? groups : []
+    cur[String(msgKey)] = Array.isArray(groups) ? groups : []
     try {
       mkdirSync(f.dir, { recursive: true })
       markWrite(f.dir)

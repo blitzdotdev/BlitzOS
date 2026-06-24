@@ -868,9 +868,12 @@ export function NotchHost({
     // Always routes to the ACTIVE agent (Blitz '0' or a peer) — sending NEVER spawns. A new agent comes only from
     // the pen button (onNewAgent). Close the attach staging immediately; the staged sources rode this message (chips).
     setAttachOpen(false)
+    // Clear staging under whatever key was used — including '' (the transient pre-boot composer). Hoisted
+    // above the early-return so the '' key is always wiped even when no live agent is present.
+    const clearKey = activeId ?? ''
+    clearStaged(clearKey)
+    clearLiveTray(clearKey) // IslandPanel already froze the tray onto this message; drop the mirror so it can't re-attach next send
     if (!activeId) return // no live agent yet (transient, pre-boot) — never blind-spawn on a send
-    clearStaged(activeId)
-    clearLiveTray(activeId) // IslandPanel already froze the tray onto this message; drop the mirror so it can't re-attach next send
     // DEBUG: while a fake status is armed (Settings → Simulate agent status), the send injects that status onto the
     // active agent instead of reaching it — so the four status surfaces can be eyeballed. Pick Off to resume normal.
     const sim = debugSimStatusRef.current

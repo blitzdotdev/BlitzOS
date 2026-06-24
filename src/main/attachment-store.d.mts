@@ -8,10 +8,10 @@ export interface AttachmentStoreDeps {
 }
 
 export interface AttachmentStore {
-  /** All frozen snapshots for a chat: `{ "<ordinal>": TrayGroup[] }` (empty when no workspace/file). */
+  /** All frozen snapshots for a chat: `{ "<msgKey>": TrayGroup[] }` (empty when no workspace/file). */
   listAttachments(chat: string): { attachments: Record<string, unknown> }
-  /** Freeze one user message's tray (merges into the chat's file). */
-  recordAttachments(chat: string, ordinal: number, groups: unknown): { ok?: boolean; error?: string }
+  /** Freeze one user message's tray (merges into the chat's file). msgKey = String(sendTs). */
+  recordAttachments(chat: string, msgKey: string, groups: unknown): { ok?: boolean; error?: string }
 }
 
 export function makeAttachmentStore(deps?: AttachmentStoreDeps): AttachmentStore

@@ -210,13 +210,14 @@ const api = {
     }
   },
   /** Per-message attachment SNAPSHOTS (the frozen in-chat dropbox), persisted on disk so they survive a restart.
-   *  `get` returns `{ attachments: { "<ordinal>": TrayGroup[] } }` for a chat; `record` freezes one message's tray. */
+   *  `get` returns `{ attachments: { "<msgKey>": TrayGroup[] } }` for a chat; `record` freezes one message's tray.
+   *  msgKey = String(sendTs) — the renderer-generated timestamp that main mirrors into chat.md. */
   attachments: {
     get(chat: string): Promise<{ attachments?: Record<string, unknown>; error?: string }> {
       return (ipcRenderer.invoke('os:attach-get', chat) as Promise<{ attachments?: Record<string, unknown>; error?: string }>).catch(() => ({ error: 'unavailable' }))
     },
-    record(chat: string, ordinal: number, groups: unknown): Promise<Record<string, unknown>> {
-      return (ipcRenderer.invoke('os:attach-record', chat, ordinal, groups) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
+    record(chat: string, msgKey: string, groups: unknown): Promise<Record<string, unknown>> {
+      return (ipcRenderer.invoke('os:attach-record', chat, msgKey, groups) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
     }
   },
   /** Window picker — while the attach drop-zone is visible, the computer-use helper highlights ANY macOS

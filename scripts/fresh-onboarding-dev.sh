@@ -120,6 +120,11 @@ else
   for f in "$WORKSPACE"/chat.md "$WORKSPACE"/chat-*.md; do
     [ -e "$f" ] && rm -f "$f"
   done
+  # Per-message attachment snapshots (.blitzos/attachments/<chat>.json): keyed by user-message ordinal.
+  # Deleting chat.md resets those ordinals to 0, so a stale snapshot for ordinal 0 maps onto the FIRST
+  # new message in the fresh session and shows a ghost attachment from a previous run. Clear alongside
+  # the transcripts so ordinals and snapshots stay in sync.
+  rm -rf "$WORKSPACE/.blitzos/attachments"
   # Runtime panel + action-item state (the chat/terminal/inbox panes + the human action queue): drop so
   # no stale agent panes or pending items are reconstructed on boot.
   rm -f "$WORKSPACE/.blitzos/state/panels.json" "$WORKSPACE/.blitzos/state/action-items.json"

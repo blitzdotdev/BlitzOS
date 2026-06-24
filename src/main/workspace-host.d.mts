@@ -74,11 +74,11 @@ export interface WorkspaceHost {
   chatHubProps(activeAgentId?: string): {
     sessions: Array<{ id: string; title: string; status: string; updatedAt: number; lastMessagePreview: string; unread: boolean }>
     archivedSessions: Array<{ id: string; title: string; status: string; updatedAt: number; lastMessagePreview: string; unread: boolean; archivedAt?: number }>
-    threads: Record<string, Array<{ role: string; text: string; ts?: number; parts?: unknown[] }>>
+    threads: Record<string, Array<{ role: string; text: string; ts?: number; userIdx?: number; parts?: unknown[] }>>
     status: Record<string, string>
     errors: Record<string, { cause: string; title: string; hint: string; retryable: boolean }>
     activeAgentId: string
-    messages: Array<{ role: string; text: string; ts?: number; parts?: unknown[] }>
+    messages: Array<{ role: string; text: string; ts?: number; userIdx?: number; parts?: unknown[] }>
     agentId: string
     sessionId: string
   }

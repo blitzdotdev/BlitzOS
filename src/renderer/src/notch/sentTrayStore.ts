@@ -2,12 +2,15 @@ import { useEffect, useSyncExternalStore } from 'react'
 import type { TrayGroup } from './attachTray'
 
 // The per-message attachment SNAPSHOT (the frozen dropbox copy shown above a sent message). Keyed
-// `chat → userOrdinal → TrayGroup[]`. PERSISTENT across a full quit/restart: backed on disk by the main process
-// (`.blitzos/attachments/<chat>.json`), cached here in a module-level external store (native useSyncExternalStore,
-// NO zustand) so it ALSO survives the island remount. Plus a NON-persisted `live` mirror — what each chat's dropbox
-// currently shows — so a send can freeze an exact copy without re-deriving.
+// `chat → msgKey → TrayGroup[]` where msgKey = String(m.ts) — the timestamp written to chat.md at append
+// time, passed from the renderer so main and renderer use the SAME value. This makes lookups stable across
+// the sliding 400-message display window: m.ts is absolute, not positional. PERSISTENT across a full
+// quit/restart: backed on disk by the main process (`.blitzos/attachments/<chat>.json`), cached here in a
+// module-level external store (native useSyncExternalStore, NO zustand) so it ALSO survives the island remount.
+// Plus a NON-persisted `live` mirror — what each chat's dropbox currently shows — so a send can freeze an
+// exact copy without re-deriving.
 
-type ChatSnaps = Record<number, TrayGroup[]>
+type ChatSnaps = Record<string, TrayGroup[]>
 let snaps: Record<string, ChatSnaps> = {}
 const loaded = new Set<string>() // chats whose disk state has been pulled this session
 const loading = new Set<string>()
@@ -24,7 +27,7 @@ const subscribe = (l: () => void): (() => void) => {
 }
 
 type AttachBridge = {
-  record(chat: string, ordinal: number, groups: TrayGroup[]): Promise<unknown>
+  record(chat: string, msgKey: string, groups: TrayGroup[]): Promise<unknown>
   get(chat: string): Promise<{ attachments?: ChatSnaps; error?: string }>
 }
 const bridge = (): AttachBridge | undefined =>
@@ -76,12 +79,13 @@ async function ensureLoaded(chat: string): Promise<void> {
   emit()
 }
 
-// Freeze the tray for (chat, ordinal) and write it through to disk. Called at send.
-export function recordSentTray(chat: string, ordinal: number, groups: TrayGroup[]): void {
-  snaps = { ...snaps, [chat]: { ...(snaps[chat] || {}), [ordinal]: groups } }
+// Freeze the tray for (chat, msgKey) and write it through to disk. Called at send.
+// msgKey = String(sendTs) — the timestamp the renderer passed to main so both sides use the same key.
+export function recordSentTray(chat: string, msgKey: string, groups: TrayGroup[]): void {
+  snaps = { ...snaps, [chat]: { ...(snaps[chat] || {}), [msgKey]: groups } }
   loaded.add(chat)
   emit()
-  void bridge()?.record?.(chat, ordinal, groups)
+  void bridge()?.record?.(chat, msgKey, groups)
 }
 
 // Subscribe to a chat's frozen snapshots; lazy-loads from disk on first use (then reopen-proof in memory).

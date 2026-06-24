@@ -19,6 +19,9 @@ export interface IslandMessage {
   role: 'user' | 'agent'
   text: string
   ts?: number
+  // absolute user-message index across the FULL transcript (set by readChatMessages before the 400-cap slice)
+  // so attachment-snapshot keys stay valid even after the window shifts past 400 messages.
+  userIdx?: number
   parts?: IslandMessagePart[]
 }
 
