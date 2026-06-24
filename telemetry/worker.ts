@@ -357,14 +357,10 @@ async function activityData(c: any) {
     return channel === 'all' || ch === channel
   }).map((session: any) => ({ ...session, channel: activitySessionChannel(session) }))
   const sessionBySid = new Map(sessions.map((session: any) => [String(session.sid || ''), session]))
-  const where: string[] = []
-  if (cutoff) where.push(`t >= ${Math.floor(cutoff)}`)
-  if (before) where.push(`t < ${Math.floor(before)}`)
-  if (eventFilter) where.push(`name == "${eventFilter}"`)
   const rawEvents = await db.table('activity_events').select({
     order: '-created',
     limit: scanLimit,
-    ...(where.length ? { where: where.join(' && ') } : {})
+    ...(before ? { where: `t < ${Math.floor(before)}` } : {})
   })
 
   const counts: Record<string, number> = {}
@@ -389,6 +385,8 @@ async function activityData(c: any) {
   for (const ev of rawEvents || []) {
     scanned++
     nextBefore = Number(ev.t) || nextBefore
+    if (cutoff && (Number(ev.t) || 0) < cutoff) continue
+    if (eventFilter && ev.name !== eventFilter) continue
     const session = sessionBySid.get(String(ev.sid || ''))
     if (!session) continue
     const props = parseActivityProps(ev.props)
