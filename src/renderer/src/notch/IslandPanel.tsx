@@ -12,14 +12,13 @@ import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
 import { AttachTray, type TrayGroup } from './attachTray'
 import { useSentTray, recordSentTray, getLiveTray } from './sentTrayStore'
-import { IslandTerminalPane } from './IslandTerminalPane'
 import MarkdownMessage from './MarkdownMessage'
 import IslandKanban, { type WfStats } from './IslandKanban'
 import { isSubagentEvents } from './wfReduce'
 import { fmtMs, fmtTok } from './wfShared'
-import { matchingChoiceAnswerForMessage } from './messageParts'
+import { matchingChoiceAnswerForMessage, messagePartsFor } from './messageParts'
 import { agentGradient } from './agentVisuals'
-import { normalizedBlitzAppPart } from './appEmbeds'
+import { normalizedBlitzAppPart, normalizedBlitzAppUrl } from './appEmbeds'
 import type { IslandAppMessagePart, IslandPanelProps, IslandWfRun } from './types'
 
 const AGENT_NAME_MAX = 24
@@ -87,6 +86,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const top = Math.max(28, menuBarH) + 8
   const feedRef = useRef<HTMLDivElement>(null)
   const lyricsRef = useRef<HTMLDivElement>(null)
+  const tabRailRef = useRef<HTMLDivElement>(null) // the horizontally-scrolling agent-tab rail (the + sits OUTSIDE it)
   // Attach mode in an AGENT chat: lock the island to the height it had BEFORE attach opened, so the attachment panel
   // rises only as tall as its own content and the chat feed shrinks to fit (instead of the island growing). We keep
   // the last closed-state height in a ref (recorded after every closed render) and apply it while attach is open.
@@ -98,13 +98,36 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const [detailRows, setDetailRows] = useState<Array<{ label: string }>>([])
   const [pendingChoiceSelections, setPendingChoiceSelections] = useState<Record<string, string>>({})
   const [openApp, setOpenApp] = useState<IslandAppMessagePart | null>(() => activeApp)
-  const [appFrameLoaded, setAppFrameLoaded] = useState(false)
+  // The app viewer iframe is mounted PERSISTENTLY and kept warm so opening an app is an instant reveal, not a cold
+  // multi-second load. warmAppUrl = the OPEN app's url while viewing (its iframe never remounts), else the LATEST
+  // app card in chat (prewarmed offscreen). appLoadedUrl tracks which url finished loading so the spinner only
+  // shows for a genuinely-unloaded app; warmArmed gates the offscreen prewarm behind a short settle delay.
+  const [appLoadedUrl, setAppLoadedUrl] = useState<string | null>(null)
+  const [warmArmed, setWarmArmed] = useState(false)
+  const warmAppUrl = useMemo(() => {
+    const open = normalizedBlitzAppUrl(openApp?.url)
+    if (open) return open
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const parts = messages[i]?.parts
+      if (!parts) continue
+      for (let j = parts.length - 1; j >= 0; j--) {
+        const p = parts[j]
+        if (p?.type === 'app') {
+          const u = normalizedBlitzAppUrl(p.url)
+          if (u) return u
+        }
+      }
+    }
+    return null
+  }, [openApp, messages])
+  const appViewerReady = !!warmAppUrl && appLoadedUrl === warmAppUrl
   // Attachment SNAPSHOT: a frozen, read-only copy of the dropbox shown above the user message it rode on. PERSISTED
   // (sentTrayStore → disk) so it survives island reopen AND a full quit/restart. Keyed by the user-message ORDINAL —
   // the dropbox clears on send, so each message's snapshot is exactly what was staged at THAT send.
   const sentTray = useSentTray(activeId)
   const pendingNewSessionRef = useRef<TrayGroup[] | null>(null) // composer ('') tray, pinned to the spawned agent's msg 0
   const seenChatRef = useRef<Set<string>>(new Set())
+  const shownChoiceEventsRef = useRef<Set<string>>(new Set())
   // On first sight of a freshly spawned agent, pin the composer tray captured at its spawning send to its first message.
   useEffect(() => {
     if (!activeId) return
@@ -114,6 +137,19 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     pendingNewSessionRef.current = null
     if (pending && pending.length) recordSentTray(activeId, 0, pending)
   }, [activeId])
+  useEffect(() => {
+    if (!activeId) return
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i]
+      if (!message || message.role !== 'agent') continue
+      const choice = messagePartsFor(message).find((part) => part.type === 'choice')
+      if (!choice) continue
+      const key = choiceSelectionKey(activeId, i, message.ts, message.text)
+      if (shownChoiceEventsRef.current.has(key)) continue
+      shownChoiceEventsRef.current.add(key)
+      window.agentOS?.activity?.track('choice.shown', { agentId: activeId, count: choice.options.length, source: 'notch' })
+    }
+  }, [activeId, messages])
   // Freeze an EXACT copy of the live dropbox (getLiveTray) onto the message being sent, THEN send (NotchHost.onSend
   // clears the live tray). New-session composer ('') → stash it to pin onto the spawned agent's first message.
   const handleSend = (text: string): void => {
@@ -299,15 +335,30 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     setDetailRows([])
     setPendingChoiceSelections({})
     setOpenApp(null)
-    setAppFrameLoaded(false)
     onActiveAppChange(null)
     onAppViewerToggle?.(false)
   }, [activeId, onActiveAppChange, onAppViewerToggle])
 
   useEffect(() => {
     setOpenApp(activeApp)
-    setAppFrameLoaded(false)
   }, [activeApp])
+
+  // Prewarm the latest app's iframe shortly after it appears — a short settle delay dodges the brief post-deploy
+  // 522/propagation window the doctrine warns about (a prewarm landing inside it could cache a transient error).
+  // When an app is actually opened we arm immediately (correctness beats the dodge).
+  useEffect(() => {
+    if (!warmAppUrl) {
+      setWarmArmed(false)
+      return
+    }
+    if (openApp) {
+      setWarmArmed(true)
+      return
+    }
+    setWarmArmed(false)
+    const t = window.setTimeout(() => setWarmArmed(true), 2500)
+    return () => window.clearTimeout(t)
+  }, [warmAppUrl, openApp])
 
   useEffect(() => {
     if (!editingId) return
@@ -344,6 +395,12 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     const next = !detailsOpen
     setDetailsOpen(next)
     if (next) loadDetails()
+  }
+
+  // The Terminal button opens the REAL macOS Terminal (read-only) in one click. No toggle/close state — the user
+  // closes the Terminal window themselves.
+  const openTerminal = (): void => {
+    if (activeId) void window.agentOS?.terminalOpenExternal?.(activeId).catch(() => {})
   }
 
   // Keep the inline activity row fresh while the agent is doing something. This is the same raw tool-row source
@@ -432,7 +489,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     const normalized = normalizedBlitzAppPart(part)
     if (!normalized) return
     appReturnScrollTopRef.current = feedRef.current?.scrollTop ?? null
-    setAppFrameLoaded(false)
     setOpenApp(normalized)
     onActiveAppChange(normalized)
     if (attachOpen) onToggleAttach()
@@ -440,10 +496,29 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   }
   const closeAppViewer = (): void => {
     setOpenApp(null)
-    setAppFrameLoaded(false)
     onActiveAppChange(null)
     onAppViewerToggle?.(false)
   }
+
+  // Keep the SELECTED tab in view: spawning a new agent (the "+") appends its chip at the far right and selects it,
+  // but a left-scrolled rail would leave that chip off-screen with no visible feedback. On every selection change
+  // (new agent, click, or Ctrl+Tab) smooth-scroll the rail just far enough that the active chip clears both edges —
+  // so the strip visibly slides to the tab you land on. Honors prefers-reduced-motion (jumps instead of animating).
+  useEffect(() => {
+    const rail = tabRailRef.current
+    if (!rail) return
+    const chip = rail.querySelector<HTMLElement>('.isl-chip.active')
+    if (!chip) return
+    const railRect = rail.getBoundingClientRect()
+    const chipRect = chip.getBoundingClientRect()
+    const PAD = 8 // breathing room so the chip never sits flush against the clipped edge
+    let delta = 0
+    if (chipRect.left < railRect.left + PAD) delta = chipRect.left - (railRect.left + PAD)
+    else if (chipRect.right > railRect.right - PAD) delta = chipRect.right - (railRect.right - PAD)
+    if (delta === 0) return
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+    rail.scrollTo({ left: rail.scrollLeft + delta, behavior: reduce ? 'auto' : 'smooth' })
+  }, [page, sessions.length])
 
   // The shared horizontal tab strip (pen + one chip per agent), kept in BOTH the chat and the peek view.
   const tabStrip = (
@@ -462,7 +537,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     >
       {/* The agent tabs scroll INSIDE this rail; the new-chat + is a sibling pinned to the RIGHT (Chrome-style),
           so it stays visible no matter how many tabs there are — the tabs scroll under it instead of pushing it off. */}
-      <div className="isl-tab-rail">
+      <div className="isl-tab-rail" ref={tabRailRef}>
       {sessions.map((s, i) => {
         const selected = page === i + 1
         const editing = editingId === s.id
@@ -644,20 +719,28 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       )}
     </div>
   ) : null
-  const appViewer = openApp ? (
-    <>
-      <div className="isl-app-viewer" data-tone={openApp.tone} data-loaded={appFrameLoaded ? 'true' : 'false'}>
+  // The persistent app iframe. Mounted whenever there is a warm url (an open app, or — once armed — the latest
+  // card to prewarm), and promoted to the foreground via `.viewing` only when an app is actually open. The src is
+  // the SAME across prewarm -> open -> close for one app, so revealing it never remounts the iframe: instant.
+  const appLayer =
+    warmAppUrl && (openApp || warmArmed) ? (
+      <div
+        className={`isl-app-viewer isl-app-warm${openApp ? ' viewing' : ''}`}
+        data-tone={openApp?.tone}
+        data-loaded={appViewerReady ? 'true' : 'false'}
+        aria-hidden={!openApp}
+      >
         <div className="isl-app-scroll">
           <iframe
             className="isl-app-frame"
-            title={`${openApp.title} generated app`}
-            src={openApp.url}
+            title="Generated app"
+            src={warmAppUrl}
             scrolling="auto"
             sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
-            onLoad={() => setAppFrameLoaded(true)}
+            onLoad={() => setAppLoadedUrl(warmAppUrl)}
           />
         </div>
-        {!appFrameLoaded && (
+        {openApp && !appViewerReady && (
           <div className="isl-app-loading" role="status" aria-live="polite">
             <span className="isl-app-loading-mark" aria-hidden />
             <span className="isl-app-loading-copy">
@@ -667,6 +750,25 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           </div>
         )}
       </div>
+    ) : null
+  const viewerControls = openApp ? (
+    <>
+      {openApp.claimUrl && (
+        <button
+          type="button"
+          className="isl-app-viewer-claim"
+          aria-label={`Claim ${openApp.title}`}
+          title="Keep this app — claim it before it expires"
+          onClick={() => {
+            if (openApp?.claimUrl) void window.agentOS?.openExternalUrl?.(openApp.claimUrl)
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+            <path d="M6 3h12v18l-6-4-6 4V3Z" />
+          </svg>
+          <span>Claim app</span>
+        </button>
+      )}
       <button type="button" className="isl-app-viewer-close" aria-label="Close generated app" onClick={closeAppViewer}>
         <svg viewBox="0 0 24 24" aria-hidden focusable="false">
           <path d="M18 6 6 18M6 6l12 12" />
@@ -680,27 +782,41 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       className={`nh-island isl-process${attachOpen ? ' isl-attaching' : ''}${openApp ? ' isl-app-viewing' : ''}`}
       style={lockHeight && !openApp ? { paddingTop: top, height: lockHeight } : { paddingTop: top }}
     >
+      {appLayer}
+      {viewerControls}
       {!openApp && (
         <div className={`isl-tabwrap${attachOpen ? ' collapsed' : ''}`}>
           <div className="isl-tabwrap-inner">{tabStrip}</div>
         </div>
       )}
-      {openApp ? appViewer : (
+      {!openApp && (
         // The active agent's chat (Blitz '0' or a peer): real messages + inline activity details — KEPT in attach mode.
         <>
           <div className="isl-agent-meta">
-            {activeId && (
+            {debugTerminalEnabled && activeId && (
               <button
                 type="button"
-                className={`isl-archive${activeId === '0' ? ' placeholder' : ''}`}
-                disabled={activeId === '0'}
-                aria-hidden={activeId === '0'}
-                tabIndex={activeId === '0' ? -1 : undefined}
-                onClick={() => {
-                  if (activeId !== '0') onArchiveAgent(activeId)
-                }}
-                title={activeId === '0' ? undefined : 'Archive agent'}
-                aria-label={activeId === '0' ? undefined : 'Archive agent'}
+                className="isl-termbtn"
+                onClick={openTerminal}
+                title="Open the agent terminal (read-only)"
+                aria-label="Open the agent terminal"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden focusable="false" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                  <path d="M7 10l2.4 2.4L7 14.8" />
+                  <path d="M12.5 15H16" />
+                </svg>
+                <span>Terminal</span>
+              </button>
+            )}
+            {/* Blitz '0' can't be archived (intentional) — no placeholder, so its Terminal button sits in the archive slot. */}
+            {activeId && activeId !== '0' && (
+              <button
+                type="button"
+                className="isl-archive"
+                onClick={() => onArchiveAgent(activeId)}
+                title="Archive agent"
+                aria-label="Archive agent"
               >
                 <svg viewBox="0 0 24 24" aria-hidden focusable="false">
                   <path d={ARCHIVE_PATH} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -738,6 +854,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                       onOpenApp={showAppViewer}
                       onChoose={(choice) => {
                         setPendingChoiceSelections((prev) => ({ ...prev, [askKey]: choice }))
+                        window.agentOS?.activity?.track('choice.answered', { agentId: activeId, source: 'notch' })
                         onSend(choice)
                       }}
                     />
@@ -766,13 +883,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               </>
             )}
           </div>
-          {debugTerminalEnabled && activeId && (
-            <IslandTerminalPane
-              terminalId={activeId}
-              title={activeTerminal?.title || (String(activeId) === '0' ? 'Blitz' : 'New Agent')}
-              status={activeTerminal?.status || 'unknown'}
-            />
-          )}
         </>
       )}
       {/* the composer + attachment panel are ALWAYS visible. */}

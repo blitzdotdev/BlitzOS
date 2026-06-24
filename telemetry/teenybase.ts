@@ -64,9 +64,42 @@ const frames = {
   triggers: [createdTrigger, updatedTrigger]
 }
 
+const activitySessions = {
+  name: 'activity_sessions',
+  fields: [
+    ...baseFields,
+    tableField('sid', 'text', 'text', { notNull: true, unique: true }),
+    tableField('install', 'text', 'text', {}),
+    tableField('version', 'text', 'text', {}),
+    tableField('branch', 'text', 'text', {}),
+    tableField('run', 'integer', 'integer', { default: sql`0` }),
+    tableField('platform', 'text', 'text', {}),
+    tableField('events', 'integer', 'integer', { default: sql`0` }),
+    tableField('t0', 'integer', 'integer', { default: sql`0` }),
+    tableField('t1', 'integer', 'integer', { default: sql`0` })
+  ],
+  indexes: [{ fields: ['sid'], unique: true }],
+  extensions: [],
+  triggers: [createdTrigger, updatedTrigger]
+}
+
+const activityEvents = {
+  name: 'activity_events',
+  fields: [
+    ...baseFields,
+    tableField('sid', 'text', 'text', { notNull: true }),
+    tableField('t', 'integer', 'integer', { default: sql`0` }),
+    tableField('name', 'text', 'text', { notNull: true }),
+    tableField('props', 'json', 'text', {})
+  ],
+  indexes: [{ fields: ['sid'] }, { fields: ['name'] }],
+  extensions: [],
+  triggers: [createdTrigger, updatedTrigger]
+}
+
 export default {
   appName: 'blitzos-telemetry',
   appUrl: 'https://blitzos-telemetry.app.blitz.dev',
   jwtSecret: '$JWT_SECRET_MAIN',
-  tables: [sessions, segments, frames]
+  tables: [sessions, segments, frames, activitySessions, activityEvents]
 }

@@ -20,6 +20,7 @@ import {
   removeSurfaceFile,
   surfaceFileExists,
   removeAgentFiles,
+  removeAgentAttachments,
   ensureSystemRenderer,
   readSystemRenderer,
   readSystemRendererInfo,
@@ -616,7 +617,7 @@ export function createWorkspaceHost(a) {
         updateChatHubState(id, true)
         return
       }
-      chatStatuses.set(id, { status: 'watching', updatedAt: Date.now(), source: 'quiet' })
+      setChatStatusLocal(id, 'watching', 'quiet')
       updateChatHubState(id, true)
     }, CHAT_QUIET_MS)
     if (typeof timer.unref === 'function') timer.unref()
@@ -626,8 +627,12 @@ export function createWorkspaceHost(a) {
     const id = String(agentId ?? '0')
     const s = String(status || 'idle')
     if (!CHAT_STATUSES.has(s)) return null
+    const previousStatus = chatStatus(id)
     const rec = { status: s, updatedAt: Date.now(), source }
     chatStatuses.set(id, rec)
+    if (previousStatus !== s) {
+      try { a.onChatStatusTransition?.({ agentId: id, previousStatus, status: s, source }) } catch { /* observers must not affect status */ }
+    }
     if (s === 'working' || s === 'starting') scheduleChatWatching(id, rec.updatedAt)
     else {
       clearChatQuietTimer(id)
@@ -931,7 +936,13 @@ export function createWorkspaceHost(a) {
   function newAgentId() {
     let max = 0
     for (const id of allAgentIds()) { const n = Number(id); if (Number.isInteger(n) && n > max) max = n }
-    return String(max + 1)
+    const id = String(max + 1)
+    // IDs are REUSED: a closed agent frees its number (allAgentIds drops the deleted dir), so this fresh agent can be
+    // reborn onto a previous agent's id. Wipe any leftover attachment snapshot for that id NOW so the new chat starts
+    // clean — this also heals orphans left by deletes from before close-time cleanup existed. newAgentId is called
+    // ONLY for a brand-new spawn (osSpawnAgent), never on boot reconstruction, so this never touches a live agent.
+    removeAgentAttachments(activeWorkspace, id)
+    return id
   }
   /** Register a new agent: write its meta (kind:'agent'), refresh the chat hub's thread list, and launch
    *  its managed terminal. Idempotent — re-adding an existing agent just refreshes the hub/thread. */

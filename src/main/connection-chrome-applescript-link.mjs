@@ -1,0 +1,161 @@
+// The CHROME tab adapter — via Apple Events `execute … javascript` (extension-free, the connector is deprecated).
+// Behind the SAME connection vocabulary as the Safari link: read / run_js / act / navigate. The JS runs in the
+// page's own context (Chrome MAIN world), so run_js is unrestricted.
+//
+// FOCUS-SAFETY IS THE DESIGN CONSTRAINT (measured by a live agent): `execute … javascript` NEVER steals focus
+// (0/50 reads, 0/55 navigations via injected location.href). AppleScript `set URL` / `make new tab` / `open`
+// stole focus ~30% of the time. So this adapter does EVERYTHING through `execute javascript` — including navigate
+// (inject `location.href=…`) — and NEVER touches `set URL` / `open` / `make new tab` on the hot path. The only
+// unavoidable steal is opening a site that has no tab yet; that is the user's job (or an explicit foreground act),
+// never something this adapter does silently.
+//
+// Honest caveats (same class as Safari): `execute javascript` is synchronous with NO background event stream (no
+// live "source changed" wake — the agent re-reads on demand), and it needs a one-time setup: Chrome ▸ View ▸
+// Developer ▸ "Allow JavaScript from Apple Events" + an Automation grant. JS is passed as an osascript ARGUMENT
+// (item 1 of argv) so there is no string-escaping to get wrong.
+
+import { execFile } from 'node:child_process'
+import { READ_JS, ACT_JS, faviconForUrl } from './connection-page-js.mjs'
+
+const osa = (args, timeout = 15000) =>
+  new Promise((resolve) =>
+    execFile('/usr/bin/osascript', args, { timeout, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) =>
+      resolve({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || '') })
+    )
+  )
+
+export function makeChromeAppleScriptLink({ connectionOps } = {}) {
+  const refToConn = new Map() // dedup: this exact Chrome tab (chrome:w:t) → its connection
+
+  // Run page-context JS in tab t of window w via `execute … javascript`. NEVER navigates via `set URL`.
+  async function execJS(code, w, t) {
+    const r = await osa([
+      '-e', 'on run argv',
+      '-e', 'tell application "Google Chrome" to execute (tab (item 2 of argv as integer) of window (item 3 of argv as integer)) javascript (item 1 of argv)',
+      '-e', 'end run',
+      code, String(t), String(w)
+    ])
+    if (!r.ok) {
+      const msg = r.stderr || 'osascript failed'
+      // Chrome's exact message when the toggle is off: "Executing JavaScript through AppleScript is turned off."
+      if (/JavaScript through AppleScript|Allow JavaScript from Apple Events|not allowed|Apple ?events|-1743|automation/i.test(msg)) {
+        return { error: 'Chrome blocked Apple Events — enable Chrome ▸ View ▸ Developer ▸ "Allow JavaScript from Apple Events" and grant Automation to BlitzOS, then retry' }
+      }
+      return { error: msg.trim() }
+    }
+    return { stdout: r.stdout.trim() }
+  }
+
+  async function listTabs() {
+    const r = await osa([
+      '-e', 'tell application "Google Chrome"',
+      '-e', 'set out to ""',
+      '-e', 'repeat with w from 1 to count of windows',
+      '-e', 'repeat with t from 1 to count of tabs of window w',
+      '-e', 'try',
+      '-e', 'set out to out & w & ":" & t & ":" & (URL of tab t of window w) & ":::" & (title of tab t of window w) & linefeed',
+      '-e', 'end try',
+      '-e', 'end repeat',
+      '-e', 'end repeat',
+      '-e', 'return out',
+      '-e', 'end tell'
+    ])
+    if (!r.ok) return []
+    const tabs = []
+    for (const line of r.stdout.split('\n')) {
+      const m = line.match(/^(\d+):(\d+):(.*?):::(.*)$/)
+      if (!m) continue
+      const url = m[3]
+      if (!/^https?:/i.test(url)) continue
+      tabs.push({ tabId: `chrome:${m[1]}:${m[2]}`, window: Number(m[1]), tab: Number(m[2]), url, title: m[4], favIconUrl: faviconForUrl(url) })
+    }
+    return tabs
+  }
+
+  function parseRef(id) {
+    const m = String(id).match(/^chrome:(\d+):(\d+)$/)
+    return m ? { w: Number(m[1]), t: Number(m[2]) } : null
+  }
+  function hostOf(url) {
+    try {
+      return new URL(url).host || 'chrome-tab'
+    } catch {
+      return 'chrome-tab'
+    }
+  }
+
+  async function connectTab(tabId, opts = {}) {
+    const ref = parseRef(tabId)
+    if (!ref) return { error: 'bad Chrome tab id (expected chrome:<window>:<tab>)' }
+    // DEDUP: this exact Chrome tab is already connected (and live) → re-attach, don't spawn a duplicate.
+    const existing = refToConn.get(String(tabId))
+    if (existing && typeof connectionOps.connectionIsLive === 'function' && connectionOps.connectionIsLive(existing)) {
+      const info = connectionOps.connectionInfo(existing)
+      if (info) {
+        if (typeof connectionOps.connectionSetOwner === 'function') connectionOps.connectionSetOwner(existing, opts.agentId)
+        return { ...info, tab: { tabId } }
+      }
+    }
+    const got = await execJS('(function(){return JSON.stringify({url:location.href,title:document.title})})()', ref.w, ref.t)
+    if (got.error) return got
+    let info = {}
+    try {
+      info = JSON.parse(got.stdout)
+    } catch {
+      /* ignore */
+    }
+    const sourceId = opts.sourceId || hostOf(info.url || '')
+    const adapter = {
+      call: async (verb, args) => {
+        if (verb === 'run_js') {
+          const code = `(function(){try{return JSON.stringify((function(args){${String((args && args.code) || '')}})(${JSON.stringify((args && args.args) || {})}))}catch(e){return JSON.stringify({error:String(e)})}})()`
+          const r = await execJS(code, ref.w, ref.t)
+          if (r.error) return r
+          try {
+            const v = JSON.parse(r.stdout)
+            return v && v.error ? v : { result: v }
+          } catch {
+            return { result: r.stdout }
+          }
+        }
+        if (verb === 'read') {
+          const r = await execJS(`${READ_JS}(${JSON.stringify(args || {})})`, ref.w, ref.t)
+          if (r.error) return r
+          try {
+            return JSON.parse(r.stdout)
+          } catch {
+            return { result: r.stdout }
+          }
+        }
+        if (verb === 'act') {
+          const r = await execJS(`${ACT_JS}(${JSON.stringify(args || {})})`, ref.w, ref.t)
+          if (r.error) return r
+          try {
+            return JSON.parse(r.stdout)
+          } catch {
+            return { effect: r.stdout }
+          }
+        }
+        if (verb === 'navigate') {
+          // FOCUS-SAFE navigation: inject location.href in-page. NEVER `set URL of tab` (that steals focus).
+          const url = String((args && args.url) || '')
+          if (!url) return { error: 'navigate needs a url' }
+          const code = `(function(u){location.href=u;return JSON.stringify({navigated:u})})(${JSON.stringify(url)})`
+          const r = await execJS(code, ref.w, ref.t)
+          if (r.error) return r
+          return { effect: { navigated: url } }
+        }
+        return { error: `verb "${verb}" not supported for a Chrome tab` }
+      },
+      drop: () => {}
+    }
+    const bound = connectionOps.connectionBind({ type: 'tab', sourceId, title: opts.title || info.title || sourceId, capabilities: { run_js: true, act: true }, adapter, ref: String(tabId), agentId: opts.agentId })
+    refToConn.set(String(tabId), bound.connId)
+    adapter.drop = () => {
+      if (refToConn.get(String(tabId)) === bound.connId) refToConn.delete(String(tabId))
+    }
+    return { connId: bound.connId, surfaceId: bound.surfaceId, sourceId, tab: { tabId, url: info.url, title: info.title } }
+  }
+
+  return { listTabs, connectTab }
+}

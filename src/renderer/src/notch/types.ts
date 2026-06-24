@@ -39,6 +39,10 @@ export interface IslandAppPart {
   icon?: IslandAppIcon
   tone?: IslandAppTone
   preview?: string
+  // The blitz.dev claim page (https://blitz.dev/claim/<slug>) — present when the app was provisioned via new_app.
+  // Anon projects delete at ~12h unless claimed, so the expanded card shows a Claim button when this is set.
+  claimUrl?: string
+  expiresAt?: string
 }
 
 export type IslandMessagePart =

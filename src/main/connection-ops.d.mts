@@ -85,6 +85,8 @@ export interface ConnectionOps {
   ): void
   /** The Safari link (Apple Events) registers itself; its tabs merge into connection_list_tabs (browser:'safari'). */
   setSafariLink(link: { listTabs: () => Promise<unknown>; connectTab: (tabId: string, opts?: any) => Promise<unknown> } | null): void
+  /** The Chrome Apple-Events link registers itself; its tabs merge into connection_list_tabs (browser:'chrome'). Replaces the deprecated connector extension. */
+  setChromeAsLink(link: { listTabs: () => Promise<unknown>; connectTab: (tabId: string, opts?: any) => Promise<unknown> } | null): void
   connectionListTabs(): Promise<Record<string, unknown>>
   connectionConnectTab(tabId: number | string, opts?: { title?: string; sourceId?: string; agentId?: string; browser?: string }): Promise<Record<string, unknown>>
   /** The window link (Electron-only) registers itself so connection_list_windows / connection_connect_window work. */

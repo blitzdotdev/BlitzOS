@@ -1,8 +1,8 @@
-import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen, nativeImage, shell, webFrameMain } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
 import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
 import { emitSystemMoment, emitWorkflowMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
@@ -16,7 +16,10 @@ import { makeTabLink } from './connection-tab-link.mjs'
 import { makeWindowLink } from './connection-window-link'
 import { makeAttachmentStore } from './attachment-store.mjs'
 import { makeSafariLink } from './connection-safari-link.mjs'
-import { startConnectorServer, installConnector, isConnectorPolicyInstalled } from './connection-install'
+import { makeChromeAppleScriptLink } from './connection-chrome-applescript-link.mjs'
+// connection-install (the connector extension force-install) is DEPRECATED. The connector is no longer
+// shipped and Chrome is driven extension-free via Apple Events (makeChromeAppleScriptLink). The boot
+// auto-install plus its server/installer wiring were removed; nothing in main imports connection-install now.
 import { aiBrowser } from './ai-browser'
 import { blitzChrome } from './blitz-chrome'
 import { isChromiumBrowser, decideDrop } from './browser-drop.mjs'
@@ -35,6 +38,7 @@ import { registerWidgets } from './widgets'
 // Keep web surfaces logged in across quit/relaunch (cookie/localStorage flush + unload).
 import { startSessionPersistence } from './persistence'
 import { initTelemetry } from './telemetry'
+import { flushActivityLogging, initActivityLogging, trackActivity, trackToolActivity } from './activity-logging.mjs'
 import { makeSessionTape } from './session-tape.mjs'
 import { setToolTap } from './os-tools.mjs'
 import { registerWallpaperIpc } from './wallpaper'
@@ -215,6 +219,9 @@ let sessionTape: ReturnType<typeof makeSessionTape> | null = null
 // boundary (which agent ids the HUD may ever list/tail) lives in island-membership.mjs — realDeps records
 // island-spawned ids there and the tail/list gate every read through islandLiveIds.
 let islandHelper: IslandHelperHandle | null = null
+// The currently-registered global show/hide-island accelerator (rebindable in Settings, persisted in
+// userData/keybinds.json). Tracked so re-binds and the before-quit release target the live chord.
+let notchToggleAccel = 'Alt+Space'
 
 function safeExternalUrl(raw: unknown): string | null {
   const value = String(raw || '').trim()
@@ -354,6 +361,7 @@ function createWindow(): void {
       webviewTag: true
     }
   })
+  mainWindow.on('focus', () => trackActivity('app.focused', { source: 'main' }))
   mainWindow.once('ready-to-show', () => {
     if (notchGated && mainWindow) applyNotchOverlay(mainWindow)
     else mainWindow?.show()
@@ -413,6 +421,21 @@ function createWindow(): void {
     if (!safe) return
     event.preventDefault()
     openExternalAndCollapse(safe)
+  })
+  // Hide blitz.dev's auto-injected "Make your own" discovery ribbon INSIDE the BlitzOS app viewer: it is redundant
+  // here (we ARE BlitzOS) and lives in a cross-origin app frame, so only the privileged main process can reach it.
+  // We hide it ONLY in our iframe; the public-web app keeps its ribbon (which is what blitz.dev wants). The ribbon
+  // is static in the served HTML, so a one-shot hide on frame-load + one re-hide covers it. TODO: drop this once
+  // blitz.dev offers a real embed/ribbon-suppress mode.
+  mainWindow.webContents.on('did-frame-finish-load', (_e, isMainFrame, frameProcessId, frameRoutingId) => {
+    if (isMainFrame) return
+    const frame = webFrameMain.fromId(frameProcessId, frameRoutingId)
+    if (!frame || !isBlitzAppHost(frame.url)) return
+    frame
+      .executeJavaScript(
+        "(function(){var h=function(){document.querySelectorAll('a.tb-ribbon,.tb-ribbon,[data-ribbon]').forEach(function(e){e.style.setProperty('display','none','important')})};h();setTimeout(h,400)})()"
+      )
+      .catch(() => {})
   })
   // Bare-Option hold → the radial create menu, same focus-proof route as the keybinds above: the
   // host webContents sees the key even when an app/srcdoc iframe holds focus (the renderer's own
@@ -528,6 +551,9 @@ app.whenReady().then(() => {
   // ~/.blitzos/telemetry.json exists; BLITZ_TELEMETRY=0 kills it. After initOsActions so the taps see
   // a wired control plane; before everything else so boot-time errors are captured.
   initTelemetry(() => mainWindow)
+  // Privacy-safe product activity logging: separate from replay/tape, config-gated, and strictly allowlisted.
+  initActivityLogging({ userDataDir: app.getPath('userData'), appVersion: app.getVersion() })
+  setToolTap((info) => trackToolActivity(info as Record<string, unknown>))
   // Session tape (plans/blitzos-logging.md): the local model-loop spool. Multi-subscriber taps, so it
   // coexists with telemetry. Local-only, never uploads. DEFAULT-OFF (the plan's M0 posture: no config =
   // no capture) because moments can carry typed input + token-bearing URLs — opt in with BLITZ_TAPE=1.
@@ -606,6 +632,11 @@ app.whenReady().then(() => {
   // Renderer (and main) client errors → the session tape's diagnostics stream (the failure markers).
   ipcMain.on('os:client-error', (_e, p: { via?: string; message?: string; stack?: string; surface?: string }) => {
     try { sessionTape?.diagError({ ...p, source: 'renderer' }) } catch { /* ignore */ }
+  })
+  ipcMain.on('os:activity-track', (_e, p: { name?: unknown; props?: unknown }) => {
+    const name = String(p?.name || '')
+    const props = p?.props && typeof p.props === 'object' ? (p.props as Record<string, unknown>) : {}
+    trackActivity(name, props)
   })
 
   // Claim the root + read the previous run's dirty bit (announced below once the control plane is up,
@@ -721,11 +752,40 @@ app.whenReady().then(() => {
   // instead of the ANSI-stripped embedded DEBUG pane. See openTerminalExternal (module scope) for the why.
   ipcMain.handle('os:terminal-open-external', (_e, id: string) => openTerminalExternal(String(id)))
   ipcMain.on('os:terminal-spawn', (_e, opts: { command?: string; title?: string }) => { void electronTerminalOps.spawnTerminal(opts || {}) })
-  ipcMain.on('os:agent-spawn', (_e, p?: { title?: string }) => { try { osSpawnAgent(p?.title != null ? String(p.title) : undefined, true) } catch { /* no workspace host yet */ } })
-  ipcMain.handle('os:close-agent', (_e, id: string) => { try { return osCloseAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
-  ipcMain.handle('os:archive-agent', (_e, id: string) => { try { return osArchiveAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
-  ipcMain.handle('os:unarchive-agent', (_e, id: string) => { try { return osUnarchiveAgent(String(id)) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
-  ipcMain.handle('os:rename-agent', (_e, p: { id: string; title: string }) => { try { return osRenameAgent(String(p?.id), String(p?.title ?? '')) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
+  ipcMain.on('os:agent-spawn', (_e, p?: { title?: string }) => {
+    try {
+      const r = osSpawnAgent(p?.title != null ? String(p.title) : undefined, true) as { id?: unknown; ok?: boolean }
+      if (r && r.ok !== false) trackActivity('agent.spawned', { agentId: r.id, source: 'main' })
+    } catch { /* no workspace host yet */ }
+  })
+  ipcMain.handle('os:close-agent', (_e, id: string) => {
+    try {
+      const r = osCloseAgent(String(id))
+      if (r?.ok) trackActivity('agent.deleted', { agentId: id, source: 'main' })
+      return r
+    } catch (e) { return { ok: false, error: (e as Error)?.message } }
+  })
+  ipcMain.handle('os:archive-agent', (_e, id: string) => {
+    try {
+      const r = osArchiveAgent(String(id))
+      if (r?.ok) trackActivity('agent.archived', { agentId: id, source: 'main' })
+      return r
+    } catch (e) { return { ok: false, error: (e as Error)?.message } }
+  })
+  ipcMain.handle('os:unarchive-agent', (_e, id: string) => {
+    try {
+      const r = osUnarchiveAgent(String(id))
+      if (r?.ok) trackActivity('agent.restored', { agentId: id, source: 'main' })
+      return r
+    } catch (e) { return { ok: false, error: (e as Error)?.message } }
+  })
+  ipcMain.handle('os:rename-agent', (_e, p: { id: string; title: string }) => {
+    try {
+      const r = osRenameAgent(String(p?.id), String(p?.title ?? ''))
+      if (r?.ok) trackActivity('agent.renamed', { agentId: p?.id, source: 'main' })
+      return r
+    } catch (e) { return { ok: false, error: (e as Error)?.message } }
+  })
   // The orchestrators (dynamic-workflows) toggle: flip the durable per-agent flag + wake it live (delivery B).
   ipcMain.handle('os:agent-orchestrators', (_e, p: { id: string; on?: boolean }) => { try { return osSetOrchestrators(String(p?.id), p?.on === undefined ? true : !!p.on) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   // One-shot snapshot for the dynamic island on open: the session roster + transcripts + status. The island
@@ -756,13 +816,31 @@ app.whenReady().then(() => {
   // the attach wake to that agent. The drop path can't see the renderer's active session, so the renderer reports it
   // when it arms the picker (os:pick-start) and we stash it here.
   let pickActiveSession = ''
-  ipcMain.handle('os:conn-list-tabs', () => electronConnections.connectionListTabs())
-  ipcMain.handle('os:conn-list-windows', () => electronConnections.connectionListWindows())
-  ipcMain.handle('os:conn-connect-tab', (_e, id: number | string, agentId?: string) => electronConnections.connectionConnectTab(id, { agentId: agentId != null ? String(agentId) : '' }))
-  ipcMain.handle('os:conn-connect-window', (_e, id: number, agentId?: string) => electronConnections.connectionConnectWindow(Number(id), { agentId: agentId != null ? String(agentId) : '' }))
+  ipcMain.handle('os:conn-list-tabs', () => {
+    trackActivity('connector.picker_opened', { connectorKind: 'browser_tab', source: 'main' })
+    return electronConnections.connectionListTabs()
+  })
+  ipcMain.handle('os:conn-list-windows', () => {
+    trackActivity('connector.picker_opened', { connectorKind: 'mac_window', source: 'main' })
+    return electronConnections.connectionListWindows()
+  })
+  ipcMain.handle('os:conn-connect-tab', async (_e, id: number | string, agentId?: string) => {
+    const r = await electronConnections.connectionConnectTab(id, { agentId: agentId != null ? String(agentId) : '' })
+    trackActivity('connector.connected', { connectorKind: 'browser_tab', agentId, success: !(r as { error?: unknown })?.error, source: 'main' })
+    return r
+  })
+  ipcMain.handle('os:conn-connect-window', async (_e, id: number, agentId?: string) => {
+    const r = await electronConnections.connectionConnectWindow(Number(id), { agentId: agentId != null ? String(agentId) : '' })
+    trackActivity('connector.connected', { connectorKind: 'mac_window', agentId, success: !(r as { error?: unknown })?.error, source: 'main' })
+    return r
+  })
   ipcMain.handle('os:conn-install', () => electronConnections.connectionInstallExtension())
   ipcMain.handle('os:conn-list', (_e, agentId?: string) => electronConnections.connectionList(agentId != null ? String(agentId) : undefined))
-  ipcMain.handle('os:conn-drop', (_e, connId: string) => electronConnections.connectionDrop(String(connId)))
+  ipcMain.handle('os:conn-drop', async (_e, connId: string) => {
+    const r = await electronConnections.connectionDrop(String(connId))
+    trackActivity('connector.disconnected', { success: !(r as { error?: unknown })?.error, source: 'main' })
+    return r
+  })
   // Per-message attachment snapshots (the frozen in-chat dropbox), persisted under <ws>/.blitzos/attachments/<chat>.json.
   const attachmentStore = makeAttachmentStore({ getWorkspacePath: () => osWorkspaceContext().workspace_path || null })
   ipcMain.handle('os:attach-get', (_e, chat: string) => attachmentStore.listAttachments(String(chat ?? '')))
@@ -935,11 +1013,13 @@ app.whenReady().then(() => {
         if (payload?.deep) {
           const r = (electronOps.startWorkflow as unknown as (s: { task: string; contextRefs?: string[]; title?: string }) => { ok?: boolean; agent?: { id: string; title?: string }; error?: string })({ task: prompt, contextRefs: [], title: undefined })
           if (r?.agent?.id) electronConnections.connectionReassign(String(r.agent.id), '')
+          if (r?.agent?.id && r.ok !== false) trackActivity('agent.spawned', { agentId: r.agent.id, source: 'main' })
           return r && r.ok !== false ? { ok: true, id: r.agent?.id ?? null } : { ok: false, error: r?.error || 'startWorkflow failed' }
         }
         const a = (electronOps.spawnAgent as unknown as (title?: string) => { id: string; title: string })(undefined)
         electronConnections.connectionReassign(String(a.id), '')
         try { (electronOps.userMessage as unknown as (text: string, agentId?: string) => void)(prompt, a.id) } catch { /* seeds when chat.md is read */ }
+        trackActivity('agent.spawned', { agentId: a.id, source: 'main' })
         return { ok: true, id: a.id }
       } catch (e) {
         return { ok: false, error: (e as Error)?.message || 'send threw' }
@@ -951,6 +1031,7 @@ app.whenReady().then(() => {
     ipcMain.handle('os:notch-new-agent', () => {
       try {
         const a = (electronOps.spawnAgent as unknown as (title?: string) => { id: string; title: string })(undefined)
+        trackActivity('agent.spawned', { agentId: a.id, source: 'main' })
         return { ok: true, id: a.id }
       } catch (e) {
         return { ok: false, error: (e as Error)?.message || 'spawn threw' }
@@ -1035,11 +1116,55 @@ app.whenReady().then(() => {
     }
     app.on('before-quit', () => { if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.destroy() })
     screen.on('display-metrics-changed', () => void refreshNotch())
-    // ⌥Space toggles the notch (expand/collapse), sent to the renderer. register() returns false only on a
-    // collision with another globalShortcut in THIS process (e.g. a leftover dev instance); log + continue, never throw.
-    if (!globalShortcut.register('Alt+Space', () => { try { mainWindow?.webContents.send('os:notch-toggle') } catch { /* mid-teardown */ } })) {
-      console.error('[notch] could not register ⌥Space (Alt+Space) — already held by another globalShortcut in this process')
+    // ⌥Space toggles the notch (expand/collapse), sent to the renderer. The accelerator is rebindable in Settings,
+    // persisted in userData/keybinds.json and re-registered live via os:keybind:set. register() returns false only on
+    // a collision with another globalShortcut in THIS process (e.g. a leftover dev instance); log + continue.
+    const keybindsFile = (): string => join(app.getPath('userData'), 'keybinds.json')
+    const readNotchToggleAccel = (): string => {
+      try {
+        const parsed = JSON.parse(readFileSync(keybindsFile(), 'utf8')) as { notchToggle?: unknown }
+        return typeof parsed?.notchToggle === 'string' && parsed.notchToggle.trim() ? parsed.notchToggle : 'Alt+Space'
+      } catch {
+        return 'Alt+Space'
+      }
     }
+    const registerNotchToggle = (accel: string): boolean => {
+      try { if (notchToggleAccel) globalShortcut.unregister(notchToggleAccel) } catch { /* ignore */ }
+      try {
+        const ok = globalShortcut.register(accel, () => { try { mainWindow?.webContents.send('os:notch-toggle') } catch { /* mid-teardown */ } })
+        if (ok) notchToggleAccel = accel
+        return ok
+      } catch {
+        return false // malformed accelerator
+      }
+    }
+    notchToggleAccel = readNotchToggleAccel()
+    if (!registerNotchToggle(notchToggleAccel)) {
+      console.error(`[notch] could not register ${notchToggleAccel} — already held by another globalShortcut in this process`)
+    }
+    ipcMain.handle('os:keybind:get', () => ({ notchToggle: notchToggleAccel }))
+    ipcMain.handle('os:keybind:set', (_e, accel: unknown) => {
+      if (typeof accel !== 'string' || !accel.trim()) return { ok: false, notchToggle: notchToggleAccel }
+      const prev = notchToggleAccel
+      if (registerNotchToggle(accel)) {
+        try {
+          mkdirSync(app.getPath('userData'), { recursive: true })
+          writeFileSync(keybindsFile(), JSON.stringify({ notchToggle: accel }, null, 2))
+        } catch { /* best-effort — worst case it reverts to the default next launch */ }
+        return { ok: true, notchToggle: accel }
+      }
+      registerNotchToggle(prev) // the new chord failed to bind (collision/invalid) → restore the previous one
+      return { ok: false, notchToggle: notchToggleAccel }
+    })
+    // While Settings is capturing a new combo, release the shortcut so the renderer actually receives the keys
+    // (a registered globalShortcut otherwise swallows them OS-wide, including the current ⌥Space). Re-armed on cancel.
+    ipcMain.handle('os:keybind:suspend', (_e, on: unknown) => {
+      try {
+        if (on) { if (notchToggleAccel) globalShortcut.unregister(notchToggleAccel) }
+        else registerNotchToggle(notchToggleAccel)
+      } catch { /* ignore */ }
+      return { ok: true }
+    })
   }
 
   // The legacy native BlitzIsland.app (BLITZ_NATIVE_ISLAND=1) is a SEPARATE path with its OWN Carbon ⌥Space chord +
@@ -1510,6 +1635,70 @@ app.whenReady().then(() => {
     }
     return null
   }
+  // Google Chrome is now driven EXTENSION-FREE (the connector is deprecated): its tabs come via Apple Events
+  // (connection-chrome-applescript-link → connection_list_tabs as browser:'chrome', ids `chrome:<window>:<tab>`).
+  // A dropped Chrome window has only a CGWindowID + on-screen bounds; we bridge to Chrome's tab vocabulary the same
+  // way the extension path did, by BOUNDS. Ask Chrome (osascript) for each window's bounds + active tab index, pick
+  // the window whose on-screen rect matches the drop, and return that window's ACTIVE tab as `chrome:W:T`. The drop
+  // then connects through connectionConnectTab (which routes `chrome:` ids to the Apple-Events adapter), so the agent
+  // gets the REAL page, not a whole-window AX grab. Returns null if Chrome isn't scriptable yet (Automation not
+  // granted) or no window matches, in which case the caller falls back to a window connect instead of hard-failing.
+  // Scoped to Google Chrome only: the AppleScript targets "Google Chrome", and other Chromium browsers (Brave/Edge/
+  // Arc) have no Apple-Events tab adapter, so they stay on the extension/window path.
+  const matchChromeTabByBounds = async (b: { x: number; y: number; w: number; h: number }): Promise<string | null> => {
+    const run = (): Promise<string> =>
+      new Promise((resolve) =>
+        execFile(
+          '/usr/bin/osascript',
+          [
+            '-e', 'on run',
+            '-e', 'tell application "Google Chrome"',
+            '-e', 'if (count of windows) is 0 then return ""',
+            '-e', 'set out to ""',
+            '-e', 'repeat with w from 1 to count of windows',
+            '-e', 'try',
+            '-e', 'set bnds to bounds of window w',
+            '-e', 'set out to out & w & "|" & (item 1 of bnds) & "|" & (item 2 of bnds) & "|" & (item 3 of bnds) & "|" & (item 4 of bnds) & "|" & (active tab index of window w) & linefeed',
+            '-e', 'end try',
+            '-e', 'end repeat',
+            '-e', 'return out',
+            '-e', 'end tell',
+            '-e', 'end run'
+          ],
+          { timeout: 8000 },
+          (err, stdout) => resolve(err ? '' : String(stdout || ''))
+        )
+      )
+    const matchOnce = async (): Promise<string | null> => {
+      const out = await run()
+      let best: { id: string; score: number } | null = null
+      for (const line of out.split('\n')) {
+        // windowIndex|left|top|right|bottom|activeTabIndex (Chrome bounds are top-left-origin points, same frame as the drop).
+        const p = line.split('|')
+        if (p.length < 6) continue
+        const wIdx = Number(p[0]); const left = Number(p[1]); const top = Number(p[2]); const right = Number(p[3]); const bottom = Number(p[4]); const tIdx = Number(p[5])
+        if (!Number.isFinite(wIdx) || !Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom) || !Number.isFinite(tIdx)) continue
+        const score = Math.abs(left - b.x) + Math.abs(top - b.y) + Math.abs(right - left - b.w) + Math.abs(bottom - top - b.h)
+        if (!best || score < best.score) best = { id: `chrome:${wIdx}:${tIdx}`, score }
+      }
+      return best && best.score <= 120 ? best.id : null // ~120pt total slack covers the title bar + rounding (same as the extension match)
+    }
+    // Brief retry: Chrome's window list can lag a just-finished drag for a beat.
+    for (let i = 0; i < 3; i++) {
+      const id = await matchOnce()
+      if (id) return id
+      if (i < 2) await new Promise((r) => setTimeout(r, 300))
+    }
+    return null
+  }
+  // A dropped Google Chrome window (the extension-free path). bundleId is authoritative; the app-name backstop only
+  // fires when the helper couldn't read a bundleId. Other Chromium browsers are intentionally excluded (the
+  // Apple-Events adapter only scripts "Google Chrome").
+  const isGoogleChrome = (bundleId: string, app: string): boolean => {
+    const b = bundleId.toLowerCase()
+    if (b) return b === 'com.google.chrome' || b.startsWith('com.google.chrome.')
+    return /\bgoogle chrome\b/.test(app.toLowerCase())
+  }
   computerUseHelper().onEvent((m) => {
     const kind = m?.kind
     if (kind === 'pick_drop' && typeof m.windowId === 'number') {
@@ -1517,13 +1706,22 @@ app.whenReady().then(() => {
       const app = String(m.app || '')
       const bundleId = String(m.bundleId || '')
       void (async () => {
-        // A browser drop must resolve to its active TAB (retry covers a momentarily-asleep connector). Only browsers
-        // try the tab match — a non-browser window with bounds that happen to coincide with a tab must NOT become a tab.
+        // A browser drop should resolve to its active TAB so the agent gets the real page. Google Chrome resolves via
+        // Apple Events (extension-free); other Chromium browsers still try the (dormant) connector-extension match.
+        // Only browsers attempt a tab match (a non-browser window with coincidentally-matching bounds must NOT become a tab).
         const isBrowser = isChromiumBrowser(bundleId, app)
-        const tabId = isBrowser ? await matchBrowserTabRetry(bounds) : null
-        const action = decideDrop({ isBrowser, tabId })
+        const chrome = isGoogleChrome(bundleId, app)
+        // chromeTabId is a `chrome:W:T` string (Apple-Events path); extTabId is a numeric extension tabId (dormant path).
+        const chromeTabId = chrome ? await matchChromeTabByBounds(bounds) : null
+        const extTabId = !chrome && isBrowser ? await matchBrowserTabRetry(bounds) : null
+        // Decide the bind. For a Chrome drop we NEVER show the dead-connector error: connect the matched tab (the real
+        // page) when we resolved one, else fall back to a window connect (the agent still gets something). For other
+        // Chromium browsers, keep the extension doctrine (decideDrop: tab-or-loud-error, no silent whole-window grab).
+        let action: 'tab' | 'window' | 'error'
+        if (chrome) action = chromeTabId ? 'tab' : 'window'
+        else action = decideDrop({ isBrowser, tabId: extTabId })
         if (action === 'error') {
-          // Browser, but the tab connector stayed unavailable. Fail LOUDLY — never a misleading whole-window grab.
+          // A non-Chrome Chromium browser whose extension tab stayed unavailable. Fail LOUDLY, never a misleading whole-window grab.
           console.warn(`[blitzos] ${app || 'browser'} drop: tab connector unavailable, not attaching (windowId ${m.windowId})`)
           mainWindow?.webContents.send('os:pick-event', {
             kind: 'connected', ok: false, windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon,
@@ -1531,13 +1729,14 @@ app.whenReady().then(() => {
           })
           return
         }
+        const tabIdForConnect: number | string | null = chromeTabId ?? extTabId
         const res =
-          action === 'tab'
-            ? await electronConnections.connectionConnectTab(tabId as number, { agentId: pickActiveSession })
+          action === 'tab' && tabIdForConnect != null
+            ? await electronConnections.connectionConnectTab(tabIdForConnect, { agentId: pickActiveSession })
             : await electronConnections.connectionConnectWindow(Number(m.windowId), { agentId: pickActiveSession })
         const ok = !!res && !res.error
         const connId = typeof res?.connId === 'string' ? res.connId : ''
-        console.log(`[blitzos] drop → ${action}${action === 'tab' ? ` tab=${tabId}` : ''} ok=${ok} (${app || bundleId})`)
+        console.log(`[blitzos] drop → ${action}${action === 'tab' ? ` tab=${tabIdForConnect}` : ''} ok=${ok} (${app || bundleId})`)
         mainWindow?.webContents.send('os:pick-event', {
           kind: 'connected', ok, connId, windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon, error: res?.error
         })
@@ -1548,23 +1747,13 @@ app.whenReady().then(() => {
   })
   // Safari tabs via Apple Events `do JavaScript` (merged into connection_list_tabs as browser:'safari').
   electronConnections.setSafariLink(makeSafariLink({ connectionOps: electronConnections }))
-  // Force-install of the connector extension: serve the .crx/updates.xml on localhost + expose the
-  // admin-prompt installer (connection_install_extension). Dev uses load-unpacked and skips this.
-  startConnectorServer()
-  electronConnections.setInstaller(installConnector)
-  // Auto-run the force-install on boot (one admin prompt) so the user's Chrome tabs are connectable with NO manual
-  // "Connect Chrome" step. Gated to macOS + only when the policy for the CURRENT extension id isn't already written
-  // and the connector isn't connected — so it prompts until installed, then never again (a cancel just retries next
-  // boot). Gated to MDM-managed Macs (the managed-prefs dir exists): an unmanaged Mac can't honor the policy, so
-  // skip the useless admin prompt — there installConnector returns the manual load-unpacked path instead.
-  if (process.platform === 'darwin' && existsSync('/Library/Managed Preferences')) {
-    setTimeout(() => {
-      if (isConnectorPolicyInstalled() || tabLink.isConnected()) return
-      void installConnector()
-        .then((r) => console.log('[blitzos] connector auto-install:', r.ok ? 'policy written — Chrome installs in ~10s' : r.error))
-        .catch(() => {})
-    }, 4000)
-  }
+  // Chrome tabs via Apple Events `execute … javascript` (browser:'chrome') — the connector extension is deprecated,
+  // so this is the Chrome tab path. Focus-safe: it drives Chrome only through executed JS, never `set URL`.
+  electronConnections.setChromeAsLink(makeChromeAppleScriptLink({ connectionOps: electronConnections }))
+  // NOTE: the connector extension force-install is DEPRECATED. The old boot auto-install (an admin prompt that
+  // wrote Chrome's ExtensionInstallForcelist managed policy) is GONE, so BlitzOS never prompts to install the
+  // extension anymore, and connection-install's server/installer are no longer wired. Chrome is connectable
+  // out of the box via Apple Events (setChromeAsLink above; one-time "Allow JavaScript from Apple Events").
 
   // Agents run as managed tmux terminals. The backend is pluggable: Claude Code (`claude`) is the default
   // when available (the visible TUI/resume path), while Codex serverless (`codex exec`) stays selectable.
@@ -1918,11 +2107,13 @@ app.whenReady().then(() => {
 
 // Flush a pending workspace write + stop the folder watchers before quit (so the last edit persists).
 app.on('before-quit', () => {
+  trackActivity('app.quit', { source: 'main' })
+  void flushActivityLogging()
   osFlushWorkspace()
   try { electronTerminalOps.stopHosts() } catch { /* ignore */ } // flush terminal scrollback + close tmux control clients (terminals survive)
   try { computerUseHelper().shutdown() } catch { /* ignore */ } // quit the CU helper + close its socket
   try { islandHelper?.stop() } catch { /* ignore */ } // stop relaunch-supervision only; the island is a separate LSUIElement that may keep running (it reconnects with backoff)
-  try { globalShortcut.unregister('Alt+Space') } catch { /* ignore */ } // release the notch-spill island's ⌥Space chord (scoped, so other consumers are untouched)
+  try { globalShortcut.unregister(notchToggleAccel) } catch { /* ignore */ } // release the live show/hide-island chord (scoped, so other consumers are untouched)
   bootJournal?.markClean() // LAST: "clean shutdown" means everything above flushed first
 })
 
@@ -1970,4 +2161,3 @@ function scanCrashReports(fromTs: number, toTs: number, pid?: number): { at: num
     return null
   }
 }
-

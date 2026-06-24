@@ -91,15 +91,51 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 
+# Port backstop: a half-dead previous run can leave the vite dev server (5173) or the connector relay
+# (7682/7683) holding their ports, which makes the relaunch silently bind a different port or fail. Kill
+# whatever still owns them so the fresh dev run gets the canonical ports. lsof prints nothing when a port
+# is free, so the kill is a no-op then.
+echo "[fresh-onboarding] freeing dev ports 5173, 7682, 7683"
+for PORT in 5173 7682 7683; do
+  PIDS="$(lsof -ti tcp:"$PORT" 2>/dev/null || true)"
+  if [[ -n "$PIDS" ]]; then
+    echo "[fresh-onboarding]   port $PORT held by: $PIDS — killing"
+    # shellcheck disable=SC2086
+    kill $PIDS 2>/dev/null || true
+  fi
+done
+
 if [[ "$NUKE" == "1" ]]; then
   echo "[fresh-onboarding] --nuke-workspace: deleting ENTIRE workspace $WORKSPACE"
   rm -rf "$WORKSPACE"
 else
-  echo "[fresh-onboarding] safe reset: clearing onboarding state in $WORKSPACE (preserving your surfaces/docs/chat)"
-  # context.md/profile.md/scan.json/interview.* → start() re-scans + re-runs the interview when these are gone.
+  echo "[fresh-onboarding] safe reset: clearing onboarding + chat state in $WORKSPACE so the resident starts fresh"
+  # context.md/profile.md/scan.json/interview.* → start() re-scans when these are gone.
   rm -rf "$WORKSPACE/.blitzos/onboarding"
   # agent runtime (bootstrap/meta/transcript) → fresh agent sessions on relaunch.
   rm -rf "$WORKSPACE/.blitzos/terminals"
+  # The chat transcripts (chat.md = agent '0', chat-N.md = peers): without removing these the island
+  # replays the old conversation, so onboarding never looks fresh. Glob may not match (nullglob off) →
+  # the `[ -e ]` guard keeps the literal pattern from being rm'd when there are no chat files.
+  for f in "$WORKSPACE"/chat.md "$WORKSPACE"/chat-*.md; do
+    [ -e "$f" ] && rm -f "$f"
+  done
+  # Runtime panel + action-item state (the chat/terminal/inbox panes + the human action queue): drop so
+  # no stale agent panes or pending items are reconstructed on boot.
+  rm -f "$WORKSPACE/.blitzos/state/panels.json" "$WORKSPACE/.blitzos/state/action-items.json"
+  # Move the matching claude session dir aside so `claude --resume` cannot revive the old conversation
+  # for agent '0' (a fresh duty needs a fresh session). Encoding matches agent-runtime.mjs exactly:
+  # the absolute workspace path with every `/` and `.` turned into `-`. History is preserved under a
+  # timestamped `.cleared-` suffix (the same convention osClearBrainContext leaves behind), never deleted.
+  CLAUDE_CFG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  ABS_WS="$(cd "$(dirname "$WORKSPACE")" 2>/dev/null && pwd)/$(basename "$WORKSPACE")"
+  ENCODED_WS="$(printf '%s' "$ABS_WS" | sed 's/[/.]/-/g')"
+  CLAUDE_PROJECT_DIR="$CLAUDE_CFG_DIR/projects/$ENCODED_WS"
+  if [[ -d "$CLAUDE_PROJECT_DIR" ]]; then
+    ASIDE="$CLAUDE_PROJECT_DIR.cleared-$(date +%s)"
+    echo "[fresh-onboarding] moving claude session dir aside: $CLAUDE_PROJECT_DIR -> $ASIDE"
+    mv "$CLAUDE_PROJECT_DIR" "$ASIDE"
+  fi
 fi
 
 echo "[fresh-onboarding] resetting root boot state to Home"

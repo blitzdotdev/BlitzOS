@@ -316,13 +316,12 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     }
   }
 
-  // Force-install is dead on a non-MDM Mac (and we ship no .crx), so "Connect Chrome" shows the ONE reliable path:
-  // load the connector unpacked, once. (installExtension is called only to recover the extension's folder path.)
-  async function install(): Promise<void> {
-    const conn = bridge()
-    const r = (conn ? await conn.installExtension().catch(() => ({})) : {}) as { extensionDir?: string }
-    const dir = r.extensionDir || '<repo>/extension'
-    setInstallNote(`To connect Chrome, load the BlitzOS Connector once: chrome://extensions → enable Developer mode → “Load unpacked” → select ${dir}`)
+  // The connector extension is DEPRECATED. Chrome is driven extension-free via Apple Events now, so "Connect Chrome"
+  // no longer installs anything; it just shows the ONE-TIME toggle Chrome needs before its tabs surface here.
+  // TODO(extension-deprecated): installExtension() is now a no-op (no installer wired in main); drop this button +
+  // the install plumbing once the Apple-Events path is the only Chrome path everywhere.
+  function install(): void {
+    setInstallNote('To connect Chrome, turn on Chrome ▸ View ▸ Developer ▸ “Allow JavaScript from Apple Events” once, then open a tab. Its tabs then appear here automatically.')
   }
 
   const groups = browserGroups(tabs)

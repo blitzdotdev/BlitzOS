@@ -2,10 +2,10 @@
 // UNIFORM sessions (the user's 2026-06-12 call): the primary (agent '0') is NOT special — it resumes its
 // claude session exactly like every spawned agent, so context PERSISTS across a BlitzOS restart unless the
 // USER clears it. (This reverts the earlier "always-fresh primary" that auto-rotated the id every launch.)
-// Also covers the agent-runtime-moments backends: the onboarding-interview FAST settings (low effort + a
-// standard-context model, beating the user's global config) and the codex-serverless peer backend. The
-// effort knob is an onboarding-SPEED concern, not a context-clearing difference. Pure: a temp sessionsDir.
-import { ensureClaudeSessionId, prepareAgentLaunch, buildClaudeCommand, buildCodexServerlessCommand, setBootTaskProvider, RESIDENT_EFFORT, INTERVIEW_FAST_MODEL } from '../../src/main/agent-runtime.mjs'
+// Effort is now UNIFORM too: every claude agent runs at RESIDENT_EFFORT (xhigh) — there is no onboarding
+// interview anymore, so no low/medium split and no fast-model pin. The codex-serverless peer backend carries
+// no effort knob here (medium by default). Pure: a temp sessionsDir.
+import { ensureClaudeSessionId, prepareAgentLaunch, buildClaudeCommand, buildCodexServerlessCommand, setBootTaskProvider, RESIDENT_EFFORT } from '../../src/main/agent-runtime.mjs'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,23 +39,16 @@ ok('primary command uses --resume (continues its session)', cmd0.includes('--res
 const prep = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md' })
 ok('prepareAgentLaunch returns established=true for an established primary', prep.established === true)
 ok('prepareAgentLaunch command resumes the persisted id', prep.command.includes('--resume PRIMARY-UUID'))
-// A non-interview Claude agent (primary or spawned) runs at RESIDENT_EFFORT (xhigh) so it decides well within
-// the act/ask boundary; only EFFORT is raised — the user's own MODEL is kept (no fast-model pin; that's interview-only).
-ok(`primary with NO duty runs at RESIDENT effort (--effort ${RESIDENT_EFFORT}), user model kept`, prep.command.includes(`--effort ${RESIDENT_EFFORT}`) && !prep.command.includes(`--model ${INTERVIEW_FAST_MODEL}`))
+// Every Claude agent (primary or spawned) runs at RESIDENT_EFFORT (xhigh) so it decides well within the
+// act/ask boundary; only EFFORT is raised — the user's own MODEL is kept (no fast-model pin anywhere).
+ok(`primary with NO duty runs at RESIDENT effort (--effort ${RESIDENT_EFFORT}), user model kept`, prep.command.includes(`--effort ${RESIDENT_EFFORT}`) && !prep.command.includes('--model '))
 
-// 2b) the ONBOARDING INTERVIEW duty (onboarding-speed knob, NOT a context difference) forces FAST settings:
-// a standard-context model + low effort, written via --settings so it BEATS the user's global config/env.
-setBootTaskProvider((id) => (String(id) === '0' ? 'THE ONBOARDING INTERVIEW. do the onboarding interview' : null))
-const prepDuty = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md' })
-ok('interview forces a standard-context model (--model sonnet)', prepDuty.command.includes('--model sonnet'))
-ok('interview forces low effort (--effort low)', prepDuty.command.includes('--effort low'))
-ok('interview writes --settings beating global effortLevel', prepDuty.command.includes('--settings') && prepDuty.command.includes('"effortLevel":"low"'))
-ok('interview overrides global CLAUDE_CODE_EFFORT_LEVEL', prepDuty.command.includes('"CLAUDE_CODE_EFFORT_LEVEL":"low"'))
-
-// 2c) a NON-interview resident duty runs at RESIDENT_EFFORT (xhigh), NOT the interview's low/fast-model knob
+// 2b) a standing duty does NOT change the effort/model — it is uniform RESIDENT_EFFORT regardless of the duty.
 setBootTaskProvider((id) => (String(id) === '0' ? 'THE RESIDENT INITIATIVE DUTY. propose initiatives' : null))
-const prepResident = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md' })
-ok(`resident (non-interview) duty runs at RESIDENT effort (--effort ${RESIDENT_EFFORT}), not interview low/model`, prepResident.command.includes(`--effort ${RESIDENT_EFFORT}`) && !prepResident.command.includes('--effort low') && !prepResident.command.includes(`--model ${INTERVIEW_FAST_MODEL}`))
+const prepDuty = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md' })
+ok(`a duty still runs at RESIDENT effort (--effort ${RESIDENT_EFFORT}), no model pin`, prepDuty.command.includes(`--effort ${RESIDENT_EFFORT}`) && !prepDuty.command.includes('--effort low') && !prepDuty.command.includes('--model '))
+ok('duty launch writes --settings beating global effortLevel', prepDuty.command.includes('--settings') && prepDuty.command.includes(`"effortLevel":"${RESIDENT_EFFORT}"`))
+ok('duty launch overrides global CLAUDE_CODE_EFFORT_LEVEL', prepDuty.command.includes(`"CLAUDE_CODE_EFFORT_LEVEL":"${RESIDENT_EFFORT}"`))
 setBootTaskProvider(null)
 
 // 3) spawned agent '1' behaves IDENTICALLY to the primary — resumes when established
@@ -65,6 +58,7 @@ ok('spawned agent keeps its persisted id', s.claudeSessionId === 'SPAWNED-UUID')
 ok('spawned agent stays established (→ resume)', s.established === true)
 const prep1 = prepareAgentLaunch({ sessionsDir, id: '1', url: 'http://127.0.0.1:1/agents.md' })
 ok('spawned agent command uses --resume (same as primary)', prep1.command.includes('--resume SPAWNED-UUID'))
+ok(`spawned agent ALSO runs at RESIDENT effort (--effort ${RESIDENT_EFFORT})`, prep1.command.includes(`--effort ${RESIDENT_EFFORT}`) && !prep1.command.includes('--model '))
 
 // 4) a brand-new agent (no meta) creates fresh, then would resume next time — same for any id
 const s2 = ensureClaudeSessionId(sessionsDir, '2')
@@ -80,13 +74,11 @@ ok('codex serverless ignores local Codex policy/config', codexCmd.includes('--di
 ok('codex serverless is noninteractive + unsandboxed for the managed agent', codexCmd.includes('--dangerously-bypass-approvals-and-sandbox') && codexCmd.includes('--skip-git-repo-check'))
 const codexDefaultCmd = buildCodexServerlessCommand({ cmd: 'codex', bootstrapFile: '/x' })
 ok('codex serverless defaults to medium reasoning', codexDefaultCmd.includes('model_reasoning_effort="medium"'))
-setBootTaskProvider((id) => (String(id) === '0' ? 'THE ONBOARDING INTERVIEW. do it' : null))
 const prepCodex = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md', runtime: 'codex-serverless', cmd: 'codex' })
 ok('codex backend is recorded in launch metadata', prepCodex.agentRuntime === 'codex-serverless')
 ok('codex backend mints NO claude session metadata', !prepCodex.claudeSessionId && prepCodex.established === false)
 ok('codex backend command uses `codex exec`', prepCodex.command.startsWith('codex exec '))
-ok('codex interview gets the low reasoning override', prepCodex.command.includes('model_reasoning_effort="low"'))
-setBootTaskProvider(null)
+ok('codex backend carries no effort knob (defaults to medium reasoning)', prepCodex.command.includes('model_reasoning_effort="medium"'))
 
-console.log(failed ? `\n${failed} FAILURES` : '\nall green — uniform sessions (primary == spawned) + interview/codex backends')
+console.log(failed ? `\n${failed} FAILURES` : '\nall green — uniform sessions (primary == spawned) + uniform RESIDENT effort + codex backend')
 process.exit(failed ? 1 : 0)

@@ -23,6 +23,8 @@ export interface WorkspaceHostAdapter {
   getActionItems?: () => unknown[]
   /** Optional Electron-only V1 helper: generate a short title from an agent's first user message. */
   generateAgentTitle?: (input: { agentId: string; text: string; workspacePath: string }) => Promise<string | null> | string | null
+  /** Optional safe activity seam: called only when the effective chat status changes. */
+  onChatStatusTransition?: (change: { agentId: string; previousStatus?: string; status: string; source?: string }) => void
 }
 
 export interface WorkspaceHost {

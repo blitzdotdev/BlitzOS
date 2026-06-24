@@ -40,7 +40,7 @@ step consuming another's output (translate each file, summarize each PDF, pull e
 generate 8 variations, scout these 5 dirs), use one `parallel([...])` and **no `phase()`** — give each leaf a
 short, distinct `label`. It renders as one row per subagent, not the kanban grid. Use `phase()` boundaries only
 when a later step consumes an earlier one (map→reduce, research→verify, rank) — that renders the grid. ("Subagents"
-here = these workflow leaves, not `spawn_agent` peers, which are persistent chat-tab agents.)
+here = these workflow leaves, not persistent chat-tab agents.)
 
 Do mechanical work (chunk, dedup, count, sort, join, branch) in **CODE**; use `agent()` only for the
 judgment/semantics. Let the agent LEAVES do file/web/tool work (they have Read/Bash/etc.) — the
@@ -100,8 +100,8 @@ The `blitz` runner is at `.blitzos/blitz` in your workspace. Author + check with
   fan-out just QUEUES (no speedup), and the board shows up to 8 in Doing with the rest as To-do — so size
   `parallel`/`pipeline` width around ~8 and batch a huge fan-out. A per-run call cap also applies automatically.
   A leaf must NOT itself author/run a workflow.
-- Act-vs-ask: do all reversible work freely (research, drafting, file/surface edits); ASK the user before any
-  irreversible outward act (send, post, deploy, spend, delete, credentials).
+- Permissions: do everything reversible on your own (research, drafting, file edits); ask ONLY before a destructive
+  or irreversible act (messaging or posting as the user, force pushing, deleting, deploying, spending).
 - Narrate: post a short plan and progress in the user's chat (`say`) as the workflow runs.
 
 ## Legacy note

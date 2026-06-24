@@ -390,6 +390,51 @@ button.isl-app-chat:active .isl-app-icon {
   font-size: 12px;
   line-height: 15px;
 }
+/* Rebind control: a tappable chip of key caps; arms (sky tint) while capturing the next combo. */
+.nh-island .isl-keybind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-text);
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.nh-island .isl-keybind:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.07);
+}
+.nh-island .isl-keybind.capturing {
+  border-color: rgba(77, 190, 255, 0.5);
+  background: rgba(77, 190, 255, 0.1);
+}
+.nh-island .isl-keybind-hint {
+  padding: 0 4px;
+  color: #7dccff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.nh-island .isl-kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+  color: var(--isl-text);
+  font-family: var(--isl-round);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+}
 .nh-island .isl-setting-input {
   position: absolute;
   opacity: 0;
@@ -416,38 +461,10 @@ button.isl-app-chat:active .isl-app-icon {
   transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .nh-island .isl-setting-input:checked + .isl-setting-toggle {
-  background: #ffd84d;
+  background: rgba(255, 255, 255, 0.55);
 }
 .nh-island .isl-setting-input:checked + .isl-setting-toggle span {
   transform: translateX(20px);
-}
-.nh-island .isl-setting-row-col {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  cursor: default;
-}
-.nh-island .isl-setting-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  resize: vertical;
-  min-height: 78px;
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.22);
-  color: var(--isl-text);
-  font: inherit;
-  font-size: 13px;
-  line-height: 18px;
-  outline: none;
-  transition: border-color 0.16s ease-out;
-}
-.nh-island .isl-setting-textarea::placeholder {
-  color: var(--isl-muted);
-}
-.nh-island .isl-setting-textarea:focus {
-  border-color: #ffd84d;
 }
 .nh-island .isl-settings-disclosure {
   display: flex;
@@ -697,8 +714,7 @@ button.isl-app-chat:active .isl-app-icon {
   font-size: 11px;
   font-weight: 650;
 }
-.nh-island .isl-onb-perms,
-.nh-island .isl-onb-accounts {
+.nh-island .isl-onb-perms {
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -795,8 +811,7 @@ button.isl-app-chat:active .isl-app-icon {
    (.isl-ask-option): a faint top-lit glass fill, hairline rim, inset highlight, hover lift. */
 .nh-island .isl-onb-primary,
 .nh-island .isl-onb-secondary,
-.nh-island .isl-onb-quiet,
-.nh-island .isl-onb-account {
+.nh-island .isl-onb-quiet {
   font-family: inherit;
   cursor: pointer;
 }
@@ -855,50 +870,6 @@ button.isl-app-chat:active .isl-app-icon {
   border-color: rgba(255, 255, 255, 0.14);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
   color: var(--isl-text);
-}
-/* Account picker rows = the choice-option card material, with a sky-tinted selected state. */
-.nh-island .isl-onb-account {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-height: 46px;
-  padding: 8px 11px;
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 rgba(0, 0, 0, 0.2);
-  color: var(--isl-text);
-  text-align: left;
-  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
-}
-.nh-island .isl-onb-account:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.052));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 10px 20px rgba(0, 0, 0, 0.22);
-  transform: translateY(-1px);
-}
-.nh-island .isl-onb-account.on {
-  border-color: rgba(77, 190, 255, 0.4);
-  background: linear-gradient(180deg, rgba(77, 190, 255, 0.14), rgba(255, 255, 255, 0.03));
-}
-.nh-island .isl-onb-account span {
-  max-width: 100%;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 17px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.nh-island .isl-onb-account small {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--isl-muted);
-  font-size: 11px;
-  line-height: 15px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 /* content rises in under the chassis reveal (opacity only — the chassis owns the shape + the slide). */
 @keyframes isl-rise {
@@ -1004,7 +975,7 @@ button.isl-app-chat:active .isl-app-icon {
   flex: none;
   min-height: 30px;
   box-sizing: border-box;
-  padding: 6px 2px 2px;
+  padding: 6px 2px 12px;
 }
 .nh-island .isl-status {
   display: flex;
@@ -1094,6 +1065,33 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-archive svg {
   width: 13px;
   height: 13px;
+  display: block;
+}
+/* The read-only terminal toggle — a sibling of Archive in the agent meta row; accent-tinted when open. */
+.nh-island .isl-termbtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.nh-island .isl-termbtn:hover {
+  color: var(--isl-text);
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+}
+.nh-island .isl-termbtn svg {
+  width: 14px;
+  height: 14px;
   display: block;
 }
 .nh-island .isl-empty {
@@ -1685,6 +1683,30 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-term-external:active {
   transform: translateY(0.5px);
+}
+.nh-island .isl-term-close {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.nh-island .isl-term-close:hover {
+  color: var(--isl-text);
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+}
+.nh-island .isl-term-close svg {
+  width: 13px;
+  height: 13px;
+  display: block;
 }
 .nh-island .isl-act {
   display: grid;
@@ -2389,7 +2411,8 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-app-card.preview {
   display: block;
   grid-template-columns: none;
-  width: min(100%, 486px);
+  width: 460px;
+  max-width: 100%;
   min-height: 0;
   margin: 9px auto 0;
   padding: 0;
@@ -2520,6 +2543,18 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-app-viewer[data-loaded='false'] .isl-app-scroll {
   pointer-events: none;
 }
+/* Prewarm state: the app iframe is mounted and loading, but kept invisible + click-through ON-screen (so the
+   browser does NOT throttle the load) until the user opens it. Promoting to `.viewing` just drops these overrides,
+   so the already-loaded iframe is revealed instantly with no remount. The latest app stays warm while the island
+   is open (bounded to ONE app). */
+.nh-island .isl-app-viewer.isl-app-warm:not(.viewing) {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+  animation: none;
+}
 .nh-island .isl-app-scroll::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -2567,6 +2602,45 @@ button.isl-app-chat:active .isl-app-icon {
   stroke: currentColor;
   stroke-width: 2.2;
   stroke-linecap: round;
+}
+/* Claim pill: same glass chrome as the close X, sat just left of it, accent-tinted as the primary action
+   (keep this app past the ~12h anon expiry). Shown only when the part carries a claimUrl. */
+.nh-island.isl-app-viewing > .isl-app-viewer-claim {
+  position: absolute;
+  top: 12px;
+  right: 50px;
+  z-index: 40;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 24%, rgba(18, 20, 25, 0.78));
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: var(--text-ui);
+  font-weight: 600;
+  line-height: 1;
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-claim:hover {
+  background: color-mix(in srgb, var(--accent) 34%, rgba(18, 20, 25, 0.86));
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-claim svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .nh-island .isl-app-frame {
   display: block;

@@ -12,6 +12,7 @@ import { applyWfRun, type WfRunRecord } from './wf-run-state.mjs'
 import * as wfStore from './wf-store.mjs'
 import { snapshot as busSnapshot, hydrate as busHydrate, subCount as busSubCount, clearRun as busClearRun } from './workflow-bus.mjs'
 import { tel } from './telemetry'
+import { trackActivity } from './activity-logging.mjs'
 import type { WebContents } from 'electron'
 
 // A web surface is now an in-DOM <webview> guest. The renderer reports its guest WebContents id via
@@ -195,6 +196,8 @@ export function initOsActions(opts: {
     onSurfaces: () => {}, // Electron web surfaces are in-DOM <webview> guests (renderer-owned)
     getActionItems: () => (actionItemsProvider ? actionItemsProvider() : []), // authoritative inbox items (index.ts wires it)
     generateAgentTitle: ({ agentId, text, workspacePath }) => generateAgentTitle({ agentId, text, workspacePath }),
+    onChatStatusTransition: ({ agentId, previousStatus, status, source }) =>
+      trackActivity('agent.status_changed', { agentId, previousStatus, status, source }),
     // An agent backend runs in a VISIBLE terminal; index.ts wires this from the shared agent-runtime
     // core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
     launchAgent: (id, home, title) => launchAgentHook?.(id, home, title),
@@ -285,6 +288,7 @@ export function initOsActions(opts: {
     // payload is { text, agentId } (object) — tolerate a bare string (older renderer) → agent '0'.
     const text = typeof payload === 'string' ? payload : String((payload as { text?: unknown })?.text ?? '')
     const aid = payload && typeof payload === 'object' && (payload as { agentId?: unknown }).agentId != null ? String((payload as { agentId?: unknown }).agentId) : '0'
+    trackActivity('chat.message_sent', { agentId: aid, messageLength: text.length, source: 'chat' })
     osUserMessage(text, aid)
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
@@ -563,7 +567,7 @@ export function osShareApp(app: Record<string, unknown>, agentId = '0', workspac
     title,
     url: String(app?.url || '')
   }
-  for (const key of ['subtitle', 'icon', 'tone', 'preview']) {
+  for (const key of ['subtitle', 'icon', 'tone', 'preview', 'claimUrl', 'expiresAt']) {
     const value = app?.[key]
     if (typeof value === 'string' && value.trim()) part[key] = value.trim()
   }

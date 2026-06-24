@@ -38,6 +38,7 @@ const workspaceHost = readFileSync(join(repoRoot, 'src/main/workspace-host.mjs')
 const workspaceHostTypes = readFileSync(join(repoRoot, 'src/main/workspace-host.d.mts'), 'utf8')
 const workspaceCore = readFileSync(join(repoRoot, 'src/main/workspace.mjs'), 'utf8')
 const osTools = readFileSync(join(repoRoot, 'src/main/os-tools.mjs'), 'utf8')
+const activityLogging = readFileSync(join(repoRoot, 'src/main/activity-logging.mjs'), 'utf8')
 const electronOsTools = readFileSync(join(repoRoot, 'src/main/electron-os-tools.ts'), 'utf8')
 const previewBackend = readFileSync(join(repoRoot, 'preview/backend.mjs'), 'utf8')
 const activity = readFileSync(join(repoRoot, 'src/main/activity.mjs'), 'utf8')
@@ -55,6 +56,8 @@ const computerUseHelperSwift = readFileSync(join(repoRoot, 'native/computer-use-
 const computerUseHelperManager = readFileSync(join(repoRoot, 'src/main/computer-use-helper.ts'), 'utf8')
 const builderConfig = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
 const ensureHelper = readFileSync(join(repoRoot, 'scripts/ensure-helper.sh'), 'utf8')
+const telemetrySchema = readFileSync(join(repoRoot, 'telemetry/teenybase.ts'), 'utf8')
+const telemetryWorker = readFileSync(join(repoRoot, 'telemetry/worker.ts'), 'utf8')
 const oldOnboardingFlowPath = join(repoRoot, 'src/renderer/src/onboarding/OnboardingFlow.tsx')
 const oldOnboardingCssPath = join(repoRoot, 'src/renderer/src/onboarding/onboarding.css')
 const homeEmptyBlock = islandCss.match(/\.isl-home-empty \{[\s\S]*?\n\}/)?.[0] || ''
@@ -101,6 +104,36 @@ ok('main forwards the hit-window click/hover to the overlay renderer + pushes th
 ok('preload exposes the bridge: notch.click/hover (hit-window → main) + onHandleClick/onHandleHover (→ overlay)',
   /click\(\): void \{[\s\S]*?'os:notch-click'/.test(preload) && /hover\(on: boolean\): void \{[\s\S]*?'os:notch-hover'/.test(preload) &&
     /onHandleClick/.test(preload) && /onHandleHover/.test(preload))
+ok('privacy-safe activity logging is config-gated and separate from replay telemetry',
+  /activity-logging\.json/.test(activityLogging) &&
+    /BLITZ_ACTIVITY_LOGGING === '0'/.test(activityLogging) &&
+    /export const ACTIVITY_EVENT_NAMES = new Set/.test(activityLogging) &&
+    /export function sanitizeActivityEvent/.test(activityLogging) &&
+    /export function sanitizeToolActivity/.test(activityLogging) &&
+    !/capturePage/.test(activityLogging) &&
+    !/sessionTape/.test(activityLogging) &&
+    /initActivityLogging/.test(index) &&
+    /setToolTap\(\(info\) => trackToolActivity/.test(index))
+ok('activity IPC accepts only named events and sanitized props through main',
+  /activity: \{[\s\S]*?track\(name: string, props\?: Record<string, unknown>\): void[\s\S]*?ipcRenderer\.send\('os:activity-track'/.test(preload) &&
+    /ipcMain\.on\('os:activity-track'[\s\S]*?trackActivity\(name, props\)/.test(index) &&
+    /chat\.message_sent/.test(activityLogging) &&
+    /messageLengthBucket/.test(activityLogging) &&
+    /agentIdHash/.test(activityLogging) &&
+    /statusCode/.test(activityLogging) &&
+    !/out\.text|out\.title|out\.url|out\.path|out\.args|out\.result|out\.stack/.test(activityLogging))
+ok('workspace host exposes safe chat status transitions for activity logging',
+  /onChatStatusTransition\?: \(change: \{ agentId: string; previousStatus\?: string; status: string; source\?: string \}\) => void/.test(workspaceHostTypes) &&
+    /onChatStatusTransition: \(\{ agentId, previousStatus, status, source \}\) =>[\s\S]*?trackActivity\('agent\.status_changed'/.test(osActions) &&
+    /const previousStatus = chatStatus\(id\)/.test(workspaceHost) &&
+    /previousStatus !== s[\s\S]*?a\.onChatStatusTransition\?\.\(\{ agentId: id, previousStatus, status: s, source \}\)/.test(workspaceHost))
+ok('activity backend has separate key-gated tables and ingest/data routes',
+  /name: 'activity_sessions'/.test(telemetrySchema) &&
+    /name: 'activity_events'/.test(telemetrySchema) &&
+    /tables: \[sessions, segments, frames, activitySessions, activityEvents\]/.test(telemetrySchema) &&
+    /userApp\.post\('\/ingest\/activity'[\s\S]*?const db = await gate\(c\)/.test(telemetryWorker) &&
+    /cleanActivityProps/.test(telemetryWorker) &&
+    /userApp\.get\('\/dash\/activity\/data'/.test(telemetryWorker))
 ok('renderer: hit-window CLICK opens the island panel when closed, HOVER → open/close the panel',
   /onHandleClick\?\.\(\(\) => \{[\s\S]*?notchStateRef\.current === 'closed'[\s\S]*?toggleIsland\(\)/.test(app) &&
     /onHandleHover\?\.\(\(on\) =>/.test(app))
@@ -170,9 +203,20 @@ ok('island onboarding starts with five simple intro slides before setup',
     /\.oba-home-icon img/.test(onboardingVisualsCss) &&
     /background: #0a84ff;/.test(islandCss) &&
     /\.isl-onb-progress/.test(islandCss))
-ok('legacy onboarding chat interview is opt-in only',
-  /const ONBOARDING_CHAT_ENABLED = process\.env\.BLITZ_ONBOARDING_CHAT === '1'/.test(onboardingMain) &&
-    /export function interviewBootTask\(\): string \| null \{[\s\S]*?if \(!ONBOARDING_CHAT_ENABLED\) return null/.test(onboardingMain) &&
+ok('agent 0 boots into the resident-only BLITZ_DUTY — no interview, no choice-card kickoff, no greeting',
+  // ONE resident duty, not two phases: the interview/resident split (INTERVIEW_BOOT_TASK +
+  // RESIDENT_INITIATIVE_BOOT_TASK) is gone; interviewBootTask() returns BLITZ_DUTY (the chat gate aside).
+  /const BLITZ_DUTY =/.test(onboardingMain) &&
+    /resident agent/.test(onboardingMain) &&
+    /Do not run an interview/.test(onboardingMain) &&
+    /export function interviewBootTask\(\): string \| null \{[\s\S]*?if \(!ONBOARDING_CHAT_ENABLED\) return null[\s\S]*?return BLITZ_DUTY/.test(onboardingMain) &&
+    !/INTERVIEW_BOOT_TASK/.test(onboardingMain) &&
+    !/RESIDENT_INITIATIVE_BOOT_TASK/.test(onboardingMain) &&
+    // The duty itself must never kick off an interview / choice-card flow.
+    !/THE ONBOARDING INTERVIEW/.test(onboardingMain) &&
+    !/choice-card question/.test(onboardingMain) &&
+    // The opt-in chat gate + the (now interview-free) artifact/phase guards still hold.
+    /const ONBOARDING_CHAT_ENABLED = process\.env\.BLITZ_ONBOARDING_CHAT === '1'/.test(onboardingMain) &&
     /function startInterviewPhase\(wsPath: string\): void \{[\s\S]*?if \(!ONBOARDING_CHAT_ENABLED\)/.test(onboardingMain) &&
     /if \(ONBOARDING_CHAT_ENABLED\) ensureInterviewArtifacts\(wsPath\)/.test(onboardingMain))
 ok('permission drag helper shows a Blitz icon with a clear drag animation while dragging the real helper bundle',

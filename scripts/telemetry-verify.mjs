@@ -29,6 +29,14 @@ const post = async (path, values, file, useKey = key) => {
   const res = await fetch(`${URL_}/ingest/${path}`, { method: 'POST', headers: { 'x-ingest-key': useKey }, body: form })
   return { status: res.status, json: await res.json().catch(() => ({})) }
 }
+const postJson = async (path, values, useKey = key) => {
+  const res = await fetch(`${URL_}/ingest/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-ingest-key': useKey },
+    body: JSON.stringify(values)
+  })
+  return { status: res.status, json: await res.json().catch(() => ({})) }
+}
 const get = async (path) => {
   const res = await fetch(`${URL_}${path}${path.includes('?') ? '&' : '?'}k=${key}`)
   return res
@@ -75,6 +83,27 @@ const JPG = Buffer.from(
 const fr = await post('frames', { sid, t: t0 + 3500 }, { buf: JPG, type: 'image/jpeg' })
 ok('frame ingest', fr.status === 200 && fr.json.ok === true, JSON.stringify(fr.json).slice(0, 160))
 
+// 4b. activity: safe JSON batch; backend should keep only sanitized props.
+const activitySid = `act-${sid}`
+const actBad = await postJson('activity', { sid: activitySid, events: [] }, 'wrong-key')
+ok('activity bad key → 403', actBad.status === 403, `got ${actBad.status}`)
+const actBatch = await postJson('activity', {
+  sid: activitySid,
+  install: 'verify-install',
+  version: '0.0.1',
+  branch: 'verify',
+  run: 999,
+  platform: 'darwin',
+  t0: t0 + 7000,
+  t1: t0 + 9000,
+  events: [
+    { t: t0 + 7000, name: 'app.started', props: { source: 'main', title: 'do-not-store' } },
+    { t: t0 + 8000, name: 'chat.message_sent', props: { agentIdHash: 'abcdef1234567890', messageLengthBucket: '1001+', text: 'private', url: 'https://example.com/private' } },
+    { t: t0 + 9000, name: 'tool.called', props: { tool: '/read_window', statusCode: 200, msBucket: '<100ms', args: { secret: true }, result: { text: 'private' } } }
+  ]
+})
+ok('activity batch ingest', actBatch.status === 200 && actBatch.json.ok === true && actBatch.json.events === 3, JSON.stringify(actBatch.json).slice(0, 160))
+
 // 5. dashboard data: counters bumped
 const dd = await (await get('/dash/data')).json()
 const ses = (dd.sessions || []).find((s) => s.sid === sid)
@@ -82,6 +111,28 @@ ok('session in /dash/data', !!ses)
 ok('counters bumped', ses && +ses.events === 6 && +ses.errors === 1 && +ses.tools === 1 && +ses.frames === 1 && +ses.segs === 1, ses && `events=${ses.events} errors=${ses.errors} tools=${ses.tools} frames=${ses.frames} segs=${ses.segs}`)
 ok('t0/t1 set', ses && +ses.t0 === t0 + 1000 && +ses.t1 === t0 + 6000, ses && `t0=${ses.t0} t1=${ses.t1}`)
 ok('recent errors include segment', (dd.recentErrSegs || []).some((g) => g.sid === sid))
+
+const ad = await (await get('/dash/activity/data')).json()
+const actSes = (ad.sessions || []).find((s) => s.sid === activitySid)
+const actEvents = (ad.events || []).filter((e) => e.sid === activitySid)
+ok('activity session in /dash/activity/data', !!actSes)
+ok('activity counters aggregate', actSes && +actSes.events === 3, actSes && `events=${actSes.events}`)
+ok('activity events roundtrip', actEvents.length === 3, `got ${actEvents.length}`)
+ok('activity counts aggregate', ad.counts && +ad.counts['chat.message_sent'] >= 1)
+ok(
+  'activity props are sanitized',
+  actEvents.every((e) => {
+    let props = {}
+    try { props = JSON.parse(e.props || '{}') } catch { props = {} }
+    const body = JSON.stringify(props)
+    return !/(private|do-not-store|https:\/\/|args|result|title|url|text)/.test(body)
+  })
+)
+ok(
+  'activity bucket props survive backend sanitizer',
+  actEvents.some((e) => String(e.props || '').includes('"messageLengthBucket":"1001+"')) &&
+    actEvents.some((e) => String(e.props || '').includes('"msBucket":"<100ms"'))
+)
 
 // 6. session detail + object roundtrips
 const sd = await (await get(`/dash/sdata/${sid}`)).json()

@@ -104,11 +104,16 @@ export default function App(): JSX.Element {
     attachOpen: boolean,
     activeApp: IslandAppMessagePart | null
   ): void => {
+    const previousView = islandViewRef.current
     islandViewRef.current = view
     islandPageRef.current = page
     islandAttachOpenRef.current = attachOpen
     islandActiveAppRef.current = activeApp
     setIslandKeepMounted(Boolean(activeApp))
+    if (previousView !== view) {
+      window.agentOS?.activity?.track('island.view_changed', { view, previousView, source: 'renderer' })
+      if (view === 'settings') window.agentOS?.activity?.track('settings.opened', { source: 'renderer' })
+    }
   }
   const overChassisRef = useRef(false) // cursor over the chat chassis (overlay mousemove) — keeps the panel open
   const notchOverRef = useRef(false) // cursor over the physical notch (reported by the hit-window's hover)
@@ -147,8 +152,10 @@ export default function App(): JSX.Element {
     }
   }
   const applyNotchState = (s: 'closed' | 'panel'): void => {
+    const previous = notchStateRef.current
     notchStateRef.current = s
     setNotchState(s)
+    if (previous !== s) window.agentOS?.activity?.track(s === 'panel' ? 'island.opened' : 'island.closed', { source: 'renderer' })
   }
   const scheduleNotchHoverClose = (delay = NOTCH_HOVER_CLOSE_DELAY_MS): void => {
     if (notchHoverGraceRef.current) clearTimeout(notchHoverGraceRef.current)
@@ -454,6 +461,10 @@ export default function App(): JSX.Element {
   const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
   const isServer = !!window.agentOS?.serverMode
 
+  // Onboarding auto-OPENS on launch so the first slide is visible without hovering the notch — but it is NOT pinned:
+  // normal hover behaviour (hover the notch to peek, glide away to dismiss, ⌥Space) all work. The hold below keeps it
+  // up long enough to notice; slide changes (which resize the chassis) re-stamp the hold via onChassisResize so a
+  // step never yanks the island shut under the cursor — a genuine hover-away still closes it after the hold.
   useEffect(() => {
     if (!onboarding || isServer || !notchOn) return
     islandViewRef.current = 'onboarding'
@@ -461,8 +472,8 @@ export default function App(): JSX.Element {
     islandAttachOpenRef.current = false
     islandActiveAppRef.current = null
     setIslandKeepMounted(false)
-    setNotchPinnedBoth(true)
     setNotchInteractive(true)
+    notchHoldUntilRef.current = performance.now() + NOTCH_ATTACH_CLOSE_HOLD_MS
     applyNotchState('panel')
   }, [onboarding, isServer, notchOn])
 
@@ -971,7 +982,8 @@ export default function App(): JSX.Element {
 
       {connectPicker && <ConnectPicker onClose={() => setConnectPicker(false)} />}
 
-      {/* ! DEBUG: temporary maintainer control for swapping future agent launches between Codex and Claude. */}
+      {/* DEBUG agent-backend switch (Codex/Claude) — a leftover bottom-right overlay from the old visual-OS build.
+          COMMENTED OUT so users never see it (uncomment to restore for maintainer debugging):
       {!isServer && agentRuntimeDebug && (
         <div className="agent-runtime-switch" aria-label="Agent backend">
           <span className="agent-runtime-debug-tag">DEBUG</span>
@@ -994,6 +1006,7 @@ export default function App(): JSX.Element {
           </div>
         </div>
       )}
+      */}
     </div>
   )
 }

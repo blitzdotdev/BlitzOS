@@ -230,25 +230,9 @@ button {
   border-radius: 0 0 13px 0; /* rounded bottom-RIGHT (outer); square against the notch on the left */
   transform-origin: left center;
 }
-/* the obsidian 1px rim, only on the OUTER edges + bottom (flush, no rim, where the bar meets the notch). */
-.glance-half::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  border-radius: inherit;
-  pointer-events: none;
-  background: linear-gradient(180deg, var(--isl-rim-top) 0%, var(--isl-rim-mid) 30%, rgba(255, 255, 255, 0.03) 62%, var(--isl-rim-bot) 100%);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-}
-.glance-left::before {
-  padding: 0 0 1.3px 1.3px; /* outline +30% (1px → 1.3px) */
-}
-.glance-right::before {
-  padding: 0 1.3px 1.3px 0;
-}
+/* The glance (at-rest, small-notch) view is deliberately RIM-LESS: it should read as a flat extension of the
+   physical notch black, not a bordered panel. The obsidian 1px rim lives only on the EXPANDED island chassis
+   (.nh-chassis::before); the glance bars keep just the flat black fill + top-edge bleed. */
 .glance-half > * {
   position: relative;
   z-index: 2;

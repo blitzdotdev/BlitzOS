@@ -17,7 +17,6 @@ files:
   # UNPACKED below; onboarding.ts swaps app.asar -> app.asar.unpacked when packaged.
   - scripts/onboarding-scan.mjs
   - src/main/blitzos-onboarding.md
-  - src/main/blitzos-interview.md
 extraResources:
   # Portable tmux (arm64, static libevent + system curses, Developer-ID signed): the agent-terminal
   # runtime ships WITH the app — the user never installs dependencies (docs/prod-ci.md).
@@ -45,16 +44,9 @@ extraResources:
   # notch-geometry). No notch => hasNotch:false and BlitzOS draws no band. Plain binary, no TCC/entitlement needed.
   - from: native/notch-geometry/notch-geometry
     to: notch-geometry
-  # The BlitzOS Connector Chrome extension, pre-packed to a signed .crx (scripts/build-extension.mjs, run by
-  # dist-mac.sh). Self-hosted on localhost for the consented force-install (connection-install.ts). A 0-byte
-  # placeholder means force-install is disabled in this build (no Chrome/key at pack time); dev load-unpacked
-  # still works.
-  - from: extension.crx
-    to: extension.crx
 asarUnpack:
   - scripts/onboarding-scan.mjs
   - src/main/blitzos-onboarding.md
-  - src/main/blitzos-interview.md
 mac:
   category: public.app-category.productivity
   icon: src/renderer/src/assets/blitz-dock-icon.png # the Blitz macOS app icon, inset to the standard macOS grid (~86% of canvas, 7% margin) so it renders at the same Dock size as other mac apps — electron-builder generates the .icns from it

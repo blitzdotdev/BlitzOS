@@ -73,6 +73,12 @@ const api = {
   openExternalUrl(url: string): Promise<{ ok: boolean; error?: string }> {
     return (ipcRenderer.invoke('os:open-external-url', url) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
+  /** Privacy-safe product activity logging: main validates event names and drops unknown props. */
+  activity: {
+    track(name: string, props?: Record<string, unknown>): void {
+      ipcRenderer.send('os:activity-track', { name, props: props || {} })
+    }
+  },
   /** Legacy webview path: renderer reports a guest WebContents id so main can read its DOM. */
   reportWebview(surfaceId: string, wcid: number): void {
     ipcRenderer.send('os:webview', { surfaceId, wcid })
@@ -148,6 +154,16 @@ const api = {
   },
   customInstructionsSet(text: string): Promise<{ ok: boolean; text: string }> {
     return ipcRenderer.invoke('os:custom-instructions:set', text) as Promise<{ ok: boolean; text: string }>
+  },
+  /** The global show/hide-island shortcut (rebindable in Settings). suspend() releases it while capturing a combo. */
+  keybindGet(): Promise<{ notchToggle: string }> {
+    return (ipcRenderer.invoke('os:keybind:get') as Promise<{ notchToggle: string }>).catch(() => ({ notchToggle: 'Alt+Space' }))
+  },
+  keybindSet(accel: string): Promise<{ ok: boolean; notchToggle: string }> {
+    return ipcRenderer.invoke('os:keybind:set', accel) as Promise<{ ok: boolean; notchToggle: string }>
+  },
+  keybindSuspend(on: boolean): Promise<{ ok: boolean }> {
+    return (ipcRenderer.invoke('os:keybind:suspend', on) as Promise<{ ok: boolean }>).catch(() => ({ ok: false }))
   },
   /** Action-items inbox (human side): list / resolve (tick) / clear a resolved item. */
   actionList(status?: string): Promise<unknown[]> {
@@ -483,6 +499,20 @@ const api = {
       const listener = (_e: unknown, m: { kind: 'fda' | 'accessibility' | 'screen' }): void => cb(m)
       ipcRenderer.on('onboarding:permission-granted', listener)
       return () => ipcRenderer.removeListener('onboarding:permission-granted', listener)
+    },
+    /** Open the Chrome "Allow JavaScript from Apple Events" step: main opens View, Developer and raises a
+     *  floating helper pointing at the row, then polls until the toggle takes effect. */
+    openChromeJsStep(): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:open-chromejs')
+    },
+    closeChromeJsStep(): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:close-chromejs')
+    },
+    /** Fired when main's poll detects Chrome Apple-Events JS is now enabled (the user ticked the row). */
+    onChromeJsGranted(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on('onboarding:chromejs-granted', listener)
+      return () => ipcRenderer.removeListener('onboarding:chromejs-granted', listener)
     },
     /** Ask for Automation (AppleEvents) consent to the detected browser — raises the macOS prompt
      *  on first call; resolves AFTER the user answers, with live window/tab counts on grant. */

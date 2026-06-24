@@ -25,9 +25,9 @@ const USER_TYPES = new Set(['key', 'click', 'input', 'pointer', 'select', 'nav',
 
 // A short standing nudge BlitzOS ships on EVERY /events response (like a system
 // reminder). The watcher surfaces it with each moment so the agent honors it on each
-// wake: you live in the island chat — respond to the user there. There is no canvas.
+// wake: the agent lives in the island chat and should act there.
 export const EVENTS_REMINDER =
-  'Reminder: respond to the user in the island chat. You have no canvas — act on what they asked and reply in chat.'
+  'Reminder: you live in the island chat. Act on what the user asked and reply to them there.'
 
 const pending = new Map()
 const lastCtx = new Map()
