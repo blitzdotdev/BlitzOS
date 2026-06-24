@@ -1,27 +1,24 @@
 import './island.css'
 import { useEffect, useRef, useState } from 'react'
 import { OnboardingVisual, OnboardingDoneHero, type IntroVisual } from './onboardingVisuals'
+import {
+  useOnboardingProgress,
+  getOnboardingProgress,
+  setIntroIndex,
+  setIntroDone,
+  setPermissionsDone,
+  setOnbStep,
+  setPreboard,
+  setOnbBrowserResult,
+  markPreboardGranted,
+  resetOnboardingProgress,
+  type DragKind,
+  type StepKey,
+  type Outcome,
+  type PreboardState
+} from './onboardingStore'
 
-type DragKind = 'fda' | 'accessibility' | 'screen'
-type StepKey = 'permissions' | 'import' | 'browser' | 'done'
-type Outcome = 'granted' | 'denied' | 'skipped'
-type ImportProfile = { id: string; name: string; email: string | null }
-type ImportSource = { id: string; name: string; profiles: ImportProfile[] }
-type BrowserResult = { status: 'granted' | 'denied' | 'unavailable'; windows?: number; tabs?: number; browser?: string }
-type SigninResult = { ok: boolean; reason?: string; account?: string | null; imported?: number; signedIn?: boolean }
 type IntroSlide = { eyebrow: string; title: string; copy: string; visual: IntroVisual }
-
-type PreboardState = {
-  forced?: boolean
-  steps: Record<string, Outcome | undefined>
-  fda: boolean
-  accessibility: boolean
-  screen: boolean
-  appName: string
-  browser: { id: string; name: string } | null
-  canDrag: boolean
-  appIcon: string | null
-}
 
 const PERMISSIONS: Array<{ key: DragKind; name: string; why: string }> = [
   { key: 'fda', name: 'Full Disk Access', why: 'Lets Blitz build local context from your Mac.' },
@@ -32,7 +29,7 @@ const CHECK_PATH = 'm5 12 4 4L19 6'
 const INTRO_SLIDES: IntroSlide[] = [
   {
     eyebrow: 'Welcome',
-    title: 'Meet Blitz — your agents, on tap',
+    title: 'Meet BlitzOS - your agents on dial',
     copy: 'A quiet island at the top of your screen. Hover in to see what every agent is doing — working, done, or waiting on you.',
     visual: 'home'
   },
@@ -55,42 +52,46 @@ const INTRO_SLIDES: IntroSlide[] = [
     visual: 'workflow'
   },
   {
+    eyebrow: 'Quick access',
+  title: 'Open Blitz whenever you need it',
+  copy: 'Press ⌥Space to show or hide the island anytime — or glide your cursor up to the notch to peek in, and away to tuck it back. You can rebind the shortcut in Settings.',
+  visual: 'final'
+  },
+  {
     eyebrow: 'You stay in control',
     title: 'A few permissions make it useful',
-    copy: 'Next, Blitz asks for the Mac access it needs. You can skip anything and change it later.',
+    copy: 'Blitz only uses the Mac access you grant — and you can skip anything or change it later.',
     visual: 'final'
-  }
+  },
 ]
 
-const hasProfiles = (sources: ImportSource[]): boolean => sources.some((source) => source.profiles.length > 0)
 const isGranted = (state: PreboardState, key: DragKind): boolean => !!state[key] || state.steps[key] === 'granted'
 const permissionPending = (state: PreboardState): boolean => PERMISSIONS.some((permission) => !isGranted(state, permission.key))
 
-function nextStep(state: PreboardState, sources: ImportSource[], permissionsDone: boolean): StepKey {
+function nextStep(state: PreboardState, permissionsDone: boolean): StepKey {
   if (!permissionsDone && permissionPending(state)) return 'permissions'
-  if (hasProfiles(sources) && !state.steps.import) return 'import'
-  if (state.browser && !state.steps.browser && (state.steps.import === 'skipped' || !hasProfiles(sources))) return 'browser'
+  if (state.browser && state.steps.browser == null) return 'browser'
   return 'done'
 }
 
-export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; onComplete: () => void }): JSX.Element {
+export function IslandOnboarding({
+  menuBarH,
+  onComplete,
+  onHoldOpen
+}: {
+  menuBarH: number
+  onComplete: () => void
+  onHoldOpen?: () => void
+}): JSX.Element {
   const api = window.agentOS?.onboarding
   const top = Math.max(28, menuBarH) + 8
-  const [state, setState] = useState<PreboardState | null>(null)
-  const [sources, setSources] = useState<ImportSource[]>([])
-  const [introIndex, setIntroIndex] = useState(0)
-  const [introDone, setIntroDone] = useState(false)
-  const [step, setStep] = useState<StepKey>('permissions')
+  // Progress lives in a module store so a hide+reopen (which remounts this component) resumes where the user was,
+  // instead of snapping back to the first intro slide. Transient UI (drag/connect/error) is fine as local state.
+  const { introIndex, introDone, permissionsDone, step, preboard: state, browserResult } = useOnboardingProgress()
   const [activeKind, setActiveKind] = useState<DragKind | null>(null)
-  const [picked, setPicked] = useState<{ src: string; id: string; email: string | null } | null>(null)
-  const [importing, setImporting] = useState(false)
   const [connecting, setConnecting] = useState(false)
-  const [signinResult, setSigninResult] = useState<SigninResult | null>(null)
-  const [browserResult, setBrowserResult] = useState<BrowserResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const permissionsDoneRef = useRef(false)
-  // The import/browser steps auto-advance after a short delay; hold the timer so a manual nav (skip) or
-  // unmount cancels it — otherwise a late goNext re-advances/overwrites the user's choice on dead state.
+  // The browser step auto-advances after a short delay; hold the timer so a manual nav (skip) or unmount cancels it.
   const advanceTimer = useRef<number | null>(null)
   const clearAdvance = (): void => {
     if (advanceTimer.current != null) {
@@ -99,16 +100,12 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
     }
   }
 
-  const goNext = (nextState: PreboardState, nextSources = sources): void => {
+  const goNext = (nextState: PreboardState, permsDone = permissionsDone): void => {
     clearAdvance()
     setActiveKind(null)
-    setPicked(null)
-    setImporting(false)
     setConnecting(false)
-    setSigninResult(null)
-    setBrowserResult(null)
     setError(null)
-    setStep(nextStep(nextState, nextSources, permissionsDoneRef.current))
+    setOnbStep(nextStep(nextState, permsDone))
   }
 
   const scheduleAdvance = (next: PreboardState, delayMs: number): void => {
@@ -122,21 +119,23 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
   useEffect(() => {
     let alive = true
     if (!api?.preboardState) {
-      setStep('done')
+      setOnbStep('done')
       return
     }
-    Promise.all([api.preboardState(), api.listImportProfiles?.() ?? Promise.resolve([])])
-      .then(([nextState, nextSources]) => {
+    // Refresh the real grant/browser state on every open (idempotent) and recompute the setup step from it +
+    // the (restored) permissions-gate flag — so reopening lands on the right step with live grant checkmarks.
+    api
+      .preboardState()
+      .then((nextState) => {
         if (!alive) return
-        const cleanSources = Array.isArray(nextSources) ? (nextSources as ImportSource[]) : []
-        setState(nextState as PreboardState)
-        setSources(cleanSources)
-        setStep(nextStep(nextState as PreboardState, cleanSources, permissionsDoneRef.current))
+        const ps = nextState as PreboardState
+        setPreboard(ps)
+        setOnbStep(nextStep(ps, getOnboardingProgress().permissionsDone))
       })
       .catch(() => {
         if (!alive) return
         setError('Setup is unavailable right now.')
-        setStep('done')
+        setOnbStep('done')
       })
     return () => {
       alive = false
@@ -150,9 +149,27 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
     return api.onPermissionGranted(({ kind }) => {
       void api.preboardMark?.(kind, 'granted')
       setActiveKind((cur) => (cur === kind ? null : cur))
-      setState((cur) => (cur ? { ...cur, [kind]: true, steps: { ...cur.steps, [kind]: 'granted' } } : cur))
+      markPreboardGranted(kind)
     })
   }, [])
+
+  // Each intro slide / setup step resizes the chassis (e.g. the text-only slides drop the 200px visual stage); ask
+  // App to hold the island open across the resize so a step change never closes it out from under the cursor. A
+  // genuine hover-away still dismisses it once the hold lapses (normal hover behaviour is preserved).
+  const holdOpenRef = useRef(onHoldOpen)
+  holdOpenRef.current = onHoldOpen
+  useEffect(() => {
+    holdOpenRef.current?.()
+  }, [introIndex, step])
+
+  useEffect(() => {
+    window.agentOS?.activity?.track('onboarding.step_viewed', {
+      step: introDone ? step : 'intro',
+      count: introDone ? undefined : introIndex + 1,
+      total: introDone ? undefined : INTRO_SLIDES.length,
+      source: 'renderer'
+    })
+  }, [introDone, introIndex, step])
 
   const openPermission = (kind: DragKind): void => {
     setActiveKind(kind)
@@ -170,46 +187,17 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
   }
 
   const continuePermissions = (): void => {
-    permissionsDoneRef.current = true
+    setPermissionsDone(true)
     void api?.closePermissionDrag?.()
-    if (state) goNext(state)
+    if (state) goNext(state, true)
   }
 
-  const skipStep = (key: 'import' | 'browser'): void => {
+  const skipBrowser = (): void => {
     if (!state) return
-    void api?.preboardMark?.(key, 'skipped')
-    const next = { ...state, steps: { ...state.steps, [key]: 'skipped' as const } }
-    setState(next)
+    void api?.preboardMark?.('browser', 'skipped')
+    const next: PreboardState = { ...state, steps: { ...state.steps, browser: 'skipped' } }
+    setPreboard(next)
     goNext(next)
-  }
-
-  const runImport = (): void => {
-    if (!api?.importSignin || !picked || importing || !state) return
-    setImporting(true)
-    setError(null)
-    api
-      .importSignin(picked.src, picked.id)
-      .then(async (result) => {
-        setSigninResult(result)
-        let browser: BrowserResult | undefined
-        try {
-          browser = api.requestAutomation ? await api.requestAutomation() : undefined
-        } catch {
-          browser = undefined
-        }
-        if (browser) setBrowserResult(browser)
-        const importOutcome: Outcome = result.ok ? 'granted' : 'skipped'
-        const browserOutcome: Outcome = browser?.status === 'granted' ? 'granted' : browser?.status === 'denied' ? 'denied' : 'skipped'
-        void api.preboardMark?.('import', importOutcome)
-        void api.preboardMark?.('browser', browserOutcome)
-        const next = { ...state, steps: { ...state.steps, import: importOutcome, browser: browserOutcome } }
-        setState(next)
-        scheduleAdvance(next, result.ok ? 1200 : 800)
-      })
-      .catch(() => {
-        setImporting(false)
-        setError('Could not import that profile.')
-      })
   }
 
   const connectBrowser = (): void => {
@@ -219,11 +207,11 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
     api
       .requestAutomation()
       .then((result) => {
-        setBrowserResult(result)
+        setOnbBrowserResult(result)
         const outcome: Outcome = result.status === 'granted' ? 'granted' : result.status === 'denied' ? 'denied' : 'skipped'
         void api.preboardMark?.('browser', outcome)
-        const next = { ...state, steps: { ...state.steps, browser: outcome } }
-        setState(next)
+        const next: PreboardState = { ...state, steps: { ...state.steps, browser: outcome } }
+        setPreboard(next)
         scheduleAdvance(next, result.status === 'granted' ? 1100 : 800)
       })
       .catch(() => {
@@ -232,12 +220,16 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
       })
   }
 
-  const accounts = sources.flatMap((source) => source.profiles.map((profile) => ({ src: source.id, id: profile.id, name: profile.name, email: profile.email })))
   const grantedCount = state ? PERMISSIONS.filter((permission) => isGranted(state, permission.key)).length : 0
   const introSlide = INTRO_SLIDES[introIndex] ?? INTRO_SLIDES[0]
   const finishIntro = (): void => {
     setIntroDone(true)
-    if (state) setStep(nextStep(state, sources, permissionsDoneRef.current))
+    if (state) setOnbStep(nextStep(state, permissionsDone))
+  }
+  const finishOnboarding = (): void => {
+    window.agentOS?.activity?.track('onboarding.completed', { source: 'renderer' })
+    resetOnboardingProgress()
+    onComplete()
   }
 
   return (
@@ -251,9 +243,9 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
             <p className="isl-onb-copy">{introSlide.copy}</p>
           </div>
           <div className="isl-onb-progress" aria-label={`Intro slide ${introIndex + 1} of ${INTRO_SLIDES.length}`}>
-            {INTRO_SLIDES.map((slide, index) => (
+            {INTRO_SLIDES.map((_slide, index) => (
               <button
-                key={slide.visual}
+                key={index}
                 type="button"
                 className={index === introIndex ? 'on' : ''}
                 aria-label={`Go to slide ${index + 1}`}
@@ -263,7 +255,7 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
           </div>
           <div className="isl-onb-actions">
             {introIndex > 0 && (
-              <button type="button" className="isl-onb-quiet" onClick={() => setIntroIndex((index) => Math.max(0, index - 1))}>
+              <button type="button" className="isl-onb-quiet" onClick={() => setIntroIndex(Math.max(0, introIndex - 1))}>
                 Back
               </button>
             )}
@@ -272,7 +264,7 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
               className="isl-onb-primary"
               onClick={() => {
                 if (introIndex >= INTRO_SLIDES.length - 1) finishIntro()
-                else setIntroIndex((index) => Math.min(INTRO_SLIDES.length - 1, index + 1))
+                else setIntroIndex(Math.min(INTRO_SLIDES.length - 1, introIndex + 1))
               }}
             >
               {introIndex >= INTRO_SLIDES.length - 1 ? 'Start setup' : 'Next'}
@@ -334,49 +326,10 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
           </div>
         </div>
       )}
-      {introDone && step === 'import' && (
-        <div className="isl-onb-card">
-          <div className="isl-onb-card-head">
-            <span>Bring your browser in</span>
-            <span>{accounts.length} profile{accounts.length === 1 ? '' : 's'}</span>
-          </div>
-          <p className="isl-onb-inline-copy">Pick a Chrome profile to bring Google sign-in and open tabs into reach.</p>
-          {!signinResult && (
-            <div className="isl-onb-accounts">
-              {accounts.map((account) => (
-                <button
-                  key={`${account.src}:${account.id}`}
-                  type="button"
-                  className={`isl-onb-account${picked?.src === account.src && picked.id === account.id ? ' on' : ''}`}
-                  onClick={() => setPicked({ src: account.src, id: account.id, email: account.email })}
-                >
-                  <span>{account.email || account.name}</span>
-                  {account.email && account.name !== account.email ? <small>{account.name}</small> : null}
-                </button>
-              ))}
-            </div>
-          )}
-          {signinResult?.ok && <div className="isl-onb-hint good">Signed in as {signinResult.account || 'your Google account'}.</div>}
-          {signinResult && !signinResult.ok && <div className="isl-onb-hint">Could not import that sign-in. You can do this later.</div>}
-          {browserResult?.status === 'granted' && (
-            <div className="isl-onb-hint good">
-              {browserResult.tabs ?? 0} tab{(browserResult.tabs ?? 0) === 1 ? '' : 's'} brought in.
-            </div>
-          )}
-          <div className="isl-onb-actions">
-            <button type="button" className="isl-onb-primary" disabled={!picked || importing || !!signinResult?.ok} onClick={runImport}>
-              {importing ? 'Bringing it in...' : 'Bring it in'}
-            </button>
-            <button type="button" className="isl-onb-quiet" onClick={() => skipStep('import')}>
-              Not now
-            </button>
-          </div>
-        </div>
-      )}
       {introDone && step === 'browser' && state && (
         <div className="isl-onb-card">
           <div className="isl-onb-card-head">
-            <span>Open tabs</span>
+            <span>Share tabs</span>
             <span>{state.browser?.name || 'Browser'}</span>
           </div>
           <p className="isl-onb-inline-copy">Blitz can use your open tabs as setup context for what you are already doing.</p>
@@ -391,7 +344,7 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
             <button type="button" className="isl-onb-primary" disabled={connecting || browserResult?.status === 'granted'} onClick={connectBrowser}>
               {connecting ? 'Waiting for macOS...' : `Connect ${state.browser?.name || 'browser'}`}
             </button>
-            <button type="button" className="isl-onb-quiet" onClick={() => skipStep('browser')}>
+            <button type="button" className="isl-onb-quiet" onClick={skipBrowser}>
               Not now
             </button>
           </div>
@@ -406,7 +359,7 @@ export function IslandOnboarding({ menuBarH, onComplete }: { menuBarH: number; o
             <p className="isl-onb-copy">Your agents are standing by. You can change setup anytime from Settings.</p>
           </div>
           <div className="isl-onb-actions">
-            <button type="button" className="isl-onb-primary" onClick={onComplete}>
+            <button type="button" className="isl-onb-primary" onClick={finishOnboarding}>
               Open Blitz
             </button>
           </div>

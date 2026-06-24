@@ -616,7 +616,7 @@ export function createWorkspaceHost(a) {
         updateChatHubState(id, true)
         return
       }
-      chatStatuses.set(id, { status: 'watching', updatedAt: Date.now(), source: 'quiet' })
+      setChatStatusLocal(id, 'watching', 'quiet')
       updateChatHubState(id, true)
     }, CHAT_QUIET_MS)
     if (typeof timer.unref === 'function') timer.unref()
@@ -626,8 +626,12 @@ export function createWorkspaceHost(a) {
     const id = String(agentId ?? '0')
     const s = String(status || 'idle')
     if (!CHAT_STATUSES.has(s)) return null
+    const previousStatus = chatStatus(id)
     const rec = { status: s, updatedAt: Date.now(), source }
     chatStatuses.set(id, rec)
+    if (previousStatus !== s) {
+      try { a.onChatStatusTransition?.({ agentId: id, previousStatus, status: s, source }) } catch { /* observers must not affect status */ }
+    }
     if (s === 'working' || s === 'starting') scheduleChatWatching(id, rec.updatedAt)
     else {
       clearChatQuietTimer(id)

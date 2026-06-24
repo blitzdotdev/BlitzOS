@@ -12,12 +12,11 @@ import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
 import { AttachTray, type TrayGroup } from './attachTray'
 import { useSentTray, recordSentTray, getLiveTray } from './sentTrayStore'
-import { IslandTerminalPane } from './IslandTerminalPane'
 import MarkdownMessage from './MarkdownMessage'
 import IslandKanban, { type WfStats } from './IslandKanban'
 import { isSubagentEvents } from './wfReduce'
 import { fmtMs, fmtTok } from './wfShared'
-import { matchingChoiceAnswerForMessage } from './messageParts'
+import { matchingChoiceAnswerForMessage, messagePartsFor } from './messageParts'
 import { agentGradient } from './agentVisuals'
 import { normalizedBlitzAppPart } from './appEmbeds'
 import type { IslandAppMessagePart, IslandPanelProps, IslandWfRun } from './types'
@@ -87,6 +86,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const top = Math.max(28, menuBarH) + 8
   const feedRef = useRef<HTMLDivElement>(null)
   const lyricsRef = useRef<HTMLDivElement>(null)
+  const tabRailRef = useRef<HTMLDivElement>(null) // the horizontally-scrolling agent-tab rail (the + sits OUTSIDE it)
   // Attach mode in an AGENT chat: lock the island to the height it had BEFORE attach opened, so the attachment panel
   // rises only as tall as its own content and the chat feed shrinks to fit (instead of the island growing). We keep
   // the last closed-state height in a ref (recorded after every closed render) and apply it while attach is open.
@@ -105,6 +105,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const sentTray = useSentTray(activeId)
   const pendingNewSessionRef = useRef<TrayGroup[] | null>(null) // composer ('') tray, pinned to the spawned agent's msg 0
   const seenChatRef = useRef<Set<string>>(new Set())
+  const shownChoiceEventsRef = useRef<Set<string>>(new Set())
   // On first sight of a freshly spawned agent, pin the composer tray captured at its spawning send to its first message.
   useEffect(() => {
     if (!activeId) return
@@ -114,6 +115,19 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     pendingNewSessionRef.current = null
     if (pending && pending.length) recordSentTray(activeId, 0, pending)
   }, [activeId])
+  useEffect(() => {
+    if (!activeId) return
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i]
+      if (!message || message.role !== 'agent') continue
+      const choice = messagePartsFor(message).find((part) => part.type === 'choice')
+      if (!choice) continue
+      const key = choiceSelectionKey(activeId, i, message.ts, message.text)
+      if (shownChoiceEventsRef.current.has(key)) continue
+      shownChoiceEventsRef.current.add(key)
+      window.agentOS?.activity?.track('choice.shown', { agentId: activeId, count: choice.options.length, source: 'notch' })
+    }
+  }, [activeId, messages])
   // Freeze an EXACT copy of the live dropbox (getLiveTray) onto the message being sent, THEN send (NotchHost.onSend
   // clears the live tray). New-session composer ('') → stash it to pin onto the spawned agent's first message.
   const handleSend = (text: string): void => {
@@ -346,6 +360,12 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     if (next) loadDetails()
   }
 
+  // The Terminal button opens the REAL macOS Terminal (read-only) in one click. No toggle/close state — the user
+  // closes the Terminal window themselves.
+  const openTerminal = (): void => {
+    if (activeId) void window.agentOS?.terminalOpenExternal?.(activeId).catch(() => {})
+  }
+
   // Keep the inline activity row fresh while the agent is doing something. This is the same raw tool-row source
   // the old bottom Details section used; the redesign changes placement first, not the backend contract.
   useEffect(() => {
@@ -445,6 +465,26 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     onAppViewerToggle?.(false)
   }
 
+  // Keep the SELECTED tab in view: spawning a new agent (the "+") appends its chip at the far right and selects it,
+  // but a left-scrolled rail would leave that chip off-screen with no visible feedback. On every selection change
+  // (new agent, click, or Ctrl+Tab) smooth-scroll the rail just far enough that the active chip clears both edges —
+  // so the strip visibly slides to the tab you land on. Honors prefers-reduced-motion (jumps instead of animating).
+  useEffect(() => {
+    const rail = tabRailRef.current
+    if (!rail) return
+    const chip = rail.querySelector<HTMLElement>('.isl-chip.active')
+    if (!chip) return
+    const railRect = rail.getBoundingClientRect()
+    const chipRect = chip.getBoundingClientRect()
+    const PAD = 8 // breathing room so the chip never sits flush against the clipped edge
+    let delta = 0
+    if (chipRect.left < railRect.left + PAD) delta = chipRect.left - (railRect.left + PAD)
+    else if (chipRect.right > railRect.right - PAD) delta = chipRect.right - (railRect.right - PAD)
+    if (delta === 0) return
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+    rail.scrollTo({ left: rail.scrollLeft + delta, behavior: reduce ? 'auto' : 'smooth' })
+  }, [page, sessions.length])
+
   // The shared horizontal tab strip (pen + one chip per agent), kept in BOTH the chat and the peek view.
   const tabStrip = (
     <div
@@ -462,7 +502,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     >
       {/* The agent tabs scroll INSIDE this rail; the new-chat + is a sibling pinned to the RIGHT (Chrome-style),
           so it stays visible no matter how many tabs there are — the tabs scroll under it instead of pushing it off. */}
-      <div className="isl-tab-rail">
+      <div className="isl-tab-rail" ref={tabRailRef}>
       {sessions.map((s, i) => {
         const selected = page === i + 1
         const editing = editingId === s.id
@@ -689,18 +729,30 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
         // The active agent's chat (Blitz '0' or a peer): real messages + inline activity details — KEPT in attach mode.
         <>
           <div className="isl-agent-meta">
-            {activeId && (
+            {debugTerminalEnabled && activeId && (
               <button
                 type="button"
-                className={`isl-archive${activeId === '0' ? ' placeholder' : ''}`}
-                disabled={activeId === '0'}
-                aria-hidden={activeId === '0'}
-                tabIndex={activeId === '0' ? -1 : undefined}
-                onClick={() => {
-                  if (activeId !== '0') onArchiveAgent(activeId)
-                }}
-                title={activeId === '0' ? undefined : 'Archive agent'}
-                aria-label={activeId === '0' ? undefined : 'Archive agent'}
+                className="isl-termbtn"
+                onClick={openTerminal}
+                title="Open the agent terminal (read-only)"
+                aria-label="Open the agent terminal"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden focusable="false" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                  <path d="M7 10l2.4 2.4L7 14.8" />
+                  <path d="M12.5 15H16" />
+                </svg>
+                <span>Terminal</span>
+              </button>
+            )}
+            {/* Blitz '0' can't be archived (intentional) — no placeholder, so its Terminal button sits in the archive slot. */}
+            {activeId && activeId !== '0' && (
+              <button
+                type="button"
+                className="isl-archive"
+                onClick={() => onArchiveAgent(activeId)}
+                title="Archive agent"
+                aria-label="Archive agent"
               >
                 <svg viewBox="0 0 24 24" aria-hidden focusable="false">
                   <path d={ARCHIVE_PATH} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -738,6 +790,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                       onOpenApp={showAppViewer}
                       onChoose={(choice) => {
                         setPendingChoiceSelections((prev) => ({ ...prev, [askKey]: choice }))
+                        window.agentOS?.activity?.track('choice.answered', { agentId: activeId, source: 'notch' })
                         onSend(choice)
                       }}
                     />
@@ -766,13 +819,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               </>
             )}
           </div>
-          {debugTerminalEnabled && activeId && (
-            <IslandTerminalPane
-              terminalId={activeId}
-              title={activeTerminal?.title || (String(activeId) === '0' ? 'Blitz' : 'New Agent')}
-              status={activeTerminal?.status || 'unknown'}
-            />
-          )}
         </>
       )}
       {/* the composer + attachment panel are ALWAYS visible. */}

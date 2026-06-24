@@ -7,11 +7,13 @@ import { useState } from 'react'
 export function IslandTerminalPane({
   terminalId,
   title,
-  status
+  status,
+  onClose
 }: {
   terminalId: string
   title: string
   status: string
+  onClose?: () => void
 }): JSX.Element {
   const [launchErr, setLaunchErr] = useState<string | null>(null)
 
@@ -43,6 +45,13 @@ export function IslandTerminalPane({
           </span>
         ) : (
           <span className="isl-terminal-status">{status || 'unknown'}</span>
+        )}
+        {onClose && (
+          <button type="button" className="isl-term-close" onClick={onClose} title="Close terminal" aria-label="Close terminal">
+            <svg viewBox="0 0 24 24" aria-hidden focusable="false" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
         )}
       </div>
     </div>

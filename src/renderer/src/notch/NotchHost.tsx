@@ -10,6 +10,7 @@
 import './notch.css'
 import { useEffect, useRef, useState } from 'react'
 import { clearStaged } from './stagingStore'
+import { clearLiveTray } from './sentTrayStore'
 import IslandPanel from './IslandPanel'
 import IslandHome from './IslandHome'
 import IslandSettings from './IslandSettings'
@@ -197,7 +198,8 @@ export function NotchHost({
   initialPage = 1,
   initialAttachOpen = false,
   initialActiveApp = null,
-  onOnboardingComplete
+  onOnboardingComplete,
+  onIslandHoldOpen
 }: {
   menuBarH: number
   visible?: boolean // false parks the mounted island off visually so app iframes survive hover-close
@@ -210,6 +212,7 @@ export function NotchHost({
   initialAttachOpen?: boolean // the attach panel's open/closed state — also restored from the last open
   initialActiveApp?: IslandAppMessagePart | null // generated app preview restored after hover-close/remount
   onOnboardingComplete?: () => void
+  onIslandHoldOpen?: () => void // onboarding step changes resize the chassis → re-stamp App's keep-open hold
 }): JSX.Element {
   // 'home' = the icon grid; 'settings' = debug settings; 'session' = today's agent chat/session UI; 'onboarding' = first-run setup.
   const [view, setView] = useState<IslandView>(initialView)
@@ -227,7 +230,6 @@ export function NotchHost({
   const [workflowAlwaysShow, setWorkflowAlwaysShow] = useState(readWorkflowAlwaysShow)
   const [activeApp, setActiveApp] = useState<IslandAppMessagePart | null>(initialActiveApp)
   const [appViewerOpen, setAppViewerOpen] = useState(Boolean(initialActiveApp))
-  const [customInstructions, setCustomInstructions] = useState('') // app-level; loaded from main on mount
   const [homeDoneAgents, setHomeDoneAgentsState] = useState<Record<string, true>>(() => readHomeDoneAgents())
   const [homeSeenWorkingAgents, setHomeSeenWorkingAgentsState] = useState<Record<string, true>>(() => readHomeSeenWorkingAgents())
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
@@ -285,27 +287,6 @@ export function NotchHost({
     } catch {
       /* preference persistence is best-effort */
     }
-  }
-  // Custom instructions live in the main process (so agent launches can read them); mirror them here for the
-  // Settings field. Load once on mount, persist on edit. Applies to new/restarted sessions, not live ones.
-  useEffect(() => {
-    let alive = true
-    void Promise.resolve(window.agentOS?.customInstructionsGet?.())
-      .then((r) => {
-        if (alive && r) setCustomInstructions(r.text || '')
-      })
-      .catch(() => {
-        /* best-effort; field stays empty if the read fails */
-      })
-    return () => {
-      alive = false
-    }
-  }, [])
-  const saveCustomInstructions = (text: string): void => {
-    setCustomInstructions(text)
-    void Promise.resolve(window.agentOS?.customInstructionsSet?.(text)).catch(() => {
-      /* best-effort persistence */
-    })
   }
   const updateHomeDoneAgents = (update: (prev: Record<string, true>) => Record<string, true>): void => {
     const prev = homeDoneAgentsRef.current
@@ -729,7 +710,12 @@ export function NotchHost({
   const activeRuns = activeId ? runs[activeId] || [] : []
   const activeStatus = activeId ? status[activeId] || activeSession?.status || 'idle' : 'idle'
 
-  const goPage = (next: number): void => setPage(N === 0 ? 0 : clamp(next, 1, N))
+  const goPage = (next: number): void => {
+    const nextPage = N === 0 ? 0 : clamp(next, 1, N)
+    const nextSession = nextPage > 0 ? displaySessions[nextPage - 1] : null
+    if (nextSession?.id) window.agentOS?.activity?.track('agent.selected', { agentId: nextSession.id, source: 'notch' })
+    setPage(nextPage)
+  }
   const requestArchiveAgent = (id: string): Promise<AgentMutationResult> => {
     if (window.agentOS?.archiveAgent) return window.agentOS.archiveAgent(id)
     if (window.agentOS?.chatControl) return window.agentOS.chatControl('archive', { id }) as Promise<AgentMutationResult>
@@ -845,6 +831,7 @@ export function NotchHost({
     setAttachOpen(false)
     if (!activeId) return // no live agent yet (transient, pre-boot) — never blind-spawn on a send
     clearStaged(activeId)
+    clearLiveTray(activeId) // IslandPanel already froze the tray onto this message; drop the mirror so it can't re-attach next send
     try {
       window.agentOS?.sendMessage?.(text, activeId)
     } catch {
@@ -863,6 +850,10 @@ export function NotchHost({
   }
   const handleAppViewerToggle = (open: boolean): void => {
     setAppViewerOpen(open)
+    window.agentOS?.activity?.track(open ? 'app_card.opened' : 'app_card.closed', {
+      agentId: activeIdRef.current || undefined,
+      source: 'notch'
+    })
     holdChassisHover()
     if (open) {
       setPeek(false)
@@ -948,7 +939,7 @@ export function NotchHost({
         {onHome && (
           <button
             type="button"
-            className={`nh-settings-btn${debugActiveTerminal ? ' on' : ''}`}
+            className="nh-settings-btn"
             onClick={() => setView('settings')}
             title="Settings"
             aria-label="Settings"
@@ -956,7 +947,6 @@ export function NotchHost({
             <svg viewBox="0 0 24 24" aria-hidden focusable="false">
               <path d={SETTINGS_PATH} fill="currentColor" />
             </svg>
-            {debugActiveTerminal && <span className="nh-settings-dot" aria-hidden />}
           </button>
         )}
         {/* The HOME button + Peek toggle live inside expanded island views; the home widget row stays widget-only. */}
@@ -1002,14 +992,10 @@ export function NotchHost({
         ) : view === 'settings' ? (
           <IslandSettings
             menuBarH={menuBarH}
-            customInstructions={customInstructions}
-            onChangeCustomInstructions={saveCustomInstructions}
             workflowAlwaysShow={workflowAlwaysShow}
             onToggleWorkflowAlwaysShow={chooseWorkflowAlwaysShow}
             showActiveTerminal={debugActiveTerminal}
             onToggleActiveTerminal={chooseDebugActiveTerminal}
-            showFakeHomeAgents={debugFakeHomeAgents}
-            onToggleFakeHomeAgents={chooseDebugFakeHomeAgents}
             archivedSessions={archivedSessions}
             onRestoreAgent={restoreAgent}
             onDeleteAgent={deleteArchivedAgent}
@@ -1017,6 +1003,7 @@ export function NotchHost({
         ) : view === 'onboarding' ? (
           <IslandOnboarding
             menuBarH={menuBarH}
+            onHoldOpen={onIslandHoldOpen}
             onComplete={() => {
               setAttachOpen(false)
               setPeek(false)

@@ -1,5 +1,5 @@
 import './island.css'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as RKeyboardEvent } from 'react'
 import type { IslandSession } from './types'
 
 const ARCHIVED_PREVIEW_CHARS = 68
@@ -11,29 +11,60 @@ const archivedMessagePreview = (session: IslandSession): string => {
   return `${text.slice(0, ARCHIVED_PREVIEW_CHARS).trimEnd()}...`
 }
 
+// ── Open/close-island shortcut rebind (persisted + re-registered in main via the keybind bridge). ──────────────
+type KeybindBridge = {
+  keybindGet?: () => Promise<{ notchToggle: string }>
+  keybindSet?: (accel: string) => Promise<{ ok: boolean; notchToggle: string }>
+  keybindSuspend?: (on: boolean) => Promise<{ ok: boolean }>
+}
+const keybindBridge = (): KeybindBridge | undefined => (window as unknown as { agentOS?: KeybindBridge }).agentOS
+
+const ARROWS: Record<string, string> = { ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right' }
+// Build an Electron accelerator (e.g. 'Alt+Space', 'Command+Shift+K') from a key event. Returns null while only
+// modifiers are held, and requires a modifier for non-function keys so a rebind can't steal a plain letter globally.
+function accelFromEvent(e: RKeyboardEvent): string | null {
+  const k = e.key
+  if (k === 'Meta' || k === 'Control' || k === 'Alt' || k === 'Shift') return null
+  const mods: string[] = []
+  if (e.metaKey) mods.push('Command')
+  if (e.ctrlKey) mods.push('Control')
+  if (e.altKey) mods.push('Alt')
+  if (e.shiftKey) mods.push('Shift')
+  let key: string
+  if (ARROWS[k]) key = ARROWS[k]
+  else if (k === ' ') key = 'Space'
+  else if (k.length === 1) key = k.toUpperCase()
+  else key = k.charAt(0).toUpperCase() + k.slice(1) // Enter, Tab, Backspace, Delete, F-keys
+  const isFn = /^F\d{1,2}$/.test(key)
+  if (!mods.length && !isFn) return null
+  return [...mods, key].join('+')
+}
+// Pretty key caps for display (⌘ ⌥ ⌃ ⇧ + the key).
+function accelCaps(accel: string): string[] {
+  return accel.split('+').map((p) => {
+    if (p === 'Command' || p === 'Cmd' || p === 'Meta' || p === 'Super') return '⌘'
+    if (p === 'Control' || p === 'Ctrl') return '⌃'
+    if (p === 'Alt' || p === 'Option') return '⌥'
+    if (p === 'Shift') return '⇧'
+    return p
+  })
+}
+
 export function IslandSettings({
   menuBarH,
-  customInstructions,
-  onChangeCustomInstructions,
   workflowAlwaysShow,
   onToggleWorkflowAlwaysShow,
   showActiveTerminal,
   onToggleActiveTerminal,
-  showFakeHomeAgents,
-  onToggleFakeHomeAgents,
   archivedSessions,
   onRestoreAgent,
   onDeleteAgent
 }: {
   menuBarH: number
-  customInstructions: string
-  onChangeCustomInstructions: (text: string) => void
   workflowAlwaysShow: boolean
   onToggleWorkflowAlwaysShow: (on: boolean) => void
   showActiveTerminal: boolean
   onToggleActiveTerminal: (on: boolean) => void
-  showFakeHomeAgents: boolean
-  onToggleFakeHomeAgents: (on: boolean) => void
   archivedSessions: IslandSession[]
   onRestoreAgent: (id: string) => void
   onDeleteAgent: (id: string) => void
@@ -41,50 +72,89 @@ export function IslandSettings({
   const top = Math.max(28, menuBarH) + 8
   const [archivedOpen, setArchivedOpen] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  // Local draft so typing doesn't round-trip to the main process per keystroke; persist on blur. Re-sync
-  // when the stored value arrives (it loads async on the island opening) or changes underneath us.
-  const [instructionsDraft, setInstructionsDraft] = useState(customInstructions)
-  useEffect(() => {
-    setInstructionsDraft(customInstructions)
-  }, [customInstructions])
-  // Flush a pending edit if the panel unmounts (view switched via keyboard) before onBlur fires. Refs keep
-  // the cleanup reading the latest values without re-subscribing the effect each keystroke.
-  const draftRef = useRef(instructionsDraft)
-  draftRef.current = instructionsDraft
-  const savedRef = useRef(customInstructions)
-  savedRef.current = customInstructions
-  const onChangeRef = useRef(onChangeCustomInstructions)
-  onChangeRef.current = onChangeCustomInstructions
-  useEffect(
-    () => () => {
-      if (draftRef.current !== savedRef.current) onChangeRef.current(draftRef.current)
-    },
-    []
-  )
   const archivedCount = archivedSessions.length
+
+  // Rebind for the global open/close-island shortcut. The button captures the next combo while focused; main
+  // suspends the live chord during capture so it isn't swallowed before the renderer sees it.
+  const [toggleAccel, setToggleAccel] = useState('Alt+Space')
+  const [capturing, setCapturing] = useState(false)
+  const keybindBtnRef = useRef<HTMLButtonElement>(null)
+  const capturingRef = useRef(false)
+  capturingRef.current = capturing
+  useEffect(() => {
+    keybindBridge()
+      ?.keybindGet?.()
+      .then((r) => {
+        if (r?.notchToggle) setToggleAccel(r.notchToggle)
+      })
+      .catch(() => {})
+    // If the panel unmounts mid-capture (e.g. Esc closed the island before onBlur fired), re-arm the chord so the
+    // global shortcut is never left dead.
+    return () => {
+      if (capturingRef.current) void keybindBridge()?.keybindSuspend?.(false)
+    }
+  }, [])
+  const startCapture = (): void => {
+    setCapturing(true)
+    keybindBtnRef.current?.focus() // guarantee keydown lands on the button, not whatever had focus
+    void keybindBridge()?.keybindSuspend?.(true)
+  }
+  const cancelCapture = (): void => {
+    setCapturing(false)
+    void keybindBridge()?.keybindSuspend?.(false)
+  }
+  const onKeybindKey = (e: RKeyboardEvent<HTMLButtonElement>): void => {
+    if (!capturing) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.key === 'Escape') {
+      cancelCapture()
+      return
+    }
+    const accel = accelFromEvent(e)
+    if (!accel) return // modifiers held but no key yet
+    setCapturing(false)
+    keybindBridge()
+      ?.keybindSet?.(accel)
+      .then((r) => {
+        if (r?.notchToggle) setToggleAccel(r.notchToggle)
+      })
+      .catch(() => void keybindBridge()?.keybindSuspend?.(false))
+  }
+
   return (
     <div className="nh-island isl-settings" style={{ paddingTop: top }}>
       <div className="isl-settings-head">
-        <span className="isl-debug-flag">DEBUG</span>
         <span className="isl-settings-title">Settings</span>
       </div>
       <div className="isl-settings-list">
-        <div className="isl-setting-row isl-setting-row-col">
+        <div className="isl-setting-row">
           <span className="isl-setting-copy">
-            <span className="isl-setting-name">Custom instructions</span>
-            <span className="isl-setting-note">Added to every agent&rsquo;s first message. Applies to new and restarted sessions.</span>
+            <span className="isl-setting-name">Open / close Blitz</span>
+            <span className="isl-setting-note">Global shortcut to show or hide the island</span>
           </span>
-          <textarea
-            className="isl-setting-textarea"
-            value={instructionsDraft}
-            placeholder="e.g. Keep answers concise. Prefer TypeScript. I'm Palash, working on BlitzOS."
-            rows={4}
-            onChange={(e) => setInstructionsDraft(e.currentTarget.value)}
-            onBlur={() => {
-              if (instructionsDraft !== customInstructions) onChangeCustomInstructions(instructionsDraft)
-            }}
-          />
+          <button
+            ref={keybindBtnRef}
+            type="button"
+            className={`isl-keybind${capturing ? ' capturing' : ''}`}
+            onClick={() => (capturing ? cancelCapture() : startCapture())}
+            onKeyDown={onKeybindKey}
+            onBlur={() => capturing && cancelCapture()}
+            aria-label="Rebind the open and close shortcut"
+          >
+            {capturing ? (
+              <span className="isl-keybind-hint">Press keys…</span>
+            ) : (
+              accelCaps(toggleAccel).map((cap, i) => (
+                <kbd key={i} className="isl-kbd">
+                  {cap}
+                </kbd>
+              ))
+            )}
+          </button>
         </div>
+        {/* Workflow board is always-on for users (default ON, driven by NotchHost). The toggle is intentionally
+            hidden — uncomment to expose it again.
         <label className="isl-setting-row">
           <span className="isl-setting-copy">
             <span className="isl-setting-name">Always show workflow board</span>
@@ -100,9 +170,10 @@ export function IslandSettings({
             <span />
           </span>
         </label>
+        */}
         <label className="isl-setting-row">
           <span className="isl-setting-copy">
-            <span className="isl-setting-name">Show active agent terminal</span>
+            <span className="isl-setting-name">Show agent terminal button</span>
             <span className="isl-setting-note">Read-only</span>
           </span>
           <input
@@ -110,21 +181,6 @@ export function IslandSettings({
             type="checkbox"
             checked={showActiveTerminal}
             onChange={(e) => onToggleActiveTerminal(e.currentTarget.checked)}
-          />
-          <span className="isl-setting-toggle" aria-hidden>
-            <span />
-          </span>
-        </label>
-        <label className="isl-setting-row">
-          <span className="isl-setting-copy">
-            <span className="isl-setting-name">Show fake Home agents</span>
-            <span className="isl-setting-note">Design preview</span>
-          </span>
-          <input
-            className="isl-setting-input"
-            type="checkbox"
-            checked={showFakeHomeAgents}
-            onChange={(e) => onToggleFakeHomeAgents(e.currentTarget.checked)}
           />
           <span className="isl-setting-toggle" aria-hidden>
             <span />

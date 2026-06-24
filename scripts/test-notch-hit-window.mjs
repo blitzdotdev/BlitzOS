@@ -38,6 +38,7 @@ const workspaceHost = readFileSync(join(repoRoot, 'src/main/workspace-host.mjs')
 const workspaceHostTypes = readFileSync(join(repoRoot, 'src/main/workspace-host.d.mts'), 'utf8')
 const workspaceCore = readFileSync(join(repoRoot, 'src/main/workspace.mjs'), 'utf8')
 const osTools = readFileSync(join(repoRoot, 'src/main/os-tools.mjs'), 'utf8')
+const activityLogging = readFileSync(join(repoRoot, 'src/main/activity-logging.mjs'), 'utf8')
 const electronOsTools = readFileSync(join(repoRoot, 'src/main/electron-os-tools.ts'), 'utf8')
 const previewBackend = readFileSync(join(repoRoot, 'preview/backend.mjs'), 'utf8')
 const activity = readFileSync(join(repoRoot, 'src/main/activity.mjs'), 'utf8')
@@ -55,6 +56,8 @@ const computerUseHelperSwift = readFileSync(join(repoRoot, 'native/computer-use-
 const computerUseHelperManager = readFileSync(join(repoRoot, 'src/main/computer-use-helper.ts'), 'utf8')
 const builderConfig = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
 const ensureHelper = readFileSync(join(repoRoot, 'scripts/ensure-helper.sh'), 'utf8')
+const telemetrySchema = readFileSync(join(repoRoot, 'telemetry/teenybase.ts'), 'utf8')
+const telemetryWorker = readFileSync(join(repoRoot, 'telemetry/worker.ts'), 'utf8')
 const oldOnboardingFlowPath = join(repoRoot, 'src/renderer/src/onboarding/OnboardingFlow.tsx')
 const oldOnboardingCssPath = join(repoRoot, 'src/renderer/src/onboarding/onboarding.css')
 const homeEmptyBlock = islandCss.match(/\.isl-home-empty \{[\s\S]*?\n\}/)?.[0] || ''
@@ -101,6 +104,36 @@ ok('main forwards the hit-window click/hover to the overlay renderer + pushes th
 ok('preload exposes the bridge: notch.click/hover (hit-window → main) + onHandleClick/onHandleHover (→ overlay)',
   /click\(\): void \{[\s\S]*?'os:notch-click'/.test(preload) && /hover\(on: boolean\): void \{[\s\S]*?'os:notch-hover'/.test(preload) &&
     /onHandleClick/.test(preload) && /onHandleHover/.test(preload))
+ok('privacy-safe activity logging is config-gated and separate from replay telemetry',
+  /activity-logging\.json/.test(activityLogging) &&
+    /BLITZ_ACTIVITY_LOGGING === '0'/.test(activityLogging) &&
+    /export const ACTIVITY_EVENT_NAMES = new Set/.test(activityLogging) &&
+    /export function sanitizeActivityEvent/.test(activityLogging) &&
+    /export function sanitizeToolActivity/.test(activityLogging) &&
+    !/capturePage/.test(activityLogging) &&
+    !/sessionTape/.test(activityLogging) &&
+    /initActivityLogging/.test(index) &&
+    /setToolTap\(\(info\) => trackToolActivity/.test(index))
+ok('activity IPC accepts only named events and sanitized props through main',
+  /activity: \{[\s\S]*?track\(name: string, props\?: Record<string, unknown>\): void[\s\S]*?ipcRenderer\.send\('os:activity-track'/.test(preload) &&
+    /ipcMain\.on\('os:activity-track'[\s\S]*?trackActivity\(name, props\)/.test(index) &&
+    /chat\.message_sent/.test(activityLogging) &&
+    /messageLengthBucket/.test(activityLogging) &&
+    /agentIdHash/.test(activityLogging) &&
+    /statusCode/.test(activityLogging) &&
+    !/out\.text|out\.title|out\.url|out\.path|out\.args|out\.result|out\.stack/.test(activityLogging))
+ok('workspace host exposes safe chat status transitions for activity logging',
+  /onChatStatusTransition\?: \(change: \{ agentId: string; previousStatus\?: string; status: string; source\?: string \}\) => void/.test(workspaceHostTypes) &&
+    /onChatStatusTransition: \(\{ agentId, previousStatus, status, source \}\) =>[\s\S]*?trackActivity\('agent\.status_changed'/.test(osActions) &&
+    /const previousStatus = chatStatus\(id\)/.test(workspaceHost) &&
+    /previousStatus !== s[\s\S]*?a\.onChatStatusTransition\?\.\(\{ agentId: id, previousStatus, status: s, source \}\)/.test(workspaceHost))
+ok('activity backend has separate key-gated tables and ingest/data routes',
+  /name: 'activity_sessions'/.test(telemetrySchema) &&
+    /name: 'activity_events'/.test(telemetrySchema) &&
+    /tables: \[sessions, segments, frames, activitySessions, activityEvents\]/.test(telemetrySchema) &&
+    /userApp\.post\('\/ingest\/activity'[\s\S]*?const db = await gate\(c\)/.test(telemetryWorker) &&
+    /cleanActivityProps/.test(telemetryWorker) &&
+    /userApp\.get\('\/dash\/activity\/data'/.test(telemetryWorker))
 ok('renderer: hit-window CLICK opens the island panel when closed, HOVER → open/close the panel',
   /onHandleClick\?\.\(\(\) => \{[\s\S]*?notchStateRef\.current === 'closed'[\s\S]*?toggleIsland\(\)/.test(app) &&
     /onHandleHover\?\.\(\(on\) =>/.test(app))

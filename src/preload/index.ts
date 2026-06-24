@@ -73,6 +73,12 @@ const api = {
   openExternalUrl(url: string): Promise<{ ok: boolean; error?: string }> {
     return (ipcRenderer.invoke('os:open-external-url', url) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
+  /** Privacy-safe product activity logging: main validates event names and drops unknown props. */
+  activity: {
+    track(name: string, props?: Record<string, unknown>): void {
+      ipcRenderer.send('os:activity-track', { name, props: props || {} })
+    }
+  },
   /** Legacy webview path: renderer reports a guest WebContents id so main can read its DOM. */
   reportWebview(surfaceId: string, wcid: number): void {
     ipcRenderer.send('os:webview', { surfaceId, wcid })
@@ -148,6 +154,16 @@ const api = {
   },
   customInstructionsSet(text: string): Promise<{ ok: boolean; text: string }> {
     return ipcRenderer.invoke('os:custom-instructions:set', text) as Promise<{ ok: boolean; text: string }>
+  },
+  /** The global show/hide-island shortcut (rebindable in Settings). suspend() releases it while capturing a combo. */
+  keybindGet(): Promise<{ notchToggle: string }> {
+    return (ipcRenderer.invoke('os:keybind:get') as Promise<{ notchToggle: string }>).catch(() => ({ notchToggle: 'Alt+Space' }))
+  },
+  keybindSet(accel: string): Promise<{ ok: boolean; notchToggle: string }> {
+    return ipcRenderer.invoke('os:keybind:set', accel) as Promise<{ ok: boolean; notchToggle: string }>
+  },
+  keybindSuspend(on: boolean): Promise<{ ok: boolean }> {
+    return (ipcRenderer.invoke('os:keybind:suspend', on) as Promise<{ ok: boolean }>).catch(() => ({ ok: false }))
   },
   /** Action-items inbox (human side): list / resolve (tick) / clear a resolved item. */
   actionList(status?: string): Promise<unknown[]> {

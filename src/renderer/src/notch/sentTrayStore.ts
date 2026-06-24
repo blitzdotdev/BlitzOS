@@ -38,6 +38,12 @@ export function publishLiveTray(chat: string, groups: TrayGroup[]): void {
 export function getLiveTray(chat: string): TrayGroup[] {
   return live[chat] || []
 }
+// Drop the mirror on send. AttachPanel (which publishes it) UNMOUNTS when the panel closes on send, so it can't
+// re-publish the now-cleared tray — without this, the last-staged groups linger and get frozen onto every later
+// message even though nothing was staged. Pair this with clearStaged (the staged set is the source of truth).
+export function clearLiveTray(chat: string): void {
+  if (live[chat]) delete live[chat]
+}
 
 async function ensureLoaded(chat: string): Promise<void> {
   if (loaded.has(chat) || loading.has(chat)) return

@@ -22,6 +22,59 @@ const userApp = new Hono()
 
 const SID_RE = /^[0-9A-Za-z-]{1,64}$/
 const ID_RE = /^[0-9A-Za-z-]{1,64}$/
+const INSTALL_RE = /^[0-9A-Za-z-]{1,96}$/
+const SAFE_TOKEN_RE = /^[0-9A-Za-z_.:/-]{1,96}$/
+const ACTIVITY_EVENT_NAMES = new Set([
+  'app.started',
+  'app.focused',
+  'app.quit',
+  'island.opened',
+  'island.closed',
+  'island.view_changed',
+  'settings.opened',
+  'onboarding.step_viewed',
+  'onboarding.completed',
+  'agent.spawned',
+  'agent.selected',
+  'agent.status_changed',
+  'agent.archived',
+  'agent.restored',
+  'agent.deleted',
+  'agent.renamed',
+  'chat.message_sent',
+  'choice.shown',
+  'choice.answered',
+  'app_card.opened',
+  'app_card.closed',
+  'connector.picker_opened',
+  'connector.connected',
+  'connector.disconnected',
+  'tool.called'
+])
+const ACTIVITY_PROPS = new Set([
+  'agentIdHash',
+  'status',
+  'previousStatus',
+  'view',
+  'previousView',
+  'step',
+  'source',
+  'connectorKind',
+  'tool',
+  'ok',
+  'success',
+  'enabled',
+  'hasAttachments',
+  'count',
+  'total',
+  'attachmentCount',
+  'messageLengthBucket',
+  'durationBucket',
+  'msBucket',
+  'statusCode'
+])
+const LENGTH_BUCKETS = new Set(['0', '1-80', '81-280', '281-1000', '1001+'])
+const MS_BUCKETS = new Set(['<100ms', '100-500ms', '500ms-2s', '2s-10s', '10s+'])
 
 async function gate(c: any): Promise<any | null> {
   const db = c.get('$db')
@@ -43,6 +96,39 @@ async function readMultipart(c: any): Promise<{ values: any; file: ArrayBuffer |
   const f = form.get('file')
   const file = f && typeof (f as any).arrayBuffer === 'function' ? await (f as any).arrayBuffer() : null
   return { values, file }
+}
+
+async function readJson(c: any): Promise<any> {
+  try {
+    return await c.req.json()
+  } catch {
+    return {}
+  }
+}
+
+function cleanActivityProps(props: any): Record<string, unknown> {
+  const input = props && typeof props === 'object' && !Array.isArray(props) ? props : {}
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(input)) {
+    if (!ACTIVITY_PROPS.has(key)) continue
+    if (typeof value === 'boolean') {
+      out[key] = value
+    } else if (typeof value === 'number') {
+      if (Number.isFinite(value)) out[key] = Math.max(0, Math.min(1000, Math.round(value)))
+    } else if (typeof value === 'string') {
+      const s = value.trim()
+      if (key === 'messageLengthBucket') {
+        if (LENGTH_BUCKETS.has(s)) out[key] = s
+        continue
+      }
+      if (key === 'durationBucket' || key === 'msBucket') {
+        if (MS_BUCKETS.has(s)) out[key] = s
+        continue
+      }
+      if (s && SAFE_TOKEN_RE.test(s)) out[key] = s
+    }
+  }
+  return out
 }
 
 userApp.get('/ping', (c) => c.json({ ok: true, t: Date.now() }))
@@ -133,6 +219,64 @@ userApp.post('/ingest/frames', async (c) => {
   return c.json({ ok: true, id, key })
 })
 
+userApp.post('/ingest/activity', async (c) => {
+  const db = await gate(c)
+  if (!db) return c.json({ error: 'forbidden' }, 403)
+  const v = await readJson(c)
+  const sid = String(v.sid || '')
+  if (!SID_RE.test(sid)) return c.json({ error: 'bad sid' }, 400)
+  const install = String(v.install || '')
+  if (install && !INSTALL_RE.test(install)) return c.json({ error: 'bad install' }, 400)
+  const rawEvents = Array.isArray(v.events) ? v.events.slice(0, 500) : []
+  const events = rawEvents
+    .map((ev: any) => ({
+      t: Number(ev?.t) || Date.now(),
+      name: String(ev?.name || ''),
+      props: cleanActivityProps(ev?.props)
+    }))
+    .filter((ev: any) => ACTIVITY_EVENT_NAMES.has(ev.name))
+  if (!events.length) return c.json({ ok: true, sid, events: 0 })
+
+  const t0 = Number(v.t0) || events[0].t || Date.now()
+  const t1 = Number(v.t1) || events[events.length - 1].t || t0
+  const session = {
+    sid,
+    install,
+    version: String(v.version || '').slice(0, 64),
+    branch: String(v.branch || '').slice(0, 64),
+    run: Number(v.run) || 0,
+    platform: String(v.platform || '').slice(0, 32),
+    events: events.length,
+    t0,
+    t1
+  }
+  const existing = await db.table('activity_sessions').select({ where: `sid == "${sid}"`, limit: 1 })
+  if (Array.isArray(existing) && existing.length) {
+    await db
+      .rawSQL({
+        q:
+          'UPDATE activity_sessions SET install=?, version=?, branch=?, run=?, platform=?, events=events+?, ' +
+          't0=CASE WHEN t0=0 OR t0>? THEN ? ELSE t0 END, t1=CASE WHEN t1<? THEN ? ELSE t1 END WHERE sid=?',
+        v: [session.install, session.version, session.branch, session.run, session.platform, session.events, t0, t0, t1, t1, sid]
+      })
+      .run()
+  } else {
+    await db.table('activity_sessions').insert({ values: { id: crypto.randomUUID(), ...session } })
+  }
+  for (const ev of events) {
+    await db.table('activity_events').insert({
+      values: {
+        id: crypto.randomUUID(),
+        sid,
+        t: ev.t,
+        name: ev.name,
+        props: JSON.stringify(ev.props)
+      }
+    })
+  }
+  return c.json({ ok: true, sid, events: events.length })
+})
+
 // ---- dashboard data ----
 
 userApp.get('/dash/data', async (c) => {
@@ -152,6 +296,16 @@ userApp.get('/dash/sdata/:sid', async (c) => {
   const segs = await db.table('segments').select({ where: `sid == "${sid}"`, order: 'seq', limit: 2000 })
   const frames = await db.table('frames').select({ where: `sid == "${sid}"`, order: 't', limit: 5000 })
   return c.json({ session: ses?.[0] || null, segments: segs || [], frames: frames || [] })
+})
+
+userApp.get('/dash/activity/data', async (c) => {
+  const db = await gate(c)
+  if (!db) return c.json({ error: 'forbidden' }, 403)
+  const sessions = await db.table('activity_sessions').select({ order: '-updated', limit: 200 })
+  const events = await db.table('activity_events').select({ order: '-created', limit: 500 })
+  const counts: Record<string, number> = {}
+  for (const ev of events || []) counts[String(ev.name || '')] = (counts[String(ev.name || '')] || 0) + 1
+  return c.json({ sessions: sessions || [], events: events || [], counts })
 })
 
 async function serveObject(c: any, table: string, contentType: string): Promise<Response> {
