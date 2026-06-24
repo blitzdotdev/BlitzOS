@@ -2,7 +2,7 @@ import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShort
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
-import { spawn, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
 import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
 import { emitSystemMoment, emitWorkflowMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
@@ -72,11 +72,13 @@ process.stderr.on('error', () => {})
 //     so a read-only watch literally cannot scroll. `mouse on` is set on the view session, not blitz, so the
 //     agent's session is untouched. Tradeoff: keystrokes now reach the agent's session, so this is a
 //     watch-and-optionally-step-in view.
-//   • LAUNCH via Terminal.app's `do script` (AppleScript), NOT by exec'ing a terminal binary directly.
-//     Exec'ing the Ghostty binary forwards to the user's already-running Ghostty instance and could tear down
-//     its existing windows ("kills all processes on ghostty"). `do script` opens a FRESH window and never
-//     touches other windows/apps. The command is passed as osascript argv (item 1 of argv), so it needs only
-//     shell-quoting, no AppleScript-string escaping. `exec` so the window closes cleanly when tmux detaches.
+//   • LAUNCH by writing a .command launcher and `open`ing it — opens the user's DEFAULT terminal (Terminal,
+//     iTerm, Ghostty, whatever they set), with NO hardcoded app. The OLD path used AppleScript
+//     (`osascript … tell application "Terminal" to do script`), which requires macOS Automation (TCC) permission
+//     the app does not hold — so the AppleEvent failed/timed out (-1712), and because the launch was
+//     fire-and-forget returning ok:true, the button SILENTLY did nothing. `open` uses LaunchServices, not
+//     AppleEvents, so it needs no Automation grant. The launch is now CHECKED (a missing/failed open surfaces a
+//     real error to the button instead of a fake success).
 //   • Use the SAME bundled tmux the host runs (spec.bin) so client/server protocol versions match.
 // KNOWN: a tmux window is shared across clients, so the Terminal client contributes to that window's size
 // negotiation (window-size 'latest') — watching can reflow the agent's pane to the Terminal window's size.
@@ -129,18 +131,15 @@ function openTerminalExternal(id: string): { ok: boolean; error?: string } {
     execFileSync(spec.bin, t('select-window', '-t', `${grp}:${spec.window}`), { stdio: 'ignore' })
     // Mouse on for THIS view session only (idempotent every open) so the wheel scrolls — blitz keeps its own.
     execFileSync(spec.bin, t('set-option', '-t', grp, 'mouse', 'on'), { stdio: 'ignore' })
-    // Open a FRESH Terminal.app window running the attach. cmdLine is ONE osascript argv element (shell-quoted),
-    // so no AppleScript-string escaping is needed and spaces in the socket path are safe. exec → clean close.
-    const cmdLine = 'exec ' + [spec.bin, '-S', spec.socket, 'attach', '-t', grp].map(shq).join(' ')
-    const child = spawn('osascript', [
-      '-e', 'on run argv',
-      '-e', 'tell application "Terminal" to do script (item 1 of argv)',
-      '-e', 'tell application "Terminal" to activate',
-      '-e', 'end run',
-      cmdLine
-    ], { detached: true, stdio: 'ignore' })
-    child.on('error', (e) => console.error('[terminal] Terminal.app launch failed:', (e as Error)?.message || e))
-    child.unref()
+    // Write a .command launcher next to the tmux socket (always workspace-writable) and `open` it → the user's
+    // DEFAULT terminal opens a fresh window running the attach. The script is shell, so paths are shq-quoted.
+    const launcher = join(spec.socket, '..', '..', `open-external-${id}.command`)
+    try {
+      writeFileSync(launcher, `#!/bin/sh\nexec ${shq(spec.bin)} -S ${shq(spec.socket)} attach -t ${shq(grp)}\n`, { mode: 0o755 })
+      execFileSync('open', [launcher], { stdio: 'ignore', timeout: 8000 })
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message || 'failed to open terminal' }
+    }
     return { ok: true }
   } catch (e) {
     return { ok: false, error: (e as Error)?.message || 'failed to open Terminal' }
