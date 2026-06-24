@@ -1728,17 +1728,42 @@ app.whenReady().then(() => {
       if (terminal?.kind === 'agent') reviveOrRestartAgentBackend(id, terminal)
       else osKickBrain(id)
     })
-    // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
-    let resumed = false
-    const resumeAll = async (): Promise<void> => {
-      if (resumed || !getAgentSocketUrl()) return
-      resumed = true
-      try { await electronTerminalOps.whenRestored() } catch { /* ignore */ }
-      osResumeAgentsOnBoot()
+    // Resume/reattach all agents — SELF-HEALING, not a fragile one-shot. The old code fired resume exactly once
+    // when the relay URL appeared; if it missed an agent (relay URL lagged past the window, terminal adoption
+    // raced, or a single launch threw) that agent had NO terminal record and stayed DEAD forever — revivable only
+    // by a user message or the watchdog. That was the "agents go dead after relaunch" bug. Now: the initial batch
+    // still sets each agent 'starting' and launches it, then a periodic reconciler ENSURES every active on-disk
+    // agent has a backend — relaunching any with no record, retried until it is actually up. Once an agent has a
+    // record, terminal-manager owns its lifecycle (auto-restart on exit), so the reconciler skips it (no
+    // double-launch); the per-agent cooldown also covers the async spawn window before the record registers.
+    let initialResumeDone = false
+    const resumeAttempt = new Map<string, number>() // id -> last (re)launch tick (anti-double-launch + flap backoff)
+    const RECONCILE_COOLDOWN_MS = 30_000
+    const reconcileAgentBackends = async (): Promise<void> => {
+      if (!getAgentSocketUrl()) return // agents need the relay URL to function — retry on the next tick
+      const now = Date.now()
+      if (!initialResumeDone) {
+        initialResumeDone = true
+        try { await electronTerminalOps.whenRestored() } catch { /* ignore */ }
+        // Seed the cooldown for every agent the initial batch is about to launch, so the reconciler does not
+        // re-launch them before their records register (spawnTerminal is async).
+        try { for (const id of Object.keys(osAgentStatus() || {})) resumeAttempt.set(id, now) } catch { /* ignore */ }
+        osResumeAgentsOnBoot() // initial batch: sets 'starting' + launches every on-disk agent
+        return
+      }
+      let ids: string[] = []
+      try { ids = Object.keys(osAgentStatus() || {}) } catch { return } // authoritative active set (excludes archived/stopped)
+      for (const id of ids) {
+        if (electronTerminalOps.getTerminal(id)) continue // terminal-manager owns it (live, or exited+auto-restart)
+        if (now - (resumeAttempt.get(id) || 0) < RECONCILE_COOLDOWN_MS) continue // just (re)launched — let it settle
+        resumeAttempt.set(id, now)
+        console.warn(`[resume] agent ${id} has no backend; (re)launching`)
+        launchAgent(id, 0)
+      }
     }
-    // The URL is minted async after the relay connects; poll until it's up (capped ~2min), then resume once.
-    let tries = 0
-    const t = setInterval(() => { if (getAgentSocketUrl()) { clearInterval(t); void resumeAll() } else if (++tries > 150) clearInterval(t) }, 800)
+    // Tick periodically: covers a late-appearing relay URL AND any agent the initial batch missed. Cheap (a
+    // readdir + map checks); a no-op once every agent has a record. Runs for the life of the app — self-healing.
+    const t = setInterval(() => { void reconcileAgentBackends() }, 4000)
     app.on('before-quit', () => clearInterval(t))
     // The milestone NARRATOR: every ~60s, summarize each agent's NEW transcript activity into one plain step
     // (Haiku, strict JSON) and broadcast it (os:action {type:'milestone'}). Idle agents make no call. The island
