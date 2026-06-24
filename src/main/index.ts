@@ -72,13 +72,13 @@ process.stderr.on('error', () => {})
 //     so a read-only watch literally cannot scroll. `mouse on` is set on the view session, not blitz, so the
 //     agent's session is untouched. Tradeoff: keystrokes now reach the agent's session, so this is a
 //     watch-and-optionally-step-in view.
-//   • LAUNCH by writing a .command launcher and `open`ing it — opens the user's DEFAULT terminal (Terminal,
-//     iTerm, Ghostty, whatever they set), with NO hardcoded app. The OLD path used AppleScript
-//     (`osascript … tell application "Terminal" to do script`), which requires macOS Automation (TCC) permission
-//     the app does not hold — so the AppleEvent failed/timed out (-1712), and because the launch was
-//     fire-and-forget returning ok:true, the button SILENTLY did nothing. `open` uses LaunchServices, not
-//     AppleEvents, so it needs no Automation grant. The launch is now CHECKED (a missing/failed open surfaces a
-//     real error to the button instead of a fake success).
+//   • LAUNCH by writing a .command launcher and `open`ing it — opens in whatever app is REGISTERED to handle
+//     .command files (Terminal.app by default; the user can remap it in Finder → Get Info → Open with → Change All).
+//     NO app is hardcoded by us. The OLD path used AppleScript (`osascript … tell application "Terminal" to do
+//     script`), which requires macOS Automation (TCC) permission the app does not hold — so the AppleEvent
+//     failed/timed out (-1712), and because the launch was fire-and-forget returning ok:true, the button SILENTLY
+//     did nothing. `open` uses LaunchServices, not AppleEvents, so it needs no Automation grant. The launch is now
+//     CHECKED (a missing/failed open surfaces a real error to the button instead of a fake success).
 //   • Use the SAME bundled tmux the host runs (spec.bin) so client/server protocol versions match.
 // KNOWN: a tmux window is shared across clients, so the Terminal client contributes to that window's size
 // negotiation (window-size 'latest') — watching can reflow the agent's pane to the Terminal window's size.
@@ -1754,7 +1754,12 @@ app.whenReady().then(() => {
       let ids: string[] = []
       try { ids = Object.keys(osAgentStatus() || {}) } catch { return } // authoritative active set (excludes archived/stopped)
       for (const id of ids) {
-        if (electronTerminalOps.getTerminal(id)) continue // terminal-manager owns it (live, or exited+auto-restart)
+        // isTerminalLive = terminal-manager has an in-memory record (live.has) — true while it OWNS the lifecycle:
+        // running, OR exited-and-pending-auto-restart (the record survives the backoff window). False only when
+        // nobody is supervising it (never launched this session, or a launch that returned before spawnTerminal
+        // registered). MUST NOT use getTerminal here: it falls back to the on-disk meta, which exists for every
+        // agent ever launched, so it would skip even a truly-dead agent — defeating the self-heal.
+        if (electronTerminalOps.isTerminalLive(id)) continue
         if (now - (resumeAttempt.get(id) || 0) < RECONCILE_COOLDOWN_MS) continue // just (re)launched — let it settle
         resumeAttempt.set(id, now)
         console.warn(`[resume] agent ${id} has no backend; (re)launching`)

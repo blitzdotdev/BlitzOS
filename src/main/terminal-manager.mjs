@@ -139,8 +139,9 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
             // Ran healthily (≥5s) → it CREATED its --session-id conversation, so the next (re)launch must
             // --resume it, not re-create (the old headless "established-after-5s" rule on the terminal's timing).
             meta.claudeEstablished = true
-          } else if (meta.claudeEstablished) {
-            // Launched in --resume mode but FAST-EXITED: claude almost certainly printed "No conversation found"
+          } else if (meta.claudeEstablished && !rec.stopping && !shuttingDown && !stopRequested.has(id)) {
+            // Launched in --resume mode but FAST-EXITED (and NOT a deliberate stop / app shutdown — those exit fast
+            // too, and must NOT cost the agent its conversation): claude almost certainly printed "No conversation found"
             // and quit — the stored session is gone/unresumable (e.g. an old id whose transcript claude has since
             // dropped, or a storage-format change). No STATIC check can predict this (claude's on-disk format
             // varies), so detect it at RUNTIME and ROTATE to a FRESH session id + create mode. The auto-restart
