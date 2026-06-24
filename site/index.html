@@ -18,7 +18,7 @@
     --color-stone-300:#d6d7db;          /* marquee text */
     --ease:cubic-bezier(.4,0,.2,1);
 
-    --paper:#0a1733;   /* deep blue page (our surface) */
+    --paper:#070b18;   /* deep blue-black page (our surface) */
     --ink:#f4f4f5;     /* near-white ink */
 
     /* BlitzOS accents: gold brand mark + Apple-blue live signal */
@@ -39,8 +39,11 @@
   html{scroll-behavior:smooth}
   html,body{margin:0}
   body{
-    background:radial-gradient(125% 85% at 50% -8%,#16357f 0%,var(--paper) 52%) no-repeat,var(--paper);
-    background-attachment:fixed;
+    background:
+      radial-gradient(80% 50% at 50% -8%, rgba(38,104,224,.18) 0%, rgba(38,104,224,0) 60%),
+      radial-gradient(60% 40% at 85% 8%, rgba(10,132,255,.10) 0%, rgba(10,132,255,0) 55%),
+      var(--paper);
+    background-repeat:no-repeat;
     color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,system-ui,sans-serif;
     -webkit-font-smoothing:antialiased;
@@ -141,8 +144,14 @@
     box-shadow:0 28px 80px -28px rgba(0,0,0,.7),0 6px 18px -10px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.06);
   }
   .frame__img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:translateY(0)}
-  /* self-contained blue "desktop" behind the island demos (replaces the old external wallpaper). */
-  .frame__wall{background:linear-gradient(155deg,#0b2f7a 0%,#0a84ff 42%,#0a1733 100%)}
+  /* self-contained blue "desktop" behind the island demos (replaces the old external wallpaper). It is purely
+     decorative, so it must NOT capture taps meant for the island sitting on top of it (pointer-events:none). */
+  .frame__wall{
+    background:
+      radial-gradient(120% 90% at 28% 0%, rgba(120,170,255,.35), rgba(120,170,255,0) 60%),
+      linear-gradient(165deg,#2a5bbf 0%,#1a428f 46%,#0c2250 100%);
+    pointer-events:none;
+  }
   .frame::after{
     content:"";position:absolute;inset:0;pointer-events:none;
     background:radial-gradient(120% 90% at 50% 18%,rgba(0,0,0,.18),rgba(0,0,0,0) 55%);
