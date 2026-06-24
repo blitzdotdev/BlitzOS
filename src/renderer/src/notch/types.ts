@@ -38,6 +38,7 @@ export interface IslandAppPart {
   subtitle?: string
   icon?: IslandAppIcon
   tone?: IslandAppTone
+  preview?: string
 }
 
 export type IslandMessagePart =

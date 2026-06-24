@@ -147,6 +147,9 @@ function normalizedShareAppSpec(raw) {
   const subtitle = cleanText(raw?.subtitle, 140)
   const icon = SHARE_APP_ICONS.has(String(raw?.icon || '')) ? String(raw.icon) : 'dashboard'
   const tone = SHARE_APP_TONES.has(String(raw?.tone || '')) ? String(raw.tone) : 'sky'
+  // preview: optional bespoke HTML the island renders as the card face (a sandboxed srcdoc iframe). Static
+  // HTML/CSS only (no scripts run); when absent the card falls back to the icon+title+subtitle layout.
+  const preview = typeof raw?.preview === 'string' && raw.preview.trim() ? String(raw.preview) : ''
   return {
     ok: true,
     app: {
@@ -155,7 +158,8 @@ function normalizedShareAppSpec(raw) {
       url,
       ...(subtitle ? { subtitle } : {}),
       icon,
-      tone
+      tone,
+      ...(preview ? { preview } : {})
     }
   }
 }
@@ -261,6 +265,7 @@ export function makeOsTools(ops) {
           subtitle: { type: 'string' },
           icon: { type: 'string', enum: ['dashboard', 'report', 'table', 'checklist', 'form', 'share', 'browser', 'file'] },
           tone: { type: 'string', enum: ['sky', 'mint', 'amber', 'violet', 'lime', 'rose'] },
+          preview: { type: 'string' },
           agent: { type: 'string' },
           workspace: { type: 'string' }
         }

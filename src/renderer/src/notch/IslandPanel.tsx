@@ -649,7 +649,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
             className="isl-app-frame"
             title={`${openApp.title} generated app`}
             src={openApp.url}
-            scrolling="no"
+            scrolling="auto"
             sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
             onLoad={() => setAppFrameLoaded(true)}
           />

@@ -531,7 +531,7 @@ export function osShareApp(app: Record<string, unknown>, agentId = '0', workspac
     title,
     url: String(app?.url || '')
   }
-  for (const key of ['subtitle', 'icon', 'tone']) {
+  for (const key of ['subtitle', 'icon', 'tone', 'preview']) {
     const value = app?.[key]
     if (typeof value === 'string' && value.trim()) part[key] = value.trim()
   }

@@ -197,6 +197,24 @@ function AppPartMessage({ part, onOpenApp }: { part: IslandAppMessagePart; onOpe
   const normalized = normalizedBlitzAppPart(part)
   const tone = normalizeAppTone(part.tone)
   const disabled = !normalized || !onOpenApp
+  if (part.preview) {
+    // Bespoke agent-authored card face: the whole preview is self-contained static HTML/CSS in a sandboxed
+    // srcdoc iframe (no scripts run). pointer-events:none (CSS) so the button captures the click -> expand.
+    return (
+      <button
+        type="button"
+        className={`isl-app-card preview${disabled ? ' invalid' : ''}`}
+        data-tone={tone}
+        disabled={disabled}
+        aria-label={normalized ? `Open ${part.title}` : `Cannot open ${part.title}`}
+        onClick={() => {
+          if (normalized) onOpenApp?.(normalized)
+        }}
+      >
+        <iframe className="isl-app-card-preview" title={`${part.title} preview`} srcDoc={part.preview} sandbox="" scrolling="no" tabIndex={-1} aria-hidden />
+      </button>
+    )
+  }
   return (
     <button
       type="button"
