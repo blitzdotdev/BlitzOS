@@ -518,6 +518,20 @@ const api = {
       ipcRenderer.on('onboarding:permission-granted', listener)
       return () => ipcRenderer.removeListener('onboarding:permission-granted', listener)
     },
+    /** Open the Chrome "Allow JavaScript from Apple Events" step: main opens View, Developer and raises a
+     *  floating helper pointing at the row, then polls until the toggle takes effect. */
+    openChromeJsStep(): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:open-chromejs')
+    },
+    closeChromeJsStep(): Promise<{ ok: boolean }> {
+      return ipcRenderer.invoke('onboarding:close-chromejs')
+    },
+    /** Fired when main's poll detects Chrome Apple-Events JS is now enabled (the user ticked the row). */
+    onChromeJsGranted(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on('onboarding:chromejs-granted', listener)
+      return () => ipcRenderer.removeListener('onboarding:chromejs-granted', listener)
+    },
     /** Ask for Automation (AppleEvents) consent to the detected browser — raises the macOS prompt
      *  on first call; resolves AFTER the user answers, with live window/tab counts on grant. */
     requestAutomation(): Promise<{ status: 'granted' | 'denied' | 'unavailable'; windows?: number; tabs?: number; browser?: string }> {

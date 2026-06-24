@@ -53,13 +53,9 @@ export function orchestratorBootTask() {
 const sessionDir = (sessionsDir, id) => join(sessionsDir, String(id))
 const metaPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'meta.json')
 const bootstrapPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'bootstrap.txt')
-export const INTERVIEW_FAST_MODEL = 'sonnet'
-export const INTERVIEW_FAST_SETTINGS = { model: INTERVIEW_FAST_MODEL, effortLevel: 'low', env: { CLAUDE_CODE_EFFORT_LEVEL: 'low' } }
-// Reasoning effort by phase (the speed/quality split). The onboarding INTERVIEW runs LOW so its dynamic
-// Q&A stays snappy (and pins the fast standard-context model above). The RESIDENT agent runs XHIGH so it
-// follows the act/ask boundary precisely and makes better autonomous calls, keeping the USER's own model.
-// Tunable here. (Earlier "always low" pinned the resident low too, which made it over-ask on reversible work.)
-export const INTERVIEW_EFFORT = 'low'
+// Reasoning effort for the resident agent. Claude agents run XHIGH so they follow the act/ask boundary
+// precisely and make better autonomous calls, keeping the USER's own model. Tunable here. (Earlier
+// "always low" pinned the resident low too, which made it over-ask on reversible work.)
 export const RESIDENT_EFFORT = 'xhigh'
 export const AGENT_RUNTIME_CLAUDE = 'claude'
 export const AGENT_RUNTIME_CODEX_SERVERLESS = 'codex-serverless'
@@ -119,7 +115,7 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   const guide = bootTask
     ? `Your full operating guide is at ${B}/agents.md, with the complete tool set. You do NOT need it for the first step of your standing duty below, so do that FIRST and fetch the guide (\`curl -s ${B}/agents.md\`) only afterward, when you need a tool the duty did not give you. Do not let reading the guide delay your first action.`
     : `Your full operating guide is at ${B}/agents.md. Please read it first (\`curl -s ${B}/agents.md\`) and follow it; if that request doesn't succeed, give it another try before continuing.`
-  const web = `Hard web rule: if a task needs current/public web info, do it in the user's connected browser so the evidence is real. Use your backend's internal web-search/browser tool only as a discovery index to find candidate URLs or query angles; do not treat invisible snippets as final evidence. Before presenting findings, open every source you rely on in the connected browser (connection_read / connection_act). For open-ended research, use multiple query angles when useful.`
+  const web = `Hard web rule: do web work in Blitz Chrome, your own background browser (open it with blitz_chrome_open, drive it with the connection_* tools). Use your backend's internal web-search/browser tool only as a discovery index to find candidate URLs or query angles; do not treat invisible snippets as final evidence. Before presenting findings, open every source you rely on in Blitz Chrome (connection_read / connection_act). For open-ended research, use multiple query angles when useful.`
   const progress = `Hard visible-work rule: for any non-trivial user task (multi-step, research/current info, build/customize, compare, troubleshoot, browse, organize, or longer than a quick direct answer), say a one-line plan in chat BEFORE doing hidden work, then say a short line as each step lands. Going dark during active work is a failure; saying "I'm working" once with nothing after it is too. Keep it tight: if a result needs more than a couple of lines, write it to a deliverable. Use share_app for generated blitz.dev apps, complex visuals, dashboards, reports, rich tables/charts, or anything the user should inspect/manipulate. Never paste an *.app.blitz.dev preview URL through say; call share_app first, then summarize without the URL. Use normal markdown for quick prose. Tiny one-shot answers/actions can stay direct.`
   const recover = `Get your bearings first: you may have been restarted, so recover the conversation before doing anything. Call \`list_state\` to get \`workspace_path\`, then read the recent chat: \`tail -n 60 "$workspace_path/${chatFile}"\`. That file is your saved conversation with the user and it carries over between restarts (the live event feed does not). Reading it helps you understand follow-ups like "continue the X thing" or "go". If the last line is a user message you haven't answered, answer it now.`
   // The OS can hand a session ONE standing duty (e.g. the onboarding interview); the duty text licenses
@@ -156,25 +152,22 @@ export function shellQuote(s) {
  *  INTERACTIVE (no -p): claude renders its full TUI in the terminal so the user can WATCH it work — print
  *  mode (-p) ran silently, leaving the terminal blank. --dangerously-skip-permissions: the agent acts
  *  unattended; cwd=workspace is set by the spawner (REQUIRED for --resume to find the session). */
-export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, effort = null, pinFastModel = false, hooks = null }) {
+export function buildClaudeCommand({ cmd = 'claude', claudeSid, mode = 'create', bootstrapFile, effort = null, hooks = null }) {
   const sessionArg = mode === 'resume' ? `--resume ${claudeSid}` : `--session-id ${claudeSid}`
-  // `effort` sets the reasoning level for THIS launch (INTERVIEW_EFFORT 'low' for the snappy interview,
-  // RESIDENT_EFFORT 'xhigh' for the resident so it follows the boundary and decides well). The real control
-  // is `--settings`, NOT --effort or env alone: Claude Code's precedence is CLI args > project > USER
-  // (~/.claude/settings.json), so we pass both and override the user's global either way, leaving the user's
-  // own MODEL untouched. pinFastModel ALSO pins the fast standard-context model — INTERVIEW ONLY (a user's
-  // 1M-context model would burn a usage credit per dynamic question). Timing on a small prompt: xhigh ~7.9s,
+  // `effort` sets the reasoning level for THIS launch (RESIDENT_EFFORT 'xhigh' for the resident so it follows
+  // the boundary and decides well). The real control is `--settings`, NOT --effort or env alone: Claude Code's
+  // precedence is CLI args > project > USER (~/.claude/settings.json), so we pass both and override the user's
+  // global either way, leaving the user's own MODEL untouched. Timing on a small prompt: xhigh ~7.9s,
   // --effort low ~3.9s, --settings low ~2.7s.
   // `hooks`: a GENERIC Claude Code `--settings` hooks object MERGED into the SAME --settings JSON (an extension
   // seam for any future hook). hooks=null (the default today) → byte-identical to before. The merge keeps the
-  // effort/model logic intact; --settings is emitted when EITHER effort OR hooks is present.
+  // effort logic intact; --settings is emitted when EITHER effort OR hooks is present.
   let tuned = ''
-  const settings = pinFastModel ? { ...INTERVIEW_FAST_SETTINGS } : effort ? { effortLevel: effort, env: { CLAUDE_CODE_EFFORT_LEVEL: effort } } : {}
+  const settings = effort ? { effortLevel: effort, env: { CLAUDE_CODE_EFFORT_LEVEL: effort } } : {}
   if (hooks && typeof hooks === 'object') Object.assign(settings, hooks) // hooks is a top-level settings key alongside effortLevel/env/model
   if (effort || (hooks && typeof hooks === 'object')) {
-    const model = pinFastModel ? `--model ${INTERVIEW_FAST_MODEL} ` : ''
     const effortArg = effort ? `--effort ${effort} ` : ''
-    tuned = `${model}${effortArg}--settings ${shellQuote(JSON.stringify(settings))} `
+    tuned = `${effortArg}--settings ${shellQuote(JSON.stringify(settings))} `
   }
   // TODO(E1 irreversible gate — guardrails-doc Phase 2 "Irreversible gate", a SEPARATE decision, deliberately out of
   // this slice): for a real "ask before send/post/deploy/spend", drop `--dangerously-skip-permissions` to
@@ -193,12 +186,12 @@ export function buildCodexServerlessCommand({ cmd = 'codex', bootstrapFile, lowT
   return `${cmd} exec ${effort}--disable plugins --ignore-user-config --ignore-rules --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --color never "$(cat ${shellQuote(bootstrapFile)})"`
 }
 
-export function buildAgentCommand({ runtime = AGENT_RUNTIME_CLAUDE, cmd, claudeSid, mode = 'create', bootstrapFile, effort = null, pinFastModel = false, hooks = null }) {
+export function buildAgentCommand({ runtime = AGENT_RUNTIME_CLAUDE, cmd, claudeSid, mode = 'create', bootstrapFile, effort = null, hooks = null }) {
   const r = normalizeAgentRuntime(runtime)
   // Codex only has the low cap (its reasoning effort lever is a single low/default), so map effort 'low' → it.
   // `hooks` is a Claude Code --settings feature; Codex has no equivalent, so it is dropped for the Codex backend.
   if (r === AGENT_RUNTIME_CODEX_SERVERLESS) return buildCodexServerlessCommand({ cmd: cmd || 'codex', bootstrapFile, lowThinking: effort === 'low' })
-  return buildClaudeCommand({ cmd: cmd || 'claude', claudeSid, mode, bootstrapFile, effort, pinFastModel, hooks })
+  return buildClaudeCommand({ cmd: cmd || 'claude', claudeSid, mode, bootstrapFile, effort, hooks })
 }
 
 /** Has claude ALREADY created this conversation on disk? claude writes `<configDir>/projects/<encoded-cwd>/
@@ -264,13 +257,10 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
     writeBlitzShim(dirname(sessionsDir)) // <ws>/.blitzos/blitz + orchestrator.md — the workflow runner + duty (orchestrators toggle)
     ensureWorkspaceTrusted(dirname(dirname(sessionsDir))) // unattended spawn must never stall on the trust dialog
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
-  // Reasoning effort by phase (Claude). The onboarding interview runs LOW + pins the fast model so its
-  // dynamic Q&A stays snappy; the RESIDENT agent runs XHIGH (RESIDENT_EFFORT) so it follows the act/ask
-  // boundary and decides well, keeping the user's own model. Codex only has the low cap, during the interview.
-  const interview = String(id) === '0' && typeof bootTask === 'string' && bootTask.includes('THE ONBOARDING INTERVIEW')
+  // Reasoning effort (Claude). The RESIDENT agent runs XHIGH (RESIDENT_EFFORT) so it follows the act/ask
+  // boundary and decides well, keeping the user's own model. Codex carries no effort knob here (null).
   const isClaude = agentRuntime === AGENT_RUNTIME_CLAUDE
-  const effort = interview ? INTERVIEW_EFFORT : isClaude ? RESIDENT_EFFORT : null
-  const pinFastModel = interview && isClaude
+  const effort = isClaude ? RESIDENT_EFFORT : null
   return {
     agentRuntime,
     agentSessionId,
@@ -282,8 +272,7 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
       claudeSid: claudeState.claudeSessionId,
       mode: claudeState.established ? 'resume' : 'create',
       bootstrapFile: file,
-      effort,
-      pinFastModel
+      effort
     })
   }
 }

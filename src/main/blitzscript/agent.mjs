@@ -176,7 +176,7 @@ export function leafMetadata(depth) {
     '---',
     `[blitzscript runtime metadata — depth ${depth}]`,
     'You are a leaf agent inside a blitzscript workflow. Do NOT recurse: no `blitz run`, no spawning sub-agents. Answer the task directly.',
-    'Act-vs-ask boundary: do reversible work on your own; ASK (do not act) before any irreversible outward act (send/post/delete/deploy/pay).',
+    'Permissions: do everything reversible on your own; ask ONLY before a destructive or irreversible act (messaging or posting as the user, force pushing, deleting, deploying, spending).',
     'Return a concise, structured result and stop.',
     '---',
   ].join('\n')

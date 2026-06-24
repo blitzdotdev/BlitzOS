@@ -97,9 +97,26 @@ const INTRO_SLIDES: IntroSlide[] = [
 
 const isGranted = (state: PreboardState, key: DragKind): boolean => !!state[key] || state.steps[key] === 'granted'
 const permissionPending = (state: PreboardState): boolean => PERMISSIONS.some((permission) => !isGranted(state, permission.key))
+// The Chrome "Allow JavaScript from Apple Events" step only applies to Google Chrome (the View ▸ Developer
+// row + the bridge target are Chrome-specific). No Chrome detected → skip the step entirely.
+const CHROME_BROWSER_ID = 'com.google.Chrome'
+const wantsChromeJs = (state: PreboardState): boolean => state.browser?.id === CHROME_BROWSER_ID
+
+// Forward-compatible bridge: the Chrome-JS IPC lives in main (onboarding.ts) and its preload bindings in
+// src/preload/index.ts; access them through an optional-typed cast so this stays robust even if a build lacks
+// them (no-ops rather than failing to compile). NOT a hack — the methods are genuinely optional.
+type OnboardingChromeJsApi = {
+  openChromeJsStep?: () => Promise<{ ok: boolean }>
+  closeChromeJsStep?: () => Promise<{ ok: boolean }>
+  onChromeJsGranted?: (cb: () => void) => () => void
+}
+const chromeJsApi = (api: NonNullable<typeof window.agentOS>['onboarding'] | undefined): OnboardingChromeJsApi | undefined =>
+  api as (OnboardingChromeJsApi & typeof api) | undefined
 
 function nextStep(state: PreboardState, permissionsDone: boolean): StepKey {
   if (!permissionsDone && permissionPending(state)) return 'permissions'
+  // Chrome JS bridge sits immediately after the Mac permissions (it depends on the Automation/AX grants).
+  if (wantsChromeJs(state) && !state.steps.chromejs) return 'chromejs'
   if (state.browser && state.steps.browser == null) return 'browser'
   return 'done'
 }
@@ -174,6 +191,7 @@ export function IslandOnboarding({
       alive = false
       clearAdvance()
       void api.closePermissionDrag?.()
+      void chromeJsApi(api)?.closeChromeJsStep?.()
     }
   }, [])
 
@@ -217,6 +235,55 @@ export function IslandOnboarding({
       })
       .catch(() => setClaude({ installed: false, path: null }))
   }, [])
+
+  // ---- Chrome "Allow JavaScript from Apple Events" step (Chrome-only; sits right after the Mac permissions) ----
+  // Open View ▸ Developer + float the helper at the row; main's probe pushes chromejs-granted once the user ticks it.
+  const openChromeJs = (): void => {
+    setError(null)
+    const request = chromeJsApi(api)?.openChromeJsStep?.()
+    if (!request) {
+      // Bindings absent (or non-macOS): let the user move past rather than trapping them here.
+      setError('Could not open the Chrome helper. You can enable this later in Chrome ▸ View ▸ Developer.')
+      return
+    }
+    request
+      .then((result) => {
+        if (!result?.ok) setError('Could not open the Chrome helper.')
+      })
+      .catch(() => setError('Could not open the Chrome helper.'))
+  }
+  const skipChromeJs = (): void => {
+    if (!state) return
+    void chromeJsApi(api)?.closeChromeJsStep?.()
+    void api?.preboardMark?.('chromejs', 'skipped')
+    const next: PreboardState = { ...state, steps: { ...state.steps, chromejs: 'skipped' } }
+    setPreboard(next)
+    goNext(next)
+  }
+  // Main pushes chromejs-granted the moment its probe sees Chrome's Apple-Events JS turn on → mark done + advance
+  // off the freshest store snapshot (the handler must not wait for a re-render).
+  useEffect(() => {
+    const onGranted = chromeJsApi(api)?.onChromeJsGranted
+    if (!onGranted) return undefined
+    return onGranted(() => {
+      void api?.preboardMark?.('chromejs', 'granted')
+      const cur = getOnboardingProgress().preboard
+      if (!cur) return
+      const next: PreboardState = { ...cur, steps: { ...cur.steps, chromejs: 'granted' } }
+      setPreboard(next)
+      goNext(next)
+    })
+  }, [])
+  // Auto-open the Chrome helper on entry to the chromejs step (one row, so open it for them); close it on leave.
+  useEffect(() => {
+    if (step !== 'chromejs') return undefined
+    openChromeJs()
+    return () => {
+      void chromeJsApi(api)?.closeChromeJsStep?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step])
+
   const recheckClaude = (): void => {
     if (!api?.claudeStatus || claudeRechecking) return
     setClaudeRechecking(true)
@@ -448,6 +515,28 @@ export function IslandOnboarding({
           </div>
         </div>
       )}
+            {step === 'chromejs' && state && (
+        <div className="isl-onb-card">
+          <div className="isl-onb-card-head">
+            <span>Let Blitz drive Chrome</span>
+            <span>{state.browser?.name || 'Chrome'}</span>
+          </div>
+          <p className="isl-onb-inline-copy">
+            Blitz works your Chrome without an extension. Turn on one Chrome setting so it can read and act in your tabs.
+          </p>
+          <div className="isl-onb-hint">
+            Chrome is open at View, Developer. Tick &ldquo;Allow JavaScript from Apple Events&rdquo; and Blitz continues on its own.
+          </div>
+          <div className="isl-onb-actions">
+            <button type="button" className="isl-onb-secondary" onClick={openChromeJs}>
+              Reopen menu
+            </button>
+            <button type="button" className="isl-onb-quiet" onClick={skipChromeJs}>
+              Not now
+            </button>
+          </div>
+        </div>
+            )}
             {step === 'browser' && state && (
         <div className="isl-onb-card">
           <div className="isl-onb-card-head">

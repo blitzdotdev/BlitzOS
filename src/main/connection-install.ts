@@ -1,3 +1,8 @@
+// DEPRECATED (kept for reference, no longer invoked at boot). The BlitzOS Connector Chrome extension is no longer
+// shipped, and Chrome is now driven EXTENSION-FREE via Apple Events (connection-chrome-applescript-link.mjs). The
+// boot auto-install plus the setInstaller/startConnectorServer wiring in index.ts were removed, so nothing calls
+// these functions anymore. They stay here only so the old force-install path is documented if we ever need it again.
+//
 // Force-install of the BlitzOS Connector Chrome extension. The user chose a RUNTIME ADMIN PROMPT (no .pkg):
 // BlitzOS writes the ExtensionInstallForcelist managed policy to /Library/Managed Preferences via an
 // AuthorizationServices admin prompt (osascript `with administrator privileges`), and self-hosts the .crx +

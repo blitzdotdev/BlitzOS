@@ -45,6 +45,21 @@ export function clearLiveTray(chat: string): void {
   if (live[chat]) delete live[chat]
 }
 
+// Drop a chat's frozen snapshots from the cache when its agent is CLOSED for good. Agent ids are reused (the main
+// process mints max(live ids)+1, so a freed number is handed back out), and this in-memory cache + the `loaded`
+// flag survive the close — so without this a new agent that reuses the id shows the CLOSED agent's snapshot. Clearing
+// `loaded` makes the next mount re-read the now-wiped disk (main deletes the file on close + on id re-mint). Call ONLY
+// on a genuine close (the `agent-remove` broadcast), never on archive — archived chats keep their snapshots to restore.
+export function dropChat(chat: string): void {
+  loaded.delete(chat)
+  loading.delete(chat)
+  if (!(chat in snaps)) return
+  const next = { ...snaps }
+  delete next[chat]
+  snaps = next
+  emit()
+}
+
 async function ensureLoaded(chat: string): Promise<void> {
   if (loaded.has(chat) || loading.has(chat)) return
   loading.add(chat)

@@ -43,7 +43,7 @@ export function parseBlitzUiChoicePart(text: string): IslandChoicePart | null {
   const spec = raw as Record<string, unknown>
   const rawKind = cleanPartText(spec.type || spec.kind, 32)
   const layout: IslandChoicePart['layout'] = rawKind === 'choice' || rawKind === 'grid' ? rawKind : 'confirm'
-  const prompt = cleanPartText(spec.prompt, 240)
+  const prompt = cleanPartText(spec.prompt || spec.title || spec.question || spec.heading, 240)
   const options = (Array.isArray(spec.options) ? spec.options : [])
     .map(normalizeChoiceOption)
     .filter((option): option is IslandChoiceOption => Boolean(option))

@@ -1757,6 +1757,20 @@ export function removeAgentFiles(dir, agentId) {
     const sdir = safeJoin(dir, join('.blitzos', sub, id))
     if (sdir && existsSync(sdir)) { try { markWrite(resolve(sdir)); rmSync(sdir, { recursive: true, force: true }) } catch { /* best-effort */ } }
   }
+  removeAgentAttachments(dir, id) // the per-message attachment snapshots are a per-agent artifact too — drop them
+}
+
+/** Delete an agent's frozen per-message attachment snapshots (`.blitzos/attachments/<id>.json`, written by the
+ *  renderer over IPC). A per-agent artifact like the chat file: removed on close, AND again when the id is re-minted.
+ *  WHY both: agent ids are reused (newAgentId hands out max(live ids)+1, so a closed agent's number is handed back),
+ *  so a fresh agent can be reborn onto a previous agent's id and would otherwise inherit its frozen dropbox. Numeric
+ *  ids only (matches newAgentId / the closeAgent guard) so a crafted id can never path-traverse. */
+export function removeAgentAttachments(dir, agentId) {
+  if (!dir) return // no active workspace → nothing to clean (newAgentId can run before one is set)
+  const id = String(agentId)
+  if (!/^[0-9]+$/.test(id)) return
+  const abs = safeJoin(dir, join('.blitzos', 'attachments', id + '.json'))
+  if (abs && existsSync(abs)) { try { markWrite(resolve(abs)); unlinkSync(abs) } catch { /* best-effort */ } }
 }
 
 // ===========================================================================================

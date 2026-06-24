@@ -214,9 +214,20 @@ ok('island onboarding starts with five simple intro slides before setup',
     /\.oba-home-icon img/.test(onboardingVisualsCss) &&
     /background: #0a84ff;/.test(islandCss) &&
     /\.isl-onb-progress/.test(islandCss))
-ok('legacy onboarding chat interview is opt-in only',
-  /const ONBOARDING_CHAT_ENABLED = process\.env\.BLITZ_ONBOARDING_CHAT === '1'/.test(onboardingMain) &&
-    /export function interviewBootTask\(\): string \| null \{[\s\S]*?if \(!ONBOARDING_CHAT_ENABLED\) return null/.test(onboardingMain) &&
+ok('agent 0 boots into the resident-only BLITZ_DUTY — no interview, no choice-card kickoff, no greeting',
+  // ONE resident duty, not two phases: the interview/resident split (INTERVIEW_BOOT_TASK +
+  // RESIDENT_INITIATIVE_BOOT_TASK) is gone; interviewBootTask() returns BLITZ_DUTY (the chat gate aside).
+  /const BLITZ_DUTY =/.test(onboardingMain) &&
+    /resident agent/.test(onboardingMain) &&
+    /Do not run an interview/.test(onboardingMain) &&
+    /export function interviewBootTask\(\): string \| null \{[\s\S]*?if \(!ONBOARDING_CHAT_ENABLED\) return null[\s\S]*?return BLITZ_DUTY/.test(onboardingMain) &&
+    !/INTERVIEW_BOOT_TASK/.test(onboardingMain) &&
+    !/RESIDENT_INITIATIVE_BOOT_TASK/.test(onboardingMain) &&
+    // The duty itself must never kick off an interview / choice-card flow.
+    !/THE ONBOARDING INTERVIEW/.test(onboardingMain) &&
+    !/choice-card question/.test(onboardingMain) &&
+    // The opt-in chat gate + the (now interview-free) artifact/phase guards still hold.
+    /const ONBOARDING_CHAT_ENABLED = process\.env\.BLITZ_ONBOARDING_CHAT === '1'/.test(onboardingMain) &&
     /function startInterviewPhase\(wsPath: string\): void \{[\s\S]*?if \(!ONBOARDING_CHAT_ENABLED\)/.test(onboardingMain) &&
     /if \(ONBOARDING_CHAT_ENABLED\) ensureInterviewArtifacts\(wsPath\)/.test(onboardingMain))
 ok('permission drag helper shows a Blitz icon with a clear drag animation while dragging the real helper bundle',

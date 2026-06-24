@@ -2686,7 +2686,8 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-app-card.preview {
   display: block;
   grid-template-columns: none;
-  width: min(100%, 486px);
+  width: 460px;
+  max-width: 100%;
   min-height: 0;
   margin: 9px auto 0;
   padding: 0;
@@ -2817,6 +2818,18 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-app-viewer[data-loaded='false'] .isl-app-scroll {
   pointer-events: none;
 }
+/* Prewarm state: the app iframe is mounted and loading, but kept invisible + click-through ON-screen (so the
+   browser does NOT throttle the load) until the user opens it. Promoting to `.viewing` just drops these overrides,
+   so the already-loaded iframe is revealed instantly with no remount. The latest app stays warm while the island
+   is open (bounded to ONE app). */
+.nh-island .isl-app-viewer.isl-app-warm:not(.viewing) {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+  animation: none;
+}
 .nh-island .isl-app-scroll::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -2864,6 +2877,45 @@ button.isl-app-chat:active .isl-app-icon {
   stroke: currentColor;
   stroke-width: 2.2;
   stroke-linecap: round;
+}
+/* Claim pill: same glass chrome as the close X, sat just left of it, accent-tinted as the primary action
+   (keep this app past the ~12h anon expiry). Shown only when the part carries a claimUrl. */
+.nh-island.isl-app-viewing > .isl-app-viewer-claim {
+  position: absolute;
+  top: 12px;
+  right: 50px;
+  z-index: 40;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 24%, rgba(18, 20, 25, 0.78));
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: var(--text-ui);
+  font-weight: 600;
+  line-height: 1;
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-claim:hover {
+  background: color-mix(in srgb, var(--accent) 34%, rgba(18, 20, 25, 0.86));
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-claim svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .nh-island .isl-app-frame {
   display: block;

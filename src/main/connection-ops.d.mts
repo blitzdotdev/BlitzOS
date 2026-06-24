@@ -20,6 +20,10 @@ export interface ConnectionBindSpec {
   /** The chat session that attached this source ('' = the new-session composer, reassigned on spawn). Owner-scopes
    *  connection_list per chat + targets the attach moment. */
   agentId?: string
+  /** WHOSE source this is, surfaced in connectionList so the agent works in a user-attached source instead of
+   *  defaulting to its own Blitz Chrome: 'user-chrome' | 'user-safari' = the user's own browser they connected;
+   *  'window' = a native macOS app; 'blitz-chrome' = the agent's own browser. */
+  origin?: 'user-chrome' | 'user-safari' | 'window' | 'blitz-chrome'
 }
 
 export interface ConnectionInfo {
@@ -85,6 +89,8 @@ export interface ConnectionOps {
   ): void
   /** The Safari link (Apple Events) registers itself; its tabs merge into connection_list_tabs (browser:'safari'). */
   setSafariLink(link: { listTabs: () => Promise<unknown>; connectTab: (tabId: string, opts?: any) => Promise<unknown> } | null): void
+  /** The Chrome Apple-Events link registers itself; its tabs merge into connection_list_tabs (browser:'chrome'). Replaces the deprecated connector extension. */
+  setChromeAsLink(link: { listTabs: () => Promise<unknown>; connectTab: (tabId: string, opts?: any) => Promise<unknown> } | null): void
   connectionListTabs(): Promise<Record<string, unknown>>
   connectionConnectTab(tabId: number | string, opts?: { title?: string; sourceId?: string; agentId?: string; browser?: string }): Promise<Record<string, unknown>>
   /** The window link (Electron-only) registers itself so connection_list_windows / connection_connect_window work. */

@@ -18,7 +18,7 @@ import { isSubagentEvents } from './wfReduce'
 import { fmtMs, fmtTok } from './wfShared'
 import { matchingChoiceAnswerForMessage, messagePartsFor } from './messageParts'
 import { agentGradient } from './agentVisuals'
-import { normalizedBlitzAppPart } from './appEmbeds'
+import { normalizedBlitzAppPart, normalizedBlitzAppUrl } from './appEmbeds'
 import type { IslandAppMessagePart, IslandPanelProps, IslandWfRun } from './types'
 
 const AGENT_NAME_MAX = 24
@@ -89,9 +89,11 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const feedRef = useRef<HTMLDivElement>(null)
   const lyricsRef = useRef<HTMLDivElement>(null)
   const tabRailRef = useRef<HTMLDivElement>(null) // the horizontally-scrolling agent-tab rail (the + sits OUTSIDE it)
-  // Attach mode in an AGENT chat: lock the island to the height it had BEFORE attach opened, so the attachment panel
-  // rises only as tall as its own content and the chat feed shrinks to fit (instead of the island growing). We keep
-  // the last closed-state height in a ref (recorded after every closed render) and apply it while attach is open.
+  // Attach mode in an AGENT chat: hold the island to AT LEAST the height it had BEFORE attach opened (a FLOOR via
+  // min-height, NOT a hard cap), so a tall chat feed shrinks to absorb the attach panel and the island does not jump.
+  // On a short/empty chat the feed cannot shrink the full ~168px, so the floor lets the island grow to fit the boxes
+  // instead of clipping them (the bug when opening attach on a brand-new agent chat). We keep the last closed-state
+  // height in a ref (recorded after every closed render) and apply it as min-height while attach is open.
   const panelRef = useRef<HTMLDivElement>(null)
   const closedHeightRef = useRef<number | null>(null)
   const appReturnScrollTopRef = useRef<number | null>(null)
@@ -100,7 +102,29 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const [detailRows, setDetailRows] = useState<Array<{ label: string }>>([])
   const [pendingChoiceSelections, setPendingChoiceSelections] = useState<Record<string, string>>({})
   const [openApp, setOpenApp] = useState<IslandAppMessagePart | null>(() => activeApp)
-  const [appFrameLoaded, setAppFrameLoaded] = useState(false)
+  // The app viewer iframe is mounted PERSISTENTLY and kept warm so opening an app is an instant reveal, not a cold
+  // multi-second load. warmAppUrl = the OPEN app's url while viewing (its iframe never remounts), else the LATEST
+  // app card in chat (prewarmed offscreen). appLoadedUrl tracks which url finished loading so the spinner only
+  // shows for a genuinely-unloaded app; warmArmed gates the offscreen prewarm behind a short settle delay.
+  const [appLoadedUrl, setAppLoadedUrl] = useState<string | null>(null)
+  const [warmArmed, setWarmArmed] = useState(false)
+  const warmAppUrl = useMemo(() => {
+    const open = normalizedBlitzAppUrl(openApp?.url)
+    if (open) return open
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const parts = messages[i]?.parts
+      if (!parts) continue
+      for (let j = parts.length - 1; j >= 0; j--) {
+        const p = parts[j]
+        if (p?.type === 'app') {
+          const u = normalizedBlitzAppUrl(p.url)
+          if (u) return u
+        }
+      }
+    }
+    return null
+  }, [openApp, messages])
+  const appViewerReady = !!warmAppUrl && appLoadedUrl === warmAppUrl
   // Attachment SNAPSHOT: a frozen, read-only copy of the dropbox shown above the user message it rode on. PERSISTED
   // (sentTrayStore → disk) so it survives island reopen AND a full quit/restart. Keyed by the user-message ORDINAL —
   // the dropbox clears on send, so each message's snapshot is exactly what was staged at THAT send.
@@ -315,15 +339,30 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     setDetailRows([])
     setPendingChoiceSelections({})
     setOpenApp(null)
-    setAppFrameLoaded(false)
     onActiveAppChange(null)
     onAppViewerToggle?.(false)
   }, [activeId, onActiveAppChange, onAppViewerToggle])
 
   useEffect(() => {
     setOpenApp(activeApp)
-    setAppFrameLoaded(false)
   }, [activeApp])
+
+  // Prewarm the latest app's iframe shortly after it appears — a short settle delay dodges the brief post-deploy
+  // 522/propagation window the doctrine warns about (a prewarm landing inside it could cache a transient error).
+  // When an app is actually opened we arm immediately (correctness beats the dodge).
+  useEffect(() => {
+    if (!warmAppUrl) {
+      setWarmArmed(false)
+      return
+    }
+    if (openApp) {
+      setWarmArmed(true)
+      return
+    }
+    setWarmArmed(false)
+    const t = window.setTimeout(() => setWarmArmed(true), 2500)
+    return () => window.clearTimeout(t)
+  }, [warmAppUrl, openApp])
 
   useEffect(() => {
     if (!editingId) return
@@ -454,7 +493,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     const normalized = normalizedBlitzAppPart(part)
     if (!normalized) return
     appReturnScrollTopRef.current = feedRef.current?.scrollTop ?? null
-    setAppFrameLoaded(false)
     setOpenApp(normalized)
     onActiveAppChange(normalized)
     if (attachOpen) onToggleAttach()
@@ -462,7 +500,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   }
   const closeAppViewer = (): void => {
     setOpenApp(null)
-    setAppFrameLoaded(false)
     onActiveAppChange(null)
     onAppViewerToggle?.(false)
   }
@@ -701,20 +738,28 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       )}
     </div>
   ) : null
-  const appViewer = openApp ? (
-    <>
-      <div className="isl-app-viewer" data-tone={openApp.tone} data-loaded={appFrameLoaded ? 'true' : 'false'}>
+  // The persistent app iframe. Mounted whenever there is a warm url (an open app, or — once armed — the latest
+  // card to prewarm), and promoted to the foreground via `.viewing` only when an app is actually open. The src is
+  // the SAME across prewarm -> open -> close for one app, so revealing it never remounts the iframe: instant.
+  const appLayer =
+    warmAppUrl && (openApp || warmArmed) ? (
+      <div
+        className={`isl-app-viewer isl-app-warm${openApp ? ' viewing' : ''}`}
+        data-tone={openApp?.tone}
+        data-loaded={appViewerReady ? 'true' : 'false'}
+        aria-hidden={!openApp}
+      >
         <div className="isl-app-scroll">
           <iframe
             className="isl-app-frame"
-            title={`${openApp.title} generated app`}
-            src={openApp.url}
+            title="Generated app"
+            src={warmAppUrl}
             scrolling="auto"
             sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
-            onLoad={() => setAppFrameLoaded(true)}
+            onLoad={() => setAppLoadedUrl(warmAppUrl)}
           />
         </div>
-        {!appFrameLoaded && (
+        {openApp && !appViewerReady && (
           <div className="isl-app-loading" role="status" aria-live="polite">
             <span className="isl-app-loading-mark" aria-hidden />
             <span className="isl-app-loading-copy">
@@ -724,6 +769,25 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           </div>
         )}
       </div>
+    ) : null
+  const viewerControls = openApp ? (
+    <>
+      {openApp.claimUrl && (
+        <button
+          type="button"
+          className="isl-app-viewer-claim"
+          aria-label={`Claim ${openApp.title}`}
+          title="Keep this app — claim it before it expires"
+          onClick={() => {
+            if (openApp?.claimUrl) void window.agentOS?.openExternalUrl?.(openApp.claimUrl)
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+            <path d="M6 3h12v18l-6-4-6 4V3Z" />
+          </svg>
+          <span>Claim app</span>
+        </button>
+      )}
       <button type="button" className="isl-app-viewer-close" aria-label="Close generated app" onClick={closeAppViewer}>
         <svg viewBox="0 0 24 24" aria-hidden focusable="false">
           <path d="M18 6 6 18M6 6l12 12" />
@@ -735,14 +799,16 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     <div
       ref={panelRef}
       className={`nh-island isl-process${attachOpen ? ' isl-attaching' : ''}${openApp ? ' isl-app-viewing' : ''}`}
-      style={lockHeight && !openApp ? { paddingTop: top, height: lockHeight } : { paddingTop: top }}
+      style={lockHeight && !openApp ? { paddingTop: top, minHeight: lockHeight } : { paddingTop: top }}
     >
+      {appLayer}
+      {viewerControls}
       {!openApp && (
         <div className={`isl-tabwrap${attachOpen ? ' collapsed' : ''}`}>
           <div className="isl-tabwrap-inner">{tabStrip}</div>
         </div>
       )}
-      {openApp ? appViewer : (
+      {!openApp && (
         // The active agent's chat (Blitz '0' or a peer): real messages + inline activity details — KEPT in attach mode.
         <>
           <div className="isl-agent-meta">

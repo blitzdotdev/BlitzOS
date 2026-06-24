@@ -21,9 +21,9 @@ export interface HookSettings {
   hooks: { [event: string]: Array<{ hooks: Array<{ type: string; command: string }> }> }
 }
 export function normalizeAgentRuntime(value?: string | null): AgentRuntime | string
-export function buildClaudeCommand(opts: { cmd?: string; claudeSid: string; mode?: 'create' | 'resume'; bootstrapFile: string; effort?: string | null; pinFastModel?: boolean; hooks?: HookSettings | null }): string
+export function buildClaudeCommand(opts: { cmd?: string; claudeSid: string; mode?: 'create' | 'resume'; bootstrapFile: string; effort?: string | null; hooks?: HookSettings | null }): string
 export function buildCodexServerlessCommand(opts: { cmd?: string; bootstrapFile: string; lowThinking?: boolean }): string
-export function buildAgentCommand(opts: { runtime?: AgentRuntime | string; cmd?: string; claudeSid?: string; mode?: 'create' | 'resume'; bootstrapFile: string; effort?: string | null; pinFastModel?: boolean; hooks?: HookSettings | null }): string
+export function buildAgentCommand(opts: { runtime?: AgentRuntime | string; cmd?: string; claudeSid?: string; mode?: 'create' | 'resume'; bootstrapFile: string; effort?: string | null; hooks?: HookSettings | null }): string
 export function ensureClaudeSessionId(sessionsDir: string, id: string): { claudeSessionId: string; established: boolean }
 export function prepareAgentLaunch(opts: { sessionsDir: string; id: string; url: string | null | undefined; cmd?: string; runtime?: AgentRuntime | string }): {
   command: string
@@ -37,9 +37,6 @@ export function prepareAgentLaunch(opts: { sessionsDir: string; id: string; url:
 export function ensureWorkspaceTrusted(wsPath: string): void
 export function writeRelayUrl(blitzDir: string, url: string | null | undefined): void
 export const RELAY_URL_FILE: string
-export const INTERVIEW_FAST_MODEL: string
-export const INTERVIEW_FAST_SETTINGS: { model: string; effortLevel: string; env: Record<string, string> }
-export const INTERVIEW_EFFORT: string
 export const RESIDENT_EFFORT: string
 export const AGENT_RUNTIME_CLAUDE: 'claude'
 export const AGENT_RUNTIME_CODEX_SERVERLESS: 'codex-serverless'

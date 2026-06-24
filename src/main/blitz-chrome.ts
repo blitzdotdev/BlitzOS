@@ -502,7 +502,8 @@ class BlitzChrome {
             capabilities: { run_js: true, act: true, cdp: true },
             adapter: this.buildAdapter(agentId),
             ref: w.targetId,
-            agentId: agentId || ''
+            agentId: agentId || '',
+            origin: 'blitz-chrome'
           })
           w.connId = bound.connId
         }

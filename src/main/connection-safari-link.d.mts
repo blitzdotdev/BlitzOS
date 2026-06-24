@@ -7,6 +7,7 @@ export interface SafariTabInfo {
   tab: number
   url: string
   title: string
+  favIconUrl?: string
 }
 
 export interface SafariLink {

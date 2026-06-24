@@ -1,8 +1,8 @@
-import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen, nativeImage, shell, webFrameMain } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
 import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osDebugSetChatStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
 import { emitSystemMoment, emitWorkflowMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
@@ -16,7 +16,10 @@ import { makeTabLink } from './connection-tab-link.mjs'
 import { makeWindowLink } from './connection-window-link'
 import { makeAttachmentStore } from './attachment-store.mjs'
 import { makeSafariLink } from './connection-safari-link.mjs'
-import { startConnectorServer, installConnector, isConnectorPolicyInstalled } from './connection-install'
+import { makeChromeAppleScriptLink } from './connection-chrome-applescript-link.mjs'
+// connection-install (the connector extension force-install) is DEPRECATED. The connector is no longer
+// shipped and Chrome is driven extension-free via Apple Events (makeChromeAppleScriptLink). The boot
+// auto-install plus its server/installer wiring were removed; nothing in main imports connection-install now.
 import { aiBrowser } from './ai-browser'
 import { blitzChrome } from './blitz-chrome'
 import { isChromiumBrowser, decideDrop } from './browser-drop.mjs'
@@ -434,6 +437,21 @@ function createWindow(): void {
     if (!safe) return
     event.preventDefault()
     openExternalAndCollapse(safe)
+  })
+  // Hide blitz.dev's auto-injected "Make your own" discovery ribbon INSIDE the BlitzOS app viewer: it is redundant
+  // here (we ARE BlitzOS) and lives in a cross-origin app frame, so only the privileged main process can reach it.
+  // We hide it ONLY in our iframe; the public-web app keeps its ribbon (which is what blitz.dev wants). The ribbon
+  // is static in the served HTML, so a one-shot hide on frame-load + one re-hide covers it. TODO: drop this once
+  // blitz.dev offers a real embed/ribbon-suppress mode.
+  mainWindow.webContents.on('did-frame-finish-load', (_e, isMainFrame, frameProcessId, frameRoutingId) => {
+    if (isMainFrame) return
+    const frame = webFrameMain.fromId(frameProcessId, frameRoutingId)
+    if (!frame || !isBlitzAppHost(frame.url)) return
+    frame
+      .executeJavaScript(
+        "(function(){var h=function(){document.querySelectorAll('a.tb-ribbon,.tb-ribbon,[data-ribbon]').forEach(function(e){e.style.setProperty('display','none','important')})};h();setTimeout(h,400)})()"
+      )
+      .catch(() => {})
   })
   // Bare-Option hold → the radial create menu, same focus-proof route as the keybinds above: the
   // host webContents sees the key even when an app/srcdoc iframe holds focus (the renderer's own
@@ -1678,20 +1696,96 @@ app.whenReady().then(() => {
     }
     return null
   }
+  // Google Chrome is now driven EXTENSION-FREE (the connector is deprecated): its tabs come via Apple Events
+  // (connection-chrome-applescript-link → connection_list_tabs as browser:'chrome', ids `chrome:<window>:<tab>`).
+  // A dropped Chrome window has only a CGWindowID + on-screen bounds; we bridge to Chrome's tab vocabulary the same
+  // way the extension path did, by BOUNDS. Ask Chrome (osascript) for each window's bounds + active tab index, pick
+  // the window whose on-screen rect matches the drop, and return that window's ACTIVE tab as `chrome:W:T`. The drop
+  // then connects through connectionConnectTab (which routes `chrome:` ids to the Apple-Events adapter), so the agent
+  // gets the REAL page, not a whole-window AX grab. Returns null if Chrome isn't scriptable yet (Automation not
+  // granted) or no window matches, in which case the caller falls back to a window connect instead of hard-failing.
+  // Scoped to Google Chrome only: the AppleScript targets "Google Chrome", and other Chromium browsers (Brave/Edge/
+  // Arc) have no Apple-Events tab adapter, so they stay on the extension/window path.
+  const matchChromeTabByBounds = async (b: { x: number; y: number; w: number; h: number }): Promise<string | null> => {
+    const run = (): Promise<string> =>
+      new Promise((resolve) =>
+        execFile(
+          '/usr/bin/osascript',
+          [
+            '-e', 'on run',
+            '-e', 'tell application "Google Chrome"',
+            '-e', 'if (count of windows) is 0 then return ""',
+            '-e', 'set out to ""',
+            '-e', 'repeat with w from 1 to count of windows',
+            '-e', 'try',
+            '-e', 'set bnds to bounds of window w',
+            '-e', 'set out to out & w & "|" & (item 1 of bnds) & "|" & (item 2 of bnds) & "|" & (item 3 of bnds) & "|" & (item 4 of bnds) & "|" & (active tab index of window w) & linefeed',
+            '-e', 'end try',
+            '-e', 'end repeat',
+            '-e', 'return out',
+            '-e', 'end tell',
+            '-e', 'end run'
+          ],
+          { timeout: 8000 },
+          (err, stdout) => resolve(err ? '' : String(stdout || ''))
+        )
+      )
+    const matchOnce = async (): Promise<string | null> => {
+      const out = await run()
+      let best: { id: string; score: number } | null = null
+      for (const line of out.split('\n')) {
+        // windowIndex|left|top|right|bottom|activeTabIndex (Chrome bounds are top-left-origin points, same frame as the drop).
+        const p = line.split('|')
+        if (p.length < 6) continue
+        const wIdx = Number(p[0]); const left = Number(p[1]); const top = Number(p[2]); const right = Number(p[3]); const bottom = Number(p[4]); const tIdx = Number(p[5])
+        if (!Number.isFinite(wIdx) || !Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom) || !Number.isFinite(tIdx)) continue
+        const score = Math.abs(left - b.x) + Math.abs(top - b.y) + Math.abs(right - left - b.w) + Math.abs(bottom - top - b.h)
+        if (!best || score < best.score) best = { id: `chrome:${wIdx}:${tIdx}`, score }
+      }
+      return best && best.score <= 120 ? best.id : null // ~120pt total slack covers the title bar + rounding (same as the extension match)
+    }
+    // Brief retry: Chrome's window list can lag a just-finished drag for a beat.
+    for (let i = 0; i < 3; i++) {
+      const id = await matchOnce()
+      if (id) return id
+      if (i < 2) await new Promise((r) => setTimeout(r, 300))
+    }
+    return null
+  }
+  // A dropped Google Chrome window (the extension-free path). bundleId is authoritative; the app-name backstop only
+  // fires when the helper couldn't read a bundleId. Other Chromium browsers are intentionally excluded (the
+  // Apple-Events adapter only scripts "Google Chrome").
+  const isGoogleChrome = (bundleId: string, app: string): boolean => {
+    const b = bundleId.toLowerCase()
+    if (b) return b === 'com.google.chrome' || b.startsWith('com.google.chrome.')
+    return /\bgoogle chrome\b/.test(app.toLowerCase())
+  }
   computerUseHelper().onEvent((m) => {
     const kind = m?.kind
     if (kind === 'pick_drop' && typeof m.windowId === 'number') {
       const bounds = { x: Number(m.x) || 0, y: Number(m.y) || 0, w: Number(m.w) || 0, h: Number(m.h) || 0 }
       const app = String(m.app || '')
       const bundleId = String(m.bundleId || '')
+      // Show the dropped app's icon in the dropbox INSTANTLY (optimistic), before the async tab-resolve + connect
+      // (a Chrome bounds-match can take a beat). The `connected` event below firms up the real connId.
+      mainWindow?.webContents.send('os:pick-event', { kind: 'dropped', windowId: m.windowId, app, icon: m.icon, title: String(m.title || '') })
       void (async () => {
-        // A browser drop must resolve to its active TAB (retry covers a momentarily-asleep connector). Only browsers
-        // try the tab match — a non-browser window with bounds that happen to coincide with a tab must NOT become a tab.
+        // A browser drop should resolve to its active TAB so the agent gets the real page. Google Chrome resolves via
+        // Apple Events (extension-free); other Chromium browsers still try the (dormant) connector-extension match.
+        // Only browsers attempt a tab match (a non-browser window with coincidentally-matching bounds must NOT become a tab).
         const isBrowser = isChromiumBrowser(bundleId, app)
-        const tabId = isBrowser ? await matchBrowserTabRetry(bounds) : null
-        const action = decideDrop({ isBrowser, tabId })
+        const chrome = isGoogleChrome(bundleId, app)
+        // chromeTabId is a `chrome:W:T` string (Apple-Events path); extTabId is a numeric extension tabId (dormant path).
+        const chromeTabId = chrome ? await matchChromeTabByBounds(bounds) : null
+        const extTabId = !chrome && isBrowser ? await matchBrowserTabRetry(bounds) : null
+        // Decide the bind. For a Chrome drop we NEVER show the dead-connector error: connect the matched tab (the real
+        // page) when we resolved one, else fall back to a window connect (the agent still gets something). For other
+        // Chromium browsers, keep the extension doctrine (decideDrop: tab-or-loud-error, no silent whole-window grab).
+        let action: 'tab' | 'window' | 'error'
+        if (chrome) action = chromeTabId ? 'tab' : 'window'
+        else action = decideDrop({ isBrowser, tabId: extTabId })
         if (action === 'error') {
-          // Browser, but the tab connector stayed unavailable. Fail LOUDLY — never a misleading whole-window grab.
+          // A non-Chrome Chromium browser whose extension tab stayed unavailable. Fail LOUDLY, never a misleading whole-window grab.
           console.warn(`[blitzos] ${app || 'browser'} drop: tab connector unavailable, not attaching (windowId ${m.windowId})`)
           mainWindow?.webContents.send('os:pick-event', {
             kind: 'connected', ok: false, windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon,
@@ -1699,13 +1793,14 @@ app.whenReady().then(() => {
           })
           return
         }
+        const tabIdForConnect: number | string | null = chromeTabId ?? extTabId
         const res =
-          action === 'tab'
-            ? await electronConnections.connectionConnectTab(tabId as number, { agentId: pickActiveSession })
+          action === 'tab' && tabIdForConnect != null
+            ? await electronConnections.connectionConnectTab(tabIdForConnect, { agentId: pickActiveSession })
             : await electronConnections.connectionConnectWindow(Number(m.windowId), { agentId: pickActiveSession })
         const ok = !!res && !res.error
         const connId = typeof res?.connId === 'string' ? res.connId : ''
-        console.log(`[blitzos] drop → ${action}${action === 'tab' ? ` tab=${tabId}` : ''} ok=${ok} (${app || bundleId})`)
+        console.log(`[blitzos] drop → ${action}${action === 'tab' ? ` tab=${tabIdForConnect}` : ''} ok=${ok} (${app || bundleId})`)
         mainWindow?.webContents.send('os:pick-event', {
           kind: 'connected', ok, connId, windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon, error: res?.error
         })
@@ -1716,23 +1811,13 @@ app.whenReady().then(() => {
   })
   // Safari tabs via Apple Events `do JavaScript` (merged into connection_list_tabs as browser:'safari').
   electronConnections.setSafariLink(makeSafariLink({ connectionOps: electronConnections }))
-  // Force-install of the connector extension: serve the .crx/updates.xml on localhost + expose the
-  // admin-prompt installer (connection_install_extension). Dev uses load-unpacked and skips this.
-  startConnectorServer()
-  electronConnections.setInstaller(installConnector)
-  // Auto-run the force-install on boot (one admin prompt) so the user's Chrome tabs are connectable with NO manual
-  // "Connect Chrome" step. Gated to macOS + only when the policy for the CURRENT extension id isn't already written
-  // and the connector isn't connected — so it prompts until installed, then never again (a cancel just retries next
-  // boot). Gated to MDM-managed Macs (the managed-prefs dir exists): an unmanaged Mac can't honor the policy, so
-  // skip the useless admin prompt — there installConnector returns the manual load-unpacked path instead.
-  if (process.platform === 'darwin' && existsSync('/Library/Managed Preferences')) {
-    setTimeout(() => {
-      if (isConnectorPolicyInstalled() || tabLink.isConnected()) return
-      void installConnector()
-        .then((r) => console.log('[blitzos] connector auto-install:', r.ok ? 'policy written — Chrome installs in ~10s' : r.error))
-        .catch(() => {})
-    }, 4000)
-  }
+  // Chrome tabs via Apple Events `execute … javascript` (browser:'chrome') — the connector extension is deprecated,
+  // so this is the Chrome tab path. Focus-safe: it drives Chrome only through executed JS, never `set URL`.
+  electronConnections.setChromeAsLink(makeChromeAppleScriptLink({ connectionOps: electronConnections }))
+  // NOTE: the connector extension force-install is DEPRECATED. The old boot auto-install (an admin prompt that
+  // wrote Chrome's ExtensionInstallForcelist managed policy) is GONE, so BlitzOS never prompts to install the
+  // extension anymore, and connection-install's server/installer are no longer wired. Chrome is connectable
+  // out of the box via Apple Events (setChromeAsLink above; one-time "Allow JavaScript from Apple Events").
 
   // Agents run as managed tmux terminals. The backend is pluggable: Claude Code (`claude`) is the default
   // when available (the visible TUI/resume path), while Codex serverless (`codex exec`) stays selectable.

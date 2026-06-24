@@ -10,7 +10,7 @@
 import './notch.css'
 import { useEffect, useRef, useState } from 'react'
 import { clearStaged } from './stagingStore'
-import { clearLiveTray } from './sentTrayStore'
+import { clearLiveTray, dropChat } from './sentTrayStore'
 import IslandPanel from './IslandPanel'
 import IslandHome from './IslandHome'
 import IslandSettings, { type SimStatus } from './IslandSettings'
@@ -691,6 +691,7 @@ export function NotchHost({
       } else if (act.type === 'agent-remove') {
         const id = act.id == null ? '' : String(act.id)
         if (id) {
+          dropChat(id) // a closed agent's frozen attachment snapshot must not resurface on a future agent that reuses its id (archive does NOT fire agent-remove, so archived chats keep theirs)
           setTerminals((prev) => {
             const next = { ...prev }
             delete next[id]

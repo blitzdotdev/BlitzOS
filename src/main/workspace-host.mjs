@@ -20,6 +20,7 @@ import {
   removeSurfaceFile,
   surfaceFileExists,
   removeAgentFiles,
+  removeAgentAttachments,
   ensureSystemRenderer,
   readSystemRenderer,
   readSystemRendererInfo,
@@ -978,7 +979,13 @@ export function createWorkspaceHost(a) {
   function newAgentId() {
     let max = 0
     for (const id of allAgentIds()) { const n = Number(id); if (Number.isInteger(n) && n > max) max = n }
-    return String(max + 1)
+    const id = String(max + 1)
+    // IDs are REUSED: a closed agent frees its number (allAgentIds drops the deleted dir), so this fresh agent can be
+    // reborn onto a previous agent's id. Wipe any leftover attachment snapshot for that id NOW so the new chat starts
+    // clean — this also heals orphans left by deletes from before close-time cleanup existed. newAgentId is called
+    // ONLY for a brand-new spawn (osSpawnAgent), never on boot reconstruction, so this never touches a live agent.
+    removeAgentAttachments(activeWorkspace, id)
+    return id
   }
   /** Register a new agent: write its meta (kind:'agent'), refresh the chat hub's thread list, and launch
    *  its managed terminal. Idempotent — re-adding an existing agent just refreshes the hub/thread. */

@@ -12,11 +12,20 @@
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './perception-core.mjs'
 
 function parse(body) {
+  let o
   try {
-    return body ? JSON.parse(body) : {}
+    o = body ? JSON.parse(body) : {}
   } catch {
     return {}
   }
+  // Tolerant alias: connect_tab / blitz_chrome_open RETURN `connId`, but the connection_* tools take `connection`.
+  // A caller naturally passes back the id it was just handed, so accept `connId` as `connection` (a live agent hit
+  // this). One fix covers the whole connection family.
+  if (o && typeof o === 'object' && o.connId != null && o.connection == null) {
+    o.connection = o.connId
+    delete o.connId
+  }
+  return o
 }
 
 let _wfRunSeq = 0 // monotonic suffix so two run_workflow calls in the same ms never collide on runId
@@ -139,6 +148,37 @@ function normalizedShareAppUrl(value) {
   }
 }
 
+// The claim page lives on the APEX blitz.dev (today https://blitz.dev/claim/<slug>), NOT the *.app.blitz.dev
+// preview host — so it gets its own validator: https + a blitz.dev host only (the Claim button opens it externally).
+function normalizedClaimUrl(value) {
+  try {
+    const url = new URL(String(value || ''))
+    if (url.protocol !== 'https:') return null
+    if (url.hostname !== 'blitz.dev' && !url.hostname.endsWith('.blitz.dev')) return null
+    if (url.username || url.password) return null
+    return url.href
+  } catch {
+    return null
+  }
+}
+
+// new_app -> share_app bridge. The provision API returns claim_url separately from preview_url, but the agent calls
+// share_app with only the preview_url. We cache { preview_url -> {claimUrl, expiresAt} } here so the island app card
+// can show a "Claim app" button WITHOUT the agent threading claim_url through. Anon blitz.dev projects delete at
+// ~12h unless claimed, so the card is the user's one-tap path to keep the app.
+const claimByPreviewUrl = new Map()
+const CLAIM_CACHE_MAX = 200
+function rememberClaim(previewUrl, claimUrl, expiresAt) {
+  const key = normalizedShareAppUrl(previewUrl)
+  const claim = normalizedClaimUrl(claimUrl)
+  if (!key || !claim) return
+  if (claimByPreviewUrl.size >= CLAIM_CACHE_MAX) {
+    const oldest = claimByPreviewUrl.keys().next().value // FIFO: the oldest provision is least likely still mid-share
+    if (oldest !== undefined) claimByPreviewUrl.delete(oldest)
+  }
+  claimByPreviewUrl.set(key, { claimUrl: claim, expiresAt: expiresAt ? String(expiresAt) : '' })
+}
+
 function normalizedShareAppSpec(raw) {
   const title = cleanText(raw?.title, 80)
   const url = normalizedShareAppUrl(raw?.url)
@@ -150,6 +190,11 @@ function normalizedShareAppSpec(raw) {
   // preview: optional bespoke HTML the island renders as the card face (a sandboxed srcdoc iframe). Static
   // HTML/CSS only (no scripts run); when absent the card falls back to the icon+title+subtitle layout.
   const preview = typeof raw?.preview === 'string' && raw.preview.trim() ? String(raw.preview) : ''
+  // Claim URL: prefer an explicit arg (e.g. a re-share after a restart, when the cache is cold), else auto-link
+  // from the new_app cache by preview URL. expiresAt rides along for the card (display only).
+  const cached = claimByPreviewUrl.get(url)
+  const claimUrl = normalizedClaimUrl(raw?.claimUrl) || cached?.claimUrl || ''
+  const expiresAt = cached?.expiresAt || ''
   return {
     ok: true,
     app: {
@@ -159,7 +204,9 @@ function normalizedShareAppSpec(raw) {
       ...(subtitle ? { subtitle } : {}),
       icon,
       tone,
-      ...(preview ? { preview } : {})
+      ...(preview ? { preview } : {}),
+      ...(claimUrl ? { claimUrl } : {}),
+      ...(claimUrl && expiresAt ? { expiresAt } : {})
     }
   }
 }
@@ -195,13 +242,13 @@ export function makeOsTools(ops) {
     {
       path: '/list_state',
       description:
-        'List the workspace: its folder path (workspace_path) and the open surfaces (layout fields only — an INDEX; use get_surface for one surface\'s props). Local agents can author by writing files into workspace_path.',
+        'List the workspace: its folder path (workspace_path) and an index of the open panels (chats, terminals; layout fields only, not content). Local agents can author by writing files into workspace_path.',
       handler: () => serializeStateForAgent(ops.getState())
     },
     {
       path: '/new_app',
       description:
-        "Provision a real blitz.dev app (SQLite+R2+auth, edge-deployed) for a DELIVERABLE the user will keep/ship (landing page, site, app, dashboard — even if v1 looks static). Returns { preview_url, claim_url, agents_md, slug }. MANDATORY FINAL STEP after authoring files: call share_app with preview_url so the island renders a compact app card; do not deliver the preview URL through say. Mention the claim URL only if the user needs ownership. For N variations to compare, spawn one sub-agent per variation, each with its OWN app (never one app with N routes, never an in-app chooser). Speed-first: build what's asked, offer backends. Working rules in the doctrine's 'Build deliverables on blitz.dev'. Args { slug } (a-z 0-9 -).",
+        "Provision a real blitz.dev app (SQLite+R2+auth, edge-deployed) for a DELIVERABLE the user will keep/ship (landing page, site, app, dashboard — even if v1 looks static). Returns { preview_url, claim_url, agents_md, slug }. MANDATORY FINAL STEP after authoring files: generate a 460x300 static HTML/CSS preview that is a minified, glanceable representation of the app (minimum words, heavy visuals, the app's real color theme, beautiful and uncluttered, lightweight, self-contained inline CSS, no scripts) and call share_app with { url: preview_url, preview: <that html> } so the island shows it as the card face — ALWAYS pass preview, or the card falls back to a bland generic icon. Do not deliver the preview URL through say. The app card shows a Claim button automatically (it keeps the app past the ~12h anon expiry), so you do not need to surface the claim URL in chat. For N variations to compare, spawn one sub-agent per variation, each with its OWN app (never one app with N routes, never an in-app chooser). Speed-first: build what's asked, offer backends. Working rules in the doctrine's 'Build deliverables on blitz.dev'. Args { slug } (a-z 0-9 -).",
       input_schema: { type: 'object', required: ['slug'], properties: { slug: { type: 'string', description: 'unique project slug, a-z 0-9 -' }, title: { type: 'string' } } },
       handler: async ({ body }) => {
         const slug = String(parse(body).slug || '')
@@ -210,13 +257,14 @@ export function makeOsTools(ops) {
         if (!/^[a-z0-9][a-z0-9-]{1,48}$/.test(slug)) return { status: 400, body: { error: 'slug must be a-z 0-9 - (2-49 chars, start alphanumeric)' } }
         const r = await provisionBlitzApp(slug)
         if (!r.ok) return { status: r.status || 400, body: { error: r.error } }
-        return { ok: true, slug, preview_url: r.preview_url, claim_url: r.claim_url, agents_md: r.agents_md, next: "IS THIS ONE OF SEVERAL VARIATIONS/PARTS? Then STOP — do NOT author here. You are the orchestrator: provision the rest, put up a placeholder surface per part, and spawn ONE sub-agent per part (build NONE yourself — not even the 'reference'/canonical one, and don't 'prove the deploy on this one first'). SINGLE deliverable only: author files (relative imports auto-bundle, every save deploys — no bundler), offer backends, then MANDATORY FINAL STEP: call share_app {title,url:preview_url,subtitle?,icon?,tone?,agent?,workspace?}. The task is incomplete until share_app succeeds. Do not paste the preview URL through say." }
+        rememberClaim(r.preview_url, r.claim_url, r.project?.expires_at) // so share_app auto-attaches a Claim button to the card
+        return { ok: true, slug, preview_url: r.preview_url, claim_url: r.claim_url, agents_md: r.agents_md, next: "IS THIS ONE OF SEVERAL VARIATIONS/PARTS? Then STOP — do NOT author here. You are the orchestrator: provision the rest, put up a placeholder surface per part, and spawn ONE sub-agent per part (build NONE yourself — not even the 'reference'/canonical one, and don't 'prove the deploy on this one first'). SINGLE deliverable only: author files (relative imports auto-bundle, every save deploys — no bundler), offer backends, then MANDATORY FINAL STEP: generate a 460x300 static HTML/CSS preview that is a minified, glanceable representation of the app (minimum words, heavy visuals, real color theme, beautiful, uncluttered, lightweight) and call share_app {title,url:preview_url,preview:<that html>,subtitle?,icon?,tone?,agent?,workspace?} — ALWAYS pass preview (no preview = bland generic icon card). The task is incomplete until share_app succeeds. Do not paste the preview URL through say." }
       }
     },
     {
       path: '/events',
       description:
-        "Long-poll the user's activity, coalesced into framed 'moments' (batched ~15s; flushed immediately on navigation or going idle after acting). Each moment carries a snapshot of the surface so you can react without a second read: {seq,surfaceId,url,title,trigger,signals,user[],snapshot}. THE AUTONOMY LOOP: start since=0, loop with since=latest and wait=25; on each moment decide whether to act, then build/arrange surfaces to help.",
+        "Long-poll the user's activity, coalesced into framed 'moments' (batched ~15s; flushed immediately on navigation or going idle after acting). Each moment carries a snapshot of the connected source so you can react without a second read: {seq,ts,url,title,trigger,signals,user[],snapshot}. THE AUTONOMY LOOP: start since=0, loop with since=latest and wait=25; on each moment decide whether to act.",
       input_schema: { type: 'object', properties: { since: { type: 'number' }, wait: { type: 'number' }, agent: { type: 'string' }, workspace: { type: 'string' } } },
       handler: async ({ body }) => {
         const a = parse(body)
@@ -232,7 +280,7 @@ export function makeOsTools(ops) {
     {
       path: '/say',
       description:
-        "Send a chat message to the USER (the island chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. For non-trivial tasks, say a one-line plan first, then short notes as you work — going dark is a failure. Keep it tight: never paste a diff, a code block, or a multi-paragraph wall into chat; if a result needs more than a couple of lines, write it to a deliverable. For a generated blitz.dev app, do NOT paste the app URL here — this tool rejects *.app.blitz.dev preview URLs; call share_app first so the island renders a compact app card, then say only a brief summary without the URL. Put decisions in `ask` buttons. To SHOW a visual, screenshot the real SOURCE in the user's connected browser (connection_read can return an image) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary agents MUST pass {agent:'<your id>'} so it lands in YOUR chat.",
+        "Send a chat message to the USER (the island chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. For non-trivial tasks, say a one-line plan first, then short notes as you work — going dark is a failure. Keep it tight: never paste a diff, a code block, or a multi-paragraph wall into chat; if a result needs more than a couple of lines, write it to a deliverable. For a generated blitz.dev app, do NOT paste the app URL here — this tool rejects *.app.blitz.dev preview URLs; call share_app first so the island renders a compact app card, then say only a brief summary without the URL. Put decisions in `ask` buttons. To SHOW a visual, screenshot the real SOURCE in Blitz Chrome (connection_read can return an image) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary agents MUST pass {agent:'<your id>'} so it lands in YOUR chat.",
       input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, agent: { type: 'string' }, workspace: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
@@ -256,7 +304,7 @@ export function makeOsTools(ops) {
     {
       path: '/share_app',
       description:
-        "Share a generated blitz.dev app in the island chat as a compact interactive app card. Use this after new_app for deliverables, dashboards, visual reports, interactive tools, rich tables/charts, or anything the user should inspect/manipulate. This is the user-facing delivery step for app previews: call share_app, then use say only for a brief summary without the preview URL. Args: {title, url, subtitle?, icon?:'dashboard'|'report'|'table'|'checklist'|'form'|'share'|'browser'|'file', tone?:'sky'|'mint'|'amber'|'violet'|'lime'|'rose', agent?, workspace?}. url must be https://*.app.blitz.dev.",
+        "Share a generated blitz.dev app in the island chat as a compact interactive app card. Use this after new_app for deliverables, dashboards, visual reports, interactive tools, rich tables/charts, or anything the user should inspect/manipulate. This is the user-facing delivery step for app previews: call share_app, then use say only for a brief summary without the preview URL. Args: {title, url, preview?, subtitle?, icon?:'dashboard'|'report'|'table'|'checklist'|'form'|'share'|'browser'|'file', tone?:'sky'|'mint'|'amber'|'violet'|'lime'|'rose', agent?, workspace?}. url must be https://*.app.blitz.dev. For a blitz.dev app ALWAYS pass `preview`: a self-contained 460x300 static HTML/CSS card face that is a minified, glanceable representation of the app (minimum words, heavy visuals, the app's real color theme, beautiful and uncluttered, lightweight, inline CSS, no scripts/network). Without it the card is a bland generic icon. When the app was made via new_app the card shows a Claim button automatically (the claim URL is auto-linked by preview URL); pass claimUrl only to override that.",
       input_schema: {
         type: 'object',
         required: ['title', 'url'],
@@ -267,6 +315,7 @@ export function makeOsTools(ops) {
           icon: { type: 'string', enum: ['dashboard', 'report', 'table', 'checklist', 'form', 'share', 'browser', 'file'] },
           tone: { type: 'string', enum: ['sky', 'mint', 'amber', 'violet', 'lime', 'rose'] },
           preview: { type: 'string' },
+          claimUrl: { type: 'string' },
           agent: { type: 'string' },
           workspace: { type: 'string' }
         }
@@ -297,28 +346,6 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/broadcast',
-      description:
-        "BROADCAST to the whole agent fleet: fan ONE directive out to EVERY other live agent in this workspace at once (steer-all). Same wake semantics as `steer` — it lands in each peer's chat as a fresh directive and triggers their `/events` loop, so they actually react — but you name NO target: it goes to all peers except yourself. Use it for fleet-wide signals the other agents should act on: 'I'm refactoring auth, hands off src/auth/**', 'API types published — re-read types.ts', 'build is green on main', 'HEAD moved to <sha>; files X/Y/Z changed — re-read before continuing'. NOT for talking to the user (that is `say`), and NOT a substitute for a targeted nudge to ONE agent (that is `steer`). Each delivered message is tagged with your agent id so recipients know who broadcast it. Args: {text, from}. `from` is YOUR OWN agent id (REQUIRED — it excludes you from your own broadcast so you don't wake yourself in a loop, and tells recipients the source). Returns { ok, from, recipients:[ids], delivered:N }.",
-      input_schema: { type: 'object', required: ['from', 'text'], properties: { from: { type: 'string' }, text: { type: 'string' } } },
-      handler: ({ body }) => {
-        const b = parse(body)
-        if (typeof ops.steer !== 'function') return { status: 501, body: { error: 'broadcast unavailable: steer not supported in this transport' } }
-        if (typeof ops.listAgents !== 'function') return { status: 501, body: { error: 'broadcast unavailable: agent roster not exposed in this transport' } }
-        const from = String(b.from ?? '')
-        const text = String(b.text || '')
-        if (!from) return { status: 400, body: { error: 'from required (your own agent id — so you are excluded from your own broadcast)' } }
-        if (!text.trim()) return { status: 400, body: { error: 'text required' } }
-        // Fan `steer` over the live roster, minus the sender, minus dupes. Tag each delivery with the source id
-        // so a recipient can tell a fleet broadcast from a human directive (both land via the same wake path).
-        const roster = (ops.listAgents() || []).map(String)
-        const recipients = [...new Set(roster)].filter((id) => id && id !== from)
-        const tagged = `[broadcast from agent ${from}] ${text}`
-        for (const id of recipients) ops.steer(tagged, id)
-        return { ok: true, from, recipients, delivered: recipients.length }
-      }
-    },
-    {
       path: '/user_say',
       description:
         "TEST/DEV syscall (localhost transport ONLY — rejected over the relay): enter a chat message AS THE USER through the exact same path as the human composer (appends '### user' to that agent's chat.md and wakes it with a message moment). Exists so a co-located test agent can drive BlitzOS like a real user; an external agent must never be able to forge user input. Args: {text, agent?}.",
@@ -334,21 +361,9 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/spawn_agent',
-      description:
-        "Spawn a NEW agent — a fresh peer agent with its own chat thread in the shared Chat hub (`chat-<id>.md`) and its own visible terminal, reachable over this same relay. The new agent is independent: messages sent to its thread go only to it, and its `say`s land only in that thread (no cross-talk with you or other agents). Use this to spin up a parallel agent for a separate task/conversation. NOTE: for \"spawn N subagents to <task>\" (many ephemeral workers fanning out over chunked work in parallel), do NOT make N peer agents — author a single-phase `run_workflow` fan-out instead (one `parallel([...])` of `agent()` leaves); use spawn_agent only for a persistent peer that owns its own chat tab. Args: {title?}. Returns { agent:{id,title} }.",
-      input_schema: { type: 'object', properties: { title: { type: 'string' } } },
-      handler: async ({ body }) => {
-        const a = parse(body)
-        if (typeof ops.spawnAgent !== 'function') return { status: 501, body: { error: 'agents not supported on this transport' } }
-        const agent = await ops.spawnAgent(a.title != null ? String(a.title) : undefined)
-        return { agent }
-      }
-    },
-    {
       path: '/start_workflow',
       description:
-        "Start a WORKFLOW: spawn a fresh agent with the ORCHESTRATORS capability ON and hand it a task. Use this (instead of spawn_agent) for a substantial task you want a dedicated, workflow-capable agent to own — especially anything HARD, large, massively parallel, or adversarial (mining many sessions, ranking N items, verifying every claim in a doc, deep research, a tournament, a wide migration). The spawned agent boots with the orchestrator duty (it can AUTHOR and RUN blitzscript workflows via `.blitzos/blitz`) and receives your task as its first directive; it decides whether to write a workflow or just do the task directly. A trivial one-off you should handle in chat yourself. Args: {task, title?, contextRefs?}. Returns { agent:{id,title} }.",
+        "Start a WORKFLOW: spawn a fresh agent with the ORCHESTRATORS capability ON and hand it a task. Use this for a substantial task you want a dedicated, workflow-capable agent to own — especially anything HARD, large, massively parallel, or adversarial (mining many sessions, ranking N items, verifying every claim in a doc, deep research, a tournament, a wide migration). The spawned agent boots with the orchestrator duty (it can AUTHOR and RUN blitzscript workflows via `.blitzos/blitz`) and receives your task as its first directive; it decides whether to write a workflow or just do the task directly. A trivial one-off you should handle in chat yourself. Args: {task, title?, contextRefs?}. Returns { agent:{id,title} }.",
       input_schema: { type: 'object', required: ['task'], properties: { task: { type: 'string' }, title: { type: 'string' }, contextRefs: { type: 'array', items: { type: 'string' } } } },
       handler: ({ body }) => {
         const a = parse(body)
@@ -380,7 +395,7 @@ export function makeOsTools(ops) {
     {
       path: '/set_orchestrators',
       description:
-        "Toggle the ORCHESTRATORS capability on an agent. When ON, that agent may AUTHOR and RUN blitzscript workflows (plain-Node programs whose llm() spawns local agent 'leaves' over chunked data — Recursive Language Models on this machine) for genuinely HARD, large, massively parallel, or adversarial tasks: mining many sessions, ranking N items, verifying every claim, deep research, a tournament, a wide migration. Enabling WAKES the agent immediately with the how-to and PERSISTS across restarts; it gains the runner `.blitzos/blitz` (run `bash .blitzos/blitz capabilities` first, then `check`, then `run`), the duty doc `.blitzos/orchestrator.md`, and the built-ins (verify-job, supervise-tick). For trivial/one-shot work the agent still just answers directly. Use it to upgrade an agent (e.g. one you just spawned for a big task) into an orchestrator; turn it OFF to stop. Args: {agent, on?} — on defaults to true. Returns { ok, orchestrators } or { ok:false, error }.",
+        "Toggle the ORCHESTRATORS capability on an agent. When ON, that agent may AUTHOR and RUN blitzscript workflows (plain-Node programs whose agent() calls spawn local 'leaves' over chunked data, Recursive Language Models on this machine) for genuinely HARD, large, massively parallel, or adversarial tasks: mining many sessions, ranking N items, verifying every claim, deep research, a tournament, a wide migration. Enabling WAKES the agent immediately with the how-to and PERSISTS across restarts; it gains the runner `.blitzos/blitz` (run `bash .blitzos/blitz capabilities` first, then `check`, then `run`), the duty doc `.blitzos/orchestrator.md`, and the built-ins (verify-job, supervise-tick). For trivial/one-shot work the agent still just answers directly. Use it to upgrade an agent (e.g. one you just spawned for a big task) into an orchestrator; turn it OFF to stop. Args: {agent, on?} — on defaults to true. Returns { ok, orchestrators } or { ok:false, error }.",
       input_schema: { type: 'object', required: ['agent'], properties: { agent: { type: 'string' }, on: { type: 'boolean', description: 'enable (default true) or disable the orchestrators capability' } } },
       handler: ({ body }) => {
         const b = parse(body)
@@ -391,34 +406,9 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/close_agent',
-      description:
-        "Close an agent you previously spawned — stops it, removes its chat widget + terminal, and deletes its files. Args: {id}. The PRIMARY agent '0' (the user's main chat) cannot be closed. Returns { ok } or { ok:false, error }.",
-      input_schema: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
-      handler: ({ body }) => {
-        const id = String(parse(body).id || '')
-        if (!id) return { status: 400, body: { error: 'id required' } }
-        if (id === '0') return { status: 400, body: { error: "cannot close the primary agent '0'" } }
-        if (typeof ops.closeAgent !== 'function') return { status: 501, body: { error: 'agents not supported on this transport' } }
-        return ops.closeAgent(id)
-      }
-    },
-    {
-      path: '/rename_agent',
-      description: 'Rename an agent (cosmetic title shown in the widget + Terminals & Agents tray). Args: {id, title}. Returns { ok, title } or { ok:false, error }.',
-      input_schema: { type: 'object', required: ['id', 'title'], properties: { id: { type: 'string' }, title: { type: 'string' } } },
-      handler: ({ body }) => {
-        const b = parse(body)
-        const id = String(b.id || '')
-        if (!id) return { status: 400, body: { error: 'id required' } }
-        if (typeof ops.renameAgent !== 'function') return { status: 501, body: { error: 'agents not supported on this transport' } }
-        return ops.renameAgent(id, String(b.title ?? ''))
-      }
-    },
-    {
       path: '/open_terminal',
       description:
-        "Open a TERMINAL — a real terminal running a command, persisted in this workspace and shown as a terminal surface. Use it for a shell, a coding agent (Codex/Claude), a build/test runner, or any long job. The terminal SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/terminals/. Args: {command (e.g. 'bash', \"codex exec '…'\", or \"claude '…'\"), cwd?, title?, cols?, rows?}. Returns { terminal }.",
+        "Open a TERMINAL — a real terminal running a command, persisted in this workspace and shown as a terminal panel. Use it for a shell, a coding agent (Codex/Claude), a build/test runner, or any long job. The terminal SURVIVES a restart (tmux-backed) and its transcript is saved under .blitzos/terminals/. Args: {command (e.g. 'bash', \"codex exec '…'\", or \"claude '…'\"), cwd?, title?, cols?, rows?}. Returns { terminal }.",
       input_schema: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' }, title: { type: 'string' }, cols: { type: 'number' }, rows: { type: 'number' } } },
       handler: async ({ body }) => {
         const a = parse(body)
@@ -517,7 +507,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_list',
       description:
-        "List CONNECTED external sources (the browser tabs / macOS windows the user connected into BlitzOS). Pass {agent: YOUR agent id} to see only YOUR chat's sources (the user attaches into the chat they're in); omit it to see all. Each: { connId, type:'tab'|'window', sourceId (a tab's origin host or a window's app bundle id), title, status, capabilities, surfaceId, agentId (the owning chat), savedTools, description }. A connection is a per-source TOOL PROVIDER — read/act on it with the other connection_* tools, passing its connId as `connection`; its toolkit (and any extra tools it can unlock) come from connection_list_tools. Empty until something is connected.",
+        "List CONNECTED external sources (the browser tabs / macOS windows the user connected into BlitzOS). Pass {agent: YOUR agent id} to see only YOUR chat's sources (the user attaches into the chat they're in); omit it to see all. Each: { connId, type:'tab'|'window', origin, sourceId (a tab's origin host or a window's app bundle id), title, status, capabilities, surfaceId, agentId (the owning chat), savedTools, description }. `origin` tells you WHOSE source it is, and it is decisive: 'user-chrome'/'user-safari' = the user's OWN browser that they connected on purpose, so DO THE WORK THERE in their live session, never open Blitz Chrome instead; 'window' = a native macOS app; 'blitz-chrome' = your own browser (the home for work you start on your own; when no source is attached, choose it vs the user's browser by where you are already signed in and what has worked with this user before). A connection is a per-source TOOL PROVIDER — read/act on it with the other connection_* tools, passing its connId as `connection`; its toolkit (and any extra tools it can unlock) come from connection_list_tools. Empty until something is connected.",
       input_schema: { type: 'object', properties: { agent: { type: 'string', description: 'your agent/session id — scopes the list to your chat' } } },
       handler: ({ body }) => {
         if (typeof ops.connectionList !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
@@ -568,15 +558,6 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/connection_install_extension',
-      description:
-        "Install the BlitzOS Connector Chrome extension (force-install) so the user's tabs can be connected. Prompts the user for admin ONCE (writes a Chrome managed policy; BlitzOS serves the extension locally). macOS + the BlitzOS app only. Returns { ok, note } or an error to relay. Only needed when connection_list_tabs reports the extension isn't connected.",
-      handler: async () => {
-        if (typeof ops.connectionInstallExtension !== 'function') return { status: 501, body: { error: 'extension install is available only in the BlitzOS app (macOS, local)' } }
-        return mapConnResult(await ops.connectionInstallExtension())
-      }
-    },
-    {
       path: '/connection_unlock',
       description:
         "Unlock a connected source's official integration. BlitzOS runs a one-time account approval (opens the login; the user approves once in their browser), then the source's extra tools appear in connection_list_tools — returns immediately. Use it when connection_list_tools shows the source under `unlock`, or when a call returns needsApproval. NEVER use claude mcp add / codex mcp / /mcp / a session restart. Args: {sourceId} (a site host like 'www.notion.com'). Returns {ok, status:'pending'|'live', source, authUrl?} — status:'pending' means tell the user to approve in their browser, then watch /events for the source's tools growing and retry; status:'live' means it was already approved and its tools are ready now. On {ok:false, error} the integration can't be unlocked automatically (use the browser path).",
@@ -620,7 +601,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_run_js',
       description:
-        "Run JavaScript in a connected TAB's page (tab-only — a window returns capability_unavailable). `code` is a function body: use `return` to read a value; `args` are passed in as the argument. Args: {connection, code, args?, max?}. Returns { result }.",
+        "Run JavaScript in a connected TAB's page (tab-only — a window returns capability_unavailable). `code` is a function BODY: end with a top-level `return` to read a value. A bare expression or an IIFE returns null while STILL running its side effects, so a paste/click silently fires twice — always `return`, never wrap in an IIFE. `args` are passed in as the argument. Args: {connection, code, args?, max?}. Returns { result }.",
       input_schema: { type: 'object', required: ['connection', 'code'], properties: { connection: { type: 'string' }, code: { type: 'string' }, args: { type: 'object' }, max: { type: 'number' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionRunJs !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
@@ -704,7 +685,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_reveal',
       description:
-        'Bring the surface BEHIND a connection to the FOREGROUND so the user can see/use it (a Blitz Chrome window comes forward; a connected real tab gets activated). Opt-in / user-intent only. Args: {connection}. Returns { ok }.',
+        'Bring the window or tab BEHIND a connection to the FOREGROUND so the user can see/use it (a Blitz Chrome window comes forward; a connected real tab gets activated). Opt-in / user-intent only. Args: {connection}. Returns { ok }.',
       input_schema: { type: 'object', required: ['connection'], properties: { connection: { type: 'string' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionReveal !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }

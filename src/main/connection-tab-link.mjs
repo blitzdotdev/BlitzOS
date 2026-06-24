@@ -256,7 +256,8 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
       capabilities: { run_js: true, act: true, cdp: true },
       adapter,
       ref: id,
-      agentId
+      agentId,
+      origin: 'blitz-chrome'
     })
     tabToConn.set(id, bound.connId)
     return { connId: bound.connId, surfaceId: bound.surfaceId, sourceId, tab: { tabId: id, url } }
@@ -280,7 +281,7 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
     if (!tab) return { error: `tab ${tabId} not found (is it still open?)` }
     const sourceId = opts.sourceId || sourceIdForUrl(tab.url)
     const adapter = buildAdapter(id)
-    const bound = connectionOps.connectionBind({ type: 'tab', sourceId, title: opts.title || tab.title, capabilities: { run_js: true, act: true, cdp: true }, adapter, ref: id, agentId: opts.agentId })
+    const bound = connectionOps.connectionBind({ type: 'tab', sourceId, title: opts.title || tab.title, capabilities: { run_js: true, act: true, cdp: true }, adapter, ref: id, agentId: opts.agentId, origin: 'user-chrome' })
     tabToConn.set(id, bound.connId)
     return { connId: bound.connId, surfaceId: bound.surfaceId, sourceId, tab: { tabId: id, title: tab.title, url: tab.url } }
   }

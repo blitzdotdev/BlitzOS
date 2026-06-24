@@ -346,6 +346,201 @@ function startDragPoll(kind: DragPerm): void {
   }, 1500)
 }
 
+// ---- Chrome "Allow JavaScript from Apple Events" step (right after the TCC permissions) -----------
+// BlitzOS drives the user's Chrome extension-free through the Apple-Events JS bridge
+// (connection-chrome-applescript-link.mjs). That bridge is OFF until the user ticks Chrome ▸ View ▸
+// Developer ▸ "Allow JavaScript from Apple Events" once. There is no API to flip it, so we make the
+// final click trivial: programmatically open View ▸ Developer (so the row is visible), float a small
+// helper window pointing at it, and let the user tick the single row. Everything else is programmatic.
+//
+// The helper is a SEPARATE non-activating panel from the TCC drag-helper (different content + a different
+// poll), constructed identically so it behaves the same over a frontmost Chrome. Reused per (re)open.
+let chromeJsHelper: BrowserWindow | null = null
+let chromeJsPollTimer: ReturnType<typeof setInterval> | null = null
+const CHROME_JS_HELPER_W = 320
+const CHROME_JS_HELPER_H = 92
+
+/** The helper card content. `pointed` (the Developer row's screen rect was read) → a LEFT-pointing arrow on
+ *  the card's left edge + the short "Click ..." copy; the card sits just right of the row so the arrow lands
+ *  on it. Not pointed (menu could not be opened/read) → no arrow + a manual instruction, so we never point an
+ *  arrow at nothing. Same frosted chrome + CSP as the drag helper; this step is a click, not a drag. */
+function chromeJsHelperHtml(pointed: boolean): string {
+  const arrow = pointed ? '<div class="arrow" aria-hidden="true"></div>' : ''
+  const copy = pointed
+    ? 'Click &ldquo;Allow JavaScript from Apple Events&rdquo;'
+    : 'In Chrome, open View &rsaquo; Developer and tick &ldquo;Allow JavaScript from Apple Events&rdquo;'
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<style>
+  :root { color-scheme: light dark; }
+  html,body { margin:0; height:100%; overflow:hidden; -webkit-user-select:none; user-select:none; font-family:-apple-system,system-ui,sans-serif; }
+  .h { height:100%; display:flex; align-items:center; gap:12px; padding:0 16px; box-sizing:border-box;
+       background:rgba(245,245,247,0.86); border-radius:16px; border:1px solid rgba(0,0,0,0.10);
+       -webkit-backdrop-filter:saturate(1.3) blur(20px); backdrop-filter:saturate(1.3) blur(20px);
+       box-shadow:0 8px 30px rgba(0,0,0,0.22); }
+  @media (prefers-color-scheme: dark){ .h{ background:rgba(40,42,46,0.86); border-color:rgba(255,255,255,0.12); color:#f5f5f7; } }
+  /* The arrow points LEFT toward the menu row (the card sits just to the row's right). */
+  .arrow { position:relative; width:40px; height:24px; flex:0 0 auto; color:#0a84ff; animation:chromeArrowHint 1.65s cubic-bezier(.22,1,.36,1) infinite; }
+  .arrow:before { content:''; position:absolute; left:6px; top:11px; width:30px; height:2px; border-radius:999px; background:currentColor; }
+  .arrow:after { content:''; position:absolute; left:4px; top:6px; width:12px; height:12px; border-bottom:2px solid currentColor; border-left:2px solid currentColor; transform:rotate(45deg); }
+  .c { min-width:0; color:inherit; font-size:15px; line-height:1.25; font-weight:700; letter-spacing:-0.01em; }
+  @keyframes chromeArrowHint {
+    0%,62%,100% { opacity:.42; transform:translateX(0); }
+    32% { opacity:1; transform:translateX(-6px); }
+  }
+</style></head><body>
+<div class="h">
+  ${arrow}
+  <div class="c">${copy}</div>
+</div></body></html>`
+}
+
+/** Open Chrome's View ▸ Developer submenu and read the SCREEN RECT of the "Allow JavaScript from Apple
+ *  Events" row, so the helper card can point its arrow straight at it. Returns {x,y,w,h} (top-left + size)
+ *  or null on failure (helper absent / not ready, no grant, Chrome closed, menu would not open).
+ *
+ *  Driving a native menu is a System Events action that needs the Accessibility grant on the RUNNING app.
+ *  dev Electron does not hold it (a direct osascript silently failed to open the menu — the user's bug), so
+ *  we run the AppleScript THROUGH the computer-use helper: computerUseHelper().runScan spawns osascript as
+ *  the helper's child, so it inherits the HELPER's Accessibility/Automation grant (the helper is a
+ *  LaunchServices app with its own TCC identity). The helper discards the child's stdout but forwards its
+ *  stderr, so osascript returns the rect via `log`, which we parse off that line. Match by `name contains
+ *  "Apple Events"` to stay robust to the exact label. */
+async function openChromeJsRow(): Promise<{ x: number; y: number; w: number; h: number } | null> {
+  if (process.platform !== 'darwin') return null
+  const applescript = [
+    'tell application "Google Chrome" to activate',
+    'delay 0.25',
+    'tell application "System Events" to tell process "Google Chrome"',
+    '  set out to ""',
+    '  try',
+    '    click menu bar item "View" of menu bar 1',
+    '    delay 0.18',
+    '    click menu item "Developer" of menu 1 of menu bar item "View" of menu bar 1',
+    '    delay 0.18',
+    '    set theRow to (first menu item of menu 1 of menu item "Developer" of menu 1 of menu bar item "View" of menu bar 1 whose name contains "Apple Events")',
+    '    set p to position of theRow',
+    '    set s to size of theRow',
+    '    set out to ((item 1 of p) as integer as string) & "," & ((item 2 of p) as integer as string) & "," & ((item 1 of s) as integer as string) & "," & ((item 2 of s) as integer as string)',
+    '  end try',
+    'end tell',
+    'log ("BLITZROW " & out)'
+  ].join('\n')
+  if (!computerUseHelper().available()) return null
+  if (!(await computerUseHelper().ensure()).ok) return null
+  let row: { x: number; y: number; w: number; h: number } | null = null
+  await computerUseHelper().runScan(
+    { node: '/usr/bin/osascript', script: '-e', args: [applescript], env: {} },
+    (line: string) => {
+      const m = line.match(/BLITZROW\s+(-?\d+),(-?\d+),(\d+),(\d+)/)
+      if (m) row = { x: Number(m[1]), y: Number(m[2]), w: Number(m[3]), h: Number(m[4]) }
+    },
+    12_000
+  )
+  return row
+}
+
+/** Probe whether Chrome's Apple-Events JavaScript bridge is ON: run a trivial `1` against the front
+ *  window's active tab. The decisive signal is the EXACT "turned off / through AppleScript" error
+ *  (connection-chrome-applescript-link.mjs documents it); 'on' = the probe ran (returned a value).
+ *  'unknown' = no front window or a non-toggle failure (e.g. the Automation prompt is still pending) —
+ *  we do NOT advance on unknown, so there is never a false auto-advance. */
+function probeChromeAppleEventsJs(): Promise<'on' | 'off' | 'unknown'> {
+  return new Promise((resolve) => {
+    const script = 'tell application "Google Chrome" to execute front window\'s active tab javascript "1"'
+    execFile('/usr/bin/osascript', ['-e', script], { timeout: 8000 }, (err, stdout, stderr) => {
+      if (!err) {
+        // Chrome returns the evaluated value ("1") when the bridge is on AND a window/tab exists.
+        return resolve(String(stdout || '').trim() === '1' ? 'on' : 'unknown')
+      }
+      const msg = String(stderr || '')
+      // The bridge being off has one exact message: "Executing JavaScript through AppleScript is turned off."
+      if (/JavaScript through AppleScript|Allow JavaScript from Apple Events|is turned off/i.test(msg)) return resolve('off')
+      // Anything else (no front window, Automation prompt pending / denied) is indeterminate.
+      resolve('unknown')
+    })
+  })
+}
+
+async function openChromeJsHelper(): Promise<void> {
+  if (process.platform !== 'darwin') return
+  // First: is the bridge already on? Then the step is already satisfied — auto-advance without showing
+  // the helper (e.g. a relaunch after the user ticked it on a prior run).
+  if ((await probeChromeAppleEventsJs()) === 'on') {
+    send('onboarding:chromejs-granted', {})
+    return
+  }
+  const row = await openChromeJsRow()
+  if (!chromeJsHelper || chromeJsHelper.isDestroyed()) {
+    chromeJsHelper = new BrowserWindow({
+      width: CHROME_JS_HELPER_W,
+      height: CHROME_JS_HELPER_H,
+      // Same NON-ACTIVATING panel pairing the TCC drag-helper uses: clicking/dragging it never activates
+      // BlitzOS, so Chrome stays frontmost and its open menu never dismisses under the helper.
+      type: process.platform === 'darwin' ? 'panel' : undefined,
+      frame: false,
+      transparent: true,
+      resizable: false,
+      movable: true,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      focusable: false,
+      hasShadow: false,
+      show: false,
+      webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true, nodeIntegration: false }
+    })
+    chromeJsHelper.on('closed', () => {
+      chromeJsHelper = null
+    })
+  }
+  const win = chromeJsHelper
+  win.setAlwaysOnTop(true, 'floating')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
+  win.setHiddenInMissionControl(true)
+  win.setMenuBarVisibility(false)
+  // Place the card just to the RIGHT of the "Allow JavaScript from Apple Events" row, vertically centered,
+  // so its left-pointing arrow lands on the row. Fallback (row unread — no grant / Chrome closed / the menu
+  // would not open): a neutral spot with the no-arrow manual-instruction copy, never an arrow at nothing.
+  const disp = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
+  let x = row ? row.x + row.w + 8 : disp.x + 24
+  let y = row ? Math.round(row.y + row.h / 2 - CHROME_JS_HELPER_H / 2) : disp.y + 36
+  x = Math.min(Math.max(disp.x + 8, x), disp.x + disp.width - CHROME_JS_HELPER_W - 8)
+  y = Math.min(Math.max(disp.y + 8, y), disp.y + disp.height - CHROME_JS_HELPER_H - 8)
+  win.setBounds({ x: Math.round(x), y: Math.round(y), width: CHROME_JS_HELPER_W, height: CHROME_JS_HELPER_H })
+  await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(chromeJsHelperHtml(!!row)))
+  win.showInactive()
+  startChromeJsPoll()
+}
+
+function closeChromeJsHelper(): void {
+  if (chromeJsPollTimer) {
+    clearInterval(chromeJsPollTimer)
+    chromeJsPollTimer = null
+  }
+  if (chromeJsHelper && !chromeJsHelper.isDestroyed()) chromeJsHelper.close()
+  chromeJsHelper = null
+}
+
+// Poll the bridge; the moment the probe reports 'on' (the user ticked the row), tear down the helper and
+// tell the card to advance. 'off'/'unknown' keep polling — never a false auto-advance (see the probe).
+let chromeJsPolling = false
+function startChromeJsPoll(): void {
+  if (chromeJsPollTimer) clearInterval(chromeJsPollTimer)
+  chromeJsPollTimer = setInterval(async () => {
+    if (chromeJsPolling) return
+    chromeJsPolling = true
+    try {
+      if ((await probeChromeAppleEventsJs()) !== 'on') return
+      closeChromeJsHelper()
+      send('onboarding:chromejs-granted', {})
+    } finally {
+      chromeJsPolling = false
+    }
+  }, 1500)
+}
+
 /** Machine-level pre-board outcomes (userData/preboard.json) — which steps are settled, so the
  *  sequence never re-asks across launches; the board's unlock card stays the re-offer path. */
 type PreboardOutcome = 'granted' | 'denied' | 'skipped'
@@ -638,28 +833,15 @@ export function setInterviewAgentAvailable(available: boolean): void {
   interviewAgentAvailable = !!available
 }
 
-const INTERVIEW_BOOT_TASK =
-  'THE ONBOARDING INTERVIEW. You are the interviewer. If `.blitzos/onboarding/context.md` is not present yet, wait for it instead of asking from generic assumptions. Then read `.blitzos/onboarding/interview.md`, skim `.blitzos/onboarding/context.md` only long enough to ask the first high-value choice-card question immediately, and continue the interview from the human answers. Ask at most 4 multiple-choice questions TOTAL and NEVER an open or write/paste question (the voice card is filled from the scan, not by asking). When their work touches web or app tools, you MUST also get them signed in: first post a multi-select card listing every tool the scan saw (web.workflow plus the comm and native apps in cadence, friendly names) and let them check all they use, not just what is open, then have them connect each checked tool through the connector (the browser extension for web tools, the helper for native apps), asking them to sign in to any that are not, and confirm each connection is live so BlitzOS can read and write in their real browser and apps. Do not ask what their workflow is; the resident discovers it by exploring each tool. That sign-in is a required action and does not count toward the 4 questions. Then write `.blitzos/onboarding/profile.md` and mark `.blitzos/onboarding/interview.json` done. Onboarding will write the compact Notepad restart anchor after completion. If the chat already shows prior Q&A, continue it, do not restart.'
+// ONE resident-only duty for agent '0'. No interview, no choice-card kickoff, no greeting — Blitz
+// boots straight into being the user's resident the moment the machine scan's context.md lands.
+const BLITZ_DUTY =
+  'You are Blitz, the user\'s resident agent, living in their chat. If `.blitzos/onboarding/context.md` does not exist yet, the machine scan is still running, so say nothing and wait. Once it exists, read it to learn the user\'s machine and work. Do not run an interview, do not post choice cards, do not greet. Act only on what the user asks; absent a request, stay quiet. Your browser is Blitz Chrome (extension-free, background): when a task needs one of their work apps, have them open it in Blitz Chrome and sign in once, then act there. Permissions: do everything reversible without asking (research, drafting, staging, editing files); ask only before a destructive or irreversible act (messaging or posting as the user, force pushing, deleting, deploying, spending). Keep polling `/events`; never go dark while working.'
 
-const RESIDENT_INITIATIVE_BOOT_TASK =
-  'THE RESIDENT INITIATIVE DUTY. The onboarding interview is done, so do not sit in passive watch mode. Read the Notepad restart anchor first if it exists, then read `.blitzos/onboarding/profile.md` and the recent chat. If profile.md ends with a "First task for the resident" line, do THAT first: it is a ready-to-run reversible task in a tool the human signed into during onboarding, so connect that tool through the connector and start the work (draft, stage, prepare), then ask only before the irreversible send. Acting at once through the tools they just brought in beats proposing something new. Otherwise act on the initiative gradient from the onboarding plan: propose useful work the user did not explicitly ask for, and start one safe reversible initiative immediately. If no initiative is active in this chat yet, send one short chat message with 2 or 3 concrete initiatives grounded in the profile, say which one you are starting now, then make visible progress on it. Keep the active initiative in this chat and your working context — do NOT persist it to a file: the user will often refine or reject it, so there is nothing durable to write yet. If an initiative is already active in the chat, continue it instead of re-proposing. Use the chat and action items, not modals. Stay inside the user boundaries in the profile, and apply them precisely. Do ALL reversible work automatically and NEVER ask permission for it: research, DRAFTING and staging any message, post, or outreach copy, and file edits. Ask ONLY before the irreversible outward act itself: actually sending or posting, deploying, spending money, using credentials, account actions, or destructive changes. Concretely: write and stage the draft, show it in the chat, and ask only before it is sent, never before it is written. Do not merely say you are watching. Keep polling `/events`, but use idle time to originate, execute, and update your notes.'
-
-/** index.ts threads this into session '0': interview first, then the resident initiative duty. */
+/** index.ts threads this into session '0': the single resident duty (no interview phase exists). */
 export function interviewBootTask(): string | null {
   if (!ONBOARDING_CHAT_ENABLED) return null
-  try {
-    const st = readInterview(osWorkspaceContext().workspace_path)
-    if (st && st.state === 'pending') {
-      return INTERVIEW_BOOT_TASK
-    }
-    if (st && st.state === 'done') {
-      refreshRestartAnchor(osWorkspaceContext().workspace_path)
-      return RESIDENT_INITIATIVE_BOOT_TASK
-    }
-  } catch {
-    /* no workspace yet */
-  }
-  return null
+  return BLITZ_DUTY
 }
 
 // Interview→resident HANDOFF: poll interview.json and, on the pending→done flip, re-exec agent '0' ONCE
@@ -841,6 +1023,16 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     closeDragHelper()
     return { ok: true }
   })
+  // Chrome "Allow JavaScript from Apple Events" step: open View ▸ Developer, float the helper at the row,
+  // and poll the bridge until the user ticks it (→ chromejs-granted). Mirrors the drag-helper handlers.
+  ipcMain.handle('onboarding:open-chromejs', async () => {
+    await openChromeJsHelper()
+    return { ok: true }
+  })
+  ipcMain.handle('onboarding:close-chromejs', () => {
+    closeChromeJsHelper()
+    return { ok: true }
+  })
   ipcMain.handle('onboarding:request-automation', () => requestAutomation())
   ipcMain.handle('onboarding:open-automation-settings', () => {
     void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Automation')
@@ -858,5 +1050,6 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
   ipcMain.handle('onboarding:dismiss-unlock', () => ({ ok: true }))
   app.on('before-quit', () => {
     closeDragHelper()
+    closeChromeJsHelper()
   })
 }

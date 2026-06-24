@@ -8,7 +8,7 @@ import { useSyncExternalStore } from 'react'
 // restart — this store is the in-session mirror, refreshed from preboardState() on each open. Reset on completion.
 
 export type DragKind = 'fda' | 'accessibility' | 'screen'
-export type StepKey = 'permissions' | 'browser' | 'done'
+export type StepKey = 'permissions' | 'chromejs' | 'browser' | 'done'
 export type Outcome = 'granted' | 'denied' | 'skipped'
 export type BrowserResult = { status: 'granted' | 'denied' | 'unavailable'; windows?: number; tabs?: number; browser?: string }
 export type PreboardState = {

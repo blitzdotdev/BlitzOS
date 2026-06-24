@@ -107,6 +107,7 @@ export function makeConnectionOps({
   let tabLink = null // the tab link (connection-tab-link.mjs) registers itself via setTabLink
   let windowLink = null // the window link (connection-window-link.ts, Electron-only) registers via setWindowLink
   let safariLink = null // the Safari link (connection-safari-link.mjs, Apple Events) registers via setSafariLink
+  let chromeAsLink = null // the Chrome Apple-Events link (connection-chrome-applescript-link.mjs) — the Chrome tab path now that the connector extension is deprecated
   let installer = null // the extension force-install (connection-install.ts, Electron-only) registers via setInstaller
   let browserLauncher = null // ensures the dedicated AI Chrome is running (ai-browser.ts, Electron-only) via setBrowserLauncher
 
@@ -192,7 +193,7 @@ export function makeConnectionOps({
   // ---- adapter binding: an adapter calls this when the user/agent connects a source ----
   // Returns { connId, surfaceId }. Auto-creates + binds the representation widget so the connId<->surfaceId
   // link is AUTHORITATIVE (a widget can't spoof which connection it drives) and marks it content-shared.
-  function connectionBind({ type, sourceId, title, capabilities, adapter, ref, agentId } = {}) {
+  function connectionBind({ type, sourceId, title, capabilities, adapter, ref, agentId, origin } = {}) {
     const connId = 'conn_' + randomUUID().slice(0, 8)
     const sid = String(sourceId || 'unknown')
     const kind = type === 'window' ? 'window' : 'tab'
@@ -247,7 +248,11 @@ export function makeConnectionOps({
       ref: ref ?? null,
       // the chat session that attached this source ('' = attached on the new-session composer, reassigned on spawn).
       // The owner scopes connection_list per chat + targets the attach moment (self-reported, like /events + /say).
-      agentId: agentId != null ? String(agentId) : ''
+      agentId: agentId != null ? String(agentId) : '',
+      // origin = WHOSE source this is, so the agent works in a source the USER attached instead of defaulting to its
+      // own Blitz Chrome: 'user-chrome'/'user-safari' = the user's own browser they connected (act in THEIR session);
+      // 'window' = a native macOS app; 'blitz-chrome' = the agent's own browser (only when the user gave it no source).
+      origin: origin || (kind === 'window' ? 'window' : undefined)
     }
     registry.set(connId, record)
     if (surfaceId) {
@@ -807,6 +812,7 @@ export function makeConnectionOps({
         .map((r) => ({
           connId: r.connId,
           type: r.type,
+          origin: r.origin || undefined,
           sourceId: r.sourceId,
           title: r.title,
           status: r.status,
@@ -1158,14 +1164,17 @@ export function makeConnectionOps({
   function setSafariLink(link) {
     safariLink = link
   }
+  function setChromeAsLink(link) {
+    chromeAsLink = link
+  }
   // Connectable tabs = Chrome (the extension) + Safari (Apple Events), tagged by `browser`.
   async function connectionListTabs() {
     const out = []
-    if (tabLink && typeof tabLink.listTabs === 'function') {
+    if (chromeAsLink && typeof chromeAsLink.listTabs === 'function') {
       try {
-        for (const t of (await tabLink.listTabs()) || []) out.push({ ...t, browser: 'chrome' })
+        for (const t of (await chromeAsLink.listTabs()) || []) out.push({ ...t, browser: 'chrome' })
       } catch {
-        /* extension offline */
+        /* Chrome not scriptable yet — "Allow JavaScript from Apple Events" is off */
       }
     }
     if (safariLink && typeof safariLink.listTabs === 'function') {
@@ -1175,7 +1184,7 @@ export function makeConnectionOps({
         /* Safari not scriptable yet */
       }
     }
-    if (!tabLink && !safariLink) return { error: 'no tab link — install + connect the BlitzOS Connector extension (Chrome), or enable Safari Apple Events' }
+    if (!chromeAsLink && !safariLink) return { error: 'no browser link — enable "Allow JavaScript from Apple Events" in Chrome (View ▸ Developer) or Safari (Develop)' }
     return { tabs: out }
   }
   // Enrich a connect result with the source's BRIEFING — savedTools (banked here) + registryTools (vetted,
@@ -1202,9 +1211,10 @@ export function makeConnectionOps({
       if (!safariLink || typeof safariLink.connectTab !== 'function') return { error: 'Safari link not available' }
       return attachBriefing(await safariLink.connectTab(String(tabId), opts || {}))
     }
-    if (!tabLink || typeof tabLink.connectTab !== 'function') return { error: 'no tab link — install + connect the BlitzOS Connector extension first' }
+    // Chrome via Apple Events (the connector extension is deprecated). Ids are chrome:<window>:<tab>.
+    if (!chromeAsLink || typeof chromeAsLink.connectTab !== 'function') return { error: 'Chrome link not available — enable "Allow JavaScript from Apple Events" in Chrome (View ▸ Developer)' }
     if (tabId == null) return { error: 'tabId required' }
-    return attachBriefing(await tabLink.connectTab(Number(tabId), opts || {}))
+    return attachBriefing(await chromeAsLink.connectTab(String(tabId), opts || {}))
   }
   // ---- the window link (connection-window-link.ts) registers itself the same way; window connect is
   // macOS-and-local-only (it needs the BlitzOS helper's AX/CGEvent/ScreenCaptureKit). ----
@@ -1228,9 +1238,9 @@ export function makeConnectionOps({
     if (!sid) return { error: 'sourceId required' }
     const co = opts && opts.agentId != null ? { agentId: opts.agentId } : {}
     const wantWindow = type === 'window'
-    if (!wantWindow && tabLink) {
+    if (!wantWindow && chromeAsLink) {
       try {
-        const tabs = (await tabLink.listTabs()) || []
+        const tabs = (await chromeAsLink.listTabs()) || []
         const match = tabs.find((t) => {
           try {
             return new URL(t.url).host === sid
@@ -1238,7 +1248,7 @@ export function makeConnectionOps({
             return false
           }
         })
-        if (match) return tabLink.connectTab(match.tabId, co)
+        if (match) return chromeAsLink.connectTab(match.tabId, co)
       } catch {
         /* fall through */
       }
@@ -1466,6 +1476,7 @@ export function makeConnectionOps({
     // tab + window link registration + the user/agent connect entries
     setTabLink,
     setSafariLink,
+    setChromeAsLink,
     connectionListTabs,
     connectionConnectTab,
     setWindowLink,
