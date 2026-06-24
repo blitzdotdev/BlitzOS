@@ -10,6 +10,7 @@ const remarkPlugins = [remarkGfm]
 type MarkdownMessageProps = Pick<IslandMessage, 'role' | 'text' | 'parts'> & {
   onChoose?: (choice: string) => void
   selectedAnswer?: string
+  showDivider?: boolean
 }
 
 type Fence = { char: '`' | '~'; size: number }
@@ -154,29 +155,36 @@ function ChoicePartMessage({
   return (
     <div className={`isl-ask-card ${part.layout}${answered ? ' answered' : ''}`} role="group" aria-label={part.prompt}>
       <div className="isl-ask-prompt">{part.prompt}</div>
-      {answered ? (
+      <div className="isl-ask-options">
+        {part.options.map((option, index) => {
+          const img = normalizedImageSrc(option.img)
+          const selected = selectedAnswer === option.label
+          return (
+            <button
+              key={`${index}:${option.label}`}
+              type="button"
+              className={`isl-ask-option${selected ? ' selected' : ''}`}
+              disabled={answered || !onChoose}
+              onClick={() => onChoose?.(option.label)}
+            >
+              {img && <img src={img} alt="" loading="lazy" decoding="async" />}
+              <span className="isl-ask-label">{option.label}</span>
+              {option.sub && <span className="isl-ask-sub">{option.sub}</span>}
+            </button>
+          )
+        })}
+      </div>
+      {answered && (
         <div className="isl-ask-selected" aria-label={`Selected answer: ${selectedAnswer}`}>
-          <span className="isl-ask-selected-kicker">Selected</span>
-          <span className="isl-ask-selected-answer">{selectedAnswer}</span>
-        </div>
-      ) : (
-        <div className="isl-ask-options">
-          {part.options.map((option, index) => {
-            const img = normalizedImageSrc(option.img)
-            return (
-              <button
-                key={`${index}:${option.label}`}
-                type="button"
-                className="isl-ask-option"
-                disabled={!onChoose}
-                onClick={() => onChoose?.(option.label)}
-              >
-                {img && <img src={img} alt="" loading="lazy" decoding="async" />}
-                <span className="isl-ask-label">{option.label}</span>
-                {option.sub && <span className="isl-ask-sub">{option.sub}</span>}
-              </button>
-            )
-          })}
+          <span className="isl-ask-selected-copy">
+            <span className="isl-ask-selected-kicker">Selected</span>
+            <span className="isl-ask-selected-answer">{selectedAnswer}</span>
+          </span>
+          <span className="isl-ask-selected-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M5 12.5l4.2 4.2L19 7" />
+            </svg>
+          </span>
         </div>
       )}
     </div>
@@ -219,12 +227,12 @@ function renderMessagePart(part: IslandMessagePart, index: number, onChoose?: (c
   }
 }
 
-function MarkdownMessage({ role, text, parts: providedParts, onChoose, selectedAnswer }: MarkdownMessageProps): JSX.Element {
+function MarkdownMessage({ role, text, parts: providedParts, onChoose, selectedAnswer, showDivider }: MarkdownMessageProps): JSX.Element {
   const parts = useMemo(() => messagePartsFor({ role, text, parts: providedParts }), [role, text, providedParts])
   const hasChoice = parts.some((part) => part.type === 'choice')
 
   return (
-    <div className={`isl-msg ${role} isl-md-msg${hasChoice ? ' isl-ask-msg' : ''}`}>
+    <div className={`isl-msg ${role} isl-md-msg${hasChoice ? ' isl-ask-msg' : ''}${showDivider ? ' isl-say-divider' : ''}`}>
       {parts.map((part, index) => renderMessagePart(part, index, onChoose, selectedAnswer))}
     </div>
   )

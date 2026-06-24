@@ -5,7 +5,7 @@
 // Point BlitzOS at it with BLITZ_TOOL_REGISTRY_URL=https://<your-worker-domain>.
 
 import { route } from './registry-core.mjs'
-import { SOURCES } from './registry-data.mjs'
+import { SOURCES, MCP_ENDPOINTS } from './registry-data.mjs'
 
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' }
 
@@ -13,7 +13,7 @@ export default {
   async fetch(request) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS })
     const url = new URL(request.url)
-    const { status, body } = route({ method: request.method, pathname: url.pathname, searchParams: url.searchParams }, SOURCES)
+    const { status, body } = route({ method: request.method, pathname: url.pathname, searchParams: url.searchParams }, SOURCES, MCP_ENDPOINTS)
     return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...CORS } })
   }
 }

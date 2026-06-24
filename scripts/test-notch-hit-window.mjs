@@ -201,7 +201,7 @@ ok('home working-agent rail jumps directly to the selected agent chat',
   /const openAgentChat = \(id: string\): void => \{[\s\S]*?const idx = sessions\.findIndex\(\(s\) => s\.id === id\)[\s\S]*?setPage\(idx \+ 1\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
     /onOpenAgent=\{openAgentChat\}/.test(notchHost))
 ok('notch agent status text keeps the backend starting state visible as Warming up',
-  /s === 'starting' \|\| s === 'reconnecting' \? 'warming' : s === 'working' \? 'working' : s === 'waiting' \? 'waiting' : 'idle'/.test(islandPanel) &&
+  /s === 'starting' \|\| s === 'reconnecting' \? 'warming' : s === 'working' \? 'working' : s === 'waiting' \? 'waiting' : s === 'error' \? 'error' : 'idle'/.test(islandPanel) &&
     /case 'working':[\s\S]*?return 'Working'[\s\S]*?case 'starting':[\s\S]*?return 'Warming up'[\s\S]*?case 'reconnecting'/.test(islandPanel) &&
     /case 'waiting':[\s\S]*?return 'Response Needed'/.test(islandPanel) &&
     /case 'stopped':[\s\S]*?return 'Idle'/.test(islandPanel) &&
@@ -209,8 +209,9 @@ ok('notch agent status text keeps the backend starting state visible as Warming 
     /\.isl-chip-dot\[data-status='warming'\] \{[\s\S]*?animation: isl-dot-pulse/.test(islandCss) &&
     /\.isl-chip-dot\[data-status='working'\] \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
     /\.isl-chip-dot\[data-status='waiting'\]/.test(islandCss) &&
-    /\.isl-status\[data-status='waiting'\]/.test(islandCss) &&
-    /\.isl-status\[data-status='working'\] \.isl-status-dot \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
+    /\.isl-chip-dot\[data-status='error'\]/.test(islandCss) &&
+    /\.isl-inline-details\[data-status='waiting'\]/.test(islandCss) &&
+    /\.isl-inline-details\[data-status='working'\] \.isl-inline-status-dot \{[\s\S]*?animation: isl-spin/.test(islandCss) &&
     /@keyframes isl-spin/.test(islandCss))
 ok('workspace host derives working status from contextual terminal output and active workflow runs',
   /chatWorkflowRuns = new Map/.test(workspaceHost) &&
@@ -296,6 +297,11 @@ ok('island terminal pane hands the active terminal to a real macOS Terminal wind
     !/subscribeTerminal\(/.test(islandTerminal) &&
     !/terminalInput/.test(islandTerminal) &&
     !/terminalResize/.test(islandTerminal))
+ok('debug terminal open revives placeholder agents through the real launch path, not a shell restart',
+  /let reviveAgentBackend/.test(index) &&
+    /reviveAgentBackend = \(id, title\) => launchAgent\(String\(id\), 0, title \|\| undefined\)/.test(index) &&
+    /terminal\?\.kind === 'agent' && terminal\.status !== 'stopped' && !isRestartableAgentTerminal\(terminal\)[\s\S]*?reviveOrRestartAgentBackend\(id, terminal\)/.test(index) &&
+    /terminal is not a live tmux window/.test(index))
 ok('island terminal pane keeps a compact debug row with an external-open action',
   /className="isl-terminal-debug"/.test(islandTerminal) &&
     /className="isl-term-external"/.test(islandTerminal) &&
@@ -305,6 +311,13 @@ ok('island terminal pane keeps a compact debug row with an external-open action'
 ok('App no longer exposes the old agent-terminal surface toggle or opens agent terminals with openTerminal',
   !/showAgentTerminals/.test(app) && !/Agent terminal visibility/.test(app) && /term\.kind !== 'agent'/.test(app) &&
     /Managed agent terminals stay hidden here/.test(app))
+ok('real user messages revive the selected agent if its backend exited or only a placeholder shell exists',
+  /setOnUserMessage\(\(sid\) => \{[\s\S]*?const id = String\(sid \|\| '0'\)[\s\S]*?isRecoverableAgentPane\(id\)[\s\S]*?agent .* not live on user message[\s\S]*?electronTerminalOps\.getTerminal\(id\)[\s\S]*?reviveOrRestartAgentBackend\(id, terminal\)[\s\S]*?osKickBrain\(id\)/.test(index))
+ok('wake watchdog refuses to type recovery nudges into shell-only agent panes',
+  /const isRecoverableAgentPane = \(id: string\): boolean => \{[\s\S]*?electronTerminalOps\.isTerminalLive\(id\) && isRestartableAgentTerminal\(terminal\)/.test(index) &&
+    /isLive: \(id\) => isRecoverableAgentPane\(String\(id\)\)/.test(index))
+ok('terminal restart never turns a placeholder agent meta into a plain shell',
+  /if \(meta\.kind === 'agent' && !command\) return null/.test(terminalManager))
 
 // ── notch-owned agent archive flow ───────────────────────────────────────────────────────────────────────────
 const archiveBlock = workspaceHost.match(/function setAgentArchived[\s\S]*?function archiveAgent/)?.[0] || ''
@@ -331,10 +344,16 @@ ok('active chat view offers archive only for non-primary agents while reserving 
     /disabled=\{activeId === '0'\}/.test(islandPanel) &&
     /if \(activeId !== '0'\) onArchiveAgent\(activeId\)/.test(islandPanel) &&
     /\.nh-island \.isl-archive\.placeholder \{[\s\S]*?visibility: hidden[\s\S]*?pointer-events: none/.test(islandCss))
-ok('active chat view shows status and archive in a padded meta row below the tabs',
-  /className="isl-agent-meta"[\s\S]*?className="isl-status"[\s\S]*?className=\{`isl-archive/.test(islandPanel) &&
-    /\.nh-island \.isl-agent-meta \{[\s\S]*?justify-content: space-between[\s\S]*?padding: 8px 2px 4px/.test(islandCss) &&
-    /\.nh-island \.isl-actions \{[\s\S]*?justify-content: flex-start/.test(islandCss))
+ok('active chat view moves status/details into a Claude-like inline transcript row',
+  /const showInlineDetails = Boolean\(activeId && \(latestDetail \|\| dotStatus\(status\) !== 'idle' \|\| detailsOpen\)\)/.test(islandPanel) &&
+    /const inlineDetails = showInlineDetails \? \(/.test(islandPanel) &&
+    /className=\{`isl-inline-details/.test(islandPanel) &&
+    /data-status=\{dotStatus\(status\)\}/.test(islandPanel) &&
+    /i === lastVisibleTurnIndex && inlineDetails/.test(islandPanel) &&
+    /className="isl-inline-detail-rows"/.test(islandPanel) &&
+    !/className="isl-actions"/.test(islandPanel) &&
+    /\.nh-island \.isl-inline-details \{/.test(islandCss) &&
+    /\.nh-island \.isl-agent-meta \{[\s\S]*?justify-content: flex-end[\s\S]*?padding: 6px 2px 2px/.test(islandCss))
 ok('agent tabs can be renamed inline from right-click with a 24-character cap',
   /renameAgent\(agentId: string, newTitle: string\)[\s\S]*?'os:rename-agent'/.test(preload) &&
     /ipcMain\.handle\('os:rename-agent'/.test(index) &&
@@ -392,12 +411,15 @@ ok('permanent archived-agent delete goes through closeAgent only after settings 
 ok('island chat renders markdown with react-markdown + GFM and no raw HTML path',
   pkg.dependencies?.['react-markdown'] && pkg.dependencies?.['remark-gfm'] &&
     /import MarkdownMessage from '.\/MarkdownMessage'/.test(islandPanel) &&
-    /import \{ matchingChoiceAnswer \} from '.\/messageParts'/.test(islandPanel) &&
+    /import \{ matchingChoiceAnswerForMessage \} from '.\/messageParts'/.test(islandPanel) &&
     /<MarkdownMessage[\s\S]*?role=\{m\.role\}[\s\S]*?text=\{m\.text\}/.test(islandPanel) &&
+    /showDivider=\{m\.role === 'agent' && i > 0\}/.test(islandPanel) &&
     /from 'react-markdown'/.test(markdownMessage) &&
     /from 'remark-gfm'/.test(markdownMessage) &&
     /remarkPlugins=\{remarkPlugins\}/.test(markdownMessage) &&
     /skipHtml/.test(markdownMessage) &&
+    /isl-say-divider/.test(markdownMessage) &&
+    /\.isl-msg\.agent\.isl-md-msg\.isl-say-divider/.test(islandCss) &&
     !/dangerouslySetInnerHTML/.test(markdownMessage) &&
     !/rehypeRaw/.test(markdownMessage))
 ok('markdown links use the safe external-url bridge and unsafe schemes become inert',
@@ -419,7 +441,7 @@ ok('island chat has a typed message-parts adapter before rendering markdown or p
     /parts\?: IslandMessagePart\[\]/.test(notchTypes) &&
     /messagePartsFor/.test(messageParts) &&
     /parseBlitzUiChoicePart/.test(messageParts) &&
-    /matchingChoiceAnswer/.test(messageParts) &&
+    /matchingChoiceAnswerForMessage/.test(messageParts) &&
     /messagePartsFor\(\{ role, text, parts: providedParts \}\)/.test(markdownMessage))
 ok('blitz-ui choice prompts render as typed tappable island parts instead of raw JSON',
   /```blitz-ui/.test(messageParts) &&
@@ -428,18 +450,29 @@ ok('blitz-ui choice prompts render as typed tappable island parts instead of raw
     /className=\{`isl-ask-card \$\{part\.layout\}/.test(markdownMessage) &&
     /case 'choice':/.test(markdownMessage) &&
     /onChoose\?\.\(option\.label\)/.test(markdownMessage) &&
-    /onChoose=\{\(choice\) => onSend\(choice\)\}/.test(islandPanel) &&
+    /disabled=\{answered \|\| !onChoose\}/.test(markdownMessage) &&
+    /setPendingChoiceSelections/.test(islandPanel) &&
+    /onSend\(choice\)/.test(islandPanel) &&
     /\.isl-ask-card/.test(islandCss) &&
-    /\.isl-ask-option/.test(islandCss))
-ok('submitted blitz-ui prompts collapse to prompt plus selected answer in history',
+    /\.isl-ask-option/.test(islandCss) &&
+    /\.isl-ask-card::before/.test(islandCss) &&
+    /backdrop-filter: blur\(40px\) saturate\(1\.35\)/.test(islandCss))
+ok('submitted blitz-ui prompts show the selected answer in the original prompt UI and hide the duplicate user bubble',
   /selectedAnswer/.test(markdownMessage) &&
     /isl-ask-selected/.test(markdownMessage) &&
+    /isl-ask-selected-mark/.test(markdownMessage) &&
+    /isl-ask-option\$\{selected \? ' selected' : ''\}/.test(markdownMessage) &&
     /className=\{`isl-ask-card \$\{part\.layout\}\$\{answered \? ' answered' : ''\}`\}/.test(markdownMessage) &&
-    /matchingChoiceAnswer/.test(islandPanel) &&
+    /pendingChoiceSelections/.test(islandPanel) &&
+    /matchingChoiceAnswerForMessage/.test(islandPanel) &&
+    /lastVisibleTurnIndex/.test(islandPanel) &&
+    /return i - 1/.test(islandPanel) &&
     /isSubmittedAskAnswer/.test(islandPanel) &&
     /if \(isSubmittedAskAnswer\) return null/.test(islandPanel) &&
     /\.isl-ask-card\.answered/.test(islandCss) &&
-    /\.isl-ask-selected-answer/.test(islandCss))
+    /\.isl-ask-card\.answered \.isl-ask-option/.test(islandCss) &&
+    /\.isl-ask-selected-answer/.test(islandCss) &&
+    /\.isl-ask-selected-mark/.test(islandCss))
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)
 process.exit(failures === 0 ? 0 : 1)

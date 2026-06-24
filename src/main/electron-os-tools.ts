@@ -3,6 +3,7 @@
 // Electron transports import OS_TOOLS / OS_TOOLS_BY_PATH from HERE: agentSocket.ts (relay) maps the array,
 // control-server.ts (localhost) dispatches the by-path map. The server (preview/backend.mjs) builds the SAME
 // registry from its own ops — so there is one tool definition, zero Electron/server difference.
+import { shell } from 'electron'
 import { makeOsTools, makeOsToolsByPath, type OsTool } from './os-tools.mjs'
 import {
   osCreateSurface,
@@ -152,6 +153,16 @@ export const electronConnections = makeConnectionOps({
       return electronTerminalOps.listTerminals().some((t) => t.kind === 'agent' && t.status === 'running')
     } catch {
       return false
+    }
+  },
+  // MCP OAuth approval: BlitzOS opens the one-time authorize URL in the user's default browser (connectMcp then
+  // awaits the loopback catch). shell.openExternal only accepts http/https; connectMcp builds an https/loopback
+  // authorize URL, so this is safe (never opens a file:/custom-scheme URL).
+  openExternal: (url: string) => {
+    try {
+      if (typeof url === 'string' && /^https?:\/\//i.test(url)) void shell.openExternal(url)
+    } catch {
+      /* the authUrl is still returned for a manual open */
     }
   }
 })

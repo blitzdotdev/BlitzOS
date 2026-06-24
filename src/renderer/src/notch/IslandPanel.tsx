@@ -15,8 +15,9 @@ import { useSentTray, recordSentTray, getLiveTray } from './sentTrayStore'
 import { IslandTerminalPane } from './IslandTerminalPane'
 import MarkdownMessage from './MarkdownMessage'
 import IslandKanban, { type WfStats } from './IslandKanban'
+import { isSubagentEvents } from './wfReduce'
 import { fmtMs, fmtTok } from './wfShared'
-import { matchingChoiceAnswer } from './messageParts'
+import { matchingChoiceAnswerForMessage } from './messageParts'
 import { agentGradient } from './agentVisuals'
 import type { IslandPanelProps, IslandWfRun } from './types'
 
@@ -29,7 +30,8 @@ const ARCHIVE_PATH =
   'M4 7h16M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 11h6M5 3h14a1 1 0 0 1 1 1v3H4V4a1 1 0 0 1 1-1Z'
 
 // Raw host status → status symbol: warming/reconnecting pulses blue, working spins, everything else is quiet.
-const dotStatus = (s: string): string => (s === 'starting' || s === 'reconnecting' ? 'warming' : s === 'working' ? 'working' : s === 'waiting' ? 'waiting' : 'idle')
+const dotStatus = (s: string): string =>
+  s === 'starting' || s === 'reconnecting' ? 'warming' : s === 'working' ? 'working' : s === 'waiting' ? 'waiting' : s === 'error' ? 'error' : 'idle'
 // Raw host status → a plain one-word label for the live status line.
 const statusLabel = (s: string): string => {
   switch (s) {
@@ -50,6 +52,8 @@ const statusLabel = (s: string): string => {
   }
 }
 const cleanAgentName = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, AGENT_NAME_MAX)
+const choiceSelectionKey = (activeId: string | undefined, index: number, ts: number | undefined, text: string): string =>
+  `${activeId || 'new'}:${index}:${ts || 0}:${text.slice(0, 80)}`
 
 export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const {
@@ -86,6 +90,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const closedHeightRef = useRef<number | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [detailRows, setDetailRows] = useState<Array<{ label: string }>>([])
+  const [pendingChoiceSelections, setPendingChoiceSelections] = useState<Record<string, string>>({})
   // Attachment SNAPSHOT: a frozen, read-only copy of the dropbox shown above the user message it rode on. PERSISTED
   // (sentTrayStore → disk) so it survives island reopen AND a full quit/restart. Keyed by the user-message ORDINAL —
   // the dropbox clears on send, so each message's snapshot is exactly what was staged at THAT send.
@@ -173,6 +178,20 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     return { runsByAnchor: byAnchor, leadingRuns: leading }
   }, [runs, messages])
   const renderBoard = (r: IslandWfRun): JSX.Element => {
+    // SINGLE-PHASE fan-out ("subagents"): each leaf is already its own row pill, so the run-level "workflow
+    // running" pill is redundant — drop it and render the rows directly (always mounted; a fan-out board is small,
+    // not the heavy multi-phase grid the lazy-mount guards). Detected from the dry-preflight skeleton alone, so no
+    // board mount is needed to decide. Before the skeleton lands it reads false → the normal pill shows, then this
+    // switches to the headless rows once the plan is known.
+    if (isSubagentEvents(r.skeleton as unknown[])) {
+      return (
+        <div className={`isl-wf-board isl-wf-subagents${r.done ? ' isl-wf-done' : ''}`} key={r.runId}>
+          <div className="isl-wf-board-body">
+            <IslandKanban runId={r.runId} skeleton={r.skeleton} onStats={handleRunStats} />
+          </div>
+        </div>
+      )
+    }
     // Prefer the LIVE stats a mounted board reports (freshest), else the final stats stored on the run record
     // (index.json) — so a collapsed/never-expanded done board still shows "{ms} · {calls} agents · {tokens} tok"
     // with no board mount. Both are null while a run is still running.
@@ -240,6 +259,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   useEffect(() => {
     setDetailsOpen(false)
     setDetailRows([])
+    setPendingChoiceSelections({})
   }, [activeId])
 
   useEffect(() => {
@@ -250,18 +270,31 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     el.select()
   }, [editingId])
 
+  const loadDetails = useCallback((): void => {
+    if (!activeId) return
+    window.agentOS
+      ?.agentDetails?.(activeId)
+      .then((r) => setDetailRows(r?.rows || []))
+      .catch(() => {
+        /* best-effort */
+      })
+  }, [activeId])
+
   const toggleDetails = (): void => {
     const next = !detailsOpen
     setDetailsOpen(next)
-    if (next && activeId) {
-      window.agentOS
-        ?.agentDetails?.(activeId)
-        .then((r) => setDetailRows(r?.rows || []))
-        .catch(() => {
-          /* best-effort */
-        })
-    }
+    if (next) loadDetails()
   }
+
+  // Keep the inline activity row fresh while the agent is doing something. This is the same raw tool-row source
+  // the old bottom Details section used; the redesign changes placement first, not the backend contract.
+  useEffect(() => {
+    if (!activeId) return
+    loadDetails()
+    if (dotStatus(status) === 'idle') return
+    const timer = window.setInterval(loadDetails, 2500)
+    return () => window.clearInterval(timer)
+  }, [activeId, loadDetails, status])
 
   const startRename = (sessionId: string, title: string): void => {
     setEditingId(sessionId)
@@ -493,6 +526,45 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   // is locked to what it was, so the attachment panel rises only as tall as its own content and the feed shrinks to
   // fit (still scrollable + bottom-pinned). The new-session tab has no chat, so it just sizes to the composer + attach.
   const lockHeight = attachOpen && !isNew ? closedHeightRef.current ?? undefined : undefined
+  const lastVisibleTurnIndex = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]
+      if (message.role === 'user') {
+        const previous = messages[i - 1]
+        if (previous?.role === 'agent' && matchingChoiceAnswerForMessage(previous, message.text)) return i - 1
+        return i
+      }
+    }
+    return -1
+  })()
+  const latestDetail = detailRows[detailRows.length - 1]?.label
+  const inlineDetailText = latestDetail || (dotStatus(status) === 'idle' ? statusLabel(status) : `${statusLabel(status)}…`)
+  const showInlineDetails = Boolean(activeId && (latestDetail || dotStatus(status) !== 'idle' || detailsOpen))
+  const inlineDetails = showInlineDetails ? (
+    <div className={`isl-inline-details${detailsOpen ? ' open' : ''}`} data-status={dotStatus(status)}>
+      <button type="button" className="isl-inline-details-summary" onClick={toggleDetails}>
+        <span className="isl-inline-status-dot" aria-hidden />
+        <span className="isl-inline-details-text">{inlineDetailText}</span>
+        <span className="isl-inline-details-caret" aria-hidden>
+          {detailsOpen ? '▾' : '›'}
+        </span>
+      </button>
+      {detailsOpen && (
+        <div className="isl-inline-detail-rows">
+          {detailRows.length === 0 ? (
+            <div className="isl-inline-detail-empty">No steps recorded</div>
+          ) : (
+            detailRows.slice(-40).map((r, i, rows) => (
+              <div key={`${i}:${r.label}`} className={`isl-inline-detail-row${i === rows.length - 1 ? ' latest' : ''}`}>
+                <span className="isl-inline-detail-bullet" aria-hidden />
+                <span>{r.label}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  ) : null
   return (
     <div
       ref={panelRef}
@@ -503,13 +575,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
         <div className="isl-tabwrap-inner">{tabStrip}</div>
       </div>
       {!isNew && (
-        // Agent tab: a PURE chat (the agent's real messages only) + Details + a live status line — KEPT in attach mode.
+        // Agent tab: a PURE chat (the agent's real messages only) + inline activity details — KEPT in attach mode.
         <>
           <div className="isl-agent-meta">
-            <div className="isl-status" data-status={dotStatus(status)}>
-              <span className="isl-status-dot" aria-hidden />
-              {statusLabel(status)}
-            </div>
             {activeId && (
               <button
                 type="button"
@@ -539,9 +607,13 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                 {leadingRuns.map((r) => renderBoard(r))}
                 {messages.map((m, i) => {
                   const previous = messages[i - 1]
+                  const askKey = choiceSelectionKey(activeId, i, m.ts, m.text)
                   const selectedAnswer =
-                    m.role === 'agent' && messages[i + 1]?.role === 'user' ? matchingChoiceAnswer(m.text, messages[i + 1]?.text) : undefined
-                  const isSubmittedAskAnswer = m.role === 'user' && previous?.role === 'agent' && Boolean(matchingChoiceAnswer(previous.text, m.text))
+                    m.role === 'agent' && messages[i + 1]?.role === 'user'
+                      ? matchingChoiceAnswerForMessage(m, messages[i + 1]?.text) || pendingChoiceSelections[askKey]
+                      : pendingChoiceSelections[askKey]
+                  const isSubmittedAskAnswer =
+                    m.role === 'user' && previous?.role === 'agent' && Boolean(matchingChoiceAnswerForMessage(previous, m.text))
                   if (isSubmittedAskAnswer) return null
                   return (
                     <Fragment key={`${i}:${m.ts || ''}`}>
@@ -551,7 +623,18 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                           <AttachTray groups={trayByIndex[i]!} readOnly />
                         </div>
                       )}
-                      <MarkdownMessage role={m.role} text={m.text} parts={m.parts} selectedAnswer={selectedAnswer} onChoose={(choice) => onSend(choice)} />
+                      <MarkdownMessage
+                        role={m.role}
+                        text={m.text}
+                        parts={m.parts}
+                        selectedAnswer={selectedAnswer}
+                        showDivider={m.role === 'agent' && i > 0}
+                        onChoose={(choice) => {
+                          setPendingChoiceSelections((prev) => ({ ...prev, [askKey]: choice }))
+                          onSend(choice)
+                        }}
+                      />
+                      {i === lastVisibleTurnIndex && inlineDetails}
                       {/* live workflow board(s) anchored right after THIS message (the agent's "running…" line) */}
                       {(runsByAnchor.get(i) || []).map((r) => renderBoard(r))}
                     </Fragment>
@@ -566,27 +649,6 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               title={activeTerminal?.title || `Agent ${activeId}`}
               status={activeTerminal?.status || 'unknown'}
             />
-          )}
-          <div className="isl-actions">
-            <button type="button" className={`isl-details${detailsOpen ? ' open' : ''}`} onClick={toggleDetails}>
-              <span className="isl-details-caret" aria-hidden>
-                {detailsOpen ? '▾' : '▸'}
-              </span>
-              Details
-            </button>
-          </div>
-          {detailsOpen && (
-            <div className="isl-detail-rows">
-              {detailRows.length === 0 ? (
-                <div className="isl-detail-empty">No steps recorded</div>
-              ) : (
-                detailRows.map((r, i) => (
-                  <div key={i} className="isl-detail-row">
-                    {r.label}
-                  </div>
-                ))
-              )}
-            </div>
           )}
         </>
       )}

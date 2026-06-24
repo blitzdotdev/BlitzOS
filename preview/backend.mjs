@@ -638,6 +638,12 @@ const serverConnections = makeConnectionOps({
     } catch {
       return false
     }
+  },
+  // MCP OAuth approval: server mode has no desktop browser to drive, so this is a no-op — connectMcp still
+  // RETURNS the authUrl, which the caller surfaces for the operator to open manually (the loopback catch then
+  // completes the flow). We log only that approval is pending, NEVER the URL (it carries the OAuth state+PKCE).
+  openExternal: () => {
+    console.log('[agent-os backend] a source needs approval; open the authUrl returned by connection_unlock in a browser on this host')
   }
 })
 Object.assign(serverOps, serverConnections)
@@ -655,6 +661,16 @@ serverTabLink
   .catch(() => {})
 // Safari tabs via Apple Events (only works when the server is co-located on a Mac with Safari; harmless else).
 serverConnections.setSafariLink(makeSafariLink({ connectionOps: serverConnections }))
+
+// MCP connections have no representation surface, so they're re-established from the encrypted token store on
+// boot (mint each previously-approved source from its kept refresh_token — no human step). Same rehydrate the
+// Electron host runs. Best-effort + idempotent; sources whose refresh fails land 'error'/'reauth'.
+setTimeout(() => {
+  void serverConnections
+    .mcpRestoreAll()
+    .then((r) => r && r.total && console.log(`[agent-os backend] MCP connections restored: ${r.restored}/${r.total}`))
+    .catch(() => {})
+}, 1500)
 
 // Start the agent-socket relay via the SHARED lifecycle module (relay.mjs) — connect + self-heal + watchdog +
 // status all live there now (one impl, Electron too). The server only supplies its tools + the adapter: how to

@@ -35,6 +35,13 @@ The runtime injects these globals into scope (no `import`/`require`):
 - `args` → the input value (pass it via `blitz run wf.js '<json>'`). `budget` → `{ total, spent(), remaining() }`.
 - `workflow(name, args?)` → run another saved workflow inline (one level deep).
 
+**Single phase = a "subagents" fan-out.** When the work is N independent pieces done once in parallel with no
+step consuming another's output (translate each file, summarize each PDF, pull each competitor's pricing,
+generate 8 variations, scout these 5 dirs), use one `parallel([...])` and **no `phase()`** — give each leaf a
+short, distinct `label`. It renders as one row per subagent, not the kanban grid. Use `phase()` boundaries only
+when a later step consumes an earlier one (map→reduce, research→verify, rank) — that renders the grid. ("Subagents"
+here = these workflow leaves, not `spawn_agent` peers, which are persistent chat-tab agents.)
+
 Do mechanical work (chunk, dedup, count, sort, join, branch) in **CODE**; use `agent()` only for the
 judgment/semantics. Let the agent LEAVES do file/web/tool work (they have Read/Bash/etc.) — the
 orchestrator body itself has no filesystem; bring external data in via `args` or have a leaf fetch it.

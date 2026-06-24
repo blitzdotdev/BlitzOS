@@ -22,6 +22,9 @@ import { join } from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
 import { markWrite as defaultMarkWrite } from './workspace.mjs'
 import { emitConnectionMoment, setContentShare, dropContentShare } from './perception-core.mjs'
+import { detectMcp } from './mcp-detect.mjs'
+import { dcrRegister, startLoopback, refresh as mcpRefresh, mcpInitialize, mcpListTools, mcpCallTool } from './mcp-broker.mjs'
+import { saveTokens, loadTokens, clearTokens, listSources as listMcpSources } from './mcp-token-store.mjs'
 
 const READ_CAP = 8192 // default size cap on a read result — never dump a whole DOM/AX tree into context
 
@@ -87,7 +90,14 @@ export function makeConnectionOps({
   // the first-party tool registry (plans/connection-tool-registry.md): a standalone HTTP service we host,
   // open-read. Configured via BLITZ_TOOL_REGISTRY_URL; unset = the registry tools report "not configured".
   registryUrl = process.env.BLITZ_TOOL_REGISTRY_URL || '',
-  fetchImpl = (...a) => globalThis.fetch(...a)
+  fetchImpl = (...a) => globalThis.fetch(...a),
+  // the MCP detection registry (plans/blitzos-mcp-connections.md): a curated sourceId->endpoint map for
+  // sites that don't self-advertise /.well-known/mcp.json. Unset = only the well-known tier-1 probe runs.
+  mcpRegistryUrl = process.env.BLITZ_MCP_REGISTRY_URL || process.env.BLITZ_TOOL_REGISTRY_URL || '',
+  // Open a URL in the user's browser for the ONE-TIME MCP OAuth approval (Electron: shell.openExternal). BlitzOS
+  // owns this UX — connectMcp opens the authorize URL itself, then awaits the loopback catch. Default no-op so
+  // server mode / tests don't try to spawn a browser; the authUrl is ALSO returned so the UI can surface it.
+  openExternal = () => {}
 } = {}) {
   // connId -> { connId, type:'tab'|'window', sourceId, title, capabilities, status, surfaceId, adapter }
   const registry = new Map()
@@ -252,6 +262,19 @@ export function makeConnectionOps({
     // vetted tools that exist for this source — instead of the registry being invisible-until-queried (the
     // reason agents re-derive from scratch). If tools exist, it wakes the agent once with the names.
     void refreshRegistryForSource(sid, connId)
+    // Probe whether this freshly-connected source has an official integration to UNLOCK. When detection LANDS a
+    // lockable one, WAKE the connecting agent with a moment so it can offer to unlock it — never blocks the connect,
+    // and crucially does NOT rely on the agent polling connection_list_tools, which races the network probe (the
+    // reason a freshly-connected Figma/Notion tab showed no `unlock` and the agent just drove the page). The cache
+    // also still feeds `unlock` on a later list_tools. MCP-FREE verb; skipped if already unlocked (live). Promise.resolve
+    // normalizes ensureMcpDetected's return (a fresh cache hit is a plain object, a cold/stale probe is a promise).
+    Promise.resolve(ensureMcpDetected(sid))
+      .then((d) => {
+        if (d && d.available && d.dcr && !liveMcpForSource(sid)) {
+          emitConnectionMoment(surfaceId || 'system', { connId, sourceId: sid, status: 'live', verb: `has an official integration — connection_unlock { sourceId: '${sid}' } to unlock its tools`, agentId: record.agentId || '0' })
+        }
+      })
+      .catch(() => { /* a detection failure already caches a negative; nothing to surface */ })
     return { connId, surfaceId }
   }
 
@@ -343,14 +366,442 @@ export function makeConnectionOps({
     }
   }
 
+  // ============ MCP broker connections — an INVISIBLE tool provenance (plans/blitzos-mcp-connections.md) ============
+  // MCP is NOT an agent-visible connection kind. A source's "official integration" is brokered through a HIDDEN
+  // kind:'mcp' connection (BlitzOS is the upstream MCP client + OAuth owner); the agent only ever sees the source's
+  // toolkit (connection_list_tools merges the banked-JS tools with this hidden connection's upstream tools) and an
+  // optional `unlock` affordance. The hidden mcp connection is FILTERED OUT of connectionList. Exactly ONE hidden
+  // mcp connection exists per sourceId (idempotent). The OAuth tokens live in the encrypted per-(workspace,sourceId)
+  // token store; BlitzOS refreshes them silently. The record carries the OAuth metadata it needs to refresh
+  // (asMeta + clientId + clientSecret), never written into context.
+
+  // The persisted token bundle for an MCP source (the broker's auth state). The agent NEVER sees this — it is
+  // loaded only to mint a live access token for an upstream call. Re-detect would re-discover asMeta, but we
+  // store it so a refresh never needs the network detection round-trip (and works if the source briefly 404s).
+  function mcpDir() {
+    return getWorkspacePath() || null
+  }
+
+  // The HIDDEN mcp connection for a sourceId, if one exists. There is at most one (the connect path is idempotent
+  // per sourceId). Used to merge its upstream tools into connection_list_tools and to route connection_call_tool.
+  function mcpConnForSource(sid) {
+    const want = String(sid || '')
+    for (const r of registry.values()) {
+      if (r.kind === 'mcp' && r.sourceId === want) return r
+    }
+    return null
+  }
+  // A LIVE hidden mcp connection (handshake done, upstream tools cached) for a sourceId. A pending/error/reauth one
+  // exists but has no usable tools yet — treated as "not live" for both the merge and the lockable check.
+  function liveMcpForSource(sid) {
+    const r = mcpConnForSource(sid)
+    return r && r.status === 'live' ? r : null
+  }
+
+  // ---- detection cache (the `unlock` affordance) -------------------------------------------------------------
+  // A per-sourceId cache of detectMcp() so connection_list_tools can SYNCHRONOUSLY decide whether a source has an
+  // official integration to unlock, without re-probing the network on every list. `ensureMcpDetected` runs the
+  // detection once, dedupes concurrent calls per sourceId (a single in-flight promise), and stores the result. A
+  // sourceId is "lockable" iff it advertises a DCR-eligible integration AND no LIVE hidden mcp connection exists
+  // for it yet (once unlocked, its tools move into `tools` and the unlock entry disappears).
+  const DETECT_CACHE_TTL_MS = 10 * 60 * 1000 // re-probe a source at most every 10 min (detectMcp itself also TTLs) so
+  // a source that GAINS an integration mid-session, or a transient detection failure, isn't stuck on a negative for
+  // the whole process lifetime — bounded staleness, not permanent.
+  const detectCache = new Map() // sourceId -> { available, dcr, endpoint, asMeta, scopes, at }
+  const detectInFlight = new Map() // sourceId -> Promise (dedupe concurrent detection)
+  async function ensureMcpDetected(sourceId) {
+    const sid = String(sourceId || '').trim()
+    if (!sid) return null
+    const hit = detectCache.get(sid)
+    if (hit && Date.now() - hit.at < DETECT_CACHE_TTL_MS) return hit
+    if (detectInFlight.has(sid)) return detectInFlight.get(sid)
+    const p = (async () => {
+      let entry
+      try {
+        // NO registryUrl — the runtime cascade (well-known → exceptions → mcp.<domain> convention) resolves the
+        // common providers with zero curated data; the optional remote registry is only for connectMcp's explicit flow.
+        const det = await detectMcp(sid)
+        entry = { available: !!(det && det.available), dcr: !!(det && det.dcr), endpoint: det && det.endpoint, asMeta: det && det.asMeta, scopes: det && det.scopes, at: Date.now() }
+      } catch {
+        // A detection failure caches a negative so we don't re-probe a dead/slow host on every list_tools; a real
+        // unlock attempt (connection_unlock) re-runs detectMcp fresh and surfaces the true error there.
+        entry = { available: false, dcr: false, at: Date.now() }
+      }
+      detectCache.set(sid, entry)
+      detectInFlight.delete(sid)
+      return entry
+    })()
+    detectInFlight.set(sid, p)
+    return p
+  }
+  // SYNC: is this sourceId lockable per the cache? available + dcr (an integration we can self-register for) and no
+  // LIVE hidden mcp connection yet. Returns false when the cache has no entry (the caller fires ensureMcpDetected).
+  function isLockableCached(sid) {
+    const e = detectCache.get(String(sid || ''))
+    if (!e || !e.available || !e.dcr) return false
+    return !liveMcpForSource(sid)
+  }
+
+  // Mint a live access token for an MCP connection: load the stored tokens, refresh if expired (rotating the
+  // stored refresh_token when the AS issues a new one), and return the bearer string. Returns { error } when
+  // there are no tokens (re-auth needed) or a refresh fails — NEVER a stale/empty token silently.
+  //
+  // `force` drives a REACTIVE refresh (from the 401 path below): an upstream that 401s with a non-expired (or
+  // unknown-expiry) token has had it revoked/invalidated server-side, so we refresh regardless of expires_at.
+  async function mcpLiveToken(r, { force = false } = {}) {
+    const ws = mcpDir()
+    if (!ws) return { error: `no active workspace to read ${r.sourceId} access from` }
+    const tok = loadTokens(ws, r.sourceId)
+    if (!tok || !tok.access_token) return { error: `${r.sourceId} isn't approved — connection_unlock { sourceId: '${r.sourceId}' } to approve it`, reauth: true }
+    // Refresh PROACTIVELY when expires_at has passed (absolute epoch-ms, shaved 60s by the broker), OR
+    // REACTIVELY when forced (a 401 came back, so the token is dead even if not nominally expired). When expiry
+    // is unknown (no expires_in was issued) we don't refresh proactively — we try the token and let a 401 drive
+    // the reactive path. We need a refresh_token to refresh at all.
+    const expired = typeof tok.expires_at === 'number' && Date.now() >= tok.expires_at
+    if (expired || force) {
+      if (!tok.refresh_token) return { error: `${r.sourceId} access expired and can't auto-renew — connection_unlock { sourceId: '${r.sourceId}' } to re-approve`, reauth: true }
+      let fresh
+      try {
+        // RFC 8707: carry the resource (the MCP endpoint) so the refreshed token keeps the same audience binding.
+        fresh = await mcpRefresh({ asMeta: tok.asMeta || r.asMeta, clientId: tok.client_id || r.clientId, clientSecret: tok.client_secret || r.clientSecret, refresh_token: tok.refresh_token, resource: tok.endpoint || r.endpoint })
+      } catch (e) {
+        return { error: `${r.sourceId} access expired — connection_unlock { sourceId: '${r.sourceId}' } to re-approve: ${String((e && e.message) || e)}`, reauth: true }
+      }
+      const merged = {
+        ...tok,
+        access_token: fresh.access_token,
+        // rotation: keep the new refresh_token when the AS rotated it, else retain the old (still valid) one
+        refresh_token: fresh.refresh_token || tok.refresh_token,
+        expires_at: fresh.expires_at
+      }
+      const saved = saveTokens(ws, r.sourceId, merged)
+      if (saved && saved.error) return { error: `couldn't save renewed ${r.sourceId} access: ${saved.error}` }
+      return { access_token: merged.access_token, refreshed: true }
+    }
+    return { access_token: tok.access_token }
+  }
+
+  // Build the in-memory MCP registry record (shared by the live-connect, post-auth, and rehydrate paths). The
+  // OAuth metadata (asMeta + clientId + clientSecret) rides along so a later refresh never needs the network
+  // detection round-trip; it is NEVER returned to the agent (connectionList projects only safe fields).
+  function makeMcpRecord({ connId, sid, det, reg, status, tools = [], agentId }) {
+    return {
+      connId,
+      type: 'mcp',
+      kind: 'mcp',
+      sourceId: sid,
+      title: sid,
+      endpoint: det.endpoint,
+      authServer: det.authServer,
+      asMeta: det.asMeta,
+      clientId: reg.client_id,
+      clientSecret: reg.client_secret,
+      scopes: det.scopes,
+      status,
+      surfaceId: null,
+      capabilities: { mcp: true },
+      // a cached copy of the upstream tool list for connection_list_tools (refreshed live on each call_tool)
+      tools,
+      ref: null,
+      agentId: agentId != null ? String(agentId) : ''
+    }
+  }
+
+  // initialize + tools/list against the upstream MCP server with a live token, returning the REAL tool set
+  // (never a guessed/empty list). Throws on a handshake failure so the caller can mark the connection 'error'.
+  async function mcpHandshakeTools(endpoint, accessToken) {
+    const init = await mcpInitialize(endpoint, accessToken)
+    const upstreamTools = await mcpListTools(endpoint, accessToken, init.session)
+    // Defensive: drop nameless tools and de-dupe by name. The MCP spec mandates unique names, but a malformed server
+    // must not inject a {name:undefined} the agent can't call, nor a duplicate that could shadow a banked JS tool.
+    const seen = new Set()
+    return (Array.isArray(upstreamTools) ? upstreamTools : [])
+      .filter((t) => t && typeof t.name === 'string' && t.name && !seen.has(t.name) && seen.add(t.name))
+      .map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
+  }
+
+  // Finalize a connection from STORED tokens: mint a live token (refreshing if needed), handshake, and register
+  // the record. Returns { ok, connId, status, tools } or { ok:false, ... }. Used by the token-reuse short-circuit,
+  // the post-auth resolution, and boot rehydrate — so all three land an identical 'live' (or 'error') record.
+  // `connId` may be supplied (to fill a pending record in place) or minted fresh. Moment verbs are MCP-FREE — the
+  // hidden connection is invisible to the agent, so its moments read as the SOURCE'S toolkit unlocking, never "MCP".
+  async function finalizeMcpFromTokens({ sid, det, reg, agentId, connId, verb = `unlocked ${sid} tools` }) {
+    const cid = connId || 'mcp_' + randomUUID().slice(0, 8)
+    const probe = makeMcpRecord({ connId: cid, sid, det, reg, status: 'live', tools: [], agentId })
+    const tok = await mcpLiveToken(probe)
+    if (tok.error) {
+      const rec = makeMcpRecord({ connId: cid, sid, det, reg, status: tok.reauth ? 'reauth' : 'error', tools: [], agentId })
+      registry.set(cid, rec)
+      emitConnectionMoment('system', { connId: cid, sourceId: sid, status: rec.status, verb: rec.status === 'reauth' ? `${sid} needs approval again` : `couldn't unlock ${sid} tools`, agentId: rec.agentId || '0' })
+      return { ok: false, connId: cid, status: rec.status, error: tok.error, reauth: !!tok.reauth }
+    }
+    let tools
+    try {
+      tools = await mcpHandshakeTools(det.endpoint, tok.access_token)
+    } catch (e) {
+      // Valid tokens but the handshake failed — keep the tokens (a retry won't re-auth) and surface the real
+      // error. Registered 'error' so connection_list_tools' merge simply omits it (still hidden) and a retry works.
+      const rec = makeMcpRecord({ connId: cid, sid, det, reg, status: 'error', tools: [], agentId })
+      registry.set(cid, rec)
+      emitConnectionMoment('system', { connId: cid, sourceId: sid, status: 'error', verb: `couldn't unlock ${sid} tools`, agentId: rec.agentId || '0' })
+      return { ok: false, connId: cid, status: 'error', error: `unlocking ${sid} tools failed: ${String((e && e.message) || e)}` }
+    }
+    const rec = makeMcpRecord({ connId: cid, sid, det, reg, status: 'live', tools, agentId })
+    registry.set(cid, rec)
+    emitConnectionMoment('system', { connId: cid, sourceId: sid, status: 'live', verb, agentId: rec.agentId || '0' })
+    return { ok: true, connId: cid, status: 'live', tools }
+  }
+
+  // connectMcp — the UNDERLYING op behind the agent-facing /connection_unlock. NON-BLOCKING two-phase OAuth
+  // (plans/blitzos-mcp-connections.md). Idempotent per sourceId: if a LIVE hidden mcp connection already exists,
+  // return it (its tools are already in the toolkit). Else detect -> if a stored token bundle exists, REUSE it (no
+  // DCR, no human step, the tools appear immediately) -> else bind the loopback port FIRST, DCR with that EXACT
+  // redirect_uri, arm the authorize URL, register a HIDDEN 'pending' record, and RETURN { ok, status, authUrl,
+  // source } IMMEDIATELY so the island can render the "approve <Source>" card and server mode can surface the URL
+  // while approval is still pending. The human approval resolves on a SEPARATE path (waitForTokens): it persists
+  // the tokens, handshakes, flips the record to 'live' (or 'error'/'reauth'), and emits a connection moment so the
+  // agent learns its toolkit grew via /events. The call NEVER blocks up to LOOPBACK_TIMEOUT_MS. All agent-facing
+  // text here is MCP-FREE (the hidden connection is invisible) — errors/verbs talk about the SOURCE's integration.
+  async function connectMcp({ sourceId, agentId, workspaceDir } = {}) {
+    const sid = String(sourceId || '').trim()
+    if (!sid) return { ok: false, error: 'sourceId required (a site host like www.notion.com)', source: sid }
+    const ws = workspaceDir != null && String(workspaceDir) ? String(workspaceDir) : mcpDir()
+    if (!ws) return { ok: false, error: `no active workspace to store ${sid} access into`, source: sid }
+
+    // 0) IDEMPOTENT — a LIVE hidden connection for this source already brokers its integration; its tools are in the
+    // toolkit. Nothing to do (no second OAuth, no second hidden connection). The agent just keeps using its tools.
+    {
+      const existing = mcpConnForSource(sid)
+      if (existing && existing.status === 'live') return { ok: true, connId: existing.connId, status: 'live', tools: existing.tools || [], source: sid, reused: true }
+      // A PENDING flow is already in progress (the doctrine has the agent retry while pending) — return THAT same
+      // flow's authUrl, never start a second OAuth (no duplicate browser tab / loopback / orphaned record). A
+      // timed-out or denied pending has already flipped to 'error' via the waitForTokens .catch, so it falls through.
+      if (existing && existing.status === 'pending') return { ok: true, connId: existing.connId, status: 'pending', authUrl: existing.authUrl, source: sid, reused: true }
+    }
+
+    // 1) detect — only proceed for a DCR-eligible official integration (the broker can't self-register otherwise).
+    let det
+    try {
+      det = await detectMcp(sid, mcpRegistryUrl ? { registryUrl: mcpRegistryUrl } : {})
+    } catch (e) {
+      return { ok: false, error: `couldn't check ${sid}'s official integration: ${String((e && e.message) || e)}`, source: sid }
+    }
+    // Keep the detection cache in step with this fresh probe so the `unlock` affordance stays consistent.
+    detectCache.set(sid, { available: !!(det && det.available), dcr: !!(det && det.dcr), endpoint: det && det.endpoint, asMeta: det && det.asMeta, scopes: det && det.scopes, at: Date.now() })
+    if (!det || !det.available) return { ok: false, error: `${sid} has no official integration we can unlock`, available: false, source: sid }
+    if (!det.dcr || !det.asMeta || !det.asMeta.registration_endpoint) {
+      // Honest, specific failure — not a silent no-op. Non-DCR providers (e.g. Google) are deferred until
+      // BlitzOS ships a pre-registered verified app (see the plan's scope).
+      return { ok: false, error: `${sid}'s official integration can't be unlocked automatically yet (use the browser/connection_run_js path instead)`, available: true, dcr: false, source: sid }
+    }
+
+    // 2) TOKEN REUSE — if this source was already approved (a stored bundle with a usable token/refresh exists),
+    // skip DCR + the browser entirely: mint a token (refreshing if needed), handshake, register 'live'. This is
+    // what makes the encrypted token store actually pay off — a reconnect of an approved source needs NO human
+    // step and reuses the kept refresh_token instead of registering a brand-new DCR client.
+    {
+      const tok = loadTokens(ws, sid)
+      if (tok && (tok.refresh_token || tok.access_token)) {
+        // Reuse the stored DCR client_id/secret (so refresh authenticates as the same client the token was issued to).
+        const reg = { client_id: tok.client_id, client_secret: tok.client_secret }
+        const det2 = { ...det, endpoint: tok.endpoint || det.endpoint, asMeta: tok.asMeta || det.asMeta }
+        const out = await finalizeMcpFromTokens({ sid, det: det2, reg, agentId, verb: `unlocked ${sid} tools` })
+        // A live reuse (or a clean error/reauth that the agent can act on) is the answer. Only fall through to a
+        // fresh OAuth flow when there were tokens but they're unusable AND non-refreshable (reauth) — handled by
+        // returning the reauth result so the agent can re-run connect (which then re-auths below on next call).
+        if (out.ok) return { ok: true, connId: out.connId, status: 'live', tools: out.tools, source: sid, reused: true }
+        if (!out.reauth) return { ok: false, connId: out.connId, status: out.status, error: out.error, source: sid }
+        // reauth: tokens are dead beyond refresh — clear them and fall through to a fresh approval.
+        try {
+          clearTokens(ws, sid)
+        } catch {
+          /* best-effort; the fresh flow overwrites them anyway */
+        }
+      }
+    }
+
+    // 3) FRESH FLOW. Bind the loopback port FIRST so the registered redirect_uri EXACTLY matches the one used at
+    // authorize + exchange (RFC 8252 §7.3 only RECOMMENDS port-insensitive loopback matching; strict ASes do
+    // exact matching). startLoopback() returns the concrete http://127.0.0.1:<port>/ to register.
+    let lb
+    try {
+      lb = await startLoopback()
+    } catch (e) {
+      return { ok: false, error: `could not start the approval flow for ${sid}: ${String((e && e.message) || e)}`, source: sid }
+    }
+
+    // 4) DCR — register a fresh client with the EXACT bound redirect_uri.
+    let reg
+    try {
+      reg = await dcrRegister(det.asMeta, { clientName: 'BlitzOS', redirectUri: lb.redirectUri, scopes: det.scopes })
+    } catch (e) {
+      try {
+        lb.cancel()
+      } catch {
+        /* listener teardown best-effort */
+      }
+      return { ok: false, error: `could not set up ${sid} access: ${String((e && e.message) || e)}`, source: sid }
+    }
+    if (!reg || !reg.client_id) {
+      try {
+        lb.cancel()
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, error: `could not set up ${sid} access (the provider returned no client id)`, source: sid }
+    }
+
+    // 5) ARM the authorize URL (built against the same redirect_uri) and start the human-approval clock.
+    let authUrl
+    try {
+      authUrl = lb.armAuthorize({ asMeta: det.asMeta, clientId: reg.client_id, clientSecret: reg.client_secret, scopes: det.scopes, resource: det.endpoint })
+    } catch (e) {
+      try {
+        lb.cancel()
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, error: `could not build the approval link for ${sid}: ${String((e && e.message) || e)}`, source: sid }
+    }
+
+    // 6) Register a HIDDEN PENDING record now (the island reads it to render the approval card; it is FILTERED OUT
+    // of connectionList so the agent never sees a connection appear), and RETURN immediately. The agent learns the
+    // outcome via the connection moment (its toolkit growing) + connection_list_tools picking up the new tools.
+    const connId = 'mcp_' + randomUUID().slice(0, 8)
+    const pendingRec = makeMcpRecord({ connId, sid, det, reg, status: 'pending', tools: [], agentId })
+    pendingRec.authUrl = authUrl // a retry while pending returns THIS same flow's link (idempotency, step 0)
+    registry.set(connId, pendingRec)
+    emitConnectionMoment('system', { connId, sourceId: sid, status: 'pending', verb: `awaiting your approval for ${sid}`, agentId: agentId != null ? String(agentId) : '0' })
+
+    // BlitzOS owns the approval UX: open the browser at the authorize URL now (the user approves once). Best-effort
+    // — if openExternal throws or is a no-op (server/tests), the authUrl is still returned so the UI/agent/operator
+    // can surface it for a manual open. NEVER log the URL (it carries state+PKCE).
+    try {
+      openExternal(authUrl)
+    } catch {
+      /* the URL is still returned for a manual open */
+    }
+
+    // 7) Resolve the human approval on a SEPARATE path — this is what unblocks server mode (the operator opens the
+    // returned URL; the loopback catch completes the flow and wakes the agent). Persist tokens, handshake, flip the
+    // pending record to live/error/reauth, and emit a moment. No await here: the tool call has already returned.
+    lb.waitForTokens()
+      .then(async (tokens) => {
+        if (!tokens || !tokens.access_token) {
+          const rec = makeMcpRecord({ connId, sid, det, reg, status: 'error', tools: [], agentId })
+          registry.set(connId, rec)
+          emitConnectionMoment('system', { connId, sourceId: sid, status: 'error', verb: `${sid} approval didn't complete`, agentId: rec.agentId || '0' })
+          return
+        }
+        // Persist the full bundle (encrypted) so refresh works headlessly forever, INCLUDING the raw sourceId
+        // (the envelope carries it unencrypted) so boot rehydrate can re-establish this connection by sourceId.
+        const bundle = {
+          endpoint: det.endpoint,
+          authServer: det.authServer,
+          asMeta: det.asMeta,
+          scopes: det.scopes,
+          client_id: reg.client_id,
+          client_secret: reg.client_secret,
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          expires_at: tokens.expires_at,
+          token_type: tokens.token_type
+        }
+        const saved = saveTokens(ws, sid, bundle)
+        if (saved && saved.error) {
+          const rec = makeMcpRecord({ connId, sid, det, reg, status: 'error', tools: [], agentId })
+          registry.set(connId, rec)
+          emitConnectionMoment('system', { connId, sourceId: sid, status: 'error', verb: `approved ${sid} but couldn't save it: ${saved.error}`, agentId: rec.agentId || '0' })
+          return
+        }
+        // Handshake + flip to live (reuses the same finalize path; tokens are now on disk). The agent's toolkit grows.
+        await finalizeMcpFromTokens({ sid, det, reg, agentId, connId, verb: `unlocked ${sid} tools` })
+      })
+      .catch((e) => {
+        // Approval denied / timed out / loopback error — flip the hidden pending record to 'error' (the merge then
+        // omits it; the source's `unlock` reappears) so a re-run of connection_unlock retries cleanly.
+        const rec = makeMcpRecord({ connId, sid, det, reg, status: 'error', tools: [], agentId })
+        registry.set(connId, rec)
+        emitConnectionMoment('system', { connId, sourceId: sid, status: 'error', verb: `${sid} approval didn't complete: ${String((e && e.message) || e)}`, agentId: rec.agentId || '0' })
+      })
+
+    return { ok: true, connId, authUrl, status: 'pending', tools: [], source: sid }
+  }
+
+  // Boot / workspace rehydrate for the HIDDEN mcp connections: scan the encrypted token store for every
+  // previously-approved source and re-establish each as a live HIDDEN connection WITHOUT a human step (mint from the
+  // kept refresh_token), so its tools are back in the toolkit silently on the next connection_list_tools. Mirrors
+  // connectionRestoreAll (tabs/windows) — a hidden mcp record has no representation surface, so it can't be rebuilt
+  // from getSurfaces(); the token store IS its persistence. The restored connections stay HIDDEN (filtered from
+  // connectionList). Idempotent: a source already live is skipped; one whose refresh fails lands 'error'/'reauth'.
+  let mcpRestoreInFlight = false
+  async function mcpRestoreAll() {
+    if (mcpRestoreInFlight) return { restored: 0, total: 0, skipped: 'in-flight' }
+    mcpRestoreInFlight = true
+    try {
+      const ws = mcpDir()
+      if (!ws) return { restored: 0, total: 0 }
+      let sources = []
+      try {
+        sources = listMcpSources(ws) || []
+      } catch {
+        sources = []
+      }
+      // Skip sources already represented by a live/pending MCP record (e.g. a workspace switch without a restart).
+      const haveLive = new Set([...registry.values()].filter((r) => r.kind === 'mcp' && r.status !== 'error' && r.status !== 'dropped').map((r) => r.sourceId))
+      let restored = 0
+      let total = 0
+      for (const sid of sources) {
+        if (haveLive.has(sid)) continue
+        total++
+        const tok = loadTokens(ws, sid)
+        if (!tok || (!tok.refresh_token && !tok.access_token)) continue
+        // Build det/reg from the STORED bundle (no network detection needed — asMeta+endpoint are persisted).
+        const det = { endpoint: tok.endpoint, authServer: tok.authServer, asMeta: tok.asMeta, scopes: tok.scopes }
+        const reg = { client_id: tok.client_id, client_secret: tok.client_secret }
+        try {
+          const out = await finalizeMcpFromTokens({ sid, det, reg, agentId: '', verb: `restored ${sid} tools` })
+          if (out.ok) restored++
+        } catch {
+          /* a source that won't re-establish stays unregistered/error; never throws out of rehydrate */
+        }
+      }
+      return { restored, total }
+    } finally {
+      mcpRestoreInFlight = false
+    }
+  }
+
+  // Flatten an MCP tools/call result's content array into a single text string for the agent (the MCP content
+  // model is an array of {type:'text'|'image'|...}). We join the text parts; non-text parts are noted by type so
+  // the agent knows there was richer content (the full structured result is also returned alongside).
+  function mcpResultText(result) {
+    const content = result && Array.isArray(result.content) ? result.content : null
+    if (!content) {
+      if (result && typeof result.text === 'string') return result.text
+      return ''
+    }
+    const parts = []
+    for (const c of content) {
+      if (c && typeof c === 'object') {
+        if (typeof c.text === 'string') parts.push(c.text)
+        else if (c.type) parts.push(`[${c.type}]`)
+      }
+    }
+    return parts.join('\n')
+  }
+
   // ================= agent-facing ops (called by the os-tools handlers) =================
 
   // Self-reported scoping (like /events + /say): pass `forAgent` to see only THAT chat's sources. undefined = all
   // (back-compat — the primary/'0' watcher + any caller that omits an id). '' = the pre-spawn (new-session) bucket.
+  // The HIDDEN mcp connections are FILTERED OUT — MCP is an invisible tool provenance, never a connection the agent
+  // sees. Its tools surface only through the owning source's connection_list_tools (merged) + connection_call_tool.
   function connectionList(forAgent) {
     const owner = forAgent === undefined ? null : String(forAgent)
     return {
       connections: [...registry.values()]
+        .filter((r) => r.kind !== 'mcp')
         .filter((r) => owner == null || String(r.agentId || '') === owner)
         .map((r) => ({
           connId: r.connId,
@@ -362,7 +813,7 @@ export function makeConnectionOps({
           surfaceId: r.surfaceId,
           ref: r.ref ?? null,
           agentId: r.agentId || '',
-          // the per-connection briefing (agents.md analog): a fresh session learns what this source already knows
+          // the per-connection briefing (agents.md analog): a fresh session learns what this source already knows.
           savedTools: readTools(r.sourceId).map((t) => ({ name: t.name, description: t.description, kind: t.kind })),
           // vetted tools available in the first-party registry for this source (warmed on connect) — so the agent
           // SEES them in its briefing and connection_registry_add's one, instead of re-deriving from scratch.
@@ -454,32 +905,129 @@ export function makeConnectionOps({
     return { ok: true, name: entry.name, count: tools.length }
   }
 
+  // Call ONE upstream tool through a LIVE hidden mcp connection (the broker path), honestly. Mint a token
+  // (proactively refreshing on a known expiry), initialize, call; a 401 (revoked/invalid token) drives ONE
+  // reactive refresh-and-retry. Returns the agent-facing shape: { ok, name, text } / { ok:false, isError, name,
+  // text } for a tool-level error / { error, reauth? } for a transport/token failure. MCP-FREE text throughout
+  // (the connection is invisible) — a reauth points the agent at connection_unlock. The cap is READ_CAP (the
+  // same context-flood guard every read path enforces); we do NOT also return the raw result (would bypass it).
+  async function callMcpTool(m, name, args) {
+    const callOnce = async ({ force = false } = {}) => {
+      const tok = await mcpLiveToken(m, { force })
+      if (tok.error) return { tokenError: tok }
+      const init = await mcpInitialize(m.endpoint, tok.access_token)
+      const result = await mcpCallTool(m.endpoint, tok.access_token, init.session, String(name), args || {})
+      return { result }
+    }
+    let result
+    try {
+      const out = await callOnce()
+      if (out.tokenError) return { error: out.tokenError.error, reauth: !!out.tokenError.reauth }
+      result = out.result
+    } catch (e) {
+      if (e && e.status === 401) {
+        try {
+          const retry = await callOnce({ force: true })
+          if (retry.tokenError) return { error: retry.tokenError.error, reauth: true }
+          result = retry.result
+        } catch (e2) {
+          if (e2 && e2.status === 401) return { error: `${m.sourceId} rejected the request even after re-approving — connection_unlock { sourceId: '${m.sourceId}' } to approve again`, reauth: true }
+          return { error: `${name} on ${m.sourceId} failed: ${String((e2 && e2.message) || e2)}` }
+        }
+      } else {
+        return { error: `${name} on ${m.sourceId} failed: ${String((e && e.message) || e)}` }
+      }
+    }
+    const text = cap(mcpResultText(result), Number(args && args.max) || READ_CAP)
+    const isError = !!(result && result.isError)
+    return isError ? { ok: false, isError: true, name: String(name), text } : { ok: true, name: String(name), text }
+  }
+
+  // The merged, agent-facing toolkit for a connection. SYNC (reads the detection cache): the banked-JS/vetted tools
+  // (the per-source tools.json, kept WHOLE — their existing fields like kind/source/contentHash/code are preserved,
+  // unchanged from before) UNIONED with the LIVE hidden mcp connection's upstream tools for the same sourceId (added
+  // as {name, description, inputSchema}). PROVENANCE IS NOT EXPOSED: neither set carries a provider tag, so the agent
+  // can't tell which is brokered — it just sees one toolkit. On a name collision the MCP tool wins (server-side,
+  // robust) and the JS duplicate is dropped. Plus `unlock` IFF the sourceId is lockable per the cache (a DCR-eligible
+  // official integration with no live hidden connection yet). When the cache has no entry, fire detection
+  // fire-and-forget and return WITHOUT unlock this call (the next list surfaces it once detection lands).
   function connectionListTools(connId) {
     const r = rec(connId)
     if (!r) return { error: `no connection ${connId}` }
-    return { sourceId: r.sourceId, tools: readTools(r.sourceId), description: readDescription(r.sourceId) || undefined }
+    const sid = r.sourceId
+    // banked JS/vetted tools (the per-source tools.json) — kept WHOLE (same shape the agent already relies on).
+    const jsTools = readTools(sid)
+    // the live hidden mcp connection's upstream tools (cached at unlock; re-fetched on every call_tool anyway).
+    const m = liveMcpForSource(sid)
+    const mcpTools = m ? (m.tools || []) : []
+    const mcpNames = new Set(mcpTools.map((t) => t.name))
+    const tools = [
+      // MCP first (collision-prefer MCP); then the banked tools that DON'T collide with an MCP name (kept whole).
+      ...mcpTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+      ...jsTools.filter((t) => !mcpNames.has(t.name))
+    ]
+    const out = { sourceId: sid, tools }
+    const desc = readDescription(sid)
+    if (desc) out.description = desc
+    // the `unlock` affordance: an official integration this source has but hasn't unlocked yet.
+    // Surface the last-known unlock affordance now; (deduped + TTL-gated) refresh detection in the background so a
+    // cold source is primed for the next list and a stale negative is eventually re-probed — never blocks this call.
+    if (isLockableCached(sid)) out.unlock = [{ source: sid, label: sid, prompt: `Approve ${sid} access to unlock its tools` }]
+    ensureMcpDetected(sid)
+    return out
   }
 
   async function connectionCallTool(connId, name, args) {
     const r = rec(connId)
     if (!r) return { error: `no connection ${connId}` }
-    const tool = readTools(r.sourceId).find((t) => t.name === String(name))
-    if (!tool) return { error: `no saved tool "${name}" for ${r.sourceId} — list_tools to see what exists, or save_tool to add it` }
-    let out
-    if (r.type === 'tab') out = await dispatch(r, 'run_js', { code: tool.code, args: args || {} })
-    else out = await dispatch(r, 'act', { steps: tool.steps, args: args || {} })
-    // a failed/empty saved tool = STALE (a selector rotted): tell the agent to re-derive, never return wrong data silently
-    if (out && out.error) return { error: out.error, stale: true, note: 'saved tool failed — read the source, then connection_save_tool: overwrite the same name if it is a stale selector on the same page-type, or save a distinctly-named variant if this is a different sub-type of the same source' }
-    const effect = out && typeof out === 'object' ? ('effect' in out ? out.effect : 'result' in out ? out.result : out) : out
-    if (tool.kind === 'act' && (effect == null || effect === '')) {
-      return { ok: false, stale: true, note: 'saved act tool produced no effect (likely a stale selector, or a different sub-type of the same source) — read the source, then connection_save_tool (overwrite if same page-type, else a distinctly-named variant)' }
+    if (!name) return { error: 'name required (the tool to run — see connection_list_tools)' }
+    const sid = r.sourceId
+    const wanted = String(name)
+    // 1) a LIVE hidden mcp connection for this source that exposes `name` → route through the broker (invisible).
+    const m = liveMcpForSource(sid)
+    if (m && (m.tools || []).some((t) => t.name === wanted)) {
+      return callMcpTool(m, wanted, args)
     }
-    return { ok: true, name: tool.name, effect: cap(effect) }
+    // 2) a banked JS/vetted tool → run it in the page/app (the existing effect-verified path).
+    const tool = readTools(sid).find((t) => t.name === wanted)
+    if (tool) {
+      let out
+      if (r.type === 'tab') out = await dispatch(r, 'run_js', { code: tool.code, args: args || {} })
+      else out = await dispatch(r, 'act', { steps: tool.steps, args: args || {} })
+      // a failed/empty saved tool = STALE (a selector rotted): tell the agent to re-derive, never return wrong data silently
+      if (out && out.error) return { error: out.error, stale: true, note: 'saved tool failed — read the source, then connection_save_tool: overwrite the same name if it is a stale selector on the same page-type, or save a distinctly-named variant if this is a different sub-type of the same source' }
+      const effect = out && typeof out === 'object' ? ('effect' in out ? out.effect : 'result' in out ? out.result : out) : out
+      if (tool.kind === 'act' && (effect == null || effect === '')) {
+        return { ok: false, stale: true, note: 'saved act tool produced no effect (likely a stale selector, or a different sub-type of the same source) — read the source, then connection_save_tool (overwrite if same page-type, else a distinctly-named variant)' }
+      }
+      return { ok: true, name: tool.name, effect: cap(effect) }
+    }
+    // 3) no such tool yet, but this source has an official integration to UNLOCK → the approval affordance (the
+    // island pops the approve card). MCP-FREE: the agent just sees a source it can unlock to gain more tools.
+    if (isLockableCached(sid)) {
+      return { needsApproval: true, source: sid, prompt: `Approve ${sid} access to unlock its tools (connection_unlock { sourceId: '${sid}' })` }
+    }
+    // Refresh detection in the background (deduped + TTL-gated) so a retry can surface the unlock for a source whose
+    // integration appeared (or recovered) after the last probe — don't block this call.
+    ensureMcpDetected(sid)
+    // 4) nothing matched → the existing "no saved tool" error.
+    return { error: `no saved tool "${wanted}" for ${sid} — list_tools to see what exists, or save_tool to add it` }
   }
 
   async function connectionDrop(connId) {
     const r = rec(connId)
     if (!r) return { error: `no connection ${connId}` }
+    // HIDDEN mcp connection: no adapter + no representation widget. Drop it from the registry AND clear the stored
+    // tokens (this re-locks the source — its `unlock` affordance reappears and re-approval re-runs the flow). The
+    // detection cache stays so the source is still known to be lockable. Invisible to the agent (verb is MCP-free).
+    if (r.kind === 'mcp') {
+      registry.delete(connId)
+      const ws = mcpDir()
+      let cleared = { ok: true }
+      if (ws) cleared = clearTokens(ws, r.sourceId) || { ok: true }
+      emitConnectionMoment('system', { connId, sourceId: r.sourceId, status: 'dropped', verb: `re-locked ${r.sourceId} tools`, agentId: r.agentId || '0' })
+      return cleared.error ? { ok: false, error: cleared.error } : { ok: true }
+    }
     try {
       if (r.adapter && typeof r.adapter.drop === 'function') await r.adapter.drop()
     } catch {
@@ -901,6 +1449,13 @@ export function makeConnectionOps({
     connectionCallTool,
     connectionDrop,
     connectionSetDescription,
+    // MCP as an INVISIBLE tool provenance: connectMcp is the op behind /connection_unlock (the only agent-facing
+    // surface); ensureMcpDetected primes the `unlock` affordance (also fired on every connect); mcpRestoreAll
+    // rehydrates the hidden connections at boot. The agent reaches unlocked tools through connection_list_tools /
+    // connection_call_tool — it never sees an mcp connection (filtered from connectionList) or the word "MCP".
+    connectMcp,
+    ensureMcpDetected,
+    mcpRestoreAll,
     // first-party tool registry
     connectionRegistrySearch,
     connectionRegistryGet,

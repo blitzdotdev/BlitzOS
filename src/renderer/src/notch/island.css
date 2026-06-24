@@ -619,16 +619,16 @@ button.isl-app-chat:active .isl-app-icon {
   min-height: 0;
 }
 
-/* ── active-agent meta row below tabs: current state + compact archive action ───────────────────────────────── */
+/* ── active-agent chrome below tabs: compact archive action; live status now lives in the transcript. ────────── */
 .nh-island .isl-agent-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   flex: none;
-  min-height: 34px;
+  min-height: 30px;
   box-sizing: border-box;
-  padding: 8px 2px 4px;
+  padding: 6px 2px 2px;
 }
 .nh-island .isl-status {
   display: flex;
@@ -779,6 +779,140 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-detail-empty {
   color: var(--isl-dim);
+}
+
+/* ── Option A: Claude-like inline activity details inside the transcript. ──────────────────────────────────── */
+.nh-island .isl-inline-details {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 100%;
+  margin: 2px 0 3px;
+  color: var(--isl-muted);
+  animation: isl-rise 0.18s ease-out both;
+}
+.nh-island .isl-inline-details-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 600 13px/18px var(--isl-font);
+  text-align: left;
+  cursor: pointer;
+}
+.nh-island .isl-inline-details-summary:hover {
+  color: var(--isl-text);
+}
+.nh-island .isl-inline-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--isl-dim);
+}
+.nh-island .isl-inline-details[data-status='warming'] .isl-inline-status-dot {
+  background: var(--isl-accent);
+  animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-inline-details[data-status='working'] .isl-inline-status-dot {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  background: transparent;
+  animation: isl-spin 0.8s linear infinite;
+}
+.nh-island .isl-inline-details[data-status='waiting'] .isl-inline-status-dot {
+  background: #ffd60a;
+  box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.14);
+}
+.nh-island .isl-inline-details[data-status='error'] .isl-inline-status-dot {
+  background: #ff453a;
+  box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.14);
+}
+.nh-island .isl-inline-details-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-inline-details[data-status='working'] .isl-inline-details-text,
+.nh-island .isl-inline-details[data-status='warming'] .isl-inline-details-text {
+  animation: isl-detail-fade 2.4s ease-in-out infinite;
+}
+.nh-island .isl-inline-details[data-status='waiting'] {
+  color: #ffe27a;
+}
+.nh-island .isl-inline-details[data-status='error'] {
+  color: #ffb4ad;
+}
+.nh-island .isl-inline-details-caret {
+  flex: none;
+  color: currentColor;
+  font-size: 15px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+.nh-island .isl-inline-detail-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 132px;
+  overflow-y: auto;
+  margin-left: 3px;
+  padding: 2px 0 3px 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+.nh-island .isl-inline-detail-row,
+.nh-island .isl-inline-detail-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.72);
+  font: 500 12px/16px var(--isl-font);
+}
+.nh-island .isl-inline-detail-row span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-inline-detail-row.latest {
+  color: var(--isl-text);
+}
+.nh-island .isl-inline-detail-bullet {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.32);
+}
+.nh-island .isl-inline-detail-row.latest .isl-inline-detail-bullet {
+  background: var(--isl-accent);
+}
+.nh-island .isl-inline-detail-empty {
+  color: var(--isl-dim);
+}
+@keyframes isl-detail-fade {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  45% {
+    opacity: 1;
+  }
 }
 
 /* ── the PEEK view: the active agent's "now playing" BELOW the kept tab bar (the toggle is .nh-peek-toggle) ─────── */
@@ -1041,6 +1175,12 @@ button.isl-app-chat:active .isl-app-icon {
   background: #ffd60a;
   box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.14);
 }
+.nh-island .isl-chip-dot[data-status='error'] {
+  width: 8px;
+  height: 8px;
+  background: #ff453a;
+  box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.14);
+}
 
 /* Album-pill tabs: each agent chip carries a mini gradient "album", then its name, then the status dot. */
 .nh-island .isl-chip-agent {
@@ -1247,8 +1387,8 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-msg.user {
   align-self: flex-end;
-  background: #fff;
-  color: #000;
+  background: var(--isl-accent);
+  color: #fff;
 }
 .nh-island .isl-msg.agent {
   align-self: flex-start;
@@ -1264,6 +1404,11 @@ button.isl-app-chat:active .isl-app-icon {
   background: transparent;
   color: var(--isl-text);
 }
+.nh-island .isl-msg.agent.isl-md-msg.isl-say-divider {
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
 .nh-island .isl-msg::before,
 .nh-island .isl-msg::after {
   content: '';
@@ -1278,7 +1423,7 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-msg.user::before {
   right: -7px;
   width: 18px;
-  background: #fff;
+  background: var(--isl-accent);
   border-bottom-left-radius: 16px 14px;
 }
 .nh-island .isl-msg.user::after {
@@ -1349,25 +1494,25 @@ button.isl-app-chat:active .isl-app-icon {
   text-underline-offset: 2px;
 }
 .nh-island .isl-msg.user a {
-  color: var(--isl-accent);
+  color: #fff;
 }
-/* the user bubble is white → flip its markdown chrome to dark-on-white so code / quotes / tables stay readable */
+/* user bubbles are blue; keep markdown chrome light enough to read without punching white holes through the pill. */
 .nh-island .isl-msg.user.isl-md-msg :not(pre) > code {
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.2);
 }
 .nh-island .isl-msg.user.isl-md-msg pre {
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.16);
+  border-color: rgba(255, 255, 255, 0.16);
 }
 .nh-island .isl-msg.user.isl-md-msg blockquote {
-  border-left-color: rgba(0, 0, 0, 0.22);
-  color: rgba(0, 0, 0, 0.6);
+  border-left-color: rgba(255, 255, 255, 0.34);
+  color: rgba(255, 255, 255, 0.84);
 }
 .nh-island .isl-msg.user.isl-md-msg :where(th, td) {
-  border-color: rgba(0, 0, 0, 0.18);
+  border-color: rgba(255, 255, 255, 0.24);
 }
 .nh-island .isl-msg.user.isl-md-msg th {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.14);
 }
 .nh-island .isl-md-link.inert {
   color: currentColor;
@@ -1475,42 +1620,80 @@ button.isl-app-chat:active .isl-app-icon {
   width: 100%;
 }
 .nh-island .isl-ask-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   box-sizing: border-box;
   width: min(100%, 520px);
-  padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.065);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  padding: 14px;
+  border: 1px solid rgba(150, 175, 220, 0.46);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 86% 10%, rgba(46, 147, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(31, 35, 48, 0.82), rgba(12, 14, 21, 0.9));
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.46),
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  -webkit-backdrop-filter: blur(40px) saturate(1.35);
+  backdrop-filter: blur(40px) saturate(1.35);
+}
+.nh-island .isl-ask-card::before {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 0;
+  height: 34px;
+  content: '';
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+  pointer-events: none;
+}
+.nh-island .isl-ask-card > * {
+  position: relative;
+  z-index: 1;
 }
 .nh-island .isl-ask-card.answered {
-  border-color: rgba(46, 147, 255, 0.24);
-  background: rgba(46, 147, 255, 0.08);
+  border-color: rgba(77, 190, 255, 0.46);
+  background:
+    radial-gradient(circle at 86% 10%, rgba(46, 147, 255, 0.18), transparent 30%),
+    linear-gradient(180deg, rgba(32, 40, 58, 0.86), rgba(10, 15, 26, 0.92));
 }
 .nh-island .isl-ask-prompt {
   color: var(--isl-text);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 18px;
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 21px;
+  letter-spacing: 0;
+  margin: 0 0 13px;
   overflow-wrap: anywhere;
 }
 .nh-island .isl-ask-selected {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
   min-width: 0;
-  margin-top: 10px;
+  margin-top: 11px;
   padding: 8px 10px;
-  border: 1px solid rgba(46, 147, 255, 0.28);
-  border-radius: 10px;
-  background: rgba(46, 147, 255, 0.12);
+  border: 1px solid rgba(77, 190, 255, 0.38);
+  border-radius: 11px;
+  background:
+    radial-gradient(circle at 86% 52%, rgba(77, 190, 255, 0.18), transparent 28%),
+    rgba(10, 132, 255, 0.11);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 10px 22px rgba(10, 132, 255, 0.08);
+}
+.nh-island .isl-ask-selected-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 .nh-island .isl-ask-selected-kicker {
-  flex: none;
-  color: #8ec5ff;
+  color: #80d7ff;
   font-size: 10px;
   font-weight: 800;
-  line-height: 13px;
+  line-height: 14px;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 .nh-island .isl-ask-selected-answer {
@@ -1523,38 +1706,74 @@ button.isl-app-chat:active .isl-app-icon {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.nh-island .isl-ask-selected-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 999px;
+  background: #4dbfff;
+  color: #061016;
+  box-shadow: 0 8px 18px rgba(77, 190, 255, 0.26);
+}
+.nh-island .isl-ask-selected-mark svg {
+  width: 14px;
+  height: 14px;
+}
+.nh-island .isl-ask-selected-mark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .nh-island .isl-ask-options {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  margin-top: 10px;
+  gap: 8px;
+  margin-top: 0;
 }
 .nh-island .isl-ask-card.confirm .isl-ask-options {
   flex-flow: row wrap;
 }
 .nh-island .isl-ask-card.grid .isl-ask-options {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
 .nh-island .isl-ask-option {
   min-width: 0;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 10px;
-  padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 12px;
+  padding: 9px 11px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 0 rgba(0, 0, 0, 0.2);
   color: var(--isl-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
 }
 .nh-island .isl-ask-card.confirm .isl-ask-option {
-  flex: 1 1 120px;
+  flex: 1 1 128px;
   text-align: center;
 }
+.nh-island .isl-ask-card.answered .isl-ask-option {
+  opacity: 0.46;
+}
+.nh-island .isl-ask-card.answered .isl-ask-option.selected {
+  border-color: rgba(77, 190, 255, 0.24);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.09), rgba(255, 255, 255, 0.028));
+}
 .nh-island .isl-ask-option:hover {
-  border-color: rgba(255, 255, 255, 0.26);
-  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.052));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 10px 20px rgba(0, 0, 0, 0.22);
   transform: translateY(-1px);
 }
 .nh-island .isl-ask-option:active {
@@ -1567,13 +1786,24 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-ask-option:disabled {
   cursor: default;
   opacity: 0.52;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 0 rgba(0, 0, 0, 0.18);
   transform: none;
+}
+.nh-island .isl-ask-card.answered .isl-ask-option:disabled:hover {
+  border-color: rgba(255, 255, 255, 0.11);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+}
+.nh-island .isl-ask-card.answered .isl-ask-option.selected:disabled:hover {
+  border-color: rgba(77, 190, 255, 0.24);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.09), rgba(255, 255, 255, 0.028));
 }
 .nh-island .isl-ask-option img {
   width: 100%;
   max-height: 88px;
   margin-bottom: 7px;
-  border-radius: 8px;
+  border-radius: 9px;
   object-fit: cover;
 }
 .nh-island .isl-ask-label,
@@ -1590,10 +1820,11 @@ button.isl-app-chat:active .isl-app-icon {
   white-space: nowrap;
 }
 .nh-island .isl-ask-sub {
-  margin-top: 2px;
+  margin-top: 3px;
   color: var(--isl-muted);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 11.5px;
+  font-weight: 560;
+  line-height: 15px;
   white-space: nowrap;
 }
 

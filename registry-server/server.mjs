@@ -6,7 +6,7 @@
 import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { route } from './registry-core.mjs'
-import { SOURCES } from './registry-data.mjs'
+import { SOURCES, MCP_ENDPOINTS } from './registry-data.mjs'
 
 const PORT = Number(process.env.PORT) || 7700
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' }
@@ -23,7 +23,7 @@ const server = createServer((req, res) => {
     res.writeHead(400, { 'content-type': 'application/json', ...CORS })
     return res.end('{"error":"bad url"}')
   }
-  const { status, body } = route({ method: req.method, pathname: url.pathname, searchParams: url.searchParams }, SOURCES)
+  const { status, body } = route({ method: req.method, pathname: url.pathname, searchParams: url.searchParams }, SOURCES, MCP_ENDPOINTS)
   const s = JSON.stringify(body)
   res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(s), ...CORS })
   res.end(s)
