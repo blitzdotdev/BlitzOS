@@ -2,7 +2,7 @@ import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShort
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
-import { spawn, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
 import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
 import { emitSystemMoment, emitWorkflowMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
@@ -17,13 +17,15 @@ import { makeWindowLink } from './connection-window-link'
 import { makeAttachmentStore } from './attachment-store.mjs'
 import { makeSafariLink } from './connection-safari-link.mjs'
 import { startConnectorServer, installConnector, isConnectorPolicyInstalled } from './connection-install'
+import { aiBrowser } from './ai-browser'
+import { blitzChrome } from './blitz-chrome'
 import { isChromiumBrowser, decideDrop } from './browser-drop.mjs'
 import { wireLauncher, registerLauncher } from './launcher'
 import { wireWorkflowHost, subscribe as wfSubscribe, snapshot as wfSnapshot } from './workflow-host.mjs'
 import { wireEnrichment, spawnWorkflowEnrichment } from './workflow-enrichment.mjs'
 // The standalone island.ts window is RETIRED — the notch is now the real UI window itself (sandwich overlay mode);
 // the notch IPC is wired inline below. (island.ts stays on disk but is no longer imported.)
-import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, orchestratorBootTask } from './agent-runtime.mjs'
+import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, setUserInstructionsProvider, orchestratorBootTask } from './agent-runtime.mjs'
 import { startNarrator } from './agent-narrator.mjs'
 import { readTerminalMeta } from './terminal-manager.mjs'
 import { wasInterrupted } from './agent-interrupt.mjs'
@@ -72,11 +74,13 @@ process.stderr.on('error', () => {})
 //     so a read-only watch literally cannot scroll. `mouse on` is set on the view session, not blitz, so the
 //     agent's session is untouched. Tradeoff: keystrokes now reach the agent's session, so this is a
 //     watch-and-optionally-step-in view.
-//   • LAUNCH via Terminal.app's `do script` (AppleScript), NOT by exec'ing a terminal binary directly.
-//     Exec'ing the Ghostty binary forwards to the user's already-running Ghostty instance and could tear down
-//     its existing windows ("kills all processes on ghostty"). `do script` opens a FRESH window and never
-//     touches other windows/apps. The command is passed as osascript argv (item 1 of argv), so it needs only
-//     shell-quoting, no AppleScript-string escaping. `exec` so the window closes cleanly when tmux detaches.
+//   • LAUNCH by writing a .command launcher and `open`ing it — opens in whatever app is REGISTERED to handle
+//     .command files (Terminal.app by default; the user can remap it in Finder → Get Info → Open with → Change All).
+//     NO app is hardcoded by us. The OLD path used AppleScript (`osascript … tell application "Terminal" to do
+//     script`), which requires macOS Automation (TCC) permission the app does not hold — so the AppleEvent
+//     failed/timed out (-1712), and because the launch was fire-and-forget returning ok:true, the button SILENTLY
+//     did nothing. `open` uses LaunchServices, not AppleEvents, so it needs no Automation grant. The launch is now
+//     CHECKED (a missing/failed open surfaces a real error to the button instead of a fake success).
 //   • Use the SAME bundled tmux the host runs (spec.bin) so client/server protocol versions match.
 // KNOWN: a tmux window is shared across clients, so the Terminal client contributes to that window's size
 // negotiation (window-size 'latest') — watching can reflow the agent's pane to the Terminal window's size.
@@ -129,18 +133,15 @@ function openTerminalExternal(id: string): { ok: boolean; error?: string } {
     execFileSync(spec.bin, t('select-window', '-t', `${grp}:${spec.window}`), { stdio: 'ignore' })
     // Mouse on for THIS view session only (idempotent every open) so the wheel scrolls — blitz keeps its own.
     execFileSync(spec.bin, t('set-option', '-t', grp, 'mouse', 'on'), { stdio: 'ignore' })
-    // Open a FRESH Terminal.app window running the attach. cmdLine is ONE osascript argv element (shell-quoted),
-    // so no AppleScript-string escaping is needed and spaces in the socket path are safe. exec → clean close.
-    const cmdLine = 'exec ' + [spec.bin, '-S', spec.socket, 'attach', '-t', grp].map(shq).join(' ')
-    const child = spawn('osascript', [
-      '-e', 'on run argv',
-      '-e', 'tell application "Terminal" to do script (item 1 of argv)',
-      '-e', 'tell application "Terminal" to activate',
-      '-e', 'end run',
-      cmdLine
-    ], { detached: true, stdio: 'ignore' })
-    child.on('error', (e) => console.error('[terminal] Terminal.app launch failed:', (e as Error)?.message || e))
-    child.unref()
+    // Write a .command launcher next to the tmux socket (always workspace-writable) and `open` it → the user's
+    // DEFAULT terminal opens a fresh window running the attach. The script is shell, so paths are shq-quoted.
+    const launcher = join(spec.socket, '..', '..', `open-external-${id}.command`)
+    try {
+      writeFileSync(launcher, `#!/bin/sh\nexec ${shq(spec.bin)} -S ${shq(spec.socket)} attach -t ${shq(grp)}\n`, { mode: 0o755 })
+      execFileSync('open', [launcher], { stdio: 'ignore', timeout: 8000 })
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message || 'failed to open terminal' }
+    }
     return { ok: true }
   } catch (e) {
     return { ok: false, error: (e as Error)?.message || 'failed to open Terminal' }
@@ -1427,6 +1428,24 @@ app.whenReady().then(() => {
     }
   })
   electronConnections.setTabLink(tabLink)
+  // The dedicated BlitzOS AI Chrome (CDP) — an isolated Chrome instance the connector is loaded into, where each
+  // agent gets its own background window (connection_open_browser). connectionOpenBrowser ensures it's running
+  // first via this launcher; the connector inside it connects to the SAME tab-link above. macOS + local only.
+  electronConnections.setBrowserLauncher(() => aiBrowser().ensure())
+  app.on('before-quit', () => {
+    try {
+      aiBrowser().shutdown()
+    } catch {
+      /* ignore */
+    }
+    // The SECOND, extension-free browsing path (blitz-chrome.ts, driven over --remote-debugging-port). Lazily
+    // launched on the first blitz_chrome_* call; quit it here so a supervised Chrome never outlives the app.
+    try {
+      blitzChrome().shutdown()
+    } catch {
+      /* ignore */
+    }
+  })
   tabLink
     .start()
     .then((r) => {
@@ -1561,6 +1580,22 @@ app.whenReady().then(() => {
     mkdirSync(app.getPath('userData'), { recursive: true })
     writeFileSync(agentRuntimePrefsFile(), JSON.stringify({ runtime }, null, 2))
   }
+  // App-level custom instructions: prose the user sets once in Settings, injected into EVERY agent
+  // session's first message (via the setUserInstructionsProvider seam below). Persisted as a small JSON
+  // file in userData, read fresh on each agent (re)launch so edits apply to new/restarted sessions.
+  const customInstructionsFile = (): string => join(app.getPath('userData'), 'custom-instructions.json')
+  const readCustomInstructions = (): string => {
+    try {
+      const parsed = JSON.parse(readFileSync(customInstructionsFile(), 'utf8')) as { text?: unknown }
+      return typeof parsed?.text === 'string' ? parsed.text : ''
+    } catch {
+      return ''
+    }
+  }
+  const writeCustomInstructions = (text: string): void => {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(customInstructionsFile(), JSON.stringify({ text }, null, 2))
+  }
   const resolveSelectedAgentRuntime = (runtime: string): AgentRuntimeSpec | null => {
     const selected = selectableAgentRuntime(runtime)
     if (selected === AGENT_RUNTIME_CODEX_SERVERLESS) {
@@ -1632,6 +1667,15 @@ app.whenReady().then(() => {
     writePreferredAgentRuntime(selected)
     applyAgentRuntime(next)
     return agentRuntimeStatus()
+  })
+  // Custom-instructions: the provider feeds buildBootstrap on every (re)launch; the IPC pair backs the
+  // Settings text field (get on open, set on edit). Same text for every agent (sessionId is ignored today).
+  setUserInstructionsProvider(() => readCustomInstructions() || null)
+  ipcMain.handle('os:custom-instructions:get', () => ({ text: readCustomInstructions() }))
+  ipcMain.handle('os:custom-instructions:set', (_e, value: string) => {
+    const text = typeof value === 'string' ? value : ''
+    writeCustomInstructions(text)
+    return { ok: true, text }
   })
   // PRE-FLIGHT: the brain = a managed agent backend inside a tmux terminal. If either is missing on this
   // Mac (fresh VM; packaged GUI apps also don't get homebrew's PATH — both resolvers use the login shell),
@@ -1776,17 +1820,47 @@ app.whenReady().then(() => {
       if (terminal?.kind === 'agent') reviveOrRestartAgentBackend(id, terminal)
       else osKickBrain(id)
     })
-    // Resume/reattach all agents once the relay URL is live + survivors adopted. Fire once.
-    let resumed = false
-    const resumeAll = async (): Promise<void> => {
-      if (resumed || !getAgentSocketUrl()) return
-      resumed = true
-      try { await electronTerminalOps.whenRestored() } catch { /* ignore */ }
-      osResumeAgentsOnBoot()
+    // Resume/reattach all agents — SELF-HEALING, not a fragile one-shot. The old code fired resume exactly once
+    // when the relay URL appeared; if it missed an agent (relay URL lagged past the window, terminal adoption
+    // raced, or a single launch threw) that agent had NO terminal record and stayed DEAD forever — revivable only
+    // by a user message or the watchdog. That was the "agents go dead after relaunch" bug. Now: the initial batch
+    // still sets each agent 'starting' and launches it, then a periodic reconciler ENSURES every active on-disk
+    // agent has a backend — relaunching any with no record, retried until it is actually up. Once an agent has a
+    // record, terminal-manager owns its lifecycle (auto-restart on exit), so the reconciler skips it (no
+    // double-launch); the per-agent cooldown also covers the async spawn window before the record registers.
+    let initialResumeDone = false
+    const resumeAttempt = new Map<string, number>() // id -> last (re)launch tick (anti-double-launch + flap backoff)
+    const RECONCILE_COOLDOWN_MS = 30_000
+    const reconcileAgentBackends = async (): Promise<void> => {
+      if (!getAgentSocketUrl()) return // agents need the relay URL to function — retry on the next tick
+      const now = Date.now()
+      if (!initialResumeDone) {
+        initialResumeDone = true
+        try { await electronTerminalOps.whenRestored() } catch { /* ignore */ }
+        // Seed the cooldown for every agent the initial batch is about to launch, so the reconciler does not
+        // re-launch them before their records register (spawnTerminal is async).
+        try { for (const id of Object.keys(osAgentStatus() || {})) resumeAttempt.set(id, now) } catch { /* ignore */ }
+        osResumeAgentsOnBoot() // initial batch: sets 'starting' + launches every on-disk agent
+        return
+      }
+      let ids: string[] = []
+      try { ids = Object.keys(osAgentStatus() || {}) } catch { return } // authoritative active set (excludes archived/stopped)
+      for (const id of ids) {
+        // isTerminalLive = terminal-manager has an in-memory record (live.has) — true while it OWNS the lifecycle:
+        // running, OR exited-and-pending-auto-restart (the record survives the backoff window). False only when
+        // nobody is supervising it (never launched this session, or a launch that returned before spawnTerminal
+        // registered). MUST NOT use getTerminal here: it falls back to the on-disk meta, which exists for every
+        // agent ever launched, so it would skip even a truly-dead agent — defeating the self-heal.
+        if (electronTerminalOps.isTerminalLive(id)) continue
+        if (now - (resumeAttempt.get(id) || 0) < RECONCILE_COOLDOWN_MS) continue // just (re)launched — let it settle
+        resumeAttempt.set(id, now)
+        console.warn(`[resume] agent ${id} has no backend; (re)launching`)
+        launchAgent(id, 0)
+      }
     }
-    // The URL is minted async after the relay connects; poll until it's up (capped ~2min), then resume once.
-    let tries = 0
-    const t = setInterval(() => { if (getAgentSocketUrl()) { clearInterval(t); void resumeAll() } else if (++tries > 150) clearInterval(t) }, 800)
+    // Tick periodically: covers a late-appearing relay URL AND any agent the initial batch missed. Cheap (a
+    // readdir + map checks); a no-op once every agent has a record. Runs for the life of the app — self-healing.
+    const t = setInterval(() => { void reconcileAgentBackends() }, 4000)
     app.on('before-quit', () => clearInterval(t))
     // The milestone NARRATOR: every ~60s, summarize each agent's NEW transcript activity into one plain step
     // (Haiku, strict JSON) and broadcast it (os:action {type:'milestone'}). Idle agents make no call. The island
@@ -1884,3 +1958,4 @@ function scanCrashReports(fromTs: number, toTs: number, pid?: number): { at: num
     return null
   }
 }
+

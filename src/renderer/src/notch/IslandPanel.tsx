@@ -24,9 +24,8 @@ import type { IslandAppMessagePart, IslandPanelProps, IslandWfRun } from './type
 
 const AGENT_NAME_MAX = 24
 
-// A compose / pen glyph for the new-session tab (kept distinct from the attach "+").
-const PEN_PATH =
-  'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z'
+// A "+" glyph for the new-chat button (spawns + enters a fresh agent). The attach "+" lives in the composer.
+const PLUS_PATH = 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z'
 const ARCHIVE_PATH =
   'M4 7h16M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 11h6M5 3h14a1 1 0 0 1 1 1v3H4V4a1 1 0 0 1 1-1Z'
 
@@ -461,17 +460,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
         }
       }}
     >
-      <button
-        type="button"
-        aria-label="New session"
-        title="New session"
-        className="isl-chip isl-chip-new"
-        onClick={onNewAgent}
-      >
-        <svg className="isl-pen" viewBox="0 0 24 24" aria-hidden focusable="false">
-          <path d={PEN_PATH} fill="currentColor" />
-        </svg>
-      </button>
+      {/* The agent tabs scroll INSIDE this rail; the new-chat + is a sibling pinned to the RIGHT (Chrome-style),
+          so it stays visible no matter how many tabs there are — the tabs scroll under it instead of pushing it off. */}
+      <div className="isl-tab-rail">
       {sessions.map((s, i) => {
         const selected = page === i + 1
         const editing = editingId === s.id
@@ -542,6 +533,18 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           </button>
         )
       })}
+      </div>
+      <button
+        type="button"
+        aria-label="New chat"
+        title="New chat"
+        className="isl-chip isl-chip-new"
+        onClick={onNewAgent}
+      >
+        <svg className="isl-pen" viewBox="0 0 24 24" aria-hidden focusable="false">
+          <path d={PLUS_PATH} fill="currentColor" />
+        </svg>
+      </button>
     </div>
   )
 

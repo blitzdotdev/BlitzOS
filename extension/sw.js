@@ -7,8 +7,13 @@
 // Executes the connection verbs on the tabs BlitzOS connects, via chrome.scripting:
 //   - read / act  -> ISOLATED world (DOM read + element click/set; no eval, works everywhere)
 //   - run_js      -> MAIN world (arbitrary page-context code; needs page globals)
-// Coordinate clicks / key events / screenshots are deliberately NOT done here (no chrome.debugger) — BlitzOS
-// drives those through the native macOS path (a Chrome window is just a macOS window).
+// CDP (chrome.debugger) adds the TRUSTED path used by the dedicated BlitzOS AI Chrome (cdp-browser plan):
+//   - cdp {tabId,method,params} -> raw chrome.debugger.sendCommand (all of CDP)
+//   - act {trusted|x,y}         -> CDP Input.* (trusted, renderer-level → drives Docs/Figma canvas, background)
+//   - read {screenshot|ax}      -> CDP Page.captureScreenshot / Accessibility.getFullAXTree
+//   - newWindow {url}           -> chrome.windows.create {focused:false} (one background window per agent)
+//   - navigate {tabId,url}      -> chrome.tabs.update
+// The synthetic-DOM read/act/run_js paths are UNCHANGED; CDP is purely additive (used only when asked for).
 //
 // Reports tab nav/title/close so BlitzOS can keep each connection's representation widget fresh.
 
@@ -262,6 +267,125 @@ async function exec(tabId, world, func, args) {
   }
 }
 
+// ---- CDP (chrome.debugger): the TRUSTED input + screenshot + AX path, used by the AI Chrome. We keep a per-tab
+// attach so repeated cdp/act/read calls don't re-attach; onDetach (devtools opened, tab navigated/closed, the
+// user hit "cancel" on the debugging banner) clears it so the next call re-attaches. attach → act → keep, with
+// the "started debugging this browser" banner confined to the off-screen AI window. ----
+const attached = new Set()
+chrome.debugger.onDetach.addListener((src) => {
+  if (src && src.tabId != null) attached.delete(Number(src.tabId))
+})
+function cdpAttach(tabId) {
+  const id = Number(tabId)
+  if (attached.has(id)) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    chrome.debugger.attach({ tabId: id }, '1.3', () => {
+      const e = chrome.runtime.lastError
+      // a debugger already attached (e.g. DevTools open) still lets us send commands on most builds → treat as ok
+      if (e && !/already attached/i.test(e.message || '')) return reject(new Error(e.message))
+      attached.add(id)
+      resolve()
+    })
+  })
+}
+function cdpSend(tabId, method, params) {
+  const id = Number(tabId)
+  return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand({ tabId: id }, method, params || {}, (res) => {
+      const e = chrome.runtime.lastError
+      if (e) return reject(new Error(e.message))
+      resolve(res)
+    })
+  })
+}
+// Raw CDP passthrough — one verb exposes ALL of CDP (Input.*, Page.*, DOM.*, Accessibility.*, Runtime.*, …).
+async function cdpRaw(tabId, method, params) {
+  try {
+    await cdpAttach(tabId)
+    return { result: await cdpSend(tabId, method, params) }
+  } catch (e) {
+    return { error: String((e && e.message) || e) }
+  }
+}
+// Trusted input via CDP — drives canvas apps (Docs/Figma) + background tabs with NO focus steal, which
+// synthetic-DOM events cannot. 'click' needs {x,y} (renderer coords); 'type' inserts at the focused node.
+async function cdpAct(tabId, spec) {
+  try {
+    await cdpAttach(tabId)
+    if (spec.action === 'click') {
+      const x = Number(spec.x) || 0
+      const y = Number(spec.y) || 0
+      const button = spec.button || 'left'
+      await cdpSend(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+      await cdpSend(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, buttons: 1, clickCount: 1 })
+      await cdpSend(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, buttons: 0, clickCount: 1 })
+      return { clicked: true, x, y, trusted: true }
+    }
+    if (spec.action === 'type') {
+      const text = spec.text == null ? '' : String(spec.text)
+      await cdpSend(tabId, 'Input.insertText', { text })
+      return { typed: text, trusted: true }
+    }
+    if (spec.action === 'key') {
+      const key = String(spec.key || '')
+      const base = { key }
+      // common editing keys carry the windowsVirtualKeyCode CDP wants for Enter/Backspace/Tab/arrows
+      const vk = { Enter: 13, Backspace: 8, Tab: 9, Escape: 27, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 }[key]
+      if (vk) {
+        base.windowsVirtualKeyCode = vk
+        base.nativeVirtualKeyCode = vk
+      }
+      await cdpSend(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', ...base })
+      await cdpSend(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base })
+      return { key, trusted: true }
+    }
+    return { error: 'unknown trusted action ' + spec.action }
+  } catch (e) {
+    return { error: String((e && e.message) || e) }
+  }
+}
+// CDP read: a screenshot of the rendered (even background) tab, or the accessibility tree (canvas apps whose
+// DOM body is empty, like Google Docs, are screen-reader accessible). Returns {png} (surfaced as an image) or {text}.
+async function cdpRead(tabId, spec) {
+  try {
+    await cdpAttach(tabId)
+    if (spec.ax) {
+      const r = await cdpSend(tabId, 'Accessibility.getFullAXTree', {})
+      const lines = ((r && r.nodes) || [])
+        .map((n) => {
+          const role = (n.role && n.role.value) || ''
+          const name = (n.name && n.name.value) || ''
+          return name ? (role ? role + ': ' + name : name) : ''
+        })
+        .filter(Boolean)
+      return { text: lines.join('\n').slice(0, Number(spec.max) || 8000) }
+    }
+    const shot = await cdpSend(tabId, 'Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+    return { png: shot && shot.data }
+  } catch (e) {
+    return { error: String((e && e.message) || e) }
+  }
+}
+// A new background window (one per agent in the AI profile). focused:false ⇒ no focus steal. Returns its tab id.
+async function newWindow(spec) {
+  try {
+    const w = await chrome.windows.create({ url: (spec && spec.url) || 'about:blank', focused: false })
+    const t = w && w.tabs && w.tabs[0]
+    if (!t || t.id == null) return { error: 'window created but no tab id' }
+    return { tabId: t.id, windowId: w.id, url: t.url || (spec && spec.url) || '' }
+  } catch (e) {
+    return { error: String((e && e.message) || e) }
+  }
+}
+async function navigate(tabId, url) {
+  try {
+    const t = await chrome.tabs.update(Number(tabId), { url: String(url || 'about:blank') })
+    return { ok: true, tabId: Number(tabId), url: (t && t.url) || String(url || '') }
+  } catch (e) {
+    return { error: String((e && e.message) || e) }
+  }
+}
+
 async function handle(data) {
   let msg
   try {
@@ -276,10 +400,23 @@ async function handle(data) {
     if (cmd === 'listTabs') return reply({ result: await listTabs() })
     if (cmd === 'listWindows') return reply({ result: await listWindows() })
     if (cmd === 'ping') return reply({ result: { pong: true } })
+    if (cmd === 'newWindow') return reply({ result: await newWindow(msg.args || msg) })
     const tabId = msg.tabId
     if (tabId == null) return reply({ error: 'tabId required' })
-    if (cmd === 'read') return reply({ result: await exec(tabId, 'ISOLATED', fnRead, [msg.args || {}]) })
-    if (cmd === 'act') return reply({ result: await exec(tabId, 'ISOLATED', fnAct, [msg.args || {}]) })
+    if (cmd === 'read') {
+      const a = msg.args || {}
+      // screenshot / ax read go through CDP (background-capable, canvas-aware); plain DOM read stays synthetic.
+      if (a.screenshot || a.ax) return reply({ result: await cdpRead(tabId, a) })
+      return reply({ result: await exec(tabId, 'ISOLATED', fnRead, [a]) })
+    }
+    if (cmd === 'act') {
+      const a = msg.args || {}
+      // a trusted act (canvas) or a coordinate click goes through CDP Input.*; a selector act stays synthetic-DOM.
+      if (a.trusted || a.x != null || a.y != null) return reply({ result: await cdpAct(tabId, a) })
+      return reply({ result: await exec(tabId, 'ISOLATED', fnAct, [a]) })
+    }
+    if (cmd === 'cdp') return reply(await cdpRaw(tabId, msg.method, msg.params))
+    if (cmd === 'navigate') return reply({ result: await navigate(tabId, msg.url || (msg.args && msg.args.url)) })
     if (cmd === 'run_js') return reply({ result: await runUserScript(tabId, msg.code, msg.args) })
     return reply({ error: 'unknown cmd ' + cmd })
   } catch (e) {

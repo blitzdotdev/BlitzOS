@@ -227,6 +227,7 @@ export function NotchHost({
   const [workflowAlwaysShow, setWorkflowAlwaysShow] = useState(readWorkflowAlwaysShow)
   const [activeApp, setActiveApp] = useState<IslandAppMessagePart | null>(initialActiveApp)
   const [appViewerOpen, setAppViewerOpen] = useState(Boolean(initialActiveApp))
+  const [customInstructions, setCustomInstructions] = useState('') // app-level; loaded from main on mount
   const [homeDoneAgents, setHomeDoneAgentsState] = useState<Record<string, true>>(() => readHomeDoneAgents())
   const [homeSeenWorkingAgents, setHomeSeenWorkingAgentsState] = useState<Record<string, true>>(() => readHomeSeenWorkingAgents())
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
@@ -284,6 +285,27 @@ export function NotchHost({
     } catch {
       /* preference persistence is best-effort */
     }
+  }
+  // Custom instructions live in the main process (so agent launches can read them); mirror them here for the
+  // Settings field. Load once on mount, persist on edit. Applies to new/restarted sessions, not live ones.
+  useEffect(() => {
+    let alive = true
+    void Promise.resolve(window.agentOS?.customInstructionsGet?.())
+      .then((r) => {
+        if (alive && r) setCustomInstructions(r.text || '')
+      })
+      .catch(() => {
+        /* best-effort; field stays empty if the read fails */
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+  const saveCustomInstructions = (text: string): void => {
+    setCustomInstructions(text)
+    void Promise.resolve(window.agentOS?.customInstructionsSet?.(text)).catch(() => {
+      /* best-effort persistence */
+    })
   }
   const updateHomeDoneAgents = (update: (prev: Record<string, true>) => Record<string, true>): void => {
     const prev = homeDoneAgentsRef.current
@@ -980,6 +1002,8 @@ export function NotchHost({
         ) : view === 'settings' ? (
           <IslandSettings
             menuBarH={menuBarH}
+            customInstructions={customInstructions}
+            onChangeCustomInstructions={saveCustomInstructions}
             workflowAlwaysShow={workflowAlwaysShow}
             onToggleWorkflowAlwaysShow={chooseWorkflowAlwaysShow}
             showActiveTerminal={debugActiveTerminal}

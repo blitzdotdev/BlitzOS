@@ -73,8 +73,16 @@ export interface ConnectionOps {
   handleSurfaceClosed(surfaceId: string): Promise<void>
   /** On (re)hydrate: rewrite a persisted connection widget to a disconnected state if its connection isn't live; else null. */
   rewriteHydratedSurface(surface: Record<string, unknown>): Record<string, unknown> | null
-  /** The tab link registers itself so connection_list_tabs / connection_connect_tab work. */
-  setTabLink(link: { listTabs: () => Promise<unknown>; connectTab: (tabId: number, opts?: any) => Promise<unknown> } | null): void
+  /** The tab link registers itself so connection_list_tabs / connection_connect_tab work. `openAgentWindow`
+   *  (CDP/AI-browser) opens a per-agent background window in the dedicated AI Chrome. */
+  setTabLink(
+    link: {
+      listTabs: () => Promise<unknown>
+      connectTab: (tabId: number, opts?: any) => Promise<unknown>
+      openAgentWindow?: (agentId: string, opts?: any) => Promise<unknown>
+      isConnected?: () => boolean
+    } | null
+  ): void
   /** The Safari link (Apple Events) registers itself; its tabs merge into connection_list_tabs (browser:'safari'). */
   setSafariLink(link: { listTabs: () => Promise<unknown>; connectTab: (tabId: string, opts?: any) => Promise<unknown> } | null): void
   connectionListTabs(): Promise<Record<string, unknown>>
@@ -92,6 +100,12 @@ export interface ConnectionOps {
   /** Force-install the connector extension (Electron + macOS only); registered via setInstaller. */
   setInstaller(fn: (() => Promise<{ ok: boolean; error?: string; note?: string }>) | null): void
   connectionInstallExtension(): Promise<Record<string, unknown>>
+  /** Ensure the dedicated AI Chrome is running (ai-browser.ts, Electron + macOS only); registered via setBrowserLauncher. */
+  setBrowserLauncher(fn: (() => Promise<unknown>) | null): void
+  /** Open (or get) an agent's dedicated background window in the AI Chrome — a CDP-driven tab connection. */
+  connectionOpenBrowser(agentId: string, opts?: { url?: string; title?: string; sourceId?: string }): Promise<Record<string, unknown>>
+  /** Navigate a connected tab (the AI-browser window or any Chrome tab) to a URL. */
+  connectionNavigate(connId: string, url: string): Promise<Record<string, unknown>>
   /** All connections, or only `forAgent`'s (self-reported scoping; undefined = all, '' = the new-session bucket). */
   connectionList(forAgent?: string): { connections: ConnectionInfo[] }
   /** Reassign every source owned by `fromAgent` (default '') to `toAgent`; returns what moved (for the spawn brief). */

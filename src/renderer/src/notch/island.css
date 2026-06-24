@@ -421,6 +421,34 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-setting-input:checked + .isl-setting-toggle span {
   transform: translateX(20px);
 }
+.nh-island .isl-setting-row-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  cursor: default;
+}
+.nh-island .isl-setting-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 78px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--isl-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  outline: none;
+  transition: border-color 0.16s ease-out;
+}
+.nh-island .isl-setting-textarea::placeholder {
+  color: var(--isl-muted);
+}
+.nh-island .isl-setting-textarea:focus {
+  border-color: #ffd84d;
+}
 .nh-island .isl-settings-disclosure {
   display: flex;
   align-items: center;
@@ -1419,17 +1447,29 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-tabs {
   display: flex;
   flex: none;
+  align-items: center;
   gap: 6px;
   min-height: 40px;
   width: 100%;
   box-sizing: border-box;
+  animation: isl-rise 0.26s ease-out 0.03s both;
+}
+/* The agent tabs scroll INSIDE this rail so the new-chat + (a sibling, pinned right) is always visible —
+   Chrome-style. flex:0 1 auto keeps the rail only as wide as its tabs until they overflow, then it shrinks
+   (min-width:0) and scrolls, holding the + hard against the right edge. The vertical padding/margin gives the
+   active/editing chip's shadow the room that overflow-x:auto would otherwise clip. */
+.nh-island .isl-tab-rail {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 6px;
   padding: 4px 0;
   margin: -4px 0;
   overflow-x: auto;
   scrollbar-width: none;
-  animation: isl-rise 0.26s ease-out 0.03s both;
 }
-.nh-island .isl-tabs::-webkit-scrollbar {
+.nh-island .isl-tab-rail::-webkit-scrollbar {
   display: none;
 }
 .nh-island .isl-chip {
@@ -1541,7 +1581,7 @@ button.isl-app-chat:active .isl-app-icon {
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
 }
 
-/* the new-session "+" tab — a circle, always the FIRST tab (it is just a tab, not a special view). */
+/* the new-session "+" tab — a circle pinned to the RIGHT of the rail, always visible (Chrome's new-tab button). */
 .nh-island .isl-chip-new {
   width: 32px;
   height: 32px;

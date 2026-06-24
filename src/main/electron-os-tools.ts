@@ -29,6 +29,7 @@ import {
   osSpawnAgent,
   osCloseAgent,
   osRenameAgent,
+  osAgentStatus,
   osSetOrchestrators,
   osSystemUi,
   osSystemUiInfo,
@@ -42,6 +43,7 @@ import { makeActionItems } from './action-items.mjs'
 import { makeConnectionOps } from './connection-ops.mjs'
 import { emitSurfaceAction } from './events'
 import { runWorkflowHosted } from './workflow-host.mjs'
+import { blitzChromeOps } from './blitz-chrome'
 
 // Exported so the widget-tool runner (src/main/widgets.ts) can build its handler map from the SAME ops —
 // see makeWidgetToolHandlers in widget-tools.mjs. One ops object → both the agent registry and the widget
@@ -78,6 +80,9 @@ export const electronOps = {
   // to that agent's chat.md + emits a 'message' moment that wakes ONLY that agent). `say` doesn't wake the
   // target (it's agent->user) and `user_say` is localhost-only; steer is the relay-safe wake-a-target path.
   steer: (text: string, agentId: string) => osUserMessage(text, agentId),
+  // broadcast (steer-all): the live agent-id roster for the current workspace host, so makeOsTools's
+  // /broadcast route can fan `steer` over every peer except the sender. Same source the W2 tick + narrator use.
+  listAgents: () => Object.keys(osAgentStatus() || {}),
   customizeWidget: (name: string, html: string, agentId?: string, lang?: 'html' | 'jsx' | 'tsx') => osCustomizeWidget(name, html, agentId, lang),
   spawnAgent: (title?: string) => osSpawnAgent(title),
   closeAgent: (id: string) => osCloseAgent(id),
@@ -169,6 +174,11 @@ export const electronConnections = makeConnectionOps({
   }
 })
 Object.assign(electronOps, electronConnections)
+// Blitz Chrome (blitz-chrome.ts) — the SECOND, extension-free AI-browsing path: a dedicated Chrome driven over
+// --remote-debugging-port (CDP). Independent of the extension/chrome.debugger path above; Object.assign'd here
+// so the blitz_chrome_* tool handlers in os-tools.mjs find these ops. The headless server transport simply
+// omits them and those tools return 501 (guarded), exactly like the other Electron-only ops.
+Object.assign(electronOps, blitzChromeOps)
 // Closing a connection's representation widget drops the connection (no leaked adapter/socket).
 onSurfaceClosed((id) => void electronConnections.handleSurfaceClosed(id))
 // On (re)hydrate, repaint persisted connection widgets whose connection isn't live → "disconnected".

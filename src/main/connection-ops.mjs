@@ -102,11 +102,13 @@ export function makeConnectionOps({
   // connId -> { connId, type:'tab'|'window', sourceId, title, capabilities, status, surfaceId, adapter }
   const registry = new Map()
   const bySurface = new Map() // surfaceId -> connId (for per-connId widget scoping)
+  const registryCache = new Map() // sourceId -> [{name,description,kind}] available in the first-party registry
   const rec = (connId) => registry.get(String(connId)) || null
   let tabLink = null // the tab link (connection-tab-link.mjs) registers itself via setTabLink
   let windowLink = null // the window link (connection-window-link.ts, Electron-only) registers via setWindowLink
   let safariLink = null // the Safari link (connection-safari-link.mjs, Apple Events) registers via setSafariLink
   let installer = null // the extension force-install (connection-install.ts, Electron-only) registers via setInstaller
+  let browserLauncher = null // ensures the dedicated AI Chrome is running (ai-browser.ts, Electron-only) via setBrowserLauncher
 
   // ---- per-source tool store: <workspace>/.blitzos/connections/<sourceId>/{tools.json, description} ----
   function storeDir(sourceId) {
@@ -257,6 +259,10 @@ export function makeConnectionOps({
       }
     }
     emitConnectionMoment(surfaceId || 'system', { connId, sourceId: sid, status: 'live', verb: 'connected', agentId: record.agentId || '0' })
+    // Warm the registry-availability cache (fire-and-forget) so the agent's connection_list briefing SHOWS the
+    // vetted tools that exist for this source — instead of the registry being invisible-until-queried (the
+    // reason agents re-derive from scratch). If tools exist, it wakes the agent once with the names.
+    void refreshRegistryForSource(sid, connId)
     // Probe whether this freshly-connected source has an official integration to UNLOCK. When detection LANDS a
     // lockable one, WAKE the connecting agent with a moment so it can offer to unlock it — never blocks the connect,
     // and crucially does NOT rely on the agent polling connection_list_tools, which races the network probe (the
@@ -293,6 +299,7 @@ export function makeConnectionOps({
       }
     }
     emitConnectionMoment(r.surfaceId || 'system', { connId, sourceId: sid, status: r.status, verb: `navigated: ${from} → ${sid}`, agentId: r.agentId || '0' })
+    void refreshRegistryForSource(sid, connId) // the new host may have its own vetted registry tools
     return { ok: true, changed: true, from, to: sid }
   }
 
@@ -809,6 +816,9 @@ export function makeConnectionOps({
           agentId: r.agentId || '',
           // the per-connection briefing (agents.md analog): a fresh session learns what this source already knows.
           savedTools: readTools(r.sourceId).map((t) => ({ name: t.name, description: t.description, kind: t.kind })),
+          // vetted tools available in the first-party registry for this source (warmed on connect) — so the agent
+          // SEES them in its briefing and connection_registry_add's one, instead of re-deriving from scratch.
+          registryTools: registryCache.get(r.sourceId) || [],
           description: readDescription(r.sourceId) || undefined
         }))
     }
@@ -1157,15 +1167,33 @@ export function makeConnectionOps({
     if (!tabLink && !safariLink) return { error: 'no tab link — install + connect the BlitzOS Connector extension (Chrome), or enable Safari Apple Events' }
     return { tabs: out }
   }
+  // Enrich a connect result with the source's BRIEFING — savedTools (banked here) + registryTools (vetted,
+  // available to add) — so the agent SEES reusable tools in the very response it gets on connect, before it
+  // decides to act. (connection_list also carries these, but the agent's connect→act flow can skip it.)
+  async function attachBriefing(res) {
+    if (!res || res.error || !res.connId) return res
+    const sid = res.sourceId || (rec(res.connId) && rec(res.connId).sourceId)
+    if (sid) {
+      try {
+        await refreshRegistryForSource(sid, res.connId) // await so registryTools is ready in the result
+      } catch {
+        /* registry offline */
+      }
+      res.savedTools = readTools(sid).map((t) => ({ name: t.name, description: t.description, kind: t.kind }))
+      res.registryTools = registryCache.get(sid) || []
+    }
+    return res
+  }
+
   async function connectionConnectTab(tabId, opts) {
     const safari = (opts && opts.browser === 'safari') || String(tabId).startsWith('safari:')
     if (safari) {
       if (!safariLink || typeof safariLink.connectTab !== 'function') return { error: 'Safari link not available' }
-      return safariLink.connectTab(String(tabId), opts || {})
+      return attachBriefing(await safariLink.connectTab(String(tabId), opts || {}))
     }
     if (!tabLink || typeof tabLink.connectTab !== 'function') return { error: 'no tab link — install + connect the BlitzOS Connector extension first' }
     if (tabId == null) return { error: 'tabId required' }
-    return tabLink.connectTab(Number(tabId), opts || {})
+    return attachBriefing(await tabLink.connectTab(Number(tabId), opts || {}))
   }
   // ---- the window link (connection-window-link.ts) registers itself the same way; window connect is
   // macOS-and-local-only (it needs the BlitzOS helper's AX/CGEvent/ScreenCaptureKit). ----
@@ -1179,7 +1207,7 @@ export function makeConnectionOps({
   async function connectionConnectWindow(windowId, opts) {
     if (!windowLink || typeof windowLink.connectWindow !== 'function') return { error: 'no window link — window connect needs the BlitzOS helper (macOS, local only)' }
     if (windowId == null) return { error: 'windowId required' }
-    return windowLink.connectWindow(Number(windowId), opts || {})
+    return attachBriefing(await windowLink.connectWindow(Number(windowId), opts || {}))
   }
   // Reconnect a source by its sourceId — the "Reconnect" affordance on a DISCONNECTED widget. Re-finds the
   // matching tab/window (by origin host for a tab, bundle id for a window) among what's currently connectable
@@ -1282,6 +1310,42 @@ export function makeConnectionOps({
     if (typeof installer !== 'function') return { error: 'extension install is available only in the BlitzOS app (macOS, local)' }
     return installer()
   }
+  // The AI-browser launcher (ai-browser.ts, Electron-only): ensures the dedicated AI Chrome process is running
+  // so the connector inside it can connect, before we try to open the agent's window.
+  function setBrowserLauncher(fn) {
+    browserLauncher = fn
+  }
+  // Open (or get) THIS agent's dedicated browsing window in the BlitzOS AI Chrome — an isolated profile (shared
+  // login across agents) driven via CDP (trusted input + screenshots + canvas apps). Ensures the AI Chrome is
+  // running first; if its connector isn't loaded yet, returns a navigable setup hint instead of a hard failure.
+  async function connectionOpenBrowser(agentId, opts = {}) {
+    if (typeof browserLauncher === 'function') {
+      try {
+        await browserLauncher()
+      } catch {
+        /* launch is best-effort; the connected-check below is the real gate */
+      }
+    }
+    if (!tabLink || typeof tabLink.openAgentWindow !== 'function') {
+      return { error: 'the AI browser is available only in the BlitzOS app (macOS, local)' }
+    }
+    if (typeof tabLink.isConnected === 'function' && !tabLink.isConnected()) {
+      return {
+        error:
+          'the BlitzOS AI Chrome is starting, but its connector isn’t loaded yet. Finish the one-time setup in the AI Chrome window (chrome://extensions → Developer mode → drag the connector folder), then try again.',
+        needsSetup: true
+      }
+    }
+    return attachBriefing(await tabLink.openAgentWindow(agentId != null ? String(agentId) : '', opts || {}))
+  }
+  // Navigate a connected TAB (the AI-browser window, or any connected Chrome tab) to a URL.
+  async function connectionNavigate(connId, url) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    const out = await dispatch(r, 'navigate', { url: String(url || '') })
+    if (out && out.error) return out
+    return out && typeof out === 'object' && 'effect' in out ? { ok: true, effect: cap(out.effect) } : { ok: true, ...(out && typeof out === 'object' ? out : {}) }
+  }
 
   // ================= the first-party TOOL REGISTRY (plans/connection-tool-registry.md) =================
   // A standalone HTTP service we host + vet. The agent SEARCHES it, GETS an entry, and ADDS it to its own
@@ -1310,6 +1374,27 @@ export function makeConnectionOps({
       return { body: await res.json() }
     } catch {
       return { error: 'tool registry returned invalid JSON' }
+    }
+  }
+
+  // Warm registryCache for a source (fire-and-forget on connect/rekey) so connection_list can SHOW vetted tools
+  // exist for it — the registry was pull-only/invisible-until-queried, which is why agents re-derived from
+  // scratch. If tools are found, wake the agent once with their names so it can connection_registry_add them.
+  // Best-effort; never throws (a missing/offline registry just means no hint).
+  async function refreshRegistryForSource(sourceId, connId) {
+    if (!registryUrl || !sourceId) return
+    try {
+      const r = await connectionRegistrySearch({ sourceId })
+      const tools = r && Array.isArray(r.entries) ? r.entries.map((e) => ({ name: e.name, description: e.description, kind: e.kind })) : []
+      registryCache.set(sourceId, tools)
+      if (tools.length && connId) {
+        const r0 = rec(connId)
+        if (r0 && r0.sourceId === sourceId) {
+          emitConnectionMoment(r0.surfaceId || 'system', { connId, sourceId, status: r0.status, verb: `${tools.length} vetted registry tool(s) available — connection_registry_add to use: ${tools.map((t) => t.name).join(', ')}`, agentId: r0.agentId || '0', registryTools: tools })
+        }
+      }
+    } catch {
+      /* registry offline — no hint, agents still work */
     }
   }
 
@@ -1379,6 +1464,9 @@ export function makeConnectionOps({
     connectionRestoreAll,
     setInstaller,
     connectionInstallExtension,
+    setBrowserLauncher,
+    connectionOpenBrowser,
+    connectionNavigate,
     // adapter / registry API (used by the tab + window adapters and by tests)
     connectionIsLive,
     connectionInfo,

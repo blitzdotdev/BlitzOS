@@ -91,11 +91,20 @@ export function setBootTaskProvider(fn) {
   bootTaskProvider = typeof fn === 'function' ? fn : null
 }
 
+// Optional user-set STANDING CUSTOM INSTRUCTIONS, injected into EVERY session's first message (both
+// backends) wrapped in <user-instructions> tags. Same DI seam as the boot task: the transport registers a
+// provider that reads the persisted text, and prepareAgentLaunch re-reads it on EVERY (re)launch, so editing
+// the instructions in Settings updates all new/restarted sessions with no rebuild. The TEXT is the user's.
+let userInstructionsProvider = null
+export function setUserInstructionsProvider(fn) {
+  userInstructionsProvider = typeof fn === 'function' ? fn : null
+}
+
 /** The agent's BOOTSTRAP prompt (written to a file and passed to the selected agent backend). The served manual
  *  (blitzos-agents.md) is the SINGLE source of truth for identity, the /events loop, every tool, window
  *  management, and the design language — this stays a thin pointer and does NOT restate behavior. Multi-line
  *  is fine: it lives in a file, so it never touches the tmux control-mode command line (which rejects LF). */
-export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace = null) {
+export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace = null, userInstructions = null) {
   const primary = !sessionId || String(sessionId) === '0'
   const chatFile = primary ? 'chat.md' : `chat-${sessionId}.md`
   // v2 bleed fix: an agent is PINNED to its workspace — every /events + /say carries it, so a
@@ -127,7 +136,13 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   const scope = primary
     ? null
     : `You are one of several Blitz agents; you serve ONLY your own chat thread. Include "agent":"${sessionId}" on your /events, /say, and open_terminal calls so they stay on your own thread and don't disturb the user or the other agents. That id is an internal routing handle, not your name; to the user you are just a Blitz agent.`
-  return [identity, relay, guide, web, progress, recover, duty, onConnect, waitLoop, keepChecking, say, scope].filter(Boolean).join('\n')
+  // The user's standing custom instructions (set in BlitzOS Settings), wrapped in tags so the agent sees
+  // exactly where they begin and end. Honored like a direct user request; it never overrides the safety /
+  // act-vs-ask boundary rules above. Empty/whitespace → omitted entirely (byte-identical to before).
+  const userBlock = typeof userInstructions === 'string' && userInstructions.trim()
+    ? `The user has set standing custom instructions that apply to every session. Follow them as if the user asked you directly, unless they conflict with a rule above:\n<user-instructions>\n${userInstructions.trim()}\n</user-instructions>`
+    : null
+  return [identity, relay, guide, web, progress, recover, duty, onConnect, waitLoop, keepChecking, say, scope, userBlock].filter(Boolean).join('\n')
 }
 
 /** POSIX single-quote a value for a shell command line (wrap in '…', escape embedded ' as '\''). */
@@ -235,11 +250,15 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
   try {
     bootTask = bootTaskProvider ? bootTaskProvider(String(id)) : null
   } catch { /* a broken provider never blocks a launch */ }
+  let userInstructions = null
+  try {
+    userInstructions = userInstructionsProvider ? userInstructionsProvider(String(id)) : null
+  } catch { /* a broken provider never blocks a launch */ }
   // sessionsDir = <workspace>/.blitzos/sessions → the workspace NAME pins this agent (v2 bleed fix).
   const workspace = basename(dirname(dirname(sessionsDir)))
   try {
     mkdirSync(sessionDir(sessionsDir, id), { recursive: true })
-    writeFileSync(file, buildBootstrap(url, id, bootTask, workspace))
+    writeFileSync(file, buildBootstrap(url, id, bootTask, workspace, userInstructions))
     writeRelayUrl(dirname(sessionsDir), url) // <ws>/.blitzos/relay-url — the live base the agent re-reads per call
     writeWaitScript(dirname(sessionsDir)) // <ws>/.blitzos/wait.sh — the blocking event-wait the bootstrap points at
     writeBlitzShim(dirname(sessionsDir)) // <ws>/.blitzos/blitz + orchestrator.md — the workflow runner + duty (orchestrators toggle)
@@ -320,9 +339,10 @@ while :; do
   [ -z "$B" ] && { sleep 1; continue; }
   R=$(curl -sS -X POST "$B/events" -H 'content-type: application/json' -d "{\\"since\\":$S,\\"wait\\":25$SC}" 2>/dev/null)
   case "$R" in
-    '' ) sleep 1 ;;                     # transient failure / url change — retry (relay-url re-read next loop)
-    *'"events":[]'* ) : ;;             # 25s timeout, nothing new — keep blocking
-    * ) printf '%s\\n' "$R"; exit 0 ;; # got events — hand them back to the agent's turn
+    '' ) sleep 1 ;;                                            # transient failure / url change — retry (relay-url re-read next loop)
+    *'"events":[]'* ) sleep 1 ;;                              # nothing new — brief sleep so an instant-returning server can't peg the CPU
+    *'"events":'*'"latest":'* ) printf '%s\\n' "$R"; exit 0 ;; # a REAL events payload — hand it to the agent's turn
+    * ) sleep 1 ;;                                            # garbage (HTML error / 404 body) — never feed it to the agent; retry
   esac
 done
 `
