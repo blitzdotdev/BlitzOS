@@ -40,6 +40,15 @@ const RATE_LIMIT_RE = /rate.?limit|temporarily limiting|overloaded|too many requ
 // schedules ONE precise resume for then. SESSION_LIMIT_RE confirms it IS a usage limit; parseResetAt extracts when.
 const SESSION_LIMIT_RE = /(?:session|usage|weekly|daily)\s+limit|hit your[^\n]{0,24}limit|usage-credits/i
 
+// A TRANSIENT API error (a 5xx, a dropped connection, a fetch failure) CRASHES the agent's current turn. Unlike a
+// rate-limit, it has no reset time and is retryable immediately. The danger is the silent path: a message was
+// DELIVERED to a live wait.sh waiter (so onUndelivered never fires), the agent woke, its turn died on the 5xx, and
+// it never relaunched wait.sh — so the loop is dead, the message is consumed, and NOTHING re-delivers it. The agent
+// goes permanently silent until a human types into it. The sweep catches exactly this (API-error pane + a DEAD
+// heartbeat) and probes it back to life. 529/overloaded is intentionally left to RATE_LIMIT_RE (hold-first).
+const API_ERROR_RE = /API Error:\s*(?:5(?:0\d|1\d|2[0-8])\b|connection error|fetch failed|network)|Internal server error/i
+const HEARTBEAT_STALE_MS = 60_000 // wait.sh polls /events every ~25s; >2 missed cycles ⇒ the loop is genuinely dead
+
 // The catch-up directive typed into a DEAF agent's pane (loop died, but the agent can still take a turn). ONE line
 // (no embedded newline). The Enter is sent SEPARATELY (see nudgeSubmit): Claude's TUI treats text+newline arriving
 // in one burst as a PASTE, keeping the \r as a literal newline in the composer (the nudge silently stacks as
@@ -75,7 +84,7 @@ export function parseResetAt(text, nowMs) {
   return best
 }
 
-export { SESSION_LIMIT_RE }
+export { SESSION_LIMIT_RE, API_ERROR_RE }
 
 /**
  * @param {object} deps
@@ -105,7 +114,8 @@ export function createWakeWatchdog(deps = {}) {
     submitDelayMs = SUBMIT_DELAY_MS,
     rateLimitBackoffMs = RATE_LIMIT_BACKOFF_MS,
     resumeBufferMs = RESUME_BUFFER_MS,
-    resumeCooldownMs = RESUME_COOLDOWN_MS
+    resumeCooldownMs = RESUME_COOLDOWN_MS,
+    heartbeatStaleMs = HEARTBEAT_STALE_MS
   } = deps
   if (typeof lastPollAt !== 'function' || typeof sendToTerminal !== 'function') {
     throw new Error('createWakeWatchdog: lastPollAt + sendToTerminal are required')
@@ -138,9 +148,21 @@ export function createWakeWatchdog(deps = {}) {
       if ((cooldownUntil.get(k) || 0) > t) continue      // just resumed it — don't storm
       if (!isLive(agentId)) continue
       const p = safeCapture(agentId)
-      if (!p || !SESSION_LIMIT_RE.test(p) || parseResetAt(p, t) == null) continue // not a usage-limit-with-reset pane
-      arm(agentId, workspace, 'sweep')
-      log(`wake-watchdog: agent ${agentId} (${workspace || 'default'}) usage-limited (pane sweep) — arming scheduled resume`)
+      if (!p) continue
+      // (a) usage-limit-with-reset → schedule a precise resume.
+      if (SESSION_LIMIT_RE.test(p) && parseResetAt(p, t) != null) {
+        arm(agentId, workspace, 'sweep')
+        log(`wake-watchdog: agent ${agentId} (${workspace || 'default'}) usage-limited (pane sweep) — arming scheduled resume`)
+        continue
+      }
+      // (b) a CRASHED TURN whose wait-loop heartbeat is already dead: a transient API error (or a rate-limit) felled
+      // the turn AFTER its message was delivered+consumed, so onUndelivered never fired and nobody re-delivers it.
+      // The dead heartbeat (no /events poll in heartbeatStaleMs) is what separates this from a healthy idle agent
+      // (whose wait.sh keeps polling) — arm a recovery so check() probes it back to life instead of silent-forever.
+      if ((API_ERROR_RE.test(p) || RATE_LIMIT_RE.test(p)) && t - (lastPollAt(agentId, workspace) || 0) > heartbeatStaleMs) {
+        arm(agentId, workspace, 'apierror')
+        log(`wake-watchdog: agent ${agentId} (${workspace || 'default'}) crashed turn + dead heartbeat (pane sweep) — arming recovery`)
+      }
     }
   }
 
@@ -149,9 +171,9 @@ export function createWakeWatchdog(deps = {}) {
     if (recs.has(k)) return // already recovering — coalesce (one wake heals every pending message)
     const t = now()
     const rec = { agentId, workspace, msgTs: t, firstTs: t, tries: 0, timer: null, source }
-    // A sweep arm goes straight to the frozen-confirm (short delay); a message arm gives the agent's own loop GRACE
-    // to self-recover first (a healthy loop re-polls within ~1s and delivers the message from the log itself).
-    rec.timer = setTimer(() => { void check(k) }, source === 'sweep' ? settleMs : graceMs)
+    // A pane-state arm (sweep / apierror) goes straight to the frozen-confirm (short delay); a message arm gives the
+    // agent's own loop GRACE to self-recover first (a healthy loop re-polls within ~1s and delivers it from the log).
+    rec.timer = setTimer(() => { void check(k) }, source === 'message' ? graceMs : settleMs)
     recs.set(k, rec)
   }
 
@@ -162,7 +184,7 @@ export function createWakeWatchdog(deps = {}) {
     // (the message is in the event LOG, so any re-poll delivers it). A sweep arm has no pending message — its
     // trigger is the PANE state, and a usage-limited agent can keep a live wait.sh heartbeat while its turn is dead,
     // so the heartbeat must NOT short-circuit it; the pane decides.
-    if (source !== 'sweep' && lastPollAt(agentId, workspace) >= msgTs) return done(k)
+    if (source !== 'sweep' && lastPollAt(agentId, workspace) >= msgTs) { setStatus(agentId, workspace, null); return done(k) }
     // Process gone (pane not wired) → terminal-manager auto-restart owns that, not us.
     if (!isLive(agentId)) return done(k)
     // Confirm the pane is FROZEN (stuck at a prompt), not actively working, before deciding. A working agent's
@@ -170,7 +192,7 @@ export function createWakeWatchdog(deps = {}) {
     const a = safeCapture(agentId)
     await sleep(settleMs)
     if (!recs.has(k)) return // cleared while settling
-    if (source !== 'sweep' && lastPollAt(agentId, workspace) >= msgTs) return done(k) // recovered during settle
+    if (source !== 'sweep' && lastPollAt(agentId, workspace) >= msgTs) { setStatus(agentId, workspace, null); return done(k) } // recovered during settle
     const b = safeCapture(agentId)
     const frozen = !!a && !!b && a === b
     // USAGE / SESSION LIMIT with a known reset time → schedule a precise resume (source-agnostic, highest priority).
@@ -190,15 +212,18 @@ export function createWakeWatchdog(deps = {}) {
     }
     // STUCK and deaf. WHY it's stuck decides the recovery.
     setStatus(agentId, workspace, 'reconnecting')
-    if (RATE_LIMIT_RE.test(b)) {
+    const apiErr = !RATE_LIMIT_RE.test(b) && API_ERROR_RE.test(b)
+    if (RATE_LIMIT_RE.test(b) || apiErr) {
       // Transient rate-limit (no reset time): a nudge can't be processed under a 429 and would just re-throttle.
       // HOLD, then PROBE on a long backoff — the first time we only wait (the limit was just hit); after a full
       // backoff we send ONE nudge to test whether it cleared (if so it submits + the agent relaunches its loop; if
-      // not it re-dies and we wait again). Never escalate to 'error' — a throttle is transient.
-      const probing = rec.rlSeen === true
+      // not it re-dies and we wait again). A transient API error (5xx / dropped connection) is the same shape but
+      // retryable IMMEDIATELY (no throttle to wait out), so probe on the FIRST sighting too. Either way NEVER
+      // escalate to 'error' — both are transient; keep probing on the backoff until the API recovers.
+      const probing = apiErr || rec.rlSeen === true
       if (probing) nudgeSubmit(agentId)
       rec.rlSeen = true
-      log(`wake-watchdog: agent ${agentId} (${workspace || 'default'}) rate-limited — ${probing ? 'probe nudge' : 'holding'} (backoff ${Math.round(rateLimitBackoffMs / 1000)}s)`)
+      log(`wake-watchdog: agent ${agentId} (${workspace || 'default'}) ${apiErr ? 'API error' : 'rate-limited'} — ${probing ? 'probe nudge' : 'holding'} (backoff ${Math.round(rateLimitBackoffMs / 1000)}s)`)
       rec.timer = setTimer(() => { void check(k) }, rateLimitBackoffMs)
       return
     }

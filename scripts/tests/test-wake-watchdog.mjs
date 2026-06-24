@@ -1,7 +1,7 @@
 // Unit test for the self-healing agent wake watchdog (src/main/agent-wake-watchdog.mjs).
 // Pure state machine with injected deps — driven here with real (tiny) timers + mutable fakes.
 // Run: node scripts/tests/test-wake-watchdog.mjs
-import { createWakeWatchdog, parseResetAt, SESSION_LIMIT_RE } from '../../src/main/agent-wake-watchdog.mjs'
+import { createWakeWatchdog, parseResetAt, SESSION_LIMIT_RE, API_ERROR_RE } from '../../src/main/agent-wake-watchdog.mjs'
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms))
 let failed = 0
@@ -205,6 +205,65 @@ async function run() {
     h.wd.sweep([{ agentId: '31', workspace: 'Home' }])
     await delay(T.settleMs + T.settleMs + T.resumeBufferMs + 40)
     ok(h.resumeNudges().length === 0, 'no resume while the pane is changing')
+    h.wd.stop()
+  }
+
+  // 14. API_ERROR_RE classifies a transient 5xx / connection-drop pane, but NOT a 529/overloaded (that is the
+  //     rate-limit's job) and not a normal pane.
+  {
+    console.log('14. API_ERROR_RE matches a crashed-turn 5xx, leaves 529/overloaded to the rate-limit path')
+    ok(API_ERROR_RE.test('API Error: 500 Internal server error.'), 'matches API Error: 500')
+    ok(API_ERROR_RE.test('API Error: 503 Service Unavailable'), 'matches API Error: 503')
+    ok(API_ERROR_RE.test('API Error: Connection error.'), 'matches a dropped connection')
+    ok(!API_ERROR_RE.test('API Error: 529 overloaded'), '529/overloaded is NOT an api-error (rate-limit owns it)')
+    ok(!API_ERROR_RE.test('idle, waiting for the user'), 'a healthy idle pane is not an api-error')
+  }
+
+  // 15. SWEEP recovers a CRASHED-TURN agent: an API-error pane + a DEAD heartbeat (no recent poll) is armed and
+  //     probed immediately (unlike a 429 which holds first), and never escalates to 'error'. The exact agent-3 bug:
+  //     the message was delivered+consumed, the turn died on a 500, the loop never relaunched — silent forever.
+  {
+    console.log('15. sweep recovers a crashed-turn (API error + dead heartbeat) → immediate probe, never error')
+    const API_PANE = 'API Error: 500 Internal server error. This is a server-side issue, usually temporary.'
+    const h = harness({ pane: () => API_PANE, poll: () => 0 }) // poll:0 ⇒ heartbeat is ancient (dead loop)
+    h.wd.sweep([{ agentId: '42', workspace: 'case-file' }])
+    await delay(T.settleMs + T.settleMs + T.submitDelayMs + 40)
+    ok(h.textNudges().length >= 1, `crashed-turn agent gets a recovery nudge (got ${h.textNudges().length})`)
+    ok(h.textNudges()[0]?.id === '42', 'nudge targets the crashed agent')
+    ok(h.enters().length >= 1, 'Enter sent as a separate write (submit-fix)')
+    ok(h.statuses.some((s) => s.st === 'reconnecting'), "status set to 'reconnecting' while recovering")
+    await delay(2 * T.rateLimitBackoffMs + 40)
+    ok(!h.statuses.some((s) => s.st === 'error'), 'a transient API error NEVER escalates to error')
+    h.wd.stop()
+  }
+
+  // 16. SWEEP does NOT arm a crashed-turn pane whose heartbeat is still ALIVE (the loop is up and will re-deliver on
+  //     its own) — the dead-heartbeat gate is what prevents stealing recovery from a healthy wait.sh.
+  {
+    console.log('16. sweep ignores an API-error pane with a LIVE heartbeat (loop self-recovers)')
+    const h = harness({ pane: () => 'API Error: 500 Internal server error.', poll: () => Date.now() }) // fresh poll
+    h.wd.sweep([{ agentId: '43', workspace: 'case-file' }])
+    await delay(T.settleMs + T.settleMs + T.submitDelayMs + 40)
+    ok(h.textNudges().length === 0 && h.wd._size() === 0, 'live-heartbeat agent left alone (no nudge, not armed)')
+    h.wd.stop()
+  }
+
+  // 17. The crashed-turn agent RECOVERS: once its heartbeat resumes (wait.sh relaunched), the next probe clears the
+  //     record AND drops the 'reconnecting' status override.
+  {
+    console.log('17. crashed-turn recovery → heartbeat resumes → record cleared + status restored')
+    let down = true
+    const h = harness({
+      pane: () => (down ? 'API Error: 500 Internal server error.' : 'FROZEN'),
+      poll: () => (down ? 0 : Date.now()) // when the API recovers, the agent relaunches wait.sh → heartbeat advances
+    })
+    h.wd.sweep([{ agentId: '44', workspace: 'case-file' }])
+    await delay(T.settleMs + T.settleMs + T.submitDelayMs + 30)
+    ok(h.statuses.some((s) => s.st === 'reconnecting'), 'reconnecting while down')
+    down = false // API recovers, loop relaunches
+    await delay(T.rateLimitBackoffMs + T.settleMs + 60)
+    ok(h.wd._size() === 0, 'watchdog cleared the agent once its heartbeat resumed')
+    ok(h.statuses.some((s) => s.st === null), "'reconnecting' override cleared on recovery")
     h.wd.stop()
   }
 
