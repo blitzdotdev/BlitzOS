@@ -1,7 +1,7 @@
 // IslandPanel — THE BlitzOS dynamic-island UI (LOCKED design), rendering REAL agent data. Deliberately MINIMAL:
-// no header, no icons. ONE persistent tab strip: tab 0 is the new-session tab (a circle with a PEN), tabs 1..N
-// are the live agents (a status dot + title). The body is the composer when the pen tab is active, else the
-// active agent's TIMELINE — the conversation (iMessage bubbles) interleaved with the narrator's plain milestone
+// no header, no icons. ONE persistent tab strip: a PEN button that spawns a brand-new agent (and enters it), then
+// tabs 1..N for the live agents (a status dot + title; Blitz '0' is the first). The body is ALWAYS the active
+// agent's TIMELINE — the conversation (iMessage bubbles) interleaved with the narrator's plain milestone
 // STEPS — above a live status line + the steer bar. A "Details" expand reveals the raw tool rows (Grep/Edit/Run).
 // Every composer has an attach "+" that toggles the AttachPanel inline (the island grows). The BLACK chassis +
 // the original NotchShape are owned by NotchHost and are INVARIANT; this paints ONLY the interior.
@@ -60,6 +60,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     sessions,
     page,
     onSelectPage,
+    onNewAgent,
     messages,
     milestones,
     runs: runsProp,
@@ -73,14 +74,14 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     debugTerminalEnabled,
     activeTerminal,
     onArchiveAgent,
-    onRenameAgent
+    onRenameAgent,
+    alwaysShowWorkflow
   } = props
   // In-chat workflow boards are durable now: each run is event-sourced on disk (index.json + events.jsonl +
   // skeleton.json), reloaded on tab-open (NotchHost.wfLoadAgentRuns), and evicted from memory only after 15 min
   // of tab inactivity — so a finished or long-past board never vanishes. See plans/blitzos-kanban-persistence.md.
   const runs = runsProp
   const top = Math.max(28, menuBarH) + 8
-  const isNew = page === 0 // the pen tab
   const feedRef = useRef<HTMLDivElement>(null)
   const lyricsRef = useRef<HTMLDivElement>(null)
   // Attach mode in an AGENT chat: lock the island to the height it had BEFORE attach opened, so the attachment panel
@@ -152,6 +153,28 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       return next
     })
   }, [])
+  // "Always show workflow board" setting: when ON, each run renders EXPANDED by default instead of the collapsed
+  // status pill. We seed every NOT-yet-seen run id into both sets (mounted + expanded) exactly once — so a freshly
+  // started run opens itself, while the per-run caret still lets the user collapse an individual board afterward (we
+  // only auto-open ids we have not seen, so a manual collapse sticks). When the setting is OFF we touch nothing,
+  // preserving the lazy-mount default (N persisted runs render as cheap pills, not N boards each replaying backlog).
+  const autoOpenedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!alwaysShowWorkflow) return
+    const fresh = runs.map((r) => r.runId).filter((id) => !autoOpenedRef.current.has(id))
+    if (!fresh.length) return
+    fresh.forEach((id) => autoOpenedRef.current.add(id))
+    setMountedRuns((prev) => {
+      const next = new Set(prev)
+      fresh.forEach((id) => next.add(id))
+      return next
+    })
+    setExpandedRuns((prev) => {
+      const next = new Set(prev)
+      fresh.forEach((id) => next.add(id))
+      return next
+    })
+  }, [alwaysShowWorkflow, runs])
   // Anchor each live workflow board AFTER the last message that preceded its run (the agent's "running…" line),
   // so the board sits in TIME ORDER in the transcript instead of stacking at the top. A run whose start predates
   // every message (no preceding message) renders at the very top. Keyed by message index → the runs anchored
@@ -178,6 +201,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     return { runsByAnchor: byAnchor, leadingRuns: leading }
   }, [runs, messages])
   const renderBoard = (r: IslandWfRun): JSX.Element => {
+    // Finished-state class, mutually exclusive: green 'done' ONLY when ok, red 'fail' when not. A failed run
+    // must never read as a green done dot (the status text already says "workflow failed").
+    const doneClass = r.done ? (r.ok ? ' isl-wf-done' : ' isl-wf-fail') : ''
     // SINGLE-PHASE fan-out ("subagents"): each leaf is already its own row pill, so the run-level "workflow
     // running" pill is redundant — drop it and render the rows directly (always mounted; a fan-out board is small,
     // not the heavy multi-phase grid the lazy-mount guards). Detected from the dry-preflight skeleton alone, so no
@@ -185,7 +211,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     // switches to the headless rows once the plan is known.
     if (isSubagentEvents(r.skeleton as unknown[])) {
       return (
-        <div className={`isl-wf-board isl-wf-subagents${r.done ? ' isl-wf-done' : ''}`} key={r.runId}>
+        <div className={`isl-wf-board isl-wf-subagents${doneClass}`} key={r.runId}>
           <div className="isl-wf-board-body">
             <IslandKanban runId={r.runId} skeleton={r.skeleton} onStats={handleRunStats} />
           </div>
@@ -199,7 +225,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     const open = expandedRuns.has(r.runId)
     const statsLine = s ? `${fmtMs(s.ms)} · ${s.calls} agents · ${fmtTok(s.tokens)} tok` : r.done ? '' : 'running…'
     return (
-      <div className={`isl-wf-board${r.done ? ' isl-wf-done' : ''}${open ? ' isl-wf-open' : ''}`} key={r.runId}>
+      <div className={`isl-wf-board${doneClass}${open ? ' isl-wf-open' : ''}`} key={r.runId}>
         <button
           type="button"
           className="isl-wf-board-head"
@@ -385,12 +411,10 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     >
       <button
         type="button"
-        role="tab"
-        aria-selected={isNew}
         aria-label="New session"
         title="New session"
-        className={`isl-chip isl-chip-new${isNew ? ' active' : ''}`}
-        onClick={() => onSelectPage(0)}
+        className="isl-chip isl-chip-new"
+        onClick={onNewAgent}
       >
         <svg className="isl-pen" viewBox="0 0 24 24" aria-hidden focusable="false">
           <path d={PEN_PATH} fill="currentColor" />
@@ -458,7 +482,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               onSelectPage(i + 1)
               startRename(s.id, s.title)
             }}
-            title={s.id === '0' ? 'Main' : 'Right-click to rename'}
+            title={s.id === '0' ? 'Blitz' : 'Right-click to rename'}
           >
             <span className="isl-chip-album" style={{ background: agentGradient(s.id) }} aria-hidden />
             <span className="isl-chip-label">{s.title}</span>
@@ -524,8 +548,8 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
 
   // ATTACH MODE: the tab strip always collapses (grid-rows pop). In an AGENT chat the chat STAYS — the island height
   // is locked to what it was, so the attachment panel rises only as tall as its own content and the feed shrinks to
-  // fit (still scrollable + bottom-pinned). The new-session tab has no chat, so it just sizes to the composer + attach.
-  const lockHeight = attachOpen && !isNew ? closedHeightRef.current ?? undefined : undefined
+  // fit (still scrollable + bottom-pinned). Locks the height while the attach panel is open in any agent chat.
+  const lockHeight = attachOpen ? closedHeightRef.current ?? undefined : undefined
   const lastVisibleTurnIndex = (() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i]
@@ -568,14 +592,14 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   return (
     <div
       ref={panelRef}
-      className={`nh-island ${isNew ? 'isl-session' : 'isl-process'}${attachOpen ? ' isl-attaching' : ''}`}
+      className={`nh-island isl-process${attachOpen ? ' isl-attaching' : ''}`}
       style={lockHeight ? { paddingTop: top, height: lockHeight } : { paddingTop: top }}
     >
       <div className={`isl-tabwrap${attachOpen ? ' collapsed' : ''}`}>
         <div className="isl-tabwrap-inner">{tabStrip}</div>
       </div>
-      {!isNew && (
-        // Agent tab: a PURE chat (the agent's real messages only) + inline activity details — KEPT in attach mode.
+      {(
+        // The active agent's chat (Blitz '0' or a peer): real messages + inline activity details — KEPT in attach mode.
         <>
           <div className="isl-agent-meta">
             {activeId && (
@@ -646,14 +670,14 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           {debugTerminalEnabled && activeId && (
             <IslandTerminalPane
               terminalId={activeId}
-              title={activeTerminal?.title || `Agent ${activeId}`}
+              title={activeTerminal?.title || (String(activeId) === '0' ? 'Blitz' : 'New Agent')}
               status={activeTerminal?.status || 'unknown'}
             />
           )}
         </>
       )}
       {/* the composer + attachment panel are ALWAYS visible. */}
-      {composerBlock(isNew ? 'Ask Blitz, or describe a task' : 'Steer this agent…', isNew ? 132 : 108, isNew)}
+      {composerBlock(activeId === '0' ? 'Message Blitz' : 'Steer this agent…', 108, false)}
     </div>
   )
 }

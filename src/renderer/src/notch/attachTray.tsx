@@ -3,6 +3,7 @@
 // is a pure function; the component owns its own hover tooltip (portaled to <body>). Scroll is the parent's job.
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
+import { brandGlyph } from './browserIcons'
 import './attach.css'
 
 // One attached source (a tab carries a favicon; a window item just a title) and a group (one browser's tabs or one
@@ -91,7 +92,7 @@ export function AttachTray({
             </button>
           )}
           <span className="att-pill-app">
-            <AppIcon src={g.appIcon} name={g.label} />
+            <AppIcon src={g.appIcon} name={g.label} brand={g.type === 'tab' ? g.key.slice(2) : undefined} />
           </span>
           <span className="att-pill-div" aria-hidden />
           <span className="att-pill-items">
@@ -132,6 +133,10 @@ export function AttachTray({
               >
                 {g.appIcon ? (
                   <img className="att-added-icon" src={`data:image/png;base64,${g.appIcon}`} alt={g.label} draggable={false} />
+                ) : brandGlyph(g.label) ? (
+                  <span className="att-added-icon att-brand-icon" aria-hidden>
+                    {brandGlyph(g.label)}
+                  </span>
                 ) : (
                   <span className="att-added-icon att-added-fallback" aria-hidden>
                     {g.label.slice(0, 1)}
@@ -181,10 +186,19 @@ export function Favicon({ src }: { src?: string }): JSX.Element {
   return <img className="att-favicon" src={src} alt="" aria-hidden draggable={false} onError={() => setFailed(true)} />
 }
 
-// A macOS app icon (base64 PNG the helper resolves per window). Falls back to the app's first letter.
-export function AppIcon({ src, name }: { src?: string; name?: string }): JSX.Element {
+// A macOS app icon (base64 PNG the helper resolves per window). When the helper icon is missing/broken, fall back to
+// the browser BRAND glyph (Chrome/Safari are reliable even with no helper) and only then to the app's first letter.
+// `brand` is the precise browser key when the caller has it; otherwise `name` (the app/group label) is matched.
+export function AppIcon({ src, name, brand }: { src?: string; name?: string; brand?: string }): JSX.Element {
   const [failed, setFailed] = useState(false)
   if (!src || failed) {
+    const glyph = brandGlyph(brand || name)
+    if (glyph)
+      return (
+        <span className="att-favicon att-brand-icon" aria-hidden>
+          {glyph}
+        </span>
+      )
     return (
       <span className="att-favicon att-app-fallback" aria-hidden>
         {(name || '?').slice(0, 1).toUpperCase()}

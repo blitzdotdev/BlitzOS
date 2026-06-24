@@ -4,9 +4,10 @@
 import './island.css'
 import { agentGradient } from './agentVisuals'
 import type { IslandSession } from './types'
-
-// A speech-bubble glyph for the Chat widget icon.
-const CHAT_GLYPH = 'M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z'
+// The Chat widget tile shows the actual Blitz macOS app icon (the pre-masked squircle asset baked by
+// ~/superapp/blitz-macos) instead of a generic glyph. The PNG is a dark rounded tile with transparent
+// corners, so it sits on the island's black as a clean app icon. (blitz-macos is a separate mac app.)
+import blitzAppIcon from '../assets/blitz-app-icon.png'
 const isActiveStatus = (value: string): boolean => value === 'working' || value === 'starting'
 const isWorkingStatus = (value: string): boolean => value === 'working'
 const isWaitingStatus = (value: string): boolean => value === 'waiting'
@@ -43,14 +44,12 @@ export function IslandHome({
     <div className={`nh-island isl-home${railSessions.length ? ' has-working has-home-rail' : ''}`} style={{ paddingTop: top }}>
       <div className="isl-home-layout">
         <div className="isl-home-chat-zone">
-          <button type="button" className="isl-app isl-app-chat" onClick={onOpenChat} aria-label="Open chat">
+          <button type="button" className="isl-app isl-app-chat" onClick={onOpenChat} aria-label="Open Blitz">
             <span className="isl-app-icon">
-              <svg viewBox="0 0 24 24" aria-hidden focusable="false">
-                <path d={CHAT_GLYPH} fill="currentColor" />
-              </svg>
+              <img className="isl-app-icon-img" src={blitzAppIcon} alt="" draggable={false} />
               {working && <span className="isl-app-badge" aria-hidden />}
             </span>
-            <span className="isl-app-name">Chat</span>
+            <span className="isl-app-name">Blitz</span>
           </button>
         </div>
         <section className="isl-home-agents" aria-label="Active agents">

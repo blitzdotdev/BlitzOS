@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BlitzOS · Obsidian-glass workflow outputs</title>
+<!--
+  Preview: the workflow OUTPUTS (the collapsed preview pill + the kanban board) restyled into the
+  BlitzOS "obsidian liquid glass" look, to match the choice-card family.
+
+  Two changes shown:
+    1. WORKFLOW PREVIEW PILL  -> full obsidian glass (same material as the choice output pill):
+       near-black fill, a 1px top-bright rim ring (blue cast), a faint bloom, depth shadow, blur.
+    2. KANBAN BOARD           -> ONLY the frame/border changes to obsidian glass (rim ring + depth
+       glow). The interior (dotted Nani board, the yellow/blue/green columns + cards) is untouched.
+
+  Toggle "Current / Obsidian glass" (top-right) to A/B the before vs after. Toggle the backdrop to
+  check the look on pure black (the real chassis) and over frosted content. Material tokens are the
+  lab "obsidian" preset from lab/choice-cards/index.html; the kanban palette + markup mirror wf.css
+  / IslandKanban.tsx. Self-contained single file.
+-->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    background: #05060a; color: #fff; overflow: hidden;
+    /* ---- obsidian-glass material tokens (the lab "obsidian" preset) ---- */
+    --blur: 28px; --glass-r: 22px;
+    --fill-top: rgba(24,28,38,.74); --fill-bot: rgba(9,11,16,.80);
+    --lift: rgba(64,94,150,.22);
+    --rim-top: rgba(196,216,255,.66); --rim-bot: rgba(196,216,255,.224);
+    --bloom: rgba(116,162,255,.28);
+    /* ---- kanban Nani palette (wf.css) ---- */
+    --kb-bg:#11151a; --kb-dot:#a4b4c121; --kb-sheet:#1b2026; --kb-line:#2c323a;
+    --kb-faint:#ffffff14; --kb-text:#ecf4fa; --kb-muted:#9da5ad; --kb-dim:#626a72;
+    --kb-yellow:#fec84b; --kb-red:#ff6b6b; --kb-green:#3ddc84; --kb-blue:#2f9bff;
+  }
+
+  /* ---- the world behind the glass (near-black; optional drifting aurora to test frosted content) ---- */
+  .scene { position: fixed; inset: 0; overflow: hidden; z-index: 0; background: #05060a; }
+  .scene .glow { position: absolute; border-radius: 50%; filter: blur(46px); opacity: 0; transition: opacity .4s; will-change: transform; }
+  .scene.aurora .glow { opacity: .9; }
+  .scene .g1 { width: 58vw; height: 58vh; background: radial-gradient(circle, rgba(80,120,255,.5), transparent 62%); }
+  .scene .g2 { width: 46vw; height: 46vh; background: radial-gradient(circle, rgba(20,200,230,.42), transparent 64%); }
+  .scene .g3 { width: 50vw; height: 50vh; background: radial-gradient(circle, rgba(255,90,170,.4), transparent 64%); }
+  .scene::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(120% 90% at 50% 30%, transparent 45%, rgba(0,0,0,.55) 100%); }
+
+  /* ---- scroll column simulating the island chat body ---- */
+  .stage { position: absolute; inset: 0; z-index: 1; overflow-y: auto; overflow-x: hidden; padding: 56px 24px 96px; }
+  .stage::-webkit-scrollbar { width: 10px; }
+  .stage::-webkit-scrollbar-thumb { background: rgba(255,255,255,.13); border-radius: 6px; }
+  .col { width: 620px; max-width: 100%; margin: 0 auto; }
+  .page-title { margin: 0 0 6px; font-size: 19px; font-weight: 650; letter-spacing: -.01em; }
+  .page-sub { margin: 0 0 30px; font-size: 12.5px; color: rgba(255,255,255,.5); line-height: 1.5; }
+  .sec-label { margin: 34px 0 12px; font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: rgba(255,255,255,.42); }
+  .sec-note { margin: -6px 0 14px; font-size: 12px; color: rgba(255,255,255,.4); line-height: 1.5; }
+
+  /* ===================================================================================
+     OBSIDIAN-GLASS MATERIAL  (shared by the choice card + the workflow pill)
+     =================================================================================== */
+  .glass { position: relative; isolation: isolate;
+    -webkit-backdrop-filter: blur(var(--blur)) saturate(1.3) brightness(1.03);
+    backdrop-filter: blur(var(--blur)) saturate(1.3) brightness(1.03);
+    background:
+      radial-gradient(120% 92% at 50% -14%, var(--lift), transparent 58%),
+      linear-gradient(180deg, var(--fill-top), var(--fill-bot));
+    box-shadow:
+      0 32px 66px rgba(0,0,0,.62),
+      0 6px 16px rgba(0,0,0,.5),
+      inset 0 1px 0 rgba(255,255,255,.05),
+      inset 0 -24px 48px rgba(0,0,0,.32);
+  }
+  /* the rim light: a 1px gradient ring, brightest along the top, cool, faint glow at the bottom */
+  .glass::before, .glass-edge::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; z-index: 3; pointer-events: none;
+    background: linear-gradient(180deg, var(--rim-top) 0%, rgba(150,172,212,.10) 24%, rgba(255,255,255,.02) 62%, var(--rim-bot) 100%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+  }
+
+  /* ---- the choice card (reference — full obsidian glass) ---- */
+  .glass-card { border-radius: var(--glass-r); padding: 18px; width: 100%; }
+  .glass-fill { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; z-index: 0; pointer-events: none; }
+  .glass-fill .bloom { position: absolute; left: 50%; bottom: -14%; transform: translateX(-50%);
+    width: 66%; height: 56%; border-radius: 50%; filter: blur(11px);
+    background: radial-gradient(ellipse at 50% 100%, var(--bloom), transparent 70%); }
+  .glass-content { position: relative; z-index: 1; }
+  .isl-ask-prompt { font: 600 14.5px/1.4 inherit; color: rgba(255,255,255,.96); margin: 2px 0 13px; }
+  .isl-ask-options { display: flex; flex-direction: column; gap: 8px; }
+  .isl-ask-option { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 11px 14px;
+    border-radius: 13px; cursor: pointer; text-align: left; color: #fff; font: inherit;
+    background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.018));
+    border: 1px solid rgba(255,255,255,.12); box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+    transition: transform .14s cubic-bezier(.22,1,.36,1), background .14s, border-color .14s, box-shadow .14s; }
+  .isl-ask-option:hover { transform: translateY(-1px); background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.2);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 6px 16px rgba(0,0,0,.32); }
+  .isl-ask-label { font-weight: 600; font-size: 13.5px; }
+  .isl-ask-sub { font-size: 11.5px; color: rgba(255,255,255,.56); line-height: 1.3; }
+
+  /* the choice OUTPUT pill (answered chip) — what the workflow pill is matched to */
+  .isl-ask-selected { display: inline-flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 13px;
+    border-radius: 999px; position: relative;
+    background: linear-gradient(180deg, rgba(56,189,248,.16), rgba(14,165,233,.08));
+    border: 1px solid rgba(120,200,255,.34);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 4px 14px rgba(0,0,0,.3);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+  .isl-ask-selected-kicker { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: rgba(120,200,255,.92); }
+  .isl-ask-selected-answer { font-size: 13px; font-weight: 600; color: rgba(255,255,255,.96); }
+  .isl-ask-selected-mark { flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+    background: rgba(56,189,248,.9); box-shadow: 0 0 10px rgba(56,189,248,.7); }
+  .isl-ask-selected-mark svg { width: 11px; height: 11px; stroke: #04263a; fill: none; stroke-width: 2.6; }
+
+  /* ===================================================================================
+     WORKFLOW PREVIEW PILL
+     =================================================================================== */
+  .wf-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .wf-pill { display: inline-flex; align-items: center; gap: 7px; max-width: 100%;
+    font-family: inherit; font-size: 11px; color: var(--kb-muted); text-align: left;
+    cursor: grab; user-select: none; -webkit-user-select: none; transition: border-color .12s, background .12s; }
+  .wf-status { font-weight: 600; color: var(--kb-text); white-space: nowrap; }
+  .wf-caret { flex: none; color: var(--kb-muted); font-size: 14px; line-height: 1; }
+  .wf-stats { color: var(--kb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .wf-dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--kb-blue); animation: wf-pulse 1.3s ease-in-out infinite; }
+  .wf-pill.is-done .wf-dot { background: var(--kb-green); animation: none; }
+  .wf-pill.is-fail .wf-dot { background: var(--kb-red); animation: none; }
+  @keyframes wf-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(.72); } }
+
+  /* --- CURRENT pill look (wf.css .isl-wf-board-head) --- */
+  body.style-current .wf-pill { padding: 4px 11px; background: var(--kb-sheet); border: 1px solid var(--kb-line); border-radius: 999px; }
+  body.style-current .wf-pill:hover { border-color: var(--kb-faint); background: #1f252d; }
+
+  /* --- NEW pill look: obsidian glass pill (matches the choice output pill family) --- */
+  body.style-glass .wf-pill { padding: 6px 14px; border-radius: 999px;
+    -webkit-backdrop-filter: blur(20px) saturate(1.3) brightness(1.03); backdrop-filter: blur(20px) saturate(1.3) brightness(1.03);
+    background: radial-gradient(120% 140% at 50% -30%, var(--lift), transparent 62%), linear-gradient(180deg, var(--fill-top), var(--fill-bot));
+    box-shadow: 0 12px 26px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.05); }
+  body.style-glass .wf-pill::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; z-index: 3; pointer-events: none;
+    background: linear-gradient(180deg, var(--rim-top) 0%, rgba(150,172,212,.10) 30%, rgba(255,255,255,.02) 64%, var(--rim-bot) 100%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+  body.style-glass .wf-pill > * { position: relative; z-index: 1; }
+  /* the dot carries a faint bloom so the glass reads alive at pill scale */
+  body.style-glass .wf-pill .wf-dot::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; background: radial-gradient(circle, var(--bloom), transparent 70%); }
+
+  /* ===================================================================================
+     KANBAN BOARD  (interior unchanged; ONLY the frame/border restyled in the glass variant)
+     =================================================================================== */
+  .kb { font-family: Inter, -apple-system, system-ui, sans-serif; border-radius: 13px; overflow: hidden; position: relative; margin-top: 6px;
+    background-color: var(--kb-bg);
+    background-image: linear-gradient(180deg, rgba(20,26,34,.55), rgba(10,14,20,.2) 45%, rgba(12,18,26,.6)), radial-gradient(var(--kb-dot) 1.2px, transparent 1.2px);
+    background-size: 100% 100%, 20px 20px; background-position: 0 0, -1px -1px; }
+
+  /* --- CURRENT board frame (wf.css: a flat 1px line) --- */
+  body.style-current .kb { border: 1px solid var(--kb-line); box-shadow: none; }
+
+  /* --- NEW board frame: obsidian liquid-glass EDGE only (rim ring + depth glow). Interior untouched. --- */
+  body.style-glass .kb { border: 1px solid transparent;
+    box-shadow: 0 28px 60px rgba(0,0,0,.55), 0 6px 16px rgba(0,0,0,.42), 0 22px 60px -26px rgba(70,110,190,.42),
+      inset 0 1px 0 rgba(255,255,255,.05), inset 0 -22px 44px rgba(0,0,0,.30); }
+  body.style-glass .kb::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; z-index: 4; pointer-events: none;
+    background: linear-gradient(180deg, var(--rim-top) 0%, rgba(150,172,212,.10) 26%, rgba(255,255,255,.02) 62%, var(--rim-bot) 100%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+
+  .kb-grid { display: grid; grid-template-columns: 92px minmax(0,.95fr) minmax(0,1.35fr) minmax(0,1.5fr); align-items: stretch; position: relative; z-index: 1; }
+  .kb-corner { border-bottom: 1px solid var(--kb-line); }
+  .kb-colh { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; padding: 9px 11px;
+    border-bottom: 1px solid var(--kb-line); border-left: 1px solid var(--kb-line); display: flex; align-items: center; justify-content: center; }
+  .kb-h-todo { color: var(--kb-yellow); } .kb-h-doing { color: var(--kb-blue); } .kb-h-done { color: var(--kb-green); }
+  .kb-rowh { display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 11px; border-bottom: 1px solid var(--kb-line); }
+  .kb-rowh-name { font-size: 12.5px; font-weight: 650; color: var(--kb-text); line-height: 1.2; }
+  .kb-rowh-n { font-size: 10.5px; color: var(--kb-dim); font-variant-numeric: tabular-nums; }
+  .kb-cell { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-bottom: 1px solid var(--kb-line); border-left: 1px solid var(--kb-line); min-height: 52px; min-width: 0; }
+  .kc { text-align: left; border: 1px solid var(--kb-faint); border-radius: 9px; background: var(--kb-sheet); color: var(--kb-text);
+    font-family: inherit; padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.3); min-width: 0; }
+  .kc-label-row { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+  .kc-label { font-size: 12px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; flex: 1; min-width: 0; }
+  .kc-model { flex: none; font-size: 9.5px; font-weight: 600; color: var(--kb-muted); background: rgba(255,255,255,.07); border-radius: 5px; padding: 1px 5px; }
+  .kc-out { font-size: 11.5px; color: var(--kb-muted); line-height: 1.35; }
+  .kc-foot { display: flex; flex-wrap: wrap; gap: 1px 8px; font-size: 10px; color: var(--kb-dim); font-variant-numeric: tabular-nums; }
+  .kc-todo { border-style: dashed; border-color: rgba(254,200,75,.32); background: rgba(254,200,75,.05); }
+  .kc-doing { position: relative; border-color: rgba(47,155,255,.55); box-shadow: 0 0 0 1px rgba(47,155,255,.18), 0 0 16px -6px rgba(47,155,255,.7); overflow: hidden; }
+  .kc-spark { position: absolute; left: 0; bottom: 0; height: 2px; width: 40%; background: linear-gradient(90deg, transparent, var(--kb-blue), transparent); animation: kc-spark 1.3s ease-in-out infinite; }
+  @keyframes kc-spark { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+  .kc-done { border-left: 2px solid var(--kb-green); }
+
+  /* ---- control bar ---- */
+  .bar { position: fixed; top: 14px; right: 16px; z-index: 9; display: flex; gap: 14px; align-items: center;
+    padding: 9px 13px; border-radius: 12px; background: rgba(16,18,24,.82);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4);
+    border: 1px solid rgba(255,255,255,.1); box-shadow: 0 14px 40px rgba(0,0,0,.5); font-size: 12px; }
+  .bar .grp { display: flex; flex-direction: column; gap: 5px; }
+  .bar .grp > span { font-size: 9.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #7f8694; }
+  .seg { display: inline-flex; background: #15171f; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; color: #c9ced8; font: 600 12px inherit; padding: 6px 11px; cursor: pointer; }
+  .seg button.on { background: #3d8dff; color: #fff; }
+</style>
+</head>
+<body class="style-glass">
+  <div class="scene" id="scene">
+    <div class="glow g1" id="glow1"></div>
+    <div class="glow g2" id="glow2"></div>
+    <div class="glow g3" id="glow3"></div>
+  </div>
+
+  <div class="bar">
+    <div class="grp"><span>Style</span>
+      <div class="seg" id="seg-style">
+        <button data-s="current">Current</button>
+        <button data-s="glass" class="on">Obsidian glass</button>
+      </div>
+    </div>
+    <div class="grp"><span>Backdrop</span>
+      <div class="seg" id="seg-bg">
+        <button data-b="black" class="on">Black</button>
+        <button data-b="aurora">Frosted</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="col">
+      <h1 class="page-title">Workflow outputs · obsidian liquid glass</h1>
+      <p class="page-sub">The collapsed workflow <b>preview pill</b> takes on the full obsidian-glass material so it reads as the same family as the choice output. The <b>kanban board</b> keeps its dotted interior and colored columns untouched — only the outer frame becomes a glass edge (rim light + depth glow). Flip <b>Style</b> top-right to compare against the current flat look.</p>
+
+      <!-- ============ REFERENCE: the choice family the pill is matched to ============ -->
+      <div class="sec-label">Reference · choice output (already obsidian glass)</div>
+      <div class="glass glass-card">
+        <div class="glass-fill"><div class="bloom"></div></div>
+        <div class="glass-content">
+          <div class="isl-ask-prompt">I can see two clusters in what you have open: fundraising and product. Where should I focus first?</div>
+          <div class="isl-ask-options">
+            <button class="isl-ask-option"><span class="isl-ask-label">Fundraising track</span><span class="isl-ask-sub">Investor docs, growth pipeline</span></button>
+            <button class="isl-ask-option"><span class="isl-ask-label">Product</span><span class="isl-ask-sub">Backend, agent runtime, dev work</span></button>
+          </div>
+          <div class="isl-ask-selected">
+            <span class="isl-ask-selected-kicker">Selected</span>
+            <span class="isl-ask-selected-answer">Product</span>
+            <span class="isl-ask-selected-mark"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ NEW: the workflow PREVIEW PILL ============ -->
+      <div class="sec-label">Workflow preview pill</div>
+      <p class="sec-note">Same obsidian-glass material as the choice output, in the collapsed pill shape. States: running (pulsing blue dot), done, failed.</p>
+      <div class="wf-row">
+        <div class="wf-pill"><span class="wf-caret">▸</span><span class="wf-dot"></span><span class="wf-status">workflow running</span><span class="wf-stats">3 of 6 agents</span></div>
+        <div class="wf-pill is-done"><span class="wf-caret">▸</span><span class="wf-dot"></span><span class="wf-status">workflow done</span><span class="wf-stats">28.4s · 6 agents · 24.1k tok</span></div>
+        <div class="wf-pill is-fail"><span class="wf-caret">▸</span><span class="wf-dot"></span><span class="wf-status">workflow failed</span><span class="wf-stats">11.2s · 4 agents</span></div>
+      </div>
+
+      <!-- ============ NEW: the expanded pill + KANBAN BOARD (border only) ============ -->
+      <div class="sec-label">Expanded · board with glass frame</div>
+      <p class="sec-note">Clicking the pill expands the board. Only the outer frame is the new glass edge — the dotted board, the To do / Doing / Done columns and cards are unchanged.</p>
+      <div class="wf-pill is-done" style="cursor:default"><span class="wf-caret">▾</span><span class="wf-dot"></span><span class="wf-status">workflow done</span><span class="wf-stats">28.4s · 6 agents · 24.1k tok</span></div>
+      <div class="kb">
+        <div class="kb-grid">
+          <div class="kb-corner"></div>
+          <div class="kb-colh kb-h-todo">To do</div>
+          <div class="kb-colh kb-h-doing">Doing</div>
+          <div class="kb-colh kb-h-done">Done</div>
+
+          <!-- phase: Scan -->
+          <div class="kb-rowh"><span class="kb-rowh-name">Scan</span><span class="kb-rowh-n">1 agents</span></div>
+          <div class="kb-cell"></div>
+          <div class="kb-cell"></div>
+          <div class="kb-cell">
+            <button class="kc kc-done"><span class="kc-label-row"><span class="kc-label">scan:repo</span><span class="kc-model">haiku</span></span><span class="kc-out">3 files changed · 412 LOC</span><span class="kc-foot"><span>4.2s</span><span>1.1k tok</span></span></button>
+          </div>
+
+          <!-- phase: Review -->
+          <div class="kb-rowh"><span class="kb-rowh-name">Review</span><span class="kb-rowh-n">4 agents</span></div>
+          <div class="kb-cell">
+            <button class="kc kc-todo"><span class="kc-label-row"><span class="kc-label">review:style</span></span></button>
+          </div>
+          <div class="kb-cell">
+            <button class="kc kc-doing"><span class="kc-label-row"><span class="kc-label">review:security</span><span class="kc-model">opus</span></span><span class="kc-spark"></span></button>
+          </div>
+          <div class="kb-cell">
+            <button class="kc kc-done"><span class="kc-label-row"><span class="kc-label">review:bugs</span><span class="kc-model">opus</span></span><span class="kc-out">2 real bugs found</span><span class="kc-foot"><span>12.1s</span><span>8.4k tok</span></span></button>
+            <button class="kc kc-done"><span class="kc-label-row"><span class="kc-label">review:perf</span><span class="kc-model">sonnet</span></span><span class="kc-out">no hot paths touched</span><span class="kc-foot"><span>9.3s</span><span>6.1k tok</span></span></button>
+          </div>
+
+          <!-- phase: Verify -->
+          <div class="kb-rowh"><span class="kb-rowh-name">Verify</span><span class="kb-rowh-n">2 agents</span></div>
+          <div class="kb-cell">
+            <button class="kc kc-todo"><span class="kc-label-row"><span class="kc-label">verify:bug#1</span></span></button>
+            <button class="kc kc-todo"><span class="kc-label-row"><span class="kc-label">verify:bug#2</span></span></button>
+          </div>
+          <div class="kb-cell"></div>
+          <div class="kb-cell"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const body = document.body, scene = document.getElementById('scene');
+  document.getElementById('seg-style').addEventListener('click', e => {
+    const s = e.target.dataset.s; if (!s) return;
+    body.className = 'style-' + s;
+    [...e.currentTarget.children].forEach(b => b.classList.toggle('on', b.dataset.s === s));
+  });
+  document.getElementById('seg-bg').addEventListener('click', e => {
+    const b = e.target.dataset.b; if (!b) return;
+    scene.className = 'scene' + (b === 'aurora' ? ' aurora' : '');
+    [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.b === b));
+  });
+
+  // drifting aurora glow (only visible in frosted mode)
+  const g1 = document.getElementById('glow1'), g2 = document.getElementById('glow2'), g3 = document.getElementById('glow3');
+  (function loop(t){
+    const W = innerWidth, H = innerHeight;
+    g1.style.transform = `translate(${W*(0.18+0.16*Math.sin(t*0.0001))-g1.offsetWidth/2}px, ${H*(0.30+0.20*Math.cos(t*0.00012))-g1.offsetHeight/2}px)`;
+    g2.style.transform = `translate(${W*(0.74+0.16*Math.cos(t*0.00009))-g2.offsetWidth/2}px, ${H*(0.66+0.20*Math.sin(t*0.00013))-g2.offsetHeight/2}px)`;
+    g3.style.transform = `translate(${W*(0.50+0.20*Math.sin(t*0.00011))-g3.offsetWidth/2}px, ${H*(0.20+0.16*Math.cos(t*0.0001))-g3.offsetHeight/2}px)`;
+    requestAnimationFrame(loop);
+  })(0);
+</script>
+</body>
+</html>

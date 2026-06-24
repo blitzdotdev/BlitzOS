@@ -18,6 +18,15 @@
   --kb-red: #ff6b6b;
   --kb-green: #3ddc84;
   --kb-blue: #2f9bff;
+  /* obsidian liquid-glass tokens — the workflow pill (full material) + the board frame (edge only).
+     Ported from lab/choice-cards (the "obsidian" preset) so the workflow output reads as the same
+     family as the choice cards: near-black fill, a top-bright cool rim ring, a faint bloom, depth. */
+  --glass-fill-top: rgba(24, 28, 38, 0.74);
+  --glass-fill-bot: rgba(9, 11, 16, 0.8);
+  --glass-lift: rgba(64, 94, 150, 0.22);
+  --glass-rim-top: rgba(196, 216, 255, 0.66);
+  --glass-rim-bot: rgba(196, 216, 255, 0.224);
+  --glass-bloom: rgba(116, 162, 255, 0.28);
 }
 
 .kb {
@@ -25,7 +34,17 @@
   border-radius: 13px;
   overflow: hidden;
   position: relative; /* containing block for the drill-in drawer overlay (.dr-scrim is absolute inside) */
-  border: 1px solid var(--kb-line);
+  isolation: isolate; /* scope the glass rim (.kb::before) + the drawer scrim z-index to this board */
+  /* OBSIDIAN-GLASS FRAME — only the EDGE changes (the dotted interior below is untouched): a transparent
+     1px border keeps the box size, the rim ring is painted by .kb::before, and depth + a cool blue lift
+     come from the shadow. Matches the workflow pill + the choice-card glass family. */
+  border: 1px solid transparent;
+  box-shadow:
+    0 28px 60px rgba(0, 0, 0, 0.55),
+    0 6px 16px rgba(0, 0, 0, 0.42),
+    0 22px 60px -26px rgba(70, 110, 190, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 -22px 44px rgba(0, 0, 0, 0.3);
   background-color: var(--kb-bg);
   background-image: linear-gradient(180deg, rgba(20, 26, 34, 0.55), rgba(10, 14, 20, 0.2) 45%, rgba(12, 18, 26, 0.6)),
     radial-gradient(var(--kb-dot) 1.2px, transparent 1.2px);
@@ -34,6 +53,21 @@
   /* FIT-TO-CONTENT: the board grows to the full size of the list — NO internal scrolling. `overflow: hidden`
      above only clips the rounded corners (there is no max-height to scroll against). The chat feed scrolls, the
      board does not. */
+}
+/* the board's glass EDGE — a 1px top-bright rim ring (cool blue cast), painted just inside the frame. Sits
+   under the drill-in drawer scrim (z-index 5) and over the dotted interior; pointer-events:none so clicks pass. */
+.kb::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(180deg, var(--glass-rim-top) 0%, rgba(150, 172, 212, 0.1) 26%, rgba(255, 255, 255, 0.02) 62%, var(--glass-rim-bot) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
 }
 .kb-empty { color: var(--kb-dim); font-size: 12.5px; padding: 24px 14px; }
 .kb-grid {
@@ -129,14 +163,47 @@
 /* the run STATUS PILL — always visible; the kanban board below is COLLAPSED by default and toggled by clicking
    this pill (the caret flips ▸/▾). Compact, rounded, hover-lit. */
 .isl-wf-board-head {
+  position: relative; isolation: isolate;
   display: inline-flex; align-items: center; gap: 7px; max-width: 100%;
   font-family: inherit; font-size: 11px; color: var(--kb-muted); text-align: left;
-  margin: 0; padding: 4px 11px;
-  background: var(--kb-sheet); border: 1px solid var(--kb-line); border-radius: 999px;
-  cursor: grab; user-select: none; -webkit-user-select: none; transition: border-color 0.12s ease, background 0.12s ease;
+  margin: 0; padding: 6px 14px;
+  border: 0; border-radius: 999px;
+  /* OBSIDIAN-GLASS PILL — the SAME material as the choice output pill (full fill + rim ring + blur + depth).
+     The rim is painted by ::before; the dot carries a faint bloom so the glass reads alive at pill scale. */
+  -webkit-backdrop-filter: blur(20px) saturate(1.3) brightness(1.03);
+  backdrop-filter: blur(20px) saturate(1.3) brightness(1.03);
+  background:
+    radial-gradient(120% 140% at 50% -30%, var(--glass-lift), transparent 62%),
+    linear-gradient(180deg, var(--glass-fill-top), var(--glass-fill-bot));
+  box-shadow:
+    0 12px 26px rgba(0, 0, 0, 0.5),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  cursor: grab; user-select: none; -webkit-user-select: none;
+  transition: box-shadow 0.14s ease, transform 0.14s ease;
 }
-.isl-wf-board-head:hover { border-color: var(--kb-faint); background: #1f252d; }
-.isl-wf-board-head:active { cursor: grabbing; }
+.isl-wf-board-head::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(180deg, var(--glass-rim-top) 0%, rgba(150, 172, 212, 0.1) 30%, rgba(255, 255, 255, 0.02) 64%, var(--glass-rim-bot) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.isl-wf-board-head > * { position: relative; z-index: 1; }
+.isl-wf-board-head:hover {
+  box-shadow:
+    0 16px 32px rgba(0, 0, 0, 0.55),
+    0 3px 8px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transform: translateY(-1px);
+}
+.isl-wf-board-head:active { cursor: grabbing; transform: translateY(0); }
 .isl-wf-status { font-weight: 600; color: var(--kb-text); white-space: nowrap; }
 .isl-wf-caret { flex: none; color: var(--kb-muted); font-size: 14px; line-height: 1; }
 /* the collapsible board body — hidden by default via the `hidden` attr (keeps IslandKanban mounted) */
@@ -147,10 +214,13 @@
 /* the running dot PULSES IN PLACE (opacity + scale) — it must NEVER translate. kc-spark is the sweeping
    underline for doing cards, not a dot; using it here made the dot slide across. Done flips it green + still. */
 @keyframes isl-wf-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.72); } }
-.isl-wf-board-head .isl-wf-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--kb-blue); animation: isl-wf-pulse 1.3s ease-in-out infinite; }
+.isl-wf-board-head .isl-wf-dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--kb-blue); animation: isl-wf-pulse 1.3s ease-in-out infinite; }
+/* faint bloom under the status dot — the glass-pill counterpart of the choice card's bottom bloom */
+.isl-wf-board-head .isl-wf-dot::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; background: radial-gradient(circle, var(--glass-bloom), transparent 70%); pointer-events: none; }
 .isl-wf-file { color: var(--kb-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .isl-wf-stats { color: var(--kb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
 .isl-wf-board.isl-wf-done .isl-wf-dot { background: var(--kb-green); animation: none; }
+.isl-wf-board.isl-wf-fail .isl-wf-dot { background: var(--kb-red); animation: none; }
 
 /* SINGLE-PHASE "subagents" fan-out view (IslandSubagents). One row pill per subagent, stacked; an expanded row
    drops that leaf's one-edge kanban (.kb.kb-edge) underneath. .kb-sub is the positioned ancestor for the shared

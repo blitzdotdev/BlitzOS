@@ -90,7 +90,7 @@ export default function App(): JSX.Element {
   // reports its view+page via onStateChange; we stash them in refs and feed them back as initialView/initialPage on
   // the next open (NotchHost remounts per open). Refs, not state, so updating them never re-renders App.
   const islandViewRef = useRef<'home' | 'settings' | 'session'>('home')
-  const islandPageRef = useRef(0)
+  const islandPageRef = useRef(1) // default to the first agent tab (Blitz '0'); page 0 (the old composer) is retired
   // Also remember the attach panel (open/closed) so reopening the island restores it, not just the view+tab. (The
   // per-chat staging TRAY lives in stagingStore — a module store that survives the remount on its own.)
   const islandAttachOpenRef = useRef(false)

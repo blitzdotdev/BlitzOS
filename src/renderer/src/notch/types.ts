@@ -66,15 +66,16 @@ export interface IslandTerminalMeta {
 
 export interface IslandPanelProps {
   sessions: IslandSession[]
-  page: number // 0 = the new-session (pen) tab; 1..N = the agent at page-1
+  page: number // 1..N = the agent at page-1 (Blitz '0' is page 1); the pen is a spawn button, not a page
   onSelectPage: (p: number) => void
+  onNewAgent: () => void // the pen button: spawn a brand-new agent immediately and enter its tab
   messages: IslandMessage[] // the active session's transcript (process view)
   milestones: IslandMilestone[] // the active session's summarized step timeline (narrator)
   runs: IslandWfRun[] // the active session's live workflow runs (inline kanban boards)
   status: string // the active session's raw host status (process view)
   activeId?: string // the active session id (the Details expand + the peek now-playing)
   peek: boolean // peek: keep the tab bar, but the area BELOW becomes the active agent's "now playing"
-  onSend: (text: string) => void // page 0 = spawn a new session; an agent tab = steer it
+  onSend: (text: string) => void // send to the ACTIVE agent (Blitz '0' or a peer); never spawns
   menuBarH: number // notch height in px, for top alignment under the physical notch
   attachOpen: boolean // the attach "+" toggles the attachment panel INLINE (island grows)
   onToggleAttach: () => void
@@ -82,4 +83,5 @@ export interface IslandPanelProps {
   activeTerminal?: IslandTerminalMeta // metadata for activeId's managed terminal; activeId remains the terminal id
   onArchiveAgent: (id: string) => void
   onRenameAgent: (id: string, title: string) => Promise<boolean>
+  alwaysShowWorkflow: boolean // when on, each workflow run renders EXPANDED by default (vs the collapsed status pill)
 }

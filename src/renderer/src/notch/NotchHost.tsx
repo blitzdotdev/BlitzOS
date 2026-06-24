@@ -2,10 +2,10 @@
 // document.body in App.tsx when the island is shown. It:
 //   - pulls a one-shot snapshot of all agent sessions on open (agentOS.agents()), then rides the live
 //     `os:action {type:'chat'}` broadcast for roster/status/transcript updates.
-//   - owns the active page: 0 = the new-session (pen) tab; 1..N = the agent at page-1.
-//   - TAB NAV: Ctrl+Tab / Ctrl+Shift+Tab (wrapping the pen tab + agents); click switches; swipe scrolls the strip.
-//   - steers / spawns for real: page 0 → agentOS.notch.send (spawn a new session); an agent tab →
-//     agentOS.sendMessage(text, sessionId) (steer that agent).
+//   - owns the active page: 1..N = the agent at page-1 (Blitz '0' is page 1); the pen is a spawn button, not a page.
+//   - TAB NAV: Ctrl+Tab / Ctrl+Shift+Tab (wrapping the agent tabs 1..N); click switches; swipe scrolls the strip.
+//   - the pen button → agentOS.notch.newAgent (spawn a fresh agent + jump to it); sending in any tab →
+//     agentOS.sendMessage(text, sessionId) (continue that agent, Blitz '0' included). Sending NEVER spawns.
 // It wraps IslandPanel in the invariant BLACK chassis (.nh-chassis), which grows wide when the attach panel opens.
 import './notch.css'
 import { useEffect, useRef, useState } from 'react'
@@ -19,6 +19,9 @@ import { applyWfRun } from '../../../main/wf-run-state.mjs'
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
 const DEBUG_FAKE_HOME_AGENTS_KEY = 'blitzos.debug.showFakeHomeAgents'
+// Real (non-debug) preference: workflow kanban boards render expanded by default instead of the collapsed pill.
+// Defaults ON (unset key reads true) so workflow always shows; the user can toggle it off in Settings.
+const WORKFLOW_ALWAYS_SHOW_KEY = 'blitzos.workflowAlwaysShow'
 const HOME_DONE_AGENTS_KEY = 'blitzos.home.doneAgents'
 const HOME_SEEN_WORKING_AGENTS_KEY = 'blitzos.home.seenWorkingAgents'
 const AGENT_NAME_MAX = 24
@@ -67,7 +70,7 @@ type TerminalAction = {
 }
 const mapSession = (s: { id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }): IslandSession => ({
   id: String(s.id),
-  title: String(s.title || `Chat ${s.id}`),
+  title: String(s.title || (String(s.id) === '0' ? 'Blitz' : 'New Agent')),
   status: String(s.status || 'idle'),
   ...(s.lastMessagePreview ? { lastMessagePreview: String(s.lastMessagePreview) } : {}),
   ...(s.archivedAt ? { archivedAt: Number(s.archivedAt) || undefined } : {})
@@ -76,7 +79,7 @@ const mapTerminal = (t: { id?: unknown; title?: unknown; status?: unknown; kind?
   if (t.id == null) return null
   return {
     id: String(t.id),
-    title: String(t.title || `Agent ${t.id}`),
+    title: String(t.title || (String(t.id) === '0' ? 'Blitz' : 'New Agent')),
     status: String(t.status || 'unknown'),
     kind: String(t.kind || 'terminal')
   }
@@ -101,6 +104,14 @@ function readDebugFakeHomeAgents(): boolean {
     return window.localStorage.getItem(DEBUG_FAKE_HOME_AGENTS_KEY) === '1'
   } catch {
     return false
+  }
+}
+function readWorkflowAlwaysShow(): boolean {
+  try {
+    const v = window.localStorage.getItem(WORKFLOW_ALWAYS_SHOW_KEY)
+    return v === null ? true : v === '1' // default ON: an unset preference means workflow boards always show
+  } catch {
+    return true
   }
 }
 function readHomeDoneAgents(): Record<string, true> {
@@ -173,7 +184,7 @@ export function NotchHost({
   onAttachChange,
   onStateChange,
   initialView = 'home',
-  initialPage = 0,
+  initialPage = 1,
   initialAttachOpen = false
 }: {
   menuBarH: number
@@ -187,7 +198,7 @@ export function NotchHost({
 }): JSX.Element {
   // 'home' = the icon grid; 'settings' = debug settings; 'session' = today's agent chat/session UI.
   const [view, setView] = useState<'home' | 'settings' | 'session'>(initialView)
-  const [page, setPage] = useState(initialPage) // 0 = new-session composer; 1..N = the agent at page-1
+  const [page, setPage] = useState(initialPage) // 1..N = the agent at page-1 (Blitz '0' is page 1); page 0 retired
   const [attachOpen, setAttachOpen] = useState(initialAttachOpen)
   const [sessions, setSessions] = useState<IslandSession[]>([])
   const [archivedSessions, setArchivedSessions] = useState<IslandSession[]>([])
@@ -198,6 +209,7 @@ export function NotchHost({
   const [terminals, setTerminals] = useState<Record<string, IslandTerminalMeta>>({})
   const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
   const [debugFakeHomeAgents, setDebugFakeHomeAgents] = useState(readDebugFakeHomeAgents)
+  const [workflowAlwaysShow, setWorkflowAlwaysShow] = useState(readWorkflowAlwaysShow)
   const [homeDoneAgents, setHomeDoneAgentsState] = useState<Record<string, true>>(() => readHomeDoneAgents())
   const [homeSeenWorkingAgents, setHomeSeenWorkingAgentsState] = useState<Record<string, true>>(() => readHomeSeenWorkingAgents())
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
@@ -246,6 +258,14 @@ export function NotchHost({
       window.localStorage.setItem(DEBUG_FAKE_HOME_AGENTS_KEY, on ? '1' : '0')
     } catch {
       /* debug-only persistence */
+    }
+  }
+  const chooseWorkflowAlwaysShow = (on: boolean): void => {
+    setWorkflowAlwaysShow(on)
+    try {
+      window.localStorage.setItem(WORKFLOW_ALWAYS_SHOW_KEY, on ? '1' : '0')
+    } catch {
+      /* preference persistence is best-effort */
     }
   }
   const updateHomeDoneAgents = (update: (prev: Record<string, true>) => Record<string, true>): void => {
@@ -642,15 +662,16 @@ export function NotchHost({
     }
   }, [])
 
-  // Tab navigation by KEYBOARD: Ctrl+Tab → next, Ctrl+Shift+Tab → prev, wrapping the pen tab (0) + agents (1..N).
+  // Tab navigation by KEYBOARD: Ctrl+Tab → next, Ctrl+Shift+Tab → prev, wrapping the agent tabs (1..N).
   // Disabled while the attachment panel is open. (Swipe just scrolls the strip; it never pages.)
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (attachOpen) return // while the attach panel is open, don't shuffle tabs underneath it (peek keeps tabs live)
       if (e.ctrlKey && e.key === 'Tab') {
         e.preventDefault()
-        const total = nRef.current + 1
-        setPage((p) => (clamp(p, 0, nRef.current) + (e.shiftKey ? total - 1 : 1)) % total)
+        const total = nRef.current
+        if (total <= 0) return
+        setPage((p) => ((clamp(p, 1, total) - 1 + (e.shiftKey ? total - 1 : 1)) % total) + 1)
       }
     }
     window.addEventListener('keydown', onKey, true)
@@ -659,17 +680,17 @@ export function NotchHost({
 
   const displaySessions = sessions.map((s) => ({ ...s, status: status[s.id] || s.status }))
   const N = displaySessions.length
-  const safePage = clamp(page, 0, N)
+  const safePage = N === 0 ? 0 : clamp(page, 1, N) // pages are 1..N (agents); page 0 (the old composer) is retired
   const activeIndex = safePage === 0 ? -1 : safePage - 1
   const activeSession = activeIndex >= 0 ? displaySessions[activeIndex] : null
   const activeId = activeSession?.id
-  activeIdRef.current = activeId ?? '' // '' = the new-session composer; sources dropped there are reassigned on spawn
+  activeIdRef.current = activeId ?? '' // '' only in the transient no-agent state (pre-boot); normally the active agent
   const messages = activeId ? threads[activeId] || [] : []
   const activeMilestones = activeId ? milestones[activeId] || [] : []
   const activeRuns = activeId ? runs[activeId] || [] : []
   const activeStatus = activeId ? status[activeId] || activeSession?.status || 'idle' : 'idle'
 
-  const goPage = (next: number): void => setPage(clamp(next, 0, N))
+  const goPage = (next: number): void => setPage(N === 0 ? 0 : clamp(next, 1, N))
   const requestArchiveAgent = (id: string): Promise<AgentMutationResult> => {
     if (window.agentOS?.archiveAgent) return window.agentOS.archiveAgent(id)
     if (window.agentOS?.chatControl) return window.agentOS.chatControl('archive', { id }) as Promise<AgentMutationResult>
@@ -780,26 +801,15 @@ export function NotchHost({
 
   // page 0 (pen) = spawn a NEW session; an agent tab = steer that session. Both are real (no mock append).
   const onSend = (text: string): void => {
-    // Attachments ride the message now (shown as chips on the sent bubble), so close the staging IMMEDIATELY. This
-    // also fixes the new-session break: leaving attach open across the page-switch to the spawned agent collided
-    // with the agent-chat attach layout (the height-lock) and broke the island.
+    // Always routes to the ACTIVE agent (Blitz '0' or a peer) — sending NEVER spawns. A new agent comes only from
+    // the pen button (onNewAgent). Close the attach staging immediately; the staged sources rode this message (chips).
     setAttachOpen(false)
-    clearStaged(activeIdRef.current) // the staged sources rode this message (chips) → clear this chat's tray
-    if (safePage === 0) {
-      window.agentOS
-        ?.notch?.send?.(text, false)
-        .then((r) => {
-          if (r?.ok && r.id != null) pendingJump.current = String(r.id)
-        })
-        .catch(() => {
-          /* spawn failed; the chat error surfaces in the host */
-        })
-    } else if (activeId) {
-      try {
-        window.agentOS?.sendMessage?.(text, activeId)
-      } catch {
-        /* no bridge */
-      }
+    if (!activeId) return // no live agent yet (transient, pre-boot) — never blind-spawn on a send
+    clearStaged(activeId)
+    try {
+      window.agentOS?.sendMessage?.(text, activeId)
+    } catch {
+      /* no bridge */
     }
   }
 
@@ -817,10 +827,37 @@ export function NotchHost({
   const openChat = (): void => {
     holdChassisHover()
     clearHomeReviewAgents()
-    setPage(0)
+    // Chat → Blitz ('0'); sending there continues '0', it never spawns. ('0' is always present once booted.)
+    const i = sessionsRef.current.findIndex((s) => s.id === '0')
+    setPage(i >= 0 ? i + 1 : 1)
     setPeek(false)
     setAttachOpen(false)
     setView('session')
+  }
+  // Pen "new session" button: spawn a fresh agent immediately and jump into its tab once it appears (pendingJump).
+  const onNewAgent = (): void => {
+    holdChassisHover()
+    clearHomeReviewAgents()
+    setPeek(false)
+    setAttachOpen(false)
+    setView('session')
+    window.agentOS
+      ?.notch?.newAgent?.()
+      .then((r) => {
+        if (!r?.ok || r.id == null) return
+        pendingJump.current = String(r.id)
+        // Proactively refresh the roster so the new agent appears (and pendingJump fires → setPage) RIGHT NOW,
+        // instead of waiting on the live chat broadcast. The broadcast is still the backstop if it lands first.
+        window.agentOS
+          ?.agents?.()
+          .then((snap) => {
+            if (snap) applySessions((snap.sessions || []).map(mapSession))
+          })
+          .catch(() => {})
+      })
+      .catch(() => {
+        /* spawn failed; the chat error surfaces in the host */
+      })
   }
   const openAgentChat = (id: string): void => {
     if (debugFakeHomeAgents && id.startsWith('fake-home-')) {
@@ -910,6 +947,8 @@ export function NotchHost({
         ) : view === 'settings' ? (
           <IslandSettings
             menuBarH={menuBarH}
+            workflowAlwaysShow={workflowAlwaysShow}
+            onToggleWorkflowAlwaysShow={chooseWorkflowAlwaysShow}
             showActiveTerminal={debugActiveTerminal}
             onToggleActiveTerminal={chooseDebugActiveTerminal}
             showFakeHomeAgents={debugFakeHomeAgents}
@@ -923,6 +962,7 @@ export function NotchHost({
             sessions={displaySessions}
             page={safePage}
             onSelectPage={goPage}
+            onNewAgent={onNewAgent}
             messages={messages}
             milestones={activeMilestones}
             runs={activeRuns}
@@ -937,6 +977,7 @@ export function NotchHost({
             activeTerminal={activeId ? terminals[activeId] : undefined}
             onArchiveAgent={archiveAgent}
             onRenameAgent={renameAgent}
+            alwaysShowWorkflow={workflowAlwaysShow}
           />
         )}
       </div>

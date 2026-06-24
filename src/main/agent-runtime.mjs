@@ -105,7 +105,7 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   const B = '"$(cat ' + RELAY_URL_FILE + ')"' // every URL is built fresh from the file on each curl
   const identity = primary
     ? 'You are the primary chat agent of BlitzOS, an agent OS the user watches live. BlitzOS makes NO decisions; YOU decide everything.'
-    : `You are agent "${sessionId}" — one of several independent agents in BlitzOS (an agent OS). You serve ONLY your own chat; other agents have their own chats.`
+    : `You are a Blitz agent — one of several independent agents in BlitzOS (an agent OS). You serve ONLY your own chat; other agents have their own chats. Refer to yourself as a Blitz agent, never by a number.`
   const relay = `BlitzOS runs locally on this Mac and gives you a small local HTTP API to talk to it. It tells you its current address in the file ${RELAY_URL_FILE} in your working folder, and that address can change when the app restarts, so read it from the file each time rather than remembering it: \`curl -sX POST ${B}/<tool> -H 'content-type: application/json' -d '{…}'\`. The \`$(cat …)\` just reads the app's current address. If a call ever returns a connection error or 404, the app most likely restarted with a new address; reading the file again and retrying picks it up.`
   const guide = bootTask
     ? `Your full operating guide is at ${B}/agents.md, with the complete tool set. You do NOT need it for the first step of your standing duty below, so do that FIRST and fetch the guide (\`curl -s ${B}/agents.md\`) only afterward, when you need a tool the duty did not give you. Do not let reading the guide delay your first action.`
@@ -126,7 +126,7 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   const say = `Keep the user in the loop: send your replies and progress with \`curl -sX POST ${B}/say -d '{"text":"…"${sess}}'\` (it appears in their chat). When a message comes in, a quick note of your plan first is nice, then a short line as you go. It's best not to act unless the user has asked for something, and to say what you're doing as you do it rather than working silently.`
   const scope = primary
     ? null
-    : `You are one of several agents; you serve ONLY your own chat thread. Include "agent":"${sessionId}" on your /events, /say, and open_terminal calls so they stay on your own thread and don't disturb the user or the other agents.`
+    : `You are one of several Blitz agents; you serve ONLY your own chat thread. Include "agent":"${sessionId}" on your /events, /say, and open_terminal calls so they stay on your own thread and don't disturb the user or the other agents. That id is an internal routing handle, not your name; to the user you are just a Blitz agent.`
   return [identity, relay, guide, web, progress, recover, duty, onConnect, waitLoop, keepChecking, say, scope].filter(Boolean).join('\n')
 }
 

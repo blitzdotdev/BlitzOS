@@ -87,12 +87,20 @@ button.isl-app {
   height: 38px;
   display: block;
 }
-/* the one functional widget — a vivid Apple-blue app icon that pops against the black island */
+/* the one functional widget — its tile is the actual Blitz macOS app icon (a dark pre-masked squircle PNG), so
+   no blue gradient here. A neutral drop-shadow + a faint rim keep it from dissolving into the island black. */
 .isl-app-chat .isl-app-icon {
-  color: #fff;
-  background: linear-gradient(160deg, #2a93ff 0%, #0a84ff 52%, #0066d6 100%);
-  box-shadow: 0 6px 18px rgba(10, 132, 255, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  background: transparent;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
   transition: transform 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.isl-app-chat .isl-app-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
 }
 button.isl-app-chat:hover .isl-app-icon {
   transform: translateY(-2px);
@@ -1191,7 +1199,7 @@ button.isl-app-chat:active .isl-app-icon {
   width: 24px;
   height: 24px;
   flex: none;
-  border-radius: 7px;
+  border-radius: 50%;
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
 }
 
@@ -1916,8 +1924,8 @@ button.isl-app-chat:active .isl-app-icon {
   align-self: center; /* vertically center in the bar (was flex-end, which biased it low on a single line) */
   border: 0;
   border-radius: 50%;
-  background: #fff; /* white send circle */
-  color: #000; /* dark arrow so it stays visible on white */
+  background: var(--isl-accent); /* send circle = the island's one accent (Apple system blue) */
+  color: #fff; /* light arrow on the accent */
   font-size: 17px;
   line-height: 1;
   display: inline-flex;
