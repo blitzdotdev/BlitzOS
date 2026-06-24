@@ -1,0 +1,1392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlitzOS — A dynamic-island agent OS for Mac.</title>
+<link rel="icon" type="image/png" href="blitz-logo.png">
+<style>
+  /* ============================================================
+     BlitzOS design tokens — our own identity (dark + gold + blue),
+     lifted straight from the BlitzOS island chrome (--isl-* vars).
+     ============================================================ */
+  :root{
+    --color-orange-25:#f5f5f7;          /* island text (near-white) */
+    --color-stone-950:#0a0a0a;          /* island body (--isl-surface) */
+    --color-stone-900:#161616;          /* frame / panel bg (--isl-surface2) */
+    --color-stone-600:#86888b;          /* marquee dot/icons (dim) */
+    --color-stone-300:#d6d7db;          /* marquee text */
+    --ease:cubic-bezier(.4,0,.2,1);
+
+    --paper:#0a1733;   /* deep blue page (our surface) */
+    --ink:#f4f4f5;     /* near-white ink */
+
+    /* BlitzOS accents: gold brand mark + Apple-blue live signal */
+    --gold:#ffd84d;        /* brand / bolt / primary action */
+    --gold-deep:#f5b300;
+    --accent:#0a84ff;      /* live / working (--isl-accent) */
+    --accent-2:#2a93ff;
+    --accent-deep:#0066d6;
+    --amber:#ffd84d;       /* repoint → brand gold highlight */
+    --amber-2:#ffd84d;     /* repoint → gold gradient start */
+    --terra:#f5b300;       /* repoint → gold gradient end */
+    --green:#3fb950;       /* done */
+    --purple:#9db8ff;      /* lock text: cool tint */
+    --marquee-duration:7s;
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  html,body{margin:0}
+  body{
+    background:radial-gradient(125% 85% at 50% -8%,#16357f 0%,var(--paper) 52%) no-repeat,var(--paper);
+    background-attachment:fixed;
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    min-height:100vh;
+  }
+  ::selection{background:var(--ink);color:var(--paper)}
+
+  /* ============================================================
+     NAV
+     ============================================================ */
+  .nav{
+    position:sticky;top:0;z-index:100;
+    display:flex;justify-content:center;
+    background:color-mix(in srgb,var(--paper) 86%,transparent);
+    backdrop-filter:saturate(1.4) blur(14px);
+    -webkit-backdrop-filter:saturate(1.4) blur(14px);
+    border-bottom:1px solid color-mix(in srgb,var(--ink) 7%,transparent);
+  }
+  .nav__inner{
+    width:min(952px,94vw);height:64px;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .brand{display:flex;align-items:center;gap:9px;color:var(--ink)}
+  .brand .bolt{width:22px;height:22px;display:block;border-radius:6px;object-fit:cover;
+    filter:drop-shadow(0 1px 8px rgba(10,132,255,.4))}
+  .brand .word{font-weight:800;letter-spacing:-.02em;font-size:15px}
+  .brand .chip{
+    margin-left:3px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;
+    background:color-mix(in srgb,var(--ink) 5%,transparent);
+    color:color-mix(in srgb,var(--ink) 70%,transparent);
+  }
+  .nav__right{display:flex;align-items:center;gap:22px}
+  .nav__link{
+    color:color-mix(in srgb,var(--ink) 70%,transparent);
+    font-weight:500;font-size:14px;text-decoration:none;
+    transition:color .2s var(--ease);
+  }
+  .nav__link:hover{color:var(--ink)}
+
+  /* ---- Alcove pill buttons (verbatim spec) ---- */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    border:0;cursor:pointer;text-decoration:none;
+    font-family:inherit;font-size:15px;
+    border-radius:16px;padding:16px 20px;
+    transition:transform .14s var(--ease),box-shadow .25s var(--ease),background-color .2s var(--ease);
+  }
+  .btn:active{transform:scale(.96)}
+  .btn--primary{
+    background:var(--gold);color:#1c1500;font-weight:800;
+    box-shadow:0 2px 12px -3px rgba(255,216,77,.5);
+  }
+  .btn--primary:hover{box-shadow:0 12px 32px -10px rgba(255,216,77,.62)}
+  .btn--secondary{
+    background:color-mix(in srgb,var(--ink) 5%,transparent);
+    color:var(--ink);font-weight:600;
+  }
+  .btn--secondary:hover{background:color-mix(in srgb,var(--ink) 9%,transparent)}
+  .nav .btn{padding:11px 16px;font-size:14px;border-radius:13px}
+
+  /* ============================================================
+     HERO
+     ============================================================ */
+  .hero{
+    display:flex;flex-direction:column;align-items:center;
+    padding:clamp(48px,8vw,96px) 24px 40px;gap:22px;
+  }
+  .h1{
+    max-width:880px;text-align:center;margin:0;
+    font-weight:800;letter-spacing:-.04em;line-height:.98;
+    font-size:clamp(40px,8.6vw,96px);
+    text-wrap:balance;
+  }
+  .h1 .l2{color:color-mix(in srgb,var(--ink) 78%,transparent)}
+  .subhead{
+    max-width:560px;text-align:center;margin:0;
+    font-size:clamp(15px,2.1vw,18px);font-weight:500;line-height:1.5;
+    color:color-mix(in srgb,var(--ink) 64%,transparent);
+    text-wrap:pretty;
+  }
+  .hero__btns{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:4px}
+  .hero__micro{
+    margin:2px 0 0;font-size:13px;font-weight:500;
+    color:color-mix(in srgb,var(--ink) 55%,transparent);
+  }
+
+  /* ============================================================
+     DEMO STAGE / SCREEN (wallpaper card + squircle clip)
+     ============================================================ */
+  .stage-wrap{width:min(952px,94vw);margin-top:14px}
+  .frame__screen{position:relative;width:100%;aspect-ratio:2/1;overflow:visible}
+  .frame{
+    position:absolute;inset:0;width:100%;height:100%;
+    border-radius:2.5rem;overflow:hidden;
+    background-color:var(--color-stone-900);
+    clip-path:path("M 886 0 c 24.2919 0 36.4379 0 45.5448 5.1002 a 40 40 0 0 1 15.355 15.355 c 5.1002 9.107 5.1002 21.2529 5.1002 45.5448 L 952 410 c 0 24.2919 0 36.4379 -5.1002 45.5448 a 40 40 0 0 1 -15.355 15.355 c -9.107 5.1002 -21.2529 5.1002 -45.5448 5.1002 L 66 476 c -24.2919 0 -36.4379 0 -45.5448 -5.1002 a 40 40 0 0 1 -15.355 -15.355 c -5.1002 -9.107 -5.1002 -21.2529 -5.1002 -45.5448 L 0 66 c 0 -24.2919 0 -36.4379 5.1002 -45.5448 a 40 40 0 0 1 15.355 -15.355 c 9.107 -5.1002 21.2529 -5.1002 45.5448 -5.1002 Z");
+    box-shadow:0 28px 80px -28px rgba(0,0,0,.7),0 6px 18px -10px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.06);
+  }
+  .frame__img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:translateY(0)}
+  /* self-contained blue "desktop" behind the island demos (replaces the old external wallpaper). */
+  .frame__wall{background:linear-gradient(155deg,#0b2f7a 0%,#0a84ff 42%,#0a1733 100%)}
+  .frame::after{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 18%,rgba(0,0,0,.18),rgba(0,0,0,0) 55%);
+  }
+
+  /* lock-screen overlay (clock / status / approve) */
+  .lock{
+    position:absolute;inset:0;z-index:10;margin-top:6%;margin-bottom:5%;
+    display:flex;flex-direction:column;align-items:center;justify-content:space-between;
+    pointer-events:none;
+  }
+  .lock-top{display:flex;flex-direction:column;align-items:center;text-align:center;
+    color:color-mix(in srgb,var(--purple) 88%,transparent);
+    filter:saturate(1.5);text-shadow:0 1px 14px rgba(0,0,0,.28)}
+  .lock-date{font-size:clamp(13px,2.4vw,26px);font-weight:600;line-height:1}
+  .lock-time{font-size:clamp(40px,11vw,108px);font-weight:800;line-height:1;letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums;margin-top:.06em}
+  .lock-status{display:none;align-items:center;gap:8px;margin-top:14px;
+    font-weight:600;font-size:clamp(12px,1.7vw,17px);
+    color:color-mix(in srgb,var(--purple) 90%,transparent);filter:saturate(1.5);
+    text-shadow:0 1px 12px rgba(0,0,0,.3)}
+  .lock-status .item{display:flex;align-items:center;gap:7px}
+  .lock-status svg{width:18px;height:18px;fill:currentColor}
+  .unlock{
+    font-weight:700;color:#fff;font-size:clamp(15px,2.6vw,22px);
+    text-shadow:0 1px 16px rgba(0,0,0,.35);
+    background:linear-gradient(100deg,rgba(255,255,255,.55) 0%,#fff 45%,rgba(255,255,255,.55) 60%);
+    background-size:220% 100%;
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    animation:shine 5s linear infinite;
+  }
+  @keyframes shine{0%{background-position:140% 0}100%{background-position:-40% 0}}
+  @media (min-width:760px){ .lock-status{display:flex} }
+
+  /* top overlay grid centers the island */
+  .overlay-grid{
+    position:absolute;top:0;left:0;right:0;z-index:20;
+    display:grid;grid-template-columns:1fr 1fr 1fr;
+  }
+  .overlay-grid .col{display:flex;padding:clamp(8px,2.2vw,20px)}
+  .overlay-grid .col.center{justify-content:center}
+  .overlay-grid .col.right{justify-content:flex-end}
+
+  /* ============================================================
+     THE ISLAND (verbatim from reproduction.html + extensions)
+     ============================================================ */
+  .select-none{user-select:none;-webkit-user-select:none}
+
+  .island{
+    color:var(--color-orange-25);
+    position:relative;display:flex;transform-origin:top;
+    width:112px;height:40px;border-radius:12px;
+    transition:width .5s var(--ease),height .5s var(--ease),
+               border-radius .5s var(--ease),box-shadow .3s var(--ease);
+    box-shadow:0 6px 22px -6px rgba(0,0,0,.5);
+  }
+  .island.is-active{box-shadow:0 14px 40px -10px rgba(0,0,0,.6)}
+  .island.is-interactive{cursor:pointer}
+
+  .island__inner{
+    position:relative;width:100%;height:100%;overflow:hidden;
+    background-color:var(--color-stone-950);
+    clip-path:path("M 92.2 0 c 7.2876 0 10.9314 0 13.6635 1.53 a 12 12 0 0 1 4.6065 4.6065 c 1.53 2.7321 1.53 6.3759 1.53 13.6635 L 112 20.2 c 0 7.2876 0 10.9314 -1.53 13.6635 a 12 12 0 0 1 -4.6065 4.6065 c -2.7321 1.53 -6.3759 1.53 -13.6635 1.53 L 19.8 40 c -7.2876 0 -10.9314 0 -13.6635 -1.53 a 12 12 0 0 1 -4.6065 -4.6065 c -1.53 -2.7321 -1.53 -6.3759 -1.53 -13.6635 L 0 19.8 c 0 -7.2876 0 -10.9314 1.53 -13.6635 a 12 12 0 0 1 4.6065 -4.6065 c 2.7321 -1.53 6.3759 -1.53 13.6635 -1.53 Z");
+  }
+
+  /* LEFT SLOT: bolt mark */
+  .island__left{position:absolute;top:0;left:0;display:flex;height:40px;align-items:center}
+  .island__left-inner{
+    padding-left:10px;opacity:0;filter:blur(10px);transform:scaleX(0);
+    transition:opacity .3s var(--ease),filter .3s var(--ease),transform .3s var(--ease);
+  }
+  .island.show-left .island__left-inner{opacity:1;filter:blur(0);transform:scaleX(1)}
+  .bolt-icon{width:18px;height:18px;display:block;fill:currentColor;color:var(--amber)}
+  .island.state-working .bolt-icon{animation:boltpulse 1.2s var(--ease) infinite}
+  @keyframes boltpulse{0%,100%{opacity:.55;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
+
+  /* RIGHT SLOT: equalizer / check */
+  .island__right{position:absolute;top:0;right:0;display:flex;height:40px;align-items:center}
+  .island__right-inner{
+    padding-right:13px;opacity:0;transform:scale(.6);filter:blur(8px);
+    transition:opacity .3s var(--ease),transform .3s var(--ease),filter .3s var(--ease);
+  }
+  .island.show-right .island__right-inner{opacity:1;transform:scale(1);filter:blur(0)}
+
+  .bars{display:flex;align-items:flex-end;gap:2px;height:12px}
+  .bars span{display:block;width:2.5px;height:3px;border-radius:2px;background:var(--accent)}
+  .bars span:nth-child(1){animation:playing .82s ease infinite}
+  .bars span:nth-child(2){animation:playing 1.24s ease infinite}
+  .bars span:nth-child(3){animation:playing .95s ease infinite}
+  .bars span:nth-child(4){animation:playing 1.46s ease infinite}
+  @keyframes playing{0%,100%{height:3px}50%{height:12px}}
+
+  .checkwrap{width:18px;height:18px;border-radius:50%;background:var(--green);
+    display:flex;align-items:center;justify-content:center}
+  .checkwrap svg{width:11px;height:11px;fill:none;stroke:#0c0a09;stroke-width:2.4;
+    stroke-linecap:round;stroke-linejoin:round}
+
+  /* MARQUEE */
+  .island__marquee{
+    pointer-events:none;position:absolute;right:0;bottom:0;left:0;
+    display:flex;transform-origin:top;justify-content:center;padding-bottom:11px;
+    font-size:.75rem;line-height:calc(1/.75);font-weight:600;
+    color:color-mix(in oklab,var(--color-stone-300) 85%,transparent);
+    opacity:0;transition:opacity .3s var(--ease);
+    -webkit-mask-image:linear-gradient(270deg,#0000 7%,#000 11% 89%,#0000 93%);
+            mask-image:linear-gradient(270deg,#0000 7%,#000 11% 89%,#0000 93%);
+  }
+  .island.show-marquee .island__marquee{opacity:1}
+  .island__marquee .track{position:relative;display:flex}
+  .island__marquee .m1,.island__marquee .m2{
+    display:inline-flex;flex-shrink:0;align-items:center;
+    padding-left:.375rem;padding-right:.375rem;white-space:nowrap;
+  }
+  .island__marquee .m1{animation:marquee-first var(--marquee-duration) linear infinite}
+  .island__marquee .m2{position:absolute;top:0;animation:marquee-second var(--marquee-duration) linear infinite}
+  .island__marquee .note{margin-right:2px;width:15px;height:15px;flex:none;
+    fill:currentColor;color:var(--color-stone-600)}
+  .island__marquee .sep{margin-left:2px;margin-right:2px;color:var(--color-stone-600)}
+  .island__marquee .accent{color:var(--amber)}
+  @keyframes marquee-first{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
+  @keyframes marquee-second{0%{transform:translateX(100%)}100%{transform:translateX(0)}}
+
+  /* PEEK / notification */
+  .island__peek{
+    position:absolute;inset:0;display:flex;align-items:center;gap:11px;padding:0 14px;
+    opacity:0;transition:opacity .3s var(--ease);
+  }
+  .island.state-done .island__peek{opacity:1}
+  .island__peek .glyph{
+    width:30px;height:30px;flex:none;border-radius:9px;
+    background:linear-gradient(150deg,var(--amber-2),var(--terra));
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 2px 8px -2px rgba(255,216,77,.7);
+  }
+  .island__peek .glyph svg{width:16px;height:16px;fill:#1c1500}
+  .island__peek .txt{display:flex;flex-direction:column;line-height:1.12;min-width:0;flex:1}
+  .island__peek .title{font-size:12px;font-weight:700;color:var(--color-orange-25);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .island__peek .sub{font-size:11px;font-weight:500;
+    color:color-mix(in oklab,var(--color-stone-300) 85%,transparent);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* progress sliver */
+  .island__progress{
+    position:absolute;left:8px;right:8px;bottom:6px;height:2.5px;border-radius:2px;
+    background:rgba(255,255,255,.12);overflow:hidden;opacity:0;
+    transition:opacity .3s var(--ease);
+  }
+  .island.state-working .island__progress{opacity:1}
+  .island__progress > i{
+    display:block;height:100%;border-radius:2px;width:30%;
+    background:linear-gradient(90deg,var(--accent-2),var(--accent));
+    animation:prog 3.4s var(--ease) infinite;
+  }
+  @keyframes prog{0%{width:8%;transform:translateX(0)}60%{width:62%}100%{width:96%;transform:translateX(0)}}
+
+  .caption{
+    margin:14px 0 0;text-align:center;font-size:13px;font-weight:500;
+    color:color-mix(in srgb,var(--ink) 55%,transparent);
+  }
+  .caption b{color:color-mix(in srgb,var(--ink) 80%,transparent);font-weight:700}
+
+  /* ============================================================
+     FEATURE SHOWCASES
+     ============================================================ */
+  .features{display:flex;flex-direction:column;align-items:center}
+  .feature{
+    width:min(952px,94vw);min-height:540px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:34px;padding:48px 0;text-align:center;
+  }
+  .feature__title{
+    margin:0;font-weight:800;letter-spacing:-.035em;line-height:1.0;
+    font-size:clamp(30px,5.6vw,56px);text-wrap:balance;
+  }
+  .feature__title .l2{color:color-mix(in srgb,var(--ink) 70%,transparent)}
+  .feature__oneliner{
+    max-width:520px;margin:-18px 0 0;
+    font-size:clamp(14px,1.9vw,17px);font-weight:500;line-height:1.5;
+    color:color-mix(in srgb,var(--ink) 58%,transparent);text-wrap:pretty;
+  }
+
+  /* mini wallpaper card per feature */
+  .mini-card{
+    position:relative;width:min(620px,92vw);aspect-ratio:2/1;overflow:visible;
+  }
+  .mini-card .mini-frame{
+    position:absolute;inset:0;width:100%;height:100%;overflow:hidden;
+    border-radius:1.6rem;background-color:var(--color-stone-900);
+    box-shadow:0 22px 60px -26px rgba(0,0,0,.66),0 5px 14px -8px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.06);
+  }
+  .mini-card .mini-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .mini-card .mini-frame::after{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 22%,rgba(0,0,0,.2),rgba(0,0,0,0) 56%);
+  }
+  .mini-stage{
+    position:absolute;inset:0;z-index:5;display:flex;justify-content:center;
+    padding-top:clamp(10px,3vw,22px);
+  }
+
+  /* reveal on scroll */
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
+  .reveal.in{opacity:1;transform:none}
+  .reveal.d1{transition-delay:.08s}
+  .reveal.d2{transition-delay:.16s}
+
+  /* ---- shared sub-mechanics for feature visuals ---- */
+  .panel-row{display:flex;align-items:center;gap:9px;padding:8px 12px;
+    border-bottom:1px solid rgba(255,255,255,.08)}
+  .panel-row:last-child{border-bottom:0}
+  .dot-av{width:16px;height:16px;border-radius:50%;flex:none}
+  .row-title{font-size:12px;font-weight:600;color:var(--color-orange-25);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;text-align:left}
+  .spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.2);
+    border-top-color:var(--accent);animation:spin 1.4s linear infinite;flex:none}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .mini-check{width:16px;height:16px;border-radius:50%;background:var(--green);
+    display:flex;align-items:center;justify-content:center;flex:none}
+  .mini-check svg{width:9px;height:9px;fill:none;stroke:#0c0a09;stroke-width:2.6;
+    stroke-linecap:round;stroke-linejoin:round}
+
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    .island{transition:none}
+    .island__left-inner,.island__right-inner,.island__marquee,.island__peek,.island__progress{transition:none}
+    .bars span,.island__marquee .m1,.island__marquee .m2,.unlock,
+    .island.state-working .bolt-icon,.island__progress > i,.spinner,
+    .reveal{animation:none !important;transition:none !important}
+    .reveal{opacity:1;transform:none}
+    .island__marquee .m2{display:none}
+    .island__marquee .m1{position:relative}
+  }
+
+  /* ============================================================
+     FAQ
+     ============================================================ */
+  .faq{display:flex;flex-direction:column;align-items:center;padding:72px 24px}
+  .faq__head{
+    margin:0 0 28px;font-weight:800;letter-spacing:-.035em;
+    font-size:clamp(30px,5vw,52px);text-align:center;
+  }
+  .faq__list{width:min(720px,94vw);display:flex;flex-direction:column}
+  .faq__item{border-bottom:1px solid color-mix(in srgb,var(--ink) 10%,transparent)}
+  .faq__q{
+    width:100%;background:none;border:0;cursor:pointer;font-family:inherit;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+    padding:22px 4px;text-align:left;color:var(--ink);
+    font-size:clamp(16px,2.1vw,19px);font-weight:700;letter-spacing:-.01em;
+  }
+  .faq__q .mark{
+    flex:none;width:22px;height:22px;position:relative;
+    transition:transform .3s var(--ease);
+  }
+  .faq__q .mark::before,.faq__q .mark::after{
+    content:"";position:absolute;background:color-mix(in srgb,var(--ink) 60%,transparent);
+    border-radius:2px;
+  }
+  .faq__q .mark::before{left:4px;right:4px;top:10px;height:2px}
+  .faq__q .mark::after{top:4px;bottom:4px;left:10px;width:2px;transition:opacity .3s var(--ease)}
+  .faq__item[open] .faq__q .mark{transform:rotate(180deg)}
+  .faq__item[open] .faq__q .mark::after{opacity:0}
+  .faq__q::-webkit-details-marker{display:none}
+  .faq__a{
+    padding:0 4px 24px;max-width:620px;
+    font-size:15px;line-height:1.6;font-weight:450;
+    color:color-mix(in srgb,var(--ink) 70%,transparent);text-wrap:pretty;
+  }
+
+  /* ============================================================
+     FINAL CTA
+     ============================================================ */
+  .cta{
+    display:flex;flex-direction:column;align-items:center;
+    padding:120px 24px;gap:20px;text-align:center;
+  }
+  .cta__head{
+    margin:0;font-weight:800;letter-spacing:-.035em;line-height:1.02;
+    font-size:clamp(30px,5.4vw,56px);max-width:760px;text-wrap:balance;
+  }
+  .cta__head .l2{color:color-mix(in srgb,var(--ink) 78%,transparent)}
+  .cta__sub{
+    margin:0;font-size:17px;font-weight:500;
+    color:color-mix(in srgb,var(--ink) 64%,transparent);
+  }
+  .cta__btns{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:6px}
+  .cta__micro{margin:4px 0 0;font-size:13px;font-weight:500;
+    color:color-mix(in srgb,var(--ink) 55%,transparent)}
+
+  /* ============================================================
+     FOOTER
+     ============================================================ */
+  .footer{
+    display:flex;flex-direction:column;align-items:center;gap:14px;
+    padding:48px 24px;
+    border-top:1px solid color-mix(in srgb,var(--ink) 8%,transparent);
+  }
+  .footer .brand .word{font-size:15px}
+  .footer__meta{
+    width:min(720px,94vw);display:flex;flex-wrap:wrap;align-items:center;
+    justify-content:center;gap:8px 18px;
+    font-size:12px;font-weight:500;
+    color:color-mix(in srgb,var(--ink) 50%,transparent);text-align:center;
+  }
+  .footer__meta a{color:color-mix(in srgb,var(--ink) 55%,transparent);text-decoration:none;
+    transition:color .2s var(--ease)}
+  .footer__meta a:hover{color:var(--ink)}
+  .footer__meta .sep{opacity:.4}
+</style>
+</head>
+<body>
+
+  <!-- ============================ NAV ============================ -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a class="brand" href="#top" aria-label="BlitzOS home">
+        <img class="bolt" src="blitz-logo.png" alt="" aria-hidden="true">
+        <span class="word">BlitzOS</span>
+        <span class="chip">beta</span>
+      </a>
+      <div class="nav__right">
+        <a class="nav__link" href="#features">Features</a>
+        <a class="nav__link" href="#faq">FAQs</a>
+        <a class="btn btn--primary" href="#cta">Get BlitzOS for Mac</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ============================ HERO ============================ -->
+  <header class="hero" id="top">
+    <h1 class="h1"><span class="l1">A dynamic-island</span><br><span class="l2">agent OS for Mac.</span></h1>
+    <p class="subhead">Your agent lives in the notch. It perceives what you're doing, decides what you need, and acts for you across your real apps — you hold the veto.</p>
+    <div class="hero__btns">
+      <a class="btn btn--primary" href="#cta">Get BlitzOS for Mac</a>
+      <a class="btn btn--secondary" href="#features">See it work</a>
+    </div>
+
+    <div class="stage-wrap">
+      <div class="frame__screen">
+
+        <!-- island overlay -->
+        <div class="overlay-grid">
+          <div class="col left"></div>
+          <div class="col center">
+            <div class="select-none">
+              <div class="island is-interactive" id="island" role="button" tabindex="0" aria-label="BlitzOS island — tap to interact">
+                <div class="island__inner" id="islandInner">
+
+                  <div class="island__left">
+                    <div class="island__left-inner">
+                      <svg class="bolt-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+                    </div>
+                  </div>
+
+                  <div class="island__right">
+                    <div class="island__right-inner">
+                      <span id="rightBars" class="bars" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+                      <span id="rightCheck" class="checkwrap" style="display:none">
+                        <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 7.5 5.5 10.5 11.5 4"/></svg>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="island__marquee">
+                    <div class="track">
+                      <div class="m1">
+                        <svg class="note" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+                        <span class="marquee-text"></span>
+                      </div>
+                      <div class="m2">
+                        <svg class="note" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+                        <span class="marquee-text"></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="island__progress"><i></i></div>
+
+                  <div class="island__peek">
+                    <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg></span>
+                    <span class="txt">
+                      <span class="title" id="peekTitle">Done</span>
+                      <span class="sub" id="peekSub"></span>
+                    </span>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col right"></div>
+        </div>
+
+        <!-- lock overlay -->
+        <div class="lock">
+          <div class="lock-top">
+            <div class="lock-date" id="lockDate">Tue, 23 Jun</div>
+            <div class="lock-time" id="lockTime">20:45</div>
+            <div class="lock-status">
+              <div class="item">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+                <div>BlitzOS · 2 drafts waiting</div>
+              </div>
+            </div>
+          </div>
+          <div class="unlock">Tap to approve</div>
+        </div>
+
+        <!-- wallpaper -->
+        <div class="frame">
+          <div class="frame__img frame__wall" role="img" aria-label="BlitzOS desktop"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="caption"><b>Psst… it's interactive!</b> — tap the island. Every state is real BlitzOS agent work.</p>
+  </header>
+
+  <!-- ===================== FEATURE SHOWCASES ===================== -->
+  <main class="features" id="features">
+
+    <!-- 1 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>It lives in</span><br><span class="l2">your notch.</span></h2>
+      <p class="feature__oneliner reveal d1">A quiet pill in the menu bar that unfurls into a full agent chat the moment you need it.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-stage"><div data-feature="shell"></div></div>
+        <div class="mini-frame"><div class="frame__img frame__wall"></div></div>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>Watch it</span><br><span class="l2">work.</span></h2>
+      <p class="feature__oneliner reveal d1">The island shows real progress as your agent moves — a live status of every action in flight.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-stage"><div data-feature="working"></div></div>
+        <div class="mini-frame"><div class="frame__img frame__wall"></div></div>
+      </div>
+    </section>
+
+    <!-- 3 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>Many agents.</span><br><span class="l2">All at once.</span></h2>
+      <p class="feature__oneliner reveal d1">Independent threads, each its own agent, working in parallel under one island.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-stage"><div data-feature="threads"></div></div>
+        <div class="mini-frame"><div class="frame__img frame__wall"></div></div>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>Your apps.</span><br><span class="l2">Already logged in.</span></h2>
+      <p class="feature__oneliner reveal d1">It drives your real, signed-in apps through your own browser — no tokens, no integrations.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-stage"><div data-feature="apps"></div></div>
+        <div class="mini-frame"><div class="frame__img frame__wall"></div></div>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>Hard jobs,</span><br><span class="l2">fanned out.</span></h2>
+      <p class="feature__oneliner reveal d1">Big work splits across many agents and tracks live on a kanban board.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-stage"><div data-feature="kanban"></div></div>
+        <div class="mini-frame"><div class="frame__img frame__wall"></div></div>
+      </div>
+    </section>
+
+    <!-- 6 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>Real terminals.</span><br><span class="l2">Always running.</span></h2>
+      <p class="feature__oneliner reveal d1">Persistent shells for builds, tests, and long jobs that survive a restart.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-stage"><div data-feature="terminal"></div></div>
+        <div class="mini-frame"><div class="frame__img frame__wall"></div></div>
+      </div>
+    </section>
+
+    <!-- 7 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>Ships a</span><br><span class="l2">live URL.</span></h2>
+      <p class="feature__oneliner reveal d1">Anything you keep becomes a real web app with its own URL — deploys on every save.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-stage"><div data-feature="deploy"></div></div>
+        <div class="mini-frame"><div class="frame__img frame__wall"></div></div>
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>It acts.</span><br><span class="l2">You hold the veto.</span></h2>
+      <p class="feature__oneliner reveal d1">Proactive by default — but any outward action waits one tap from your approval.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-stage"><div data-feature="veto"></div></div>
+        <div class="mini-frame"><div class="frame__img frame__wall"></div></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============================ FAQ ============================ -->
+  <section class="faq" id="faq">
+    <h2 class="faq__head">Questions, answered.</h2>
+    <div class="faq__list">
+      <details class="faq__item">
+        <summary class="faq__q">What is BlitzOS?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">A macOS dynamic-island agent OS. It lives in your Mac's notch as a small bar that expands into a full chat the moment you need it. It perceives what you're doing, decides what you need, and acts for you across your real apps — the same island you see cycling through live states in the demo above, except every state is real agent work.</div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Does it need access to my accounts or API tokens?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">No tokens, no integrations to set up. BlitzOS works your real, already-logged-in apps through your own browser, exactly as you would. There's nothing to connect and no keys to paste — if you're signed in, your agent can act there.</div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Which apps does it work with?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">Any app you use in your browser while logged in — Gmail, your calendar, and the rest of your real, day-to-day tools. Because it drives your own logged-in sessions rather than wiring up per-app integrations, you're not limited to a fixed list. It also runs persistent terminals for builds, tests, and long-running jobs that survive a restart.</div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Is it safe? Do I stay in control?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">You hold the veto. BlitzOS acts proactively, but any action that reaches outward is one tap from your approval — nothing leaves your hands without it. The island keeps work visible in the notch (a live status like "staged 3 drafts in Gmail, reading your calendar") so you always see what it's doing before you approve.</div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">What can it actually do for me?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">Run several independent agents at once, each its own chat thread working in parallel. Fan a hard job across many agents and track each piece on a live kanban board. Keep real terminals running for builds and tests. And anything you decide to keep becomes a live web app with its own URL that redeploys on every save — so the work ships, not just sits in a chat.</div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">How do I get it, and what does it cost?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">BlitzOS is a native Mac app, currently in beta — grab it from "Get BlitzOS for Mac" above. We haven't published pricing yet; join the beta now and you'll be the first to know when plans go live.</div>
+      </details>
+    </div>
+  </section>
+
+  <!-- ============================ CTA ============================ -->
+  <section class="cta" id="cta">
+    <h2 class="cta__head"><span>Your agent's already</span><br><span class="l2">in the notch.</span></h2>
+    <p class="cta__sub">It works while you don't. You hold the veto.</p>
+    <div class="cta__btns">
+      <a class="btn btn--primary" href="#top">Get BlitzOS for Mac</a>
+      <a class="btn btn--secondary" href="#top">See it work</a>
+    </div>
+    <p class="cta__micro">Native Mac app · in beta · no tokens, no integrations.</p>
+  </section>
+
+  <!-- ========================== FOOTER ========================== -->
+  <footer class="footer">
+    <a class="brand" href="#top" aria-label="BlitzOS">
+      <img class="bolt" src="blitz-logo.png" alt="" aria-hidden="true">
+      <span class="word">BlitzOS</span>
+    </a>
+    <div class="footer__meta">
+      <span>A dynamic-island agent OS for Mac.</span>
+      <span class="sep">·</span>
+      <a href="#features">Features</a>
+      <a href="#faq">FAQs</a>
+      <a href="#cta">Get for Mac</a>
+      <span class="sep">·</span>
+      <span>© 2026 BlitzOS · in beta</span>
+    </div>
+  </footer>
+
+<script>
+"use strict";
+
+/* ===============================================================
+   SQUIRCLE GENERATOR — verbatim from reproduction.html
+   (figma-squircle continuous corners, cornerSmoothing 0.65)
+   =============================================================== */
+var SMOOTHING = 0.65;
+var DEG = Math.PI / 180;
+
+function cornerParams(R, s, budget){
+  R = Math.min(R, budget);
+  var p          = Math.min((1 + s) * R, budget);
+  var arcMeasure = 90 * (1 - s);
+  var angleAlpha = (90 - arcMeasure) / 2;
+  var angleBeta  = 45 * s;
+  var p3ToP4     = R * Math.tan((angleAlpha / 2) * DEG);
+  var c          = p3ToP4 * Math.cos(angleBeta * DEG);
+  var d          = c * Math.tan(angleBeta * DEG);
+  var arcSection = Math.sin((arcMeasure / 2) * DEG) * R * Math.SQRT2;
+  var rem        = p - arcSection - c - d;
+  return { a: (2/3)*rem, b: (1/3)*rem, c: c, d: d, p: p, arc: arcSection, R: R };
+}
+
+function squircle(w, h, r){
+  var budget = Math.min(w, h) / 2;
+  var P = cornerParams(r, SMOOTHING, budget);
+  var a = P.a, b = P.b, c = P.c, d = P.d, p = P.p, arc = P.arc, R = P.R;
+  var n = function(x){
+    var v = Math.round(x * 10000) / 10000;
+    if (v === 0) v = 0;
+    return v;
+  };
+  return 'path("M ' + n(w - p) + ' 0 ' +
+    'c ' + n(a) + ' 0 ' + n(a+b) + ' 0 ' + n(a+b+c) + ' ' + n(d) + ' ' +
+    'a ' + n(R) + ' ' + n(R) + ' 0 0 1 ' + n(arc) + ' ' + n(arc) + ' ' +
+    'c ' + n(d) + ' ' + n(c) + ' ' + n(d) + ' ' + n(b+c) + ' ' + n(d) + ' ' + n(a+b+c) + ' ' +
+    'L ' + n(w) + ' ' + n(h - p) + ' ' +
+    'c 0 ' + n(a) + ' 0 ' + n(a+b) + ' ' + n(-d) + ' ' + n(a+b+c) + ' ' +
+    'a ' + n(R) + ' ' + n(R) + ' 0 0 1 ' + n(-arc) + ' ' + n(arc) + ' ' +
+    'c ' + n(-c) + ' ' + n(d) + ' ' + n(-(b+c)) + ' ' + n(d) + ' ' + n(-(a+b+c)) + ' ' + n(d) + ' ' +
+    'L ' + n(p) + ' ' + n(h) + ' ' +
+    'c ' + n(-a) + ' 0 ' + n(-(a+b)) + ' 0 ' + n(-(a+b+c)) + ' ' + n(-d) + ' ' +
+    'a ' + n(R) + ' ' + n(R) + ' 0 0 1 ' + n(-arc) + ' ' + n(-arc) + ' ' +
+    'c ' + n(-d) + ' ' + n(-c) + ' ' + n(-d) + ' ' + n(-(b+c)) + ' ' + n(-d) + ' ' + n(-(a+b+c)) + ' ' +
+    'L 0 ' + n(p) + ' ' +
+    'c 0 ' + n(-a) + ' 0 ' + n(-(a+b)) + ' ' + n(d) + ' ' + n(-(a+b+c)) + ' ' +
+    'a ' + n(R) + ' ' + n(R) + ' 0 0 1 ' + n(arc) + ' ' + n(-arc) + ' ' +
+    'c ' + n(c) + ' ' + n(-d) + ' ' + n(b+c) + ' ' + n(-d) + ' ' + n(a+b+c) + ' ' + n(-d) + ' Z")';
+}
+
+var COLLAPSED_PATH = 'path("M 92.2 0 c 7.2876 0 10.9314 0 13.6635 1.53 a 12 12 0 0 1 4.6065 4.6065 c 1.53 2.7321 1.53 6.3759 1.53 13.6635 L 112 20.2 c 0 7.2876 0 10.9314 -1.53 13.6635 a 12 12 0 0 1 -4.6065 4.6065 c -2.7321 1.53 -6.3759 1.53 -13.6635 1.53 L 19.8 40 c -7.2876 0 -10.9314 0 -13.6635 -1.53 a 12 12 0 0 1 -4.6065 -4.6065 c -1.53 -2.7321 -1.53 -6.3759 -1.53 -13.6635 L 0 19.8 c 0 -7.2876 0 -10.9314 1.53 -13.6635 a 12 12 0 0 1 4.6065 -4.6065 c 2.7321 -1.53 6.3759 -1.53 13.6635 -1.53 Z")';
+function finalClip(w, h, r){
+  return (w===112 && h===40 && r===12) ? COLLAPSED_PATH : squircle(w, h, r);
+}
+
+var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* setSize — verbatim mechanic: animate clip on rAF over the CSS transition.
+   Operates on a given island/inner pair so it can be reused per feature. */
+function makeSizer(island, inner){
+  var clipAnim = null;
+  function ease(t){ return t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2; }
+  return function setSize(w, h, r, animMs){
+    island.style.width  = w + 'px';
+    island.style.height = h + 'px';
+    island.style.borderRadius = r + 'px';
+    if (reduce || !animMs){
+      if (clipAnim) cancelAnimationFrame(clipAnim);
+      inner.style.clipPath = finalClip(w, h, r);
+      return;
+    }
+    var rect = island.getBoundingClientRect();
+    var fromW = rect.width || 112, fromH = rect.height || 40;
+    var fromR = parseFloat(getComputedStyle(island).borderRadius) || 12;
+    var start = null;
+    if (clipAnim) cancelAnimationFrame(clipAnim);
+    function step(ts){
+      if (start === null) start = ts;
+      var t = Math.min(1, (ts - start) / animMs);
+      var e = ease(t);
+      var cw = fromW + (w-fromW)*e;
+      var ch = fromH + (h-fromH)*e;
+      var cr = fromR + (r-fromR)*e;
+      inner.style.clipPath = squircle(cw, ch, cr);
+      if (t < 1) clipAnim = requestAnimationFrame(step);
+      else inner.style.clipPath = finalClip(w, h, r);
+    }
+    clipAnim = requestAnimationFrame(step);
+  };
+}
+
+/* ===============================================================
+   HERO ISLAND — verbatim state machine, BlitzOS data + interactivity
+   =============================================================== */
+(function(){
+  var island      = document.getElementById('island');
+  var inner       = document.getElementById('islandInner');
+  var rightBars   = document.getElementById('rightBars');
+  var rightCheck  = document.getElementById('rightCheck');
+  var marqueeText = island.querySelectorAll('.marquee-text');
+  var peekTitle   = document.getElementById('peekTitle');
+  var peekSub     = document.getElementById('peekSub');
+  var lockStatus  = document.querySelector('.lock-status .item div');
+  var setSize     = makeSizer(island, inner);
+
+  var TASKS = [
+    { working:"BlitzOS · staged 3 drafts in Gmail · reading your calendar",
+      doneTitle:"3 drafts staged", doneSub:"Gmail · ready for your review",
+      lock:"BlitzOS · 3 drafts waiting" },
+    { working:"BlitzOS · scanning 42 unread · flagged 2 needing a reply today",
+      doneTitle:"2 emails flagged", doneSub:"Need a reply before 5pm",
+      lock:"BlitzOS · 2 flagged for you" },
+    { working:"BlitzOS · holding 10:30 with Maya · drafting the agenda",
+      doneTitle:"Agenda drafted", doneSub:"10:30 · Maya · in your calendar",
+      lock:"BlitzOS · agenda ready to send" },
+    { working:"BlitzOS · summarizing the Q3 thread · pulling action items",
+      doneTitle:"Q3 thread summarized", doneSub:"4 action items · saved to Notes",
+      lock:"BlitzOS · 4 action items waiting" }
+  ];
+
+  var COLLAPSED = {w:112, h:40, r:12};
+  var WORKING   = {w:300, h:40, r:20};
+  var PEEK      = {w:268, h:64, r:24};
+
+  var idx = 0;
+  var timers = [];
+  function clearTimers(){ timers.forEach(clearTimeout); timers = []; }
+  function later(fn, ms){ var t=setTimeout(fn, ms); timers.push(t); return t; }
+
+  function setMarquee(text){
+    for (var i=0;i<marqueeText.length;i++) marqueeText[i].textContent = text;
+    var px = (text.length * 6.6) + 60;
+    var dur = Math.max(6, px/52);
+    island.style.setProperty('--marquee-duration', dur.toFixed(2)+'s');
+  }
+
+  function toCollapsed(){
+    island.className = 'island is-interactive';
+    if (lockStatus) lockStatus.textContent = TASKS[idx].lock;
+    setSize(COLLAPSED.w, COLLAPSED.h, COLLAPSED.r, reduce?0:500);
+  }
+  function toWorking(){
+    var task = TASKS[idx];
+    setMarquee(task.working);
+    rightBars.style.display = 'flex';
+    rightCheck.style.display = 'none';
+    island.className = 'island is-interactive is-active state-working show-left show-right show-marquee';
+    setSize(WORKING.w, WORKING.h, WORKING.r, reduce?0:500);
+  }
+  function toDone(){
+    var task = TASKS[idx];
+    peekTitle.textContent = task.doneTitle;
+    peekSub.textContent   = task.doneSub;
+    rightBars.style.display = 'none';
+    rightCheck.style.display = 'flex';
+    island.className = 'island is-interactive is-active state-done show-right';
+    setSize(PEEK.w, PEEK.h, PEEK.r, reduce?0:500);
+  }
+
+  function cycle(){
+    clearTimers();
+    toCollapsed();
+    later(function(){ toWorking(); }, 50 + 650);
+    later(function(){ toDone(); }, 50 + 650 + 4200);
+    later(function(){
+      idx = (idx + 1) % TASKS.length;
+      toCollapsed();
+      later(cycle, 1100);
+    }, 50 + 650 + 4200 + 2000);
+  }
+
+  /* interactivity: tap jumps straight to the working state, then resumes */
+  function poke(){
+    clearTimers();
+    toWorking();
+    later(function(){ toDone(); }, 4200);
+    later(function(){
+      idx = (idx + 1) % TASKS.length;
+      toCollapsed();
+      later(cycle, 1100);
+    }, 4200 + 2000);
+  }
+  island.addEventListener('click', poke);
+  island.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); poke(); }
+  });
+
+  /* live clock */
+  function pad(n){ return n<10 ? '0'+n : ''+n; }
+  var DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function tick(){
+    var d = new Date();
+    document.getElementById('lockTime').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    document.getElementById('lockDate').textContent = DAYS[d.getDay()] + ', ' + d.getDate() + ' ' + MONTHS[d.getMonth()];
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  inner.style.clipPath = COLLAPSED_PATH;
+  if (reduce) cycle();
+  else later(cycle, 900);
+})();
+
+/* ===============================================================
+   FEATURE MINI-VISUALS
+   Each builds a fresh .island that REUSES the same squircle +
+   setSize mechanic. Loops are driven (and gated by IntersectionObserver
+   so they only run when on screen). Reduced-motion -> static frame.
+   =============================================================== */
+var BOLT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>';
+
+function islandShell(extra){
+  var d = document.createElement('div');
+  d.className = 'island ' + (extra||'');
+  d.innerHTML =
+    '<div class="island__inner">' +
+      '<div class="island__left"><div class="island__left-inner">' +
+        '<svg class="bolt-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>' +
+      '</div></div>' +
+      '<div class="island__right"><div class="island__right-inner">' +
+        '<span class="bars js-bars" aria-hidden="true"><span></span><span></span><span></span><span></span></span>' +
+        '<span class="checkwrap js-check" style="display:none"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 7.5 5.5 10.5 11.5 4"/></svg></span>' +
+      '</div></div>' +
+      '<div class="island__marquee"><div class="track">' +
+        '<div class="m1"><svg class="note" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg><span class="marquee-text"></span></div>' +
+        '<div class="m2"><svg class="note" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg><span class="marquee-text"></span></div>' +
+      '</div></div>' +
+      '<div class="island__progress"><i></i></div>' +
+      '<div class="island__peek"><span class="glyph">'+BOLT+'</span>' +
+        '<span class="txt"><span class="title"></span><span class="sub"></span></span></div>' +
+      '<div class="island__custom" style="position:absolute;inset:0;opacity:0;transition:opacity .3s var(--ease)"></div>' +
+    '</div>';
+  return d;
+}
+
+function setMarqueeOn(island, text){
+  var mt = island.querySelectorAll('.marquee-text');
+  for (var i=0;i<mt.length;i++) mt[i].textContent = text;
+  var px = (text.length * 6.6) + 60;
+  island.style.setProperty('--marquee-duration', Math.max(6, px/52).toFixed(2)+'s');
+}
+
+/* visibility gate so loops idle off-screen */
+function onVisible(el, enter, leave){
+  if (!('IntersectionObserver' in window)){ enter(); return; }
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){ e.isIntersecting ? enter() : (leave&&leave()); });
+  }, {threshold:.25});
+  io.observe(el);
+}
+
+var MINI = {};
+
+/* ---- 1: shell — collapsed pill expands DOWN into a chat panel ---- */
+MINI.shell = function(host){
+  var island = islandShell('show-left');
+  var inner = island.querySelector('.island__inner');
+  island.style.cursor = 'pointer';
+  host.appendChild(island);
+  var setSize = makeSizer(island, inner);
+  island.querySelector('.island__left-inner').style.opacity = '0';
+  var custom = island.querySelector('.island__custom');
+  custom.style.display='flex';custom.style.flexDirection='column';custom.style.justifyContent='center';
+  custom.style.gap='8px';custom.style.padding='16px 14px 14px';custom.style.alignItems='stretch';
+  custom.innerHTML =
+    '<div style="align-self:flex-end;max-width:78%;background:color-mix(in srgb,#fffaf4 12%,transparent);color:var(--color-orange-25);font-size:12px;font-weight:600;padding:7px 11px;border-radius:13px 13px 4px 13px">summarize my unread</div>' +
+    '<div style="display:flex;gap:8px;align-items:flex-start;max-width:84%">' +
+      '<span style="width:20px;height:20px;flex:none;border-radius:7px;background:linear-gradient(150deg,var(--amber-2),var(--terra));display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:#1c1500"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg></span>' +
+      '<div style="background:rgba(255,255,255,.08);color:var(--color-orange-25);font-size:12px;font-weight:500;padding:7px 11px;border-radius:4px 13px 13px 13px;line-height:1.35">On it — scanning 42 unread now.</div>' +
+    '</div>' +
+    '<div class="js-typing" style="display:flex;gap:4px;padding-left:28px">' +
+      '<i style="width:5px;height:5px;border-radius:50%;background:var(--amber);animation:typing 1.2s infinite"></i>' +
+      '<i style="width:5px;height:5px;border-radius:50%;background:var(--amber);animation:typing 1.2s .2s infinite"></i>' +
+      '<i style="width:5px;height:5px;border-radius:50%;background:var(--amber);animation:typing 1.2s .4s infinite"></i>' +
+    '</div>';
+
+  function collapse(){
+    island.className='island show-left';island.style.cursor='pointer';
+    island.querySelector('.island__left-inner').style.opacity='0';
+    custom.style.opacity='0';
+    setSize(112,40,12,reduce?0:500);
+  }
+  function expand(){
+    island.className='island is-active show-left';
+    island.querySelector('.island__left-inner').style.opacity='1';
+    setSize(360,230,28,reduce?0:500);
+    setTimeout(function(){ custom.style.opacity='1'; }, reduce?0:260);
+  }
+  inner.style.clipPath = COLLAPSED_PATH;
+  if (reduce){ expand(); return; }
+  var on=false,t=[];
+  function clear(){ t.forEach(clearTimeout); t=[]; }
+  function loop(){ clear(); collapse(); t.push(setTimeout(expand,900)); t.push(setTimeout(loop,5000)); }
+  island.addEventListener('click', function(){ clear(); expand(); t.push(setTimeout(loop,3500)); });
+  onVisible(host, function(){ if(!on){on=true;loop();} }, function(){ on=false;clear(); });
+};
+
+/* ---- 2: working — expanded pill, marquee cycles 3 statuses ---- */
+MINI.working = function(host){
+  var island = islandShell('is-active state-working show-left show-right show-marquee');
+  var inner = island.querySelector('.island__inner');
+  host.appendChild(island);
+  var setSize = makeSizer(island, inner);
+  inner.style.clipPath = squircle(300,40,20);
+  setSize(300,40,20,0);
+  var msgs = [
+    "BlitzOS · staged 3 drafts in Gmail · reading your calendar",
+    "BlitzOS · scanning 42 unread · flagged 2 needing a reply",
+    "BlitzOS · holding 10:30 with Maya · drafting the agenda"
+  ];
+  var i=0;
+  setMarqueeOn(island, msgs[0]);
+  if (reduce) return;
+  var on=false,iv=null;
+  function tickMsg(){
+    i=(i+1)%msgs.length; setMarqueeOn(island, msgs[i]);
+    island.animate?island.animate(
+      [{transform:'scaleY(1)'},{transform:'scaleY(1.12)'},{transform:'scaleY(1)'}],
+      {duration:280,easing:'cubic-bezier(.4,0,.2,1)'}):0;
+  }
+  onVisible(host, function(){ if(!on){on=true; iv=setInterval(tickMsg, 3600);} },
+                  function(){ on=false; if(iv){clearInterval(iv);iv=null;} });
+};
+
+/* ---- 3: threads — three parallel rows, states flip out of sync ---- */
+MINI.threads = function(host){
+  var island = islandShell('is-active show-left');
+  var inner = island.querySelector('.island__inner');
+  host.appendChild(island);
+  var setSize = makeSizer(island, inner);
+  island.querySelector('.island__left-inner').style.opacity='1';
+  var custom = island.querySelector('.island__custom');
+  custom.style.opacity='1';custom.style.display='flex';custom.style.flexDirection='column';
+  custom.style.justifyContent='center';custom.style.padding='10px 4px';
+  var data = [
+    {hue:'#0a84ff', title:'Inbox triage', state:'work'},
+    {hue:'#ffd84d', title:'Q3 deck',      state:'think'},
+    {hue:'#3fb950', title:'Refactor auth', state:'done'}
+  ];
+  function chip(state){
+    if (state==='work') return '<span class="bars" style="height:11px"><span></span><span></span><span></span></span>';
+    if (state==='think') return '<span class="spinner"></span>';
+    return '<span class="mini-check"><svg viewBox="0 0 14 14"><path d="M2.5 7.5 5.5 10.5 11.5 4"/></svg></span>';
+  }
+  function render(){
+    custom.innerHTML = data.map(function(r){
+      return '<div class="panel-row">' +
+        '<span class="dot-av" style="background:'+r.hue+'"></span>' +
+        '<span class="row-title">'+r.title+'</span>' +
+        '<span style="display:flex;align-items:flex-end;gap:2px">'+chip(r.state)+'</span>' +
+      '</div>';
+    }).join('');
+  }
+  render();
+  inner.style.clipPath = squircle(340,250,28);
+  setSize(340,250,28,0);
+  if (reduce) return;
+  var order=['think','work','done'];
+  var on=false,iv=null,k=0;
+  function flip(){
+    var r = data[k%data.length];
+    var ci = order.indexOf(r.state);
+    r.state = order[(ci+1)%order.length];
+    k++; render();
+  }
+  onVisible(host, function(){ if(!on){on=true; iv=setInterval(flip, 3000);} },
+                  function(){ on=false; if(iv){clearInterval(iv);iv=null;} });
+};
+
+/* ---- 4: apps — collapsed island + a row of app tiles, beam lights them ---- */
+MINI.apps = function(host){
+  host.style.display='flex';host.style.flexDirection='column';host.style.alignItems='center';host.style.gap='18px';
+  var island = islandShell('');
+  var inner = island.querySelector('.island__inner');
+  host.appendChild(island);
+  var setSize = makeSizer(island, inner);
+  inner.style.clipPath = COLLAPSED_PATH; setSize(112,40,12,0);
+
+  var wrap = document.createElement('div');
+  wrap.style.cssText='display:flex;gap:10px';
+  var APPS = ['M','C','D','N','◻'];
+  var tiles = APPS.map(function(g){
+    var t = document.createElement('div');
+    t.style.cssText='position:relative;width:44px;height:44px;border-radius:12px;'+
+      'background:color-mix(in srgb,#fffaf4 14%,transparent);backdrop-filter:blur(4px);'+
+      'border:1.5px solid rgba(255,255,255,.16);display:flex;align-items:center;justify-content:center;'+
+      'color:#fffaf4;font-weight:700;font-size:16px;transition:border-color .35s var(--ease),box-shadow .35s var(--ease)';
+    t.style.clipPath = squircle(44,44,12);
+    t.innerHTML = '<span>'+g+'</span>'+
+      '<span class="mini-check t-check" style="position:absolute;top:-5px;right:-5px;opacity:0;transform:scale(.5);transition:opacity .3s,transform .3s"><svg viewBox="0 0 14 14"><path d="M2.5 7.5 5.5 10.5 11.5 4"/></svg></span>';
+    wrap.appendChild(t);
+    return t;
+  });
+  host.appendChild(wrap);
+
+  var cap = document.createElement('div');
+  cap.textContent = 'through your own browser · no tokens';
+  cap.style.cssText='font-size:11px;font-weight:600;color:color-mix(in srgb,#fffaf4 70%,transparent);'+
+    'background:rgba(0,0,0,.35);padding:4px 10px;border-radius:999px';
+  host.appendChild(cap);
+
+  if (reduce){ tiles.forEach(function(t){ t.style.borderColor='var(--amber)'; var c=t.querySelector('.t-check'); c.style.opacity='1';c.style.transform='scale(1)'; }); return; }
+  var on=false,iv=null,k=0;
+  function light(){
+    var t = tiles[k%tiles.length];
+    t.style.borderColor='var(--amber)';
+    t.style.boxShadow='0 0 0 1px var(--amber),0 6px 16px -8px rgba(255,216,77,.8)';
+    var c=t.querySelector('.t-check'); c.style.opacity='1';c.style.transform='scale(1)';
+    setTimeout(function(){
+      t.style.borderColor='rgba(255,255,255,.16)'; t.style.boxShadow='none';
+      c.style.opacity='0';c.style.transform='scale(.5)';
+    }, 2600);
+    k++;
+  }
+  onVisible(host, function(){ if(!on){on=true; light(); iv=setInterval(light, 800);} },
+                  function(){ on=false; if(iv){clearInterval(iv);iv=null;} });
+};
+
+/* ---- 5: kanban — cards move Queued -> Running -> Done ---- */
+MINI.kanban = function(host){
+  var island = islandShell('is-active');
+  var inner = island.querySelector('.island__inner');
+  host.appendChild(island);
+  var setSize = makeSizer(island, inner);
+  var custom = island.querySelector('.island__custom');
+  custom.style.opacity='1';custom.style.display='grid';
+  custom.style.gridTemplateColumns='1fr 1fr 1fr';custom.style.gap='8px';custom.style.padding='14px 12px';
+  var cols = ['Queued','Running','Done'];
+  var cards = [
+    {label:'Parse', col:0},{label:'Index', col:1},{label:'Embed', col:1},
+    {label:'Rank', col:0},{label:'Ship', col:2}
+  ];
+  function barColor(col){ return col===2 ? 'var(--green)' : col===1 ? 'var(--amber-2)' : 'var(--color-stone-600)'; }
+  function render(){
+    custom.innerHTML = cols.map(function(name,ci){
+      var inCol = cards.filter(function(c){return c.col===ci;});
+      var body = inCol.map(function(c){
+        var pulse = ci===1 ? 'animation:colpulse 1.2s var(--ease) infinite;' : '';
+        return '<div style="display:flex;align-items:center;gap:5px;background:color-mix(in srgb,#fffaf4 10%,transparent);'+
+          'border-radius:8px;padding:5px 6px;font-size:9.5px;font-weight:600;color:var(--color-orange-25);'+
+          'transition:transform .5s var(--ease),background-color .5s var(--ease)">'+
+          '<span style="width:3px;height:11px;border-radius:2px;background:'+barColor(ci)+';'+pulse+'"></span>'+
+          c.label+
+          (ci===2?'<span class="mini-check" style="width:12px;height:12px;margin-left:auto"><svg viewBox="0 0 14 14"><path d="M2.5 7.5 5.5 10.5 11.5 4"/></svg></span>':'')+
+          '</div>';
+      }).join('');
+      return '<div style="display:flex;flex-direction:column;gap:6px;min-width:0">'+
+        '<div style="font-size:8.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;'+
+        'color:color-mix(in oklab,var(--color-stone-300) 85%,transparent)">'+name+' · '+inCol.length+'</div>'+
+        body+'</div>';
+    }).join('');
+  }
+  render();
+  inner.style.clipPath = squircle(440,250,28);
+  setSize(440,250,28,0);
+  if (reduce) return;
+  var on=false,iv=null,k=0;
+  function move(){
+    var moving = cards.filter(function(c){return c.col<2;});
+    if (!moving.length){ cards.forEach(function(c){ c.col=0; }); cards[1].col=1; render(); k=0; return; }
+    var c = moving.sort(function(a,b){return b.col-a.col;})[0];
+    c.col++; render(); k++;
+  }
+  onVisible(host, function(){ if(!on){on=true; iv=setInterval(move, 3500);} },
+                  function(){ on=false; if(iv){clearInterval(iv);iv=null;} });
+};
+
+/* ---- 6: terminal — typing build output, persistent blinking cursor ---- */
+MINI.terminal = function(host){
+  var island = islandShell('is-active');
+  var inner = island.querySelector('.island__inner');
+  host.appendChild(island);
+  var setSize = makeSizer(island, inner);
+  var custom = island.querySelector('.island__custom');
+  custom.style.opacity='1';custom.style.display='flex';custom.style.flexDirection='column';
+  custom.style.padding='0';custom.style.overflow='hidden';
+  custom.innerHTML =
+    '<div style="display:flex;align-items:center;gap:7px;padding:9px 13px;border-bottom:1px solid rgba(255,255,255,.08)">'+
+      '<span style="width:9px;height:9px;border-radius:50%;background:var(--terra)"></span>'+
+      '<span style="width:9px;height:9px;border-radius:50%;background:var(--amber-2)"></span>'+
+      '<span style="width:9px;height:9px;border-radius:50%;background:var(--amber)"></span>'+
+      '<span style="margin-left:6px;font-size:10px;font-weight:600;color:color-mix(in oklab,var(--color-stone-300) 85%,transparent)">blitz · build</span>'+
+      '<span style="margin-left:auto;display:flex;align-items:center;gap:5px;font-size:9px;color:color-mix(in oklab,var(--color-stone-300) 70%,transparent)">'+
+        '<i style="width:6px;height:6px;border-radius:50%;background:var(--amber);box-shadow:0 0 6px var(--amber)"></i>'+
+        '<span class="js-uptime">pid 4821 · 3h12m uptime</span></span>'+
+    '</div>'+
+    '<pre class="js-term" style="margin:0;padding:11px 13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;'+
+      'font-size:10.5px;line-height:1.5;color:var(--color-orange-25);white-space:pre-wrap;flex:1;overflow:hidden"></pre>';
+  inner.style.clipPath = squircle(420,230,24);
+  setSize(420,230,24,0);
+
+  var term = custom.querySelector('.js-term');
+  var lines = [
+    '$ npm run build',
+    '✓ compiled client in 1.2s',
+    '✓ compiled server in 0.8s',
+    '✓ build complete',
+    '$ npm test --watch'
+  ];
+  var CUR = '<span class="js-cur" style="display:inline-block;width:7px;height:13px;background:var(--amber);vertical-align:-2px"></span>';
+  if (reduce){ term.innerHTML = lines.join('\n') + ' ' + CUR; startUptime(); return; }
+  var on=false, raf=null, killed=false;
+  function type(){
+    killed=false;
+    term.innerHTML=''; var li=0, ci=0, buf='';
+    function step(){
+      if (killed) return;
+      if (li>=lines.length){ term.innerHTML = buf + ' ' + CUR; blinkThenLoop(); return; }
+      var line = lines[li];
+      if (ci<=line.length){ term.innerHTML = buf + line.slice(0,ci) + CUR; ci++; raf=setTimeout(step, 32); }
+      else { buf += line + '\n'; li++; ci=0; raf=setTimeout(step, 260); }
+    }
+    step();
+  }
+  function blink(){ var c=term.querySelector('.js-cur'); if(c) c.style.animation='blinkcur 1s steps(1) infinite'; }
+  function blinkThenLoop(){ blink(); raf=setTimeout(function(){ if(!killed) type(); }, 4200); }
+  onVisible(host, function(){ if(!on){on=true; type();} },
+                  function(){ on=false; killed=true; if(raf)clearTimeout(raf); });
+  startUptime();
+  function startUptime(){
+    var el = custom.querySelector('.js-uptime'); var m=12;
+    setInterval(function(){ m++; var h=3+Math.floor(m/60); el.textContent='pid 4821 · '+h+'h'+(m%60)+'m uptime'; }, 4000);
+  }
+};
+
+/* ---- 7: deploy — save -> building -> deployed, URL glows ---- */
+MINI.deploy = function(host){
+  var island = islandShell('is-active show-left');
+  var inner = island.querySelector('.island__inner');
+  host.appendChild(island);
+  var setSize = makeSizer(island, inner);
+  island.querySelector('.island__left-inner').style.opacity='0';
+  var custom = island.querySelector('.island__custom');
+  custom.style.opacity='1';custom.style.display='flex';custom.style.alignItems='center';
+  custom.style.gap='12px';custom.style.padding='0 16px';
+  custom.innerHTML =
+    '<span class="glyph js-globe" style="width:34px;height:34px;flex:none;border-radius:10px;'+
+      'background:linear-gradient(150deg,var(--amber-2),var(--terra));display:flex;align-items:center;justify-content:center;'+
+      'box-shadow:0 2px 8px -2px rgba(255,216,77,.7);position:relative">'+
+      '<svg viewBox="0 0 24 24" style="width:17px;height:17px;fill:none;stroke:#1c1500;stroke-width:2;stroke-linecap:round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg>'+
+    '</span>'+
+    '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">'+
+      '<div class="js-url" style="font-size:13px;font-weight:700;color:var(--color-orange-25);font-family:ui-monospace,monospace;'+
+        'transition:text-shadow .3s,color .3s">blitzos.app/your-app</div>'+
+      '<div class="js-status" style="font-size:11px;font-weight:600;color:color-mix(in oklab,var(--color-stone-300) 85%,transparent)">saved ·</div>'+
+      '<div style="height:2.5px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden">'+
+        '<i class="js-bar" style="display:block;height:100%;width:0;border-radius:2px;background:linear-gradient(90deg,var(--amber-2),var(--amber));transition:width .9s var(--ease)"></i></div>'+
+    '</div>'+
+    '<span class="js-open" style="flex:none;font-size:10px;font-weight:700;color:#1c1500;background:var(--amber);padding:4px 8px;border-radius:8px;opacity:.5;transition:opacity .3s">open ↗</span>';
+  inner.style.clipPath = squircle(360,96,24);
+  setSize(360,96,24,0);
+
+  var statusEl = custom.querySelector('.js-status');
+  var bar = custom.querySelector('.js-bar');
+  var url = custom.querySelector('.js-url');
+  var open = custom.querySelector('.js-open');
+  if (reduce){ statusEl.textContent='deployed · live'; bar.style.width='100%'; bar.style.background='var(--green)'; open.style.opacity='1'; return; }
+  var on=false,t=[];
+  function clear(){ t.forEach(clearTimeout); t=[]; }
+  function loop(){
+    clear();
+    statusEl.textContent='saved ·'; statusEl.style.color='color-mix(in oklab,var(--color-stone-300) 85%,transparent)';
+    bar.style.width='0'; bar.style.background='linear-gradient(90deg,var(--amber-2),var(--amber))';
+    url.style.textShadow='none'; url.style.color='var(--color-orange-25)'; open.style.opacity='.5';
+    t.push(setTimeout(function(){ statusEl.textContent='building…'; bar.style.width='70%'; }, 700));
+    t.push(setTimeout(function(){ bar.style.width='100%'; }, 1600));
+    t.push(setTimeout(function(){
+      statusEl.innerHTML='<span style="color:var(--green)">✓ deployed · live</span>';
+      bar.style.background='var(--green)';
+      url.style.textShadow='0 0 12px rgba(255,216,77,.9)'; url.style.color='var(--amber)';
+      open.style.opacity='1';
+    }, 2100));
+    t.push(setTimeout(loop, 4400));
+  }
+  onVisible(host, function(){ if(!on){on=true; loop();} }, function(){ on=false; clear(); });
+};
+
+/* ---- 8: veto — approval card, countdown ring, synthetic tap ---- */
+MINI.veto = function(host){
+  var island = islandShell('is-active show-left');
+  var inner = island.querySelector('.island__inner');
+  host.appendChild(island);
+  var setSize = makeSizer(island, inner);
+  island.querySelector('.island__left-inner').style.opacity='0';
+  var custom = island.querySelector('.island__custom');
+  custom.style.opacity='1';custom.style.display='flex';custom.style.flexDirection='column';
+  custom.style.justifyContent='center';custom.style.gap='12px';custom.style.padding='14px 16px';
+  var actions = [
+    {q:'Send reply to Maya?', sub:'Drafted · 2 min ago', done:'sent · reply to Maya'},
+    {q:'Book the 10:30?',     sub:'Calendar · hold ready', done:'booked · 10:30 hold'},
+    {q:'Post to #eng?',       sub:'Draft · awaiting you', done:'posted · #eng update'}
+  ];
+  function render(a){
+    custom.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px">'+
+        '<span class="glyph" style="width:28px;height:28px;flex:none;border-radius:8px;'+
+          'background:linear-gradient(150deg,var(--amber-2),var(--terra));display:flex;align-items:center;justify-content:center;'+
+          'box-shadow:0 2px 8px -2px rgba(255,216,77,.7)"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:#1c1500"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg></span>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-size:13px;font-weight:700;color:var(--color-orange-25)">'+a.q+'</div>'+
+          '<div style="font-size:11px;font-weight:500;color:color-mix(in oklab,var(--color-stone-300) 85%,transparent)">'+a.sub+'</div>'+
+        '</div>'+
+      '</div>'+
+      '<div style="display:flex;gap:8px">'+
+        '<button class="js-approve" style="position:relative;flex:1;border:0;cursor:pointer;font-family:inherit;'+
+          'background:var(--color-orange-25);color:#1c1917;font-weight:700;font-size:12px;padding:9px;border-radius:12px;'+
+          'overflow:hidden;transition:transform .14s var(--ease)">Approve'+
+          '<i class="js-ring" style="position:absolute;left:0;bottom:0;height:3px;width:0;background:var(--amber-2)"></i></button>'+
+        '<button style="border:0;cursor:pointer;font-family:inherit;background:rgba(255,255,255,.1);'+
+          'color:var(--color-orange-25);font-weight:600;font-size:12px;padding:9px 14px;border-radius:12px">Hold</button>'+
+      '</div>';
+  }
+  var i=0;
+  render(actions[0]);
+  inner.style.clipPath = squircle(320,110,26);
+  setSize(320,110,26,0);
+  if (reduce) return;
+  var on=false,t=[];
+  function clear(){ t.forEach(clearTimeout); t=[]; }
+  function loop(){
+    clear();
+    render(actions[i]);
+    setSize(320,110,26,reduce?0:400);
+    var ring = custom.querySelector('.js-ring');
+    var btn = custom.querySelector('.js-approve');
+    requestAnimationFrame(function(){ ring.style.transition='width 2.4s linear'; ring.style.width='100%'; });
+    t.push(setTimeout(function(){
+      btn.style.transform='scale(.96)';
+    }, 2400));
+    t.push(setTimeout(function(){
+      island.className='island is-active state-done show-left show-right';
+      var rc = island.querySelector('.js-check'); var rb = island.querySelector('.js-bars');
+      if(rb)rb.style.display='none'; if(rc)rc.style.display='flex';
+      island.querySelector('.island__peek .title').textContent = actions[i].done;
+      island.querySelector('.island__peek .sub').textContent = 'Approved by you';
+      custom.style.opacity='0';
+      setSize(268,64,24,500);
+    }, 2700));
+    t.push(setTimeout(function(){
+      island.className='island is-active show-left';
+      custom.style.opacity='1';
+      i=(i+1)%actions.length;
+      setSize(320,110,26,500);
+      loop();
+    }, 4200));
+  }
+  onVisible(host, function(){ if(!on){on=true; loop();} }, function(){ on=false; clear(); });
+};
+
+/* boot all feature visuals */
+(function(){
+  var hosts = document.querySelectorAll('[data-feature]');
+  for (var i=0;i<hosts.length;i++){
+    var fn = MINI[hosts[i].getAttribute('data-feature')];
+    if (fn) fn(hosts[i]);
+  }
+})();
+
+/* reveal-on-scroll */
+(function(){
+  var els = document.querySelectorAll('.reveal');
+  if (reduce || !('IntersectionObserver' in window)){
+    els.forEach(function(e){ e.classList.add('in'); }); return;
+  }
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, {threshold:.18});
+  els.forEach(function(e){ io.observe(e); });
+})();
+
+/* keyframes injected for feature visuals */
+(function(){
+  var s = document.createElement('style');
+  s.textContent =
+    '@keyframes typing{0%,60%,100%{opacity:.25}30%{opacity:1}}' +
+    '@keyframes blinkcur{0%,50%{opacity:1}51%,100%{opacity:0}}' +
+    '@keyframes colpulse{0%,100%{opacity:.55}50%{opacity:1}}';
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>
