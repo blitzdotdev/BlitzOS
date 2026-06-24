@@ -691,6 +691,17 @@ export function makeOsTools(ops) {
       }
     },
     {
+      path: '/blitz_chrome_show',
+      description:
+        "Bring the Blitz Chrome window to the FOREGROUND so the user can watch it — opt-in, user-initiated reveal ONLY (Blitz Chrome otherwise runs in the background and never steals focus). Pass {agent} to raise that agent's window. Use this only when the user explicitly asks to see the browser. Args: {agent?}. Returns { ok, shown }.",
+      input_schema: { type: 'object', properties: { agent: { type: 'string', description: "the agent/session id whose window to reveal (defaults to 'default')" } } },
+      handler: async ({ body }) => {
+        if (typeof ops.blitzChromeShow !== 'function') return { status: 501, body: { error: 'the Blitz browser is available only in the BlitzOS app (macOS, local)' } }
+        const a = parse(body)
+        return mapConnResult(await ops.blitzChromeShow(a.agent != null ? String(a.agent) : undefined))
+      }
+    },
+    {
       path: '/connection_save_tool',
       description:
         "Save a NAMED reusable tool for this source, keyed on its sourceId — so every connection to the same site/app reuses it, across sessions (the per-source tools.json). A TAB tool is JS (`code`, a function body); a WINDOW tool is a recipe of AX/coordinate `steps`. kind:'read' returns a value; kind:'act' MUST return its effect so a stale selector is detectable (a silent no-op is the enemy). Args: {connection, name, description?, kind?, code?|steps?}. Returns { ok, name, count }.",

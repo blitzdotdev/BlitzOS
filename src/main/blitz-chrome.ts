@@ -18,7 +18,7 @@
 // explicit opt-in for canvas apps only. Exposed to agents as the blitz_chrome_* syscalls (os-tools.mjs).
 
 import { app } from 'electron'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import http from 'node:http'
@@ -57,6 +57,19 @@ function portFree(port: number): Promise<boolean> {
 async function pickPort(): Promise<number> {
   for (let p = PORT_BASE; p < PORT_BASE + PORT_SPAN; p++) if (await portFree(p)) return p
   return PORT_BASE // last resort; the connect will surface the failure honestly
+}
+
+// Resolve the PID listening on our debug port = the real Chrome browser process. We launch via `open` (so Chrome
+// never activates), but `open`'s own PID exits immediately and is NOT Chrome's, so we look Chrome's pid up by the
+// unique debug port for a reliable, orphan-free quit (the synchronous before-quit can't await a CDP Browser.close).
+function resolvePidOnPort(port: number): number | null {
+  try {
+    const out = execFileSync('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8', timeout: 2000 }).trim()
+    const pid = parseInt(out.split('\n')[0] || '', 10)
+    return Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null // best-effort backstop; the tool-path Browser.close still gives a graceful quit
+  }
 }
 
 // A tiny GET against the DevTools HTTP endpoint (/json/version → the browser-level WebSocket url).
@@ -104,7 +117,10 @@ export interface BlitzChromeStatus {
 }
 
 class BlitzChrome {
-  private child: ChildProcess | null = null
+  private alive = false // liveness is re-based on the CDP debug endpoint (we launch via `open`, whose pid isn't Chrome's)
+  private chromePid: number | null = null // Chrome's REAL pid (resolved from the debug port) for a reliable quit
+  private monitorTimer: NodeJS.Timeout | null = null // backstop liveness poll while a window/ws may not yet exist
+  private livenessMisses = 0 // consecutive failed pings; debounced so a transient hiccup never false-kills the browser
   private supervise = false
   private wantQuit = false
   private port: number | null = null
@@ -129,7 +145,7 @@ class BlitzChrome {
     return process.platform === 'darwin' && !!findChromeBin()
   }
   isRunning(): boolean {
-    return !!this.child && this.child.exitCode == null && !this.child.killed
+    return this.alive
   }
   private isWsOpen(): boolean {
     return !!this.ws && this.ws.readyState === WebSocket.OPEN
@@ -191,31 +207,20 @@ class BlitzChrome {
       if (firstRun) this.seedBranding()
       const port = await pickPort()
       try {
-        const child = spawn(bin, this.launchArgs(port), { detached: false, stdio: 'ignore' })
-        this.child = child
+        // PRIMARY FOCUS FIX: launch NON-ACTIVATING via LaunchServices `open -g`, so the Blitz Chrome app never comes
+        // to the foreground. Spawning the binary directly makes the GUI app activate (become frontmost) → it steals
+        // the user's keyboard/window focus. CDP Input.* drives an unfocused window fine, so background launch is all
+        // we need.   -g = open in the background (the key flag)   -n = a distinct instance (--user-data-dir isolates it)
+        // Trade-off: `open` is a launcher whose own pid exits immediately and is NOT Chrome's, so liveness, self-heal
+        // and shutdown are re-based on the CDP debug endpoint below (this.alive + the monitor + ws 'close'), never on
+        // a child handle.
+        const appBundle = bin.replace(/\/Contents\/MacOS\/[^/]+$/, '') // → /Applications/Google Chrome.app
+        spawn('open', ['-g', '-n', '-a', appBundle, '--args', ...this.launchArgs(port)], { stdio: 'ignore' }).on('error', (e) =>
+          console.warn('[blitzos] Blitz Chrome launch error:', (e as Error)?.message)
+        )
         this.port = port
         this.supervise = true
         this.wantQuit = false
-        child.on('exit', () => {
-          if (this.child === child) {
-            this.child = null
-            this.port = null
-            this.unbindAll()
-            this.windows.clear()
-            try {
-              this.ws?.close()
-            } catch {
-              /* ignore */
-            }
-            this.ws = null
-          }
-          if (this.wantQuit) {
-            this.wantQuit = false
-            return
-          }
-          if (this.supervise) setTimeout(() => void this.ensure().catch(() => {}), 1200)
-        })
-        child.on('error', (e) => console.warn('[blitzos] Blitz Chrome spawn error:', (e as Error)?.message))
       } catch (e) {
         return { ok: false, error: String((e as Error)?.message || e) }
       }
@@ -223,7 +228,13 @@ class BlitzChrome {
       for (let i = 0; i < 40; i++) {
         try {
           const v = (await getJSON(port, '/json/version')) as Record<string, unknown>
-          if (v && v.webSocketDebuggerUrl) return { ok: true }
+          if (v && v.webSocketDebuggerUrl) {
+            this.alive = true
+            this.livenessMisses = 0
+            this.chromePid = resolvePidOnPort(port) // Chrome's real pid → reliable, orphan-free quit
+            this.startMonitor()
+            return { ok: true }
+          }
         } catch {
           /* not up yet */
         }
@@ -250,7 +261,12 @@ class BlitzChrome {
       const ws = new WebSocket(url, { origin: 'http://127.0.0.1', perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 })
       ws.on('message', (m: Buffer | string) => this.onMessage(String(m)))
       ws.on('close', () => {
-        if (this.ws === ws) this.ws = null
+        if (this.ws === ws) {
+          this.ws = null
+          // The browser-level socket dropping = Chrome went away. With no child pid to watch, this is the PRIMARY
+          // death signal — route it through handleDeath (idempotent; self-heals when supervised).
+          this.handleDeath()
+        }
       })
       ws.on('error', () => {
         /* surfaced to callers via send timeouts/rejection */
@@ -349,6 +365,61 @@ class BlitzChrome {
     }
   }
 
+  // Chrome went away (ws 'close', or a liveness ping failed). The SINGLE death path now that we launch via `open`
+  // (no child pid to hang an 'exit' handler on). Idempotent: tears down state once and self-heals when supervised.
+  private handleDeath(): void {
+    if (!this.alive) return // already torn down (shutdown, or a prior death) — never double-process or relaunch
+    this.alive = false
+    this.chromePid = null
+    this.stopMonitor()
+    this.port = null
+    this.unbindAll()
+    this.windows.clear()
+    try {
+      this.ws?.close()
+    } catch {
+      /* ignore */
+    }
+    this.ws = null
+    if (this.wantQuit) {
+      this.wantQuit = false
+      return
+    }
+    if (this.supervise) setTimeout(() => void this.ensure().catch(() => {}), 1200) // keep the existing relaunch backoff
+  }
+
+  // Backstop liveness poll. The ws 'close' event is the fast death signal, but before the first window opens there
+  // is no socket, so a ~2s /json/version ping catches a Chrome that died in that window too.
+  private startMonitor(): void {
+    if (this.monitorTimer) return
+    this.monitorTimer = setInterval(() => void this.pingLiveness(), 2000)
+    this.monitorTimer.unref?.() // never keep the app alive just for this timer
+  }
+  private stopMonitor(): void {
+    if (this.monitorTimer) {
+      clearInterval(this.monitorTimer)
+      this.monitorTimer = null
+    }
+  }
+  private async pingLiveness(): Promise<void> {
+    const port = this.port
+    if (!this.alive || this.wantQuit || !port) return
+    try {
+      const v = (await getJSON(port, '/json/version', 2000)) as Record<string, unknown>
+      if (v && v.webSocketDebuggerUrl) {
+        this.livenessMisses = 0
+        return // still up
+      }
+    } catch {
+      /* fall through: endpoint didn't answer this round */
+    }
+    // Require two consecutive misses so a transient hiccup (GC pause, heavy load) never false-kills the user's
+    // browser. The ws 'close' event is the immediate, definitive death signal; this poll only backstops it.
+    if (++this.livenessMisses < 2) return
+    this.livenessMisses = 0
+    this.handleDeath()
+  }
+
   private send(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<unknown> {
     if (!this.isWsOpen()) return Promise.reject(new Error('Blitz Chrome CDP socket is not open'))
     const id = ++this.nextId
@@ -388,7 +459,11 @@ class BlitzChrome {
     const key = agentId || 'default'
     const existing = this.windows.get(key)
     if (existing && existing.ready) return existing.sessionId
-    const created = (await this.send('Target.createTarget', { url: 'about:blank', newWindow: true })) as { targetId: string }
+    // FOCUS INVARIANT: open the agent's window in the BACKGROUND, and NEVER call Page.bringToFront /
+    // Target.activateTarget from here, from act(), or any automatic path — CDP Input.* drives an unfocused window
+    // fine. Foreground is opt-in only (the blitz_chrome_show tool). background:true also keeps the new window from
+    // grabbing focus inside Chrome's own window stack (Fix 1's non-activating launch is the real guarantee).
+    const created = (await this.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true })) as { targetId: string }
     const attached = (await this.send('Target.attachToTarget', { targetId: created.targetId, flatten: true })) as { sessionId: string }
     const sid = attached.sessionId
     await this.send('Page.enable', {}, sid)
@@ -610,9 +685,41 @@ class BlitzChrome {
     }
   }
 
+  // OPT-IN, USER-INITIATED reveal ("bring the agent's window to me"). This is the ONE place Blitz Chrome may take
+  // focus — never call it from session()/act()/open() or any automatic path. Exposed as the blitz_chrome_show tool.
+  async show(agentId?: string): Promise<Record<string, unknown>> {
+    if (!this.isRunning()) return { error: 'Blitz Chrome is not running' }
+    try {
+      const key = agentId || 'default'
+      const w = this.windows.get(key)
+      if (w && this.isWsOpen()) {
+        try {
+          await this.send('Target.activateTarget', { targetId: w.targetId }) // raise the right window inside Chrome
+        } catch {
+          /* best-effort */
+        }
+      }
+      // Bring the Chrome app frontmost (LaunchServices activate — no -g this time; the user asked to see it).
+      const bin = findChromeBin()
+      if (bin) {
+        const appBundle = bin.replace(/\/Contents\/MacOS\/[^/]+$/, '')
+        spawn('open', ['-a', appBundle], { stdio: 'ignore' }).on('error', () => {})
+      }
+      return { ok: true, shown: true, agentWindow: !!w }
+    } catch (e) {
+      return { error: String((e as Error)?.message || e) }
+    }
+  }
+
   async close(agentId?: string, opts: { quit?: boolean } = {}): Promise<Record<string, unknown>> {
     try {
       if (opts.quit) {
+        // The tool path CAN await, so quit gracefully over CDP first (clean window teardown), then tear down state.
+        try {
+          if (this.isWsOpen()) await this.send('Browser.close')
+        } catch {
+          /* Chrome may already be gone */
+        }
         this.shutdown()
         return { ok: true, quit: true }
       }
@@ -638,10 +745,13 @@ class BlitzChrome {
     }
   }
 
-  /** Quit the supervised Chrome (before-quit hook). */
+  /** Quit the supervised Chrome (before-quit hook + the blitz_chrome_close quit path). Synchronous so the
+   *  synchronous before-quit handler fully tears Chrome down — it can't await us. */
   shutdown(): void {
     this.supervise = false
     this.wantQuit = true
+    this.alive = false
+    this.stopMonitor()
     try {
       this.ws?.close()
     } catch {
@@ -650,12 +760,17 @@ class BlitzChrome {
     this.ws = null
     this.unbindAll()
     this.windows.clear()
-    try {
-      this.child?.kill()
-    } catch {
-      /* ignore */
+    // No child handle (we launched via `open`): SIGTERM the REAL Chrome we resolved at launch so a supervised
+    // Chrome never orphans the app. This is the reliable backstop for the synchronous app-quit path (close()'s
+    // quit branch already did a graceful CDP Browser.close before calling us).
+    if (this.chromePid) {
+      try {
+        process.kill(this.chromePid)
+      } catch {
+        /* already gone */
+      }
     }
-    this.child = null
+    this.chromePid = null
     this.port = null
   }
 
@@ -682,5 +797,6 @@ export function blitzChrome(): BlitzChrome {
 export const blitzChromeOps = {
   blitzChromeOpen: (agentId: string, opts?: { url?: string }) => blitzChrome().open(agentId, opts || {}),
   blitzChromeStatus: (agentId?: string) => blitzChrome().status(agentId),
-  blitzChromeClose: (agentId?: string, opts?: { quit?: boolean }) => blitzChrome().close(agentId, opts || {})
+  blitzChromeClose: (agentId?: string, opts?: { quit?: boolean }) => blitzChrome().close(agentId, opts || {}),
+  blitzChromeShow: (agentId?: string) => blitzChrome().show(agentId)
 }
