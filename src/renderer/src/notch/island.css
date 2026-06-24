@@ -915,6 +915,8 @@ button.isl-app-chat:active .isl-app-icon {
 /* ── the composer ROW: an attach "+" (opens the connectors view) to the left of the iMessage pill ─────────────── */
 .nh-island .isl-composer {
   display: flex;
+  flex: none; /* never shrink: the message bar keeps its OWN height, invariant to feed height. The feed (flex:1) is
+                 the sole height absorber, so a tall/scrolling feed can never squeeze + clip the input (BLI-41). */
   align-items: center; /* the attach button + send sit centered in the ONE message bar */
   gap: 2px;
   margin-top: auto; /* process view: pinned to the bottom (the feed flex:1 fills above it) */

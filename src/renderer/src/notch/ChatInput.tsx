@@ -42,6 +42,19 @@ export function ChatInput({
   useEffect(() => {
     autosize()
     if (autoFocus) ref.current?.focus()
+    // Re-autosize whenever the LAYOUT changes, not just on input: the feed growing/scrolling, the chassis width
+    // animating, or a window resize all reflow the textarea's wrapped lines. Without this the height + overflowY
+    // stay frozen at their pre-relayout values and the text clips past the chassis (overflow:hidden). The input
+    // must be invariant to chat state (BLI-41).
+    const el = ref.current
+    if (!el) return
+    const ro = new ResizeObserver(() => autosize())
+    ro.observe(el)
+    window.addEventListener('resize', autosize)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', autosize)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
