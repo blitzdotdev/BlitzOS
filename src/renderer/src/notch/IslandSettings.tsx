@@ -1,5 +1,5 @@
 import './island.css'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { IslandSession } from './types'
 
 const ARCHIVED_PREVIEW_CHARS = 68
@@ -13,6 +13,8 @@ const archivedMessagePreview = (session: IslandSession): string => {
 
 export function IslandSettings({
   menuBarH,
+  customInstructions,
+  onChangeCustomInstructions,
   workflowAlwaysShow,
   onToggleWorkflowAlwaysShow,
   showActiveTerminal,
@@ -24,6 +26,8 @@ export function IslandSettings({
   onDeleteAgent
 }: {
   menuBarH: number
+  customInstructions: string
+  onChangeCustomInstructions: (text: string) => void
   workflowAlwaysShow: boolean
   onToggleWorkflowAlwaysShow: (on: boolean) => void
   showActiveTerminal: boolean
@@ -37,6 +41,26 @@ export function IslandSettings({
   const top = Math.max(28, menuBarH) + 8
   const [archivedOpen, setArchivedOpen] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  // Local draft so typing doesn't round-trip to the main process per keystroke; persist on blur. Re-sync
+  // when the stored value arrives (it loads async on the island opening) or changes underneath us.
+  const [instructionsDraft, setInstructionsDraft] = useState(customInstructions)
+  useEffect(() => {
+    setInstructionsDraft(customInstructions)
+  }, [customInstructions])
+  // Flush a pending edit if the panel unmounts (view switched via keyboard) before onBlur fires. Refs keep
+  // the cleanup reading the latest values without re-subscribing the effect each keystroke.
+  const draftRef = useRef(instructionsDraft)
+  draftRef.current = instructionsDraft
+  const savedRef = useRef(customInstructions)
+  savedRef.current = customInstructions
+  const onChangeRef = useRef(onChangeCustomInstructions)
+  onChangeRef.current = onChangeCustomInstructions
+  useEffect(
+    () => () => {
+      if (draftRef.current !== savedRef.current) onChangeRef.current(draftRef.current)
+    },
+    []
+  )
   const archivedCount = archivedSessions.length
   return (
     <div className="nh-island isl-settings" style={{ paddingTop: top }}>
@@ -44,6 +68,22 @@ export function IslandSettings({
         <span className="isl-settings-title">Settings</span>
       </div>
       <div className="isl-settings-list">
+        <div className="isl-setting-row isl-setting-row-col">
+          <span className="isl-setting-copy">
+            <span className="isl-setting-name">Custom instructions</span>
+            <span className="isl-setting-note">Added to every agent&rsquo;s first message. Applies to new and restarted sessions.</span>
+          </span>
+          <textarea
+            className="isl-setting-textarea"
+            value={instructionsDraft}
+            placeholder="e.g. Keep answers concise. Prefer TypeScript. I'm Palash, working on BlitzOS."
+            rows={4}
+            onChange={(e) => setInstructionsDraft(e.currentTarget.value)}
+            onBlur={() => {
+              if (instructionsDraft !== customInstructions) onChangeCustomInstructions(instructionsDraft)
+            }}
+          />
+        </div>
         <label className="isl-setting-row">
           <span className="isl-setting-copy">
             <span className="isl-setting-name">Always show workflow board</span>

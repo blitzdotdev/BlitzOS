@@ -1,8 +1,12 @@
 // Types for the shared agent-runtime core (agent-runtime.mjs).
-export function buildBootstrap(url: string, sessionId?: string, bootTask?: string | null, workspace?: string | null): string
+export function buildBootstrap(url: string, sessionId?: string, bootTask?: string | null, workspace?: string | null, userInstructions?: string | null): string
 /** Register the per-agent standing-duty provider (e.g. the onboarding interview). Re-read on every
  *  (re)launch by prepareAgentLaunch; return null for no duty. Policy-free: the text is the caller's. */
 export function setBootTaskProvider(fn: ((sessionId: string) => string | null | undefined) | null): void
+/** Register the user's standing custom-instructions provider — text injected into every session's first
+ *  message (both backends) wrapped in <user-instructions> tags. Re-read on every (re)launch by
+ *  prepareAgentLaunch; return null/empty for none. Policy-free: the text is the user's. */
+export function setUserInstructionsProvider(fn: ((sessionId: string) => string | null | undefined) | null): void
 /** Write the `blitz` workflow runner shim (-> blitzscript/run.mjs) + copy the orchestrator duty doc into a workspace's
  *  `.blitzos` dir. Idempotent; called per (re)launch by prepareAgentLaunch so the runner is always current. */
 export function writeBlitzShim(blitzDir: string): void

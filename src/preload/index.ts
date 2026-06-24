@@ -142,6 +142,13 @@ const api = {
   agentRuntimeSet(runtime: 'codex-serverless' | 'claude'): Promise<AgentRuntimeStatus> {
     return ipcRenderer.invoke('os:agent-runtime:set', runtime) as Promise<AgentRuntimeStatus>
   },
+  /** App-level custom instructions injected into every agent session's first message (set in Settings). */
+  customInstructionsGet(): Promise<{ text: string }> {
+    return (ipcRenderer.invoke('os:custom-instructions:get') as Promise<{ text: string }>).catch(() => ({ text: '' }))
+  },
+  customInstructionsSet(text: string): Promise<{ ok: boolean; text: string }> {
+    return ipcRenderer.invoke('os:custom-instructions:set', text) as Promise<{ ok: boolean; text: string }>
+  },
   /** Action-items inbox (human side): list / resolve (tick) / clear a resolved item. */
   actionList(status?: string): Promise<unknown[]> {
     return (ipcRenderer.invoke('os:action-list', status) as Promise<unknown[]>).catch(() => [])

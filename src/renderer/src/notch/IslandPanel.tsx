@@ -408,17 +408,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
         }
       }}
     >
-      <button
-        type="button"
-        aria-label="New chat"
-        title="New chat"
-        className="isl-chip isl-chip-new"
-        onClick={onNewAgent}
-      >
-        <svg className="isl-pen" viewBox="0 0 24 24" aria-hidden focusable="false">
-          <path d={PLUS_PATH} fill="currentColor" />
-        </svg>
-      </button>
+      {/* The agent tabs scroll INSIDE this rail; the new-chat + is a sibling pinned to the RIGHT (Chrome-style),
+          so it stays visible no matter how many tabs there are — the tabs scroll under it instead of pushing it off. */}
+      <div className="isl-tab-rail">
       {sessions.map((s, i) => {
         const selected = page === i + 1
         const editing = editingId === s.id
@@ -489,6 +481,18 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           </button>
         )
       })}
+      </div>
+      <button
+        type="button"
+        aria-label="New chat"
+        title="New chat"
+        className="isl-chip isl-chip-new"
+        onClick={onNewAgent}
+      >
+        <svg className="isl-pen" viewBox="0 0 24 24" aria-hidden focusable="false">
+          <path d={PLUS_PATH} fill="currentColor" />
+        </svg>
+      </button>
     </div>
   )
 

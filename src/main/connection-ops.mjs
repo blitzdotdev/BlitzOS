@@ -108,6 +108,7 @@ export function makeConnectionOps({
   let windowLink = null // the window link (connection-window-link.ts, Electron-only) registers via setWindowLink
   let safariLink = null // the Safari link (connection-safari-link.mjs, Apple Events) registers via setSafariLink
   let installer = null // the extension force-install (connection-install.ts, Electron-only) registers via setInstaller
+  let browserLauncher = null // ensures the dedicated AI Chrome is running (ai-browser.ts, Electron-only) via setBrowserLauncher
 
   // ---- per-source tool store: <workspace>/.blitzos/connections/<sourceId>/{tools.json, description} ----
   function storeDir(sourceId) {
@@ -1309,6 +1310,42 @@ export function makeConnectionOps({
     if (typeof installer !== 'function') return { error: 'extension install is available only in the BlitzOS app (macOS, local)' }
     return installer()
   }
+  // The AI-browser launcher (ai-browser.ts, Electron-only): ensures the dedicated AI Chrome process is running
+  // so the connector inside it can connect, before we try to open the agent's window.
+  function setBrowserLauncher(fn) {
+    browserLauncher = fn
+  }
+  // Open (or get) THIS agent's dedicated browsing window in the BlitzOS AI Chrome — an isolated profile (shared
+  // login across agents) driven via CDP (trusted input + screenshots + canvas apps). Ensures the AI Chrome is
+  // running first; if its connector isn't loaded yet, returns a navigable setup hint instead of a hard failure.
+  async function connectionOpenBrowser(agentId, opts = {}) {
+    if (typeof browserLauncher === 'function') {
+      try {
+        await browserLauncher()
+      } catch {
+        /* launch is best-effort; the connected-check below is the real gate */
+      }
+    }
+    if (!tabLink || typeof tabLink.openAgentWindow !== 'function') {
+      return { error: 'the AI browser is available only in the BlitzOS app (macOS, local)' }
+    }
+    if (typeof tabLink.isConnected === 'function' && !tabLink.isConnected()) {
+      return {
+        error:
+          'the BlitzOS AI Chrome is starting, but its connector isn’t loaded yet. Finish the one-time setup in the AI Chrome window (chrome://extensions → Developer mode → drag the connector folder), then try again.',
+        needsSetup: true
+      }
+    }
+    return attachBriefing(await tabLink.openAgentWindow(agentId != null ? String(agentId) : '', opts || {}))
+  }
+  // Navigate a connected TAB (the AI-browser window, or any connected Chrome tab) to a URL.
+  async function connectionNavigate(connId, url) {
+    const r = rec(connId)
+    if (!r) return { error: `no connection ${connId}` }
+    const out = await dispatch(r, 'navigate', { url: String(url || '') })
+    if (out && out.error) return out
+    return out && typeof out === 'object' && 'effect' in out ? { ok: true, effect: cap(out.effect) } : { ok: true, ...(out && typeof out === 'object' ? out : {}) }
+  }
 
   // ================= the first-party TOOL REGISTRY (plans/connection-tool-registry.md) =================
   // A standalone HTTP service we host + vet. The agent SEARCHES it, GETS an entry, and ADDS it to its own
@@ -1427,6 +1464,9 @@ export function makeConnectionOps({
     connectionRestoreAll,
     setInstaller,
     connectionInstallExtension,
+    setBrowserLauncher,
+    connectionOpenBrowser,
+    connectionNavigate,
     // adapter / registry API (used by the tab + window adapters and by tests)
     connectionIsLive,
     connectionInfo,

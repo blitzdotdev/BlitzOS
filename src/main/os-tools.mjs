@@ -123,7 +123,8 @@ async function provisionBlitzApp(slug) {
 /**
  * Build the tool registry bound to a runtime's primitive operations.
  * @param {object} ops — { getState()->state, workspaceContext()->{workspace,workspace_path,siblings}, say(text),
- *   steer(text,agentId), userMessage(text,agentId), runWorkflow(spec)->{ok,runId}, setTheme({accent,accentDeep})->{ok},
+ *   steer(text,agentId), listAgents()->string[] (live agent-id roster, powers /broadcast),
+ *   userMessage(text,agentId), runWorkflow(spec)->{ok,runId}, setTheme({accent,accentDeep})->{ok},
  *   spawnAgent/closeAgent/renameAgent, startWorkflow, setOrchestrators, spawnTerminal/listTerminals/sendToTerminal/
  *   readTerminal/stopTerminal/removeTerminal, requestAction/listActions/resolveAction, and the connection_* ops }
  */
@@ -206,6 +207,28 @@ export function makeOsTools(ops) {
         if (!text.trim()) return { status: 400, body: { error: 'text required' } }
         ops.steer(text, agent)
         return { ok: true }
+      }
+    },
+    {
+      path: '/broadcast',
+      description:
+        "BROADCAST to the whole agent fleet: fan ONE directive out to EVERY other live agent in this workspace at once (steer-all). Same wake semantics as `steer` — it lands in each peer's chat as a fresh directive and triggers their `/events` loop, so they actually react — but you name NO target: it goes to all peers except yourself. Use it for fleet-wide signals the other agents should act on: 'I'm refactoring auth, hands off src/auth/**', 'API types published — re-read types.ts', 'build is green on main', 'HEAD moved to <sha>; files X/Y/Z changed — re-read before continuing'. NOT for talking to the user (that is `say`), and NOT a substitute for a targeted nudge to ONE agent (that is `steer`). Each delivered message is tagged with your agent id so recipients know who broadcast it. Args: {text, from}. `from` is YOUR OWN agent id (REQUIRED — it excludes you from your own broadcast so you don't wake yourself in a loop, and tells recipients the source). Returns { ok, from, recipients:[ids], delivered:N }.",
+      input_schema: { type: 'object', required: ['from', 'text'], properties: { from: { type: 'string' }, text: { type: 'string' } } },
+      handler: ({ body }) => {
+        const b = parse(body)
+        if (typeof ops.steer !== 'function') return { status: 501, body: { error: 'broadcast unavailable: steer not supported in this transport' } }
+        if (typeof ops.listAgents !== 'function') return { status: 501, body: { error: 'broadcast unavailable: agent roster not exposed in this transport' } }
+        const from = String(b.from ?? '')
+        const text = String(b.text || '')
+        if (!from) return { status: 400, body: { error: 'from required (your own agent id — so you are excluded from your own broadcast)' } }
+        if (!text.trim()) return { status: 400, body: { error: 'text required' } }
+        // Fan `steer` over the live roster, minus the sender, minus dupes. Tag each delivery with the source id
+        // so a recipient can tell a fleet broadcast from a human directive (both land via the same wake path).
+        const roster = (ops.listAgents() || []).map(String)
+        const recipients = [...new Set(roster)].filter((id) => id && id !== from)
+        const tagged = `[broadcast from agent ${from}] ${text}`
+        for (const id of recipients) ops.steer(tagged, id)
+        return { ok: true, from, recipients, delivered: recipients.length }
       }
     },
     {
@@ -518,6 +541,107 @@ export function makeOsTools(ops) {
         if (!a.connection) return { status: 400, body: { error: 'connection (connId) required' } }
         if (typeof a.code !== 'string') return { status: 400, body: { error: 'code (a JS function body) required' } }
         return mapConnResult(await ops.connectionRunJs(String(a.connection), { code: a.code, args: a.args, max: a.max }))
+      }
+    },
+    {
+      path: '/connection_open_browser',
+      description:
+        "Open (or get) THIS agent's own browsing window in the dedicated BlitzOS AI Chrome — an isolated profile (shared login across agents) driven via CDP: TRUSTED input (canvas apps like Google Docs/Figma + background tabs, no focus steal), screenshots, and the accessibility tree. Returns a tab connection { connId, ... } you then drive with connection_navigate / connection_read (pass {screenshot:true} or {ax:true}) / connection_act (pass {trusted:true} or {x,y} for the trusted path) / connection_run_js. If the AI Chrome's connector isn't loaded yet it returns { needsSetup:true } with the one-time setup hint. Args: {agent, url?}.",
+      input_schema: { type: 'object', properties: { agent: { type: 'string', description: 'your agent/session id — owns this window' }, url: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionOpenBrowser !== 'function') return { status: 501, body: { error: 'the AI browser is available only in the BlitzOS app (macOS, local)' } }
+        const a = parse(body)
+        return mapConnResult(await ops.connectionOpenBrowser(a.agent != null ? String(a.agent) : '', { url: a.url, title: a.title }))
+      }
+    },
+    {
+      path: '/connection_navigate',
+      description:
+        'Navigate a connected TAB to a URL — the AI-browser window, or any connected Chrome tab. Args: {connection, url}. Returns { ok, effect }.',
+      input_schema: { type: 'object', required: ['connection', 'url'], properties: { connection: { type: 'string' }, url: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.connectionNavigate !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
+        const a = parse(body)
+        if (!a.connection) return { status: 400, body: { error: 'connection (connId) required' } }
+        if (!a.url) return { status: 400, body: { error: 'url required' } }
+        return mapConnResult(await ops.connectionNavigate(String(a.connection), String(a.url)))
+      }
+    },
+
+    // ---- Blitz Chrome (blitz-chrome.ts): the SECOND, extension-free browsing path. A dedicated Chrome WE
+    // launch, driven over --remote-debugging-port (CDP) with NO extension and NO manual setup. Separate from
+    // the connection_* / AI-Chrome (extension) path. Each agent gets its own window in the shared "Blitz"
+    // profile. Electron-only — these return 501 on the headless server transport.
+    {
+      path: '/blitz_chrome_open',
+      description:
+        "Open (or get) THIS agent's window in the dedicated **Blitz Chrome** — a separate, isolated Chrome we launch and drive over CDP (the debug port), with NO extension and NO setup step. First call launches + brands the 'Blitz' profile. Pass {url} to also navigate. Returns { ok, agent, url, title }. Drive it afterwards with blitz_chrome_navigate / blitz_chrome_screenshot / blitz_chrome_read / blitz_chrome_act. Args: {agent?, url?}.",
+      input_schema: { type: 'object', properties: { agent: { type: 'string', description: 'your agent/session id — owns this window (defaults to "default")' }, url: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.blitzChromeOpen !== 'function') return { status: 501, body: { error: 'the Blitz browser is available only in the BlitzOS app (macOS, local)' } }
+        const a = parse(body)
+        return mapConnResult(await ops.blitzChromeOpen(a.agent != null ? String(a.agent) : '', { url: a.url }))
+      }
+    },
+    {
+      path: '/blitz_chrome_navigate',
+      description: 'Navigate THIS agent\'s Blitz Chrome window to a URL (over CDP). Args: {agent?, url}. Returns { ok, effect:{url,title} }.',
+      input_schema: { type: 'object', required: ['url'], properties: { agent: { type: 'string' }, url: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.blitzChromeNavigate !== 'function') return { status: 501, body: { error: 'the Blitz browser is available only in the BlitzOS app (macOS, local)' } }
+        const a = parse(body)
+        if (!a.url) return { status: 400, body: { error: 'url required' } }
+        return mapConnResult(await ops.blitzChromeNavigate(a.agent != null ? String(a.agent) : '', String(a.url)))
+      }
+    },
+    {
+      path: '/blitz_chrome_screenshot',
+      description: "Capture a PNG of THIS agent's Blitz Chrome window (real pixels, via CDP Page.captureScreenshot). Saves a file and returns its path. Args: {agent?, path?}. Returns { ok, path, bytes }.",
+      input_schema: { type: 'object', properties: { agent: { type: 'string' }, path: { type: 'string', description: 'optional output file path; defaults to a temp file' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.blitzChromeScreenshot !== 'function') return { status: 501, body: { error: 'the Blitz browser is available only in the BlitzOS app (macOS, local)' } }
+        const a = parse(body)
+        return mapConnResult(await ops.blitzChromeScreenshot(a.agent != null ? String(a.agent) : '', { path: a.path }))
+      }
+    },
+    {
+      path: '/blitz_chrome_read',
+      description: "Read THIS agent's Blitz Chrome page from the REAL DOM via injected JS (not the accessibility tree). mode:'text' (default) = visible innerText, 'html' = serialized DOM markup, 'title' = the page title; all optionally scoped by CSS `selector`. mode:'ax' is an explicit opt-in for canvas apps (Docs/Figma) that have no meaningful DOM text. Capped (pass {max} bytes for more). Args: {agent?, mode?, selector?, max?}. Returns { ok, mode, result }.",
+      input_schema: { type: 'object', properties: { agent: { type: 'string' }, mode: { type: 'string', enum: ['text', 'html', 'title', 'ax'] }, selector: { type: 'string' }, max: { type: 'number' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.blitzChromeRead !== 'function') return { status: 501, body: { error: 'the Blitz browser is available only in the BlitzOS app (macOS, local)' } }
+        const a = parse(body)
+        return mapConnResult(await ops.blitzChromeRead(a.agent != null ? String(a.agent) : '', { mode: a.mode, selector: a.selector, max: a.max }))
+      }
+    },
+    {
+      path: '/blitz_chrome_act',
+      description: "Act on THIS agent's Blitz Chrome window via TRUSTED CDP Input.* (drives canvas apps; no focus steal). action:'type' (text, optional `selector` to focus first), 'click' ({x,y} or a CSS `selector`), 'key' (a named key like Enter/Tab/Escape/ArrowDown). Args: {agent?, action, text?, selector?, x?, y?, key?}. Returns { ok, effect }.",
+      input_schema: { type: 'object', properties: { agent: { type: 'string' }, action: { type: 'string', enum: ['type', 'click', 'key'] }, text: { type: 'string' }, selector: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, key: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.blitzChromeAct !== 'function') return { status: 501, body: { error: 'the Blitz browser is available only in the BlitzOS app (macOS, local)' } }
+        const a = parse(body)
+        return mapConnResult(await ops.blitzChromeAct(a.agent != null ? String(a.agent) : '', { action: a.action, text: a.text, selector: a.selector, x: a.x, y: a.y, key: a.key }))
+      }
+    },
+    {
+      path: '/blitz_chrome_status',
+      description: 'Status of the Blitz Chrome (extension-free CDP browser): { available, running, connected, port, profileDir, windows }. Args: {agent?}.',
+      input_schema: { type: 'object', properties: { agent: { type: 'string' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.blitzChromeStatus !== 'function') return { status: 501, body: { error: 'the Blitz browser is available only in the BlitzOS app (macOS, local)' } }
+        const a = parse(body)
+        return await ops.blitzChromeStatus(a.agent != null ? String(a.agent) : undefined)
+      }
+    },
+    {
+      path: '/blitz_chrome_close',
+      description: "Close THIS agent's Blitz Chrome window, or quit the whole Blitz Chrome with {quit:true}. Args: {agent?, quit?}. Returns { ok }.",
+      input_schema: { type: 'object', properties: { agent: { type: 'string' }, quit: { type: 'boolean' } } },
+      handler: async ({ body }) => {
+        if (typeof ops.blitzChromeClose !== 'function') return { status: 501, body: { error: 'the Blitz browser is available only in the BlitzOS app (macOS, local)' } }
+        const a = parse(body)
+        return mapConnResult(await ops.blitzChromeClose(a.agent != null ? String(a.agent) : undefined, { quit: !!a.quit }))
       }
     },
     {

@@ -17,13 +17,15 @@ import { makeWindowLink } from './connection-window-link'
 import { makeAttachmentStore } from './attachment-store.mjs'
 import { makeSafariLink } from './connection-safari-link.mjs'
 import { startConnectorServer, installConnector, isConnectorPolicyInstalled } from './connection-install'
+import { aiBrowser } from './ai-browser'
+import { blitzChrome } from './blitz-chrome'
 import { isChromiumBrowser, decideDrop } from './browser-drop.mjs'
 import { wireLauncher, registerLauncher } from './launcher'
 import { wireWorkflowHost, subscribe as wfSubscribe, snapshot as wfSnapshot } from './workflow-host.mjs'
 import { wireEnrichment, spawnWorkflowEnrichment } from './workflow-enrichment.mjs'
 // The standalone island.ts window is RETIRED — the notch is now the real UI window itself (sandwich overlay mode);
 // the notch IPC is wired inline below. (island.ts stays on disk but is no longer imported.)
-import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, orchestratorBootTask } from './agent-runtime.mjs'
+import { AGENT_RUNTIME_CLAUDE, AGENT_RUNTIME_CODEX_SERVERLESS, DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime, prepareAgentLaunch, setBootTaskProvider, setUserInstructionsProvider, orchestratorBootTask } from './agent-runtime.mjs'
 import { startNarrator } from './agent-narrator.mjs'
 import { readTerminalMeta } from './terminal-manager.mjs'
 import { wasInterrupted } from './agent-interrupt.mjs'
@@ -1388,6 +1390,24 @@ app.whenReady().then(() => {
     }
   })
   electronConnections.setTabLink(tabLink)
+  // The dedicated BlitzOS AI Chrome (CDP) — an isolated Chrome instance the connector is loaded into, where each
+  // agent gets its own background window (connection_open_browser). connectionOpenBrowser ensures it's running
+  // first via this launcher; the connector inside it connects to the SAME tab-link above. macOS + local only.
+  electronConnections.setBrowserLauncher(() => aiBrowser().ensure())
+  app.on('before-quit', () => {
+    try {
+      aiBrowser().shutdown()
+    } catch {
+      /* ignore */
+    }
+    // The SECOND, extension-free browsing path (blitz-chrome.ts, driven over --remote-debugging-port). Lazily
+    // launched on the first blitz_chrome_* call; quit it here so a supervised Chrome never outlives the app.
+    try {
+      blitzChrome().shutdown()
+    } catch {
+      /* ignore */
+    }
+  })
   tabLink
     .start()
     .then((r) => {
@@ -1522,6 +1542,22 @@ app.whenReady().then(() => {
     mkdirSync(app.getPath('userData'), { recursive: true })
     writeFileSync(agentRuntimePrefsFile(), JSON.stringify({ runtime }, null, 2))
   }
+  // App-level custom instructions: prose the user sets once in Settings, injected into EVERY agent
+  // session's first message (via the setUserInstructionsProvider seam below). Persisted as a small JSON
+  // file in userData, read fresh on each agent (re)launch so edits apply to new/restarted sessions.
+  const customInstructionsFile = (): string => join(app.getPath('userData'), 'custom-instructions.json')
+  const readCustomInstructions = (): string => {
+    try {
+      const parsed = JSON.parse(readFileSync(customInstructionsFile(), 'utf8')) as { text?: unknown }
+      return typeof parsed?.text === 'string' ? parsed.text : ''
+    } catch {
+      return ''
+    }
+  }
+  const writeCustomInstructions = (text: string): void => {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(customInstructionsFile(), JSON.stringify({ text }, null, 2))
+  }
   const resolveSelectedAgentRuntime = (runtime: string): AgentRuntimeSpec | null => {
     const selected = selectableAgentRuntime(runtime)
     if (selected === AGENT_RUNTIME_CODEX_SERVERLESS) {
@@ -1593,6 +1629,15 @@ app.whenReady().then(() => {
     writePreferredAgentRuntime(selected)
     applyAgentRuntime(next)
     return agentRuntimeStatus()
+  })
+  // Custom-instructions: the provider feeds buildBootstrap on every (re)launch; the IPC pair backs the
+  // Settings text field (get on open, set on edit). Same text for every agent (sessionId is ignored today).
+  setUserInstructionsProvider(() => readCustomInstructions() || null)
+  ipcMain.handle('os:custom-instructions:get', () => ({ text: readCustomInstructions() }))
+  ipcMain.handle('os:custom-instructions:set', (_e, value: string) => {
+    const text = typeof value === 'string' ? value : ''
+    writeCustomInstructions(text)
+    return { ok: true, text }
   })
   // PRE-FLIGHT: the brain = a managed agent backend inside a tmux terminal. If either is missing on this
   // Mac (fresh VM; packaged GUI apps also don't get homebrew's PATH — both resolvers use the login shell),
@@ -1866,3 +1911,4 @@ function scanCrashReports(fromTs: number, toTs: number, pid?: number): { at: num
     return null
   }
 }
+

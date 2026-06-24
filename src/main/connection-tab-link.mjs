@@ -5,8 +5,9 @@
 // binds a connection in the registry whose ADAPTER forwards read/act/run_js to the extension over the socket.
 // Tab nav/title/close events become connectionNotify() so the representation widget stays fresh.
 //
-// Coordinate clicks / key events / screenshots are NOT here (the extension never uses chrome.debugger) — the
-// window adapter's native path handles those for a Chrome window too (it's just a macOS window).
+// CDP (chrome.debugger) IS available now (cdp-browser plan): the adapter forwards a raw `cdp` verb and a
+// `navigate` verb, and screenshot/trusted-input reads+acts ride the normal read/act verbs (the SW routes them
+// to CDP by their args). openAgentWindow opens a per-agent BACKGROUND window in the dedicated AI Chrome.
 
 import { WebSocketServer } from 'ws'
 import { randomUUID } from 'node:crypto'
@@ -206,6 +207,61 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
     }
   }
 
+  // The per-tab ADAPTER the registry calls (read/act/run_js/cdp/navigate forwarded to the extension over the
+  // socket). Shared by connectTab (a user-connected tab) and openAgentWindow (a fresh AI-browser window).
+  // run_js/act/navigate keep their existing shapes; `cdp` is a raw passthrough (method/params at top level so
+  // the SW's cdp verb reads them); screenshot/trusted reads+acts ride the normal read/act verbs (the SW routes
+  // those to CDP based on their args), so nothing special is needed here for them.
+  function buildAdapter(id) {
+    return {
+      call: async (verb, args) => {
+        if (verb === 'run_js') {
+          return cmd({ cmd: 'run_js', tabId: id, code: String((args && args.code) || ''), args: (args && args.args) || {} })
+        }
+        if (verb === 'cdp') {
+          return cmd({ cmd: 'cdp', tabId: id, method: args && args.method, params: (args && args.params) || {} })
+        }
+        if (verb === 'navigate') {
+          const r = await cmd({ cmd: 'navigate', tabId: id, url: (args && args.url) || '' })
+          return r && r.error ? r : { effect: r }
+        }
+        if (verb === 'act') {
+          const r = await cmd({ cmd: 'act', tabId: id, args: args || {} })
+          return r && r.error ? r : { effect: r }
+        }
+        return cmd({ cmd: verb, tabId: id, args: args || {} })
+      },
+      drop: () => {
+        tabToConn.delete(id)
+      }
+    }
+  }
+
+  // Open a fresh BACKGROUND window in the AI Chrome (one per agent) and bind it as a tab connection owned by
+  // that agent. The new window is focused:false (no focus steal); its tab is driven by CDP (trusted input +
+  // screenshots) the same as any connected tab. Reuses the per-agent window via the dedup in connectionBind only
+  // indirectly — callers (connectionOpenBrowser) decide whether to reuse an existing live window for the agent.
+  async function openAgentWindow(agentId, opts = {}) {
+    const url = opts.url || 'about:blank'
+    const r = await cmd({ cmd: 'newWindow', url })
+    if (!r || r.error) return { error: (r && r.error) || 'could not open an AI-browser window (is the connector loaded in the AI Chrome?)' }
+    const id = Number(r.tabId)
+    if (!Number.isFinite(id)) return { error: 'the AI Chrome opened a window but returned no tab id' }
+    const sourceId = opts.sourceId || sourceIdForUrl(url)
+    const adapter = buildAdapter(id)
+    const bound = connectionOps.connectionBind({
+      type: 'tab',
+      sourceId,
+      title: opts.title || 'AI browser',
+      capabilities: { run_js: true, act: true, cdp: true },
+      adapter,
+      ref: id,
+      agentId
+    })
+    tabToConn.set(id, bound.connId)
+    return { connId: bound.connId, surfaceId: bound.surfaceId, sourceId, tab: { tabId: id, url } }
+  }
+
   async function connectTab(tabId, opts = {}) {
     const id = Number(tabId)
     // DEDUP: this exact tab is already connected (and live) → re-attach, don't spawn a duplicate connection+widget.
@@ -223,22 +279,8 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
     if (!tab) tab = (await listTabs()).find((t) => t.tabId === id)
     if (!tab) return { error: `tab ${tabId} not found (is it still open?)` }
     const sourceId = opts.sourceId || sourceIdForUrl(tab.url)
-    const adapter = {
-      call: async (verb, args) => {
-        if (verb === 'run_js') {
-          return cmd({ cmd: 'run_js', tabId: id, code: String((args && args.code) || ''), args: (args && args.args) || {} })
-        }
-        if (verb === 'act') {
-          const r = await cmd({ cmd: 'act', tabId: id, args: args || {} })
-          return r && r.error ? r : { effect: r }
-        }
-        return cmd({ cmd: verb, tabId: id, args: args || {} })
-      },
-      drop: () => {
-        tabToConn.delete(id)
-      }
-    }
-    const bound = connectionOps.connectionBind({ type: 'tab', sourceId, title: opts.title || tab.title, capabilities: { run_js: true, act: true }, adapter, ref: id, agentId: opts.agentId })
+    const adapter = buildAdapter(id)
+    const bound = connectionOps.connectionBind({ type: 'tab', sourceId, title: opts.title || tab.title, capabilities: { run_js: true, act: true, cdp: true }, adapter, ref: id, agentId: opts.agentId })
     tabToConn.set(id, bound.connId)
     return { connId: bound.connId, surfaceId: bound.surfaceId, sourceId, tab: { tabId: id, title: tab.title, url: tab.url } }
   }
@@ -259,6 +301,7 @@ export function makeTabLink({ connectionOps, port = DEFAULT_TAB_LINK_PORT, token
     listTabs,
     listWindows,
     connectTab,
+    openAgentWindow,
     isConnected: isUp,
     get extensionId() {
       return CONNECTOR_EXTENSION_ID
