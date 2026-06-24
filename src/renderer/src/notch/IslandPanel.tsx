@@ -87,9 +87,11 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const feedRef = useRef<HTMLDivElement>(null)
   const lyricsRef = useRef<HTMLDivElement>(null)
   const tabRailRef = useRef<HTMLDivElement>(null) // the horizontally-scrolling agent-tab rail (the + sits OUTSIDE it)
-  // Attach mode in an AGENT chat: lock the island to the height it had BEFORE attach opened, so the attachment panel
-  // rises only as tall as its own content and the chat feed shrinks to fit (instead of the island growing). We keep
-  // the last closed-state height in a ref (recorded after every closed render) and apply it while attach is open.
+  // Attach mode in an AGENT chat: hold the island to AT LEAST the height it had BEFORE attach opened (a FLOOR via
+  // min-height, NOT a hard cap), so a tall chat feed shrinks to absorb the attach panel and the island does not jump.
+  // On a short/empty chat the feed cannot shrink the full ~168px, so the floor lets the island grow to fit the boxes
+  // instead of clipping them (the bug when opening attach on a brand-new agent chat). We keep the last closed-state
+  // height in a ref (recorded after every closed render) and apply it as min-height while attach is open.
   const panelRef = useRef<HTMLDivElement>(null)
   const closedHeightRef = useRef<number | null>(null)
   const appReturnScrollTopRef = useRef<number | null>(null)
@@ -780,7 +782,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     <div
       ref={panelRef}
       className={`nh-island isl-process${attachOpen ? ' isl-attaching' : ''}${openApp ? ' isl-app-viewing' : ''}`}
-      style={lockHeight && !openApp ? { paddingTop: top, height: lockHeight } : { paddingTop: top }}
+      style={lockHeight && !openApp ? { paddingTop: top, minHeight: lockHeight } : { paddingTop: top }}
     >
       {appLayer}
       {viewerControls}

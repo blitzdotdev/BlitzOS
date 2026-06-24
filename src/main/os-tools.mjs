@@ -601,7 +601,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_run_js',
       description:
-        "Run JavaScript in a connected TAB's page (tab-only — a window returns capability_unavailable). `code` is a function body: use `return` to read a value; `args` are passed in as the argument. Args: {connection, code, args?, max?}. Returns { result }.",
+        "Run JavaScript in a connected TAB's page (tab-only — a window returns capability_unavailable). `code` is a function BODY: end with a top-level `return` to read a value. A bare expression or an IIFE returns null while STILL running its side effects, so a paste/click silently fires twice — always `return`, never wrap in an IIFE. `args` are passed in as the argument. Args: {connection, code, args?, max?}. Returns { result }.",
       input_schema: { type: 'object', required: ['connection', 'code'], properties: { connection: { type: 'string' }, code: { type: 'string' }, args: { type: 'object' }, max: { type: 'number' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionRunJs !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
