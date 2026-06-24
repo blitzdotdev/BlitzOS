@@ -1018,8 +1018,8 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
       }
     })
   })
-  // Hovering the floating drag-helper (the user is heading to grab the icon) HIDES the island so the full Settings
-  // window is visible to drop into; the grant poll (startDragPoll) re-shows it via os:notch-open.
+  // Hovering the floating drag-helper (the user is heading to grab the icon) VEILS the island (hidden but still
+  // mounted) so the full Settings window is visible to drop into; closeDragHelper unveils it (grant / skip / leave).
   ipcMain.on('onboarding:drag-hover', () => send('os:island-veil', true))
   // Open a drag-list permission step (FDA / Accessibility / Screen Recording): navigate Settings to
   // the pane + raise the floating drag-helper over it + poll until granted (→ permission-granted).

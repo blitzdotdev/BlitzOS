@@ -459,18 +459,33 @@ class BlitzChrome {
     const key = agentId || 'default'
     const existing = this.windows.get(key)
     if (existing && existing.ready) return existing.sessionId
-    // FOCUS INVARIANT: open the agent's window in the BACKGROUND, and NEVER call Page.bringToFront /
+    // FOCUS INVARIANT: open/adopt the agent's window in the BACKGROUND, and NEVER call Page.bringToFront /
     // Target.activateTarget from here, from act(), or any automatic path — CDP Input.* drives an unfocused window
-    // fine. Foreground is opt-in only (the blitz_chrome_show tool). background:true also keeps the new window from
-    // grabbing focus inside Chrome's own window stack (Fix 1's non-activating launch is the real guarantee).
-    const created = (await this.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true })) as { targetId: string }
-    const attached = (await this.send('Target.attachToTarget', { targetId: created.targetId, flatten: true })) as { sessionId: string }
+    // fine. Foreground is opt-in only (the blitz_chrome_show tool).
+    // REUSE the window Chrome already opened (the launch `about:blank`) instead of spawning a new one, so a single
+    // agent's work stays in ONE window and the launch tab is not orphaned. Adopt ONLY a blank tab not already bound
+    // to another agent (never clobber a real page); spawn a fresh background window only when there is none.
+    let targetId: string | null = null
+    try {
+      const got = (await this.send('Target.getTargets', {})) as { targetInfos?: Array<{ targetId: string; type: string; url?: string }> }
+      const bound = new Set([...this.windows.values()].map((w) => w.targetId))
+      const isBlank = (u?: string): boolean => !u || u === 'about:blank' || u.startsWith('chrome://newtab') || u.startsWith('chrome://new-tab')
+      const free = (got.targetInfos || []).find((t) => t.type === 'page' && !bound.has(t.targetId) && isBlank(t.url))
+      if (free) targetId = free.targetId
+    } catch {
+      /* getTargets failed — fall back to creating a window */
+    }
+    if (!targetId) {
+      const created = (await this.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true })) as { targetId: string }
+      targetId = created.targetId
+    }
+    const attached = (await this.send('Target.attachToTarget', { targetId, flatten: true })) as { sessionId: string }
     const sid = attached.sessionId
     await this.send('Page.enable', {}, sid)
     await this.send('Runtime.enable', {}, sid)
     await this.send('DOM.enable', {}, sid)
     await this.send('Accessibility.enable', {}, sid)
-    this.windows.set(key, { targetId: created.targetId, sessionId: sid, ready: true })
+    this.windows.set(key, { targetId, sessionId: sid, ready: true })
     return sid
   }
 
