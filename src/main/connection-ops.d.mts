@@ -20,6 +20,10 @@ export interface ConnectionBindSpec {
   /** The chat session that attached this source ('' = the new-session composer, reassigned on spawn). Owner-scopes
    *  connection_list per chat + targets the attach moment. */
   agentId?: string
+  /** WHOSE source this is, surfaced in connectionList so the agent works in a user-attached source instead of
+   *  defaulting to its own Blitz Chrome: 'user-chrome' | 'user-safari' = the user's own browser they connected;
+   *  'window' = a native macOS app; 'blitz-chrome' = the agent's own browser. */
+  origin?: 'user-chrome' | 'user-safari' | 'window' | 'blitz-chrome'
 }
 
 export interface ConnectionInfo {

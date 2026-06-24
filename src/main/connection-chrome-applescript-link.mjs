@@ -149,7 +149,7 @@ export function makeChromeAppleScriptLink({ connectionOps } = {}) {
       },
       drop: () => {}
     }
-    const bound = connectionOps.connectionBind({ type: 'tab', sourceId, title: opts.title || info.title || sourceId, capabilities: { run_js: true, act: true }, adapter, ref: String(tabId), agentId: opts.agentId })
+    const bound = connectionOps.connectionBind({ type: 'tab', sourceId, title: opts.title || info.title || sourceId, capabilities: { run_js: true, act: true }, adapter, ref: String(tabId), agentId: opts.agentId, origin: 'user-chrome' })
     refToConn.set(String(tabId), bound.connId)
     adapter.drop = () => {
       if (refToConn.get(String(tabId)) === bound.connId) refToConn.delete(String(tabId))

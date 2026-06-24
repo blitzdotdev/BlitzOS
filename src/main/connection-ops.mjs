@@ -193,7 +193,7 @@ export function makeConnectionOps({
   // ---- adapter binding: an adapter calls this when the user/agent connects a source ----
   // Returns { connId, surfaceId }. Auto-creates + binds the representation widget so the connId<->surfaceId
   // link is AUTHORITATIVE (a widget can't spoof which connection it drives) and marks it content-shared.
-  function connectionBind({ type, sourceId, title, capabilities, adapter, ref, agentId } = {}) {
+  function connectionBind({ type, sourceId, title, capabilities, adapter, ref, agentId, origin } = {}) {
     const connId = 'conn_' + randomUUID().slice(0, 8)
     const sid = String(sourceId || 'unknown')
     const kind = type === 'window' ? 'window' : 'tab'
@@ -248,7 +248,11 @@ export function makeConnectionOps({
       ref: ref ?? null,
       // the chat session that attached this source ('' = attached on the new-session composer, reassigned on spawn).
       // The owner scopes connection_list per chat + targets the attach moment (self-reported, like /events + /say).
-      agentId: agentId != null ? String(agentId) : ''
+      agentId: agentId != null ? String(agentId) : '',
+      // origin = WHOSE source this is, so the agent works in a source the USER attached instead of defaulting to its
+      // own Blitz Chrome: 'user-chrome'/'user-safari' = the user's own browser they connected (act in THEIR session);
+      // 'window' = a native macOS app; 'blitz-chrome' = the agent's own browser (only when the user gave it no source).
+      origin: origin || (kind === 'window' ? 'window' : undefined)
     }
     registry.set(connId, record)
     if (surfaceId) {
@@ -808,6 +812,7 @@ export function makeConnectionOps({
         .map((r) => ({
           connId: r.connId,
           type: r.type,
+          origin: r.origin || undefined,
           sourceId: r.sourceId,
           title: r.title,
           status: r.status,

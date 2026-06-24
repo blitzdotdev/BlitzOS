@@ -96,7 +96,7 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
       }
     }
 
-    const bound = connectionOps.connectionBind({ type: 'window', sourceId, title, capabilities: { act: true, vision: true }, adapter, ref: windowId, agentId: opts.agentId })
+    const bound = connectionOps.connectionBind({ type: 'window', sourceId, title, capabilities: { act: true, vision: true }, adapter, ref: windowId, agentId: opts.agentId, origin: 'window' })
     if (!pidToConns.has(pid)) pidToConns.set(pid, new Set())
     pidToConns.get(pid)!.add(bound.connId)
     windowToConn.set(Number(windowId), bound.connId)
