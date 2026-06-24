@@ -19,6 +19,8 @@ const notchHost = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHost.
 const islandHome = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandHome.tsx'), 'utf8')
 const islandPanel = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandPanel.tsx'), 'utf8')
 const islandOnboarding = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandOnboarding.tsx'), 'utf8')
+const onboardingVisuals = readFileSync(join(repoRoot, 'src/renderer/src/notch/onboardingVisuals.tsx'), 'utf8')
+const onboardingVisualsCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/onboardingVisuals.css'), 'utf8')
 const agentVisualsPath = join(repoRoot, 'src/renderer/src/notch/agentVisuals.ts')
 const agentVisuals = existsSync(agentVisualsPath) ? readFileSync(agentVisualsPath, 'utf8') : ''
 const onboardingConfig = readFileSync(join(repoRoot, 'src/renderer/src/onboarding/config.ts'), 'utf8')
@@ -142,29 +144,30 @@ ok('first-launch onboarding is owned by the dynamic island, not the old fullscre
 ok('island onboarding uses the setup IPC surface and does not start the scan/interview path',
   /import IslandOnboarding from '.\/IslandOnboarding'/.test(notchHost) &&
     /view === 'onboarding'/.test(notchHost) &&
-    /<IslandOnboarding[\s\S]*?onComplete=\{\(\) => \{[\s\S]*?setView\('home'\)[\s\S]*?onOnboardingComplete\?\.\(\)/.test(notchHost) &&
+    /<IslandOnboarding[\s\S]*?onComplete=\{\(\) => \{[\s\S]*?setView\('session'\)[\s\S]*?onOnboardingComplete\?\.\(\)/.test(notchHost) &&
     /api\.preboardState\(\)/.test(islandOnboarding) &&
     /api\.listImportProfiles/.test(islandOnboarding) &&
     /const request = api\?\.openPermissionDrag\?\.\(kind\)/.test(islandOnboarding) &&
-    /api\s*\.importSignin\(picked\.src, picked\.id\)/.test(islandOnboarding) &&
+    /api[\s\S]*?\.importSignin\(picked\.src, picked\.id\)/.test(islandOnboarding) &&
     /api\.requestAutomation/.test(islandOnboarding) &&
     /api\.preboardMark\?\.\('import',/.test(islandOnboarding) &&
     /api\.preboardMark\?\.\('browser',/.test(islandOnboarding) &&
     !/\.start\(\)/.test(islandOnboarding))
 ok('island onboarding starts with five simple intro slides before setup',
   /const INTRO_SLIDES: IntroSlide\[\] = \[/.test(islandOnboarding) &&
-    /Welcome to Blitz, the dynamic-island agent OS for Mac/.test(islandOnboarding) &&
-    /Your agent is always one hover away/.test(islandOnboarding) &&
-    /Blitz works across your Mac/.test(islandOnboarding) &&
-    /Run more than one agent at once/.test(islandOnboarding) &&
+    /Meet Blitz — your agents, on tap/.test(islandOnboarding) &&
+    /Run a roster of agents at once/.test(islandOnboarding) &&
+    /Put your browser and apps in reach/.test(islandOnboarding) &&
+    /Watch the work unfold/.test(islandOnboarding) &&
     /A few permissions make it useful/.test(islandOnboarding) &&
-    /import blitzAppIcon from '\.\.\/assets\/blitz-app-icon\.png'/.test(islandOnboarding) &&
-    /<img src=\{blitzAppIcon\} alt="" draggable="false" \/>/.test(islandOnboarding) &&
+    /import \{ OnboardingVisual, OnboardingDoneHero, type IntroVisual \} from '.\/onboardingVisuals'/.test(islandOnboarding) &&
+    /import blitzAppIcon from '\.\.\/assets\/blitz-app-icon\.png'/.test(onboardingVisuals) &&
+    /<img src=\{blitzAppIcon\} alt="" draggable=\{false\} \/>/.test(onboardingVisuals) &&
     /const \[introDone, setIntroDone\] = useState\(false\)/.test(islandOnboarding) &&
     /\{!introDone && \(/.test(islandOnboarding) &&
     /\{introDone && step === 'permissions' && state && \(/.test(islandOnboarding) &&
     /\.isl-onb-intro/.test(islandCss) &&
-    /\.isl-onb-visual-card img/.test(islandCss) &&
+    /\.oba-home-icon img/.test(onboardingVisualsCss) &&
     /background: #0a84ff;/.test(islandCss) &&
     /\.isl-onb-progress/.test(islandCss))
 ok('legacy onboarding chat interview is opt-in only',
@@ -227,6 +230,7 @@ ok('home renders a compact working-agent rail that matches the tab active-work s
     /\.isl-home-working \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\)[\s\S]*?max-height: 146px[\s\S]*?overflow-y: auto/.test(islandCss) &&
     homeEmptyBlock.includes('padding: 12px 2px 0') &&
     !/background:|border:|border-radius:|min-height:|place-items:/.test(homeEmptyBlock) &&
+    /\.isl-working-agent-icon \{[\s\S]*?border-radius: 50%/.test(islandCss) &&
     /\.isl-working-agent-main \{[\s\S]*?gap: 2px/.test(islandCss) &&
     /\.isl-working-agent-dot \{[\s\S]*?border-top-color: var\(--isl-accent\)[\s\S]*?animation: isl-spin/.test(islandCss) &&
     /\.isl-working-agent\[data-home-state='waiting'\]/.test(islandCss) &&
