@@ -19,7 +19,8 @@ import { isSubagentEvents } from './wfReduce'
 import { fmtMs, fmtTok } from './wfShared'
 import { matchingChoiceAnswerForMessage } from './messageParts'
 import { agentGradient } from './agentVisuals'
-import type { IslandPanelProps, IslandWfRun } from './types'
+import { normalizedBlitzAppPart } from './appEmbeds'
+import type { IslandAppMessagePart, IslandPanelProps, IslandWfRun } from './types'
 
 const AGENT_NAME_MAX = 24
 
@@ -71,6 +72,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     menuBarH,
     attachOpen,
     onToggleAttach,
+    onAppViewerToggle,
     debugTerminalEnabled,
     activeTerminal,
     onArchiveAgent,
@@ -89,9 +91,11 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   // the last closed-state height in a ref (recorded after every closed render) and apply it while attach is open.
   const panelRef = useRef<HTMLDivElement>(null)
   const closedHeightRef = useRef<number | null>(null)
+  const appReturnScrollTopRef = useRef<number | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [detailRows, setDetailRows] = useState<Array<{ label: string }>>([])
   const [pendingChoiceSelections, setPendingChoiceSelections] = useState<Record<string, string>>({})
+  const [openApp, setOpenApp] = useState<IslandAppMessagePart | null>(null)
   // Attachment SNAPSHOT: a frozen, read-only copy of the dropbox shown above the user message it rode on. PERSISTED
   // (sentTrayStore → disk) so it survives island reopen AND a full quit/restart. Keyed by the user-message ORDINAL —
   // the dropbox clears on send, so each message's snapshot is exactly what was staged at THAT send.
@@ -286,6 +290,8 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     setDetailsOpen(false)
     setDetailRows([])
     setPendingChoiceSelections({})
+    setOpenApp(null)
+    onAppViewerToggle?.(false)
   }, [activeId])
 
   useEffect(() => {
@@ -295,6 +301,19 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     el.focus()
     el.select()
   }, [editingId])
+
+  useLayoutEffect(() => {
+    if (openApp) return
+    const restoreTop = appReturnScrollTopRef.current
+    if (restoreTop == null) return
+    appReturnScrollTopRef.current = null
+    const restore = (): void => {
+      if (feedRef.current) feedRef.current.scrollTop = restoreTop
+    }
+    restore()
+    const frame = window.requestAnimationFrame(restore)
+    return () => window.cancelAnimationFrame(frame)
+  }, [openApp])
 
   const loadDetails = useCallback((): void => {
     if (!activeId) return
@@ -393,6 +412,19 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       </div>
     </>
   )
+
+  const showAppViewer = (part: IslandAppMessagePart): void => {
+    const normalized = normalizedBlitzAppPart(part)
+    if (!normalized) return
+    appReturnScrollTopRef.current = feedRef.current?.scrollTop ?? null
+    setOpenApp(normalized)
+    if (attachOpen) onToggleAttach()
+    onAppViewerToggle?.(true)
+  }
+  const closeAppViewer = (): void => {
+    setOpenApp(null)
+    onAppViewerToggle?.(false)
+  }
 
   // The shared horizontal tab strip (pen + one chip per agent), kept in BOTH the chat and the peek view.
   const tabStrip = (
@@ -589,16 +621,35 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       )}
     </div>
   ) : null
+  const appViewer = openApp ? (
+    <>
+      <button type="button" className="isl-app-viewer-close" aria-label="Close generated app" onClick={closeAppViewer}>
+        <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+      <div className="isl-app-viewer" data-tone={openApp.tone}>
+        <iframe
+          className="isl-app-frame"
+          title={`${openApp.title} generated app`}
+          src={openApp.url}
+          sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
+        />
+      </div>
+    </>
+  ) : null
   return (
     <div
       ref={panelRef}
-      className={`nh-island isl-process${attachOpen ? ' isl-attaching' : ''}`}
-      style={lockHeight ? { paddingTop: top, height: lockHeight } : { paddingTop: top }}
+      className={`nh-island isl-process${attachOpen ? ' isl-attaching' : ''}${openApp ? ' isl-app-viewing' : ''}`}
+      style={lockHeight && !openApp ? { paddingTop: top, height: lockHeight } : { paddingTop: top }}
     >
-      <div className={`isl-tabwrap${attachOpen ? ' collapsed' : ''}`}>
-        <div className="isl-tabwrap-inner">{tabStrip}</div>
-      </div>
-      {(
+      {!openApp && (
+        <div className={`isl-tabwrap${attachOpen ? ' collapsed' : ''}`}>
+          <div className="isl-tabwrap-inner">{tabStrip}</div>
+        </div>
+      )}
+      {openApp ? appViewer : (
         // The active agent's chat (Blitz '0' or a peer): real messages + inline activity details — KEPT in attach mode.
         <>
           <div className="isl-agent-meta">
@@ -653,6 +704,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                         parts={m.parts}
                         selectedAnswer={selectedAnswer}
                         showDivider={m.role === 'agent' && i > 0}
+                        onOpenApp={showAppViewer}
                         onChoose={(choice) => {
                           setPendingChoiceSelections((prev) => ({ ...prev, [askKey]: choice }))
                           onSend(choice)
@@ -677,7 +729,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
         </>
       )}
       {/* the composer + attachment panel are ALWAYS visible. */}
-      {composerBlock(activeId === '0' ? 'Message Blitz' : 'Steer this agent…', 108, false)}
+      {!openApp && composerBlock(activeId === '0' ? 'Message Blitz' : 'Steer this agent…', 108, false)}
     </div>
   )
 }

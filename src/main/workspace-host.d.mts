@@ -58,7 +58,7 @@ export interface WorkspaceHost {
   locateSurface(id: string): { name: string; dir: string; node: Record<string, unknown> } | null
   /** Item 4: bring a surface from another workspace into the active one (id preserved). */
   bringSurfaceHere(id: string, x?: number, y?: number): { ok: boolean; from?: string; id?: string; notFound?: boolean; error?: string }
-  appendChat(role: 'user' | 'agent', text: string, agentId?: string, meta?: Record<string, unknown>): Array<{ role: string; text: string; ts: number }>
+  appendChat(role: 'user' | 'agent', text: string, agentId?: string, meta?: Record<string, unknown>): Array<{ role: string; text: string; ts: number; parts?: unknown[] }>
   customizeWidget(name: string, html: string, agentId?: string, lang?: 'html' | 'jsx' | 'tsx'): { ok: boolean; rel?: string; lang?: string; error?: string }
   systemUi(name: string): string | null
   systemUiInfo(name: string): { rel: string; source: string; lang: 'html' | 'jsx' | 'tsx' } | null
@@ -72,10 +72,10 @@ export interface WorkspaceHost {
   chatHubProps(activeAgentId?: string): {
     sessions: Array<{ id: string; title: string; status: string; updatedAt: number; lastMessagePreview: string; unread: boolean }>
     archivedSessions: Array<{ id: string; title: string; status: string; updatedAt: number; lastMessagePreview: string; unread: boolean; archivedAt?: number }>
-    threads: Record<string, Array<{ role: string; text: string; ts?: number }>>
+    threads: Record<string, Array<{ role: string; text: string; ts?: number; parts?: unknown[] }>>
     status: Record<string, string>
     activeAgentId: string
-    messages: Array<{ role: string; text: string; ts?: number }>
+    messages: Array<{ role: string; text: string; ts?: number; parts?: unknown[] }>
     agentId: string
     sessionId: string
   }

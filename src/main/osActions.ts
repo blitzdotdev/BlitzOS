@@ -523,6 +523,28 @@ export function osSay(text: string, agentId = '0', workspace?: string): void {
   }
   wsHost?.appendChat('agent', text, agentId)
 }
+export function osShareApp(app: Record<string, unknown>, agentId = '0', workspace?: string): void {
+  const title = String(app?.title || '').replace(/\s+/g, ' ').trim() || 'Generated app'
+  const text = `Generated app: ${title}`
+  const part: Record<string, unknown> = {
+    type: 'app',
+    title,
+    url: String(app?.url || '')
+  }
+  for (const key of ['subtitle', 'icon', 'tone']) {
+    const value = app?.[key]
+    if (typeof value === 'string' && value.trim()) part[key] = value.trim()
+  }
+  const meta = { parts: [part] }
+  if (workspace && wsHost && workspace !== wsHost.active()) {
+    const dir = wsRoot ? resolveWorkspace(wsRoot, workspace, { mustExist: true }) : null
+    if (dir) {
+      appendChatMessage(dir, 'agent', text, String(agentId), meta)
+      return
+    }
+  }
+  wsHost?.appendChat('agent', text, agentId, meta)
+}
 /** USER → agent: enter a chat message exactly as the human composer does (append '### user' to that
  *  agent's chat.md + echo to its widget, and wake that agent with a 'message' moment). The renderer
  *  IPC and the localhost-only `user_say` test syscall both land here, so programmatic user input is

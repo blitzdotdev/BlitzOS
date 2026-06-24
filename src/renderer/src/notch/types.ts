@@ -26,15 +26,29 @@ export interface IslandChoiceOption {
   img?: string
 }
 
+export type IslandAppIcon = 'dashboard' | 'report' | 'table' | 'checklist' | 'form' | 'share' | 'browser' | 'file'
+export type IslandAppTone = 'sky' | 'mint' | 'amber' | 'violet' | 'lime' | 'rose'
+
+export interface IslandAppPart {
+  type: 'app'
+  title: string
+  url: string
+  subtitle?: string
+  icon?: IslandAppIcon
+  tone?: IslandAppTone
+}
+
 export type IslandMessagePart =
   | { type: 'text'; text: string }
   | { type: 'choice'; layout: 'confirm' | 'choice' | 'grid'; prompt: string; options: IslandChoiceOption[] }
+  | IslandAppPart
   | { type: 'tool'; title: string; state: 'preparing' | 'awaiting-permission' | 'running' | 'output' | 'error' | 'denied'; output?: string; error?: string }
   | { type: 'attachment'; title: string; sourceType?: string }
   | { type: 'status'; text: string; tone?: 'info' | 'working' | 'warning' | 'error' }
   | { type: 'error'; text: string }
 
 export type IslandChoicePart = Extract<IslandMessagePart, { type: 'choice' }>
+export type IslandAppMessagePart = Extract<IslandMessagePart, { type: 'app' }>
 
 // A summarized step from the narrator (Haiku): one plain past-tense line of what the agent did.
 export interface IslandMilestone {
@@ -79,6 +93,7 @@ export interface IslandPanelProps {
   menuBarH: number // notch height in px, for top alignment under the physical notch
   attachOpen: boolean // the attach "+" toggles the attachment panel INLINE (island grows)
   onToggleAttach: () => void
+  onAppViewerToggle?: (open: boolean) => void
   debugTerminalEnabled: boolean // debug-only: show the active agent's tmux terminal inside the chat app
   activeTerminal?: IslandTerminalMeta // metadata for activeId's managed terminal; activeId remains the terminal id
   onArchiveAgent: (id: string) => void

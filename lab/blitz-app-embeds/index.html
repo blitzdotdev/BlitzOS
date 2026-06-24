@@ -1,0 +1,1368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BlitzOS embedded app cards</title>
+<style>
+  * { box-sizing: border-box; }
+
+  html,
+  body {
+    margin: 0;
+    min-height: 100%;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    background: #070708;
+    color: #f7f7f8;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+
+  button {
+    font: inherit;
+  }
+
+  .page {
+    min-height: 100vh;
+    padding: 28px;
+    background:
+      linear-gradient(180deg, rgba(28, 31, 36, 0.56), rgba(7, 7, 8, 0.96) 240px),
+      #070708;
+  }
+
+  .prototype {
+    width: 1180px;
+    max-width: calc(100vw - 56px);
+    margin: 0 auto;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 18px;
+  }
+
+  .topbar-title {
+    min-width: 0;
+  }
+
+  .topbar-title h1 {
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.2;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+
+  .topbar-title p {
+    margin: 5px 0 0;
+    font-size: 12px;
+    line-height: 1.35;
+    color: rgba(255, 255, 255, 0.54);
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .segmented {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .segmented button,
+  .utility-button {
+    border: 0;
+    color: rgba(255, 255, 255, 0.66);
+    background: transparent;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+  }
+
+  .segmented button {
+    min-width: 34px;
+    height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .segmented button:hover,
+  .utility-button:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .segmented button[aria-pressed="true"] {
+    color: #0b0d10;
+    background: #f6f7fb;
+  }
+
+  .utility-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0 14px;
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    font-size: 12px;
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .utility-button svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .island {
+    position: relative;
+    min-height: 760px;
+    overflow: hidden;
+    border-radius: 0 0 42px 42px;
+    background: #000;
+    box-shadow:
+      0 28px 80px rgba(0, 0, 0, 0.48),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  .notch-chip {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 184px;
+    height: 28px;
+    transform: translateX(-50%);
+    border-radius: 0 0 14px 14px;
+    background: #050505;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.72);
+    z-index: 4;
+  }
+
+  .notch-chip::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 11px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    transform: translateX(-50%);
+    background: #1e8cff;
+    box-shadow: 16px 0 0 rgba(255, 255, 255, 0.42);
+  }
+
+  .chat-shell {
+    position: relative;
+    min-height: 760px;
+    padding: 58px 42px 38px;
+    transition: opacity 180ms ease, filter 180ms ease, transform 180ms ease;
+  }
+
+  .island.expanded .chat-shell {
+    opacity: 0.16;
+    filter: blur(2px);
+    transform: scale(0.992);
+    pointer-events: none;
+  }
+
+  .session-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 36px;
+  }
+
+  .home-icon,
+  .tab-pill,
+  .composer-plus {
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.78);
+  }
+
+  .home-icon,
+  .composer-plus {
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    display: grid;
+    place-items: center;
+  }
+
+  .home-icon svg,
+  .composer-plus svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .tab-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    height: 46px;
+    padding: 5px 16px 5px 7px;
+    border-radius: 999px;
+    font-size: 18px;
+    color: rgba(255, 255, 255, 0.62);
+  }
+
+  .tab-pill.active {
+    color: #fff;
+    box-shadow: inset 0 0 0 2px #ffb114;
+  }
+
+  .tab-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.43);
+  }
+
+  .avatar {
+    width: 36px;
+    height: 36px;
+    flex: none;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--tone-a), var(--tone-b));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  }
+
+  .transcript {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    max-width: 100%;
+  }
+
+  .msg {
+    max-width: 760px;
+    font-size: 21px;
+    line-height: 1.34;
+  }
+
+  .msg.agent {
+    color: rgba(255, 255, 255, 0.95);
+  }
+
+  .msg.user {
+    align-self: flex-end;
+    max-width: 620px;
+    padding: 14px 22px;
+    border-radius: 26px 26px 6px 26px;
+    color: #fff;
+    background: #168fff;
+  }
+
+  .activity-line {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 17px;
+    font-weight: 700;
+  }
+
+  .activity-line svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .app-region {
+    max-width: 950px;
+  }
+
+  .app-region-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+
+  .app-region-title {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .app-region-note {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 12px;
+  }
+
+  .app-cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .app-card {
+    --tone-a: #31c6ff;
+    --tone-b: #426dff;
+    position: relative;
+    display: flex;
+    min-width: 0;
+    width: 100%;
+    color: #fff;
+    text-align: left;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    background:
+      linear-gradient(180deg, rgba(32, 35, 43, 0.86), rgba(16, 17, 21, 0.94));
+    box-shadow:
+      0 18px 44px rgba(0, 0, 0, 0.38),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+  }
+
+  .app-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--tone-a) 23%, transparent), transparent 46%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 34%);
+    opacity: 0.48;
+    pointer-events: none;
+  }
+
+  .app-card:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--tone-a) 52%, rgba(255, 255, 255, 0.2));
+  }
+
+  .app-card:active {
+    transform: translateY(0);
+  }
+
+  .app-card:focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 2px rgba(255, 177, 20, 0.88),
+      0 18px 44px rgba(0, 0, 0, 0.38),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  .app-card-inner {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    gap: 10px;
+    width: 100%;
+    padding: 15px;
+  }
+
+  .app-card-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .app-glyph {
+    width: 42px;
+    height: 42px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 13px;
+    color: #fff;
+    background: linear-gradient(135deg, var(--tone-a), var(--tone-b));
+    box-shadow:
+      0 10px 24px color-mix(in srgb, var(--tone-a) 24%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  }
+
+  .app-glyph svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .app-title-wrap {
+    min-width: 0;
+  }
+
+  .app-title {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 17px;
+    line-height: 1.16;
+    font-weight: 800;
+    letter-spacing: 0;
+  }
+
+  .app-subtitle {
+    display: block;
+    margin-top: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgba(255, 255, 255, 0.58);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .app-open {
+    margin-left: auto;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.78);
+  }
+
+  .app-open svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .app-desc {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 13px;
+    line-height: 1.35;
+  }
+
+  .app-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+
+  .metric {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 9px;
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.67);
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 11px;
+    font-weight: 750;
+  }
+
+  .app-card.preview .app-card-inner {
+    grid-template-columns: minmax(0, 1fr) 142px;
+    align-items: stretch;
+  }
+
+  .app-card.preview .app-card-top,
+  .app-card.preview .app-desc,
+  .app-card.preview .app-metrics {
+    grid-column: 1;
+  }
+
+  .mini-preview {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    display: grid;
+    gap: 7px;
+    align-content: start;
+    min-height: 118px;
+    padding: 10px;
+    border-radius: 13px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .mini-preview-row {
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16);
+  }
+
+  .mini-preview-row.hot {
+    width: 74%;
+    background: linear-gradient(90deg, var(--tone-a), var(--tone-b));
+  }
+
+  .mini-preview-row.short { width: 54%; }
+  .mini-preview-row.mid { width: 82%; }
+
+  .app-card.strip {
+    min-height: 78px;
+    border-radius: 15px;
+  }
+
+  .app-card.strip .app-card-inner {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .app-card.strip .app-card-top {
+    display: contents;
+  }
+
+  .app-card.strip .app-title-wrap {
+    grid-column: 2;
+  }
+
+  .app-card.strip .app-desc,
+  .app-card.strip .app-metrics,
+  .app-card.strip .mini-preview {
+    display: none;
+  }
+
+  .app-card.strip .app-open {
+    grid-column: 3;
+    margin-left: 0;
+  }
+
+  .app-card.hero {
+    grid-column: span 2;
+    min-height: 168px;
+  }
+
+  .app-card.hero .app-card-inner {
+    grid-template-columns: minmax(0, 1fr) 220px;
+    padding: 20px;
+  }
+
+  .app-card.hero .app-title {
+    font-size: 22px;
+  }
+
+  .app-card.hero .app-desc {
+    max-width: 520px;
+    font-size: 15px;
+  }
+
+  .app-card.hero .mini-preview {
+    display: grid;
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    min-height: 126px;
+  }
+
+  .composer {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    margin-top: 34px;
+  }
+
+  .composer-box {
+    display: flex;
+    align-items: center;
+    min-height: 58px;
+    padding: 0 20px;
+    border: 1px solid rgba(255, 255, 255, 0.17);
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 23px;
+  }
+
+  .expanded-layer {
+    position: absolute;
+    z-index: 6;
+    inset: 48px 34px 30px;
+    display: none;
+    min-height: 0;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 28px;
+    background:
+      linear-gradient(180deg, rgba(24, 27, 35, 0.94), rgba(7, 8, 11, 0.97));
+    box-shadow:
+      0 32px 80px rgba(0, 0, 0, 0.72),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+
+  .island.expanded .expanded-layer {
+    display: flex;
+    flex-direction: column;
+    animation: expandIn 180ms ease both;
+  }
+
+  @keyframes expandIn {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .app-view-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 18px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--tone-a) 16%, transparent), transparent 44%),
+      rgba(255, 255, 255, 0.03);
+  }
+
+  .app-view-title {
+    min-width: 0;
+  }
+
+  .app-view-title strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 19px;
+    line-height: 1.16;
+  }
+
+  .app-view-title span {
+    display: block;
+    margin-top: 3px;
+    color: rgba(255, 255, 255, 0.52);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .app-tabs {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .app-tabs button {
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.58);
+    background: transparent;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .app-tabs button[aria-pressed="true"] {
+    color: #061016;
+    background: linear-gradient(135deg, var(--tone-a), var(--tone-b));
+  }
+
+  .close-button {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.72);
+    background: rgba(255, 255, 255, 0.06);
+    cursor: pointer;
+  }
+
+  .close-button:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .close-button svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .app-frame {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+    padding: 22px;
+  }
+
+  .app-frame::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .app-frame::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.18);
+    background-clip: padding-box;
+  }
+
+  .frame-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 14px;
+  }
+
+  .frame-panel,
+  .frame-table,
+  .frame-long {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.055);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  .frame-panel {
+    padding: 18px;
+  }
+
+  .frame-panel h3,
+  .frame-long h3 {
+    margin: 0 0 11px;
+    font-size: 15px;
+    line-height: 1.2;
+  }
+
+  .frame-panel p,
+  .frame-long p {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.67);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .number-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 15px;
+  }
+
+  .number-tile {
+    padding: 12px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.23);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .number-tile strong {
+    display: block;
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+  }
+
+  .number-tile span {
+    display: block;
+    margin-top: 6px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .frame-table {
+    overflow: hidden;
+  }
+
+  .frame-table-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    font-size: 13px;
+  }
+
+  .frame-table-row:first-child {
+    border-top: 0;
+  }
+
+  .frame-table-row span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    color: color-mix(in srgb, var(--tone-a) 82%, #fff);
+    background: color-mix(in srgb, var(--tone-a) 13%, transparent);
+    border: 1px solid color-mix(in srgb, var(--tone-a) 28%, transparent);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .frame-long {
+    margin-top: 14px;
+    padding: 18px;
+  }
+
+  .checklist {
+    display: grid;
+    gap: 10px;
+    margin-top: 14px;
+  }
+
+  .check-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 13px;
+    background: rgba(0, 0, 0, 0.22);
+  }
+
+  .check-icon {
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: #061016;
+    background: linear-gradient(135deg, var(--tone-a), var(--tone-b));
+  }
+
+  .check-icon svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .check-row span:nth-child(2) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+
+  .check-row span:last-child {
+    color: rgba(255, 255, 255, 0.46);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .frame-action {
+    height: 34px;
+    padding: 0 13px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 780;
+  }
+
+  .frame-action.primary {
+    color: #061016;
+    border-color: transparent;
+    background: linear-gradient(135deg, var(--tone-a), var(--tone-b));
+  }
+
+  [data-tone="sky"] { --tone-a: #31c6ff; --tone-b: #426dff; }
+  [data-tone="mint"] { --tone-a: #5ef0a6; --tone-b: #43d1d8; }
+  [data-tone="amber"] { --tone-a: #ffd247; --tone-b: #ff6f5f; }
+  [data-tone="violet"] { --tone-a: #9b7cff; --tone-b: #ed4ac8; }
+  [data-tone="lime"] { --tone-a: #a9ff5c; --tone-b: #33df6a; }
+  [data-tone="rose"] { --tone-a: #ff66c4; --tone-b: #ff8361; }
+
+  @media (max-width: 860px) {
+    .page {
+      padding: 16px;
+    }
+
+    .prototype {
+      max-width: calc(100vw - 32px);
+    }
+
+    .topbar {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .chat-shell {
+      padding-inline: 18px;
+    }
+
+    .session-bar {
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+
+    .app-cards {
+      grid-template-columns: 1fr;
+    }
+
+    .app-card.hero {
+      grid-column: auto;
+    }
+
+    .app-card.preview .app-card-inner,
+    .app-card.hero .app-card-inner {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .mini-preview,
+    .app-card.preview .mini-preview,
+    .app-card.hero .mini-preview {
+      display: none;
+    }
+
+    .expanded-layer {
+      inset: 42px 12px 12px;
+      border-radius: 22px;
+    }
+
+    .app-view-head {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+
+    .app-tabs {
+      grid-column: 1 / -1;
+      justify-self: start;
+    }
+
+    .frame-grid,
+    .number-row {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+</head>
+<body>
+  <main class="page">
+    <section class="prototype" aria-labelledby="page-title">
+      <header class="topbar">
+        <div class="topbar-title">
+          <h1 id="page-title">Blitz app embeds in island chat</h1>
+          <p>Click any app card to expand the island into an interactive embedded app frame.</p>
+        </div>
+        <div class="controls">
+          <div class="segmented" aria-label="Card direction">
+            <button type="button" data-variant="summary" aria-pressed="true">A</button>
+            <button type="button" data-variant="preview" aria-pressed="false">B</button>
+            <button type="button" data-variant="strip" aria-pressed="false">C</button>
+            <button type="button" data-variant="hero" aria-pressed="false">D</button>
+          </div>
+          <button class="utility-button" type="button" id="rotate-colors">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12a9 9 0 1 1-3-6.7" />
+              <path d="M21 3v6h-6" />
+            </svg>
+            Rotate colors
+          </button>
+        </div>
+      </header>
+
+      <div class="island" id="island">
+        <div class="notch-chip" aria-hidden="true"></div>
+
+        <div class="chat-shell" aria-label="Chat mock">
+          <div class="session-bar">
+            <div class="home-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 10.5 12 3l9 7.5" />
+                <path d="M5 9.5V21h14V9.5" />
+                <path d="M9 21v-7h6v7" />
+              </svg>
+            </div>
+            <div class="tab-pill">
+              <span class="avatar" data-tone="amber"></span>
+              <strong>Main</strong>
+              <span class="tab-dot"></span>
+            </div>
+            <div class="tab-pill active">
+              <span class="avatar" data-tone="violet"></span>
+              <strong>Launch plan</strong>
+              <span class="tab-dot"></span>
+            </div>
+            <div class="tab-pill">
+              <span class="avatar" data-tone="mint"></span>
+              <strong>Research</strong>
+              <span class="tab-dot"></span>
+            </div>
+          </div>
+
+          <div class="transcript">
+            <div class="msg user">Build a launch dashboard and show me the result here.</div>
+
+            <div class="activity-line">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 12h16" />
+                <path d="m14 6 6 6-6 6" />
+              </svg>
+              Published a Blitz app preview
+            </div>
+
+            <div class="msg agent">
+              I made a compact dashboard app for the launch work: checklist, countdown, owners, and a risk snapshot.
+              You can open it inline without leaving the chat.
+            </div>
+
+            <section class="app-region" aria-label="Generated Blitz apps">
+              <div class="app-region-head">
+                <h2 class="app-region-title" id="variant-title">Option A: summary cards</h2>
+                <span class="app-region-note" id="variant-note">Title-first, color-coded, good default for chat history.</span>
+              </div>
+              <div class="app-cards" id="app-cards"></div>
+            </section>
+
+            <div class="composer">
+              <div class="composer-plus" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+              </div>
+              <div class="composer-box">Steer this agent...</div>
+            </div>
+          </div>
+        </div>
+
+        <section class="expanded-layer" id="expanded" aria-live="polite">
+          <header class="app-view-head" id="expanded-head" data-tone="sky">
+            <div class="app-glyph" id="expanded-glyph" aria-hidden="true"></div>
+            <div class="app-view-title">
+              <strong id="expanded-title">Launch Dashboard</strong>
+              <span id="expanded-subtitle">Interactive Blitz app</span>
+            </div>
+            <div class="app-tabs" aria-label="Embedded app view">
+              <button type="button" data-tab="summary" aria-pressed="true">Summary</button>
+              <button type="button" data-tab="app" aria-pressed="false">App</button>
+              <button type="button" data-tab="actions" aria-pressed="false">Actions</button>
+            </div>
+            <button type="button" class="close-button" id="close-expanded" aria-label="Close embedded app">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
+          </header>
+          <div class="app-frame" id="app-frame" tabindex="0"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+<script>
+const ICONS = {
+  dashboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h7V4H4v9Z"/><path d="M13 20h7V4h-7v16Z"/><path d="M4 20h7v-5H4v5Z"/></svg>',
+  report: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l5 5v13H7V3Z"/><path d="M14 3v6h5"/><path d="M9 14h7"/><path d="M9 18h5"/></svg>',
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 6 8 12l8 6"/><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/></svg>',
+  board: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4V5Z"/><path d="M9 5v14"/><path d="M15 5v14"/><path d="M4 11h16"/></svg>'
+};
+
+const tones = ["sky", "mint", "amber", "violet", "lime", "rose"];
+
+const apps = [
+  {
+    id: "launch",
+    tone: "sky",
+    icon: "dashboard",
+    title: "Launch Dashboard",
+    subtitle: "Checklist, owners, countdown",
+    desc: "A live launch board with the next moves, risk flags, and owner assignments.",
+    metrics: ["9 tasks", "3 blockers", "Live app"]
+  },
+  {
+    id: "research",
+    tone: "violet",
+    icon: "report",
+    title: "Competitor Brief",
+    subtitle: "Market scan and notes",
+    desc: "A structured report with findings, cited notes, and follow-up questions.",
+    metrics: ["12 sources", "4 themes", "Updated"]
+  },
+  {
+    id: "share",
+    tone: "mint",
+    icon: "share",
+    title: "Drive Share Report",
+    subtitle: "Permissions and edits",
+    desc: "A permissions summary with what changed, who can access it, and next actions.",
+    metrics: ["5 files", "2 edits", "Shared"]
+  },
+  {
+    id: "board",
+    tone: "amber",
+    icon: "board",
+    title: "Outreach Board",
+    subtitle: "People, drafts, follow-ups",
+    desc: "A small CRM-style board for launch outreach, message drafts, and booking status.",
+    metrics: ["40 leads", "7 verified", "Drafts"]
+  }
+];
+
+const variantCopy = {
+  summary: {
+    title: "Option A: summary cards",
+    note: "Title-first, color-coded, good default for chat history."
+  },
+  preview: {
+    title: "Option B: preview cards",
+    note: "Adds a tiny app preview for reports or dashboards with visible structure."
+  },
+  strip: {
+    title: "Option C: compact strips",
+    note: "Best when agents produce several apps or artifacts in one turn."
+  },
+  hero: {
+    title: "Option D: hero app",
+    note: "One promoted app with stronger presence, plus secondary app cards."
+  }
+};
+
+let activeVariant = "summary";
+let activeApp = apps[0];
+let activeTab = "summary";
+let toneOffset = 0;
+
+const cardsEl = document.getElementById("app-cards");
+const islandEl = document.getElementById("island");
+const expandedHead = document.getElementById("expanded-head");
+const expandedGlyph = document.getElementById("expanded-glyph");
+const expandedTitle = document.getElementById("expanded-title");
+const expandedSubtitle = document.getElementById("expanded-subtitle");
+const appFrame = document.getElementById("app-frame");
+
+function toneFor(index, app) {
+  return tones[(tones.indexOf(app.tone) + toneOffset + tones.length) % tones.length];
+}
+
+function renderCards() {
+  const copy = variantCopy[activeVariant];
+  document.getElementById("variant-title").textContent = copy.title;
+  document.getElementById("variant-note").textContent = copy.note;
+
+  cardsEl.innerHTML = "";
+  apps.forEach((app, index) => {
+    const card = document.createElement("button");
+    const tone = toneFor(index, app);
+    const cardVariant = activeVariant === "hero" && index > 0 ? "strip" : activeVariant;
+    card.type = "button";
+    card.className = `app-card ${cardVariant}`;
+    card.dataset.tone = tone;
+    card.dataset.app = app.id;
+    card.setAttribute("aria-label", `Open ${app.title}`);
+    card.innerHTML = `
+      <span class="app-card-inner">
+        <span class="app-card-top">
+          <span class="app-glyph" aria-hidden="true">${ICONS[app.icon]}</span>
+          <span class="app-title-wrap">
+            <span class="app-title">${app.title}</span>
+            <span class="app-subtitle">${app.subtitle}</span>
+          </span>
+          <span class="app-open" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M7 17 17 7" />
+              <path d="M9 7h8v8" />
+            </svg>
+          </span>
+        </span>
+        <p class="app-desc">${app.desc}</p>
+        <span class="app-metrics">${app.metrics.map((m) => `<span class="metric">${m}</span>`).join("")}</span>
+        <span class="mini-preview" aria-hidden="true">
+          <span class="mini-preview-row hot"></span>
+          <span class="mini-preview-row mid"></span>
+          <span class="mini-preview-row"></span>
+          <span class="mini-preview-row short"></span>
+          <span class="mini-preview-row mid"></span>
+        </span>
+      </span>
+    `;
+    card.addEventListener("click", () => openApp(app.id));
+    cardsEl.appendChild(card);
+  });
+}
+
+function openApp(id) {
+  activeApp = apps.find((app) => app.id === id) || apps[0];
+  activeTab = "summary";
+  setExpandedChrome();
+  renderFrame();
+  islandEl.classList.add("expanded");
+}
+
+function closeApp() {
+  islandEl.classList.remove("expanded");
+}
+
+function setExpandedChrome() {
+  const tone = toneFor(apps.indexOf(activeApp), activeApp);
+  expandedHead.dataset.tone = tone;
+  expandedGlyph.dataset.tone = tone;
+  expandedGlyph.innerHTML = ICONS[activeApp.icon];
+  expandedTitle.textContent = activeApp.title;
+  expandedSubtitle.textContent = `${activeApp.subtitle} - embedded Blitz app`;
+
+  document.querySelectorAll(".app-tabs button").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.tab === activeTab));
+  });
+}
+
+function renderFrame() {
+  setExpandedChrome();
+
+  if (activeTab === "actions") {
+    appFrame.innerHTML = `
+      <div class="frame-grid">
+        <section class="frame-panel">
+          <h3>Suggested actions</h3>
+          <p>These are commands the embedded app could expose back to the agent or the user.</p>
+          <div class="action-bar">
+            <button class="frame-action primary">Ask agent to refine</button>
+            <button class="frame-action">Share app</button>
+            <button class="frame-action">Open full page</button>
+            <button class="frame-action">Pin to chat</button>
+          </div>
+        </section>
+        <section class="frame-panel">
+          <h3>Permissions</h3>
+          <p>For V1, this could stay read-only unless the generated app explicitly asks for write access.</p>
+          <div class="checklist">
+            <div class="check-row">${checkIcon()}<span>Read chat context</span><span>Allowed</span></div>
+            <div class="check-row">${checkIcon()}<span>Open generated app frame</span><span>Allowed</span></div>
+            <div class="check-row">${checkIcon()}<span>Write to Drive or external services</span><span>Ask</span></div>
+          </div>
+        </section>
+      </div>
+      <section class="frame-long">
+        <h3>Design note</h3>
+        <p>The app card is the chat artifact. The expanded view is the working surface. Closing the frame returns the user to the exact chat position.</p>
+      </section>
+    `;
+    return;
+  }
+
+  if (activeTab === "app") {
+    appFrame.innerHTML = `
+      <div class="frame-grid">
+        <section class="frame-panel">
+          <h3>${activeApp.title}</h3>
+          <p>${activeApp.desc}</p>
+          <div class="number-row">
+            <div class="number-tile"><strong>74%</strong><span>Ready</span></div>
+            <div class="number-tile"><strong>3</strong><span>Blockers</span></div>
+            <div class="number-tile"><strong>12h</strong><span>To launch</span></div>
+          </div>
+        </section>
+        <section class="frame-table">
+          <div class="frame-table-row"><span>Design pass</span><span class="badge">Done</span></div>
+          <div class="frame-table-row"><span>Copy review</span><span class="badge">Working</span></div>
+          <div class="frame-table-row"><span>Share checklist</span><span class="badge">Needs OK</span></div>
+          <div class="frame-table-row"><span>Publish route</span><span class="badge">Queued</span></div>
+        </section>
+      </div>
+      <section class="frame-long">
+        <h3>Scrollable app area</h3>
+        <p>This area represents the generated Blitz app iframe. It can hold long reports, dashboards, charts, tables, forms, or small custom tools without forcing the user into a separate browser window.</p>
+        <div class="checklist">
+          ${Array.from({ length: 12 }).map((_, i) => `
+            <div class="check-row">
+              ${checkIcon()}
+              <span>${["Finalize headline", "Verify links", "Collect screenshots", "Run smoke test", "Draft launch post", "Review permissions"][i % 6]}</span>
+              <span>${i % 3 === 0 ? "Today" : i % 3 === 1 ? "Next" : "Later"}</span>
+            </div>
+          `).join("")}
+        </div>
+      </section>
+    `;
+    return;
+  }
+
+  appFrame.innerHTML = `
+    <div class="frame-grid">
+      <section class="frame-panel">
+        <h3>What opened</h3>
+        <p>${activeApp.title} is a generated Blitz app embedded directly inside the island. The user can inspect it, scroll it, and interact with controls while staying in chat.</p>
+        <div class="number-row">
+          <div class="number-tile"><strong>${activeApp.metrics[0].split(" ")[0]}</strong><span>${activeApp.metrics[0].replace(activeApp.metrics[0].split(" ")[0], "").trim() || "Items"}</span></div>
+          <div class="number-tile"><strong>${activeApp.metrics[1].split(" ")[0]}</strong><span>${activeApp.metrics[1].replace(activeApp.metrics[1].split(" ")[0], "").trim() || "Open"}</span></div>
+          <div class="number-tile"><strong>1</strong><span>App</span></div>
+        </div>
+      </section>
+      <section class="frame-table">
+        <div class="frame-table-row"><span>Generated by agent</span><span class="badge">Blitz app</span></div>
+        <div class="frame-table-row"><span>Interaction mode</span><span class="badge">Inline</span></div>
+        <div class="frame-table-row"><span>Recommended default</span><span class="badge">Option A</span></div>
+        <div class="frame-table-row"><span>Color treatment</span><span class="badge">Rotating</span></div>
+      </section>
+    </div>
+    <section class="frame-long">
+      <h3>Why this pattern works</h3>
+      <p>The card stays compact in chat history, but it promises a real app behind it. The expanded state feels like the island temporarily becomes an app viewer instead of launching a separate browser.</p>
+      <div class="action-bar">
+        <button class="frame-action primary">Interact with app</button>
+        <button class="frame-action">Ask for changes</button>
+        <button class="frame-action">Copy link</button>
+      </div>
+    </section>
+  `;
+}
+
+function checkIcon() {
+  return '<span class="check-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m5 13 4 4L19 7"/></svg></span>';
+}
+
+document.querySelectorAll("[data-variant]").forEach((button) => {
+  button.addEventListener("click", () => {
+    activeVariant = button.dataset.variant;
+    document.querySelectorAll("[data-variant]").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b === button));
+    });
+    renderCards();
+  });
+});
+
+document.getElementById("rotate-colors").addEventListener("click", () => {
+  toneOffset = (toneOffset + 1) % tones.length;
+  renderCards();
+  setExpandedChrome();
+});
+
+document.getElementById("close-expanded").addEventListener("click", closeApp);
+
+document.querySelectorAll(".app-tabs button").forEach((button) => {
+  button.addEventListener("click", () => {
+    activeTab = button.dataset.tab;
+    renderFrame();
+  });
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeApp();
+});
+
+renderCards();
+</script>
+</body>
+</html>

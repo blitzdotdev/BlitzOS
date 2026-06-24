@@ -46,7 +46,6 @@ const FAKE_HOME_STATUS = FAKE_HOME_AGENTS.reduce<Record<string, string>>((acc, s
   return acc
 }, {})
 const FAKE_HOME_DONE_IDS = FAKE_HOME_AGENTS.filter((s) => isHomeDoneReviewStatus(s.status)).map((s) => s.id)
-
 // peek toggle glyphs: compress (corners in → enter peek) / expand (corners out → back to chat).
 const PEEK_IN = 'M5 9h4a1 1 0 0 0 1-1V4M19 9h-4a1 1 0 0 1-1-1V4M5 15h4a1 1 0 0 1 1 1v4M19 15h-4a1 1 0 0 0-1 1v4'
 const PEEK_OUT = 'M9 4H5a1 1 0 0 0-1 1v4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4M15 20h4a1 1 0 0 0 1-1v-4'
@@ -58,7 +57,7 @@ type ChatAction = {
   type: 'chat'
   sessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }>
   archivedSessions?: Array<{ id?: unknown; title?: unknown; status?: unknown; lastMessagePreview?: unknown; archivedAt?: unknown }>
-  threads?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown }>>
+  threads?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown; parts?: unknown }>>
   status?: Record<string, string>
 }
 type AgentMutationResult = { ok?: boolean; error?: string; archived?: boolean; title?: string }
@@ -165,14 +164,23 @@ type WfRunAction = { type: 'workflow-run'; runId?: unknown; agentId?: unknown; f
 // (it persisted in chat.md). New sends never inject it; this keeps already-persisted messages clean at display.
 const stripAttachBrief = (text: string): string => text.replace(/\n+Attached before you started \(drive these with[\s\S]*$/, '').trim()
 
-const mapThreads = (
-  raw?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown }>>
-): Record<string, IslandMessage[]> => {
+const mapMessageParts = (value: unknown): IslandMessage['parts'] | undefined => {
+  if (!Array.isArray(value)) return undefined
+  const parts = value.filter((part) => part && typeof part === 'object' && typeof (part as { type?: unknown }).type === 'string') as NonNullable<IslandMessage['parts']>
+  return parts.length ? parts : undefined
+}
+
+const mapThreads = (raw?: Record<string, Array<{ role?: unknown; text?: unknown; ts?: unknown; parts?: unknown }>>): Record<string, IslandMessage[]> => {
   const out: Record<string, IslandMessage[]> = {}
   for (const id of Object.keys(raw || {})) {
     out[id] = (raw![id] || [])
-      .map((m) => ({ role: m.role === 'user' ? ('user' as const) : ('agent' as const), text: m.role === 'user' ? stripAttachBrief(String(m.text)) : String(m.text), ts: Number(m.ts) || undefined }))
-      .filter((m) => m.text.trim())
+      .map((m) => ({
+        role: m.role === 'user' ? ('user' as const) : ('agent' as const),
+        text: m.role === 'user' ? stripAttachBrief(String(m.text || '')) : String(m.text || ''),
+        ts: Number(m.ts) || undefined,
+        parts: mapMessageParts(m.parts)
+      }))
+      .filter((m) => m.text.trim() || m.parts?.length)
   }
   return out
 }
@@ -210,6 +218,7 @@ export function NotchHost({
   const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
   const [debugFakeHomeAgents, setDebugFakeHomeAgents] = useState(readDebugFakeHomeAgents)
   const [workflowAlwaysShow, setWorkflowAlwaysShow] = useState(readWorkflowAlwaysShow)
+  const [appViewerOpen, setAppViewerOpen] = useState(false)
   const [homeDoneAgents, setHomeDoneAgentsState] = useState<Record<string, true>>(() => readHomeDoneAgents())
   const [homeSeenWorkingAgents, setHomeSeenWorkingAgentsState] = useState<Record<string, true>>(() => readHomeSeenWorkingAgents())
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
@@ -242,7 +251,7 @@ export function NotchHost({
       return
     }
     onChassisResize?.()
-  }, [attachOpen, debugActiveTerminal, debugFakeHomeAgents, peek, view]) // view/debug changes resize the chassis too — hold the island open across the transit
+  }, [appViewerOpen, attachOpen, debugActiveTerminal, debugFakeHomeAgents, peek, view]) // view/debug changes resize the chassis too — hold the island open across the transit
 
   const chooseDebugActiveTerminal = (on: boolean): void => {
     setDebugActiveTerminal(on)
@@ -817,6 +826,16 @@ export function NotchHost({
     setPeek((v) => !v)
     setAttachOpen(false)
   }
+  const handleAppViewerToggle = (open: boolean): void => {
+    setAppViewerOpen(open)
+    holdChassisHover()
+    if (open) {
+      setPeek(false)
+      setAttachOpen(false)
+    }
+    onChassisResize?.()
+    window.setTimeout(() => onChassisResize?.(), 220)
+  }
 
   // The CHASSIS is invariant black + the original NotchShape, and grows wide when the attach panel opens. The
   // PEEK toggle lives at the very top (the notch / menu-bar band), top-right, ALWAYS visible across every view.
@@ -905,7 +924,7 @@ export function NotchHost({
           </button>
         )}
         {/* The HOME button + Peek toggle live inside expanded island views; the home widget row stays widget-only. */}
-        {!onHome && (
+        {!onHome && !appViewerOpen && (
           <button type="button" className="nh-home-btn" onClick={() => setView('home')} title="Home" aria-label="Home">
             <svg viewBox="0 0 24 24" aria-hidden focusable="false">
               <path
@@ -973,6 +992,7 @@ export function NotchHost({
             menuBarH={menuBarH}
             attachOpen={attachOpen}
             onToggleAttach={() => setAttachOpen((v) => !v)}
+            onAppViewerToggle={handleAppViewerToggle}
             debugTerminalEnabled={debugActiveTerminal}
             activeTerminal={activeId ? terminals[activeId] : undefined}
             onArchiveAgent={archiveAgent}

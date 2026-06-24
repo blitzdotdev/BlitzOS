@@ -120,10 +120,57 @@ async function provisionBlitzApp(slug) {
   }
 }
 
+const SHARE_APP_ICONS = new Set(['dashboard', 'report', 'table', 'checklist', 'form', 'share', 'browser', 'file'])
+const SHARE_APP_TONES = new Set(['sky', 'mint', 'amber', 'violet', 'lime', 'rose'])
+
+function cleanText(value, max) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max)
+}
+
+function normalizedShareAppUrl(value) {
+  try {
+    const url = new URL(String(value || ''))
+    if (url.protocol !== 'https:') return null
+    if (!url.hostname.endsWith('.app.blitz.dev')) return null
+    if (url.username || url.password) return null
+    return url.href
+  } catch {
+    return null
+  }
+}
+
+function normalizedShareAppSpec(raw) {
+  const title = cleanText(raw?.title, 80)
+  const url = normalizedShareAppUrl(raw?.url)
+  if (!title) return { ok: false, error: 'title required' }
+  if (!url) return { ok: false, error: 'url must be https://*.app.blitz.dev' }
+  const subtitle = cleanText(raw?.subtitle, 140)
+  const icon = SHARE_APP_ICONS.has(String(raw?.icon || '')) ? String(raw.icon) : 'dashboard'
+  const tone = SHARE_APP_TONES.has(String(raw?.tone || '')) ? String(raw.tone) : 'sky'
+  return {
+    ok: true,
+    app: {
+      type: 'app',
+      title,
+      url,
+      ...(subtitle ? { subtitle } : {}),
+      icon,
+      tone
+    }
+  }
+}
+
+function firstBlitzAppPreviewUrl(text) {
+  const s = String(text || '')
+  const match = s.match(/(?:https:\/\/)?([a-z0-9-]+\.app\.blitz\.dev(?:\/[^\s<)]*)?)/i)
+  if (!match) return null
+  return match[0].toLowerCase().startsWith('https://') ? match[0] : `https://${match[1]}`
+}
+
 /**
  * Build the tool registry bound to a runtime's primitive operations.
  * @param {object} ops — { getState()->state, workspaceContext()->{workspace,workspace_path,siblings}, say(text),
- *   steer(text,agentId), userMessage(text,agentId), runWorkflow(spec)->{ok,runId}, setTheme({accent,accentDeep})->{ok},
+ *   shareApp(app,agentId,workspace), steer(text,agentId), userMessage(text,agentId), runWorkflow(spec)->{ok,runId}, setTheme({accent,accentDeep})->{ok},
  *   spawnAgent/closeAgent/renameAgent, startWorkflow, setOrchestrators, spawnTerminal/listTerminals/sendToTerminal/
  *   readTerminal/stopTerminal/removeTerminal, requestAction/listActions/resolveAction, and the connection_* ops }
  */
@@ -149,7 +196,7 @@ export function makeOsTools(ops) {
     {
       path: '/new_app',
       description:
-        "Provision a real blitz.dev app (SQLite+R2+auth, edge-deployed) for a DELIVERABLE the user will keep/ship (landing page, site, app, dashboard — even if v1 looks static). Returns { preview_url, claim_url, agents_md, slug }. Then author files and tell the user the claim URL. For N variations to compare, spawn one sub-agent per variation, each with its OWN app (never one app with N routes, never an in-app chooser). Speed-first: build what's asked, offer backends. Working rules in the doctrine's 'Build deliverables on blitz.dev'. Args { slug } (a-z 0-9 -).",
+        "Provision a real blitz.dev app (SQLite+R2+auth, edge-deployed) for a DELIVERABLE the user will keep/ship (landing page, site, app, dashboard — even if v1 looks static). Returns { preview_url, claim_url, agents_md, slug }. MANDATORY FINAL STEP after authoring files: call share_app with preview_url so the island renders a compact app card; do not deliver the preview URL through say. Mention the claim URL only if the user needs ownership. For N variations to compare, spawn one sub-agent per variation, each with its OWN app (never one app with N routes, never an in-app chooser). Speed-first: build what's asked, offer backends. Working rules in the doctrine's 'Build deliverables on blitz.dev'. Args { slug } (a-z 0-9 -).",
       input_schema: { type: 'object', required: ['slug'], properties: { slug: { type: 'string', description: 'unique project slug, a-z 0-9 -' }, title: { type: 'string' } } },
       handler: async ({ body }) => {
         const slug = String(parse(body).slug || '')
@@ -158,7 +205,7 @@ export function makeOsTools(ops) {
         if (!/^[a-z0-9][a-z0-9-]{1,48}$/.test(slug)) return { status: 400, body: { error: 'slug must be a-z 0-9 - (2-49 chars, start alphanumeric)' } }
         const r = await provisionBlitzApp(slug)
         if (!r.ok) return { status: r.status || 400, body: { error: r.error } }
-        return { ok: true, slug, preview_url: r.preview_url, claim_url: r.claim_url, agents_md: r.agents_md, next: "IS THIS ONE OF SEVERAL VARIATIONS/PARTS? Then STOP — do NOT author here. You are the orchestrator: provision the rest, put up a placeholder surface per part, and spawn ONE sub-agent per part (build NONE yourself — not even the 'reference'/canonical one, and don't 'prove the deploy on this one first'). SINGLE deliverable only: author files (relative imports auto-bundle, every save deploys — no bundler), open as one `app` surface, offer backends, tell the user the preview + claim URLs." }
+        return { ok: true, slug, preview_url: r.preview_url, claim_url: r.claim_url, agents_md: r.agents_md, next: "IS THIS ONE OF SEVERAL VARIATIONS/PARTS? Then STOP — do NOT author here. You are the orchestrator: provision the rest, put up a placeholder surface per part, and spawn ONE sub-agent per part (build NONE yourself — not even the 'reference'/canonical one, and don't 'prove the deploy on this one first'). SINGLE deliverable only: author files (relative imports auto-bundle, every save deploys — no bundler), offer backends, then MANDATORY FINAL STEP: call share_app {title,url:preview_url,subtitle?,icon?,tone?,agent?,workspace?}. The task is incomplete until share_app succeeds. Do not paste the preview URL through say." }
       }
     },
     {
@@ -180,15 +227,50 @@ export function makeOsTools(ops) {
     {
       path: '/say',
       description:
-        "Send a chat message to the USER (the island chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. For non-trivial tasks, say a one-line plan first, then short notes as you work — going dark is a failure. Keep it tight: never paste a diff, a code block, or a multi-paragraph wall into chat; if a result needs more than a couple of lines, write it to a deliverable (a file, or a blitz.dev app) and link it, putting the decision in `ask` buttons. To SHOW a visual, screenshot the real SOURCE in the user's connected browser (connection_read can return an image) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary agents MUST pass {agent:'<your id>'} so it lands in YOUR chat.",
+        "Send a chat message to the USER (the island chat). Reply on a trigger:'message' moment, or proactively. RESPONSE STYLE: answer in ONE breath, then stop — open with the substance, no 'I found…' preamble; plain natural language, NEVER JSON/jargon/tool-speak shown to the user. For non-trivial tasks, say a one-line plan first, then short notes as you work — going dark is a failure. Keep it tight: never paste a diff, a code block, or a multi-paragraph wall into chat; if a result needs more than a couple of lines, write it to a deliverable. For a generated blitz.dev app, do NOT paste the app URL here — this tool rejects *.app.blitz.dev preview URLs; call share_app first so the island renders a compact app card, then say only a brief summary without the URL. Put decisions in `ask` buttons. To SHOW a visual, screenshot the real SOURCE in the user's connected browser (connection_read can return an image) and inline that in chat as ![what it is](data:image/png;base64,<base64>). A data: image ALWAYS renders; do NOT hotlink third-party image URLs (Yelp/Instagram/Google/CDN), they 403 or block embedding and arrive blank. Inline <svg> works too. Never claim a visual ('photo is up') unless you inlined a data: image in THIS message. For a DECISION / APPROVAL / ambiguous pick, do NOT ask in prose — use the `ask` tool (it renders real tappable buttons). Non-primary agents MUST pass {agent:'<your id>'} so it lands in YOUR chat.",
       input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, agent: { type: 'string' }, workspace: { type: 'string' } } },
       handler: ({ body }) => {
         const b = parse(body)
         const text = String(b.text || '')
         if (!text) return { status: 400, body: { error: 'text required' } }
+        const appUrl = typeof ops.shareApp === 'function' ? firstBlitzAppPreviewUrl(text) : null
+        if (appUrl) {
+          return {
+            status: 400,
+            body: {
+              error: `Do not paste Blitz app preview URLs through say. Call share_app with url=${appUrl}, then send a short summary without the URL.`
+            }
+          }
+        }
         // `workspace` routes the message to the AGENT'S OWN workspace transcript (pinned via bootstrap),
         // so a background workspace's say never lands in whichever workspace happens to be active.
         ops.say(text, b.agent != null ? String(b.agent) : '0', b.workspace != null ? String(b.workspace) : undefined)
+        return { ok: true }
+      }
+    },
+    {
+      path: '/share_app',
+      description:
+        "Share a generated blitz.dev app in the island chat as a compact interactive app card. Use this after new_app for deliverables, dashboards, visual reports, interactive tools, rich tables/charts, or anything the user should inspect/manipulate. This is the user-facing delivery step for app previews: call share_app, then use say only for a brief summary without the preview URL. Args: {title, url, subtitle?, icon?:'dashboard'|'report'|'table'|'checklist'|'form'|'share'|'browser'|'file', tone?:'sky'|'mint'|'amber'|'violet'|'lime'|'rose', agent?, workspace?}. url must be https://*.app.blitz.dev.",
+      input_schema: {
+        type: 'object',
+        required: ['title', 'url'],
+        properties: {
+          title: { type: 'string' },
+          url: { type: 'string' },
+          subtitle: { type: 'string' },
+          icon: { type: 'string', enum: ['dashboard', 'report', 'table', 'checklist', 'form', 'share', 'browser', 'file'] },
+          tone: { type: 'string', enum: ['sky', 'mint', 'amber', 'violet', 'lime', 'rose'] },
+          agent: { type: 'string' },
+          workspace: { type: 'string' }
+        }
+      },
+      handler: ({ body }) => {
+        const b = parse(body)
+        const normalized = normalizedShareAppSpec(b)
+        if (!normalized.ok) return { status: 400, body: { error: normalized.error } }
+        if (typeof ops.shareApp !== 'function') return { status: 501, body: { error: 'share_app not available in this transport' } }
+        ops.shareApp(normalized.app, b.agent != null ? String(b.agent) : '0', b.workspace != null ? String(b.workspace) : undefined)
         return { ok: true }
       }
     },

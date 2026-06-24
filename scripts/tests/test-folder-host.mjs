@@ -113,6 +113,10 @@ ok('appendChat writes chat.md', existsSync(join(ws, 'chat.md')) && m1.length ===
 ok('appendChat broadcasts {type:chat, messages}', broadcasts.some((b) => b && b.type === 'chat' && Array.isArray(b.messages) && b.messages.length === 1))
 ok('appendChat syncs osState chat surface props (fresh hydrate shows it)', (osState.surfaces.find((s) => s.role === 'chat')?.props?.messages || []).length === 1)
 ok('appendChat exposes hub threads', Array.isArray(osState.surfaces.find((s) => s.role === 'chat')?.props?.threads?.['0']))
+host.appendChat('agent', 'Generated app: Demo Dashboard', '0', {
+  parts: [{ type: 'app', title: 'Demo Dashboard', url: 'https://demo-dashboard.app.blitz.dev/', icon: 'dashboard', tone: 'sky' }]
+})
+ok('appendChat exposes typed app parts through hub threads', chatProps().threads?.['0']?.some((m) => m.parts?.[0]?.type === 'app' && m.parts?.[0]?.url === 'https://demo-dashboard.app.blitz.dev/'), chatProps().threads?.['0'])
 ok('user chat marks the agent working', chatProps().status?.['0'] === 'working', chatProps().status)
 host.appendChat('agent', 'hi there')
 ok('agent /say keeps the turn briefly open', chatProps().status?.['0'] === 'working', chatProps().status)

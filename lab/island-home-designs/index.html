@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BlitzOS · Home Notch Design Lab</title>
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    color-scheme: dark;
+    /* Faithful to the real island (src/renderer/src/notch/island.css). */
+    --bg: #05060a;
+    --panel: #0b0d13;
+    --line: rgba(255,255,255,.10);
+    --line2: rgba(255,255,255,.18);
+    --text: #ffffff;
+    --muted: rgba(255,255,255,.60);
+    --dim: rgba(255,255,255,.40);
+    --faint: rgba(255,255,255,.26);
+    --blue: #0a84ff;          /* the ONE island accent */
+    --blue-bright: #2a93ff;
+    --blue-deep: #0066d6;
+    --green: #30d158;
+    --green-soft: #8ff0a4;
+    --amber: #ffd60a;
+    --amber-soft: #ffe27a;
+    --island: #000;
+    --ease: cubic-bezier(.22,1,.36,1);
+    --spring: cubic-bezier(.18,1,.28,1);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  }
+
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background:
+      radial-gradient(900px 560px at 70% -18%, rgba(56,189,248,.16), transparent 58%),
+      radial-gradient(620px 420px at 8% 4%, rgba(124,60,255,.12), transparent 64%),
+      linear-gradient(150deg, #0d111a 0%, #05060a 56%, #080a10 100%);
+    color: var(--text);
+  }
+  body { overflow-x: hidden; }
+  button { font: inherit; color: inherit; }
+
+  .app { width: min(1480px, 100%); margin: 0 auto; padding: 26px clamp(16px,3vw,44px) 44px; }
+
+  /* ── Header ────────────────────────────────────────────── */
+  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+  .eyebrow { display: inline-flex; align-items: center; margin: 0 0 10px; color: #7dd3fc; font-size: 12px; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; }
+  .brand-dot { position: relative; display: inline-block; width: 28px; height: 12px; margin-right: 9px; border-radius: 6px; background: #000; box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); vertical-align: middle; }
+  .brand-dot::after { content: ''; position: absolute; right: 5px; top: 50%; transform: translateY(-50%); width: 5px; height: 5px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 7px var(--blue); }
+  h1 { margin: 0; font-size: clamp(28px,3.2vw,44px); line-height: 1.03; letter-spacing: -.01em; text-shadow: 0 2px 36px rgba(56,189,248,.18); }
+  .intro { width: min(720px,100%); margin: 11px 0 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+
+  .controls { display: flex; flex-direction: column; gap: 10px; align-items: flex-end; }
+  .seg { display: inline-flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid var(--line); border-radius: 12px; background: rgba(14,17,24,.66); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 10px 26px rgba(0,0,0,.34); }
+  .seg > span { padding: 0 8px; color: var(--dim); font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+  .seg button { height: 32px; border: 0; border-radius: 8px; padding: 0 13px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 800; transition: background .16s, color .16s, transform .12s; }
+  .seg button:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .seg button.active { background: rgba(10,132,255,.20); color: #fff; box-shadow: inset 0 0 0 1px rgba(78,174,255,.34); }
+  .seg button.primary { background: linear-gradient(180deg, var(--blue-bright), var(--blue-deep)); color: #fff; box-shadow: 0 6px 18px rgba(10,132,255,.3), inset 0 1px 0 rgba(255,255,255,.34); }
+  .seg button.primary:hover { filter: brightness(1.06); }
+  .stepper { display: inline-flex; align-items: center; gap: 2px; }
+  .stepper b { min-width: 18px; text-align: center; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 850; color: #fff; }
+
+  /* ── Concept switcher ──────────────────────────────────── */
+  .concepts { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 12px; margin: 20px 0; }
+  .concept { position: relative; text-align: left; border: 1px solid var(--line); border-radius: 14px; background: rgba(14,16,22,.6); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 11px; cursor: pointer; transition: border-color .18s, background .18s, transform .16s, box-shadow .18s; }
+  .concept:hover { transform: translateY(-3px); border-color: var(--line2); background: rgba(20,23,31,.86); box-shadow: 0 14px 34px rgba(0,0,0,.4); }
+  .concept.active { border-color: rgba(86,181,255,.62); background: linear-gradient(180deg, rgba(17,44,76,.6), rgba(12,15,22,.92)); box-shadow: 0 16px 40px rgba(8,40,80,.5); }
+  .concept.active::after { content: ''; position: absolute; inset: -1px; border-radius: 14px; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(120,200,255,.35); }
+  .concept strong { display: block; font-size: 13.5px; margin-bottom: 4px; color: #fff; }
+  .concept .ctag { display: block; color: var(--muted); font-size: 11.5px; line-height: 1.36; }
+
+  /* concept signature thumbnails */
+  .thumb { position: relative; height: 50px; margin-bottom: 11px; border-radius: 10px; overflow: hidden; display: grid; place-items: center;
+    background: radial-gradient(130% 120% at 50% 0%, #121722, #070a10); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), inset 0 8px 20px rgba(0,0,0,.4); }
+  .t { display: flex; align-items: center; justify-content: center; }
+  .t-wing { gap: 6px; }
+  .t-wing i { display: block; }
+  .t-wing .d { width: 9px; height: 9px; border-radius: 3px; }
+  .t-wing .c { width: 16px; height: 16px; border-radius: 5px; background: linear-gradient(160deg,#2a93ff,#0066d6); box-shadow: 0 0 12px rgba(10,132,255,.75); }
+  .t-wing .d:nth-child(1), .t-wing .d:nth-child(5) { transform: translateY(6px); opacity: .55; }
+  .t-wing .d:nth-child(2), .t-wing .d:nth-child(4) { transform: translateY(2px); opacity: .85; }
+  .t-aurora { position: absolute; inset: 0; }
+  .t-aurora .g { position: absolute; inset: -35%; filter: blur(11px); opacity: .85; background: conic-gradient(from 0deg, #0a84ff, #7c3cff, #ff3b8d, #30d158, #38bdf8, #0a84ff); }
+  .t-aurora .core { position: absolute; left: 50%; top: 50%; width: 17px; height: 17px; border-radius: 5px; transform: translate(-50%,-50%); background: linear-gradient(160deg,#2a93ff,#0066d6); box-shadow: 0 0 0 2px rgba(0,0,0,.45), 0 0 14px rgba(10,132,255,.85); }
+  .t-pulse { gap: 3px; height: 28px; }
+  .t-pulse i { width: 3px; border-radius: 2px; }
+  .t-glance .pill { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; background: #000; box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); }
+  .t-glance .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 8px var(--blue); }
+  .t-glance .ln { width: 20px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.3); }
+  .t-glance .mini { display: flex; }
+  .t-glance .mini i { width: 11px; height: 11px; border-radius: 50%; margin-left: -4px; box-shadow: 0 0 0 1.5px #000; }
+  .t-liquid i { width: 18px; height: 18px; border-radius: 50%; margin: 0 -4px; box-shadow: 0 0 0 1px rgba(255,255,255,.06); }
+  .t-liquid .c { width: 23px; height: 23px; background: linear-gradient(160deg,#2a93ff,#0066d6); box-shadow: 0 0 13px rgba(10,132,255,.7); z-index: 2; }
+
+  /* ── Layout ────────────────────────────────────────────── */
+  .layout { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 18px; align-items: start; }
+
+  /* ── Stage = a fake mac desktop with a simulated wallpaper + real menu bar + hardware notch ── */
+  .stage { position: relative; height: 648px; overflow: hidden; border: 1px solid var(--line); border-radius: 16px;
+    background:
+      radial-gradient(78% 68% at 14% 4%, rgba(82,116,240,.55), transparent 60%),
+      radial-gradient(74% 70% at 90% 8%, rgba(158,84,206,.5), transparent 62%),
+      radial-gradient(92% 84% at 74% 110%, rgba(38,158,184,.5), transparent 60%),
+      radial-gradient(70% 64% at 26% 104%, rgba(126,64,182,.46), transparent 64%),
+      linear-gradient(162deg, #1b2358 0%, #171b46 44%, #0f1430 100%);
+    box-shadow: 0 50px 140px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.025); }
+  .stage::after { content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit; box-shadow: inset 0 0 150px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06); }
+  .wall { position: absolute; inset: 0; mix-blend-mode: screen; opacity: .9;
+    background:
+      radial-gradient(58% 48% at 80% 22%, rgba(255,255,255,.07), transparent 60%),
+      radial-gradient(52% 42% at 12% 72%, rgba(150,200,255,.06), transparent 62%); }
+  .dock-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; align-items: flex-end; gap: 10px; padding: 7px 10px; z-index: 1;
+    border-radius: 20px; border: 1px solid rgba(255,255,255,.1); background: rgba(22,26,36,.42); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 18px 44px rgba(0,0,0,.46); }
+  .dock-bar i { width: 40px; height: 40px; border-radius: 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 5px 12px rgba(0,0,0,.42); }
+
+  .menubar { position: absolute; top: 0; left: 0; right: 0; height: 30px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; z-index: 1; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.82); background: linear-gradient(180deg, rgba(18,22,30,.66), rgba(18,22,30,.2)); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  .menubar .mb-left { display: flex; gap: 17px; }
+  .menubar .mb-left b { font-weight: 850; }
+  .menubar .mb-right { display: flex; align-items: center; gap: 13px; color: rgba(255,255,255,.78); }
+  .menubar .mb-right svg { width: 15px; height: 15px; display: block; fill: none; stroke: currentColor; stroke-width: 1.6; }
+
+  /* the physical hardware notch — the anchor everything grows from */
+  .hw-notch { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 200px; height: 32px; background: #000; border-radius: 0 0 16px 16px; z-index: 3; box-shadow: 0 6px 16px rgba(0,0,0,.55); }
+
+  /* ── The island ─────────────────────────────────────────── */
+  .island-area { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+  .island { position: absolute; top: 0; left: 50%; width: 200px; height: 32px; transform: translateX(-50%); pointer-events: auto; cursor: pointer;
+    transition: width .46s var(--spring), height .46s var(--spring), top .46s var(--spring); }
+  .island-bg { position: absolute; inset: 0; background: var(--island); border-radius: 0 0 18px 18px;
+    box-shadow: 0 26px 64px rgba(0,0,0,.68), inset 0 1px 0 rgba(255,255,255,.05);
+    transition: border-radius .46s var(--spring), background .3s ease, box-shadow .3s ease; }
+  .layer { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; opacity: 0; pointer-events: none;
+    transition: opacity .26s ease, transform .42s var(--spring), filter .3s ease; }
+  .layer.show { opacity: 1; pointer-events: auto; }
+
+  /* states */
+  .island[data-state="closed"] { width: 200px; height: 34px; top: 0; }
+  .island[data-state="closed"] .island-bg { border-radius: 0 0 17px 17px; }
+  .island[data-state="chat"]   { width: min(880px, calc(100% - 60px)); height: 432px; top: 0; }
+  .island[data-state="chat"] .island-bg { border-radius: 0 0 30px 30px; background: #000; }
+
+  /* per-concept HOME silhouette (size + radius). Content lives in the home layer. */
+  /* Wing → a rounded "roulette" carousel */
+  .island[data-concept="wing"][data-state="home"]   { width: 620px; height: 212px; }
+  .island[data-concept="wing"][data-state="home"] .island-bg { border-radius: 0 0 50% 50%; }
+  /* Aurora → living light-field */
+  .island[data-concept="aurora"][data-state="home"]  { width: 604px; height: 192px; }
+  .island[data-concept="aurora"][data-state="home"] .island-bg { border-radius: 0 0 54px 54px; }
+  /* Pulse → kinetic waveform */
+  .island[data-concept="pulse"][data-state="home"]   { width: 652px; height: 150px; }
+  .island[data-concept="pulse"][data-state="home"] .island-bg { border-radius: 0 0 40px 40px; }
+  .island[data-concept="glance"][data-state="home"] { width: 392px; height: 56px; top: 50px; }   /* floats below the notch */
+  .island[data-concept="glance"][data-state="home"] .island-bg { border-radius: 999px; box-shadow: 0 18px 44px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.08); }
+  .island[data-concept="liquid"][data-state="home"] { width: 600px; height: 150px; }
+  .island[data-concept="liquid"][data-state="home"] .island-bg { background: transparent; box-shadow: none; }  /* the pods ARE the shape */
+
+  /* layer visibility per state */
+  .island[data-state="closed"] .layer.closed { opacity: 1; pointer-events: auto; }
+  .island[data-state="home"]   .layer.home   { opacity: 1; pointer-events: auto; }
+  .island[data-state="chat"]   .layer.chat   { opacity: 1; pointer-events: auto; }
+  .island[data-state="home"]   .layer.chat,
+  .island[data-state="chat"]   .layer.home   { transform: translateY(-14px) scale(.97); filter: blur(6px); }
+
+  /* ── shared bits: chat tile, agent avatar, status badges ── */
+  .chat-tile { position: relative; display: grid; place-items: center; color: #fff; border-radius: 22%;
+    background: linear-gradient(160deg, var(--blue-bright) 0%, var(--blue) 52%, var(--blue-deep) 100%);
+    box-shadow: 0 8px 22px rgba(10,132,255,.4), inset 0 1px 0 rgba(255,255,255,.34); }
+  .chat-tile svg { width: 52%; height: 52%; fill: #fff; }
+  .chat-tile.lg { width: 64px; height: 64px; }
+  .chat-tile.md { width: 54px; height: 54px; }
+  .chat-tile.sm { width: 30px; height: 30px; border-radius: 28%; }
+  .tile-cap { color: var(--muted); font-size: 11px; font-weight: 600; margin-top: 7px; text-align: center; }
+
+  .ava { position: relative; display: block; border-radius: 26%; box-shadow: inset 0 0 0 .5px rgba(255,255,255,.2); }
+  .ava.lg { width: 48px; height: 48px; }
+  .ava.md { width: 40px; height: 40px; }
+  .ava.sm { width: 30px; height: 30px; }
+
+  .badge { position: absolute; right: -4px; top: -4px; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; border: 2.5px solid #000; }
+  .badge svg { width: 9px; height: 9px; fill: none; stroke: #000; stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
+  .badge.working { background: var(--blue); animation: pulse 1.5s ease-out infinite; }
+  .badge.done { background: var(--green); }
+  .badge.waiting { background: var(--amber); }
+
+  .spin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid rgba(10,132,255,.28); border-top-color: var(--blue); animation: spin .8s linear infinite; }
+  .si { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 700; }
+  .si svg { width: 12px; height: 12px; }
+  .si.working { color: var(--muted); }
+  .si.done { color: var(--green-soft); }
+  .si.done svg { fill: none; stroke: var(--green-soft); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .si.waiting { color: var(--amber-soft); }
+  .si.waiting svg { fill: none; stroke: var(--amber-soft); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+
+  .empty-note { color: var(--dim); font-size: 13px; font-weight: 650; }
+
+  /* ── Concept: WING — circular roulette wheel (domed silhouette, icons on a true arc) ── */
+  .wheel { position: absolute; inset: 0; }
+  .dtile { position: absolute; transform: translate(-50%, -50%); transition: transform .3s var(--spring); }
+  .dtile.chat .chat-tile { box-shadow: 0 10px 30px rgba(10,132,255,.55), 0 0 0 7px rgba(10,132,255,.12), 0 0 34px rgba(56,189,248,.5), inset 0 1px 0 rgba(255,255,255,.34); }
+
+  /* ── Concept: AURORA — the island becomes living light ──── */
+  /* STATIC aurora: opaque black bg, no blend mode, no animation — it can't flicker and can't bleed onto the wallpaper */
+  .aurora-bg { position: absolute; inset: 0; border-radius: 0 0 54px 54px; overflow: hidden; background: #000; }
+  .aurora-bg::after { content: ''; position: absolute; inset: 0; background: radial-gradient(125% 95% at 50% -12%, transparent 40%, rgba(0,0,0,.6) 88%); }
+  .aurora-glow { position: absolute; width: 150%; height: 300%; left: -25%; top: -100%; filter: blur(42px); opacity: .62;
+    background: conic-gradient(from 0deg at 50% 50%, #0a84ff, #7c3cff, #ff3b8d, #30d158, #38bdf8, #0a84ff); }
+  .aurora-glow.b { opacity: .5;
+    background: radial-gradient(42% 52% at 28% 38%, #38bdf8, transparent 70%), radial-gradient(46% 56% at 74% 56%, #ff3b8d, transparent 70%), radial-gradient(40% 52% at 52% 82%, #30d158, transparent 70%); }
+  .aurora-content { position: relative; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 22px; padding-top: 30px; }
+  .aurora-core .chat-tile { box-shadow: 0 0 0 1px rgba(255,255,255,.22), 0 0 30px rgba(10,132,255,.85), 0 0 66px rgba(56,189,248,.55); }
+  .aorb { position: relative; width: 46px; height: 46px; border-radius: 50%; box-shadow: 0 0 20px rgba(255,255,255,.28), inset 0 0 0 .5px rgba(255,255,255,.45); }
+  .aorb::before { content: ''; position: absolute; inset: -8px; border-radius: 50%; background: inherit; filter: blur(9px); opacity: .8; z-index: -1; }
+  .aurora-empty { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 36px; }
+
+  /* ── Concept: PULSE — a luminous kinetic waveform ───────── */
+  .pulse { display: flex; align-items: center; gap: 20px; padding: 24px 30px 0; width: 100%; height: 100%; }
+  .pulse-core { position: relative; flex: none; display: grid; place-items: center; }
+  .pulse-core .chat-tile { box-shadow: 0 0 0 1px rgba(255,255,255,.18), 0 0 26px rgba(10,132,255,.9), 0 0 56px rgba(56,189,248,.5); }
+  .pulse-wave { position: relative; flex: 1; display: flex; align-items: center; gap: 3px; height: 86px; }
+  .pbar { flex: 1; min-width: 3px; border-radius: 3px; transform-origin: center; animation: barPulse 1.2s ease-in-out infinite alternate; }
+  .pulse-base { position: absolute; left: 0; right: 0; top: 50%; height: 1px; transform: translateY(-50%); background: linear-gradient(90deg, transparent, rgba(255,255,255,.2), transparent); }
+  .pdot { position: absolute; top: 50%; transform: translate(-50%, -50%); }
+  .pdot .ava { box-shadow: 0 0 0 3px rgba(5,6,10,.72), inset 0 0 0 .5px rgba(255,255,255,.45); }
+  .pulse-empty { display: flex; align-items: center; gap: 11px; padding-left: 4px; }
+
+  /* ── Concept: GLANCE BAR (floating ticker) ──────────────── */
+  .glance { display: flex; align-items: center; gap: 11px; padding: 0 8px 0 9px; width: 100%; height: 100%; }
+  .glance .chat-tile { width: 36px; height: 36px; border-radius: 50%; flex: none; }
+  .glance .chat-tile svg { width: 19px; height: 19px; }
+  .glance-sum { font-size: 12.5px; font-weight: 650; color: rgba(255,255,255,.82); white-space: nowrap; }
+  .glance-sum .gw { color: #7db9ff; } .glance-sum .gd { color: var(--green-soft); } .glance-sum .ga { color: var(--amber-soft); }
+  .glance-avas { display: flex; margin-left: auto; padding-right: 4px; }
+  .glance-avas .ava { width: 24px; height: 24px; border-radius: 50%; box-shadow: 0 0 0 2.5px #000; margin-left: -8px; }
+
+  /* ── Concept: LIQUID PODS ───────────────────────────────── */
+  .goo { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 0; padding-top: 26px; filter: url(#goo) drop-shadow(0 22px 46px rgba(0,0,0,.62)); }
+  .blob { width: 78px; height: 78px; margin: 0 -7px; border-radius: 50%; background: linear-gradient(180deg, #2c3340, #141823); }
+  .blob.center { width: 98px; height: 98px; background: linear-gradient(180deg, #36404f, #181d28); }
+  .goo-top { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 0; padding-top: 26px; pointer-events: none; }
+  .goo-cell { width: 78px; height: 78px; margin: 0 -7px; display: grid; place-items: center; position: relative; }
+  .goo-cell.center { width: 98px; height: 98px; }
+  .liquid-empty { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); }
+
+  /* ── Closed glance pill ─────────────────────────────────── */
+  .glancepill { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px; border-radius: 999px; background: #000; }
+  .glancepill i { width: 7px; height: 7px; border-radius: 50%; background: #6a6e76; }
+  .island[data-agents="active"] .glancepill i { background: var(--blue); animation: pulse 1.4s ease-out infinite; }
+  .glancepill b { font-size: 11px; font-weight: 850; color: rgba(255,255,255,.86); font-variant-numeric: tabular-nums; }
+
+  /* ── Shared chat panel (the expanded state, same for every concept) ── */
+  .chatpanel { position: absolute; inset: 50px 30px 22px; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; }
+  .ctabs { display: flex; gap: 7px; padding: 0 6px; overflow: hidden; }
+  .ctab { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 999px; background: rgba(255,255,255,.06); border: 1px solid var(--line); color: var(--muted); font-size: 12px; font-weight: 800; white-space: nowrap; }
+  .ctab.active { color: #fff; background: rgba(10,132,255,.2); border-color: rgba(80,180,255,.36); }
+  .ctab i { width: 7px; height: 7px; border-radius: 50%; }
+  .cfeed { min-height: 0; display: grid; align-content: end; gap: 10px; padding: 0 8px; }
+  .cb { width: fit-content; max-width: 70%; padding: 10px 14px; border-radius: 18px; background: rgba(255,255,255,.07); border: 1px solid var(--line); color: rgba(255,255,255,.88); font-size: 13.5px; line-height: 1.4; }
+  .cb.me { justify-self: end; background: linear-gradient(180deg, var(--blue-bright), var(--blue-deep)); color: #fff; border-color: transparent; }
+  .composer { display: grid; grid-template-columns: 34px 1fr 34px; gap: 9px; align-items: center; padding: 6px; border-radius: 999px; background: rgba(255,255,255,.07); border: 1px solid var(--line); }
+  .composer b { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.1); color: #fff; font-size: 16px; font-weight: 400; }
+  .composer b.send { background: linear-gradient(180deg, var(--blue-bright), var(--blue-deep)); }
+  .composer span { color: var(--dim); font-size: 13.5px; }
+
+  .stagelabel { position: absolute; left: 16px; bottom: 14px; z-index: 6; color: var(--faint); font-size: 12px; font-weight: 800; letter-spacing: .02em; }
+
+  /* ── Side notes ─────────────────────────────────────────── */
+  .side { position: sticky; top: 18px; border: 1px solid var(--line); border-radius: 16px; background: rgba(13,16,23,.72); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 18px; box-shadow: 0 26px 64px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.05); }
+  .side-thumb { height: 76px; margin-bottom: 15px; }
+  /* control panel */
+  .cp-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .cp-head .side-thumb { width: 60px; height: 46px; margin: 0; flex: none; }
+  .cp-title h2 { margin: 0; font-size: 18px; letter-spacing: -.01em; }
+  .cp-kicker { display: block; margin-top: 3px; color: #7dd3fc; font-size: 10px; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; }
+  .cp-body { display: grid; gap: 15px; }
+  .ctrl { display: grid; gap: 9px; }
+  .ctrl-row { display: flex; align-items: center; justify-content: space-between; }
+  .ctrl-label { font-size: 12px; font-weight: 750; color: var(--muted); }
+  .ctrl-val { font-size: 11px; font-weight: 850; color: #fff; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 6px; background: rgba(10,132,255,.18); }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 5px; border-radius: 999px; background: rgba(255,255,255,.13); outline: none; cursor: pointer; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: linear-gradient(180deg, #fff, #cfe1f5); box-shadow: 0 2px 6px rgba(0,0,0,.5), 0 0 0 1px rgba(0,0,0,.25); transition: transform .12s; }
+  input[type=range]::-webkit-slider-thumb:active { transform: scale(1.18); }
+  input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; }
+  .ctrl-toggle { display: flex; align-items: center; justify-content: space-between; }
+  .seg-mini { display: flex; gap: 5px; }
+  .seg-mini button { flex: 1; min-width: 0; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.04); color: var(--muted); font-size: 11px; font-weight: 800; cursor: pointer; transition: background .14s, color .14s, border-color .14s; }
+  .seg-mini button:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .seg-mini button.active { background: rgba(10,132,255,.2); color: #fff; border-color: rgba(80,180,255,.4); }
+  .switch { width: 44px; height: 25px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,.08); position: relative; cursor: pointer; transition: background .16s; }
+  .switch i { position: absolute; top: 2px; left: 2px; width: 19px; height: 19px; border-radius: 50%; background: #fff; transition: transform .18s var(--spring); }
+  .switch.on { background: linear-gradient(180deg, var(--blue-bright), var(--blue-deep)); border-color: transparent; }
+  .switch.on i { transform: translateX(19px); }
+
+  /* entrance motion (demo) */
+  @keyframes rise { from { opacity: 0; transform: translateY(13px); } to { opacity: 1; transform: none; } }
+  .top { animation: rise .5s var(--ease) both; }
+  .concepts { animation: rise .5s var(--ease) .08s both; }
+  .layout { animation: rise .5s var(--ease) .16s both; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(10,132,255,.5); } 70% { box-shadow: 0 0 0 6px rgba(10,132,255,0); } 100% { box-shadow: 0 0 0 0 rgba(10,132,255,0); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes barPulse { from { transform: scaleY(1); } to { transform: scaleY(.5); } }
+
+  @media (max-width: 1180px) {
+    .concepts { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    .layout { grid-template-columns: 1fr; }
+    .side { position: static; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" aria-hidden="true" focusable="false">
+  <filter id="goo"><feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b" /><feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9" result="g" /><feBlend in="SourceGraphic" in2="g" /></filter>
+</svg>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <p class="eyebrow"><span class="brand-dot"></span>BlitzOS · Design Lab</p>
+      <h1>Home notch concepts</h1>
+    </div>
+    <div class="controls">
+      <div class="seg" aria-label="State">
+        <span>State</span>
+        <button data-state-btn="closed">Closed</button>
+        <button data-state-btn="home" class="active">Home</button>
+        <button data-state-btn="chat">Chat</button>
+        <button data-state-btn="auto" title="Auto-cycle the concepts">Auto</button>
+        <button data-state-btn="replay" class="primary">Replay</button>
+      </div>
+      <div class="seg" aria-label="Agents">
+        <span>Agents</span>
+        <button data-agents-btn="active" class="active">Active</button>
+        <button data-agents-btn="empty">None</button>
+        <span class="stepper"><button data-count="-1">−</button><b id="countLabel">4</b><button data-count="1">+</button></span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="concepts" id="concepts" aria-label="Concepts"></nav>
+
+  <main class="layout">
+    <section class="stage" aria-label="Preview">
+      <div class="wall"></div>
+      <div class="dock-bar">
+        <i style="background:linear-gradient(180deg,#3a4356,#1b2130)"></i>
+        <i style="background:linear-gradient(160deg,#2a93ff,#0066d6)"></i>
+        <i style="background:linear-gradient(160deg,#30d158,#149a3a)"></i>
+        <i style="background:linear-gradient(160deg,#ff6f5f,#e0322a)"></i>
+        <i style="background:linear-gradient(160deg,#ffd247,#ff9f0a)"></i>
+        <i style="background:linear-gradient(160deg,#b07cff,#6f3cff)"></i>
+        <i style="background:linear-gradient(180deg,#3a4356,#1b2130)"></i>
+      </div>
+      <div class="menubar">
+        <div class="mb-left"><b>Ghostty</b><span>File</span><span>Edit</span><span>View</span><span>Window</span><span>Help</span></div>
+        <div class="mb-right">
+          <svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6c0 5-2 7-2 7h16s-2-2-2-7a6 6 0 0 0-6-6Z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1"/></svg>
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          <span style="font-weight:700;font-size:12px">Fri 9:41</span>
+        </div>
+      </div>
+      <div class="hw-notch"></div>
+      <div class="island-area">
+        <div class="island" id="island" data-concept="wing" data-state="home" data-agents="active" role="button" tabindex="0" aria-label="Notch">
+          <div class="island-bg"></div>
+          <div class="layer closed"><div class="glancepill"><i></i><b id="glanceCount">4</b></div></div>
+          <div class="layer home" id="homeLayer"></div>
+          <div class="layer chat" id="chatLayer"></div>
+        </div>
+      </div>
+      <div class="stagelabel" id="stageLabel"></div>
+    </section>
+
+    <aside class="side" id="sidePanel" aria-label="Controls"></aside>
+  </main>
+</div>
+
+<script>
+(() => {
+  // Port of agentGradient() from src/renderer/src/notch/agentVisuals.ts — golden-angle hue per id.
+  function agentGradient(id) {
+    let n = 0;
+    for (let i = 0; i < id.length; i++) n = (n * 33 + id.charCodeAt(i)) >>> 0;
+    const base = /^\d+$/.test(id) ? parseInt(id, 10) : n;
+    const h = (base * 137.508) % 360;
+    return `radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,.42) 0%, transparent 40%), linear-gradient(145deg, hsl(${h} 85% 60%), hsl(${(h + 50) % 360} 80% 56%) 45%, hsl(${(h + 110) % 360} 82% 60%))`;
+  }
+
+  const CHAT = '<svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg>';
+  const CHECK = '<svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>';
+  const ALERT = '<svg viewBox="0 0 24 24"><path d="M12 7v6M12 17h.01"/></svg>';
+
+  const AGENTS = [
+    { id: '1', name: 'Research', status: 'working' },
+    { id: '2', name: 'Build pass', status: 'working' },
+    { id: '3', name: 'Review queue', status: 'done' },
+    { id: '4', name: 'Draft email', status: 'waiting' },
+    { id: '5', name: 'Data sync', status: 'working' },
+    { id: '6', name: 'Summarize', status: 'done' }
+  ];
+
+  const CONCEPTS = {
+    wing: {
+      name: 'Roulette Dock', tag: 'Rounded carousel around Chat.',
+      notes: [
+        ['Why it stands out', 'The deliberately “normal” option, elevated: a soft, very-rounded capsule where agents arc away from a big centered Chat like a roulette wheel.'],
+        ['Fits the app', 'Icon-only and instantly legible — Chat is the hub, each agent a live tile with a working/done/needs-you badge. Stays calm at 4–6 agents.'],
+        ['Build cost', 'Low-medium. A rounder flush-top shell + a curved icon row in IslandHome (scale/fade by distance from center).']
+      ]
+    },
+    aurora: {
+      name: 'Aurora', tag: 'The island as living light.',
+      notes: [
+        ['Why it stands out', 'Not a panel with stuff in it — the surface itself is alive. A slow spectral aurora drifts behind a luminous Chat core while agents float as glowing orbs.'],
+        ['Fits the app', 'Status reads as light: working orbs pulse, done glows green, needs-you glows amber. Ambient, premium, unmistakably “the agent is awake.”'],
+        ['Build cost', 'Medium. Layered animated gradients + blur (cheap on the GPU). The real work is keeping agent identity legible inside the glow.']
+      ]
+    },
+    pulse: {
+      name: 'Pulse', tag: 'A luminous, kinetic waveform.',
+      notes: [
+        ['Why it stands out', 'Motion-first and alive: a glowing equalizer ripples across the island, each agent owning a colored band that dances while it works.'],
+        ['Fits the app', 'The wave IS the status — blue bands working, green settled = done, amber = needs you. A small agent node rides each band for identity.'],
+        ['Build cost', 'Medium. A row of animated bars (deterministic heights) with per-bar glow; freeze on prefers-reduced-motion.']
+      ]
+    },
+    glance: {
+      name: 'Glance Bar', tag: 'A floating status ticker.',
+      notes: [
+        ['Why it stands out', 'The calmest resting state — it detaches from the notch and reads like a live-activity ticker. Expands to full Chat on click.'],
+        ['Fits the app', 'Perfect default when the island is "idle but watching": "2 working · 1 done · 1 needs you" with overlapping agent avatars.'],
+        ['Build cost', 'Low-medium. A compact summary row; the float (detached pill) is a small departure from the always-hanging shell.']
+      ]
+    },
+    liquid: {
+      name: 'Liquid Pods', tag: 'Pods fused into one blob.',
+      notes: [
+        ['Why it stands out', 'The boldest silhouette change — separate pods melt into a single organic surface (SVG goo), then resolve into the Chat panel.'],
+        ['Fits the app', 'Chat is the big center pod; agents are the smaller fused ones. Status badges float crisp above the goo.'],
+        ['Build cost', 'High / risky. Goo filters over live content are expensive; best reserved for marketing or a hero moment, not the daily default.']
+      ]
+    }
+  };
+
+  const ORDER = ['wing', 'aurora', 'pulse', 'glance', 'liquid'];
+
+  // Live, per-concept control values + the control schema that drives the side panel.
+  const params = {
+    wing:   { roundness: 50, curve: 7, spacing: 24 },
+    aurora: { palette: 0, intensity: 62, softness: 42 },
+    pulse:  { intensity: 58, density: 46, speed: 6 },
+    glance: { width: 392, gap: 50, summary: true },
+    liquid: { fusion: 7, size: 78, merge: 7 }
+  };
+  const CONTROLS = {
+    wing: [
+      { key: 'roundness', label: 'Dome roundness', type: 'range', min: 38, max: 50, step: 1, unit: '%' },
+      { key: 'curve', label: 'Wheel curve', type: 'range', min: 1, max: 10, step: 1 },
+      { key: 'spacing', label: 'Arc spread', type: 'range', min: 12, max: 28, step: 1, unit: '°' }
+    ],
+    aurora: [
+      { key: 'palette', label: 'Palette', type: 'options', options: ['Spectrum', 'Ocean', 'Sunset', 'Mint'] },
+      { key: 'intensity', label: 'Glow', type: 'range', min: 28, max: 95, step: 1, unit: '%' },
+      { key: 'softness', label: 'Softness', type: 'range', min: 20, max: 64, step: 1, unit: 'px' }
+    ],
+    pulse: [
+      { key: 'intensity', label: 'Pulse intensity', type: 'range', min: 20, max: 80, step: 1 },
+      { key: 'density', label: 'Bar density', type: 'range', min: 20, max: 64, step: 2 },
+      { key: 'speed', label: 'Speed', type: 'range', min: 1, max: 10, step: 1 }
+    ],
+    glance: [
+      { key: 'width', label: 'Capsule width', type: 'range', min: 300, max: 460, step: 4, unit: 'px' },
+      { key: 'gap', label: 'Float gap', type: 'range', min: 38, max: 84, step: 1, unit: 'px' },
+      { key: 'summary', label: 'Status summary', type: 'toggle' }
+    ],
+    liquid: [
+      { key: 'fusion', label: 'Fusion', type: 'range', min: 4, max: 12, step: 1 },
+      { key: 'size', label: 'Pod size', type: 'range', min: 62, max: 96, step: 1, unit: 'px' },
+      { key: 'merge', label: 'Overlap', type: 'range', min: 2, max: 16, step: 1, unit: 'px' }
+    ]
+  };
+  const AURORA_PALETTES = [
+    { conic: 'conic-gradient(from 0deg at 50% 50%, #0a84ff, #7c3cff, #ff3b8d, #30d158, #38bdf8, #0a84ff)', blob: 'radial-gradient(42% 52% at 28% 38%, #38bdf8, transparent 70%), radial-gradient(46% 56% at 74% 56%, #ff3b8d, transparent 70%), radial-gradient(40% 52% at 52% 82%, #30d158, transparent 70%)' },
+    { conic: 'conic-gradient(from 0deg at 50% 50%, #0a84ff, #22d3ee, #2563eb, #38bdf8, #0a84ff)', blob: 'radial-gradient(45% 55% at 30% 40%, #38bdf8, transparent 70%), radial-gradient(45% 55% at 72% 58%, #2563eb, transparent 70%), radial-gradient(40% 50% at 52% 82%, #22d3ee, transparent 70%)' },
+    { conic: 'conic-gradient(from 0deg at 50% 50%, #ff6f5f, #ff3b8d, #ffd247, #ff9f0a, #ff6f5f)', blob: 'radial-gradient(45% 55% at 30% 40%, #ff6f5f, transparent 70%), radial-gradient(45% 55% at 72% 58%, #ff3b8d, transparent 70%), radial-gradient(40% 50% at 52% 82%, #ffd247, transparent 70%)' },
+    { conic: 'conic-gradient(from 0deg at 50% 50%, #30d158, #38bdf8, #5ef0a6, #149a3a, #30d158)', blob: 'radial-gradient(45% 55% at 30% 40%, #5ef0a6, transparent 70%), radial-gradient(45% 55% at 72% 58%, #38bdf8, transparent 70%), radial-gradient(40% 50% at 52% 82%, #30d158, transparent 70%)' }
+  ];
+
+  const island = document.getElementById('island');
+  const homeLayer = document.getElementById('homeLayer');
+  const chatLayer = document.getElementById('chatLayer');
+  const conceptsEl = document.getElementById('concepts');
+  const sidePanel = document.getElementById('sidePanel');
+  const stageLabel = document.getElementById('stageLabel');
+  const countLabel = document.getElementById('countLabel');
+  const glanceCount = document.getElementById('glanceCount');
+  const gooBlur = document.querySelector('#goo feGaussianBlur');
+
+  let concept = 'wing';
+  let view = 'home';        // closed | home | chat
+  let agentsOn = true;
+  let count = 4;
+  let timers = [];
+
+  const activeAgents = () => (agentsOn ? AGENTS.slice(0, count) : []);
+
+  function badge(status) {
+    if (status === 'done') return `<span class="badge done">${CHECK}</span>`;
+    if (status === 'waiting') return `<span class="badge waiting">${ALERT}</span>`;
+    return '<span class="badge working"></span>';
+  }
+  function statusInline(status) {
+    if (status === 'done') return `<span class="si done">${CHECK}<span>Done</span></span>`;
+    if (status === 'waiting') return `<span class="si waiting">${ALERT}<span>Needs you</span></span>`;
+    return '<span class="si working"><span class="spin"></span><span>Working</span></span>';
+  }
+  const ava = (a, size) => `<span class="ava ${size}" style="background:${agentGradient(a.id)}">${badge(a.status)}</span>`;
+  const chatTile = (size, live) => `<div class="chat-tile ${size}">${CHAT}${live ? '<span class="badge working" style="right:-3px;top:-3px"></span>' : ''}</div>`;
+  const anyWorking = (ags) => ags.some((a) => a.status === 'working');
+
+  // Small static "signature" preview per concept (used on the cards + the side panel).
+  function thumb(key) {
+    const g = (id) => agentGradient(id);
+    if (key === 'wing') return `<span class="t t-wing"><i class="d" style="background:${g('1')}"></i><i class="d" style="background:${g('2')}"></i><i class="c"></i><i class="d" style="background:${g('3')}"></i><i class="d" style="background:${g('4')}"></i></span>`;
+    if (key === 'aurora') return '<span class="t t-aurora"><i class="g"></i><i class="core"></i></span>';
+    if (key === 'pulse') {
+      const cols = ['#38bdf8', '#38bdf8', '#30d158', '#38bdf8', '#ffd60a', '#38bdf8', '#30d158', '#38bdf8', '#38bdf8'];
+      const hs = [8, 16, 22, 12, 18, 24, 10, 16, 9];
+      return `<span class="t t-pulse">${hs.map((h, i) => `<i style="height:${h}px;background:${cols[i]};box-shadow:0 0 6px ${cols[i]}"></i>`).join('')}</span>`;
+    }
+    if (key === 'glance') return `<span class="t t-glance"><span class="pill"><i class="dot"></i><i class="ln"></i><span class="mini"><i style="background:${g('1')}"></i><i style="background:${g('2')}"></i><i style="background:${g('3')}"></i></span></span></span>`;
+    if (key === 'liquid') return `<span class="t t-liquid"><i style="background:${g('2')}"></i><i class="c"></i><i style="background:${g('3')}"></i></span>`;
+    return '';
+  }
+
+  // ── HOME builders ──────────────────────────────────────────
+  function buildWing(ags, p) {
+    const W = 620, cx = W / 2, topY = 64;
+    if (!ags.length) return `<div class="wheel"><div class="dtile chat" style="left:${cx}px;top:98px">${chatTile('lg', false)}</div><span class="empty-note" style="position:absolute;left:50%;top:162px;transform:translateX(-50%)">No active agents</span></div>`;
+    // True circular wheel: Chat at the top apex, agents stepped around a real arc (radius from "wheel curve").
+    const Rad = 420 - p.curve * 26;             // higher curve → tighter circle
+    const maxK = Math.ceil(ags.length / 2);
+    const step = (Math.min(p.spacing, 56 / maxK) * Math.PI) / 180;   // clamp so the outer tiles stay inside the dome
+    const slots = [{ chat: true, k: 0 }];
+    ags.forEach((a, i) => { const s = Math.floor(i / 2) + 1; slots.push({ a, k: i % 2 === 0 ? -s : s }); });
+    const tiles = slots.map((o) => {
+      const ang = o.k * step;
+      const x = (cx + Rad * Math.sin(ang)).toFixed(1);
+      const y = (topY + Rad * (1 - Math.cos(ang))).toFixed(1);
+      const ak = Math.abs(o.k);
+      if (o.chat) return `<div class="dtile chat" style="left:${x}px;top:${y}px;z-index:20">${chatTile('lg', anyWorking(ags))}</div>`;
+      const sc = (1 - ak * 0.08).toFixed(3), op = (1 - ak * 0.14).toFixed(2);
+      return `<div class="dtile" style="left:${x}px;top:${y}px;transform:translate(-50%,-50%) scale(${sc});opacity:${op};z-index:${10 - ak}">${ava(o.a, 'lg')}</div>`;
+    }).join('');
+    return `<div class="wheel">${tiles}</div>`;
+  }
+
+  function buildAurora(ags, p) {
+    const pal = AURORA_PALETTES[p.palette] || AURORA_PALETTES[0];
+    const op = (p.intensity / 100).toFixed(2);
+    const glow = `<div class="aurora-bg"><div class="aurora-glow" style="background:${pal.conic};opacity:${op};filter:blur(${p.softness}px)"></div><div class="aurora-glow b" style="background:${pal.blob};opacity:${(op * 0.82).toFixed(2)};filter:blur(${p.softness}px)"></div></div>`;
+    if (!ags.length) return `${glow}<div class="aurora-empty">${chatTile('lg', false)}<span class="empty-note">No active agents</span></div>`;
+    const half = Math.ceil(ags.length / 2);
+    const L = ags.slice(0, half), R = ags.slice(half);
+    const orb = (a, i) => `<span class="aorb" style="background:${agentGradient(a.id)};transform:translateY(${i % 2 ? 12 : -12}px)">${badge(a.status)}</span>`;
+    return `${glow}<div class="aurora-content">${L.map((a, i) => orb(a, i)).join('')}<div class="aurora-core">${chatTile('lg', anyWorking(ags))}</div>${R.map((a, i) => orb(a, i + 1)).join('')}</div>`;
+  }
+
+  function buildPulse(ags, p) {
+    if (!ags.length) return `<div class="pulse"><div class="pulse-core">${chatTile('md', false)}</div><div class="pulse-empty empty-note">No active agents</div></div>`;
+    const N = p.density, per = Math.max(1, Math.floor(N / ags.length));
+    const dur = (2.3 - p.speed * 0.16).toFixed(2);
+    let bars = '';
+    for (let i = 0; i < N; i++) {
+      const ai = Math.min(ags.length - 1, Math.floor(i / per));
+      const s = ags[ai].status;
+      const color = s === 'done' ? '#30d158' : s === 'waiting' ? '#ffd60a' : '#38bdf8';
+      const amp = s === 'done' ? 0.32 : s === 'waiting' ? 0.6 : 1;       // working dances tallest; done settles flat
+      const h = Math.round(10 + Math.abs(Math.sin(i * 0.5 + ai * 1.4)) * p.intensity * amp + (s === 'done' ? 14 : 0));
+      const delay = ((i % 7) * 0.09).toFixed(2);
+      bars += `<div class="pbar" style="height:${h}px;background:${color};box-shadow:0 0 9px ${color};animation-delay:${delay}s;animation-duration:${dur}s"></div>`;
+    }
+    const dots = ags.map((a, ai) => {
+      const center = (((ai * per) + per / 2) / N) * 100;
+      return `<span class="pdot" style="left:${center.toFixed(1)}%">${ava(a, 'sm')}</span>`;
+    }).join('');
+    return `<div class="pulse"><div class="pulse-core">${chatTile('md', anyWorking(ags))}</div><div class="pulse-wave"><div class="pulse-base"></div>${bars}${dots}</div></div>`;
+  }
+
+  function buildGlance(ags, p) {
+    if (!ags.length) return `<div class="glance">${chatTile('sm', false)}<span class="glance-sum">No active agents</span></div>`;
+    const w = ags.filter((a) => a.status === 'working').length;
+    const d = ags.filter((a) => a.status === 'done').length;
+    const wa = ags.filter((a) => a.status === 'waiting').length;
+    const parts = [];
+    if (w) parts.push(`<span class="gw">${w} working</span>`);
+    if (d) parts.push(`<span class="gd">${d} done</span>`);
+    if (wa) parts.push(`<span class="ga">${wa} needs you</span>`);
+    const summary = p.summary ? `<span class="glance-sum">${parts.join(' · ')}</span>` : '';
+    const avas = ags.slice(0, 5).map((a) => `<span class="ava" style="background:${agentGradient(a.id)}"></span>`).join('');
+    return `<div class="glance">${chatTile('sm', anyWorking(ags))}${summary}<span class="glance-avas">${avas}</span></div>`;
+  }
+
+  function buildLiquid(ags, p) {
+    const sz = p.size, cen = Math.round(sz * 1.26), mg = -p.merge;
+    const bs = `width:${sz}px;height:${sz}px;margin:0 ${mg}px`;
+    const cs = `width:${cen}px;height:${cen}px;margin:0 ${mg}px`;
+    if (!ags.length) {
+      return `<div class="goo"><div class="blob center" style="${cs}"></div></div><div class="goo-top"><div class="goo-cell center" style="${cs}">${chatTile('md', false)}</div></div><div class="liquid-empty empty-note">No active agents</div>`;
+    }
+    const half = Math.ceil(ags.length / 2);
+    const L = ags.slice(0, half), R = ags.slice(half);
+    const blob = () => `<div class="blob" style="${bs}"></div>`;
+    const cell = (a) => `<div class="goo-cell" style="${bs}">${ava(a, 'md')}</div>`;
+    const blobs = `${L.map(blob).join('')}<div class="blob center" style="${cs}"></div>${R.map(blob).join('')}`;
+    const cells = `${L.map(cell).join('')}<div class="goo-cell center" style="${cs}">${chatTile('md', anyWorking(ags))}</div>${R.map(cell).join('')}`;
+    return `<div class="goo">${blobs}</div><div class="goo-top">${cells}</div>`;
+  }
+
+  const BUILDERS = { wing: buildWing, aurora: buildAurora, pulse: buildPulse, glance: buildGlance, liquid: buildLiquid };
+
+  function buildChat(ags) {
+    const tab = (a) => `<span class="ctab"><i style="background:${a.status === 'done' ? 'var(--green)' : a.status === 'waiting' ? 'var(--amber)' : 'var(--blue)'}"></i>${a.name}</span>`;
+    const tabs = ags.slice(0, 3).map(tab).join('');
+    return `<div class="chatpanel">
+      <div class="ctabs"><span class="ctab active">${CHAT.replace('viewBox="0 0 24 24"', 'viewBox="0 0 24 24" style="width:13px;height:13px"')}Chat</span>${tabs}</div>
+      <div class="cfeed">
+        <div class="cb">Two agents are working, Review queue is done, and Draft email needs your call.</div>
+        <div class="cb me">Open the review and keep everything else running.</div>
+        <div class="cb">On it — pulling Review queue forward now.</div>
+      </div>
+      <div class="composer"><b>+</b><span>Message, or steer an agent…</span><b class="send">↑</b></div>
+    </div>`;
+  }
+
+  // ── Render ─────────────────────────────────────────────────
+  function renderConcepts() {
+    conceptsEl.innerHTML = ORDER.map((key) => {
+      const c = CONCEPTS[key];
+      return `<button class="concept ${key === concept ? 'active' : ''}" data-concept="${key}"><span class="thumb">${thumb(key)}</span><strong>${c.name}</strong><span class="ctag">${c.tag}</span></button>`;
+    }).join('');
+  }
+  // Shell props a control changes live (notch roundness, float) applied as inline styles so the CSS morph still runs.
+  function applyShell() {
+    const bg = island.querySelector('.island-bg');
+    island.style.width = ''; island.style.top = '';
+    bg.style.borderRadius = '';
+    if (view !== 'home') return;
+    const p = params[concept];
+    if (concept === 'wing') bg.style.borderRadius = `0 0 ${p.roundness}% ${p.roundness}%`;   // a circular dome
+    if (concept === 'glance') { island.style.width = p.width + 'px'; island.style.top = p.gap + 'px'; }
+  }
+  function applyGoo() { if (concept === 'liquid' && gooBlur) gooBlur.setAttribute('stdDeviation', String(params.liquid.fusion)); }
+
+  function renderPreview() {
+    const ags = activeAgents();
+    island.dataset.concept = concept;
+    island.dataset.state = view;
+    island.dataset.agents = agentsOn && count > 0 ? 'active' : 'empty';
+    homeLayer.innerHTML = BUILDERS[concept](ags, params[concept]);
+    chatLayer.innerHTML = buildChat(agentsOn ? AGENTS.slice(0, Math.max(count, 3)) : AGENTS.slice(0, 3));
+    applyShell();
+    applyGoo();
+    countLabel.textContent = String(count);
+    glanceCount.textContent = String(ags.length);
+    document.querySelectorAll('[data-state-btn]').forEach((b) => { const k = b.dataset.stateBtn; if (k === 'auto' || k === 'replay') return; b.classList.toggle('active', k === view); });
+    document.querySelectorAll('[data-agents-btn]').forEach((b) => b.classList.toggle('active', (b.dataset.agentsBtn === 'active') === agentsOn));
+    document.querySelectorAll('.concept').forEach((b) => b.classList.toggle('active', b.dataset.concept === concept));
+    stageLabel.textContent = `${CONCEPTS[concept].name}  ·  ${view[0].toUpperCase() + view.slice(1)}  ·  ${agentsOn && count ? count + ' agents' : 'no agents'}`;
+  }
+  function controlHTML(ctl) {
+    const v = params[concept][ctl.key];
+    if (ctl.type === 'range') return `<label class="ctrl"><span class="ctrl-row"><span class="ctrl-label">${ctl.label}</span><span class="ctrl-val">${v}${ctl.unit || ''}</span></span><input type="range" data-key="${ctl.key}" min="${ctl.min}" max="${ctl.max}" step="${ctl.step}" value="${v}"></label>`;
+    if (ctl.type === 'options') return `<div class="ctrl"><span class="ctrl-label">${ctl.label}</span><div class="seg-mini">${ctl.options.map((o, i) => `<button data-key="${ctl.key}" data-opt="${i}" class="${i === v ? 'active' : ''}">${o}</button>`).join('')}</div></div>`;
+    if (ctl.type === 'toggle') return `<div class="ctrl ctrl-toggle"><span class="ctrl-label">${ctl.label}</span><button class="switch ${v ? 'on' : ''}" data-toggle="${ctl.key}"><i></i></button></div>`;
+    return '';
+  }
+  function renderControls() {
+    const c = CONCEPTS[concept];
+    sidePanel.innerHTML = `<div class="cp-head"><span class="thumb side-thumb">${thumb(concept)}</span><div class="cp-title"><h2>${c.name}</h2><span class="cp-kicker">Live controls</span></div></div><div class="cp-body">${CONTROLS[concept].map(controlHTML).join('')}</div>`;
+  }
+  function render() { renderPreview(); renderControls(); }
+
+  let autoTimer = null;
+  function stopAuto() { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; const b = document.querySelector('[data-state-btn="auto"]'); if (b) b.classList.remove('active'); } }
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; stopAuto(); }
+  function setView(v) { clearTimers(); view = v; render(); }
+  function replay() { clearTimers(); view = 'closed'; render(); timers.push(setTimeout(() => { view = 'home'; render(); }, 560)); timers.push(setTimeout(() => { view = 'chat'; render(); }, 1640)); }
+  function toggleAuto() {
+    if (autoTimer) { stopAuto(); return; }
+    clearTimers(); view = 'home'; render();
+    const b = document.querySelector('[data-state-btn="auto"]'); if (b) b.classList.add('active');
+    let i = ORDER.indexOf(concept);
+    autoTimer = setInterval(() => { i = (i + 1) % ORDER.length; concept = ORDER[i]; view = 'home'; render(); }, 2600);
+  }
+
+  conceptsEl.addEventListener('click', (e) => { const b = e.target.closest('[data-concept]'); if (!b) return; clearTimers(); concept = b.dataset.concept; view = 'home'; render(); });
+  document.querySelectorAll('[data-state-btn]').forEach((b) => b.addEventListener('click', () => { const k = b.dataset.stateBtn; if (k === 'auto') return toggleAuto(); if (k === 'replay') return replay(); setView(k); }));
+  document.querySelectorAll('[data-agents-btn]').forEach((b) => b.addEventListener('click', () => { clearTimers(); agentsOn = b.dataset.agentsBtn === 'active'; render(); }));
+  document.querySelectorAll('[data-count]').forEach((b) => b.addEventListener('click', () => { clearTimers(); count = Math.min(6, Math.max(1, count + Number(b.dataset.count))); agentsOn = true; render(); }));
+
+  island.addEventListener('click', () => { clearTimers(); view = view === 'closed' ? 'home' : view === 'home' ? 'chat' : 'home'; render(); });
+  island.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); island.click(); } });
+
+  // Control panel: sliders update the preview live (no panel rebuild, so the drag isn't interrupted); options/toggles rebuild.
+  sidePanel.addEventListener('input', (e) => {
+    const inp = e.target.closest('input[type=range]'); if (!inp) return;
+    const ctl = CONTROLS[concept].find((c) => c.key === inp.dataset.key);
+    params[concept][inp.dataset.key] = Number(inp.value);
+    const val = inp.parentElement.querySelector('.ctrl-val'); if (val) val.textContent = `${inp.value}${ctl && ctl.unit ? ctl.unit : ''}`;
+    renderPreview();
+  });
+  sidePanel.addEventListener('click', (e) => {
+    const opt = e.target.closest('[data-opt]');
+    if (opt) { params[concept][opt.dataset.key] = Number(opt.dataset.opt); render(); return; }
+    const tog = e.target.closest('[data-toggle]');
+    if (tog) { params[concept][tog.dataset.toggle] = !params[concept][tog.dataset.toggle]; render(); return; }
+  });
+
+  // Deep-link a state via the hash, e.g. #orbit/home/4 , #liquid/chat , #wing/home/0 (empty).
+  function readHash() {
+    const h = location.hash.replace(/^#/, '');
+    if (!h) return;
+    const [c, s, n] = h.split('/');
+    if (c && CONCEPTS[c]) concept = c;
+    if (s && ['closed', 'home', 'chat'].includes(s)) view = s;
+    if (n !== undefined && n !== '') {
+      const num = parseInt(n, 10);
+      if (!isNaN(num)) { if (num <= 0) agentsOn = false; else { agentsOn = true; count = Math.min(6, Math.max(1, num)); } }
+    }
+  }
+  window.addEventListener('hashchange', () => { readHash(); render(); });
+
+  readHash();
+  renderConcepts();
+  render();
+})();
+</script>
+</body>
+</html>

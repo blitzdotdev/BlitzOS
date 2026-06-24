@@ -1,14 +1,16 @@
 import { memo, useMemo, type MouseEvent } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { AppEmbedIcon, blitzAppSubtitle, normalizedBlitzAppPart, normalizeAppTone } from './appEmbeds'
 import { markdownUrlTransform, normalizedExternalUrl, normalizedImageSrc } from './markdownSafety'
 import { messagePartsFor } from './messageParts'
-import type { IslandChoicePart, IslandMessage, IslandMessagePart } from './types'
+import type { IslandAppMessagePart, IslandChoicePart, IslandMessage, IslandMessagePart } from './types'
 
 const remarkPlugins = [remarkGfm]
 
 type MarkdownMessageProps = Pick<IslandMessage, 'role' | 'text' | 'parts'> & {
   onChoose?: (choice: string) => void
+  onOpenApp?: (app: IslandAppMessagePart) => void
   selectedAnswer?: string
   showDivider?: boolean
 }
@@ -191,10 +193,47 @@ function ChoicePartMessage({
   )
 }
 
-function renderMessagePart(part: IslandMessagePart, index: number, onChoose?: (choice: string) => void, selectedAnswer?: string): JSX.Element {
+function AppPartMessage({ part, onOpenApp }: { part: IslandAppMessagePart; onOpenApp?: (app: IslandAppMessagePart) => void }): JSX.Element {
+  const normalized = normalizedBlitzAppPart(part)
+  const tone = normalizeAppTone(part.tone)
+  const disabled = !normalized || !onOpenApp
+  return (
+    <button
+      type="button"
+      className={`isl-app-card${disabled ? ' invalid' : ''}`}
+      data-tone={tone}
+      disabled={disabled}
+      aria-label={normalized ? `Open ${part.title}` : `Cannot open ${part.title}`}
+      onClick={() => {
+        if (normalized) onOpenApp?.(normalized)
+      }}
+    >
+      <span className="isl-app-card-icon" aria-hidden>
+        <AppEmbedIcon icon={part.icon} />
+      </span>
+      <span className="isl-app-card-copy">
+        <span className="isl-app-card-kicker">{part.title}</span>
+        <span className="isl-app-card-sub">{normalized ? blitzAppSubtitle(part) : 'Unsupported app URL'}</span>
+      </span>
+      <span className="isl-app-card-open" aria-hidden>
+        ›
+      </span>
+    </button>
+  )
+}
+
+function renderMessagePart(
+  part: IslandMessagePart,
+  index: number,
+  onChoose?: (choice: string) => void,
+  selectedAnswer?: string,
+  onOpenApp?: (app: IslandAppMessagePart) => void
+): JSX.Element {
   switch (part.type) {
     case 'choice':
       return <ChoicePartMessage key={`choice:${index}:${part.prompt}`} part={part} onChoose={onChoose} selectedAnswer={selectedAnswer} />
+    case 'app':
+      return <AppPartMessage key={`app:${index}:${part.url}:${part.title}`} part={part} onOpenApp={onOpenApp} />
     case 'error':
       return (
         <div key={`error:${index}`} className="isl-msg-part error">
@@ -227,13 +266,14 @@ function renderMessagePart(part: IslandMessagePart, index: number, onChoose?: (c
   }
 }
 
-function MarkdownMessage({ role, text, parts: providedParts, onChoose, selectedAnswer, showDivider }: MarkdownMessageProps): JSX.Element {
+function MarkdownMessage({ role, text, parts: providedParts, onChoose, onOpenApp, selectedAnswer, showDivider }: MarkdownMessageProps): JSX.Element {
   const parts = useMemo(() => messagePartsFor({ role, text, parts: providedParts }), [role, text, providedParts])
   const hasChoice = parts.some((part) => part.type === 'choice')
+  const hasApp = parts.some((part) => part.type === 'app')
 
   return (
-    <div className={`isl-msg ${role} isl-md-msg${hasChoice ? ' isl-ask-msg' : ''}${showDivider ? ' isl-say-divider' : ''}`}>
-      {parts.map((part, index) => renderMessagePart(part, index, onChoose, selectedAnswer))}
+    <div className={`isl-msg ${role} isl-md-msg${hasChoice ? ' isl-ask-msg' : ''}${hasApp ? ' isl-app-msg' : ''}${showDivider ? ' isl-say-divider' : ''}`}>
+      {parts.map((part, index) => renderMessagePart(part, index, onChoose, selectedAnswer, onOpenApp))}
     </div>
   )
 }

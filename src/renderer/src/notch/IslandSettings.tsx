@@ -41,6 +41,7 @@ export function IslandSettings({
   return (
     <div className="nh-island isl-settings" style={{ paddingTop: top }}>
       <div className="isl-settings-head">
+        <span className="isl-debug-flag">DEBUG</span>
         <span className="isl-settings-title">Settings</span>
       </div>
       <div className="isl-settings-list">

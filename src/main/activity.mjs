@@ -15,7 +15,7 @@
 export const ACTIVITY_TOOLS = new Set([
   '/open_window', '/create_surface', '/update_surface', '/move_surface', '/close_surface',
   '/surface_control', '/read_window', '/spawn_widget', '/save_widget', '/say', '/go_to_primary',
-  '/new_app', '/customize_widget', '/create_workspace', '/switch_workspace',
+  '/new_app', '/share_app', '/customize_widget', '/create_workspace', '/switch_workspace',
   '/connection_read', '/connection_act', '/connection_run_js', '/connection_call_tool', '/connection_save_tool', '/connection_drop'
 ])
 
@@ -41,6 +41,7 @@ export function activityText(path, a) {
     case '/spawn_widget': return `▣ opening widget ${safeText(a.name || '')}`
     case '/save_widget': return `💾 saving widget ${safeText(a.name || '')}`
     case '/new_app': return `🚀 provisioning app ${safeText(a.slug || '')}`
+    case '/share_app': return `sharing app ${safeText(a.title || '')}`
     case '/customize_widget': return `🎨 restyling ${a.name || 'widget'}`
     case '/create_workspace': return `🗃 new workspace “${safeText(a.name)}”`
     case '/switch_workspace': return `↪ switching to “${safeText(a.name)}”`

@@ -13,12 +13,16 @@ const dir = mkdtempSync(join(tmpdir(), 'blitz-chat-'))
 console.log('# chat transcript (chat.md) — the OS owns the serialization, in the folder')
 appendChatMessage(dir, 'user', 'open photopea')
 appendChatMessage(dir, 'agent', 'Opened Photopea.\nIt may take a moment.')
+appendChatMessage(dir, 'agent', 'Generated app: Launch Dashboard', '0', {
+  parts: [{ type: 'app', title: 'Launch Dashboard', url: 'https://launch-dashboard.app.blitz.dev/', icon: 'dashboard', tone: 'sky' }]
+})
 ok('chat.md created in the workspace folder', existsSync(join(dir, 'chat.md')))
 let msgs = readChatMessages(dir)
-ok('two messages parsed back', msgs.length === 2)
+ok('three messages parsed back', msgs.length === 3)
 ok('roles + order correct', msgs[0].role === 'user' && msgs[1].role === 'agent')
 ok('user text round-trips', msgs[0].text === 'open photopea')
 ok('multi-line agent text round-trips', msgs[1].text === 'Opened Photopea.\nIt may take a moment.')
+ok('typed app parts round-trip from chat metadata', msgs[2].text === 'Generated app: Launch Dashboard' && msgs[2].parts?.[0]?.type === 'app' && msgs[2].parts?.[0]?.url === 'https://launch-dashboard.app.blitz.dev/')
 ok('timestamps captured', msgs[0].ts > 0)
 ok('chat.md is human-readable markdown', /^# Chat/.test(readFileSync(join(dir, 'chat.md'), 'utf8')) && readFileSync(join(dir, 'chat.md'), 'utf8').includes('### user'))
 

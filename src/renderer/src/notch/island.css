@@ -1835,6 +1835,213 @@ button.isl-app-chat:active .isl-app-icon {
   line-height: 15px;
   white-space: nowrap;
 }
+.nh-island [data-tone='sky'] {
+  --isl-app-a: #31c6ff;
+  --isl-app-b: #426dff;
+}
+.nh-island [data-tone='mint'] {
+  --isl-app-a: #5ef0a6;
+  --isl-app-b: #43d1d8;
+}
+.nh-island [data-tone='amber'] {
+  --isl-app-a: #ffd247;
+  --isl-app-b: #ff6f5f;
+}
+.nh-island [data-tone='violet'] {
+  --isl-app-a: #9b7cff;
+  --isl-app-b: #ed4ac8;
+}
+.nh-island [data-tone='lime'] {
+  --isl-app-a: #a9ff5c;
+  --isl-app-b: #33df6a;
+}
+.nh-island [data-tone='rose'] {
+  --isl-app-a: #ff66c4;
+  --isl-app-b: #ff8361;
+}
+.nh-island .isl-app-msg {
+  width: 100%;
+  max-width: 100%;
+}
+.nh-island .isl-app-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 11px;
+  width: min(100%, 390px);
+  min-height: 64px;
+  margin-top: 9px;
+  padding: 10px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 15px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--isl-app-a) 14%, transparent), transparent 48%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.072), rgba(255, 255, 255, 0.035));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 12px 24px rgba(0, 0, 0, 0.22);
+  color: var(--isl-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.nh-island .isl-app-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--isl-app-a) 44%, rgba(255, 255, 255, 0.18));
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--isl-app-a) 20%, transparent), transparent 50%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.045));
+}
+.nh-island .isl-app-card:active {
+  transform: translateY(0);
+}
+.nh-island .isl-app-card:focus-visible {
+  outline: 2px solid rgba(255, 177, 20, 0.82);
+  outline-offset: 2px;
+}
+.nh-island .isl-app-card.invalid {
+  opacity: 0.58;
+  cursor: default;
+}
+.nh-island .isl-app-card.invalid:hover {
+  transform: none;
+  border-color: rgba(255, 255, 255, 0.13);
+}
+.nh-island .isl-app-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: linear-gradient(135deg, var(--isl-app-a), var(--isl-app-b));
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+.nh-island .isl-app-card-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  width: 19px;
+  height: 19px;
+}
+.nh-island .isl-app-card-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.nh-island .isl-app-card-kicker {
+  color: var(--isl-app-a);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 17px;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-app-card-sub {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--isl-muted);
+  font-size: 11.5px;
+  font-weight: 560;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-app-card-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 19px;
+  line-height: 1;
+}
+
+.nh-island.isl-app-viewing {
+  min-height: min(820px, calc(100vh - 22px));
+  padding-right: 8px;
+  padding-bottom: 8px;
+  padding-left: 8px;
+  animation: isl-rise 0.18s ease-out both;
+}
+.nh-island .isl-app-viewer {
+  position: relative;
+  color-scheme: dark;
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+  border: 0;
+  border-radius: 20px;
+  background: transparent;
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  animation: isl-app-viewer-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 3;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(18, 20, 25, 0.74);
+  color: rgba(255, 255, 255, 0.78);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-close:hover {
+  background: rgba(30, 33, 40, 0.86);
+  color: #fff;
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-close svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+.nh-island .isl-app-frame {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: #fff;
+  border-radius: 0;
+  color-scheme: dark;
+}
+@keyframes isl-app-viewer-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
 
 /* the in-chat attachment SNAPSHOT — a frozen, read-only, scaled-down copy of the dropbox above the user message it
    rode on. Glass pill (the agent-tab .isl-chip look: dark surface + faint hairline), right-aligned like the bubble.

@@ -23,6 +23,7 @@ import {
   osReadWindow,
   osControlSurface,
   osSay,
+  osShareApp,
   osUserMessage,
   osCustomizeWidget,
   osSpawnAgent,
@@ -70,6 +71,7 @@ export const electronOps = {
   readWindow: (id: string, script?: string) => osReadWindow(id, script),
   controlSurface: (id: string, action: unknown) => osControlSurface(id, action as Parameters<typeof osControlSurface>[1]),
   say: (text: string, agentId?: string, workspace?: string) => osSay(text, agentId, workspace),
+  shareApp: (app: Record<string, unknown>, agentId?: string, workspace?: string) => osShareApp(app, agentId, workspace),
   // user_say (localhost-only test syscall): programmatic user input through the human composer's exact path
   userMessage: (text: string, agentId?: string) => osUserMessage(text, agentId),
   // steer (W2 supervisor): nudge a SPECIFIC agent — same waking path as a user message (osUserMessage appends

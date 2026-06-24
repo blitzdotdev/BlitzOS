@@ -22,6 +22,7 @@ const agentVisuals = existsSync(agentVisualsPath) ? readFileSync(agentVisualsPat
 const markdownMessage = readFileSync(join(repoRoot, 'src/renderer/src/notch/MarkdownMessage.tsx'), 'utf8')
 const messageParts = readFileSync(join(repoRoot, 'src/renderer/src/notch/messageParts.ts'), 'utf8')
 const markdownSafety = readFileSync(join(repoRoot, 'src/renderer/src/notch/markdownSafety.ts'), 'utf8')
+const appEmbeds = readFileSync(join(repoRoot, 'src/renderer/src/notch/appEmbeds.tsx'), 'utf8')
 const islandSettings = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandSettings.tsx'), 'utf8')
 const islandTerminal = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandTerminalPane.tsx'), 'utf8')
 const notchTypes = readFileSync(join(repoRoot, 'src/renderer/src/notch/types.ts'), 'utf8')
@@ -30,6 +31,13 @@ const notchCss = readFileSync(join(repoRoot, 'src/renderer/src/notch/notch.css')
 const css = readFileSync(join(repoRoot, 'src/renderer/src/styles.css'), 'utf8')
 const workspaceHost = readFileSync(join(repoRoot, 'src/main/workspace-host.mjs'), 'utf8')
 const workspaceHostTypes = readFileSync(join(repoRoot, 'src/main/workspace-host.d.mts'), 'utf8')
+const workspaceCore = readFileSync(join(repoRoot, 'src/main/workspace.mjs'), 'utf8')
+const osTools = readFileSync(join(repoRoot, 'src/main/os-tools.mjs'), 'utf8')
+const electronOsTools = readFileSync(join(repoRoot, 'src/main/electron-os-tools.ts'), 'utf8')
+const previewBackend = readFileSync(join(repoRoot, 'preview/backend.mjs'), 'utf8')
+const activity = readFileSync(join(repoRoot, 'src/main/activity.mjs'), 'utf8')
+const blitzosAgents = readFileSync(join(repoRoot, 'src/main/blitzos-agents.md'), 'utf8')
+const agentRuntime = readFileSync(join(repoRoot, 'src/main/agent-runtime.mjs'), 'utf8')
 const agentTranscript = readFileSync(join(repoRoot, 'src/main/agent-transcript.mjs'), 'utf8')
 const chatTitleer = readFileSync(join(repoRoot, 'src/main/chat-titleer.mjs'), 'utf8')
 const osActions = readFileSync(join(repoRoot, 'src/main/osActions.ts'), 'utf8')
@@ -99,8 +107,8 @@ ok('agent tab labels have enough line box for descenders like g/y',
     /\.nh-island \.isl-chip-label \{[\s\S]*?min-height: 18px[\s\S]*?line-height: 18px/.test(islandCss))
 ok('island feed hides horizontal overflow and keeps chat bubbles inset from the panel edge',
   /\.nh-island \.isl-feed \{[\s\S]*?box-sizing: border-box[\s\S]*?overflow-x: hidden[\s\S]*?overflow-y: auto[\s\S]*?padding: 8px 16px 12px/.test(islandCss))
-ok('opening Chat from Home resets to the new-session composer instead of the last agent tab',
-  /const openChat = \(\): void => \{[\s\S]*?setPage\(0\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
+ok('opening Chat from Home selects the Blitz main thread instead of the last agent tab',
+  /const openChat = \(\): void => \{[\s\S]*?const i = sessionsRef\.current\.findIndex\(\(s\) => s\.id === '0'\)[\s\S]*?setPage\(i >= 0 \? i \+ 1 : 1\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
     /onOpenChat=\{openChat\}/.test(notchHost))
 ok('agent gradient visuals are shared between the session tabs and home working rail',
   (/export function agentGradient\(id: string\): string/.test(agentVisuals) &&
@@ -367,7 +375,7 @@ ok('agent tabs can be renamed inline from right-click with a 24-character cap',
     /onRenameAgent=\{renameAgent\}/.test(notchHost) &&
     /function agentTitleText/.test(workspaceHost) &&
     /if \(id === '0'\) return \{ ok: false, error: 'main agent cannot be renamed' \}/.test(workspaceHost) &&
-    /title: id === '0' \? 'Main' : agentTitleText\(meta\.title \|\| defaultAgentTitle\(id\)\)/.test(workspaceHost) &&
+    /title: id === '0' \? 'Blitz' : agentTitleText\(meta\.title \|\| defaultAgentTitle\(id\)\)/.test(workspaceHost) &&
     /\.slice\(0, 24\)/.test(workspaceHost) &&
     /isl-chip-editing/.test(islandCss) &&
     /isl-chip-input/.test(islandCss))
@@ -437,6 +445,7 @@ ok('island chat has a typed message-parts adapter before rendering markdown or p
   /IslandMessagePart/.test(notchTypes) &&
     /type: 'text'/.test(notchTypes) &&
     /type: 'choice'/.test(notchTypes) &&
+    /type: 'app'/.test(notchTypes) &&
     /type: 'tool'/.test(notchTypes) &&
     /parts\?: IslandMessagePart\[\]/.test(notchTypes) &&
     /messagePartsFor/.test(messageParts) &&
@@ -473,6 +482,78 @@ ok('submitted blitz-ui prompts show the selected answer in the original prompt U
     /\.isl-ask-card\.answered \.isl-ask-option/.test(islandCss) &&
     /\.isl-ask-selected-answer/.test(islandCss) &&
     /\.isl-ask-selected-mark/.test(islandCss))
+ok('generated app message parts render compact cards and open the island iframe viewer',
+  /IslandAppIcon = 'dashboard' \| 'report' \| 'table' \| 'checklist' \| 'form' \| 'share' \| 'browser' \| 'file'/.test(notchTypes) &&
+    /IslandAppTone = 'sky' \| 'mint' \| 'amber' \| 'violet' \| 'lime' \| 'rose'/.test(notchTypes) &&
+    /export interface IslandAppPart/.test(notchTypes) &&
+    /type: 'app'/.test(notchTypes) &&
+    /APP_EMBED_ICONS/.test(appEmbeds) &&
+    /APP_EMBED_TONES/.test(appEmbeds) &&
+    /function normalizedBlitzAppUrl/.test(appEmbeds) &&
+    /url\.protocol !== 'https:'/.test(appEmbeds) &&
+    /url\.hostname\.endsWith\('\.app\.blitz\.dev'\)/.test(appEmbeds) &&
+    /case 'app':/.test(markdownMessage) &&
+    /className=\{`isl-app-card/.test(markdownMessage) &&
+    /className="isl-app-card-icon"/.test(markdownMessage) &&
+    !/isl-app-card-frame/.test(markdownMessage) &&
+    /<span className="isl-app-card-kicker">\{part\.title\}<\/span>/.test(markdownMessage) &&
+    !/isl-app-card-kicker">Blitz app/.test(markdownMessage) &&
+    /onOpenApp\?: \(app: IslandAppMessagePart\) => void/.test(markdownMessage) &&
+    /onOpenApp=\{showAppViewer\}/.test(islandPanel) &&
+    /const \[openApp, setOpenApp\] = useState<IslandAppMessagePart \| null>\(null\)/.test(islandPanel) &&
+    /const appReturnScrollTopRef = useRef<number \| null>\(null\)/.test(islandPanel) &&
+    /appReturnScrollTopRef\.current = feedRef\.current\?\.scrollTop \?\? null/.test(islandPanel) &&
+    /if \(feedRef\.current\) feedRef\.current\.scrollTop = restoreTop/.test(islandPanel) &&
+    /\{!openApp && \([\s\S]*?className=\{`isl-tabwrap/.test(islandPanel) &&
+    !/isl-app-viewer-head/.test(islandPanel) &&
+    !/isl-app-viewer-kicker/.test(islandPanel) &&
+    /aria-label="Close generated app"/.test(islandPanel) &&
+    /<>\s*<button type="button" className="isl-app-viewer-close"/.test(islandPanel) &&
+    /<div className="isl-app-viewer" data-tone=\{openApp\.tone\}>[\s\S]*?<iframe/.test(islandPanel) &&
+    /<iframe[\s\S]*?className="isl-app-frame"[\s\S]*?src=\{openApp\.url\}[\s\S]*?sandbox="allow-scripts allow-forms allow-popups allow-same-origin"/.test(islandPanel) &&
+    /style=\{lockHeight && !openApp/.test(islandPanel) &&
+    /const \[appViewerOpen, setAppViewerOpen\] = useState\(false\)/.test(notchHost) &&
+    /setAppViewerOpen\(open\)/.test(notchHost) &&
+    /\{!onHome && !appViewerOpen && \(/.test(notchHost) &&
+    /onAppViewerToggle=\{handleAppViewerToggle\}/.test(notchHost) &&
+    /\.isl-app-card/.test(islandCss) &&
+    /\.isl-app-viewer/.test(islandCss) &&
+    /\.nh-island\.isl-app-viewing \{[\s\S]*?min-height: min\(820px, calc\(100vh - 22px\)\)/.test(islandCss) &&
+    /\.nh-island\.isl-app-viewing \{[\s\S]*?padding-right: 8px[\s\S]*?padding-bottom: 8px[\s\S]*?padding-left: 8px/.test(islandCss) &&
+    /\.nh-island \.isl-app-viewer \{[\s\S]*?border: 0/.test(islandCss) &&
+    /\.nh-island\.isl-app-viewing > \.isl-app-viewer-close \{[\s\S]*?position: absolute[\s\S]*?width: 28px[\s\S]*?height: 28px/.test(islandCss) &&
+    /\.isl-app-frame/.test(islandCss) &&
+    /\.nh-island \.isl-app-frame \{[\s\S]*?color-scheme: dark/.test(islandCss) &&
+    !/openExternalUrl/.test(appEmbeds))
+ok('agents can share generated Blitz apps as typed island app cards',
+  /path: '\/share_app'/.test(osTools) &&
+    /normalizedShareAppSpec/.test(osTools) &&
+    /firstBlitzAppPreviewUrl/.test(osTools) &&
+    /url\.hostname\.endsWith\('\.app\.blitz\.dev'\)/.test(osTools) &&
+    /ops\.shareApp\(normalized\.app/.test(osTools) &&
+    /MANDATORY FINAL STEP/.test(osTools) &&
+    /this tool rejects \*\.app\.blitz\.dev preview URLs/.test(osTools) &&
+    /Do not paste Blitz app preview URLs through say/.test(osTools) &&
+    /osShareApp/.test(osActions) &&
+    /parts: \[part\]/.test(osActions) &&
+    /shareApp: \(app: Record<string, unknown>, agentId\?: string, workspace\?: string\) => osShareApp/.test(electronOsTools) &&
+    /shareApp: \(app, agentId, workspace\) =>/.test(previewBackend) &&
+    /appendChatMessage\(dir, 'agent', text, String\(agentId \?\? '0'\), meta\)/.test(previewBackend) &&
+    /Array\.isArray\(meta\?\.parts\)/.test(workspaceCore) &&
+    /msg\.parts = meta\.parts/.test(workspaceCore) &&
+    /parts\?: unknown\[\]/.test(workspaceHostTypes) &&
+    /'\/share_app'/.test(activity) &&
+    /case '\/share_app': return `sharing app/.test(activity) &&
+    /share_app \{ title, url: preview_url \}/.test(blitzosAgents) &&
+    /Never paste an `\*\.app\.blitz\.dev` preview URL through `say`/.test(blitzosAgents) &&
+    /Use share_app for generated blitz\.dev apps/.test(agentRuntime))
+ok('fake Blitz app embed debug preview setting is not exposed',
+  !/DEBUG_FAKE_APP_EMBED_KEY|debugFakeAppEmbed|fakeAppEmbed|showFakeAppEmbed|Show fake Blitz app embed|Refresh preview|DEFAULT_BLITZ_APP_EMBED_URL/.test(
+    `${notchHost}\n${islandSettings}\n${appEmbeds}`
+  ) &&
+    /const mapMessageParts = \(value: unknown\): IslandMessage\['parts'\] \| undefined =>/.test(notchHost) &&
+    /parts: mapMessageParts\(m\.parts\)/.test(notchHost) &&
+    /\.filter\(\(m\) => m\.text\.trim\(\) \|\| m\.parts\?\.length\)/.test(notchHost))
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILED'}`)
 process.exit(failures === 0 ? 0 : 1)

@@ -548,6 +548,21 @@ const serverOps = {
     }
     return wsHost.appendChat('agent', String(text), agentId) // append to that agent's chat.md + broadcast
   },
+  shareApp: (app, agentId, workspace) => {
+    const title = String(app?.title || '').replace(/\s+/g, ' ').trim() || 'Generated app'
+    const text = `Generated app: ${title}`
+    const part = { type: 'app', title, url: String(app?.url || '') }
+    for (const key of ['subtitle', 'icon', 'tone']) {
+      const value = app?.[key]
+      if (typeof value === 'string' && value.trim()) part[key] = value.trim()
+    }
+    const meta = { parts: [part] }
+    if (workspace && workspace !== wsHost.active()) {
+      const dir = resolveWorkspace(WORKSPACES_ROOT, String(workspace), { mustExist: true })
+      if (dir) return appendChatMessage(dir, 'agent', text, String(agentId ?? '0'), meta)
+    }
+    return wsHost.appendChat('agent', text, agentId, meta)
+  },
   // steer (W2 supervisor): nudge a SPECIFIC agent — the relay-safe wake-a-target path. Mirrors Electron's
   // osUserMessage: append the directive AS the user to that agent's chat.md (appendChat('user') also flips it
   // to 'working' + echoes the widget) AND emit a 'message' moment that wakes ONLY that agent. `say` does NOT

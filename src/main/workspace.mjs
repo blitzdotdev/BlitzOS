@@ -1993,7 +1993,9 @@ export function readChatMessages(dir, cap = 400, sessionId = '0') {
     const msg = { role: marks[i].role, text: body, ts: marks[i].ts }
     if (marks[i].metaB64) {
       try {
-        msg.ref = { ...JSON.parse(Buffer.from(marks[i].metaB64, 'base64').toString('utf8')), text: body }
+        const meta = JSON.parse(Buffer.from(marks[i].metaB64, 'base64').toString('utf8'))
+        if (Array.isArray(meta?.parts)) msg.parts = meta.parts
+        msg.ref = { ...meta, text: body }
       } catch {
         /* corrupt ref — fall back to a plain message */
       }
