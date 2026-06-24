@@ -726,26 +726,37 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                   const isSubmittedAskAnswer =
                     m.role === 'user' && previous?.role === 'agent' && Boolean(matchingChoiceAnswerForMessage(previous, m.text))
                   if (isSubmittedAskAnswer) return null
+                  const hasTray = Boolean(trayByIndex[i] && trayByIndex[i]!.length > 0)
+                  // The bubble renders the same with or without attachments; only its WRAPPER differs.
+                  const bubble = (
+                    <MarkdownMessage
+                      role={m.role}
+                      text={m.text}
+                      parts={m.parts}
+                      selectedAnswer={selectedAnswer}
+                      showDivider={m.role === 'agent' && i > 0}
+                      onOpenApp={showAppViewer}
+                      onChoose={(choice) => {
+                        setPendingChoiceSelections((prev) => ({ ...prev, [askKey]: choice }))
+                        onSend(choice)
+                      }}
+                    />
+                  )
                   return (
                     <Fragment key={`${i}:${m.ts || ''}`}>
-                      {trayByIndex[i] && trayByIndex[i]!.length > 0 && (
-                        // a frozen, read-only, glass-pill copy of the dropbox — scrolls + tooltips, no delete.
-                        <div className="isl-msg-tray">
-                          <AttachTray groups={trayByIndex[i]!} readOnly />
+                      {hasTray ? (
+                        // The frozen snapshot is GROUPED FLUSH with its bubble as ONE scroll unit, so a partial
+                        // scroll never leaves an isolated clipped chip floating above a complete message (the strip
+                        // itself scrolls sideways, never vertical-clips). See plans/blitzos-connector-snapshot-clip-fix.md.
+                        <div className="isl-msg-group">
+                          <div className="isl-msg-tray">
+                            <AttachTray groups={trayByIndex[i]!} readOnly />
+                          </div>
+                          {bubble}
                         </div>
+                      ) : (
+                        bubble
                       )}
-                      <MarkdownMessage
-                        role={m.role}
-                        text={m.text}
-                        parts={m.parts}
-                        selectedAnswer={selectedAnswer}
-                        showDivider={m.role === 'agent' && i > 0}
-                        onOpenApp={showAppViewer}
-                        onChoose={(choice) => {
-                          setPendingChoiceSelections((prev) => ({ ...prev, [askKey]: choice }))
-                          onSend(choice)
-                        }}
-                      />
                       {i === lastVisibleTurnIndex && inlineDetails}
                       {/* live workflow board(s) anchored right after THIS message (the agent's "running…" line) */}
                       {(runsByAnchor.get(i) || []).map((r) => renderBoard(r))}

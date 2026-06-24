@@ -2563,33 +2563,51 @@ button.isl-app-chat:active .isl-app-icon {
 /* the in-chat attachment SNAPSHOT — a frozen, read-only, scaled-down copy of the dropbox above the user message it
    rode on. Glass pill (the agent-tab .isl-chip look: dark surface + faint hairline), right-aligned like the bubble.
    Scrolls (capped height) and keeps tooltips; the read-only AttachTray drops every delete control. */
+/* a user turn that carried attachments: the frozen snapshot strip sits FLUSH atop its bubble as ONE unit (the group
+   + its bubble scroll together), so a partial scroll reads as the message scrolling, not a broken floating chip.
+   See plans/blitzos-connector-snapshot-clip-fix.md. */
+.nh-island .isl-msg-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
 .nh-island .isl-msg-tray {
   align-self: flex-end;
   max-width: 80%;
   box-sizing: border-box;
-  margin-bottom: 3px;
   padding: 6px 8px;
   border-radius: 14px;
   background: var(--isl-surface);
   border: 1px solid var(--isl-faint);
-  max-height: 104px;
-  overflow-y: auto;
+}
+/* reuse the dropbox markup (.att-added-stack/.att-pill/…) but the in-chat snapshot is a SINGLE horizontal STRIP
+   (sideways-scroll), never the dropbox's vertical column: a vertical stack hit the tray's old max-height and clipped
+   the TOP connector, and being tall made the snapshot the first thing the feed clipped when scrolled. One short row
+   can't vertical-clip and stays ~1 tile tall. Every 44px tile SCALES DOWN to 28px for the compact copy. */
+.nh-island .isl-msg-tray .att-added-stack {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
 }
-.nh-island .isl-msg-tray::-webkit-scrollbar {
+.nh-island .isl-msg-tray .att-added-stack::-webkit-scrollbar {
   display: none;
 }
-/* reuse the dropbox markup (.att-added-stack/.att-pill/…) but: the .isl-msg-tray is the scroll container (neutralize
-   the live box's own flex+scroll+padding), and every 44px tile SCALES DOWN to 28px for the compact in-chat copy. */
-.nh-island .isl-msg-tray .att-added-stack {
-  padding: 0;
-  gap: 6px;
-  overflow: visible;
-}
+/* pills + the single-window row keep their size and never wrap inside the strip (they scroll sideways instead). */
 .nh-island .isl-msg-tray .att-pill {
+  flex: none;
   gap: 7px;
   padding: 4px 9px 4px 6px;
   border-radius: 15px;
+}
+.nh-island .isl-msg-tray .att-singles {
+  flex: none;
+  flex-wrap: nowrap;
 }
 .nh-island .isl-msg-tray .att-pill-items,
 .nh-island .isl-msg-tray .att-singles {
