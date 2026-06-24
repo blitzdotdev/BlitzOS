@@ -424,6 +424,7 @@ const api = {
   // Onboarding (P1 director): start the scan+board flow, stream real scan progress to the boot
   // screen, and drive the FDA tutorial-unlock card.
   onboarding: {
+    forceVisible: process.env.BLITZ_FORCE_ONBOARDING === '1',
     start(): Promise<{ ok: boolean; cached?: boolean }> {
       return ipcRenderer.invoke('onboarding:start')
     },

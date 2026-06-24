@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 // The user-facing "Connect" entry (radial / launcher menu → 'connect'). Lists the connectable browser tabs
-// (Chrome via the Connector extension + Safari via Apple Events) and macOS app windows (the BlitzComputerUse
+// (Chrome via the Connector extension + Safari via Apple Events) and macOS app windows (the BlitzOS
 // helper), and connects one into BlitzOS as a per-source tool provider. The heavy lifting is all in main
 // (electronConnections); this is a thin picker over the os:conn-* IPC.
 
@@ -120,7 +120,7 @@ export function ConnectPicker({ onClose }: { onClose: () => void }): JSX.Element
             <h4>
               App windows <button className="connect-picker-refresh" onClick={() => void refresh()} title="Refresh">↻</button>
             </h4>
-            {windows.length === 0 && <div className="connect-picker-empty">No windows (needs the BlitzComputerUse helper + Accessibility on macOS).</div>}
+            {windows.length === 0 && <div className="connect-picker-empty">No windows (needs the BlitzOS helper + Accessibility on macOS).</div>}
             {(() => {
               // A window's own title is often empty; falling back to the app name made multiple windows of
               // one app indistinguishable ("Safari / Safari"). Number them per-app instead so each row is unique.

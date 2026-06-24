@@ -136,7 +136,7 @@ export const electronActionItems = makeActionItems({
 Object.assign(electronOps, electronActionItems)
 
 // Connections (connection-ops.mjs) — the SHARED registry + per-source tool store + dispatch, bound to
-// Electron's surface primitives. The tab (Chrome extension) and window (BlitzComputerUse helper) adapters
+// Electron's surface primitives. The tab (Chrome extension) and window (BlitzOS helper) adapters
 // bind through electronConnections.connectionBind / report changes via connectionNotify. Object.assign'd
 // BEFORE makeOsTools(electronOps) below so the connection_* tool handlers find these ops.
 export const electronConnections = makeConnectionOps({

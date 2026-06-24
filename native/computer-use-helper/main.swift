@@ -1,4 +1,4 @@
-// BlitzComputerUse — the separate, Developer-ID-signed background helper that HOLDS the
+// BlitzOS — the separate, Developer-ID-signed background helper that HOLDS the
 // computer-use TCC grants (Accessibility + Screen Recording) so BlitzOS never has to quit and
 // reopen for them (plans/blitzos-computer-use-helper.md). Launched by BlitzOS via LaunchServices
 // (`open -a`) so it is its OWN responsible process with its OWN TCC identity, distinct from the
@@ -691,7 +691,7 @@ func socketPathArg() -> String? {
 
 let bundleId = Bundle.main.bundleIdentifier ?? "dev.blitz.os.computeruse"
 guard let socketPath = socketPathArg(), let liveConn = HelperConnection(socketPath: socketPath) else {
-    FileHandle.standardError.write(Data("BlitzComputerUse: missing/failed --connect <socket>\n".utf8))
+    FileHandle.standardError.write(Data("BlitzOS helper: missing/failed --connect <socket>\n".utf8))
     exit(2)
 }
 conn = liveConn
@@ -754,7 +754,7 @@ conn.run { msg in
             let sr = msg["selfRect"] as? [String: Any] ?? [:]
             let selfR = CGRect(x: pickNum(sr["x"]) ?? 0, y: pickNum(sr["y"]) ?? 0, width: pickNum(sr["w"]) ?? 0, height: pickNum(sr["h"]) ?? 0)
             let ok = pickController!.start(dropZone: rect, selfRect: selfR, excludePids: (msg["excludePids"] as? [Int]) ?? [])
-            reply(ok ? ["ok": true] : ["ok": false, "error": "could not create event tap (is Accessibility granted to BlitzComputerUse?)"])
+            reply(ok ? ["ok": true] : ["ok": false, "error": "could not create event tap (is Accessibility granted to BlitzOS?)"])
         case "pick_update":
             let dz = msg["dropZone"] as? [String: Any] ?? [:]
             pickController?.updateDropZone(CGRect(x: pickNum(dz["x"]) ?? 0, y: pickNum(dz["y"]) ?? 0, width: pickNum(dz["w"]) ?? 0, height: pickNum(dz["h"]) ?? 0))

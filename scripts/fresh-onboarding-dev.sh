@@ -7,7 +7,7 @@
 #
 # Onboarding now runs in the single default workspace (Home) — there is no throwaway case-file. By
 # default this does a SAFE reset: it removes only the onboarding artifacts + agent runtime state inside
-# the workspace (.blitzos/onboarding and .blitzos/terminals) so a fresh scan + interview runs, while
+# the workspace (.blitzos/onboarding and .blitzos/terminals) so the island setup flow starts fresh, while
 # PRESERVING your workspace layout, documents, notepad, and chat. Pass --nuke-workspace to delete the
 # entire workspace dir (the old behavior) — dangerous now that Home holds real data.
 set -euo pipefail
@@ -114,6 +114,9 @@ d.lastActiveWorkspace = 'Home'
 if (d.boot && typeof d.boot === 'object') d.boot = { ...d.boot, cleanShutdown: true }
 fs.writeFileSync(path, JSON.stringify(d, null, 2) + '\n')
 NODE
+
+export BLITZ_FORCE_ONBOARDING=1
+echo "[fresh-onboarding] BLITZ_FORCE_ONBOARDING=1 (dev: ignore renderer localStorage completion flag)"
 
 if [[ "$RESET_PERMS" == "1" ]]; then
   echo "[fresh-onboarding] clearing pre-board state: $PREBOARD_FILE"

@@ -9,7 +9,7 @@
 // ADAPTER bound per connection: `{ call(verb, args) -> result, drop() }`, plus it reports "source changed"
 // by calling connectionNotify(). Two adapters live elsewhere and bind through connectionBind():
 //   - tab    = the Chrome extension link  (verbs: read / run_js / act)
-//   - window = the BlitzComputerUse helper (verbs: read (AX/screenshot) / act (AXPress/CGEvent))
+//   - window = the BlitzOS helper (verbs: read (AX/screenshot) / act (AXPress/CGEvent))
 // Everything here is adapter-agnostic and unit-testable with a stub adapter (scripts/test-connections.mjs).
 //
 // Two ids (the doc's model): a `connId` per connection (this specific tab/window — the representation widget
@@ -1168,16 +1168,16 @@ export function makeConnectionOps({
     return tabLink.connectTab(Number(tabId), opts || {})
   }
   // ---- the window link (connection-window-link.ts) registers itself the same way; window connect is
-  // macOS-and-local-only (it needs the BlitzComputerUse helper's AX/CGEvent/ScreenCaptureKit). ----
+  // macOS-and-local-only (it needs the BlitzOS helper's AX/CGEvent/ScreenCaptureKit). ----
   function setWindowLink(link) {
     windowLink = link
   }
   async function connectionListWindows() {
-    if (!windowLink || typeof windowLink.listWindows !== 'function') return { error: 'no window link — window connect needs the BlitzComputerUse helper (macOS, local only)' }
+    if (!windowLink || typeof windowLink.listWindows !== 'function') return { error: 'no window link — window connect needs the BlitzOS helper (macOS, local only)' }
     return windowLink.listWindows()
   }
   async function connectionConnectWindow(windowId, opts) {
-    if (!windowLink || typeof windowLink.connectWindow !== 'function') return { error: 'no window link — window connect needs the BlitzComputerUse helper (macOS, local only)' }
+    if (!windowLink || typeof windowLink.connectWindow !== 'function') return { error: 'no window link — window connect needs the BlitzOS helper (macOS, local only)' }
     if (windowId == null) return { error: 'windowId required' }
     return windowLink.connectWindow(Number(windowId), opts || {})
   }

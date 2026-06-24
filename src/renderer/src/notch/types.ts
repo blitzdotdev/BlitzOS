@@ -3,6 +3,8 @@
 // shared: tab 0 is the new-session tab, tabs 1..N are the live agents. The body is the new-session composer when
 // page===0, else the active agent's transcript + steer bar.
 
+export type IslandView = 'home' | 'settings' | 'session' | 'onboarding'
+
 // One agent session as the island needs it. `status` is the raw host status (working/starting/watching/waiting/
 // idle/stopped/error); IslandPanel maps it to the dot + a label.
 export interface IslandSession {

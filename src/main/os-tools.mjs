@@ -521,7 +521,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_list_windows',
       description:
-        "List the user's open macOS app windows that CAN be connected (via the BlitzComputerUse helper — macOS + local only). Returns { windows:[{windowId,pid,app,bundleId,title}] }. Then connection_connect_window one of them.",
+        "List the user's open macOS app windows that CAN be connected (via the BlitzOS helper — macOS + local only). Returns { windows:[{windowId,pid,app,bundleId,title}] }. Then connection_connect_window one of them.",
       handler: async () => {
         if (typeof ops.connectionListWindows !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
         return mapConnResult(await ops.connectionListWindows())

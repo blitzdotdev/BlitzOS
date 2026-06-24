@@ -1,7 +1,7 @@
 #!/bin/bash
-# Build + sign BlitzComputerUse.app — the separate computer-use TCC helper
+# Build + sign BlitzOS.app — the separate computer-use TCC helper
 # (plans/blitzos-computer-use-helper.md). Native Swift, arm64, Developer-ID signed so its TCC
-# identity is stable. Output: native/computer-use-helper/build/BlitzComputerUse.app
+# identity is stable. Output: native/computer-use-helper/build/BlitzOS.app
 #
 # Signing: uses the "Developer ID Application" identity from the keychain (override with
 # BLITZ_HELPER_SIGN_IDENTITY). Unsigned ad-hoc fallback for dev mechanics testing (TCC identity is
@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP_NAME="BlitzComputerUse"
+APP_NAME="BlitzOS"
 BUNDLE="build/${APP_NAME}.app"
 EXEC_DIR="${BUNDLE}/Contents/MacOS"
 EXEC="${EXEC_DIR}/${APP_NAME}"
@@ -26,9 +26,9 @@ swiftc -O -target "${ARCH}-apple-macos13.0" -framework AppKit -framework CoreGra
 cp Info.plist "${BUNDLE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "${BUNDLE}/Contents/Info.plist" >/dev/null # validate
 
-# Brand the helper with the BlitzOS bubble mark (so the FDA/Accessibility list + the drag tile show
-# "BlitzOS Computer Use" with a recognizable icon, not the generic executable icon).
-ICON_SRC="../../src/renderer/src/assets/aqua-bubble.png"
+# Brand the helper with the BlitzOS mark (so the FDA/Accessibility list + the drag tile show
+# "BlitzOS" with the product icon, not the generic executable/helper icon).
+ICON_SRC="../../src/renderer/src/assets/blitz-app-icon.png"
 if [[ -f "$ICON_SRC" ]]; then
   ICONSET="build/AppIcon.iconset"
   mkdir -p "$ICONSET"

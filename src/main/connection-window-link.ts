@@ -1,5 +1,5 @@
 // The WINDOW adapter (Electron + macOS-local only): connects a macOS app WINDOW into BlitzOS through the
-// BlitzComputerUse helper — AX read/act on BACKGROUND windows, plus per-window ScreenCaptureKit screenshots
+// BlitzOS helper — AX read/act on BACKGROUND windows, plus per-window ScreenCaptureKit screenshots
 // and CGEvent coordinate input for apps AX can't read. Mirrors connection-tab-link: list → connect → bind a
 // connection whose ADAPTER forwards verbs to the helper. The helper holds the Accessibility + Screen-Recording
 // TCC grants. Window connect is intentionally Electron+local only (a remote server would need a local
@@ -42,7 +42,7 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
 
   async function listWindows(): Promise<Record<string, unknown>> {
     const e = await ready()
-    if (!e.ok) return { error: e.error || 'the BlitzComputerUse helper is not available' }
+    if (!e.ok) return { error: e.error || 'the BlitzOS helper is not available' }
     // The helper provides the REAL macOS app icon per window (NSRunningApplication.icon → base64 PNG): it is the
     // one GUI-session process that can read it — Electron's app.getFileIcon returns a generic placeholder in dev.
     const r = await helper.call('list_windows')
@@ -66,7 +66,7 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
       }
     }
     const e = await ready()
-    if (!e.ok) return { error: e.error || 'the BlitzComputerUse helper is not available' }
+    if (!e.ok) return { error: e.error || 'the BlitzOS helper is not available' }
     const list = await helper.call('list_windows')
     const wins = Array.isArray(list.windows) ? (list.windows as Array<Record<string, unknown>>) : []
     const win = wins.find((w) => Number(w.windowId) === Number(windowId))

@@ -774,7 +774,7 @@ app.whenReady().then(() => {
     const r = await helper.call('pick_start', { dropZone, selfRect, excludePids: [process.pid] })
     if (r.error || r.ok === false) {
       void helper.request('accessibility').catch(() => {}) // most likely the tap needs Accessibility — raise the prompt
-      const error = String(r.error || 'enable Accessibility for BlitzComputerUse, then reopen the attach panel')
+      const error = String(r.error || 'enable Accessibility for BlitzOS, then reopen the attach panel')
       mainWindow?.webContents.send('os:pick-event', { kind: 'error', error })
       return { ok: false, error }
     }
@@ -1442,7 +1442,7 @@ app.whenReady().then(() => {
   // refresh_token, with no human step. Idempotent; a source whose refresh fails lands 'error'/'reauth'.
   setTimeout(() => void electronConnections.mcpRestoreAll().then((r: { restored: number; total: number }) => r && r.total && console.log(`[blitzos] MCP connections restored: ${r.restored}/${r.total}`)).catch(() => {}), 6500)
 
-  // Window connect (macOS-local only): the BlitzComputerUse helper IS the window adapter (AX + vision +
+  // Window connect (macOS-local only): the BlitzOS helper IS the window adapter (AX + vision +
   // CGEvent). It's ensured lazily on the first window op (it holds the Accessibility + Screen-Recording grants).
   electronConnections.setWindowLink(makeWindowLink({ connectionOps: electronConnections, helper: computerUseHelper() }))
   // Window-picker drops: route by WHAT landed (browser-ness by bundleId), not just by whether bounds matched.

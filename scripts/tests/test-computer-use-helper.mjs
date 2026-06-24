@@ -1,4 +1,4 @@
-// Smoke-test the BlitzComputerUse helper's socket protocol (plans/blitzos-computer-use-helper.md).
+// Smoke-test the BlitzOS computer-use helper's socket protocol (plans/blitzos-computer-use-helper.md).
 // Headless: BlitzOS listens on a unix socket, launches the helper binary with --connect, drives the
 // newline-JSON protocol. Verifies hello + ping + tcc_status shape (the live TCC GRANT + the
 // LaunchServices identity are a packaged-build/user test — here we prove the wire protocol).
@@ -10,8 +10,8 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const bin = join(root, 'native/computer-use-helper/build/BlitzComputerUse.app/Contents/MacOS/BlitzComputerUse')
+const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
+const bin = join(root, 'native/computer-use-helper/build/BlitzOS.app/Contents/MacOS/BlitzOS')
 if (!existsSync(bin)) {
   console.error('FAIL: helper not built — run native/computer-use-helper/build.sh')
   process.exit(1)

@@ -4,7 +4,6 @@ import App from './App'
 import { bootTheme } from './theme'
 import './tokens.css'
 import './styles.css'
-import './onboarding/onboarding.css'
 
 const storedTheme = window.localStorage.getItem('blitzos.theme')
 document.documentElement.dataset.theme =

@@ -1,6 +1,6 @@
-// BlitzOS Computer Use helper — lifecycle manager (plans/blitzos-computer-use-helper.md).
+// BlitzOS computer-use helper — lifecycle manager (plans/blitzos-computer-use-helper.md).
 //
-// Owns the separate native helper (BlitzComputerUse.app) that HOLDS the Accessibility + Screen
+// Owns the separate native helper app that HOLDS the Accessibility + Screen
 // Recording TCC grants, so BlitzOS never quits/reopens for them. The load-bearing trick: the helper
 // is launched via LaunchServices (`open -n`), which makes it its OWN responsible process with its
 // OWN TCC identity (dev.blitz.os.computeruse), distinct from BlitzOS/Electron. A child spawned by us
@@ -37,7 +37,8 @@ export interface ScanRequest {
 // __dirname = <repo>/out/main in dev). Overridable with BLITZ_COMPUTER_USE_APP.
 let helperPathLogged = false
 function bundledHelperApp(): string {
-  const rel = ['native', 'computer-use-helper', 'build', 'BlitzComputerUse.app']
+  const rel = ['native', 'computer-use-helper', 'build', 'BlitzOS.app']
+  const legacyRel = ['native', 'computer-use-helper', 'build', 'BlitzComputerUse.app']
   const here = (() => {
     try {
       return typeof __dirname !== 'undefined' ? __dirname : fileURLToPath(new URL('.', import.meta.url))
@@ -47,10 +48,14 @@ function bundledHelperApp(): string {
   })()
   const candidates = [
     process.env.BLITZ_COMPUTER_USE_APP,
-    app.isPackaged ? join(process.resourcesPath, 'BlitzComputerUse.app') : null,
+    app.isPackaged ? join(process.resourcesPath, 'BlitzOS.app') : null,
     join(app.getAppPath(), ...rel),
     here ? join(here, '..', '..', ...rel) : null, // out/main → repo root in dev
-    !app.isPackaged ? join(process.cwd(), ...rel) : null // electron-vite dev runs with cwd = repo root
+    !app.isPackaged ? join(process.cwd(), ...rel) : null, // electron-vite dev runs with cwd = repo root
+    app.isPackaged ? join(process.resourcesPath, 'BlitzComputerUse.app') : null,
+    join(app.getAppPath(), ...legacyRel),
+    here ? join(here, '..', '..', ...legacyRel) : null,
+    !app.isPackaged ? join(process.cwd(), ...legacyRel) : null
   ].filter((p): p is string => !!p)
   for (const c of candidates) if (existsSync(c)) return c
   if (!helperPathLogged) {
@@ -63,6 +68,10 @@ function bundledHelperApp(): string {
 // Stable install location (same in dev + packaged, independent of userData naming) so the bundle the
 // user GRANTED stays put across app updates and never needs re-granting — Codex's installer pattern.
 function installedHelperApp(): string {
+  return join(app.getPath('appData'), 'BlitzOS', 'BlitzOS.app')
+}
+
+function legacyInstalledHelperApp(): string {
   return join(app.getPath('appData'), 'BlitzOS', 'BlitzComputerUse.app')
 }
 
@@ -105,6 +114,14 @@ class HelperManager {
       mkdirSync(join(app.getPath('appData'), 'BlitzOS'), { recursive: true })
       if (existsSync(dst)) rmSync(dst, { recursive: true, force: true })
       const r = await exec('/bin/cp', ['-R', src, dst])
+      if (r.ok) {
+        try {
+          const legacy = legacyInstalledHelperApp()
+          if (legacy !== dst && existsSync(legacy)) rmSync(legacy, { recursive: true, force: true })
+        } catch {
+          /* best-effort legacy cleanup */
+        }
+      }
       return r.ok && existsSync(dst)
     } catch {
       return false

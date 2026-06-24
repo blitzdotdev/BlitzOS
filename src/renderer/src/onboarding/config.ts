@@ -2,7 +2,7 @@
 //   'always'       — every launch (use this while iterating on the flow)
 //   'first-launch' — only until completed once, then never again
 //   'off'          — never
-export const ONBOARDING_MODE: 'always' | 'first-launch' | 'off' = 'always'
+export const ONBOARDING_MODE: 'always' | 'first-launch' | 'off' = 'first-launch'
 
 const DONE_KEY = 'blitzos.onboarded.v1'
 
@@ -12,6 +12,7 @@ export function shouldShowOnboarding(): boolean {
   // run here (and trying crashes the renderer on the missing IPC). Show the desktop directly.
   try { if ((window as { agentOS?: { serverMode?: boolean } }).agentOS?.serverMode) return false } catch { /* bridge not ready */ }
   if (ONBOARDING_MODE === 'off') return false
+  try { if (window.agentOS?.onboarding?.forceVisible) return true } catch { /* bridge not ready */ }
   if (ONBOARDING_MODE === 'always') return true
   try {
     return localStorage.getItem(DONE_KEY) !== '1'

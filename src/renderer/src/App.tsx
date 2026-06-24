@@ -6,10 +6,9 @@ import { pushTerminalData, pushTerminalExit } from './terminalStream'
 import type { Surface } from './types'
 import { isRuntimePanel } from './types'
 import { NotchHost } from './notch/NotchHost'
-import type { IslandAppMessagePart } from './notch/types'
+import type { IslandAppMessagePart, IslandView } from './notch/types'
 import { ConnectPicker } from './components/ConnectPicker'
 import { IconCheck } from './components/Icons'
-import { OnboardingFlow } from './onboarding/OnboardingFlow'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
 
 type ThemeMode = 'light' | 'dark'
@@ -90,7 +89,7 @@ export default function App(): JSX.Element {
   // The island RESTORES its last view + tab on EVERY open (hover OR ⌥Space), instead of resetting to Home. NotchHost
   // reports its view+page via onStateChange; we stash them in refs and feed them back as initialView/initialPage on
   // the next open (NotchHost remounts per open). Refs, not state, so updating them never re-renders App.
-  const islandViewRef = useRef<'home' | 'settings' | 'session'>('home')
+  const islandViewRef = useRef<IslandView>('home')
   const islandPageRef = useRef(1) // default to the first agent tab (Blitz '0'); page 0 (the old composer) is retired
   // Also remember the attach panel (open/closed) so reopening the island restores it, not just the view+tab. (The
   // per-chat staging TRAY lives in stagingStore — a module store that survives the remount on its own.)
@@ -98,7 +97,7 @@ export default function App(): JSX.Element {
   const islandActiveAppRef = useRef<IslandAppMessagePart | null>(null)
   const [islandKeepMounted, setIslandKeepMounted] = useState(false)
   const onIslandStateChange = (
-    view: 'home' | 'settings' | 'session',
+    view: IslandView,
     page: number,
     attachOpen: boolean,
     activeApp: IslandAppMessagePart | null
@@ -406,6 +405,31 @@ export default function App(): JSX.Element {
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
   const isServer = !!window.agentOS?.serverMode
+
+  useEffect(() => {
+    if (!onboarding || isServer || !notchOn) return
+    islandViewRef.current = 'onboarding'
+    islandPageRef.current = 1
+    islandAttachOpenRef.current = false
+    islandActiveAppRef.current = null
+    setIslandKeepMounted(false)
+    setNotchPinnedBoth(true)
+    setNotchInteractive(true)
+    applyNotchState('panel')
+  }, [onboarding, isServer, notchOn])
+
+  const completeIslandOnboarding = (): void => {
+    markOnboarded()
+    setOnboarding(false)
+    islandViewRef.current = 'session' // land straight in Blitz's chat, not the home grid
+    islandPageRef.current = 1
+    islandAttachOpenRef.current = false
+    islandActiveAppRef.current = null
+    setIslandKeepMounted(false)
+    setNotchInteractive(true)
+    applyNotchState('panel')
+  }
+
   // ! DEBUG: runtime switch state is intentionally UI-only; the selected value is persisted in main.
   const [agentRuntimeDebug, setAgentRuntimeDebug] = useState<AgentRuntimeDebugStatus | null>(null)
   const [agentRuntimePending, setAgentRuntimePending] = useState<AgentRuntimeChoice | null>(null)
@@ -854,6 +878,7 @@ export default function App(): JSX.Element {
               setNotchInteractive(true)
             }}
             onAttachChange={onIslandAttachChange}
+            onOnboardingComplete={completeIslandOnboarding}
           />,
           document.body
         )}
@@ -884,15 +909,6 @@ export default function App(): JSX.Element {
       )}
 
       {connectPicker && <ConnectPicker onClose={() => setConnectPicker(false)} />}
-
-      {onboarding && (
-        <OnboardingFlow
-          onComplete={() => {
-            markOnboarded()
-            setOnboarding(false)
-          }}
-        />
-      )}
 
       {/* ! DEBUG: temporary maintainer control for swapping future agent launches between Codex and Claude. */}
       {!isServer && agentRuntimeDebug && (

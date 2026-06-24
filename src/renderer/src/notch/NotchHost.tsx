@@ -13,7 +13,8 @@ import { clearStaged } from './stagingStore'
 import IslandPanel from './IslandPanel'
 import IslandHome from './IslandHome'
 import IslandSettings from './IslandSettings'
-import type { IslandAppMessagePart, IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta, IslandWfRun } from './types'
+import IslandOnboarding from './IslandOnboarding'
+import type { IslandAppMessagePart, IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta, IslandWfRun, IslandView } from './types'
 import { applyWfRun } from '../../../main/wf-run-state.mjs'
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
@@ -195,21 +196,23 @@ export function NotchHost({
   initialView = 'home',
   initialPage = 1,
   initialAttachOpen = false,
-  initialActiveApp = null
+  initialActiveApp = null,
+  onOnboardingComplete
 }: {
   menuBarH: number
   visible?: boolean // false parks the mounted island off visually so app iframes survive hover-close
   onChassisResize?: () => void
   onChassisHoverChange?: (on: boolean) => void
   onAttachChange?: (open: boolean) => void // attach panel (the macOS window picker) opened/closed → App pins the island open
-  onStateChange?: (view: 'home' | 'settings' | 'session', page: number, attachOpen: boolean, activeApp: IslandAppMessagePart | null) => void // report state so App restores it on the next open
-  initialView?: 'home' | 'settings' | 'session' // the view to open into — RESTORED from the last open (NotchHost remounts per open)
+  onStateChange?: (view: IslandView, page: number, attachOpen: boolean, activeApp: IslandAppMessagePart | null) => void // report state so App restores it on the next open
+  initialView?: IslandView // the view to open into — RESTORED from the last open (NotchHost remounts per open)
   initialPage?: number // the tab to open into (0 = composer, 1..N = agent) — also restored from the last open
   initialAttachOpen?: boolean // the attach panel's open/closed state — also restored from the last open
   initialActiveApp?: IslandAppMessagePart | null // generated app preview restored after hover-close/remount
+  onOnboardingComplete?: () => void
 }): JSX.Element {
-  // 'home' = the icon grid; 'settings' = debug settings; 'session' = today's agent chat/session UI.
-  const [view, setView] = useState<'home' | 'settings' | 'session'>(initialView)
+  // 'home' = the icon grid; 'settings' = debug settings; 'session' = today's agent chat/session UI; 'onboarding' = first-run setup.
+  const [view, setView] = useState<IslandView>(initialView)
   const [page, setPage] = useState(initialPage) // 1..N = the agent at page-1 (Blitz '0' is page 1); page 0 retired
   const [attachOpen, setAttachOpen] = useState(initialAttachOpen)
   const [sessions, setSessions] = useState<IslandSession[]>([])
@@ -851,7 +854,7 @@ export function NotchHost({
   // PEEK toggle lives at the very top (the notch / menu-bar band), top-right, ALWAYS visible across every view.
   const onHome = view === 'home'
   const inSession = view === 'session'
-  const dataView = onHome ? 'home' : view === 'settings' ? 'settings' : safePage === 0 ? 'session' : 'process'
+  const dataView = onHome ? 'home' : view === 'settings' ? 'settings' : view === 'onboarding' ? 'onboarding' : safePage === 0 ? 'session' : 'process'
   const holdChassisHover = (): void => onChassisHoverChange?.(true)
   const openChat = (): void => {
     holdChassisHover()
@@ -935,7 +938,7 @@ export function NotchHost({
           </button>
         )}
         {/* The HOME button + Peek toggle live inside expanded island views; the home widget row stays widget-only. */}
-        {!onHome && !appViewerOpen && (
+        {!onHome && view !== 'onboarding' && !appViewerOpen && (
           <button type="button" className="nh-home-btn" onClick={() => setView('home')} title="Home" aria-label="Home">
             <svg viewBox="0 0 24 24" aria-hidden focusable="false">
               <path
@@ -986,6 +989,30 @@ export function NotchHost({
             archivedSessions={archivedSessions}
             onRestoreAgent={restoreAgent}
             onDeleteAgent={deleteArchivedAgent}
+          />
+        ) : view === 'onboarding' ? (
+          <IslandOnboarding
+            menuBarH={menuBarH}
+            onComplete={() => {
+              setAttachOpen(false)
+              setPeek(false)
+              // Land in Blitz's chat ('0'), not the home grid — mirror openChat.
+              const i = sessionsRef.current.findIndex((s) => s.id === '0')
+              setPage(i >= 0 ? i + 1 : 1)
+              if (i < 0) {
+                // '0' hasn't reached the roster yet (boot race) — jump to it once it appears, and refresh now
+                // so the chat fills in instead of sitting on a blank page (mirror onNewAgent's pendingJump).
+                pendingJump.current = '0'
+                window.agentOS
+                  ?.agents?.()
+                  .then((snap) => {
+                    if (snap) applySessions((snap.sessions || []).map(mapSession))
+                  })
+                  .catch(() => {})
+              }
+              setView('session')
+              onOnboardingComplete?.()
+            }}
           />
         ) : (
           <IslandPanel

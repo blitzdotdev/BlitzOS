@@ -13,12 +13,15 @@ const overlay = readFileSync(join(repoRoot, 'src/main/notch-overlay.ts'), 'utf8'
 const index = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')
 const preload = readFileSync(join(repoRoot, 'src/preload/index.ts'), 'utf8')
 const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'))
+const rendererMain = readFileSync(join(repoRoot, 'src/renderer/src/main.tsx'), 'utf8')
 const app = readFileSync(join(repoRoot, 'src/renderer/src/App.tsx'), 'utf8')
 const notchHost = readFileSync(join(repoRoot, 'src/renderer/src/notch/NotchHost.tsx'), 'utf8')
 const islandHome = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandHome.tsx'), 'utf8')
 const islandPanel = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandPanel.tsx'), 'utf8')
+const islandOnboarding = readFileSync(join(repoRoot, 'src/renderer/src/notch/IslandOnboarding.tsx'), 'utf8')
 const agentVisualsPath = join(repoRoot, 'src/renderer/src/notch/agentVisuals.ts')
 const agentVisuals = existsSync(agentVisualsPath) ? readFileSync(agentVisualsPath, 'utf8') : ''
+const onboardingConfig = readFileSync(join(repoRoot, 'src/renderer/src/onboarding/config.ts'), 'utf8')
 const markdownMessage = readFileSync(join(repoRoot, 'src/renderer/src/notch/MarkdownMessage.tsx'), 'utf8')
 const messageParts = readFileSync(join(repoRoot, 'src/renderer/src/notch/messageParts.ts'), 'utf8')
 const markdownSafety = readFileSync(join(repoRoot, 'src/renderer/src/notch/markdownSafety.ts'), 'utf8')
@@ -42,6 +45,16 @@ const agentTranscript = readFileSync(join(repoRoot, 'src/main/agent-transcript.m
 const chatTitleer = readFileSync(join(repoRoot, 'src/main/chat-titleer.mjs'), 'utf8')
 const osActions = readFileSync(join(repoRoot, 'src/main/osActions.ts'), 'utf8')
 const terminalManager = readFileSync(join(repoRoot, 'src/main/terminal-manager.mjs'), 'utf8')
+const onboardingMain = readFileSync(join(repoRoot, 'src/main/onboarding.ts'), 'utf8')
+const freshOnboarding = readFileSync(join(repoRoot, 'scripts/fresh-onboarding-dev.sh'), 'utf8')
+const computerUseHelperPlist = readFileSync(join(repoRoot, 'native/computer-use-helper/Info.plist'), 'utf8')
+const computerUseHelperBuild = readFileSync(join(repoRoot, 'native/computer-use-helper/build.sh'), 'utf8')
+const computerUseHelperSwift = readFileSync(join(repoRoot, 'native/computer-use-helper/main.swift'), 'utf8')
+const computerUseHelperManager = readFileSync(join(repoRoot, 'src/main/computer-use-helper.ts'), 'utf8')
+const builderConfig = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
+const ensureHelper = readFileSync(join(repoRoot, 'scripts/ensure-helper.sh'), 'utf8')
+const oldOnboardingFlowPath = join(repoRoot, 'src/renderer/src/onboarding/OnboardingFlow.tsx')
+const oldOnboardingCssPath = join(repoRoot, 'src/renderer/src/onboarding/onboarding.css')
 const homeEmptyBlock = islandCss.match(/\.isl-home-empty \{[\s\S]*?\n\}/)?.[0] || ''
 
 let failures = 0
@@ -110,6 +123,79 @@ ok('island feed hides horizontal overflow and keeps chat bubbles inset from the 
 ok('opening Chat from Home selects the Blitz main thread instead of the last agent tab',
   /const openChat = \(\): void => \{[\s\S]*?const i = sessionsRef\.current\.findIndex\(\(s\) => s\.id === '0'\)[\s\S]*?setPage\(i >= 0 \? i \+ 1 : 1\)[\s\S]*?setPeek\(false\)[\s\S]*?setAttachOpen\(false\)[\s\S]*?setView\('session'\)/.test(notchHost) &&
     /onOpenChat=\{openChat\}/.test(notchHost))
+ok('first-launch onboarding is owned by the dynamic island, not the old fullscreen overlay',
+  /export type IslandView = 'home' \| 'settings' \| 'session' \| 'onboarding'/.test(notchTypes) &&
+    /const islandViewRef = useRef<IslandView>\('home'\)/.test(app) &&
+    /if \(!onboarding \|\| isServer \|\| !notchOn\) return/.test(app) &&
+    /islandViewRef\.current = 'onboarding'/.test(app) &&
+    /setNotchPinnedBoth\(true\)/.test(app) &&
+    /applyNotchState\('panel'\)/.test(app) &&
+    /onOnboardingComplete=\{completeIslandOnboarding\}/.test(app) &&
+    !/OnboardingFlow/.test(app) &&
+    !/onboarding\/onboarding\.css/.test(rendererMain) &&
+    !existsSync(oldOnboardingFlowPath) &&
+    !existsSync(oldOnboardingCssPath) &&
+    /ONBOARDING_MODE: 'always' \| 'first-launch' \| 'off' = 'first-launch'/.test(onboardingConfig) &&
+    preload.includes("forceVisible: process.env.BLITZ_FORCE_ONBOARDING === '1'") &&
+    onboardingConfig.includes('window.agentOS?.onboarding?.forceVisible') &&
+    freshOnboarding.includes('export BLITZ_FORCE_ONBOARDING=1'))
+ok('island onboarding uses the setup IPC surface and does not start the scan/interview path',
+  /import IslandOnboarding from '.\/IslandOnboarding'/.test(notchHost) &&
+    /view === 'onboarding'/.test(notchHost) &&
+    /<IslandOnboarding[\s\S]*?onComplete=\{\(\) => \{[\s\S]*?setView\('home'\)[\s\S]*?onOnboardingComplete\?\.\(\)/.test(notchHost) &&
+    /api\.preboardState\(\)/.test(islandOnboarding) &&
+    /api\.listImportProfiles/.test(islandOnboarding) &&
+    /const request = api\?\.openPermissionDrag\?\.\(kind\)/.test(islandOnboarding) &&
+    /api\s*\.importSignin\(picked\.src, picked\.id\)/.test(islandOnboarding) &&
+    /api\.requestAutomation/.test(islandOnboarding) &&
+    /api\.preboardMark\?\.\('import',/.test(islandOnboarding) &&
+    /api\.preboardMark\?\.\('browser',/.test(islandOnboarding) &&
+    !/\.start\(\)/.test(islandOnboarding))
+ok('island onboarding starts with five simple intro slides before setup',
+  /const INTRO_SLIDES: IntroSlide\[\] = \[/.test(islandOnboarding) &&
+    /Welcome to Blitz, the dynamic-island agent OS for Mac/.test(islandOnboarding) &&
+    /Your agent is always one hover away/.test(islandOnboarding) &&
+    /Blitz works across your Mac/.test(islandOnboarding) &&
+    /Run more than one agent at once/.test(islandOnboarding) &&
+    /A few permissions make it useful/.test(islandOnboarding) &&
+    /import blitzAppIcon from '\.\.\/assets\/blitz-app-icon\.png'/.test(islandOnboarding) &&
+    /<img src=\{blitzAppIcon\} alt="" draggable="false" \/>/.test(islandOnboarding) &&
+    /const \[introDone, setIntroDone\] = useState\(false\)/.test(islandOnboarding) &&
+    /\{!introDone && \(/.test(islandOnboarding) &&
+    /\{introDone && step === 'permissions' && state && \(/.test(islandOnboarding) &&
+    /\.isl-onb-intro/.test(islandCss) &&
+    /\.isl-onb-visual-card img/.test(islandCss) &&
+    /background: #0a84ff;/.test(islandCss) &&
+    /\.isl-onb-progress/.test(islandCss))
+ok('legacy onboarding chat interview is opt-in only',
+  /const ONBOARDING_CHAT_ENABLED = process\.env\.BLITZ_ONBOARDING_CHAT === '1'/.test(onboardingMain) &&
+    /export function interviewBootTask\(\): string \| null \{[\s\S]*?if \(!ONBOARDING_CHAT_ENABLED\) return null/.test(onboardingMain) &&
+    /function startInterviewPhase\(wsPath: string\): void \{[\s\S]*?if \(!ONBOARDING_CHAT_ENABLED\)/.test(onboardingMain) &&
+    /if \(ONBOARDING_CHAT_ENABLED\) ensureInterviewArtifacts\(wsPath\)/.test(onboardingMain))
+ok('permission drag helper shows a Blitz icon with a clear drag animation while dragging the real helper bundle',
+  /const icon = iconUrl \? `<img src="\$\{iconUrl\}" alt="" draggable="false">` : '<span class="fallback">B<\/span>'/.test(onboardingMain) &&
+    /function blitzVisualIconDataUrl\(\): Promise<string \| null>/.test(onboardingMain) &&
+    /src\/renderer\/src\/assets\/blitz-app-icon\.png/.test(onboardingMain) &&
+    /class="drag"[\s\S]*?class="ghost"[\s\S]*?class="tile"[\s\S]*?class="arrow"/.test(onboardingMain) &&
+    /@keyframes dragIconHint/.test(onboardingMain) &&
+    /@keyframes dragArrowHint/.test(onboardingMain) &&
+    /transform:translateY\(-16px\)/.test(onboardingMain) &&
+    /<div class="c">Drag the Blitz Icon into \$\{label\}<\/div>/.test(onboardingMain) &&
+    /const html = dragHelperHtml\(kind, await blitzVisualIconDataUrl\(\)\)/.test(onboardingMain) &&
+    /const bundle = currentDragBundle[\s\S]*?e\.sender\.startDrag\(\{ file: bundle, icon \}\)/.test(onboardingMain) &&
+    /<key>CFBundleDisplayName<\/key>\s*<string>BlitzOS<\/string>/.test(computerUseHelperPlist) &&
+    /<key>CFBundleName<\/key>\s*<string>BlitzOS<\/string>/.test(computerUseHelperPlist) &&
+    /<key>CFBundleExecutable<\/key>\s*<string>BlitzOS<\/string>/.test(computerUseHelperPlist) &&
+    /<key>CFBundleVersion<\/key>\s*<string>14<\/string>/.test(computerUseHelperPlist) &&
+    /APP_NAME="BlitzOS"/.test(computerUseHelperBuild) &&
+    /native\/computer-use-helper\/build\/BlitzOS\.app/.test(builderConfig) &&
+    /to: BlitzOS\.app/.test(builderConfig) &&
+    /build\/BlitzOS\.app\/Contents\/MacOS\/BlitzOS/.test(ensureHelper) &&
+    /build', 'BlitzOS\.app'/.test(computerUseHelperManager) &&
+    /return join\(app\.getPath\('appData'\), 'BlitzOS', 'BlitzOS\.app'\)/.test(computerUseHelperManager) &&
+    /assets\/blitz-app-icon\.png/.test(computerUseHelperBuild) &&
+    /Drag the BlitzOS icon into the permission list/.test(islandOnboarding) &&
+    !/Accessibility granted to BlitzComputerUse/.test(computerUseHelperSwift))
 ok('agent gradient visuals are shared between the session tabs and home working rail',
   (/export function agentGradient\(id: string\): string/.test(agentVisuals) &&
     /import \{ agentGradient \} from '.\/agentVisuals'/.test(islandPanel) &&
@@ -537,7 +623,7 @@ ok('generated app message parts render compact cards and open the island iframe 
     /setAppViewerOpen\(open\)/.test(notchHost) &&
     /nh-parked/.test(notchHost) &&
     /nh-app-viewing/.test(notchHost) &&
-    /\{!onHome && !appViewerOpen && \(/.test(notchHost) &&
+    /\{!onHome && view !== 'onboarding' && !appViewerOpen && \(/.test(notchHost) &&
     /onAppViewerToggle=\{handleAppViewerToggle\}/.test(notchHost) &&
     /\.isl-app-card/.test(islandCss) &&
     /\.isl-app-viewer/.test(islandCss) &&

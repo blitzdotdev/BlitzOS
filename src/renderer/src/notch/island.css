@@ -545,6 +545,333 @@ button.isl-app-chat:active .isl-app-icon {
   background: rgba(255, 69, 58, 0.24);
 }
 
+/* ── ISLAND ONBOARDING: setup-only first-run flow inside the notch. ─────────────────────────────────────────── */
+.nh-island.isl-onboarding {
+  min-height: 244px;
+  max-height: 72vh;
+  gap: 12px;
+  padding-right: 18px;
+  padding-bottom: 20px;
+  padding-left: 18px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+.nh-island.isl-onboarding::-webkit-scrollbar {
+  width: 4px;
+}
+.nh-island.isl-onboarding::-webkit-scrollbar-thumb {
+  background: #ffffff26;
+  border-radius: 9999px;
+}
+.nh-island .isl-onb-head {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  animation: isl-rise 0.22s ease-out both;
+}
+.nh-island .isl-onb-intro {
+  display: flex;
+  min-height: 230px;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  animation: isl-rise 0.22s ease-out both;
+}
+.nh-island .isl-onb-head.intro {
+  gap: 7px;
+  animation: none;
+}
+.nh-island .isl-onb-kicker {
+  color: #7dccff;
+  font: 800 10px/1 var(--isl-round);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.nh-island .isl-onb-title {
+  margin: 0;
+  color: var(--isl-text);
+  font-size: 19px;
+  font-weight: 720;
+  line-height: 23px;
+}
+.nh-island .isl-onb-copy,
+.nh-island .isl-onb-inline-copy {
+  margin: 0;
+  color: var(--isl-muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+.nh-island .isl-onb-intro .isl-onb-title {
+  max-width: 430px;
+  font-size: 24px;
+  line-height: 29px;
+  letter-spacing: -0.02em;
+}
+.nh-island .isl-onb-intro .isl-onb-copy {
+  max-width: 410px;
+  color: rgba(245, 245, 247, 0.68);
+  font-size: 13px;
+  line-height: 18px;
+}
+/* The per-slide intro visual is now an animated mockup (onboardingVisuals.tsx / .css), not a static card. */
+.nh-island .isl-onb-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nh-island .isl-onb-progress button {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  transition: width 0.18s ease, background 0.18s ease;
+}
+.nh-island .isl-onb-progress button.on {
+  width: 19px;
+  background: #0a84ff;
+}
+.nh-island .isl-onb-error {
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 69, 58, 0.3);
+  border-radius: 12px;
+  background: rgba(255, 69, 58, 0.08);
+  color: #ffb4ad;
+  font-size: 12px;
+  line-height: 16px;
+}
+.nh-island .isl-onb-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.045);
+  animation: isl-rise 0.24s ease-out 0.04s both;
+}
+.nh-island .isl-onb-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--isl-text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 18px;
+}
+.nh-island .isl-onb-card-head span:last-child {
+  flex: none;
+  color: var(--isl-dim);
+  font-size: 11px;
+  font-weight: 650;
+}
+.nh-island .isl-onb-perms,
+.nh-island .isl-onb-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.nh-island .isl-onb-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 50px;
+  padding: 8px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.nh-island .isl-onb-row.active {
+  border-color: rgba(10, 132, 255, 0.34);
+  background: rgba(10, 132, 255, 0.08);
+}
+.nh-island .isl-onb-row.granted {
+  border-color: rgba(48, 209, 88, 0.24);
+  background: rgba(48, 209, 88, 0.07);
+}
+.nh-island .isl-onb-check {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: #000;
+}
+.nh-island .isl-onb-row.granted .isl-onb-check {
+  background: #30d158;
+}
+.nh-island .isl-onb-check svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+.nh-island .isl-onb-check path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.nh-island .isl-onb-row-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.nh-island .isl-onb-row-title {
+  color: var(--isl-text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 17px;
+}
+.nh-island .isl-onb-row-note {
+  color: var(--isl-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+.nh-island .isl-onb-row-status {
+  flex: none;
+  color: #8ff0a4;
+  font-size: 11px;
+  font-weight: 700;
+}
+.nh-island .isl-onb-hint {
+  padding: 9px 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--isl-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+.nh-island .isl-onb-hint.good {
+  border-style: solid;
+  border-color: rgba(48, 209, 88, 0.24);
+  background: rgba(48, 209, 88, 0.08);
+  color: #8ff0a4;
+}
+.nh-island .isl-onb-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* All onboarding buttons share the obsidian liquid-glass material of the in-chat choice cards
+   (.isl-ask-option): a faint top-lit glass fill, hairline rim, inset highlight, hover lift. */
+.nh-island .isl-onb-primary,
+.nh-island .isl-onb-secondary,
+.nh-island .isl-onb-quiet,
+.nh-island .isl-onb-account {
+  font-family: inherit;
+  cursor: pointer;
+}
+.nh-island .isl-onb-primary,
+.nh-island .isl-onb-secondary,
+.nh-island .isl-onb-quiet {
+  height: 32px;
+  flex: none;
+  padding: 0 15px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 11px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 rgba(0, 0, 0, 0.2);
+  color: var(--isl-text);
+  font-size: 12.5px;
+  font-weight: 700;
+  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+.nh-island .isl-onb-primary:hover,
+.nh-island .isl-onb-secondary:hover,
+.nh-island .isl-onb-quiet:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.052));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 10px 20px rgba(0, 0, 0, 0.22);
+  transform: translateY(-1px);
+}
+.nh-island .isl-onb-primary:active,
+.nh-island .isl-onb-secondary:active,
+.nh-island .isl-onb-quiet:active {
+  transform: translateY(0);
+}
+/* Primary CTA = the sky-tinted "selected" variant of the same glass, so it still reads as primary. */
+.nh-island .isl-onb-primary {
+  border-color: rgba(77, 190, 255, 0.32);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.16), rgba(255, 255, 255, 0.04));
+}
+.nh-island .isl-onb-primary:hover {
+  border-color: rgba(77, 190, 255, 0.5);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.22), rgba(255, 255, 255, 0.06));
+}
+.nh-island .isl-onb-primary:disabled {
+  cursor: default;
+  opacity: 0.45;
+  transform: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 0 rgba(0, 0, 0, 0.18);
+}
+/* Quiet = lowest emphasis: ghost until hover, then the same faint glass. */
+.nh-island .isl-onb-quiet {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--isl-muted);
+  font-weight: 650;
+}
+.nh-island .isl-onb-quiet:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  color: var(--isl-text);
+}
+/* Account picker rows = the choice-option card material, with a sky-tinted selected state. */
+.nh-island .isl-onb-account {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 46px;
+  padding: 8px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 rgba(0, 0, 0, 0.2);
+  color: var(--isl-text);
+  text-align: left;
+  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+.nh-island .isl-onb-account:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.052));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 10px 20px rgba(0, 0, 0, 0.22);
+  transform: translateY(-1px);
+}
+.nh-island .isl-onb-account.on {
+  border-color: rgba(77, 190, 255, 0.4);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.14), rgba(255, 255, 255, 0.03));
+}
+.nh-island .isl-onb-account span {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-onb-account small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--isl-muted);
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* content rises in under the chassis reveal (opacity only — the chassis owns the shape + the slide). */
 @keyframes isl-rise {
   from {

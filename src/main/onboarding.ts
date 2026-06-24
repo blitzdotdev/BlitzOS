@@ -4,7 +4,7 @@
 // primary chat agent (the interview boot task). There is NO seeded widget board in V1 — the scan's
 // context.md is the chat agent's primer; the whole flow happens in one agent chat.
 //
-import { app, ipcMain, shell, screen, BrowserWindow } from 'electron'
+import { app, ipcMain, shell, screen, BrowserWindow, nativeImage } from 'electron'
 import { execFileSync, execFile, spawn } from 'node:child_process'
 
 // Repo root in dev; app.asar.UNPACKED in a packaged build — the scan runs as a PLAIN-NODE child
@@ -26,6 +26,7 @@ interface ScanJson {
 }
 
 const WS_NAME = 'Home' // single workspace: onboarding runs in the default Home workspace (no separate case-file)
+const ONBOARDING_CHAT_ENABLED = process.env.BLITZ_ONBOARDING_CHAT === '1'
 
 let mainWindow: (() => BrowserWindow | null) | null = null
 let starting = false
@@ -110,6 +111,51 @@ async function appIconDataUrl(bundlePath?: string): Promise<string | null> {
   }
 }
 
+/** First on-disk Blitz brand icon (dev source tree or packaged resources). */
+function blitzIconFile(): string | null {
+  const candidates = [
+    join(appRoot(), 'src/renderer/src/assets/blitz-app-icon.png'),
+    join(appRoot(), 'src/renderer/src/assets/blitz-dock-icon.png'),
+    join(process.resourcesPath || '', 'blitz-dock-icon.png')
+  ]
+  for (const file of candidates) {
+    try {
+      if (file && existsSync(file)) return file
+    } catch {
+      /* try next */
+    }
+  }
+  return null
+}
+
+async function blitzVisualIconDataUrl(): Promise<string | null> {
+  const file = blitzIconFile()
+  if (file) {
+    try {
+      return `data:image/png;base64,${readFileSync(file).toString('base64')}`
+    } catch {
+      /* fall through to the system app icon */
+    }
+  }
+  return appIconDataUrl()
+}
+
+/** The Blitz icon as a NativeImage for the native drag preview (cosmetic — the dragged FILE stays the
+    target bundle so the TCC grant still lands on the right app). */
+function blitzDragIconImage(): Electron.NativeImage | null {
+  const file = blitzIconFile()
+  if (!file) return null
+  try {
+    const img = nativeImage.createFromPath(file)
+    if (img.isEmpty()) return null
+    const sized = img.resize({ width: 64, height: 64 })
+    // An empty image would make startDrag({ icon }) throw — return null so the caller falls back instead.
+    return sized.isEmpty() ? null : sized
+  } catch {
+    return null
+  }
+}
+
 /** First chromium-family browser found (AppleScript-drivable for the open-tabs import). */
 const BROWSERS = [
   { id: 'com.google.Chrome', name: 'Google Chrome', path: '/Applications/Google Chrome.app' },
@@ -142,32 +188,46 @@ let dragPollTimer: ReturnType<typeof setInterval> | null = null
 const DRAG_HELPER_W = 460
 const DRAG_HELPER_H = 96
 
-function dragHelperHtml(kind: DragPerm, iconUrl: string | null, appName: string): string {
+function dragHelperHtml(kind: DragPerm, iconUrl: string | null): string {
   // Self-contained; the window shares the app preload, so the tile calls window.agentOS.onboarding
   // .preboardDrag() (→ main startDrag of the bundle). CSP locks it to inline + data: only.
   const label = PERM_LABEL[kind]
-  const icon = iconUrl ? `<img src="${iconUrl}" alt="" draggable="false">` : ''
+  const icon = iconUrl ? `<img src="${iconUrl}" alt="" draggable="false">` : '<span class="fallback">B</span>'
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
   :root { color-scheme: light dark; }
   html,body { margin:0; height:100%; overflow:hidden; -webkit-user-select:none; user-select:none; font-family:-apple-system,system-ui,sans-serif; }
-  .h { height:100%; display:flex; align-items:center; gap:14px; padding:0 18px; box-sizing:border-box;
+  .h { height:100%; display:flex; align-items:center; gap:18px; padding:0 22px; box-sizing:border-box;
        background:rgba(245,245,247,0.86); border-radius:16px; border:1px solid rgba(0,0,0,0.10);
        -webkit-backdrop-filter:saturate(1.3) blur(20px); backdrop-filter:saturate(1.3) blur(20px);
        box-shadow:0 8px 30px rgba(0,0,0,0.22); }
   @media (prefers-color-scheme: dark){ .h{ background:rgba(40,42,46,0.86); border-color:rgba(255,255,255,0.12); color:#f5f5f7; } }
-  .tile { width:60px; height:60px; flex:0 0 auto; display:grid; place-items:center; cursor:grab; border-radius:14px; transition:transform .12s ease; }
-  .tile:hover { transform:scale(1.07); } .tile:active { cursor:grabbing; }
-  .tile img { width:56px; height:56px; pointer-events:none; }
-  .c { font-size:13px; line-height:1.45; }
-  .c b { font-weight:600; }
-  .c .sub { opacity:0.62; font-size:12px; margin-top:2px; }
+  .drag { position:relative; width:140px; height:92px; flex:0 0 auto; }
+  .tile { position:absolute; left:10px; top:24px; width:60px; height:60px; display:grid; place-items:center; cursor:grab;
+    border-radius:17px; background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.04));
+    box-shadow:0 14px 24px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.22);
+    animation:dragIconHint 1.65s cubic-bezier(.22,1,.36,1) infinite; transition:transform .12s ease; }
+  .tile:hover { transform:translateY(-16px) scale(1.07); animation-play-state:paused; } .tile:active { cursor:grabbing; }
+  .tile img { width:56px; height:56px; pointer-events:none; border-radius:14px; }
+  .fallback { width:52px; height:52px; display:grid; place-items:center; border-radius:13px; background:#0a84ff; color:white; font-weight:800; font-size:28px; }
+  .ghost { position:absolute; left:14px; top:28px; width:52px; height:52px; border-radius:15px; border:1px dashed rgba(255,255,255,.34); opacity:.5; }
+  .arrow { position:absolute; left:94px; top:7px; width:28px; height:64px; color:#0a84ff; animation:dragArrowHint 1.65s cubic-bezier(.22,1,.36,1) infinite; }
+  .arrow:before { content:''; position:absolute; left:13px; top:16px; width:2px; height:42px; border-radius:999px; background:currentColor; }
+  .arrow:after { content:''; position:absolute; left:7px; top:8px; width:12px; height:12px; border-top:2px solid currentColor; border-left:2px solid currentColor; transform:rotate(45deg); }
+  .c { min-width:0; color:inherit; font-size:17px; line-height:1.2; font-weight:750; letter-spacing:-0.01em; }
+  @keyframes dragIconHint {
+    0%,62%,100% { transform:translateY(0) scale(1); }
+    32% { transform:translateY(-16px) scale(1.04); }
+  }
+  @keyframes dragArrowHint {
+    0%,62%,100% { opacity:.38; transform:translateY(0); }
+    32% { opacity:1; transform:translateY(-6px); }
+  }
 </style></head><body>
 <div class="h">
-  <span class="tile" id="t" draggable="true">${icon}</span>
-  <div class="c"><div>Drag <b>${appName}</b> into the <b>${label}</b> list above</div>
-  <div class="sub">Then flip it on. I'll notice the moment it lands.</div></div>
+  <div class="drag" aria-hidden="true"><span class="ghost"></span><span class="tile" id="t" draggable="true">${icon}</span><span class="arrow"></span></div>
+  <div class="c">Drag the Blitz Icon into ${label}</div>
 </div>
 <script>
   document.getElementById('t').addEventListener('dragstart', function(e){
@@ -181,7 +241,6 @@ function dragHelperHtml(kind: DragPerm, iconUrl: string | null, appName: string)
 // computer-use pair → the SEPARATE helper bundle, so the grant + the quit-and-reopen land on it,
 // never on BlitzOS (plans/blitzos-computer-use-helper.md). Set per openDragHelper, read by the drag IPC.
 let currentDragBundle: string | null = null
-const HELPER_NAME = 'BlitzOS Computer Use'
 
 async function openDragHelper(kind: DragPerm): Promise<void> {
   if (process.platform !== 'darwin') return
@@ -212,7 +271,9 @@ async function openDragHelper(kind: DragPerm): Promise<void> {
   if (!usingHelper) console.error(`[computer-use] HELPER UNAVAILABLE for ${kind} (available=${avail}) — drag suppressed; build native/computer-use-helper`)
   currentDragBundle = dragBundle
   void shell.openExternal(PERM_DEEPLINK[kind]) // navigate Settings to the exact pane
-  const html = dragHelperHtml(kind, dragBundle ? await appIconDataUrl(dragBundle) : null, HELPER_NAME)
+  // Visual clarity: show the Blitz icon in the helper, but keep dragging currentDragBundle (the
+  // computer-use helper app) so the TCC grant still lands on the process that needs it.
+  const html = dragHelperHtml(kind, await blitzVisualIconDataUrl())
   if (!dragHelper || dragHelper.isDestroyed()) {
     dragHelper = new BrowserWindow({
       width: DRAG_HELPER_W,
@@ -575,6 +636,7 @@ const RESIDENT_INITIATIVE_BOOT_TASK =
 
 /** index.ts threads this into session '0': interview first, then the resident initiative duty. */
 export function interviewBootTask(): string | null {
+  if (!ONBOARDING_CHAT_ENABLED) return null
   try {
     const st = readInterview(osWorkspaceContext().workspace_path)
     if (st && st.state === 'pending') {
@@ -611,6 +673,10 @@ function watchInterviewDone(wsPath: string): void {
 }
 
 function startInterviewPhase(wsPath: string): void {
+  if (!ONBOARDING_CHAT_ENABLED) {
+    progress({ phase: 'setup-only' })
+    return
+  }
   ensureInterviewArtifacts(wsPath)
   const st = readInterview(wsPath)
   if (!st || st.state !== 'pending') return
@@ -653,7 +719,7 @@ async function start(): Promise<{ ok: boolean; cached?: boolean }> {
       return { ok: false }
     }
     const wsPath = osWorkspaceContext().workspace_path
-    ensureInterviewArtifacts(wsPath) // make the standing duty visible before any boot-resume of agent 0
+    if (ONBOARDING_CHAT_ENABLED) ensureInterviewArtifacts(wsPath) // legacy chat interview: make the standing duty visible before any boot-resume of agent 0
     // A restart mid-onboarding (the scan already ran): don't re-scan, just hand back to the canvas +
     // resume the interview agent (or no-op when the interview is done).
     if (existsSync(join(onboardingDir(wsPath), 'context.md'))) {
@@ -733,6 +799,17 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     const bundle = currentDragBundle
     console.log(`[computer-use] DRAG fired → file=${bundle ?? '(none — suppressed)'}`)
     if (!bundle) return
+    // Drag preview = the Blitz icon (the tile the user sees), NOT app.getFileIcon(bundle) — for the
+    // computer-use pair the bundle is the helper, whose file icon renders blank under the cursor.
+    const blitzIcon = blitzDragIconImage()
+    if (blitzIcon) {
+      try {
+        e.sender.startDrag({ file: bundle, icon: blitzIcon })
+      } catch {
+        /* drag raced a navigation — harmless */
+      }
+      return
+    }
     void app.getFileIcon(bundle, { size: 'normal' }).then((icon) => {
       try {
         e.sender.startDrag({ file: bundle, icon })

@@ -1,7 +1,7 @@
 // Types for the shared connection ops binding (connection-ops.mjs).
 
 /** A per-connection backend ADAPTER — the only per-type code (tab = the Chrome extension link; window =
- *  the BlitzComputerUse helper). It executes a verb and reports "source changed" out-of-band by calling
+ *  the BlitzOS helper). It executes a verb and reports "source changed" out-of-band by calling
  *  connectionNotify(connId, …) on the ops. `read`/`act`/`run_js` are the verbs the dispatcher uses. */
 export interface ConnectionAdapter {
   call(verb: 'read' | 'act' | 'run_js' | string, args: Record<string, unknown>): Promise<unknown> | unknown
