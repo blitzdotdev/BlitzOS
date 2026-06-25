@@ -1,0 +1,46 @@
+<!doctype html><meta charset="utf-8"><title>Timeline</title>
+<!-- Thinking-widget: a vertical timeline of events. Drive with update_surface{props:{items}}. -->
+<style>
+  :root{--ac:var(--blitz-accent,#1a1b1d);--bg:var(--blitz-bg,#fff);--sf:var(--blitz-surface,#f5f5f3);
+        --tx:var(--blitz-text,#1a1b1d);--dim:var(--blitz-text-dim,#8a8d90);--line:var(--blitz-hairline,rgba(0,0,0,.09))}
+  .wrap{padding:14px 16px}
+  .lb{font:600 9px ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--ac);margin-bottom:11px}
+  .tl{position:relative;margin-left:6px;padding-left:22px}
+  .tl:before{content:'';position:absolute;left:4px;top:4px;bottom:8px;width:2px;background:var(--line)}
+  .ev{position:relative;padding-bottom:16px}
+  .tl.intro .ev{animation:in .35s both}
+  .ev:nth-child(2){animation-delay:.04s}.ev:nth-child(3){animation-delay:.08s}.ev:nth-child(4){animation-delay:.12s}.ev:nth-child(5){animation-delay:.16s}
+  @keyframes in{from{opacity:0;transform:translateX(-6px)}}
+  .ev .dt{position:absolute;left:-22px;top:2px;width:11px;height:11px;border-radius:50%;background:var(--bg);border:2px solid var(--dim)}
+  .ev.now .dt{border-color:var(--ac);background:var(--ac);box-shadow:0 0 0 4px color-mix(in srgb,var(--ac) 15%,transparent)}
+  .ev.now .dt:after{content:'';position:absolute;inset:-2px;border-radius:50%;border:2px solid var(--ac);animation:pulse 1.6s ease-out infinite}
+  @keyframes pulse{to{transform:scale(2.4);opacity:0}}
+  .ev .tm{font:10px ui-monospace,'SF Mono',monospace;letter-spacing:.06em;color:var(--dim);text-transform:uppercase}
+  .ev .ti{font-weight:600;font-size:13px;margin:2px 0 1px}
+  .ev .de{font-size:12px;color:var(--dim)}
+</style>
+<div class="wrap"><div class="lb" id="hd">Timeline</div><div class="tl" id="tl"></div></div>
+<script>
+  // props: { title?, items:[{time, title, detail?, now?:bool}] }
+  const SAMPLE={title:'Timeline',items:[
+    {time:'step 1',title:'First event',detail:'what happened'},
+    {time:'step 2',title:'Second event',detail:'what happened'},
+    {time:'step 3',title:'Third event',detail:'what happened'},
+    {time:'now',title:'In progress',detail:'happening now',now:true},
+    {time:'next',title:'Next up',detail:'pending'}]}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  function render(d){
+    document.getElementById('hd').textContent=d.title||'Timeline'
+    // size-adaptive: two events as the gist (m tile), more as the tile grows / pops out
+    const H=window.innerHeight
+    const max=H<220?2:H>460?9:5
+    const items=(d.items||[]).slice(0,max)
+    const compact=H<220
+    const tl=document.getElementById('tl');tl.classList.toggle('intro',!__p);__p=true
+    tl.innerHTML=items.map(e=>'<div class="ev'+(e.now?' now':'')+'"><div class="dt"></div><div class="tm">'+esc(e.time)+'</div><div class="ti">'+esc(e.title)+'</div>'+(e.detail&&!compact?'<div class="de">'+esc(e.detail)+'</div>':'')+'</div>').join('')
+  }
+  render(data)
+  window.addEventListener('resize',()=>render(data))
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
+</script>

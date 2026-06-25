@@ -1,0 +1,142 @@
+[
+  {
+    "name": "pipeline",
+    "description": "Thinking-widget (no integration). Default task-start progress widget for non-trivial work; auto-closes after all items are done unless props.autoClose=false. A live work queue: items flow queued -> processing -> done with a pop/drain/check animation. Drive it with spawn_widget/update_surface props.items exactly: {items:[{label,sub?,status:'queued'|'active'|'done'}]}. Do not use props.steps.",
+    "needs": [],
+    "props": { "title": "Pipeline" },
+    "version": 1
+  },
+  {
+    "name": "dossiers",
+    "description": "Thinking-widget. A grid of scored entity cards (a score ring, stats, tags per card). For comparing/profiling a SET of things — candidates, repos, options. Drive with update_surface{props:{items:[{name,sub?,score?,stats?:[{k,n}],tags?}]}}.",
+    "needs": [],
+    "props": { "title": "Dossiers" },
+    "version": 1
+  },
+  {
+    "name": "timeline",
+    "description": "Thinking-widget. A vertical timeline of events with a pulsing 'now' marker. For a SEQUENCE over time — a plan, a session log, what happened then what's next. Drive with update_surface{props:{items:[{time,title,detail?,now?}]}}.",
+    "needs": [],
+    "props": { "title": "Timeline" },
+    "version": 1
+  },
+  {
+    "name": "matrix",
+    "description": "Thinking-widget. A comparison matrix (options as rows × criteria as columns; cells render as yes/no dots, 0-3 heat pills, or text). For a DECISION or trade-off table. Drive with update_surface{props:{cols:[...],rows:[{name,cells:[true|false|0..3|'text']}]}}.",
+    "needs": [],
+    "props": { "title": "Matrix" },
+    "version": 1
+  },
+  {
+    "name": "graph",
+    "description": "Thinking-widget. A hub-and-spoke relationship graph (a center node with labelled spokes, animated edges). For RELATIONSHIPS around one thing — who connects to X, parts of a system. Drive with update_surface{props:{center:{label},nodes:[{label,sub?}]}}.",
+    "needs": [],
+    "props": { "title": "Graph" },
+    "version": 1
+  },
+  {
+    "name": "profile",
+    "description": "Thinking-widget. An identity card for ONE subject — big name, up to 4 quiet stats (no titlebar, no prose). The centerpiece of a dossier/case-file board. Drive with update_surface{props:{kicker?,name,sub?,facts?:[{k,v}]}}.",
+    "needs": [],
+    "props": { "title": "Profile" },
+    "version": 1
+  },
+  {
+    "name": "rhythm",
+    "description": "Thinking-widget. A week×hour activity punchcard (heat grid) + top time-sinks as bars. For WHEN something happens — work rhythm, usage, cadence. Drive with update_surface{props:{punch:{'<weekday0-6>:<hour0-23>':n},peakHours?:[h..],activeWeekdays?:[names],topApps?:[{app,secs?|n?}],note?}}.",
+    "needs": [],
+    "props": { "title": "Rhythm" },
+    "version": 1
+  },
+  {
+    "name": "toolbox",
+    "description": "Thinking-widget. An inventory of chips in labelled sections — tools, tags, skills, ingredients, any flat sets; high-count items emphasize themselves. Drive with update_surface{props:{sections:[{label,items:[{name,n?}]}]}}.",
+    "needs": [],
+    "props": { "title": "Toolbox" },
+    "version": 1
+  },
+  {
+    "name": "workflows",
+    "description": "Thinking-widget. The web tools someone lives in, as an ICON GRID (favicons, Shortcuts-widget look) — tap an icon to open the site as a live web surface via open_window. Drive with update_surface{props:{items:[{name,host,color?,integration?}]}}.",
+    "needs": [],
+    "props": { "title": "Workflows" },
+    "version": 1
+  },
+  {
+    "name": "worktabs",
+    "description": "Thinking-widget. The LIVE working set — the browser tabs someone has open right now, as a list grouped by window; the titles are the signal (what they are doing this moment). Tap a row to open that exact tab as a live web surface. Drive with update_surface{props:{title?,sub?,items:[{title,host,url,win?}]}}.",
+    "needs": [],
+    "props": { "title": "Open right now" },
+    "version": 1
+  },
+  {
+    "name": "gaps",
+    "description": "Thinking-widget. Open questions as a clean checklist — what is NOT known yet; flip an item with done:true when answered. Drive with update_surface{props:{items:[{q,hint?,done?}]}}.",
+    "needs": [],
+    "props": { "title": "Gaps" },
+    "version": 1
+  },
+  {
+    "name": "remix",
+    "description": "Remix the web — a control surface that lets the user redesign any website. The user opens a site and says what to change; YOU (the agent) do the work and render it back. The widget emits the user's intents as chat messages you receive via /events: `remix open <url>`, `remix instant <directive>` (fast ephemeral re-skin of the current page), `remix smart <directive>` (a DURABLE rule you build in the background — surgical or re-skin — that persists every visit), `remix act <ref>` (a click on a data-act element in the current view → open that link's page), `remix back`, `remix toggle|remove <id>`. To fulfill: fetch/extract the REAL page (open_window+read_window, or a public API), then push results into THIS widget with update_surface{props:{ view:'<styled HTML fragment using the .rmx design classes — .item/.av/.nm/.body/.acts/.article/.prose/.card, data-act on every clickable thing>', url, status, busy, remixes:[{id,name,enabled}] }}. NEVER invent data — render only what's really on the page. Spawn with spawn_widget{name:'remix'}.",
+    "needs": [],
+    "props": { "title": "Remix" },
+    "version": 1
+  },
+  {
+    "name": "kpi-spark",
+    "description": "React reference (lang:jsx). A KPI tile: accent kicker, big hero number, delta, and a recharts area sparkline bleeding off the bottom. The pattern for any single metric-with-trend. Drive with update_surface{props:{kicker,value,delta,up?,series?:[numbers]}}. Fork it (get_widget_source) for the house LOOK + the recharts-color-via-getComputedStyle pattern.",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Revenue" },
+    "version": 1
+  },
+  {
+    "name": "kpi-counter",
+    "description": "React reference (lang:jsx). An animated metric: a number that springs up on mount (framer-motion) over a token-accent progress bar. For a single count you want to feel alive. Drive with update_surface{props:{kicker,value,target?,delta?,up?}}. Fork for the framer-motion spring + token pattern.",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Signups" },
+    "version": 1
+  },
+  {
+    "name": "status-list",
+    "description": "React reference (lang:jsx). A labelled status list: accent kicker, hairline rows of icon + label + bold value (lucide-react). For a small set of named readings. Drive with update_surface{props:{kicker,rows:[{icon,label,value}]}}. Fork for the lucide-via-currentColor theming pattern.",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "System" },
+    "version": 1
+  },
+  {
+    "name": "markdown-card",
+    "description": "React reference (lang:jsx). A styled markdown card (react-markdown + remark-gfm) mapping headings/prose to the OS type scale. For notes, release notes, agent summaries. Drive with update_surface{props:{markdown}}. Fork for the element-to-token component map.",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Notes" },
+    "version": 1
+  },
+  {
+    "name": "plan",
+    "description": "The W1 editable JOB plan widget (lang:jsx). A user-editable plan the agent presents BEFORE a job runs: inline-editable stages, reorder/remove, per-decision toggles, a comments box, Approve/Send-back. On submit it setProps the full edited plan and sends the JOB agent a tiny 'plan approve'/'plan reject' message (props.agentId routes it); the agent reads the full plan via get_surface and reconciles it into plan.md. Spawn with spawn_widget{name:'plan', props:{mode:'edit', agentId:'<your id>', stages:[{id,title,detail,status:'todo'}], decisions:{}, comments:''}}; flip props.mode to 'status' on approval to drive live execution. Its VISUAL is a lean template you may restyle; keep the data contract + return channel (see get_widget_authoring 'Editable / interactive widgets').",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Plan" },
+    "version": 1
+  },
+  {
+    "name": "wf-graph",
+    "description": "Live workflow externalization as a NODE GRAPH (lang:jsx). The OS drives it, not the agent: run_workflow places it bound to a runId and it subscribes to the live WfEvent stream — a run root, a phase spine, and the agent() leaves fanning out below each phase, glowing while running and settling to ok/error. Transparent (frameless, reads as nodes on the canvas); pan + wheel-zoom. Default live view for run_workflow.",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Workflow", "transparent": true },
+    "version": 1
+  },
+  {
+    "name": "wf-kanban",
+    "description": "Live workflow externalization as a KANBAN post-it board (lang:jsx). The OS drives it, not the agent: run_workflow places it bound to a runId and it subscribes to the live WfEvent stream — each agent() leaf is a post-it that moves Queued -> Running (glowing) -> Done (a summary note with duration + tokens). Transparent (frameless). The alternate live view for run_workflow (view:'kanban').",
+    "needs": [],
+    "lang": "jsx",
+    "props": { "title": "Workflow", "transparent": true },
+    "version": 1
+  }
+]

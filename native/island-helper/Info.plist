@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>BlitzOS Island</string>
+  <key>CFBundleDisplayName</key>
+  <string>BlitzOS Island</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.blitz.os.island</string>
+  <key>CFBundleExecutable</key>
+  <string>BlitzIsland</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <!-- Faceless background agent: no Dock icon, no menu bar (a notch HUD .accessory app). -->
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
