@@ -71,8 +71,10 @@ jobs:
         run: npm run build
       - name: Package
         run: |
-          # stamp the channel into the app: the updater follows ITS OWN branch; the dev picker shows all
-          ARGS="--mac zip --arm64 --publish never -c.extraMetadata.buildBranch=$SAFE_BRANCH -c.extraMetadata.buildRun=${{ github.run_number }}"
+          # stamp the channel into the app: the updater follows ITS OWN branch; the dev picker shows all.
+          # Build BOTH dmg + zip: the zip carries the notarized .app (the updater consumes it); the dmg is the
+          # human download. (CLI flag overrides electron-builder.yml's zip-only mac.target, like scripts/dist-mac.sh.)
+          ARGS="--mac dmg zip --arm64 --publish never -c.extraMetadata.buildBranch=$SAFE_BRANCH -c.extraMetadata.buildRun=${{ github.run_number }}"
           if [ -z "$MAC_CERT_P12" ]; then
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             echo "[ci] unsigned build (no MAC_CERT_P12 secret)"
@@ -87,11 +89,26 @@ jobs:
             echo "[ci] signed build (no notarization key)"
           fi
           npx electron-builder $ARGS
+          # electron-builder notarizes the .app (the .zip carries it) but leaves the .dmg CONTAINER
+          # unsigned + unstapled, so a downloaded dmg warns on mount. Sign + notarize + staple it ourselves
+          # (mirrors scripts/dist-mac.sh ~L61-70). Only with full notarization creds; same shell, so the
+          # APPLE_API_* exports + asc.p8 above are still in scope. The identity is derived from the keychain.
+          if [ -n "$MAC_CERT_P12" ] && [ -n "$ASC_KEY_P8" ]; then
+            IDENTITY=$(security find-identity -v -p codesigning | awk '/Developer ID Application/{print $2; exit}')
+            for dmg in release/*.dmg; do
+              [ -e "$dmg" ] || continue
+              echo "[ci] sign + notarize + staple dmg: $dmg"
+              codesign --force --sign "$IDENTITY" --timestamp "$dmg"
+              xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+              xcrun stapler staple "$dmg"
+              xcrun stapler validate "$dmg"
+            done
+          fi
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$BUILD_TAG" release/*.zip \
+          gh release create "$BUILD_TAG" release/*.dmg release/*.zip \
             --prerelease \
             --target "${{ github.sha }}" \
             --title "BlitzOS ${{ github.ref_name }} #${{ github.run_number }}" \
