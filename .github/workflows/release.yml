@@ -74,7 +74,7 @@ jobs:
           # stamp the channel into the app: the updater follows ITS OWN branch; the dev picker shows all.
           # Build BOTH dmg + zip: the zip carries the notarized .app (the updater consumes it); the dmg is the
           # human download. (CLI flag overrides electron-builder.yml's zip-only mac.target, like scripts/dist-mac.sh.)
-          ARGS="--mac dmg zip --arm64 --publish never -c.extraMetadata.buildBranch=$SAFE_BRANCH -c.extraMetadata.buildRun=${{ github.run_number }}"
+          ARGS="--mac dmg zip --arm64 --publish never -c.extraMetadata.buildBranch=$SAFE_BRANCH -c.extraMetadata.buildRun=${{ github.run_number }} -c.extraMetadata.buildRepo=${{ github.repository }}"
           if [ -z "$MAC_CERT_P12" ]; then
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             echo "[ci] unsigned build (no MAC_CERT_P12 secret)"

@@ -19,7 +19,20 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rm
 import { join } from 'path'
 import { homedir } from 'os'
 
-const REPO = process.env.BLITZ_UPDATE_REPO || 'blitzdotdev/BlitzOS'
+// Which repo's releases this build follows: env override > the repo CI baked into THIS build
+// (extraMetadata.buildRepo = github.repository) > the public OSS repo. The OSS build polls the
+// PUBLIC blitzdotdev/blitzos-oss (no token needed); a private/internal build bakes blitzdotdev/BlitzOS.
+// Lazy (not a load-time const) because it reads app.getAppPath(), which needs the app to be ready.
+function repo(): string {
+  if (process.env.BLITZ_UPDATE_REPO) return process.env.BLITZ_UPDATE_REPO.trim()
+  try {
+    const pkg = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) as { buildRepo?: string }
+    if (pkg.buildRepo) return String(pkg.buildRepo)
+  } catch {
+    /* dev run / pre-CI build */
+  }
+  return 'blitzdotdev/blitzos-oss'
+}
 const POLL_MS = 30 * 60 * 1000 // 30 min; plus one check shortly after boot
 // Developer Macs (hardware UUID via IOPlatformExpertDevice) that see the hidden build picker.
 const DEV_MACHINE_UUIDS = new Set(['51312831-F822-58AB-A7CA-7D54A86C9B10'])
@@ -87,7 +100,7 @@ function ghHeaders(tok: string | null, accept: string): Record<string, string> {
 
 /** All CI builds, newest first: releases tagged build-<branch>-<run> with a mac zip asset. */
 async function listBuilds(tok: string | null): Promise<Build[]> {
-  const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=60`, { headers: ghHeaders(tok, 'application/vnd.github+json') })
+  const res = await fetch(`https://api.github.com/repos/${repo()}/releases?per_page=60`, { headers: ghHeaders(tok, 'application/vnd.github+json') })
   if (!res.ok) {
     console.log(`[update] release list ${res.status} (private repo needs GH_TOKEN or ~/.blitzos/github-token)`)
     return []
