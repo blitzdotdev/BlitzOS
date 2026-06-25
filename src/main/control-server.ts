@@ -1,6 +1,6 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { randomBytes } from 'crypto'
-import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, type SurfaceDescriptor } from './osActions'
+import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, osBroadcast, type SurfaceDescriptor } from './osActions'
 import { OS_TOOLS_BY_PATH } from './electron-os-tools'
 import type { ControlAction } from './cdp'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './events'
@@ -25,6 +25,14 @@ export function startControlServer(): void {
     if (req.headers['authorization'] !== `Bearer ${token}`) {
       res.writeHead(401, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'unauthorized' }))
+      return
+    }
+
+    // Dev-only: replay the cinematic intro animation without restarting or wiping TCC permissions.
+    if (req.method === 'POST' && req.url === '/replay-cinematic') {
+      osBroadcast({ type: 'cinematic' })
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true }))
       return
     }
 

@@ -6,6 +6,7 @@
 import './onboardingVisuals.css'
 import { useEffect, useState } from 'react'
 import blitzAppIcon from '../assets/blitz-app-icon.png'
+import blitzGlanceIcon from '../assets/blitz-glance-icon.png'
 import { agentGradient } from './agentVisuals'
 
 export type IntroVisual = 'home' | 'tabs' | 'connect' | 'workflow' | 'final' | 'requirement' | 'notch'
@@ -54,11 +55,12 @@ const Alert = (): JSX.Element => (
 // ── Slide 1: island hover → expands to reveal a multi-agent working session ───────────────────────────────────
 // steps: 0 resting · 1 cursor moving up · 2 island open (working agents) · 3 cursor retreating
 const H_SEQ = [1400, 750, 2100, 650]
-// Two peer agents chosen for hue variety: '5' ≈ pink/rose, '2' ≈ violet
 const HOME_AGENTS = [
   { id: '0', name: 'Blitz', dot: 'working' as const },
   { id: '5', name: 'Aria', dot: 'done' as const },
 ]
+// Glance bar avatars — same IDs as the cinematic fake agents: blue, rose, green.
+const GLANCE_AGENTS = ['0', '5', '1']
 
 function HomeVisual(): JSX.Element {
   const step = useSequence(H_SEQ)
@@ -66,16 +68,19 @@ function HomeVisual(): JSX.Element {
   const cursorUp = step === 1 || step === 2
   return (
     <div className="oba-notch-scene" aria-hidden>
-      <div className="oba-notch-menubar">
-        <span className="oba-notch-mb-left">
-          <span className="oba-notch-mb-dot" /><span className="oba-notch-mb-dot" /><span className="oba-notch-mb-dot" />
-        </span>
-        <span className="oba-notch-mb-right">
-          <span className="oba-notch-mb-item">11:41</span>
-          <span className="oba-notch-mb-icon" /><span className="oba-notch-mb-icon" />
-        </span>
-      </div>
       <div className={`oba-notch-chassis${open ? ' open' : ''}`}>
+        {!open && (
+          <div className="oba-notch-glance">
+            <span className="oba-glance-logo">
+              <img src={blitzGlanceIcon} alt="" draggable={false} />
+            </span>
+            <div className="oba-glance-avas">
+              {GLANCE_AGENTS.map((id) => (
+                <span key={id} className="oba-glance-ava" style={{ background: agentGradient(id) }} />
+              ))}
+            </div>
+          </div>
+        )}
         {open && (
           <div className="oba-notch-chat" style={{ animation: 'oba-rise 0.2s ease-out 0.12s both' }}>
             <div className="oba-notch-tabs">
@@ -87,12 +92,13 @@ function HomeVisual(): JSX.Element {
                     <span className={`oba-dot oba-dot-${a.dot}`} style={{ width: 7, height: 7 }} />
                   </span>
                 ))}
+                <span className="oba-notch-tab-new">
+                  <svg viewBox="0 0 24 24" width="11" height="11" focusable="false"><path d={PLUS} fill="currentColor" /></svg>
+                </span>
               </div>
-              <span className="oba-notch-tab-new">
-                <svg viewBox="0 0 24 24" width="11" height="11" focusable="false"><path d={PLUS} fill="currentColor" /></svg>
-              </span>
             </div>
             <div className="oba-notch-feed">
+              <div className="oba-notch-bubble user">What&apos;s the plan for today?</div>
               <div className="oba-notch-bubble">Planning your product launch…</div>
             </div>
             <div className="oba-notch-composer-bar">
@@ -102,7 +108,6 @@ function HomeVisual(): JSX.Element {
           </div>
         )}
       </div>
-      <div className="oba-notch-desktop" />
       <svg className={`oba-notch-cursor${cursorUp ? ' up' : ''}`} viewBox="0 0 14 20" width="14" height="20" aria-hidden>
         <path d="M1 1 L1 17 L4.4 13 L7 19.2 L9.2 18.2 L6.6 12 L12.4 12 Z" fill="#fff" stroke="rgba(0,0,0,0.45)" strokeWidth="1.2" strokeLinejoin="round" />
       </svg>
@@ -225,8 +230,8 @@ function ConnectVisual(): JSX.Element {
         )}
       </div>
       <div className="oba-composer">
-        <span className="oba-attach-btn">{step <= 2 ? '×' : '+'}</span>
         <div className="oba-bar">
+          <span className="oba-attach-btn">{step <= 2 ? '×' : '+'}</span>
           <span className="oba-bar-field">
             {step === 3 && typed.length > 0 ? (
               <>
@@ -361,15 +366,6 @@ function NotchVisual(): JSX.Element {
   const cursorUp = step === 1 || step === 2
   return (
     <div className="oba-notch-scene" aria-hidden>
-      <div className="oba-notch-menubar">
-        <span className="oba-notch-mb-left">
-          <span className="oba-notch-mb-dot" /><span className="oba-notch-mb-dot" /><span className="oba-notch-mb-dot" />
-        </span>
-        <span className="oba-notch-mb-right">
-          <span className="oba-notch-mb-item">11:41</span>
-          <span className="oba-notch-mb-icon" /><span className="oba-notch-mb-icon" />
-        </span>
-      </div>
       <div className={`oba-notch-chassis${open ? ' open' : ''}`}>
         {open && (
           <div className="oba-notch-chat" style={{ animation: 'oba-rise 0.2s ease-out 0.12s both' }}>
@@ -395,7 +391,6 @@ function NotchVisual(): JSX.Element {
           </div>
         )}
       </div>
-      <div className="oba-notch-desktop" />
       <svg className={`oba-notch-cursor${cursorUp ? ' up' : ''}`} viewBox="0 0 14 20" width="14" height="20" aria-hidden>
         <path d="M1 1 L1 17 L4.4 13 L7 19.2 L9.2 18.2 L6.6 12 L12.4 12 Z" fill="#fff" stroke="rgba(0,0,0,0.45)" strokeWidth="1.2" strokeLinejoin="round" />
       </svg>

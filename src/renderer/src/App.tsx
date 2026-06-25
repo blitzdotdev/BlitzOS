@@ -13,6 +13,8 @@ import type { IslandAppMessagePart, IslandView } from './notch/types'
 import { ConnectPicker } from './components/ConnectPicker'
 import { IconCheck } from './components/Icons'
 import { shouldShowOnboarding, markOnboarded } from './onboarding/config'
+import { CinematicIntro } from './CinematicIntro'
+import { triggerCinematic, doneCinematic, isCinematicActive, useCinematicActive } from './cinematicStore'
 
 type ThemeMode = 'light' | 'dark'
 // ! DEBUG: temporary bottom-right agent backend selector.
@@ -147,6 +149,10 @@ export default function App(): JSX.Element {
   // drag-helper window it owns is never torn down. While veiled it must be fully click-through so System Settings is
   // usable through it, so this is the chokepoint that forces interactive off regardless of what any hover path wants.
   const notchVeiledRef = useRef(false)
+  // SYNTHETIC (VM) MODE: main detected a notch-less hypervisor display where the hit-window can't exist and hover
+  // can't open the island. When on, the island is pinned OPEN + interactive and retraction is disabled (the pin
+  // already blocks both retract paths); the close / toggle-hide paths are no-ops so it can never get stranded shut.
+  const syntheticRef = useRef(false)
   const setNotchInteractive = (on: boolean): void => {
     if (notchVeiledRef.current) on = false
     if (notchLastIRef.current === on) return
@@ -233,8 +239,8 @@ export default function App(): JSX.Element {
       setNotchPinnedBoth(true) // a keyboard-opened panel stays open regardless of the mouse
       setNotchInteractive(true)
       applyNotchState('panel') // opens to the LAST view+tab (islandViewRef/islandPageRef), not a forced new session
-    } else {
-      // hide (panel → closed)
+    } else if (!syntheticRef.current) {
+      // hide (panel → closed) — but in VM/synthetic mode the island stays put (⌥Space can't reliably reopen it)
       setNotchPinnedBoth(false)
       setNotchAnimating(true) // freeze widget motion during the collapse (smooth)
       applyNotchState('closed')
@@ -250,11 +256,19 @@ export default function App(): JSX.Element {
         setNotchWidth(g.hasNotch ? (g.notchWidth && g.notchWidth > 0 ? g.notchWidth : NOTCH_W) : 0)
         setHasNotch(!!g.hasNotch)
         setNotchOn(true)
+        // VM / notch-less: pin the island OPEN + interactive so it is reachable without a hit-window or hover.
+        if (g.synthetic && !syntheticRef.current) {
+          syntheticRef.current = true
+          setNotchPinnedBoth(true)
+          applyNotchState('panel')
+          setNotchInteractive(true)
+        }
       }),
     []
   )
   // Collapse the island (panel → closed). Shared by Esc and the main-driven os:notch-close.
   const closeIsland = (): void => {
+    if (syntheticRef.current) return // VM/synthetic: the island never closes (no hit-window/hover to reopen it)
     if (notchVeiledRef.current) {
       notchVeiledRef.current = false
       document.body.classList.remove('island-veiled')
@@ -279,6 +293,7 @@ export default function App(): JSX.Element {
         notchVeiledRef.current = on
         document.body.classList.toggle('island-veiled', on)
         if (on) setNotchInteractive(false)
+        else if (syntheticRef.current) setNotchInteractive(true) // synthetic: no hover to restore interactivity after a veil
       }),
     []
   )
@@ -491,6 +506,10 @@ export default function App(): JSX.Element {
   }, [])
   const [activeWs, setActiveWs] = useState<string | null>(null)
   const [onboarding, setOnboarding] = useState(() => shouldShowOnboarding())
+  const cinematicActive = useCinematicActive()
+  // While the cinematic plays, bars are held tucked into the notch (is-open). At spring-settle we
+  // flip to false → the existing CSS transition slides them out. Overrides the normal notchState-based open.
+  const [cinematicGlanceOpen, setCinematicGlanceOpen] = useState(false)
   const isServer = !!window.agentOS?.serverMode
 
   // Onboarding auto-OPENS on launch so the first slide is visible without hovering the notch — but it is NOT pinned:
@@ -499,6 +518,7 @@ export default function App(): JSX.Element {
   // step never yanks the island shut under the cursor — a genuine hover-away still closes it after the hold.
   useEffect(() => {
     if (!onboarding || isServer || !notchOn) return
+    // Pre-stage the island view so it's ready when the cinematic hands off.
     islandViewRef.current = 'onboarding'
     islandPageRef.current = 1
     islandAttachOpenRef.current = false
@@ -506,7 +526,15 @@ export default function App(): JSX.Element {
     setIslandKeepMounted(false)
     setNotchInteractive(true)
     notchHoldUntilRef.current = performance.now() + NOTCH_ATTACH_CLOSE_HOLD_MS
-    applyNotchState('panel')
+    // Play the cinematic intro instead of opening the island directly.
+    // The cinematic's onComplete callback calls applyNotchState('panel') after the animation.
+    setNotchPeek({ working: 0, attn: 0, err: 0, total: 3, agents: [
+      { id: '0', status: 'working' },
+      { id: '5', status: 'working' },
+      { id: '1', status: 'working' },
+    ]})
+    setCinematicGlanceOpen(true)
+    triggerCinematic()
   }, [onboarding, isServer, notchOn])
 
   const completeIslandOnboarding = (): void => {
@@ -692,7 +720,7 @@ export default function App(): JSX.Element {
             : statusMap
               ? Object.entries(statusMap).map(([id, status]) => ({ id: String(id), status: String(status) }))
               : []
-          if (agents.length || sessions) {
+          if ((agents.length || sessions) && !isCinematicActive()) {
             const working = agents.filter((x) => x.status === 'working' || x.status === 'starting' || x.status === 'reconnecting').length
             const attn = agents.filter((x) => x.status === 'waiting').length
             const err = agents.filter((x) => x.status === 'error').length
@@ -757,6 +785,16 @@ export default function App(): JSX.Element {
             if (tab) st.closeTab(w.id, tab.id)
           }
         }
+      } else if (a.type === 'cinematic') {
+        // Seed 3 scripted onboarding avatars: Blitz blue ('0'), rose-red ('5', hue 327.5°), green ('1', hue 137.5°).
+        // working:0 so no "N working" status text appears — just the three circles.
+        setNotchPeek({ working: 0, attn: 0, err: 0, total: 3, agents: [
+          { id: '0', status: 'working' },
+          { id: '5', status: 'working' },
+          { id: '1', status: 'working' },
+        ]})
+        setCinematicGlanceOpen(true) // bars tucked in; will flip at spring-settle
+        triggerCinematic()
       }
     })
   }, [])
@@ -967,7 +1005,7 @@ export default function App(): JSX.Element {
           mousemove drives hover-to-open. */}
       {notchOn && hasNotch &&
         createPortal(
-          <GlanceBar peek={notchPeek} notchWidth={notchWidth} menuBarH={notchMenuBarH} open={notchState === 'panel'} />,
+          <GlanceBar peek={notchPeek} notchWidth={notchWidth} menuBarH={notchMenuBarH} open={cinematicActive ? cinematicGlanceOpen : notchState === 'panel'} />,
           document.body
         )}
       {/* The island chassis (the locked NotchHost design) — also a body portal so it ESCAPES the #root-canvas clip
@@ -1051,6 +1089,20 @@ export default function App(): JSX.Element {
         </div>
       )}
       */}
+      {cinematicActive && (
+        <CinematicIntro
+          onSettle={() => setCinematicGlanceOpen(false)}
+          onComplete={() => {
+            doneCinematic()
+            // Bars slide out in 0.34s; give them time to extend before the island pulls them back in.
+            // Then clear the scripted fake agents — real agent data owns notchPeek from here on.
+            window.setTimeout(() => {
+              applyNotchState('panel')
+              setNotchPeek({ working: 0, attn: 0, err: 0, total: 0, agents: [] })
+            }, 400)
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -726,7 +726,7 @@ button.isl-app-chat:active .isl-app-icon {
 /* Every intro slide is the SAME fixed height so navigating between them never resizes the island. The body
    (visual/card + head) is vertically centred and fills; the footer (dots + Back/Next) is pinned at the bottom. */
 .nh-island .isl-onb-slide {
-  height: 430px;
+  height: 330px;
   min-height: 0;
 }
 /* The setup phase (permissions / chrome-js / browser steps) hugs its card instead of the fixed 430px the intro
@@ -747,8 +747,9 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-onb-slide-foot {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
 }
 .nh-island .isl-onb-head.intro {
   gap: 7px;
@@ -846,8 +847,8 @@ button.isl-app-chat:active .isl-app-icon {
   background: rgba(255, 255, 255, 0.04);
 }
 .nh-island .isl-onb-req-row.ok {
-  border-color: rgba(48, 209, 88, 0.3);
-  background: rgba(48, 209, 88, 0.07);
+  border-color: rgba(10, 132, 255, 0.3);
+  background: rgba(10, 132, 255, 0.07);
 }
 .nh-island .isl-onb-req-row.warn {
   border-color: rgba(255, 214, 10, 0.32);
@@ -867,8 +868,8 @@ button.isl-app-chat:active .isl-app-icon {
   color: var(--isl-dim);
 }
 .nh-island .isl-onb-req-row.ok .isl-onb-req-icon {
-  background: #30d158;
-  color: #000;
+  background: #0a84ff;
+  color: #fff;
 }
 .nh-island .isl-onb-req-row.warn .isl-onb-req-icon {
   background: #ffd60a;
@@ -915,7 +916,7 @@ button.isl-app-chat:active .isl-app-icon {
   line-height: 16px;
 }
 .nh-island .isl-onb-req-row.ok .isl-onb-req-note {
-  color: #8ff0a4;
+  color: #7dccff;
 }
 .nh-island .isl-onb-req-row.warn .isl-onb-req-note {
   color: #ffe27a;
@@ -926,7 +927,7 @@ button.isl-app-chat:active .isl-app-icon {
   font-weight: 650;
 }
 .nh-island .isl-onb-req-status.ok {
-  color: #8ff0a4;
+  color: #7dccff;
 }
 .nh-island .isl-onb-req-status.soon {
   color: var(--isl-dim);

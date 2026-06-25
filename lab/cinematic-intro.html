@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BlitzOS — Cinematic Intro</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%; height: 100vh;
+      overflow: hidden;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    #wallpaper {
+      position: fixed; inset: 0;
+      background-image:
+        radial-gradient(circle 1.5px at 15% 25%, rgba(255,255,255,0.14) 0%, transparent 100%),
+        radial-gradient(circle 1px   at 55% 50%, rgba(255,255,255,0.10) 0%, transparent 100%),
+        radial-gradient(circle 2px   at 82% 18%, rgba(255,255,255,0.09) 0%, transparent 100%),
+        radial-gradient(circle 1px   at 32% 75%, rgba(255,255,255,0.07) 0%, transparent 100%),
+        radial-gradient(circle 1.5px at 70% 82%, rgba(255,255,255,0.08) 0%, transparent 100%),
+        radial-gradient(ellipse 70% 55% at 20% 70%, #0c2040 0%, transparent 55%),
+        radial-gradient(ellipse 50% 40% at 80% 30%, #08302a 0%, transparent 50%),
+        radial-gradient(ellipse 80% 60% at 50% 85%, #1a0828 0%, transparent 55%),
+        #06080d;
+    }
+
+    #scrim {
+      position: fixed; inset: 0;
+      background: #000;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 20;
+    }
+
+    /* ── Notch ── */
+    #notch {
+      position: fixed; top: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 128px; height: 34px;
+      background: #000;
+      border-radius: 0 0 20px 20px;
+      z-index: 200;
+    }
+
+    /* ── Glance bars: two pure-black bars extending from the notch ── */
+    #gb-left, #gb-right {
+      position: fixed;
+      top: 0;
+      height: 34px;
+      background: #000;
+      overflow: hidden;
+      z-index: 198;
+    }
+    #gb-left {
+      right: calc(50% - 4px);  /* overlaps notch center by 4px — same as real app */
+      width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    #gb-right {
+      left: calc(50% - 4px);
+      width: 0;
+      display: flex;
+      align-items: center;
+    }
+    .gb-content {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      opacity: 0;
+    }
+    #gb-left .gb-content { padding-right: 16px; }
+    #gb-right .gb-content { padding-left: 16px; }
+
+    /* Blitz icon: small gradient circle with lightning bolt */
+    .gb-blitz-icon {
+      width: 20px; height: 20px;
+      flex: none;
+      border-radius: 50%;
+      background:
+        radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.40) 0%, transparent 42%),
+        linear-gradient(150deg, #2a93ff 0%, #0066d6 40%, #08203c 72%, #05060a 100%);
+      display: grid; place-items: center;
+      box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.22);
+    }
+    .gb-blitz-icon svg { display: block; }
+
+    .gb-label {
+      color: rgba(255,255,255,0.58);
+      font-size: 11.5px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* Agent avatar circles */
+    .gb-avas {
+      display: flex;
+      align-items: center;
+    }
+    .gb-ava {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      flex: none;
+      margin-left: -6px;
+      border: 1.5px solid #000;
+      box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.20);
+    }
+    .gb-ava:first-child { margin-left: 0; }
+
+    /* ── Glass bar ── */
+    #bar {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 320px; height: 44px;
+      border-radius: 999px;
+      opacity: 0;
+      z-index: 100;
+      will-change: top, width, height, opacity, filter;
+      isolation: isolate;
+    }
+    #bar-fill {
+      position: absolute; inset: 0;
+      border-radius: inherit;
+      background: rgba(8, 10, 14, 0.72);
+      backdrop-filter: blur(40px) saturate(1.8) brightness(0.85);
+      -webkit-backdrop-filter: blur(40px) saturate(1.8) brightness(0.85);
+    }
+    #bar-rim {
+      position: absolute; inset: 0;
+      border-radius: inherit;
+      box-shadow:
+        inset 0 1.5px 0 rgba(255, 255, 255, 0.38),
+        inset 0 0 0 0.75px rgba(255, 255, 255, 0.16),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+        0 16px 48px rgba(0, 0, 0, 0.70),
+        0 4px 12px  rgba(0, 0, 0, 0.55);
+    }
+    #bar-sheen {
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 52%;
+      border-radius: 999px 999px 0 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.00) 100%);
+    }
+    #bar-glow {
+      position: absolute; inset: -8px;
+      border-radius: inherit;
+      opacity: 0;
+    }
+
+    /* ── UI ── */
+    #replay {
+      position: fixed; bottom: 20px; right: 20px;
+      padding: 8px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.09);
+      background: rgba(255,255,255,0.04);
+      color: rgba(255,255,255,0.38);
+      font-size: 11px; font-weight: 500; letter-spacing: 0.05em;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      z-index: 999;
+      transition: background 0.12s, color 0.12s;
+    }
+    #replay:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.75); }
+
+    #lbl {
+      position: fixed; bottom: 23px; left: 20px;
+      color: rgba(255,255,255,0.14);
+      font-size: 10px; font-weight: 500; letter-spacing: 0.08em;
+      text-transform: uppercase; z-index: 999;
+    }
+  </style>
+</head>
+<body>
+  <div id="wallpaper"></div>
+  <div id="scrim"></div>
+  <div id="notch"></div>
+
+  <!-- Glance bar: LEFT (Blitz icon + status) -->
+  <div id="gb-left">
+    <div class="gb-content" id="gb-left-content">
+      <span class="gb-blitz-icon">
+        <!-- lightning bolt -->
+        <svg width="11" height="11" viewBox="0 0 18 18" fill="white">
+          <path d="M11 1L4 10h5l-1.5 7L17 8h-5.5z"/>
+        </svg>
+      </span>
+      <span class="gb-label">2 working</span>
+    </div>
+  </div>
+
+  <!-- Glance bar: RIGHT (agent avatars) -->
+  <div id="gb-right">
+    <div class="gb-content" id="gb-right-content">
+      <div class="gb-avas">
+        <!-- Agent '0': Blitz blue (exact agentGradient('0') from agentVisuals.ts) -->
+        <span class="gb-ava" style="background:
+          radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.40) 0%, transparent 42%),
+          linear-gradient(150deg, #2a93ff 0%, #0066d6 40%, #08203c 72%, #05060a 100%)">
+        </span>
+        <!-- Pinkish-red: agentGradient('5') → h=327.5° (deep rose/fuchsia) -->
+        <span class="gb-ava" style="background:
+          radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.42) 0%, transparent 40%),
+          linear-gradient(181deg, hsl(327.5deg 87% 51%), hsl(17.5deg 79% 59%) 45%, hsl(77.5deg 82% 58%))">
+        </span>
+        <!-- Green: agentGradient('1') → h=137.5° (emerald green) -->
+        <span class="gb-ava" style="background:
+          radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.42) 0%, transparent 40%),
+          linear-gradient(157deg, hsl(137.5deg 81% 53%), hsl(187.5deg 79% 47%) 45%, hsl(247.5deg 82% 58%))">
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <div id="bar">
+    <div id="bar-fill"></div>
+    <div id="bar-glow"></div>
+    <div id="bar-rim"></div>
+    <div id="bar-sheen"></div>
+  </div>
+
+  <button id="replay">↺  Replay</button>
+  <div id="lbl">BlitzOS Cinematic Intro</div>
+
+  <script>
+    const scrim        = document.getElementById('scrim');
+    const bar          = document.getElementById('bar');
+    const barFill      = document.getElementById('bar-fill');
+    const barGlow      = document.getElementById('bar-glow');
+    const gbLeft       = document.getElementById('gb-left');
+    const gbRight      = document.getElementById('gb-right');
+    const gbLeftCont   = document.getElementById('gb-left-content');
+    const gbRightCont  = document.getElementById('gb-right-content');
+
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const lerp  = (a, b, t) => a + (b - a) * t;
+    const prog  = (t, s, e) => clamp((t - s) / (e - s), 0, 1);
+
+    const easeOut3     = t => 1 - Math.pow(1 - clamp(t,0,1), 3);
+    const easeOut5     = t => 1 - Math.pow(1 - clamp(t,0,1), 5);
+    const easeInOut5   = t => {
+      t = clamp(t, 0, 1);
+      return t < 0.5 ? 16*t*t*t*t*t : 1 - Math.pow(-2*t+2, 5)/2;
+    };
+    function springSettle(t) {
+      t = clamp(t, 0, 1);
+      return 1 - Math.exp(-t * 9) * Math.cos(t * Math.PI * 3.8);
+    }
+
+    // ── Timing (ms) ──
+    const T = {
+      scrimIn:    [0,    900],
+      barFadeIn:  [700, 1400],
+      rise:       [1100, 4300],
+      spring:     [4300, 4700],
+      barFadeOut: [4100, 4500],
+      // Glance bars snap in right when spring settles
+      glanceBar:  [4700, 4960],   // bars extend outward (260ms)
+      glanceCont: [4760, 5100],   // content fades in
+      scrimOut:   [4700, 5700],   // desktop returns
+      done:       6000,
+    };
+
+    function run() {
+      const H = window.innerHeight;
+      const barStart = H - 80;
+      const barEnd   = 1;
+      const totalDist = barStart - barEnd;
+
+      // Reset
+      scrim.style.opacity     = 0;
+      bar.style.opacity       = 0;
+      bar.style.top           = barStart + 'px';
+      bar.style.width         = '320px';
+      bar.style.height        = '44px';
+      bar.style.filter        = 'none';
+      barFill.style.background = 'rgba(8,10,14,0.72)';
+      barGlow.style.opacity   = 0;
+      gbLeft.style.width      = '0';
+      gbRight.style.width     = '0';
+      gbLeftCont.style.opacity  = 0;
+      gbRightCont.style.opacity = 0;
+
+      const t0 = performance.now();
+      let prevTop = barStart;
+
+      function tick(now) {
+        const t = now - t0;
+
+        // ── SCRIM: fade in then out after glance bars appear ──
+        const scrimInVal  = easeOut3(prog(t, T.scrimIn[0],  T.scrimIn[1]));
+        const scrimOutVal = easeOut3(prog(t, T.scrimOut[0], T.scrimOut[1]));
+        scrim.style.opacity = (scrimInVal * 0.96 * (1 - scrimOutVal)).toFixed(3);
+
+        // ── BAR: fade in / fade out ──
+        const fadeIn  = easeOut3(prog(t, T.barFadeIn[0],  T.barFadeIn[1]));
+        const fadeOut = easeOut5(prog(t, T.barFadeOut[0], T.barFadeOut[1]));
+        bar.style.opacity = clamp(fadeIn - fadeOut, 0, 1).toFixed(3);
+
+        // ── RISE ──
+        const riseRaw = prog(t, T.rise[0], T.rise[1]);
+        const riseP   = easeInOut5(riseRaw);
+        let barTop    = lerp(barStart, barEnd, riseP);
+
+        // Spring settle
+        if (t >= T.spring[0]) {
+          const sp = prog(t, T.spring[0], T.spring[1]);
+          barTop = barEnd + (1 - springSettle(sp)) * 6;
+        }
+
+        // Morph to notch dimensions in last 28% of screen travel
+        const screenFrac = 1 - (barTop - barEnd) / totalDist;
+        const morphP = easeOut3(clamp((screenFrac - 0.72) / 0.28, 0, 1));
+        const barW = lerp(320, 128, morphP);
+        const barH = lerp(44,  34,  morphP);
+
+        bar.style.top    = barTop.toFixed(1) + 'px';
+        bar.style.width  = barW.toFixed(1)   + 'px';
+        bar.style.height = barH.toFixed(1)   + 'px';
+
+        const tintA = lerp(0.72, 0.50, morphP);
+        const tintR = Math.round(lerp(8,  30, morphP));
+        const tintG = Math.round(lerp(10, 55, morphP));
+        const tintB = Math.round(lerp(14, 80, morphP));
+        barFill.style.background =
+          `rgba(${tintR},${tintG},${tintB},${tintA.toFixed(2)})`;
+
+        // Motion blur + travel glow
+        const velocity = Math.abs(barTop - prevTop);
+        prevTop = barTop;
+        const blur = Math.min(velocity * 0.18, 3).toFixed(1);
+        bar.style.filter = blur > 0.3 ? `blur(${blur}px)` : 'none';
+
+        const midProgress = Math.sin(Math.PI * riseRaw);
+        const travelGlowOp = midProgress * 0.55 * (1 - morphP);
+        barGlow.style.opacity = travelGlowOp.toFixed(3);
+        barGlow.style.boxShadow =
+          `0 0 ${12 + velocity}px ${4 + velocity * 0.3}px rgba(56,189,248,0.25),
+           0 0 40px 8px rgba(56,189,248,0.10)`;
+
+        // ── GLANCE BARS: snap in when spring settles ──
+        if (t >= T.glanceBar[0]) {
+          const gbP = easeOut5(prog(t, T.glanceBar[0], T.glanceBar[1]));
+          gbLeft.style.width  = (gbP * 216).toFixed(0) + 'px';
+          gbRight.style.width = (gbP * 178).toFixed(0) + 'px';
+        }
+
+        if (t >= T.glanceCont[0]) {
+          const gcP = easeOut3(prog(t, T.glanceCont[0], T.glanceCont[1]));
+          gbLeftCont.style.opacity  = gcP.toFixed(3);
+          gbRightCont.style.opacity = gcP.toFixed(3);
+        }
+
+        if (t < T.done) requestAnimationFrame(tick);
+      }
+
+      requestAnimationFrame(tick);
+    }
+
+    setTimeout(run, 100);
+    document.getElementById('replay').addEventListener('click', () => setTimeout(run, 50));
+  </script>
+</body>
+</html>

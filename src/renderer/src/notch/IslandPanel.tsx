@@ -856,7 +856,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               // BRAND-NEW / pre-transcript agent: there's no message bubble to anchor the inline status under yet, but
               // the agent already has a status (warming up, or an error hit during startup). Show that standalone so a
               // fresh chat is never blank+silent — otherwise the user sends a message and sees nothing happening.
-              inlineDetails || <div className="isl-empty">No messages yet</div>
+              // Only show inline details when NOT idle — avoids stale tool rows from a previous session floating in
+              // an otherwise empty chat (loadDetails fires on mount and can return rows from the last agent run).
+              (dotStatus(status) !== 'idle' ? inlineDetails : null) || <div className="isl-empty">No messages yet</div>
             ) : (
               <>
                 {/* runs that started before any message render at the top; the rest are interleaved below */}

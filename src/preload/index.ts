@@ -10,7 +10,7 @@ export interface AgentRuntimeStatus {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme' | 'handoff'
+  type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme' | 'handoff' | 'cinematic'
   [k: string]: unknown
 }
 
@@ -655,11 +655,11 @@ const api = {
       return () => ipcRenderer.removeListener('os:notch-handle-hover', listener)
     },
     onGeometry(
-      cb: (g: { width: number; height: number; menuBarH: number; notchWidth?: number; hasNotch?: boolean }) => void
+      cb: (g: { width: number; height: number; menuBarH: number; notchWidth?: number; hasNotch?: boolean; synthetic?: boolean }) => void
     ): () => void {
       const listener = (
         _e: unknown,
-        g: { width: number; height: number; menuBarH: number; notchWidth?: number; hasNotch?: boolean }
+        g: { width: number; height: number; menuBarH: number; notchWidth?: number; hasNotch?: boolean; synthetic?: boolean }
       ): void => cb(g)
       ipcRenderer.on('os:notch-geometry', listener)
       return () => ipcRenderer.removeListener('os:notch-geometry', listener)

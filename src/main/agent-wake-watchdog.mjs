@@ -47,6 +47,13 @@ const SESSION_LIMIT_RE = /(?:session|usage|weekly|daily)\s+limit|hit your[^\n]{0
 // goes permanently silent until a human types into it. The sweep catches exactly this (API-error pane + a DEAD
 // heartbeat) and probes it back to life. 529/overloaded is intentionally left to RATE_LIMIT_RE (hold-first).
 const API_ERROR_RE = /API Error:\s*(?:5(?:0\d|1\d|2[0-8])\b|connection error|fetch failed|network)|Internal server error/i
+// An AUTH failure (not signed in / expired-or-revoked token / no credits). Claude Code reports it ONLY in its
+// terminal TUI ("Please run /login · API Error: 401 Invalid authentication credentials") — it never writes an
+// isApiErrorMessage record, so the JSONL-based status detector is blind to it (the island just sits on
+// "Working…"). This is the pane's job to catch. It is NOT revivable by a nudge — a re-auth needs the user — so a
+// match surfaces the "Not signed in" error and stops, never the rate-limit/api-error recovery ladder. The pane
+// text is unambiguous (a healthy agent never prints it), so no heartbeat gate is needed to avoid false trips.
+const AUTH_ERROR_RE = /run \/login|please sign in|not logged in|invalid authentication credentials|invalid x-api-key|oauth token (?:has )?expired|credit balance is too low/i
 const HEARTBEAT_STALE_MS = 60_000 // wait.sh polls /events every ~25s; >2 missed cycles ⇒ the loop is genuinely dead
 
 // The catch-up directive typed into a DEAF agent's pane (loop died, but the agent can still take a turn). ONE line
@@ -102,6 +109,7 @@ export function createWakeWatchdog(deps = {}) {
     captureTerminal = () => '',
     isLive = () => true,
     setStatus = () => {},
+    onAuthError = () => {}, // (agentId, workspace) => surface a sticky "Not signed in" error (terminal-only auth 401)
     log = () => {},
     now = () => Date.now(),
     setTimer = setTimeout,
@@ -123,7 +131,20 @@ export function createWakeWatchdog(deps = {}) {
 
   const recs = new Map() // key -> { agentId, workspace, msgTs, firstTs, tries, timer, source, preResume }
   const cooldownUntil = new Map() // key -> epoch-ms before which the sweep must not re-arm (post-resume quiet window)
+  const authSurfaced = new Set() // keys we've already surfaced an auth error for; cleared once the pane recovers
   const key = (a, w) => `${w == null ? '' : w} ${a}`
+
+  /** Surface a terminal-only auth failure ONCE per episode (deduped on `k`); cleared when the pane recovers. */
+  function surfaceAuth(agentId, workspace, k) {
+    if (authSurfaced.has(k)) return
+    authSurfaced.add(k)
+    log(`wake-watchdog: agent ${agentId} (${workspace || 'default'}) NOT SIGNED IN (pane auth error) — surfacing`)
+    try {
+      onAuthError(agentId, workspace)
+    } catch {
+      /* never break the sweep/recovery on a surfacing failure */
+    }
+  }
 
   /** perception-core hook: a 'message'/'steer' moment reached NO live waiter for this agent. */
   function onUndelivered(moment) {
@@ -149,6 +170,10 @@ export function createWakeWatchdog(deps = {}) {
       if (!isLive(agentId)) continue
       const p = safeCapture(agentId)
       if (!p) continue
+      // (a0) AUTH failure (not signed in / expired token / no credits) — terminal-only, NOT revivable. Surface the
+      // "Not signed in" error and move on (highest priority; no heartbeat gate — the pane text is definitive).
+      if (AUTH_ERROR_RE.test(p)) { surfaceAuth(agentId, workspace, k); continue }
+      authSurfaced.delete(k) // pane no longer shows an auth error → a future auth episode may re-surface
       // (a) usage-limit-with-reset → schedule a precise resume.
       if (SESSION_LIMIT_RE.test(p) && parseResetAt(p, t) != null) {
         arm(agentId, workspace, 'sweep')
@@ -211,6 +236,8 @@ export function createWakeWatchdog(deps = {}) {
       return
     }
     // STUCK and deaf. WHY it's stuck decides the recovery.
+    // AUTH failure first: a 401 / not-signed-in can't be nudged past — surface "Not signed in" and STOP (no ladder).
+    if (AUTH_ERROR_RE.test(b)) { surfaceAuth(agentId, workspace, k); return done(k) }
     setStatus(agentId, workspace, 'reconnecting')
     const apiErr = !RATE_LIMIT_RE.test(b) && API_ERROR_RE.test(b)
     if (RATE_LIMIT_RE.test(b) || apiErr) {

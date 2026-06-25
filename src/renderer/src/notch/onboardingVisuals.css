@@ -187,6 +187,10 @@
   gap: 7px;
   padding: 12px 16px;
 }
+/* In the connect visual, the feed appears at the bottom of the body */
+.oba-feed.bottom {
+  margin-top: auto;
+}
 .oba-msg {
   position: relative;
   width: fit-content;
@@ -487,7 +491,8 @@
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  overflow: hidden;
 }
 /* Attach panel sits BELOW the composer (real island order: feed → composer → attach) */
 .oba-attach {
@@ -642,32 +647,27 @@
   background: #34a853;
 }
 .oba-composer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   margin-top: 8px;
-}
-.oba-attach-btn {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 50%;
-  color: var(--isl-muted);
-  font-size: 17px;
-  font-weight: 300;
 }
 .oba-bar {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
   min-height: 34px;
-  padding: 3px 4px 3px 14px;
+  padding: 3px 4px 3px 4px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 18px;
+}
+.oba-attach-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  color: var(--isl-muted);
+  font-size: 16px;
+  font-weight: 300;
 }
 .oba-bar-field {
   overflow: hidden;
@@ -1180,7 +1180,7 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 50%;
   color: rgba(255, 255, 255, 0.35);
-  margin-left: auto;
+  margin-left: 2px;
 }
 .oba-notch-tab {
   display: inline-flex;
@@ -1231,6 +1231,52 @@
   font-size: 10px;
   line-height: 14px;
   animation: oba-rise 0.22s ease-out 0.28s both;
+}
+.oba-notch-bubble.user {
+  align-self: flex-end;
+  border-radius: 12px 12px 3px 12px;
+  background: rgba(10, 132, 255, 0.75);
+  color: #fff;
+}
+/* Glance content inside the pill — BlitzOS icon left, agent circles right */
+.oba-notch-glance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0 9px;
+  box-sizing: border-box;
+}
+.oba-glance-logo {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #0d0f14;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+.oba-glance-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  -webkit-user-drag: none;
+}
+.oba-glance-avas {
+  display: flex;
+  align-items: center;
+}
+.oba-glance-ava {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-left: -6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px #000;
+}
+.oba-glance-ava:first-child {
+  margin-left: 0;
 }
 .oba-notch-empty {
   flex: 1;

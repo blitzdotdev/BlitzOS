@@ -4,7 +4,7 @@ import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { execFile, execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osDebugSetChatStatus, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osDebugSetChatStatus, osSurfaceChatError, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
 import { emitSystemMoment, emitWorkflowMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
 import { createWakeWatchdog } from './agent-wake-watchdog.mjs'
 import { openBootJournal, chatFileName } from './workspace.mjs'
@@ -232,6 +232,31 @@ let islandHelper: IslandHelperHandle | null = null
 // The currently-registered global show/hide-island accelerator (rebindable in Settings, persisted in
 // userData/keybinds.json). Tracked so re-binds and the before-quit release target the live chord.
 let notchToggleAccel = 'Alt+Space'
+
+// SYNTHETIC (VM) MODE. A notch-less display (every VM, and any external/pre-notch Mac) has no physical notch, so the
+// hit-window can't be placed and hover-to-open is impossible — the island opens once, retracts, and is unreachable.
+// When we detect a hypervisor guest we tell the renderer to pin the island OPEN + interactive with retraction
+// disabled, so BlitzOS is actually usable in a VM. BLITZ_SYNTHETIC=1 forces it on (any machine); =0 forces it off.
+let _syntheticMode: boolean | null = null
+function isSyntheticMode(): boolean {
+  if (_syntheticMode !== null) return _syntheticMode
+  const env = process.env.BLITZ_SYNTHETIC
+  if (env === '1' || env === 'true') return (_syntheticMode = true)
+  if (env === '0' || env === 'false') return (_syntheticMode = false)
+  let vm = false
+  try {
+    // kern.hv_vmm_present = 1 when running as a guest under a hypervisor (Apple VZ, Parallels, VMware on Apple Silicon).
+    // Bare metal returns 0, so a real Mac is never affected.
+    if (execFileSync('sysctl', ['-n', 'kern.hv_vmm_present'], { timeout: 2000 }).toString().trim() === '1') vm = true
+  } catch { /* sysctl missing or not macOS — fall through to the model check */ }
+  if (!vm) {
+    try {
+      const model = execFileSync('sysctl', ['-n', 'hw.model'], { timeout: 2000 }).toString().trim()
+      if (/Virtual|VMware|Parallels|VirtualBox|QEMU/i.test(model)) vm = true
+    } catch { /* ignore — default to not-synthetic */ }
+  }
+  return (_syntheticMode = vm)
+}
 
 function safeExternalUrl(raw: unknown): string | null {
   const value = String(raw || '').trim()
@@ -1080,7 +1105,9 @@ app.whenReady().then(() => {
           height: d.bounds.height,
           menuBarH: Math.max(0, d.workArea.y - d.bounds.y),
           notchWidth: notchGeom?.hasNotch ? Math.round(notchGeom.notchWidth) : 0,
-          hasNotch: !!notchGeom?.hasNotch
+          hasNotch: !!notchGeom?.hasNotch,
+          // VM / notch-less: tell the renderer to pin the island open + interactive (no hit-window can exist here).
+          synthetic: isSyntheticMode()
         })
       } catch { /* mid-teardown */ }
     }
@@ -1130,6 +1157,7 @@ app.whenReady().then(() => {
     }
     const refreshNotch = async (): Promise<void> => {
       notchGeom = await readNotchGeometry()
+      console.log(`[notch] hasNotch=${!!notchGeom?.hasNotch} synthetic=${isSyntheticMode()}${isSyntheticMode() ? ' (VM / notch-less → island pinned open, no retract)' : ''}`)
       updateNotchHitWindow()
       pushNotchGeometry()
     }
@@ -1507,6 +1535,9 @@ app.whenReady().then(() => {
     captureTerminal: (id) => electronTerminalOps.captureTerminal(String(id)),
     isLive: (id) => isRecoverableAgentPane(String(id)),
     setStatus: setWakeStatus,
+    // A terminal-only Claude Code auth 401 (never in the JSONL): drop any stale 'reconnecting' override so the real
+    // sticky 'error' shows, then surface the "Not signed in" card via the same setChatStatus path as a JSONL error.
+    onAuthError: (id, ws) => { setWakeStatus(String(id), ws, null); osSurfaceChatError(String(id), 'auth') },
     log: (m) => console.log('[wake]', m)
   })
   // DEBUG (Settings → Simulate agent status): inject a fake status onto an agent so the four status surfaces (home

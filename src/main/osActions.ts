@@ -678,6 +678,13 @@ export function osAgentStatus(): Record<string, string> {
 export function osDebugSetChatStatus(agentId: string, status: 'error' | 'waiting' | 'watching' | 'idle', cause?: string): { ok: boolean } {
   return wsHost?.setChatStatus(String(agentId), status, cause) || { ok: false }
 }
+/** Surface a REAL, sticky chat error (red dot + the cause's "title + hint" detail card) for an agent, through the
+ *  same setChatStatus path applyClaudeTurnError uses. For errors detected OUTSIDE the session JSONL — e.g. a Claude
+ *  Code auth 401 that only ever appears in the agent's terminal (the wake-watchdog's onAuthError calls this). The
+ *  status clears on the next real user message, exactly like a JSONL-detected api-error. */
+export function osSurfaceChatError(agentId: string, cause: string): { ok: boolean } {
+  return wsHost?.setChatStatus(String(agentId), 'error', cause) || { ok: false }
+}
 export function osClearBrainContext(agentId = '0'): void {
   clearBrainContextHook?.(String(agentId))
 }

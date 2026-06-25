@@ -18,7 +18,7 @@ import {
   type PreboardState
 } from './onboardingStore'
 
-type IntroSlide = { eyebrow: string; title: string; copy: string; visual: IntroVisual; shortcut?: string }
+type IntroSlide = { title: string; copy: string; visual: IntroVisual; shortcut?: string }
 
 const accelCaps = (accel: string): string[] =>
   accel.split('+').map((p) => {
@@ -51,41 +51,25 @@ const CHECK_PATH = 'm5 12 4 4L19 6'
 const ALERT_PATH = 'M12 8v5M12 16h.01'
 const INTRO_SLIDES: IntroSlide[] = [
   {
-    eyebrow: 'Welcome',
-    title: 'Meet BlitzOS - your agents on dial',
-    copy: 'A quiet island at the top of your screen. Hover in to see what every agent is doing — working, done, or waiting on you.',
+    title: 'Meet BlitzOS',
+    copy: 'A quiet island at the top of your screen. Hover in to see every agent in motion: working, done, or waiting on you.',
+    shortcut: 'Alt+Space',
     visual: 'home'
   },
   {
-    eyebrow: 'A team, not a tool',
-    title: 'Run a roster of agents at once',
-    copy: 'Each agent gets its own tab and its own conversation. Hand off work and switch between them like chats.',
-    visual: 'tabs'
-  },
-  {
-    eyebrow: 'Your real apps',
     title: 'Put your browser and apps in reach',
     copy: 'Connect a tab or a window, then just ask. Blitz works where you already are and reports back.',
     visual: 'connect'
   },
   {
-    eyebrow: 'Big jobs, in view',
     title: 'Watch the work unfold',
-    copy: 'Blitz breaks large tasks into a workflow you can open as a board — every step moving from to-do to done.',
+    copy: 'Blitz breaks large tasks into a workflow you can open as a board. Every step moves from to-do to done.',
     visual: 'workflow'
   },
   {
-    eyebrow: 'Requirements',
     title: 'Blitz runs on Claude Code',
-    copy: 'Blitz uses Claude Code as its agent engine — make sure it’s installed to continue. Codex support is coming soon.',
+    copy: 'Blitz uses Claude Code as its agent engine. Make sure it\'s installed before continuing.',
     visual: 'requirement'
-  },
-  {
-    eyebrow: 'Quick access',
-    title: 'Open Blitz whenever you need it',
-    copy: 'to show or hide the island anytime — or glide your cursor up to the notch to peek in, and away to tuck it back. You can rebind the shortcut in Settings.',
-    shortcut: 'Alt+Space',
-    visual: 'notch'
   },
 ]
 
@@ -132,6 +116,9 @@ export function IslandOnboarding({
   const { introIndex, introDone, permissionsDone, step, preboard: state } = useOnboardingProgress()
   const [activeKind, setActiveKind] = useState<DragKind | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Keeps the island locked open until the user mouses into it for the first time. Without this,
+  // if the cursor is elsewhere when onboarding first appears, the island immediately collapses.
+  const [initialHoverSeen, setInitialHoverSeen] = useState(false)
   // When Chrome is quit, main launches it (profile picker appears) and fires chromejs-waiting-profile.
   // We show a "click your profile" prompt until chromejs-ready fires (Chrome has a window, helper is showing).
   const [chromeJsWaiting, setChromeJsWaiting] = useState(false)
@@ -314,15 +301,18 @@ export function IslandOnboarding({
 
   // The TCC permission step (3 reqs) locks the island's hover open/close: the user drags the BlitzOS icon out to
   // System Settings, so only ⌥Space should toggle it (App's hover handler reads this lock). Cleared on leave/unmount.
+  // Also locked during the initial intro display until the user mouses into the island for the first time: without
+  // this, if the cursor is elsewhere when onboarding auto-opens, it would immediately collapse on the first
+  // hover-check cycle. Once the user enters the island, normal hover-away-to-close resumes.
   useEffect(() => {
-    // Lock ONLY on the actual 3-reqs card: the store defaults step to 'permissions' during the intro carousel too,
-    // so gate on introDone or the whole intro would wrongly lock hover.
     // Lock the island open for BOTH steps where the user must act OUTSIDE it: the permission drag AND the
     // Chrome menu step (cursor goes up to the menu bar). Without this the island retracts on hover-away,
     // unmounts NotchHost, and the cleanup tears down the open Chrome menu (the disappearing-menu bug).
-    setOnboardingHoverLock(introDone && (step === 'permissions' || step === 'chromejs'))
+    const setupLock = introDone && (step === 'permissions' || step === 'chromejs')
+    const initialLock = !introDone && !initialHoverSeen
+    setOnboardingHoverLock(setupLock || initialLock)
     return () => setOnboardingHoverLock(false)
-  }, [introDone, step])
+  }, [introDone, step, initialHoverSeen])
 
   const recheckClaude = (): void => {
     if (!api?.claudeStatus || claudeRechecking) return
@@ -373,8 +363,18 @@ export function IslandOnboarding({
     onComplete()
   }
 
+  // Skip the "Blitz is ready" card entirely — go straight to chat as soon as setup is done.
+  useEffect(() => {
+    if (introDone && step === 'done') finishOnboarding()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [introDone, step])
+
   return (
-    <div className="nh-island isl-onboarding" style={{ paddingTop: top }}>
+    <div
+      className="nh-island isl-onboarding"
+      style={{ paddingTop: top }}
+      onMouseEnter={() => { if (!introDone && !initialHoverSeen) setInitialHoverSeen(true) }}
+    >
       {!introDone && (
         <div className={`isl-onb-intro isl-onb-slide visual-${introSlide.visual}`}>
           <div className="isl-onb-slide-body">
@@ -382,15 +382,11 @@ export function IslandOnboarding({
               <OnboardingVisual key={introIndex} kind={introSlide.visual} />
             )}
           <div className="isl-onb-head intro">
-            <span className="isl-onb-kicker">{introSlide.eyebrow}</span>
             <h1 className="isl-onb-title">{introSlide.title}</h1>
             <p className="isl-onb-copy">
-              {introSlide.shortcut ? (
-                <>
-                  Press <ShortcutKeys accel={introSlide.shortcut} /> {introSlide.copy}
-                </>
-              ) : (
-                introSlide.copy
+              {introSlide.copy}
+              {introSlide.shortcut && (
+                <> Press <ShortcutKeys accel={introSlide.shortcut} /> to show or hide it anytime.</>
               )}
             </p>
           </div>
@@ -477,7 +473,6 @@ export function IslandOnboarding({
         <div className="isl-onb-slide isl-onb-setup">
           <div className="isl-onb-slide-body">
             <div className="isl-onb-head intro">
-              <span className="isl-onb-kicker">Setup</span>
               <h1 className="isl-onb-title">Set up Blitz</h1>
               <p className="isl-onb-copy">Blitz needs all three to work. Grant each one to continue.</p>
             </div>
@@ -531,13 +526,13 @@ export function IslandOnboarding({
             {step === 'chromejs' && state && (
         <div className="isl-onb-card">
           <div className="isl-onb-card-head">
-            <span>{chromeJsGranted ? 'Chrome connected' : 'Let Blitz drive Chrome'}</span>
-            <span>{state.browser?.name || 'Chrome'}</span>
+            <span>{chromeJsGranted ? (state.browser?.name || 'Chrome') : 'Let Blitz drive Chrome'}</span>
+            {!chromeJsGranted && <span>{state.browser?.name || 'Chrome'}</span>}
           </div>
           {chromeJsGranted ? (
             <p className="isl-onb-connected">
               <span className="isl-onb-connected-dot" aria-hidden="true" />
-              Connected. Blitz can now read and act in your Chrome tabs.
+              Blitz can now read and act in your tabs.
             </p>
           ) : chromeJsWaiting ? (
             <p className="isl-onb-profile-cta">
@@ -568,25 +563,6 @@ export function IslandOnboarding({
           </div>
         </div>
             )}
-          </div>
-        </div>
-      )}
-      {introDone && step === 'done' && (
-        <div className="isl-onb-intro isl-onb-slide visual-done">
-          <div className="isl-onb-slide-body">
-            <OnboardingDoneHero />
-            <div className="isl-onb-head intro">
-              <span className="isl-onb-kicker">All set</span>
-              <h1 className="isl-onb-title">Blitz is ready</h1>
-              <p className="isl-onb-copy">Your agents are standing by. You can change setup anytime from Settings.</p>
-            </div>
-          </div>
-          <div className="isl-onb-slide-foot">
-            <div className="isl-onb-actions">
-              <button type="button" className="isl-onb-primary" onClick={finishOnboarding}>
-                Open Blitz
-              </button>
-            </div>
           </div>
         </div>
       )}

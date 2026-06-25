@@ -11,6 +11,8 @@ export interface WakeWatchdogDeps {
   isLive?: (agentId: string) => boolean
   /** Push an island status override while recovering ('reconnecting' | 'error') or clear it (null). */
   setStatus?: (agentId: string, workspace: string | null, status: string | null) => void
+  /** Surface a sticky "Not signed in" chat error for a terminal-only auth 401 (never in the JSONL). */
+  onAuthError?: (agentId: string, workspace: string | null) => void
   log?: (msg: string) => void
   now?: () => number
   setTimer?: (fn: () => void, ms: number) => unknown
