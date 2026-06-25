@@ -241,8 +241,8 @@ ok('permission drag helper shows a Blitz icon with a clear drag animation while 
     /<div class="c">Drag the Blitz Icon into \$\{label\}<\/div>/.test(onboardingMain) &&
     /const html = dragHelperHtml\(kind, await blitzVisualIconDataUrl\(\)\)/.test(onboardingMain) &&
     /const bundle = currentDragBundle[\s\S]*?e\.sender\.startDrag\(\{ file: bundle, icon \}\)/.test(onboardingMain) &&
-    /<key>CFBundleDisplayName<\/key>\s*<string>BlitzOS<\/string>/.test(computerUseHelperPlist) &&
-    /<key>CFBundleName<\/key>\s*<string>BlitzOS<\/string>/.test(computerUseHelperPlist) &&
+    /<key>CFBundleDisplayName<\/key>\s*<string>BlitzOS Helper<\/string>/.test(computerUseHelperPlist) &&
+    /<key>CFBundleName<\/key>\s*<string>BlitzOS Helper<\/string>/.test(computerUseHelperPlist) &&
     /<key>CFBundleExecutable<\/key>\s*<string>BlitzOS<\/string>/.test(computerUseHelperPlist) &&
     /<key>CFBundleVersion<\/key>\s*<string>14<\/string>/.test(computerUseHelperPlist) &&
     /APP_NAME="BlitzOS"/.test(computerUseHelperBuild) &&

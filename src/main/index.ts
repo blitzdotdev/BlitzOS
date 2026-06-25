@@ -35,7 +35,6 @@ import { initTelemetry } from './telemetry'
 import { flushActivityLogging, initActivityLogging, trackActivity, trackToolActivity } from './activity-logging.mjs'
 import { makeSessionTape } from './session-tape.mjs'
 import { setToolTap } from './os-tools.mjs'
-import { registerWallpaperIpc } from './wallpaper'
 import { registerOnboarding, interviewBootTask, claudeCliPath, codexCliPath, setInterviewAgentAvailable } from './onboarding'
 import { initUpdater, openBuildPicker, isDevMachine } from './update'
 import { resolveTmuxBin } from './tmux-host.mjs'
@@ -761,9 +760,6 @@ app.whenReady().then(() => {
 
   // Widget bridge: a sandboxed widget calls an OS tool (blitz.tool, CLOSED allowlist).
   registerWidgets()
-
-  // Onboarding/boot frosted backdrop: serve the user's macOS wallpaper to the renderer.
-  registerWallpaperIpc()
 
   // Onboarding director (P1): local scan → Case File workspace → template board → FDA unlock loop.
   registerOnboarding(() => mainWindow)
@@ -1731,18 +1727,15 @@ app.whenReady().then(() => {
       '-e', 'end run'
     ]
     // Route the Chrome AppleScript THROUGH the helper so the "control Google Chrome" Automation grant stays on the
-    // helper (granted in onboarding). A direct Electron osascript here RE-PROMPTS when you drop a Chrome window into
-    // the dropbox. Ensure the helper (it's needed for the window-fallback anyway); fall back to direct only if absent.
+    // helper (granted in onboarding). A direct Electron osascript here runs as BlitzOS and RE-PROMPTS. There is NO
+    // direct-osascript fallback: if the helper can't run it, return '' → the caller connects the dropped window as a
+    // plain window (computer-use helper AX, no Apple Event), so a missing helper never raises a BlitzOS TCC prompt.
     const helper = computerUseHelper()
-    if (helper.available()) await helper.ensure().catch(() => {})
+    if (helper.available() && !helper.connected()) await helper.ensure().catch(() => {})
     const run = async (): Promise<string> => {
-      if (helper.connected()) {
-        const r = await helper.call('osa', { args: osaArgs }, 10000)
-        if (!r.error) return String(r.stdout || '')
-      }
-      return new Promise<string>((resolve) =>
-        execFile('/usr/bin/osascript', osaArgs, { timeout: 8000 }, (err, stdout) => resolve(err ? '' : String(stdout || '')))
-      )
+      if (!helper.connected()) return ''
+      const r = await helper.call('osa', { args: osaArgs }, 10000)
+      return r.error ? '' : String(r.stdout || '')
     }
     const matchOnce = async (): Promise<string | null> => {
       const out = await run()

@@ -19,5 +19,7 @@ export interface ChromeAppleScriptLink {
 export interface OsaHelperLike {
   call(cmd: string, args?: Record<string, unknown>, ms?: number): Promise<Record<string, unknown>>
   connected(): boolean
+  available?(): boolean
+  ensure?(): Promise<{ ok: boolean; error?: string }>
 }
 export function makeChromeAppleScriptLink(opts: { connectionOps: ConnectionOps; helper?: OsaHelperLike }): ChromeAppleScriptLink

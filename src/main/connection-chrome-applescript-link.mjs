@@ -14,24 +14,27 @@
 // Developer ▸ "Allow JavaScript from Apple Events" + an Automation grant. JS is passed as an osascript ARGUMENT
 // (item 1 of argv) so there is no string-escaping to get wrong.
 
-import { execFile } from 'node:child_process'
 import { READ_JS, ACT_JS, faviconForUrl } from './connection-page-js.mjs'
 
 export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
-  // Run AppleScript THROUGH the helper when it's up, so the "control Google Chrome" Automation grant lives on the
-  // HELPER (granted once in onboarding) — not BlitzOS, which would otherwise re-prompt in every chat session. Fall
-  // back to a direct osascript only when the helper is absent (the grant then lands on BlitzOS, with its own consent).
+  // EVERY osascript runs THROUGH the computer-use helper so the "control Google Chrome" Automation grant stays on
+  // the HELPER (granted once in onboarding) and BlitzOS is NEVER the responsible process for an Apple Event. A
+  // direct Electron osascript would run as BlitzOS and re-prompt "control Google Chrome" in every chat session, so
+  // there is NO direct-osascript fallback: if the helper can't run it we FAIL (ok:false) and the caller degrades.
+  // Ensure the helper first if it isn't up yet (it is prewarmed at boot, so this is usually a no-op).
   const osa = async (args, timeout = 15000) => {
-    if (helper && helper.connected && helper.connected()) {
-      const r = await helper.call('osa', { args }, timeout + 2000)
-      if (!r.error) return { ok: !!r.ok, stdout: String(r.stdout || ''), stderr: String(r.stderr || '') }
-      // a helper-LEVEL failure (disconnect/timeout, not the osascript itself) → fall through to direct
+    if (!helper || !helper.available || !helper.available()) {
+      return { ok: false, stdout: '', stderr: 'computer-use helper unavailable' }
     }
-    return new Promise((resolve) =>
-      execFile('/usr/bin/osascript', args, { timeout, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) =>
-        resolve({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || '') })
-      )
-    )
+    if (!helper.connected() && helper.ensure) {
+      try { await helper.ensure() } catch { /* reported by the not-connected check below */ }
+    }
+    if (!helper.connected()) {
+      return { ok: false, stdout: '', stderr: 'computer-use helper not connected' }
+    }
+    const r = await helper.call('osa', { args }, timeout + 2000)
+    if (r.error) return { ok: false, stdout: '', stderr: String(r.error) }
+    return { ok: !!r.ok, stdout: String(r.stdout || ''), stderr: String(r.stderr || '') }
   }
   const refToConn = new Map() // dedup: this exact Chrome tab (chrome:w:t) → its connection
 

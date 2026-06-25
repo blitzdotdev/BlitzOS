@@ -197,8 +197,11 @@ class HelperManager {
     }
     if (this.supervise) {
       // Unexpected drop (crash) → bring it back. shutdown() clears `supervise`, so a deliberate
-      // app quit never respawns. Small delay avoids a tight respawn loop.
-      setTimeout(() => void this.launch().catch(() => {}), 800)
+      // app quit never respawns. Small delay avoids a tight respawn loop. Respawn THROUGH ensure()
+      // (single-flight), NOT launch() directly: a connection osa()/ensure() firing in this ~800ms
+      // down-window then SHARES the same in-flight launch instead of racing a SECOND `open -n` (two
+      // helpers both holding TCC, the zombie's later socket-close clobbering the live one → respawn cascade).
+      setTimeout(() => void this.ensure().catch(() => {}), 800)
     }
   }
 

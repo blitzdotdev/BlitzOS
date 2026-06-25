@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, realpathSync, readdirSync } from 'node:fs'
 import { join, dirname, basename, resolve, sep } from 'node:path'
+import { execFile } from 'node:child_process'
 import { startBrowserHost } from './browser-host.mjs'
 import { controlSession } from '../src/main/control-core.mjs'
 // listWidgets/getWidgetSource/saveWidget moved INTO the shared os-tools.mjs registry (server no longer
@@ -663,7 +664,22 @@ const serverConnections = makeConnectionOps({
 Object.assign(serverOps, serverConnections)
 
 // Safari tabs via Apple Events (only works when the server is co-located on a Mac with Safari; harmless else).
-serverConnections.setSafariLink(makeSafariLink({ connectionOps: serverConnections }))
+// On the SERVER transport there is NO separate TCC helper and no sandboxed GUI app, so the Electron app's
+// "route every osascript through the helper" rule (which exists ONLY to keep `dev.blitz.os` off the TCC prompt)
+// does not apply here — the link runs its AppleScript directly. This shim presents the osa-runner interface the
+// link now expects (available/connected/ensure/call) so server-mode Safari keeps working without a real helper.
+const serverOsa = {
+  available: () => process.platform === 'darwin',
+  connected: () => true,
+  ensure: async () => ({ ok: true }),
+  call: (_cmd, { args } = {}, ms = 17000) =>
+    new Promise((resolve) =>
+      execFile('/usr/bin/osascript', args, { timeout: ms, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) =>
+        resolve({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || '') })
+      )
+    )
+}
+serverConnections.setSafariLink(makeSafariLink({ connectionOps: serverConnections, helper: serverOsa }))
 
 // MCP connections have no representation surface, so they're re-established from the encrypted token store on
 // boot (mint each previously-approved source from its kept refresh_token — no human step). Same rehydrate the
