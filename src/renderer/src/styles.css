@@ -223,14 +223,7 @@ button {
   z-index: 2147482900; /* above the canvas, just under the notch-handle pill (2147483001) */
   display: inline-flex;
   align-items: center;
-  background: #000;
-  /* obsidian-glass rim tokens — identical to .nh-chassis so the bar reads as the island's material. */
-  --isl-rim-top: rgba(198, 217, 255, 0.6);
-  --isl-rim-mid: rgba(150, 172, 212, 0.14);
-  --isl-rim-bot: rgba(140, 176, 255, 0.34);
-  /* Pure flat notch-black: only the top-edge bleed (like the notch-handle), NO blue lift/aura so the fill reads as
-     the exact same black as the physical notch, not a floating panel. */
-  box-shadow: 0 -4px 0 0 #000;
+  background: transparent;
   pointer-events: none;
   transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.26s ease;
 }
@@ -247,9 +240,6 @@ button {
   border-radius: 0 0 13px 0; /* rounded bottom-RIGHT (outer); square against the notch on the left */
   transform-origin: left center;
 }
-/* The glance (at-rest, small-notch) view is deliberately RIM-LESS: it should read as a flat extension of the
-   physical notch black, not a bordered panel. The obsidian 1px rim lives only on the EXPANDED island chassis
-   (.nh-chassis::before); the glance bars keep just the flat black fill + top-edge bleed. */
 .glance-half > * {
   position: relative;
   z-index: 2;
@@ -350,21 +340,9 @@ button {
   background: #30d158; /* Apple system green (matches island.css) */
   box-shadow: 0 0 0 1.5px #000; /* black gap so the dot reads against both the avatar and the next one */
 }
-.glance-ava.working {
-  animation: glance-ava-pulse 1.5s ease-in-out infinite;
-}
-/* errored agent avatar — a steady red ring (no pulse), distinct from the blue working pulse. */
+/* errored agent avatar — a steady red ring, distinct from working. */
 .glance-ava.error {
   box-shadow: 0 0 0 2px #000, 0 0 0 3.5px rgba(255, 69, 58, 0.9);
-}
-@keyframes glance-ava-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 2px #000, 0 0 0 rgba(125, 185, 255, 0);
-  }
-  50% {
-    box-shadow: 0 0 0 2px #000, 0 0 9px rgba(125, 185, 255, 0.85);
-  }
 }
 .glance-ava-more {
   display: grid;

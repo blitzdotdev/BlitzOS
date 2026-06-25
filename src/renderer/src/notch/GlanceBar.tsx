@@ -5,7 +5,6 @@
 // `open` prop collapses the bars INTO the notch (slide + fade) when the island opens and expands them back OUT when
 // it closes, so the island appears to grow from / shrink to this bar. Hover-to-open is driven by App's mousemove
 // (the overlay forwards moves even while click-through), so the bars themselves are display-only.
-import blitzIcon from '../assets/blitz-glance-icon.png'
 import { agentGradient } from './agentVisuals'
 import { useDoneAgents } from './doneStore'
 
@@ -54,14 +53,7 @@ export function GlanceBar({
   const extra = shownAgents.length - shown.length
   return (
     <>
-      {/* LEFT bar — just the circled BlitzOS icon (the brand mark). Grows left from the notch. */}
-      <div className={`glance-half glance-left${open ? ' is-open' : ''}`} style={{ right: toCenter, height: h, paddingRight: sidePad }} aria-hidden>
-        <span className="glance-logo">
-          <img src={blitzIcon} alt="" draggable={false} />
-        </span>
-      </div>
-      {/* RIGHT bar — ALWAYS shown (mirrors the left, MINUS the icon): an empty black bar when nothing is active, else
-          the active peers' avatars. */}
+      {/* RIGHT bar — agent avatars only. */}
       <div className={`glance-half glance-right${open ? ' is-open' : ''}`} style={{ left: toCenter, height: h, paddingLeft: sidePad }} aria-hidden>
         {shown.length > 0 && (
           <div className="glance-avas">
