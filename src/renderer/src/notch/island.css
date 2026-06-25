@@ -1019,48 +1019,74 @@ button.isl-app-chat:active .isl-app-icon {
   flex-direction: column;
   gap: 7px;
 }
-/* Permission row — styled as isl-ask-option: faint glass pill, clickable */
+/* Permission row — mirrors the Claude/Codex requirement card (.isl-onb-req-row): a flat card with a round
+   status icon. Not-granted = neutral faint glass + gray lock icon; granted = the .ok blue tint + blue check. */
 .nh-island .isl-onb-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   width: 100%;
-  min-height: 48px;
-  padding: 9px 11px;
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 rgba(0, 0, 0, 0.2);
+  min-height: 52px;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
   color: var(--isl-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
   transition: border-color 0.14s ease, background 0.14s ease, transform 0.12s ease;
-  box-sizing: border-box;
 }
 .nh-island .isl-onb-row:hover:not(:disabled) {
   border-color: rgba(255, 255, 255, 0.2);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.052));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 10px 20px rgba(0, 0, 0, 0.22);
+  background: rgba(255, 255, 255, 0.06);
   transform: translateY(-1px);
 }
 .nh-island .isl-onb-row:active:not(:disabled) {
   transform: translateY(0);
 }
-/* "active" = System Settings opened for this row */
+/* "active" = System Settings opened for this row, waiting on the user (the icon shows a spinner). */
 .nh-island .isl-onb-row.active {
-  border-color: rgba(10, 132, 255, 0.4);
-  background: linear-gradient(180deg, rgba(10, 132, 255, 0.12), rgba(10, 132, 255, 0.06));
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.055);
 }
-/* "granted" = isl-ask-option.selected: light blue tint */
+/* "granted" = the requirement card's .ok state: blue tint + blue check icon. */
 .nh-island .isl-onb-row.granted {
-  border-color: rgba(77, 190, 255, 0.24);
-  background: linear-gradient(180deg, rgba(77, 190, 255, 0.09), rgba(255, 255, 255, 0.028));
+  border-color: rgba(10, 132, 255, 0.3);
+  background: rgba(10, 132, 255, 0.07);
   cursor: default;
 }
 .nh-island .isl-onb-row:disabled {
   cursor: default;
   transform: none;
+}
+/* Round status icon — mirrors .isl-onb-req-icon (gray by default, solid blue when granted). */
+.nh-island .isl-onb-row-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--isl-dim);
+}
+.nh-island .isl-onb-row.granted .isl-onb-row-icon {
+  background: #0a84ff;
+  color: #fff;
+}
+.nh-island .isl-onb-row-icon svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+.nh-island .isl-onb-row-icon svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .nh-island .isl-onb-row-copy {
   display: flex;
@@ -1071,16 +1097,19 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-onb-row-title {
   color: var(--isl-text);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 17px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
 }
 .nh-island .isl-onb-row-note {
   color: var(--isl-muted);
-  font-size: 11px;
-  line-height: 15px;
+  font-size: 12px;
+  line-height: 16px;
 }
-/* "Enable" / "Reopen" label on the right of each non-granted row */
+.nh-island .isl-onb-row.granted .isl-onb-row-note {
+  color: #7dccff;
+}
+/* "Enable" / "Reopen" label on a not-granted row. */
 .nh-island .isl-onb-row-cta {
   flex: none;
   color: rgba(255, 255, 255, 0.45);
@@ -1088,27 +1117,14 @@ button.isl-app-chat:active .isl-app-icon {
   font-weight: 600;
 }
 .nh-island .isl-onb-row.active .isl-onb-row-cta {
-  color: rgba(77, 190, 255, 0.85);
+  color: rgba(255, 255, 255, 0.7);
 }
-/* Granted badge */
-.nh-island .isl-onb-row-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+/* "Granted" status text — mirrors .isl-onb-req-status.ok (the check now lives in the round icon). */
+.nh-island .isl-onb-row-status {
   flex: none;
-  color: #4dbfff;
+  color: #7dccff;
   font-size: 11px;
-  font-weight: 700;
-}
-.nh-island .isl-onb-row-tag svg {
-  display: block;
-}
-.nh-island .isl-onb-row-tag path {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-weight: 650;
 }
 /* Big bold one-line CTA for the Chrome step — the single "do this now" instruction (pick a profile, or
    tick the Apple-Events row). One simple bold line, no supporting copy. */

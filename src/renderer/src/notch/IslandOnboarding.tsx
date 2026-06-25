@@ -49,6 +49,10 @@ const PERMISSIONS: Array<{ key: DragKind; name: string; why: string }> = [
 ]
 const CHECK_PATH = 'm5 12 4 4L19 6'
 const ALERT_PATH = 'M12 8v5M12 16h.01'
+// Padlock glyph for a not-yet-granted permission row (neutral state), drawn in the same 24x24 stroked
+// style as the requirement-card icons (shackle + body as two stroked paths).
+const LOCK_SHACKLE = 'M9 11V8a3 3 0 0 1 6 0v3'
+const LOCK_BODY = 'M7 11h10v8H7z'
 const INTRO_SLIDES: IntroSlide[] = [
   {
     title: 'Meet BlitzOS',
@@ -497,15 +501,24 @@ export function IslandOnboarding({
                   onClick={granted ? undefined : () => openPermission(permission.key)}
                   disabled={granted}
                 >
+                  <span className="isl-onb-row-icon" aria-hidden>
+                    {granted ? (
+                      <svg viewBox="0 0 24 24" focusable="false"><path d={CHECK_PATH} /></svg>
+                    ) : active ? (
+                      <span className="isl-onb-req-spin" />
+                    ) : (
+                      <svg viewBox="0 0 24 24" focusable="false">
+                        <path d={LOCK_SHACKLE} />
+                        <path d={LOCK_BODY} />
+                      </svg>
+                    )}
+                  </span>
                   <span className="isl-onb-row-copy">
                     <span className="isl-onb-row-title">{permission.name}</span>
                     <span className="isl-onb-row-note">{permission.why}</span>
                   </span>
                   {granted ? (
-                    <span className="isl-onb-row-tag" aria-hidden>
-                      <svg viewBox="0 0 24 24" width="10" height="10" focusable="false"><path d={CHECK_PATH} /></svg>
-                      Granted
-                    </span>
+                    <span className="isl-onb-row-status">Granted</span>
                   ) : (
                     <span className="isl-onb-row-cta">{active ? 'Reopen' : 'Enable'}</span>
                   )}
