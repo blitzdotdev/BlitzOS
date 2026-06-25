@@ -6,6 +6,7 @@
 // control-core.mjs / perception-core.mjs pattern: one feature, both modes.
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, watch, statSync, realpathSync, existsSync } from 'node:fs'
 import { join, basename, resolve, sep } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import {
   writeWorkspace,
   readWorkspace,
@@ -71,6 +72,16 @@ export function createWorkspaceHost(a) {
   const root = resolve(a.root)
   const onSurfaces = a.onSurfaces || (() => {})
   mkdirSync(root, { recursive: true })
+  // GORDIAN KNOT (TCC): HOME is frequently itself a git repo (~/.git dotfiles). Workspaces live UNDER ~ (e.g.
+  // ~/Blitz), so an agent's startup `git status` (Claude Code / Codex both do this) resolves the repo root to
+  // ~ and walks the ENTIRE home dir — ~/Pictures (Photos), ~/Library/Calendars, ~/Library/.../AddressBook,
+  // Desktop/Documents/Downloads — each one a macOS TCC prompt charged to BlitzOS. Making the workspaces ROOT
+  // its own git repo turns it into a hard boundary: git physically cannot climb past it to ~, so it never sees
+  // the home repo. Structural, so unlike a GIT_CEILING_DIRECTORIES env it can't be lost across tmux/shell/agent.
+  // Idempotent + best-effort: if git is absent the agent can't run git either (no walk), so nothing to fix.
+  try {
+    if (!existsSync(join(root, '.git'))) execFileSync('git', ['init', '-q', root], { stdio: 'ignore', timeout: 10000 })
+  } catch { /* no git on PATH or init failed — the GIT_CEILING_DIRECTORIES env (index.ts) is the fallback */ }
 
   let initialName = a.initialName || 'Home'
   if (!safeName(initialName)) {
