@@ -38,12 +38,11 @@ export function notchOverlayWindowOptions(): Electron.BrowserWindowConstructorOp
   }
 }
 
-/** Post-show overlay setup (call on ready-to-show): hide the native traffic lights (the renderer draws its own),
- *  cover the full display incl. the menu bar, float over everything on ALL Spaces, and start CLICK-THROUGH so only
- *  the notch captures the mouse until the renderer flips it via setNotchInteractive. showInactive so the notch never
- *  steals focus from whatever app the user is over. Bounds are re-asserted post-show because Electron clamps y into
- *  the workArea (below the menu bar) before the window is shown, and again after 700ms (post-show clamping settles). */
-export function applyNotchOverlay(win: BrowserWindow): void {
+/** Configure the notch overlay window (call on ready-to-show, BEFORE geometry is known). Sets the
+ *  persistent overlay properties — bounds, z-order, click-through — but does NOT show the window.
+ *  Call showNotchOverlay() after geometry has been pushed to the renderer so the window only appears
+ *  once the island clip is ready (no flash of the un-clipped full-screen canvas). */
+export function configureNotchOverlay(win: BrowserWindow): void {
   if (win.isDestroyed()) return
   const b = screen.getPrimaryDisplay().bounds
   win.setWindowButtonVisibility?.(false)
@@ -51,8 +50,17 @@ export function applyNotchOverlay(win: BrowserWindow): void {
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   win.setIgnoreMouseEvents(true, { forward: true })
-  win.showInactive() // the notch must NOT steal focus from whatever app the user is over (all-Spaces overlay)
-  win.setBounds(b) // re-assert post-show (pre-show Electron clamps y into the workArea, below the menu bar)
+}
+
+/** Show the notch overlay (call ONCE, after notch geometry has been pushed to the renderer). Separated
+ *  from configureNotchOverlay so the window only appears when the island is ready — no flash of the
+ *  un-clipped full-screen canvas or the windowed-mode titlebar. showInactive so the notch never steals
+ *  focus. Bounds re-asserted post-show and after 700ms because Electron clamps y into the workArea. */
+export function showNotchOverlay(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const b = screen.getPrimaryDisplay().bounds
+  win.showInactive()
+  win.setBounds(b) // re-assert post-show (pre-show Electron clamps y into the workArea)
   setTimeout(() => {
     if (!win.isDestroyed()) {
       win.setBounds(b)

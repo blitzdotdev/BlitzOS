@@ -46,6 +46,14 @@ button {
   inset: 0;
   overflow: hidden;
 }
+/* Belt-and-suspenders: keep the full canvas invisible until the island clip activates (notch-mode class set
+   by App.tsx when os:notch-geometry arrives). Prevents any flash of the windowed-mode titlebar or .bg as
+   a full-screen overlay during the main-process geometry-push race. Note: BLITZ_NO_NOTCH_GATE=1 (the dev
+   escape hatch) means notch-mode never fires and the canvas stays hidden — acceptable since that flag is
+   not a production path. */
+#root-canvas:not(.notch-mode) {
+  visibility: hidden;
+}
 
 /* Notch mode: promote #root-canvas to its OWN compositor layer so the clip-path GROW animates on the GPU
    (butter-smooth) instead of a main-thread re-clip of the whole app every frame; and paint the canvas BLACK so

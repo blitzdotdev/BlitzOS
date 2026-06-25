@@ -994,8 +994,8 @@ export default function App(): JSX.Element {
         if (ae && ae.tagName === 'IFRAME') ae.blur()
       }}
     >
-      {/* Draggable title bar — ONE normal window, so a plain CSS app-region drags it natively (zero IPC). */}
-      {!shellFullscreen && (
+      {/* Draggable title bar — windowed mode only (never shown when the island is active). */}
+      {!notchOn && !shellFullscreen && (
         <div className="titlebar" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
           <span className="titlebar-label">BlitzOS</span>
         </div>

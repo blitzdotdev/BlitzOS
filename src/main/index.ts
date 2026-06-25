@@ -49,7 +49,7 @@ import { recordIslandId, islandLiveIds, pruneIslandIds } from './island-membersh
 // The notch (dynamic island) overlay — the notch-essential bits extracted from the retired sandwich compositor
 // (web surfaces are now in-DOM <webview>, so the two-window sandwich is gone): the single window is reconfigured
 // as a transparent, all-Spaces, full-display island, with a click-through toggle the renderer drives on hover.
-import { notchOverlayWindowOptions, applyNotchOverlay, setNotchInteractive, readNotchGeometry, notchHitRect, notchHitWindowOptions, NOTCH_HIT_HTML, type NotchGeometry } from './notch-overlay'
+import { notchOverlayWindowOptions, configureNotchOverlay, showNotchOverlay, setNotchInteractive, readNotchGeometry, notchHitRect, notchHitWindowOptions, NOTCH_HIT_HTML, type NotchGeometry } from './notch-overlay'
 
 // Harden the log pipes FIRST: if the launching terminal or parent is severed (e.g. a killed duplicate instance),
 // the next console write throws `write EIO` on stdout/stderr, which — unhandled — crashes the main process with
@@ -57,6 +57,16 @@ import { notchOverlayWindowOptions, applyNotchOverlay, setNotchInteractive, read
 // crash BlitzOS.
 process.stdout.on('error', () => {})
 process.stderr.on('error', () => {})
+
+// HOME is frequently itself a git repo (~/.git for dotfiles). Agents run in ~/Blitz/<workspace>, INSIDE that
+// repo, so a tool's startup `git status` (Claude Code does this) resolves the repo root to ~ and walks the
+// ENTIRE home dir — ~/Pictures (Photos), ~/Library/Calendars, ~/Library/.../AddressBook, Desktop/Documents/
+// Downloads — each one a macOS TCC prompt attributed to BlitzOS (the responsible process). Tell every child
+// git to NOT chdir up INTO ~ while searching for a repo: a workspace under ~ becomes "not a repo" (no tree
+// walk, no prompts), while git AT ~ or in a real nested repo still works. Set before any terminal/agent spawns.
+if (process.platform === 'darwin' && process.env.HOME && !process.env.GIT_CEILING_DIRECTORIES) {
+  process.env.GIT_CEILING_DIRECTORIES = process.env.HOME
+}
 
 // "Open in Terminal": hand a LIVE terminal off to a real terminal window (macOS Terminal.app) so TUIs
 // (claude/codex, full-screen curses) render correctly — the embedded DEBUG pane strips ANSI and garbles them.
@@ -422,7 +432,7 @@ function createWindow(): void {
   })
   mainWindow.on('focus', () => trackActivity('app.focused', { source: 'main' }))
   mainWindow.once('ready-to-show', () => {
-    if (notchGated && mainWindow) applyNotchOverlay(mainWindow)
+    if (notchGated && mainWindow) configureNotchOverlay(mainWindow) // show deferred until geometry push
     else mainWindow?.show()
   })
   // Overlay mode draws its OWN traffic lights (App.tsx); re-assert the native ones hidden across dev reloads.
@@ -1074,6 +1084,7 @@ app.whenReady().then(() => {
     let notchGeom: NotchGeometry | null = null
     let notchHitWin: BrowserWindow | null = null
     let notchOverlayInteractive = false
+    let notchWindowShown = false
     const notchPreload = join(__dirname, '../preload/index.js')
     ipcMain.on('os:notch-interactive', (_e, on: boolean) => {
       notchOverlayInteractive = !!on
@@ -1192,6 +1203,12 @@ app.whenReady().then(() => {
       console.log(`[notch] hasNotch=${!!notchGeom?.hasNotch} synthetic=${isSyntheticMode()}${isSyntheticMode() ? ' (VM / notch-less → island pinned open, no retract)' : ''}`)
       updateNotchHitWindow()
       pushNotchGeometry()
+      // Show the window AFTER geometry is pushed (once only — display-change refreshes skip this).
+      // The renderer's CSS also hides #root-canvas until notch-mode kicks in (belt-and-suspenders).
+      if (!notchWindowShown && mainWindow && !mainWindow.isDestroyed()) {
+        notchWindowShown = true
+        showNotchOverlay(mainWindow)
+      }
     }
     // Forward the hit-window's click/hover to the overlay renderer (click → toggle fullscreen, hover → panel).
     ipcMain.on('os:notch-click', () => { try { mainWindow?.webContents.send('os:notch-handle-click') } catch { /* mid-teardown */ } })
