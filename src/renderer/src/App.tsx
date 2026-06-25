@@ -750,9 +750,9 @@ export default function App(): JSX.Element {
             // DONE-pip edges. These are the RAW host statuses (see notch/types.ts): an agent that just finished its
             // turn settles to 'watching' (turn ended clean, after the host's ~10s quiet debounce) or 'idle' (no live
             // terminal) — NOT a per-tool-call flicker. Mark that working→finished edge so the at-rest glance bar
-            // shows a quiet green pip until the user views that agent (NotchHost clears it). Any move back into an
-            // active status supersedes the mark; reconcile drops marks for agents that left the roster so a pip
-            // never outlives its agent.
+            // shows the quiet green DONE mark until the user views that agent (NotchHost clears it). Any move back
+            // into an active status supersedes the mark; reconcile drops marks for agents that left the roster so a
+            // mark never outlives its agent.
             const prev = prevAgentStatusRef.current
             const liveIds = new Set<string>()
             for (const { id, status } of agents) {

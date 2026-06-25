@@ -65,7 +65,7 @@ export function GlanceBar({
       <div className={`glance-half glance-right${open ? ' is-open' : ''}`} style={{ left: toCenter, height: h, paddingLeft: sidePad }} aria-hidden>
         {shown.length > 0 && (
           <div className="glance-avas">
-            {shown.map((a) => {
+            {shown.map((a, i) => {
               const cls =
                 a.status === 'error'
                   ? ' error'
@@ -76,9 +76,12 @@ export function GlanceBar({
                       : isFinished(a.status) && doneIds.has(a.id)
                         ? ' done'
                         : ''
-              return <span key={a.id} className={`glance-ava${cls}`} style={{ background: agentGradient(a.id) }} />
+              // Left-over-right z-stack: the LEFTMOST avatar sits highest, each one tucks UNDER its left neighbor
+              // (so a top-right DONE pip is never clipped by the avatar to its right).
+              return <span key={a.id} className={`glance-ava${cls}`} style={{ background: agentGradient(a.id), zIndex: shown.length - i }} />
             })}
-            {extra > 0 && <span className="glance-ava glance-ava-more">+{extra}</span>}
+            {/* the overflow counter caps the right end, kept on top so its "+N" stays legible. */}
+            {extra > 0 && <span className="glance-ava glance-ava-more" style={{ zIndex: shown.length + 1 }}>+{extra}</span>}
           </div>
         )}
       </div>

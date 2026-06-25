@@ -304,22 +304,18 @@ button {
   margin-left: 0;
 }
 /* DONE state — an agent that just finished its turn (raw host status working→'watching'/'idle') sits settled in the
-   bar until the user opens the island and views it (NotchHost clears the mark). ACTIVE look: a solid green RING (the
-   success counterpart of the red .error ring), no motion. The liquid-glass ring (::before) and corner pip (::after)
-   are kept but TEMPORARILY DISABLED via their display lines — delete a display:none to try that one instead. Raised
-   above its right-hand neighbor so the avatar overlap (margin-left:-7px) can't clip the ring. */
-.glance-ava.done {
-  z-index: 2;
-  box-shadow: 0 0 0 2px #000, 0 0 0 3px #30d158; /* solid green ring (Apple system green), the success twin of .error */
-}
-/* green liquid-glass ring — the island chassis rim technique (a mask-composite gradient hairline, see notch.css)
-   tinted green, sitting just outside the avatar's black rim. Bright at the top, soft at the bottom = liquid-glass
-   sheen, plus a faint outer green glow. */
+   bar until the user opens the island and views it (NotchHost clears the mark). ACTIVE look: a quiet green corner
+   PIP (::after), no motion (the avatar keeps its normal black rim). The liquid-glass rim (::before) is kept but
+   DISABLED — delete its display:none to try it instead. (The bar's left-over-right z-stack, set inline in GlanceBar,
+   already keeps every avatar above its right-hand neighbor, so the top-right pip is never clipped.) */
+/* green liquid-glass rim — the island chassis rim technique (a mask-composite gradient hairline, see notch.css)
+   tinted green, hugging the avatar edge in place of the default rim. Bright at the top, soft at the bottom =
+   liquid-glass sheen, plus a faint outer green glow. */
 .glance-ava.done::before {
-  display: none; /* TEMP: glass ring disabled while trying the solid green ring — delete this line to bring it back */
+  display: none; /* DISABLED: the liquid-glass rim — delete this line to use it instead of the pip */
   content: '';
   position: absolute;
-  inset: -3px;
+  inset: -2px;
   border-radius: 50%;
   padding: 2px; /* ring thickness */
   pointer-events: none;
@@ -336,7 +332,6 @@ button {
   mask-composite: exclude;
 }
 .glance-ava.done::after {
-  display: none; /* TEMP: pip hidden to try ring-only — delete this one line to bring the pip back */
   content: '';
   position: absolute;
   top: -1px;
