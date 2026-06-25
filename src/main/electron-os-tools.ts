@@ -35,8 +35,6 @@ import {
   osSystemUiInfo,
   osGroupIntoFolder,
   osBroadcast,
-  osHandoffCreate,
-  osHandoffResolve,
   osSetTheme,
   type SurfaceDescriptor
 } from './osActions'
@@ -182,75 +180,6 @@ Object.assign(electronOps, electronConnections)
 // omits them and those tools return 501 (guarded), exactly like the other Electron-only ops.
 Object.assign(electronOps, blitzChromeOps)
 
-// Handoff cards (request_handoff / resolve_handoff): a human-in-the-loop step (login, 2FA, captcha, consent) in a
-// connected surface. requestHandoff screenshots the connection, banks it in the runtime handoff map (osHandoffCreate
-// broadcasts it; the screenshot rides the store, NOT chat.md) and posts a tiny {type:'handoff',cardId} fence into the
-// agent's chat. The card's tap reveals the real surface (os:reveal-connection → connectionReveal). resolveHandoff
-// marks it done and PURGES the screenshot.
-//
-// Navigation-wake: when the handoff tab navigates (same-host or cross-host), we steer the owning agent
-// directly so it wakes and resolves even if its events loop had exited after calling request_handoff.
-// pendingHandoffByConn tracks connId→{cardId,agentId}; the steer fires once on the first significant
-// navigation, then the entry is removed (the agent owns the resolve from there).
-const pendingHandoffByConn = new Map<string, { cardId: string; agentId: string }>()
-const pendingHandoffByCard = new Map<string, string>() // cardId → connId, for cleanup in resolveHandoff
-
-function steerPendingHandoffNav(connId: string): void {
-  const h = pendingHandoffByConn.get(connId)
-  if (!h) return
-  pendingHandoffByConn.delete(connId) // one steer per handoff; the agent owns resolve from here
-  try {
-    osUserMessage(
-      `The tab navigated. The user may have completed the action. Call connection_read to confirm, then resolve_handoff { cardId: "${h.cardId}" } to clear the card and continue.`,
-      h.agentId
-    )
-  } catch { /* best-effort: the agent still has the trigger:'connection' events-loop wake as a fallback */ }
-}
-
-// Wrap connectionNotify to catch same-host navigation events from adapters.
-const _origConnectionNotify = electronConnections.connectionNotify
-electronConnections.connectionNotify = (connId: string, opts?: { significant?: boolean; summary?: string; status?: string }): void => {
-  _origConnectionNotify(connId, opts)
-  if (opts?.significant !== false) steerPendingHandoffNav(String(connId || ''))
-}
-
-// Wrap connectionRekey to catch cross-host navigations (e.g. accounts.google.com → mail.google.com after login).
-const _origConnectionRekey = electronConnections.connectionRekey
-electronConnections.connectionRekey = (connId: string, newSourceId: string): Record<string, unknown> => {
-  const result = _origConnectionRekey(connId, newSourceId)
-  if (result && result.changed) steerPendingHandoffNav(String(connId || ''))
-  return result
-}
-
-Object.assign(electronOps, {
-  requestHandoff: async (connId: string, opts: { reason?: string; agentId?: string } = {}) => {
-    const id = String(connId || '')
-    if (!id) return { error: 'connection (connId) required' }
-    const reason = String(opts.reason || 'Requires user login')
-    let img = ''
-    try {
-      const r = (await electronConnections.connectionRead(id, { screenshot: true })) as { image?: string }
-      if (r && r.image) img = `data:image/png;base64,${r.image}`
-    } catch {
-      /* no screenshot — the card still works as a labelled tap-to-open affordance */
-    }
-    const cardId = osHandoffCreate({ connId: id, reason, img })
-    const agentId = opts.agentId != null ? String(opts.agentId) : '0'
-    osSay('```blitz-ui\n' + JSON.stringify({ type: 'handoff', cardId }) + '\n```', agentId)
-    pendingHandoffByConn.set(id, { cardId, agentId })
-    pendingHandoffByCard.set(cardId, id)
-    return { ok: true, cardId }
-  },
-  resolveHandoff: (cardId: string) => {
-    const cid = String(cardId || '')
-    const connId = pendingHandoffByCard.get(cid)
-    if (connId) {
-      pendingHandoffByConn.delete(connId)
-      pendingHandoffByCard.delete(cid)
-    }
-    return osHandoffResolve(cid)
-  }
-})
 // Closing a connection's representation widget drops the connection (no leaked adapter/socket).
 onSurfaceClosed((id) => void electronConnections.handleSurfaceClosed(id))
 // On (re)hydrate, repaint persisted connection widgets whose connection isn't live → "disconnected".

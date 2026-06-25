@@ -575,7 +575,7 @@ class BlitzChrome {
             return r.error ? r : { effect: (r as { effect?: unknown }).effect }
           }
           if (verb === 'cdp') return { result: await this.send(String(args.method || ''), (args.params as Record<string, unknown>) || {}, sid) }
-          // OPT-IN reveal: the handoff card's tap (and connection_reveal) bring THIS window to the foreground.
+          // OPT-IN reveal: connection_reveal brings THIS window to the foreground.
           if (verb === 'reveal') return await this.show(agentId)
           return { error: `the Blitz Chrome connection does not support '${verb}'` }
         } catch (e) {

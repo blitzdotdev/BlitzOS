@@ -121,7 +121,7 @@ export interface ConnectionOps {
   connectionSetOwner(connId: string, agentId?: string): { ok?: boolean; changed?: boolean; error?: string }
   connectionRead(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>
   connectionAct(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>
-  /** Bring the surface behind a connection to the foreground (the handoff card's tap / connection_reveal). */
+  /** Bring the surface behind a connection to the foreground (connection_reveal). */
   connectionReveal(connId: string): Promise<Record<string, unknown>>
   connectionRunJs(connId: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>
   connectionSaveTool(connId: string, tool: { name: string; description?: string; kind?: string; code?: string; steps?: unknown }): Record<string, unknown>

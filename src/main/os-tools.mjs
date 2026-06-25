@@ -699,30 +699,6 @@ export function makeOsTools(ops) {
       }
     },
     {
-      path: '/request_handoff',
-      description:
-        "Hand a connected surface to the USER for a human step you can't do for them — a LOGIN/account-chooser wall, a 2FA code, a captcha, a consent screen. BlitzOS screenshots the page and posts a 'Requires user login'-style card in chat; the user taps it to jump to the real tab and finish. Do NOT write prose telling the user to 'go sign in' — call this instead. After calling it, idle on /events: the page navigating once they finish wakes you; then connection_read to confirm, resolve_handoff, and continue. Args: {connection, reason?, agent?}. Returns { ok, cardId }.",
-      input_schema: { type: 'object', required: ['connection'], properties: { connection: { type: 'string', description: 'the connId of the surface that needs the human step' }, reason: { type: 'string', description: "the card title, e.g. 'Requires user login' or 'Enter the 2FA code' (defaults to 'Requires user login')" }, agent: { type: 'string' } } },
-      handler: async ({ body }) => {
-        if (typeof ops.requestHandoff !== 'function') return { status: 501, body: { error: 'the handoff card is available only in the BlitzOS app (macOS, local)' } }
-        const a = parse(body)
-        if (!a.connection) return { status: 400, body: { error: 'connection (connId) required' } }
-        return mapConnResult(await ops.requestHandoff(String(a.connection), { reason: a.reason, agentId: a.agent != null ? String(a.agent) : undefined }))
-      }
-    },
-    {
-      path: '/resolve_handoff',
-      description:
-        'Mark a handoff card done once the user finished the human step (you confirmed via connection_read). Collapses the card to a checkmark and DELETES its screenshot. Args: {cardId}. Returns { ok }.',
-      input_schema: { type: 'object', required: ['cardId'], properties: { cardId: { type: 'string' } } },
-      handler: async ({ body }) => {
-        if (typeof ops.resolveHandoff !== 'function') return { status: 501, body: { error: 'the handoff card is available only in the BlitzOS app (macOS, local)' } }
-        const a = parse(body)
-        if (!a.cardId) return { status: 400, body: { error: 'cardId required' } }
-        return mapConnResult(await ops.resolveHandoff(String(a.cardId)))
-      }
-    },
-    {
       path: '/connection_save_tool',
       description:
         "Save a NAMED reusable tool for this source, keyed on its sourceId — so every connection to the same site/app reuses it, across sessions (the per-source tools.json). A TAB tool is JS (`code`, a function body); a WINDOW tool is a recipe of AX/coordinate `steps`. kind:'read' returns a value; kind:'act' MUST return its effect so a stale selector is detectable (a silent no-op is the enemy). Args: {connection, name, description?, kind?, code?|steps?}. Returns { ok, name, count }.",
