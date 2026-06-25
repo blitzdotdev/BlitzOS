@@ -405,6 +405,10 @@ export function createWorkspaceHost(a) {
   const chatTerminalWorkUntil = new Map()
   const chatUserTurnAt = new Map()
   const chatClaudeTurnStopOffset = new Map()
+  // Independent post-say end_turn watcher (agent-status fix): a per-agent 1s JSONL poll that SURVIVES the settle
+  // timer being cancelled by post-say terminal activity (the background wait.sh), so status flips to 'watching'
+  // ~1s after the turn actually ends instead of waiting out the 10s quiet timer.
+  const chatEndTurnWatchTimers = new Map()
   const chatWorkflowRuns = new Map()
   const pendingAutoTitles = new Set()
   /** The chat-bearing agents: always '0' (primary) + any .blitzos/terminals/<id> that is an AGENT (its
@@ -468,11 +472,23 @@ export function createWorkspaceHost(a) {
     if (timer) clearTimeout(timer)
     chatPostSaySettleTimers.delete(id)
   }
+  // Cancel the independent end_turn watcher. CRITICAL: this is deliberately NOT called from clearPostSaySettle —
+  // clearPostSaySettle fires on post-say terminal activity (noteAgentActivity 'terminal', line ~790), which is
+  // exactly when the watcher must KEEP running. It is cleared only by a settled status, a new user turn, the 60s
+  // cap, success, or a workspace teardown (see the call sites).
+  function clearEndTurnWatch(agentId) {
+    const id = String(agentId ?? '0')
+    const t = chatEndTurnWatchTimers.get(id)
+    if (t != null) clearTimeout(t)
+    chatEndTurnWatchTimers.delete(id)
+  }
   function clearChatRuntimeState() {
     for (const timer of chatQuietTimers.values()) clearTimeout(timer)
     for (const timer of chatPostSaySettleTimers.values()) clearTimeout(timer)
+    for (const timer of chatEndTurnWatchTimers.values()) clearTimeout(timer)
     chatQuietTimers.clear()
     chatPostSaySettleTimers.clear()
+    chatEndTurnWatchTimers.clear()
     chatTerminalActivityAt.clear()
     chatTerminalWorkUntil.clear()
     chatUserTurnAt.clear()
@@ -675,6 +691,7 @@ export function createWorkspaceHost(a) {
     if (s === 'working' || s === 'starting') scheduleChatWatching(id, rec.updatedAt)
     else {
       clearChatQuietTimer(id)
+      clearEndTurnWatch(id) // settled (watching/waiting/idle/stopped/error) → the end_turn watcher's job is done
       if (s === 'waiting') clearPostSaySettle(id)
       if (s === 'idle' || s === 'stopped' || s === 'error') {
         clearPostSaySettle(id)
@@ -704,6 +721,38 @@ export function createWorkspaceHost(a) {
     const out = {}
     for (const id of agentIds()) out[id] = chatStatus(id)
     return out
+  }
+  // Independent end_turn watcher (agent-status fix). Armed after a /say that keeps the agent 'working', it polls the
+  // Claude session JSONL once a second for stop_reason:end_turn and flips to 'watching' ~1s after the turn ends.
+  // It is its OWN timer chain so it SURVIVES the post-say terminal activity that cancels the settle poll (the
+  // background wait.sh → noteAgentActivity 'terminal' → clearPostSaySettle). Claude-only: a Codex turn boundary is
+  // an exit code, handled elsewhere. Self-clears on success or the 60s cap; otherwise cleared by a settled status
+  // (setChatStatusLocal) or a new user turn (appendChat) — never by clearPostSaySettle.
+  function scheduleEndTurnWatch(agentId) {
+    const id = String(agentId ?? '0')
+    if (!claudeAgentMeta(id)) return
+    clearEndTurnWatch(id)
+    let ticks = 0
+    const MAX_TICKS = 60 // ~60s safety cap so a never-yielding turn can't leave a poller running forever
+    const poll = () => {
+      chatEndTurnWatchTimers.delete(id)
+      if (++ticks > MAX_TICKS) return
+      // Only the working→watching edge is ours to make: never clobber a status that legitimately supersedes — a
+      // question's 'waiting', a surfaced 'error', 'stopped'/archived, a fresh 'starting'. Anything but 'working' = done.
+      if (chatStatuses.get(id)?.status !== 'working') return
+      if (claudeTurnEndedClean(id)) {
+        clearTurnActivity(id)
+        setChatStatusLocal(id, 'watching', 'end-turn-watch')
+        updateChatHubState(id, true)
+        return
+      }
+      const t = setTimeout(poll, 1000)
+      if (typeof t.unref === 'function') t.unref()
+      chatEndTurnWatchTimers.set(id, t)
+    }
+    const t = setTimeout(poll, 1000)
+    if (typeof t.unref === 'function') t.unref()
+    chatEndTurnWatchTimers.set(id, t)
   }
   function schedulePostSaySettle(agentId, text = '') {
     const id = String(agentId ?? '0')
@@ -738,6 +787,7 @@ export function createWorkspaceHost(a) {
     }
     shortenTerminalWorkAfterSay(id)
     setChatStatusLocal(id, 'working', 'say')
+    scheduleEndTurnWatch(id) // independent of the settle/terminal chain below — survives post-say terminal activity
     const startedAt = Date.now()
     const finishSettle = () => {
       chatPostSaySettleTimers.delete(id)
@@ -1160,6 +1210,7 @@ export function createWorkspaceHost(a) {
     const workspacePath = activeWorkspace
     if (role === 'user') {
       clearPostSaySettle(aid)
+      clearEndTurnWatch(aid) // new user turn: drop the prior turn's watcher (the agent's next say re-arms a fresh one)
       rememberClaudeTurnBaseline(aid)
       chatUserTurnAt.set(aid, Date.now())
       setChatStatusLocal(aid, 'working', 'user-message')
