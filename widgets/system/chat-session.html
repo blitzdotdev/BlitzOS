@@ -1,0 +1,27 @@
+<!-- KEPT FOR LATER (unused): master's simple ONE-SESSION chat renderer, paired with a per-session buildChatSurface variant (see master 4611bb5
+     in workspace-host). The shipped default is the multi-session HUB (chat.html). -->
+<!-- The DEFAULT chat UI. It is just a file: customize it by editing blitz-chat.html in the workspace
+     (ask the agent to "make the chat look like X"). It renders the transcript the OS pushes in
+     props.messages (the OS keeps the history in chat.md) and sends with blitz.sendMessage. The
+     <blitz-*> components + tokens come from the shared Blitz UI kit — no styling duplicated here. -->
+<blitz-titlebar>Chat</blitz-titlebar>
+<blitz-list id="log"></blitz-list>
+<blitz-input id="composer" placeholder="Message the agent…"></blitz-input>
+<script>
+  var log = document.getElementById('log')
+  function render(p) {
+    var msgs = (p && p.messages) || []
+    log.innerHTML = ''
+    for (var i = 0; i < msgs.length; i++) {
+      var el = document.createElement('blitz-message')
+      el.setAttribute('role', msgs[i].role === 'user' ? 'user' : 'agent')
+      el.textContent = msgs[i].text || ''
+      log.appendChild(el)
+    }
+    log.scrollTop = log.scrollHeight
+  }
+  blitz.onProps(render)
+  document.getElementById('composer').addEventListener('send', function (e) {
+    blitz.sendMessage(e.detail.text) // the OS appends it to chat.md + wakes the agent
+  })
+</script>

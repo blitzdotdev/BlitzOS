@@ -1,0 +1,60 @@
+{
+  "name": "blitzos",
+  "version": "0.0.1",
+  "description": "A macOS dynamic-island OS for human+agent collaboration.",
+  "main": "./out/main/index.js",
+  "author": "Palash Bansal",
+  "license": "Apache-2.0",
+  "scripts": {
+    "predev": "node scripts/rebrand-dev-electron.mjs && bash scripts/ensure-helper.sh",
+    "dev": "electron-vite dev",
+    "dev:activity": "node scripts/activity-local-dev.mjs",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "parity": "node scripts/check-parity.mjs",
+    "check": "npm run typecheck && npm run parity && npm run build",
+    "dev:fresh-onboarding": "bash scripts/fresh-onboarding-dev.sh",
+    "dev:fresh-onboarding:reset": "bash scripts/fresh-onboarding-dev.sh --yes --reset-permissions",
+    "onboard": "node scripts/onboarding-scan.mjs --no-fda --prompt src/main/blitzos-onboarding.md --out -",
+    "onboard:fda": "node scripts/onboarding-scan.mjs --prompt src/main/blitzos-onboarding.md --out -",
+    "onboard:scan": "node scripts/onboarding-scan.mjs --out -",
+    "dist": "bash scripts/dist-mac.sh",
+    "build:app": "bash scripts/build-local-app.sh",
+    "test": "node scripts/run-tests.mjs"
+  },
+  "dependencies": {
+    "@agent-socket/sdk": "file:./vendor/agent-socket-sdk",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "sucrase": "^3.35.1",
+    "ws": "^8.18.0",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^31.4.0",
+    "electron-builder": "^26.15.2",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blitzdotdev/blitzos-oss.git"
+  },
+  "homepage": "https://github.com/blitzdotdev/blitzos-oss#readme",
+  "bugs": {
+    "url": "https://github.com/blitzdotdev/blitzos-oss/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

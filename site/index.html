@@ -1,0 +1,1097 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlitzOS — A dynamic-island agent OS for Mac.</title>
+<link rel="icon" type="image/png" href="blitz-logo.png">
+<style>
+  /* ============================================================
+     BlitzOS design tokens — our own identity (dark + gold + blue),
+     lifted straight from the BlitzOS island chrome (--isl-* vars).
+     ============================================================ */
+  :root{
+    --color-orange-25:#f5f5f7;          /* island text (near-white) */
+    --color-stone-950:#0a0a0a;          /* island body (--isl-surface) */
+    --color-stone-900:#161616;          /* frame / panel bg (--isl-surface2) */
+    --color-stone-600:#86888b;          /* marquee dot/icons (dim) */
+    --color-stone-300:#d6d7db;          /* marquee text */
+    --ease:cubic-bezier(.4,0,.2,1);
+
+    --paper:#0a0a0a;   /* near-black page (our surface) */
+    --ink:#f4f4f5;     /* near-white ink */
+
+    /* BlitzOS accent: Apple-blue, used for EVERYTHING (brand mark, buttons, highlights). */
+    --gold:#0a84ff;        /* brand / bolt / primary action (was gold → now blue) */
+    --gold-deep:#0066d6;
+    --accent:#0a84ff;      /* live / working (--isl-accent) */
+    --accent-2:#2a93ff;
+    --accent-deep:#0066d6;
+    --amber:#0a84ff;       /* highlight → blue */
+    --amber-2:#2a93ff;     /* gradient start → blue */
+    --terra:#0066d6;       /* gradient end → blue */
+    --green:#3fb950;       /* done */
+    --purple:#9db8ff;      /* lock text: cool tint */
+    --marquee-duration:7s;
+
+    /* ── BlitzOS island chrome — ported verbatim from notch.css / island.css / wf.css ── */
+    --isl-text:#fff; --isl-muted:#ffffff99; --isl-dim:#ffffff66; --isl-faint:#ffffff14;
+    --isl-surface:#0a0a0a; --isl-surface2:#161616; --isl-accent:#0a84ff;
+    /* obsidian liquid-glass material (the pill + buttons) */
+    --glass-fill-top:rgba(24,28,38,.74); --glass-fill-bot:rgba(9,11,16,.8);
+    --glass-lift:rgba(64,94,150,.22);
+    --glass-rim-top:rgba(196,216,255,.66); --glass-rim-bot:rgba(196,216,255,.224);
+    --glass-bloom:rgba(116,162,255,.28);
+    /* kanban board tokens (wf.css) */
+    --kb-bg:#11151a; --kb-dot:#a4b4c121; --kb-sheet:#1b2026; --kb-line:#2c323a;
+    --kb-faint:#ffffff14; --kb-text:#ecf4fa; --kb-muted:#9da5ad; --kb-dim:#626a72;
+    --kb-yellow:#fec84b; --kb-red:#ff6b6b; --kb-green:#3ddc84; --kb-blue:#2f9bff;
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  html,body{margin:0}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    min-height:100vh;
+  }
+  /* Near-black page with just a whisper of blue glow at the top (viewport-locked), so the dark surface has a
+     little depth and echoes the blue accent without becoming a blue background. */
+  body::before{
+    content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+    background:
+      radial-gradient(900px 520px at 50% -12%, rgba(10,132,255,.10), transparent 60%),
+      var(--paper);
+  }
+  ::selection{background:var(--ink);color:var(--paper)}
+
+  /* ============================================================
+     NAV
+     ============================================================ */
+  .nav{
+    position:sticky;top:0;z-index:100;
+    display:flex;justify-content:center;
+    background:color-mix(in srgb,var(--paper) 86%,transparent);
+    backdrop-filter:saturate(1.4) blur(14px);
+    -webkit-backdrop-filter:saturate(1.4) blur(14px);
+    border-bottom:1px solid color-mix(in srgb,var(--ink) 7%,transparent);
+  }
+  .nav__inner{
+    width:min(952px,94vw);height:64px;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .brand{display:flex;align-items:center;gap:9px;color:var(--ink);text-decoration:none}
+  .brand .bolt{width:22px;height:22px;display:block;border-radius:6px;object-fit:cover;
+    filter:drop-shadow(0 1px 8px rgba(10,132,255,.4))}
+  .brand .word{font-weight:800;letter-spacing:-.02em;font-size:15px}
+  .brand .chip{
+    margin-left:3px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;
+    background:color-mix(in srgb,var(--ink) 5%,transparent);
+    color:color-mix(in srgb,var(--ink) 70%,transparent);
+  }
+  .nav__right{display:flex;align-items:center;gap:22px}
+  .nav__link{
+    color:color-mix(in srgb,var(--ink) 70%,transparent);
+    font-weight:500;font-size:14px;text-decoration:none;
+    transition:color .2s var(--ease);
+  }
+  .nav__link:hover{color:var(--ink)}
+
+  /* ---- Alcove pill buttons (verbatim spec) ---- */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    border:0;cursor:pointer;text-decoration:none;
+    font-family:inherit;font-size:15px;
+    border-radius:16px;padding:16px 20px;
+    transition:transform .14s var(--ease),box-shadow .25s var(--ease),background-color .2s var(--ease);
+  }
+  .btn:active{transform:scale(.96)}
+  /* Obsidian liquid glass — black, no blue fill; slightly exaggerated specular + rim (BlitzOS chrome). */
+  .btn--primary{
+    position:relative;color:#fff;font-weight:700;letter-spacing:-.01em;
+    background:
+      linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,0) 46%),
+      radial-gradient(120% 170% at 50% -40%,var(--glass-lift),transparent 60%),
+      linear-gradient(180deg,var(--glass-fill-top),var(--glass-fill-bot));
+    -webkit-backdrop-filter:blur(26px) saturate(1.5) brightness(1.07);
+            backdrop-filter:blur(26px) saturate(1.5) brightness(1.07);
+    box-shadow:
+      0 16px 32px -8px rgba(0,0,0,.62),
+      0 3px 8px rgba(0,0,0,.45),
+      inset 0 1px 0 rgba(255,255,255,.16),
+      inset 0 -12px 24px rgba(0,0,0,.34);
+  }
+  /* 1px gradient rim (bright top → dim bottom), masked to the edge only */
+  .btn--primary::before{
+    content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;
+    background:linear-gradient(180deg,var(--glass-rim-top) 0%,rgba(150,172,212,.12) 32%,rgba(255,255,255,.03) 64%,var(--glass-rim-bot) 100%);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;mask-composite:exclude;
+  }
+  .btn--primary:hover{
+    transform:translateY(-1px);
+    box-shadow:
+      0 22px 44px -10px rgba(0,0,0,.7),
+      0 5px 12px rgba(0,0,0,.5),
+      inset 0 1px 0 rgba(255,255,255,.2),
+      inset 0 -12px 24px rgba(0,0,0,.36),
+      0 0 34px -6px var(--glass-bloom);
+  }
+  .btn--secondary{
+    background:color-mix(in srgb,var(--ink) 5%,transparent);
+    color:var(--ink);font-weight:600;
+  }
+  .btn--secondary:hover{background:color-mix(in srgb,var(--ink) 9%,transparent)}
+  .nav .btn{padding:11px 16px;font-size:14px;border-radius:13px}
+
+  /* ============================================================
+     HERO
+     ============================================================ */
+  .hero{
+    display:flex;flex-direction:column;align-items:center;
+    padding:clamp(48px,8vw,96px) 24px 40px;gap:22px;
+  }
+  .h1{
+    max-width:880px;text-align:center;margin:0;
+    font-weight:800;letter-spacing:-.04em;line-height:.98;
+    font-size:clamp(40px,8.6vw,96px);
+    text-wrap:balance;
+  }
+  .h1 .l2{color:color-mix(in srgb,var(--ink) 78%,transparent)}
+  .subhead{
+    max-width:560px;text-align:center;margin:0;
+    font-size:clamp(15px,2.1vw,18px);font-weight:500;line-height:1.5;
+    color:color-mix(in srgb,var(--ink) 64%,transparent);
+    text-wrap:pretty;
+  }
+  .hero__btns{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:4px}
+  .hero__micro{
+    margin:6px 0 0;font-size:11.5px;font-weight:500;
+    font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    text-transform:uppercase;letter-spacing:.12em;
+    color:color-mix(in srgb,var(--ink) 48%,transparent);
+  }
+
+  /* ============================================================
+     DEMO STAGE / SCREEN (wallpaper card + squircle clip)
+     ============================================================ */
+  .stage-wrap{width:min(952px,94vw);margin-top:14px}
+  .frame__screen{position:relative;width:100%;aspect-ratio:2/1;overflow:visible}
+  .frame{
+    position:absolute;inset:0;width:100%;height:100%;
+    border-radius:2.5rem;overflow:hidden;
+    background-color:var(--color-stone-900);
+    clip-path:path("M 886 0 c 24.2919 0 36.4379 0 45.5448 5.1002 a 40 40 0 0 1 15.355 15.355 c 5.1002 9.107 5.1002 21.2529 5.1002 45.5448 L 952 410 c 0 24.2919 0 36.4379 -5.1002 45.5448 a 40 40 0 0 1 -15.355 15.355 c -9.107 5.1002 -21.2529 5.1002 -45.5448 5.1002 L 66 476 c -24.2919 0 -36.4379 0 -45.5448 -5.1002 a 40 40 0 0 1 -15.355 -15.355 c -5.1002 -9.107 -5.1002 -21.2529 -5.1002 -45.5448 L 0 66 c 0 -24.2919 0 -36.4379 5.1002 -45.5448 a 40 40 0 0 1 15.355 -15.355 c 9.107 -5.1002 21.2529 -5.1002 45.5448 -5.1002 Z");
+    box-shadow:0 28px 80px -28px rgba(0,0,0,.7),0 6px 18px -10px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.06);
+  }
+  .frame__img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:translateY(0)}
+  /* self-contained blue "desktop" behind the island demos (replaces the old external wallpaper). It is purely
+     decorative, so it must NOT capture taps meant for the island sitting on top of it (pointer-events:none). */
+  .frame__wall{
+    background:
+      radial-gradient(120% 90% at 28% 0%, rgba(120,170,255,.35), rgba(120,170,255,0) 60%),
+      linear-gradient(165deg,#2a5bbf 0%,#1a428f 46%,#0c2250 100%);
+    pointer-events:none;
+  }
+  .frame::after{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 18%,rgba(0,0,0,.18),rgba(0,0,0,0) 55%);
+  }
+
+  /* lock-screen overlay (clock / status / approve) */
+  .lock{
+    position:absolute;inset:0;z-index:10;
+    display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:clamp(6px,1.6vw,14px);
+    padding:0 0 6%;pointer-events:none;
+  }
+  .lock-top{display:flex;flex-direction:column;align-items:center;text-align:center;
+    color:color-mix(in srgb,var(--purple) 88%,transparent);
+    filter:saturate(1.5);text-shadow:0 1px 14px rgba(0,0,0,.28)}
+  .lock-date{font-size:clamp(13px,2.4vw,26px);font-weight:600;line-height:1}
+  .lock-time{font-size:clamp(34px,8vw,76px);font-weight:800;line-height:1;letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums;margin-top:.06em}
+  .lock-status{display:none;align-items:center;gap:8px;margin-top:14px;
+    font-weight:600;font-size:clamp(12px,1.7vw,17px);
+    color:color-mix(in srgb,var(--purple) 90%,transparent);filter:saturate(1.5);
+    text-shadow:0 1px 12px rgba(0,0,0,.3)}
+  .lock-status .item{display:flex;align-items:center;gap:7px}
+  .lock-status svg{width:18px;height:18px;fill:currentColor}
+  .unlock{
+    font-weight:700;color:#fff;font-size:clamp(15px,2.6vw,22px);
+    text-shadow:0 1px 16px rgba(0,0,0,.35);
+    background:linear-gradient(100deg,rgba(255,255,255,.55) 0%,#fff 45%,rgba(255,255,255,.55) 60%);
+    background-size:220% 100%;
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    animation:shine 5s linear infinite;
+  }
+  @keyframes shine{0%{background-position:140% 0}100%{background-position:-40% 0}}
+  @media (min-width:760px){ .lock-status{display:flex} }
+
+  /* top overlay grid centers the island */
+  .overlay-grid{
+    position:absolute;top:0;left:0;right:0;z-index:20;
+    display:block;padding-top:clamp(6px,1.4vw,14px);
+  }
+  .overlay-grid .col.left,.overlay-grid .col.right{display:none}
+  .overlay-grid .col.center{display:block;width:100%;padding:0}
+
+  /* ============================================================
+     THE BLITZOS ISLAND — real V1 chrome, reproduced 1:1.
+     Ported from notch.css / island.css / wf.css / attach.css.
+     One chassis (.nh-chassis) + interior views, zoomed to fit a card.
+     ============================================================ */
+  .select-none{user-select:none;-webkit-user-select:none}
+
+  /* stage = the card's island holder; bz-scale zooms the true-metric island down */
+  .bz-stage{position:relative;display:flex;justify-content:center;align-items:flex-start}
+  .bz-scale{zoom:var(--bz-z,.84)}
+  @supports not (zoom:1){ .bz-scale{transform:scale(var(--bz-z,.84));transform-origin:top center} }
+
+  /* the chassis: black panel, square top + 28px rounded bottom, obsidian rim */
+  .nh-chassis{
+    position:relative;width:var(--bz-w,696px);box-sizing:border-box;
+    background:#000;color:#ededed;border-radius:0 0 28px 28px;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Helvetica,Arial,sans-serif;
+    box-shadow:0 18px 50px -10px rgba(30,64,140,.30),0 2px 8px rgba(120,160,255,.12);
+  }
+  .nh-chassis::before{ /* 1px masked-gradient rim — left/right/bottom only (top unpainted) */
+    content:"";position:absolute;inset:0;z-index:4;pointer-events:none;
+    padding:0 1px 1px;border-radius:inherit;
+    background:linear-gradient(180deg,rgba(198,217,255,.6) 0%,rgba(150,172,212,.14) 24%,rgba(255,255,255,.03) 60%,rgba(140,176,255,.34) 100%);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+            mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;mask-composite:exclude;
+  }
+  .nh-island{position:relative;padding:26px 16px 16px;text-align:left}
+
+  /* interior stagger on open */
+  .isl-rise{animation:isl-rise .3s ease-out both}
+  @keyframes isl-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  /* ---- CHAT ---- */
+  .isl-feed{display:flex;flex-direction:column;gap:8px}
+  .isl-msg{position:relative;font-size:16px;line-height:22px;padding:7px 13px;border-radius:18px;max-width:76%;width:fit-content;overflow-wrap:anywhere}
+  .isl-msg.user{align-self:flex-end;background:var(--isl-accent);color:#fff}
+  .isl-msg.user::before{content:"";position:absolute;right:-7px;width:18px;height:17px;bottom:0;background:var(--isl-accent);border-bottom-left-radius:16px 14px}
+  .isl-msg.user::after{content:"";position:absolute;right:-15px;width:15px;height:17px;bottom:0;background:#000;border-bottom-left-radius:10px}
+  /* agent reply = transparent, full-width, white text (the real isl-md-msg look) */
+  .isl-msg.agent{align-self:stretch;width:100%;max-width:100%;background:transparent;color:var(--isl-text);padding:2px 2px 4px;border-radius:0;font-weight:400}
+  .isl-msg.agent b,.isl-msg.agent strong{font-weight:700}
+
+  /* ---- WORKING status line + Details steps ---- */
+  .isl-status{display:inline-flex;align-items:center;gap:8px;min-height:24px;font-weight:600;font-size:13px;line-height:18px;color:var(--isl-muted)}
+  .isl-status .isl-dot{width:10px;height:10px;box-sizing:border-box;border:2px solid rgba(10,132,255,.28);border-top-color:var(--isl-accent);border-radius:50%;background:transparent;flex:none;animation:isl-spin .8s linear infinite}
+  .isl-status .isl-lbl{animation:isl-detail-fade 2.4s ease-in-out infinite}
+  .isl-status.done{color:var(--isl-text)}
+  .isl-status.done .isl-dot{border:0;background:var(--isl-accent);animation:none;position:relative}
+  .isl-status.done .isl-lbl{animation:none}
+  @keyframes isl-spin{to{transform:rotate(360deg)}}
+  @keyframes isl-detail-fade{0%,100%{opacity:.62}45%{opacity:1}}
+  .isl-steps{display:flex;flex-direction:column;gap:2px;border-left:1px solid rgba(255,255,255,.12);padding:2px 0 3px 14px;margin:8px 0 0 3px;overflow:hidden}
+  .isl-step{display:flex;align-items:flex-start;gap:7px;color:rgba(255,255,255,.72);font-weight:500;font-size:12px;line-height:16px}
+  .isl-step .ms{margin-left:auto;color:var(--isl-dim);font-variant-numeric:tabular-nums}
+  .isl-step.latest{color:var(--isl-text)}
+  .isl-step::before{content:"";width:5px;height:5px;margin-top:5px;border-radius:50%;background:rgba(255,255,255,.32);flex:none}
+  .isl-step.latest::before{background:var(--isl-accent)}
+
+  /* ---- TABS ---- */
+  .isl-tabs{display:flex;gap:6px;min-height:40px;align-items:center}
+  .isl-chip{display:inline-flex;align-items:center;gap:6px;flex:none;font-size:13px;line-height:18px;font-weight:400;color:var(--isl-muted);background:var(--isl-surface);border:1px solid var(--isl-faint);border-radius:9999px;padding:7px 12px 7px 10px;max-width:168px;white-space:nowrap}
+  .isl-chip.active{color:var(--isl-text);font-weight:600;background:var(--isl-surface2);border-color:#ffffff1f}
+  .isl-chip-agent{gap:8px;padding:4px 12px 4px 4px}
+  .isl-chip-new{width:32px;height:32px;padding:0;border-radius:50%;justify-content:center}
+  .isl-pen{width:15px;height:15px;display:block;fill:currentColor}
+  .isl-chip-album{width:24px;height:24px;flex:none;border-radius:50%;box-shadow:inset 0 0 0 .5px rgba(255,255,255,.18)}
+  .isl-chip-dot{width:6px;height:6px;border-radius:50%;background:var(--isl-dim);flex:none}
+  .isl-chip-dot.working{width:9px;height:9px;box-sizing:border-box;border:2px solid rgba(10,132,255,.28);border-top-color:var(--isl-accent);background:transparent;animation:isl-spin .8s linear infinite}
+  .isl-chip-dot.waiting{width:8px;height:8px;background:#ffd60a;box-shadow:0 0 0 3px rgba(255,214,10,.14)}
+
+  /* ---- CONNECTIONS (attach panel) ---- */
+  .att{display:flex;flex-direction:column;gap:10px}
+  .att-boxes{display:flex;gap:10px;height:168px}
+  .att-drop,.att-apps{flex:1;min-width:0;box-sizing:border-box;border:1.5px dashed rgba(255,255,255,.22);border-radius:14px}
+  .att-apps{overflow:hidden;padding:8px 12px 8px 14px}
+  .att-drop{display:flex;flex-direction:column;gap:9px;padding:10px}
+  .att-drop.empty{align-items:center;justify-content:center}
+  .att-drop-hint{color:var(--isl-dim);font-size:13px;text-align:center;line-height:1.4}
+  .att-app{display:flex;align-items:center;gap:9px;width:100%;box-sizing:border-box;border:0;background:transparent;border-radius:8px;color:var(--isl-text);font-size:13px;padding:7px 8px;text-align:left}
+  .att-app.connected{background:var(--isl-accent);color:#fff}
+  .att-twisty{width:14px;color:var(--isl-muted);font-size:11px;flex:none;text-align:center}
+  .att-app-name{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .att-app-conn{font-size:11px;color:#fff;background:var(--isl-accent);border-radius:9999px;padding:1px 7px;flex:none}
+  .att-app-count{font-size:11px;color:var(--isl-dim);background:var(--isl-surface);border-radius:9999px;padding:1px 7px;flex:none}
+  .att-tabs{padding-left:22px;display:flex;flex-direction:column}
+  .att-tab{display:flex;align-items:center;gap:9px;width:100%;box-sizing:border-box;border:0;background:transparent;color:var(--isl-muted);font-size:12.5px;padding:5px 8px;border-radius:8px;text-align:left}
+  .att-tab.connected{background:var(--isl-accent);color:#fff}
+  .att-tab-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .att-favicon{width:16px;height:16px;border-radius:3px;flex:none;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:10px;font-weight:700;color:#fff}
+  .att-favicon svg{width:100%;height:100%;display:block}
+  /* staged tray pill */
+  .att-pill{display:flex;align-items:center;gap:10px;padding:6px 12px 6px 8px;background:var(--isl-surface);border:1px solid var(--isl-faint);border-radius:20px;max-width:100%;box-sizing:border-box}
+  .att-pill-ico{width:44px;height:44px;border-radius:11px;flex:none;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .att-pill-div{width:1px;align-self:stretch;background:var(--isl-faint);margin:5px 0}
+  .att-pill-items{display:flex;gap:10px;flex-wrap:wrap}
+  .att-pill-item{width:44px;height:44px;border-radius:11px;flex:none;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:15px;font-weight:700;color:#fff}
+
+  /* ---- WORKFLOW KANBAN (wf.css, ported 1:1) ---- */
+  .isl-wf-board{position:relative}
+  .isl-wf-board-head{display:inline-flex;align-items:center;gap:7px;max-width:100%;font-size:11px;color:var(--kb-muted);padding:6px 14px;border:0;border-radius:999px;position:relative;isolation:isolate;
+    -webkit-backdrop-filter:blur(20px) saturate(1.3) brightness(1.03);backdrop-filter:blur(20px) saturate(1.3) brightness(1.03);
+    background:radial-gradient(120% 140% at 50% -30%,var(--glass-lift),transparent 62%),linear-gradient(180deg,var(--glass-fill-top),var(--glass-fill-bot));
+    box-shadow:0 12px 26px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.05)}
+  .isl-wf-board-head::before{content:"";position:absolute;inset:0;z-index:0;padding:1px;border-radius:inherit;
+    background:linear-gradient(180deg,var(--glass-rim-top) 0%,rgba(150,172,212,.1) 30%,rgba(255,255,255,.02) 64%,var(--glass-rim-bot) 100%);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+  .isl-wf-board-head>*{position:relative;z-index:1}
+  .isl-wf-caret{flex:none;color:var(--kb-muted);font-size:14px;line-height:1}
+  .isl-wf-dot{position:relative;width:7px;height:7px;border-radius:50%;background:var(--kb-blue);flex:none;animation:isl-wf-pulse 1.3s ease-in-out infinite}
+  .isl-wf-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;background:radial-gradient(circle,var(--glass-bloom),transparent 70%);pointer-events:none}
+  .isl-wf-board.isl-wf-done .isl-wf-dot{background:var(--kb-green);animation:none}
+  .isl-wf-board.isl-wf-fail .isl-wf-dot{background:var(--kb-red);animation:none}
+  .isl-wf-status{font-weight:600;color:var(--kb-text);white-space:nowrap}
+  .isl-wf-stats{color:var(--kb-dim);font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}
+  @keyframes isl-wf-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.72)}}
+  .isl-wf-board-body{margin-top:6px}
+  .kb{font-family:Inter,-apple-system,system-ui,sans-serif;border-radius:13px;overflow:hidden;position:relative;isolation:isolate;border:1px solid transparent;
+    background-color:var(--kb-bg);
+    background-image:linear-gradient(180deg,rgba(20,26,34,.55),rgba(10,14,20,.2) 45%,rgba(12,18,26,.6)),radial-gradient(var(--kb-dot) 1.2px,transparent 1.2px);
+    background-size:100% 100%,20px 20px;background-position:0 0,-1px -1px;
+    box-shadow:0 28px 60px rgba(0,0,0,.55),0 6px 16px rgba(0,0,0,.42),0 22px 60px -26px rgba(70,110,190,.42),inset 0 1px 0 rgba(255,255,255,.05),inset 0 -22px 44px rgba(0,0,0,.3)}
+  .kb::before{content:"";position:absolute;inset:0;z-index:4;padding:1px;border-radius:inherit;
+    background:linear-gradient(180deg,var(--glass-rim-top) 0%,rgba(150,172,212,.1) 26%,rgba(255,255,255,.02) 62%,var(--glass-rim-bot) 100%);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+  .kb-grid{display:grid;align-items:stretch;grid-template-columns:92px minmax(0,.95fr) minmax(0,1.35fr) minmax(0,1.5fr)}
+  .kb-corner{border-bottom:1px solid var(--kb-line)}
+  .kb-colh{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;padding:9px 11px;border-bottom:1px solid var(--kb-line);border-left:1px solid var(--kb-line);display:flex;align-items:center;justify-content:center;text-align:center;white-space:nowrap}
+  .kb-h-todo{color:var(--kb-yellow)}
+  .kb-h-doing{color:var(--kb-blue)}
+  .kb-h-done{color:var(--kb-green)}
+  .kb-rowh{display:flex;flex-direction:column;justify-content:center;gap:3px;padding:11px;border-bottom:1px solid var(--kb-line)}
+  .kb-rowh-name{font-size:12.5px;font-weight:650;color:var(--kb-text);line-height:1.2;overflow-wrap:anywhere}
+  .kb-rowh-n{font-size:10.5px;color:var(--kb-dim);font-variant-numeric:tabular-nums}
+  .kb-cell{display:flex;flex-direction:column;gap:6px;padding:8px;border-bottom:1px solid var(--kb-line);border-left:1px solid var(--kb-line);min-height:52px;min-width:0}
+  .kc{text-align:left;border:1px solid var(--kb-faint);border-radius:9px;background:var(--kb-sheet);color:var(--kb-text);padding:7px 9px;display:flex;flex-direction:column;gap:3px;box-shadow:0 1px 2px rgba(0,0,0,.3);min-width:0}
+  .kc-label-row{display:flex;align-items:flex-start;gap:6px;min-width:0}
+  .kc-label{font-size:12px;font-weight:600;line-height:1.25;overflow-wrap:anywhere;flex:1;min-width:0}
+  .kc-model{flex:none;font-size:9.5px;font-weight:600;letter-spacing:.02em;color:var(--kb-muted);background:rgba(255,255,255,.07);border-radius:5px;padding:1px 5px}
+  .kc-out{font-size:11.5px;color:var(--kb-muted);line-height:1.35}
+  .kc-foot{display:flex;flex-wrap:wrap;gap:1px 8px;font-size:10px;color:var(--kb-dim);font-variant-numeric:tabular-nums}
+  .kc-todo{border-style:dashed;border-color:rgba(254,200,75,.32);background:rgba(254,200,75,.05)}
+  .kc-doing{position:relative;border-color:rgba(47,155,255,.55);box-shadow:0 0 0 1px rgba(47,155,255,.18),0 0 16px -6px rgba(47,155,255,.7);overflow:hidden}
+  .kc-spark{position:absolute;left:0;bottom:0;height:2px;width:40%;background:linear-gradient(90deg,transparent,var(--kb-blue),transparent);animation:kc-spark 1.3s ease-in-out infinite}
+  @keyframes kc-spark{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
+  .kc-done{border-left:2px solid var(--kb-green)}
+  .kc-error{border-left-color:var(--kb-red)}
+  .kc-error .kc-out{color:#ff9c95}
+
+  /* ---- interactive HERO: macOS notch + glance bar + island ---- */
+  .hero-top{position:absolute;top:0;left:0;right:0;z-index:30;pointer-events:none}
+  .hero-glance{position:absolute;top:0;left:0;right:0;height:34px;z-index:3;pointer-events:none;cursor:pointer}
+  .hero-glance > *{pointer-events:auto}
+  /* square notch centered on the frame; the chassis (also centered) hangs from it */
+  .hero-notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:150px;height:100%;background:#000;z-index:3}
+  .glance-half{position:absolute;top:0;height:100%;display:inline-flex;align-items:center;background:#000;transition:transform .34s cubic-bezier(.22,1,.36,1),opacity .26s ease}
+  .glance-left{right:calc(50% + 71px);border-radius:0 0 0 15px;gap:8px;padding:0 10px 0 14px;transform-origin:right center}
+  .glance-right{left:calc(50% + 71px);border-radius:0 0 15px 0;gap:6px;padding:0 14px 0 11px;transform-origin:left center}
+  /* rim on the glance WINGS only — the physical notch is bare black, no glass */
+  .glance-half::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(180deg,rgba(198,217,255,.55) 0%,rgba(150,172,212,.12) 30%,rgba(255,255,255,.02) 62%,rgba(140,176,255,.3) 100%);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}
+  .glance-left::before{padding:0 0 1.3px 1.3px}
+  .glance-right::before{padding:0 1.3px 1.3px 0}
+  .glance-left.is-open{transform:translateX(18px);opacity:0}
+  .glance-right.is-open{transform:translateX(-18px);opacity:0}
+  .glance-logo{width:22px;height:22px;flex:none;border-radius:50%;background:#0d0f14;box-shadow:inset 0 0 0 1px rgba(255,255,255,.16),0 1px 3px rgba(0,0,0,.5);object-fit:cover}
+  .glance-sum{font-weight:600;font-size:12px;line-height:1;white-space:nowrap;color:rgba(255,255,255,.82)}
+  .glance-sum .work{color:#7db9ff}
+  .glance-sum .attn{color:#ffcf6b}
+  .glance-sum .sep{color:rgba(255,255,255,.42);margin:0 5px}
+  .glance-ava{width:20px;height:20px;flex:none;border-radius:50%;margin-left:-7px;box-shadow:0 0 0 2px #000}
+  .glance-ava:first-child{margin-left:0}
+  .hero-island{position:absolute;top:0;left:50%;z-index:1;transform:translateX(-50%) translateY(-10px) scale(.985);transform-origin:top center;opacity:0;pointer-events:none;transition:opacity .26s ease,transform .28s cubic-bezier(.32,.72,0,1)}
+  .hero-island.open{opacity:1;transform:translateX(-50%) translateY(0) scale(1);pointer-events:auto}
+
+  /* attachment tray above a user message (frozen attach pill) */
+  .isl-msg-tray{align-self:flex-end;max-width:80%;box-sizing:border-box;margin-bottom:3px;padding:6px 8px;border-radius:14px;background:var(--isl-surface);border:1px solid var(--isl-faint)}
+  .isl-msg-tray .att-added-stack{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+  .isl-msg-tray .att-pill{gap:7px;padding:4px 9px 4px 6px;border-radius:15px}
+  .isl-msg-tray .att-pill-ico,.isl-msg-tray .att-pill-item{width:28px;height:28px;border-radius:7px;font-size:12px}
+
+  /* blitz-ui CHOICE CARD (.isl-ask-card confirm) — ported from island.css */
+  .isl-ask-card{position:relative;isolation:isolate;overflow:hidden;box-sizing:border-box;width:min(100%,520px);padding:14px;border:1px solid rgba(150,175,220,.46);border-radius:18px;background:radial-gradient(circle at 86% 10%,rgba(46,147,255,.12),transparent 28%),linear-gradient(180deg,rgba(31,35,48,.82),rgba(12,14,21,.9));box-shadow:0 24px 48px rgba(0,0,0,.46),0 4px 12px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.07);-webkit-backdrop-filter:blur(40px) saturate(1.35);backdrop-filter:blur(40px) saturate(1.35)}
+  .isl-ask-card::before{content:"";position:absolute;inset:0 0 auto 0;z-index:0;height:34px;background:linear-gradient(180deg,rgba(255,255,255,.08),transparent);pointer-events:none}
+  .isl-ask-card>*{position:relative;z-index:1}
+  .isl-ask-prompt{color:var(--isl-text);font-size:17px;font-weight:650;line-height:21px;margin:0 0 13px;overflow-wrap:anywhere}
+  .isl-ask-options{display:flex;flex-direction:column;gap:8px}
+  .isl-ask-card.confirm .isl-ask-options{flex-flow:row wrap}
+  .isl-ask-option{min-width:0;border:1px solid rgba(255,255,255,.11);border-radius:12px;padding:9px 11px;background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.035));box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 1px 0 rgba(0,0,0,.2);color:#fff;font:inherit;text-align:left;cursor:pointer;transition:border-color .14s ease,background .14s ease,box-shadow .14s ease,transform .14s ease}
+  .isl-ask-card.confirm .isl-ask-option{flex:1 1 128px;text-align:center}
+  .isl-ask-option:hover{border-color:rgba(255,255,255,.2);background:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.052));box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 10px 20px rgba(0,0,0,.22);transform:translateY(-1px)}
+  .isl-ask-label{display:block;font-size:13px;font-weight:700;line-height:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .caption{
+    margin:16px 0 0;text-align:center;font-size:11.5px;font-weight:500;
+    font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    text-transform:uppercase;letter-spacing:.1em;
+    color:color-mix(in srgb,var(--ink) 50%,transparent);
+  }
+  .caption b{color:var(--accent);font-weight:600}
+  .caption b{color:color-mix(in srgb,var(--ink) 80%,transparent);font-weight:700}
+
+  /* ============================================================
+     FEATURE SHOWCASES
+     ============================================================ */
+  .features{display:flex;flex-direction:column;align-items:center}
+  .feature{
+    width:min(952px,94vw);min-height:540px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:34px;padding:48px 0;text-align:center;
+  }
+  .feature__title{
+    margin:0;font-weight:800;letter-spacing:-.035em;line-height:1.0;
+    font-size:clamp(30px,5.6vw,56px);text-wrap:balance;
+  }
+  .feature__title .l2{color:color-mix(in srgb,var(--ink) 70%,transparent)}
+  .feature__oneliner{
+    max-width:520px;margin:-18px 0 0;
+    font-size:clamp(14px,1.9vw,17px);font-weight:500;line-height:1.5;
+    color:color-mix(in srgb,var(--ink) 58%,transparent);text-wrap:pretty;
+  }
+
+  /* mini wallpaper card per feature */
+  .mini-card{position:relative;width:min(640px,92vw);margin:0 auto}
+  .mini-frame{
+    position:absolute;inset:0;overflow:hidden;border-radius:26px;
+    background:radial-gradient(120% 90% at 50% -8%,#14181f 0%,#0a0b0e 60%);
+    box-shadow:0 26px 70px -28px rgba(0,0,0,.72),0 0 0 1px rgba(255,255,255,.06);
+  }
+  .mini-stage{position:relative;display:flex;justify-content:center;padding:0 0 28px}
+
+  /* reveal on scroll */
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
+  .reveal.in{opacity:1;transform:none}
+  .reveal.d1{transition-delay:.08s}
+  .reveal.d2{transition-delay:.16s}
+
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    .reveal{opacity:1;transform:none;animation:none !important;transition:none !important}
+    .nh-in,.isl-rise,.isl-status .isl-dot,.isl-status .isl-lbl,.isl-chip-dot.working,
+    .isl-wf-dot,.kc-spark{animation:none !important}
+  }
+
+  /* ============================================================
+     FAQ
+     ============================================================ */
+  .faq{display:flex;flex-direction:column;align-items:center;padding:72px 24px}
+  .faq__head{
+    margin:0 0 28px;font-weight:800;letter-spacing:-.035em;
+    font-size:clamp(30px,5vw,52px);text-align:center;
+  }
+  .faq__list{width:min(720px,94vw);display:flex;flex-direction:column}
+  .faq__item{border-bottom:1px solid color-mix(in srgb,var(--ink) 10%,transparent)}
+  .faq__q{
+    width:100%;background:none;border:0;cursor:pointer;font-family:inherit;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+    padding:22px 4px;text-align:left;color:var(--ink);
+    font-size:clamp(16px,2.1vw,19px);font-weight:700;letter-spacing:-.01em;
+  }
+  .faq__q .mark{
+    flex:none;width:22px;height:22px;position:relative;
+    transition:transform .3s var(--ease);
+  }
+  .faq__q .mark::before,.faq__q .mark::after{
+    content:"";position:absolute;background:color-mix(in srgb,var(--ink) 60%,transparent);
+    border-radius:2px;
+  }
+  .faq__q .mark::before{left:4px;right:4px;top:10px;height:2px}
+  .faq__q .mark::after{top:4px;bottom:4px;left:10px;width:2px;transition:opacity .3s var(--ease)}
+  .faq__item[open] .faq__q .mark{transform:rotate(180deg)}
+  .faq__item[open] .faq__q .mark::after{opacity:0}
+  .faq__q::-webkit-details-marker{display:none}
+  .faq__a{
+    padding:0 4px 24px;max-width:620px;
+    font-size:15px;line-height:1.6;font-weight:450;
+    color:color-mix(in srgb,var(--ink) 70%,transparent);text-wrap:pretty;
+  }
+
+  /* ============================================================
+     FINAL CTA
+     ============================================================ */
+  .cta{
+    display:flex;flex-direction:column;align-items:center;
+    padding:120px 24px;gap:20px;text-align:center;
+  }
+  .cta__head{
+    margin:0;font-weight:800;letter-spacing:-.035em;line-height:1.02;
+    font-size:clamp(30px,5.4vw,56px);max-width:760px;text-wrap:balance;
+  }
+  .cta__head .l2{color:color-mix(in srgb,var(--ink) 78%,transparent)}
+  .cta__sub{
+    margin:0;font-size:17px;font-weight:500;
+    color:color-mix(in srgb,var(--ink) 64%,transparent);
+  }
+  .cta__btns{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:6px}
+  .cta__micro{margin:4px 0 0;font-size:13px;font-weight:500;
+    color:color-mix(in srgb,var(--ink) 55%,transparent)}
+
+  /* ============================================================
+     FOOTER
+     ============================================================ */
+  .footer{
+    display:flex;flex-direction:column;align-items:center;gap:14px;
+    padding:48px 24px;
+    border-top:1px solid color-mix(in srgb,var(--ink) 8%,transparent);
+  }
+  .footer .brand .word{font-size:15px}
+  .footer__meta{
+    width:min(720px,94vw);display:flex;flex-wrap:wrap;align-items:center;
+    justify-content:center;gap:8px 18px;
+    font-size:12px;font-weight:500;
+    color:color-mix(in srgb,var(--ink) 50%,transparent);text-align:center;
+  }
+  .footer__meta a{color:color-mix(in srgb,var(--ink) 55%,transparent);text-decoration:none;
+    transition:color .2s var(--ease)}
+  .footer__meta a:hover{color:var(--ink)}
+  .footer__meta .sep{opacity:.4}
+</style>
+</head>
+<body>
+
+  <!-- ============================ NAV ============================ -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a class="brand" href="#top" aria-label="BlitzOS home">
+        <img class="bolt" src="blitz-logo.png" alt="" aria-hidden="true">
+        <span class="word">BlitzOS</span>
+        <span class="chip">beta</span>
+      </a>
+      <div class="nav__right">
+        <a class="nav__link" href="#features">Features</a>
+        <a class="nav__link" href="#faq">FAQs</a>
+        <a class="btn btn--primary" href="#cta">Get BlitzOS for Mac</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ============================ HERO ============================ -->
+  <header class="hero" id="top">
+    <h1 class="h1"><span class="l1">A dynamic-island</span><br><span class="l2">agent OS for Mac.</span></h1>
+    <p class="subhead">Your agent lives in the notch. It perceives what you're doing, decides what you need, and acts for you across your real apps — you hold the veto.</p>
+    <div class="hero__btns">
+      <a class="btn btn--primary" href="#cta">Get BlitzOS for Mac</a>
+      <a class="btn btn--secondary" href="#features">See it work</a>
+    </div>
+
+    <div class="stage-wrap">
+      <div class="frame__screen">
+
+        <!-- interactive BlitzOS notch + glance bar + island -->
+        <div class="hero-top" id="heroTop">
+          <div class="hero-island" id="heroIsland" aria-label="BlitzOS island"></div>
+          <div class="hero-glance" id="heroGlance" role="button" tabindex="0" aria-label="Open the BlitzOS island">
+            <div class="glance-half glance-left" id="glanceL"></div>
+            <div class="hero-notch"></div>
+            <div class="glance-half glance-right" id="glanceR"></div>
+          </div>
+        </div>
+
+        <!-- lock screen -->
+        <div class="lock">
+          <div class="lock-top">
+            <div class="lock-date" id="lockDate">Tue, 23 Jun</div>
+            <div class="lock-time" id="lockTime">20:45</div>
+            <div class="lock-status">
+              <div class="item">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+                <div>BlitzOS · 2 flagged for you</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- wallpaper -->
+        <div class="frame">
+          <div class="frame__img frame__wall" role="img" aria-label="BlitzOS desktop"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="caption"><b>&#8997; + Enter</b> to open the island &middot; or hover the notch</p>
+  </header>
+
+  <!-- ===================== FEATURE SHOWCASES ===================== -->
+  <main class="features" id="features">
+
+    <!-- 1 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>It lives in</span><br><span class="l2">your notch.</span></h2>
+      <p class="feature__oneliner reveal d1">A quiet pill in the menu bar that unfurls into a full agent chat the moment you need it.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-frame"></div>
+        <div class="mini-stage" data-island="chat" data-w="560"></div>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>Watch it</span><br><span class="l2">work.</span></h2>
+      <p class="feature__oneliner reveal d1">The island shows real progress as your agent moves, a live status of every action in flight.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-frame"></div>
+        <div class="mini-stage" data-island="working" data-w="560"></div>
+      </div>
+    </section>
+
+    <!-- 3 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>Many agents.</span><br><span class="l2">All at once.</span></h2>
+      <p class="feature__oneliner reveal d1">Independent threads, each its own agent, working in parallel under one island.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-frame"></div>
+        <div class="mini-stage" data-island="tabs" data-w="600"></div>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>Your apps,</span><br><span class="l2">all connected.</span></h2>
+      <p class="feature__oneliner reveal d1">It automatically detects all your apps through your own browser, and lets you connect them to your agent. No extra setup.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-frame"></div>
+        <div class="mini-stage" data-island="connections" data-w="760"></div>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section class="feature">
+      <h2 class="feature__title reveal"><span>Workflows for</span><br><span class="l2">complex work.</span></h2>
+      <p class="feature__oneliner reveal d1">Big jobs fan out across many agents and track live on a kanban board, right in the island.</p>
+      <div class="mini-card reveal d2">
+        <div class="mini-frame"></div>
+        <div class="mini-stage" data-island="kanban" data-w="660"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============================ FAQ ============================ -->
+  <section class="faq" id="faq">
+    <h2 class="faq__head">Questions, answered.</h2>
+    <div class="faq__list">
+      <details class="faq__item">
+        <summary class="faq__q">What is BlitzOS?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">A macOS dynamic-island agent OS. It lives in your Mac's notch as a small bar that expands into a full chat the moment you need it. It perceives what you're doing, decides what you need, and acts for you across your real apps — the same island you see cycling through live states in the demo above, except every state is real agent work.</div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Does it need access to my accounts or API tokens?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">No tokens, no integrations to set up. BlitzOS works your real, already-logged-in apps through your own browser, exactly as you would. There's nothing to connect and no keys to paste — if you're signed in, your agent can act there.</div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Which apps does it work with?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">Any app you use in your browser while logged in — Gmail, your calendar, and the rest of your real, day-to-day tools. Because it drives your own logged-in sessions rather than wiring up per-app integrations, you're not limited to a fixed list. It also runs persistent terminals for builds, tests, and long-running jobs that survive a restart.</div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Is it safe? Do I stay in control?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">You hold the veto. BlitzOS acts proactively, but any action that reaches outward is one tap from your approval — nothing leaves your hands without it. The island keeps work visible in the notch (a live status like "staged 3 drafts in Gmail, reading your calendar") so you always see what it's doing before you approve.</div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">What can it actually do for me?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">Run several independent agents at once, each its own chat thread working in parallel. Fan a hard job across many agents and track each piece on a live kanban board. Keep real terminals running for builds and tests. And anything you decide to keep becomes a live web app with its own URL that redeploys on every save — so the work ships, not just sits in a chat.</div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">How do I get it, and what does it cost?<span class="mark" aria-hidden="true"></span></summary>
+        <div class="faq__a">BlitzOS is a native Mac app, currently in beta — grab it from "Get BlitzOS for Mac" above. We haven't published pricing yet; join the beta now and you'll be the first to know when plans go live.</div>
+      </details>
+    </div>
+  </section>
+
+  <!-- ============================ CTA ============================ -->
+  <section class="cta" id="cta">
+    <h2 class="cta__head"><span>Your agent's already</span><br><span class="l2">in the notch.</span></h2>
+    <p class="cta__sub">It works while you don't. You hold the veto.</p>
+    <div class="cta__btns">
+      <a class="btn btn--primary" href="#top">Get BlitzOS for Mac</a>
+      <a class="btn btn--secondary" href="#top">See it work</a>
+    </div>
+    <p class="cta__micro">Native Mac app · in beta · no tokens, no integrations.</p>
+  </section>
+
+  <!-- ========================== FOOTER ========================== -->
+  <footer class="footer">
+    <a class="brand" href="#top" aria-label="BlitzOS">
+      <img class="bolt" src="blitz-logo.png" alt="" aria-hidden="true">
+      <span class="word">BlitzOS</span>
+    </a>
+    <div class="footer__meta">
+      <span>A dynamic-island agent OS for Mac.</span>
+      <span class="sep">·</span>
+      <a href="#features">Features</a>
+      <a href="#faq">FAQs</a>
+      <a href="#cta">Get for Mac</a>
+      <span class="sep">·</span>
+      <span>© 2026 BlitzOS · in beta</span>
+    </div>
+  </footer>
+
+<script>
+"use strict";
+
+/* ===============================================================
+   THE BLITZOS ISLAND — real V1 chrome, reproduced for the site.
+   One chassis (.nh-chassis) + interior builders (chat / working /
+   tabs / connections / kanban), each zoomed to fit its card.
+   Ported from notch.css / island.css / wf.css / attach.css +
+   agentVisuals.ts (the agent gradients) + browserIcons.tsx (icons).
+   =============================================================== */
+var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function el(tag, cls, html){ var d=document.createElement(tag); if(cls)d.className=cls; if(html!=null)d.innerHTML=html; return d; }
+function later(arr, fn, ms){ var t=setTimeout(fn, ms); arr.push(t); return t; }
+function clearAll(arr){ arr.forEach(clearTimeout); arr.length=0; }
+
+/* loops idle off-screen */
+function onVisible(host, enter, leave){
+  if(!('IntersectionObserver' in window)){ enter(); return; }
+  var io=new IntersectionObserver(function(es){ es.forEach(function(e){ e.isIntersecting?enter():(leave&&leave()); }); }, {threshold:.2});
+  io.observe(host);
+}
+
+/* agentGradient — verbatim from agentVisuals.ts */
+function agentGradient(id){
+  id=String(id);
+  if(id==='0') return 'radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.4) 0%, transparent 42%), linear-gradient(150deg, #2a93ff 0%, #0066d6 40%, #08203c 72%, #05060a 100%)';
+  var n=0; for(var i=0;i<id.length;i++) n=(n*33+id.charCodeAt(i))>>>0;
+  var base=/^\d+$/.test(id)?parseInt(id,10):n; var h=(base*137.508)%360;
+  return 'radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.42) 0%, transparent 40%), linear-gradient(145deg, hsl('+h+' 85% 60%), hsl('+((h+50)%360)+' 80% 56%) 45%, hsl('+((h+110)%360)+' 82% 60%))';
+}
+
+var PEN='<svg class="isl-pen" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
+var CHROME='<svg viewBox="0 0 256 256" aria-hidden="true"><circle cx="128" cy="128" r="64" fill="#fff"/><path fill="#34a853" d="M96 183.4A63.7 63.7 0 0 1 72.6 160L17.2 64A128 128 0 0 0 128 256l55.4-96A64 64 0 0 1 96 183.4Z"/><path fill="#fbbc04" d="M192 128a63.7 63.7 0 0 1-8.6 32L128 256A128 128 0 0 0 238.9 64h-111a64 64 0 0 1 64 64Z"/><circle cx="128" cy="128" r="52" fill="#1a73e8"/><path fill="#ea4335" d="M96 72.6a63.7 63.7 0 0 1 32-8.6h110.8a128 128 0 0 0-221.7 0l55.5 96A64 64 0 0 1 96 72.6Z"/></svg>';
+var SAFARI='<svg viewBox="0 0 256 256" aria-hidden="true"><circle cx="128" cy="128" r="120" fill="#1d8ff0"/><circle cx="128" cy="128" r="106" fill="none" stroke="#fff" stroke-opacity="0.5" stroke-width="5"/><path fill="#fff" d="M196 60 112 112 144 144Z"/><path fill="#ff3b30" d="M60 196 112 112 144 144Z"/><circle cx="128" cy="128" r="8" fill="#fff"/></svg>';
+function favTile(letter, bg){ return '<span class="att-favicon" style="background:'+bg+'">'+letter+'</span>'; }
+
+/* the chassis + a steer/composer bar (static, for realism) */
+function chassis(width){
+  var c=el('div','nh-chassis'); c.style.setProperty('--bz-w',(width||620)+'px');
+  var isl=el('div','nh-island'); c.appendChild(isl);
+  return {chassis:c, island:isl};
+}
+function composer(ph){
+  return '<div class="isl-composer" style="display:flex;align-items:center;gap:2px;margin-top:14px;min-height:38px;padding:3px 5px;border:1px solid rgba(255,255,255,.22);border-radius:19px">'+
+    '<span style="width:30px;height:30px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--isl-muted);font-size:19px;font-weight:300">+</span>'+
+    '<span style="flex:1;color:var(--isl-muted);font-size:16px;padding:0 4px">'+(ph||'Message Blitz')+'</span>'+
+    '<span style="width:28px;height:28px;flex:none;border-radius:50%;background:var(--isl-accent);color:#fff;font-size:17px;display:inline-flex;align-items:center;justify-content:center">&#8593;</span>'+
+  '</div>';
+}
+
+/* mount: stage > scale(zoom) > chassis; responsive zoom from host width */
+function mount(host, c, chassisW, frac, maxZ){
+  var stage=el('div','bz-stage'); var scale=el('div','bz-scale'); scale.appendChild(c); stage.appendChild(scale); host.appendChild(stage);
+  function apply(){ var w=host.clientWidth||host.getBoundingClientRect().width; if(!w) return; var z=Math.min(maxZ||1,(w*(frac||0.96))/chassisW); scale.style.setProperty('--bz-z', z); scale.style.zoom=z; }
+  apply(); window.addEventListener('resize', apply); setTimeout(apply,60);
+  return stage;
+}
+
+/* ---------------- CHAT (card 1 "it lives in your notch" + HERO) ---------------- */
+function buildChat(host, opts){
+  opts=opts||{};
+  var W=opts.w||560;
+  var b=chassis(W); var feed=el('div','isl-feed'); b.island.appendChild(feed);
+  b.island.insertAdjacentHTML('beforeend', composer('Message Blitz'));
+  var lockEl=document.querySelector('.lock-status .item div');
+  mount(host, b.chassis, W, opts.frac||0.94, opts.maxZ||1);
+
+  var TASKS=[
+    {user:'Summarize my unread', work:'Reading 42 unread', reply:'Done. <b>2 need a reply today</b>: Maya (the Q3 deck) and Finance (the invoice). The rest are newsletters and CI noise. Want me to draft both replies?', lock:'BlitzOS · 2 flagged for you'},
+    {user:'Hold 10:30 with Maya', work:'Checking your calendar', reply:'Booked <b>10:30 with Maya</b> and dropped a 3-bullet agenda from your last thread into the invite. Reminder set for 10:15.', lock:'BlitzOS · agenda ready'},
+    {user:'Draft the Q3 update', work:'Pulling the Q3 thread', reply:'Drafted the <b>Q3 update</b> — 4 action items, owners tagged, saved to Notes. It is staged in Gmail, ready for your one-tap send.', lock:'BlitzOS · 1 draft waiting'}
+  ];
+  var i=0, t=[];
+  function step(html, cls){ var m=el('div','isl-msg '+cls+' isl-rise', html); feed.appendChild(m); return m; }
+  function status(){ var s=el('div','isl-status isl-rise','<span class="isl-dot"></span><span class="isl-lbl">Working…</span>'); feed.appendChild(s); return s; }
+  function run(){
+    clearAll(t); feed.innerHTML='';
+    var task=TASKS[i]; if(lockEl) lockEl.textContent=task.lock;
+    later(t, function(){ step(task.user,'user'); }, 250);
+    var st;
+    later(t, function(){ st=status(); }, 1100);
+    later(t, function(){ if(st) st.remove(); var rep=step(task.reply,'agent'); }, 3200);
+    later(t, function(){ i=(i+1)%TASKS.length; run(); }, 6800);
+  }
+  onVisible(host, function(){ if(!t.running){ t.running=true; run(); } }, function(){ t.running=false; clearAll(t); });
+}
+
+/* ---------------- WORKING (card 2 "watch it work") ---------------- */
+function buildWorking(host, opts){
+  opts=opts||{}; var W=opts.w||560;
+  var b=chassis(W); mount(host, b.chassis, W, 0.94, 1);
+  var feed=el('div','isl-feed'); b.island.appendChild(feed);
+  var STEPS=[
+    {l:'Grep  unread across Gmail',ms:'0.4s'},
+    {l:'Read  42 messages',ms:'2.1s'},
+    {l:'Group by sender + thread',ms:'1.3s'},
+    {l:'Draft  2 replies needing you',ms:'3.7s'},
+    {l:'Flag  Maya + Finance as urgent',ms:'0.6s'}
+  ];
+  var t=[];
+  function run(){
+    clearAll(t); feed.innerHTML='';
+    feed.appendChild(el('div','isl-msg user isl-rise','Summarize my unread'));
+    var st=el('div','isl-status isl-rise','<span class="isl-dot"></span><span class="isl-lbl">Working…</span>'); feed.appendChild(st);
+    var steps=el('div','isl-steps'); feed.appendChild(steps);
+    STEPS.forEach(function(s, k){
+      later(t, function(){
+        var rows=steps.querySelectorAll('.isl-step'); rows.forEach(function(r){ r.classList.remove('latest'); });
+        var row=el('div','isl-step latest','<span>'+s.l+'</span><span class="ms">'+s.ms+'</span>'); steps.appendChild(row);
+      }, 700 + k*1100);
+    });
+    later(t, function(){ st.className='isl-status done'; st.innerHTML='<span class="isl-dot"></span><span class="isl-lbl">Done · 2 flagged for you</span>'; }, 700 + STEPS.length*1100 + 200);
+    later(t, run, 700 + STEPS.length*1100 + 2600);
+  }
+  onVisible(host, function(){ if(!t.running){ t.running=true; run(); } }, function(){ t.running=false; clearAll(t); });
+}
+
+/* ---------------- TABS (card 3 "many agents") ---------------- */
+function buildTabs(host, opts){
+  opts=opts||{}; var W=opts.w||600;
+  var b=chassis(W); mount(host, b.chassis, W, 0.95, 1);
+  var AGENTS=[
+    {id:'0',name:'Blitz',q:'Triage my morning',status:'working',line:'Staging 3 drafts in Gmail…'},
+    {id:'1',name:'Inbox',q:'Clear my inbox',status:'waiting',line:'Reply to Maya? Awaiting your ok.'},
+    {id:'2',name:'Research',q:'Research our top 3 rivals',status:'working',line:'Reading 6 competitor pages…'},
+    {id:'3',name:'Deploy',q:'Ship the landing page',status:'idle',line:'Shipped · live at the new URL.'}
+  ];
+  var tabs=el('div','isl-tabs'); b.island.appendChild(tabs);
+  var body=el('div','isl-feed'); body.style.marginTop='12px'; b.island.appendChild(body);
+  b.island.insertAdjacentHTML('beforeend', composer('Steer this agent…'));
+  var active=0, t=[];
+  function dotCls(s){ return s==='working'?'isl-chip-dot working':s==='waiting'?'isl-chip-dot waiting':'isl-chip-dot'; }
+  function render(){
+    tabs.innerHTML='';
+    var pen=el('button','isl-chip isl-chip-new', PEN); tabs.appendChild(pen);
+    AGENTS.forEach(function(a, k){
+      var chip=el('button','isl-chip isl-chip-agent'+(k===active?' active':''));
+      var av=el('span','isl-chip-album'); av.style.background=agentGradient(a.id); chip.appendChild(av);
+      chip.appendChild(el('span','isl-chip-label', a.name));
+      chip.appendChild(el('span', dotCls(a.status)));
+      tabs.appendChild(chip);
+    });
+    var a=AGENTS[active]; body.innerHTML='';
+    body.appendChild(el('div','isl-msg user isl-rise', a.q));
+    if(a.status==='working'){ body.appendChild(el('div','isl-status isl-rise','<span class="isl-dot"></span><span class="isl-lbl">'+a.line+'</span>')); }
+    else if(a.status==='waiting'){ body.insertAdjacentHTML('beforeend','<div class="isl-rise" style="align-self:stretch">'+choiceCard('Reply to Maya?',['Approve','Hold'])+'</div>'); }
+    else { body.appendChild(el('div','isl-msg agent isl-rise', a.line)); }
+  }
+  function run(){ clearAll(t); render(); later(t, function(){ active=(active+1)%AGENTS.length; run(); }, 2600); }
+  onVisible(host, function(){ if(!t.running){ t.running=true; run(); } }, function(){ t.running=false; clearAll(t); });
+}
+
+/* ---------------- CONNECTIONS (card 4 "your apps, all connected") ---------------- */
+function buildConnections(host, opts){
+  opts=opts||{}; var W=opts.w||760;
+  var b=chassis(W); mount(host, b.chassis, W, 0.98, 1);
+  var att=el('div','att'); b.island.appendChild(att);
+  var boxes=el('div','att-boxes'); att.appendChild(boxes);
+  var drop=el('div','att-drop'); var apps=el('div','att-apps'); boxes.appendChild(drop); boxes.appendChild(apps);
+  var TABS=[
+    {t:'Inbox (3) – you@gmail.com – Gmail', fav:favTile('M','#ea4335'), on:true},
+    {t:'June – Google Calendar', fav:favTile('31','#1a73e8'), on:true},
+    {t:'BLITZ-217 – Linear', fav:favTile('L','#5e6ad2'), on:false},
+    {t:'Roadmap – Notion', fav:favTile('N','#111'), on:false}
+  ];
+  var t=[];
+  function connCount(){ return TABS.filter(function(x){return x.on;}).length; }
+  function render(){
+    apps.innerHTML='';
+    var grp=el('div');
+    var head=el('div','att-app'+(connCount()===TABS.length?' connected':''));
+    head.innerHTML='<span class="att-twisty">▾</span><span class="att-favicon" style="background:transparent">'+CHROME+'</span><span class="att-app-name">Chrome</span><span class="att-app-conn">'+connCount()+'</span><span class="att-app-count">'+TABS.length+'</span>';
+    grp.appendChild(head);
+    var list=el('div','att-tabs');
+    TABS.forEach(function(x){ var r=el('div','att-tab'+(x.on?' connected':'')); r.innerHTML=x.fav+'<span class="att-tab-title">'+x.t+'</span>'; list.appendChild(r); });
+    grp.appendChild(list); apps.appendChild(grp);
+    var saf=el('div','att-app'); saf.style.marginTop='4px';
+    saf.innerHTML='<span class="att-twisty">▸</span><span class="att-favicon" style="background:transparent">'+SAFARI+'</span><span class="att-app-name">Safari</span><span class="att-app-count">3</span>';
+    apps.appendChild(saf);
+    // left tray pill
+    drop.className='att-drop'; drop.innerHTML='';
+    var pill=el('div','att-pill');
+    pill.innerHTML='<span class="att-pill-ico" style="background:transparent">'+CHROME+'</span><span class="att-pill-div"></span>';
+    var items=el('div','att-pill-items');
+    TABS.filter(function(x){return x.on;}).forEach(function(x){ var it=el('span','att-pill-item'); it.innerHTML=x.fav; items.appendChild(it); });
+    pill.appendChild(items); drop.appendChild(pill);
+    drop.insertAdjacentHTML('beforeend','<div style="color:var(--isl-dim);font-size:12px;margin-top:auto;text-align:center">Connected · the agent acts here</div>');
+  }
+  function run(){
+    clearAll(t); TABS.forEach(function(x,k){ x.on = k<2; }); render();
+    later(t, function(){ TABS[2].on=true; render(); }, 2200);
+    later(t, function(){ TABS[3].on=true; render(); }, 4000);
+    later(t, run, 7000);
+  }
+  onVisible(host, function(){ if(!t.running){ t.running=true; run(); } }, function(){ t.running=false; clearAll(t); });
+}
+
+/* ---------------- KANBAN (card 5 "workflows for complex work") ---------------- */
+function buildKanban(host, opts){
+  opts=opts||{}; var W=opts.w||660;
+  var b=chassis(W); mount(host, b.chassis, W, 0.99, 1);
+  var board=el('div','isl-wf-board'); b.island.appendChild(board);
+  var head=el('button','isl-wf-board-head'); board.appendChild(head);
+  var bodyWrap=el('div','isl-wf-board-body'); var grid=el('div','kb'); var kbg=el('div','kb-grid'); grid.appendChild(kbg); bodyWrap.appendChild(grid); board.appendChild(bodyWrap);
+
+  // phases + leaves (the lab/workflow-glass sample run)
+  var PH=[
+    {name:'Scan', nodes:[{label:'scan:repo',model:'haiku',out:'3 files changed · 412 LOC',ms:'4.2s',tok:'1.1k'}]},
+    {name:'Review', nodes:[
+      {label:'review:bugs',model:'opus',out:'2 real bugs found',ms:'12.1s',tok:'8.4k'},
+      {label:'review:perf',model:'sonnet',out:'no hot paths touched',ms:'9.3s',tok:'6.1k'},
+      {label:'review:security',model:'opus'},
+      {label:'review:style'}
+    ]},
+    {name:'Verify', nodes:[{label:'verify:bug#1'},{label:'verify:bug#2'}]}
+  ];
+  // per-cycle progress: how many leaves (flattened) are done / doing
+  var flat=[]; PH.forEach(function(p,pi){ p.nodes.forEach(function(n,ni){ flat.push({pi:pi,ni:ni,n:n}); }); });
+  var t=[];
+  function head_set(state, stats){
+    var dot='<span class="isl-wf-dot"></span>';
+    var label = state==='done'?'workflow done':state==='fail'?'workflow failed':'workflow running';
+    board.className='isl-wf-board'+(state==='done'?' isl-wf-done':state==='fail'?' isl-wf-fail':'');
+    head.innerHTML='<span class="isl-wf-caret">▾</span>'+dot+'<span class="isl-wf-status">'+label+'</span><span class="isl-wf-stats">'+stats+'</span>';
+  }
+  function cardFor(n, status){
+    if(status==='todo'){ var c=el('div','kc kc-todo'); c.innerHTML='<div class="kc-label-row"><span class="kc-label">'+n.label+'</span>'+(n.model?'<span class="kc-model">'+n.model+'</span>':'')+'</div>'; return c; }
+    if(status==='doing'){ var d=el('div','kc kc-doing'); d.innerHTML='<div class="kc-label-row"><span class="kc-label">'+n.label+'</span>'+(n.model?'<span class="kc-model">'+n.model+'</span>':'')+'</div><i class="kc-spark"></i>'; return d; }
+    var e=el('div','kc kc-done'); e.innerHTML='<div class="kc-label-row"><span class="kc-label">'+n.label+'</span>'+(n.model?'<span class="kc-model">'+n.model+'</span>':'')+'</div>'+(n.out?'<div class="kc-out">'+n.out+'</div>':'')+'<div class="kc-foot"><span>'+(n.ms||'')+'</span><span>'+(n.tok?n.tok+' tok':'')+'</span></div>'; return e;
+  }
+  // statusOf: index in flat -> 'done' if < doneN, 'doing' if == doneN (and has output capability), else 'todo'
+  function render(doneN, doingN){
+    kbg.innerHTML='';
+    kbg.appendChild(el('div','kb-corner'));
+    kbg.appendChild(el('div','kb-colh kb-h-todo','To do'));
+    kbg.appendChild(el('div','kb-colh kb-h-doing','Doing'));
+    kbg.appendChild(el('div','kb-colh kb-h-done','Done'));
+    var idx=0;
+    PH.forEach(function(p){
+      var rh=el('div','kb-rowh','<div class="kb-rowh-name">'+p.name+'</div><div class="kb-rowh-n">'+p.nodes.length+' agents</div>');
+      var cTodo=el('div','kb-cell'), cDoing=el('div','kb-cell'), cDone=el('div','kb-cell');
+      p.nodes.forEach(function(n){
+        var gi=idx++; var status = gi<doneN?'done':(gi<doneN+doingN?'doing':'todo');
+        if(status==='done') cDone.appendChild(cardFor(n,'done'));
+        else if(status==='doing') cDoing.appendChild(cardFor(n,'doing'));
+        else cTodo.appendChild(cardFor(n,'todo'));
+      });
+      kbg.appendChild(rh); kbg.appendChild(cTodo); kbg.appendChild(cDoing); kbg.appendChild(cDone);
+    });
+  }
+  var N=flat.length;
+  function run(){
+    clearAll(t);
+    var done=0;
+    head_set('running','running…'); render(0, Math.min(2,N));
+    function tickStep(){
+      done++;
+      if(done<=N){
+        var doing = Math.min(2, N-done);
+        head_set('running', done+' of '+N+' agents'); render(done, doing);
+        later(t, tickStep, 1500);
+      } else {
+        head_set('done','28.4s · 6 agents · 24.1k tok'); render(N, 0);
+        later(t, run, 4200);
+      }
+    }
+    later(t, tickStep, 1700);
+  }
+  onVisible(host, function(){ if(!t.running){ t.running=true; run(); } }, function(){ t.running=false; clearAll(t); });
+}
+
+/* ---------------- boot + clock ---------------- */
+/* a frozen attach-tray snapshot above a user message: a Chrome pill with the Gmail favicon tile */
+function gmailTray(){
+  return '<div class="isl-msg-tray"><div class="att-added-stack"><div class="att-pill">'+
+    '<span class="att-pill-ico" style="background:transparent">'+CHROME+'</span>'+
+    '<span class="att-pill-div"></span>'+
+    '<span class="att-pill-items"><span class="att-pill-item" style="background:#ea4335">M</span></span>'+
+  '</div></div></div>';
+}
+/* the blitz-ui choice card (confirm layout) */
+function choiceCard(prompt, options){
+  var btns=options.map(function(o){ return '<button type="button" class="isl-ask-option"><span class="isl-ask-label">'+o+'</span></button>'; }).join('');
+  return '<div class="isl-ask-card confirm" role="group" aria-label="'+prompt+'"><div class="isl-ask-prompt">'+prompt+'</div><div class="isl-ask-options">'+btns+'</div></div>';
+}
+/* the interactive hero: macOS notch + glance bar that opens the island on hover / Alt+Enter (mirrors App.tsx) */
+function initHero(){
+  var top=document.getElementById('heroTop'); if(!top) return;
+  var islandHost=document.getElementById('heroIsland');
+  var glance=document.getElementById('heroGlance');
+  var gl=document.getElementById('glanceL'), gr=document.getElementById('glanceR');
+  gl.innerHTML='<img class="glance-logo" src="blitz-logo.png" alt=""><span class="glance-sum"><span class="work">1 working</span></span>';
+  var av=el('span','glance-ava'); av.style.background=agentGradient('0'); gr.appendChild(av);
+  var W=560;
+  var b=chassis(W); var scale=el('div','bz-scale'); scale.appendChild(b.chassis); islandHost.appendChild(scale);
+  function fit(){ var fw=top.clientWidth||top.getBoundingClientRect().width; if(!fw) return; var z=Math.min(1,(fw*0.6)/W); scale.style.zoom=z; scale.style.setProperty('--bz-z',z); }
+  fit(); window.addEventListener('resize',fit); setTimeout(fit,60);
+  var feed=el('div','isl-feed'); b.island.appendChild(feed);
+  b.island.insertAdjacentHTML('beforeend', composer('Message Blitz'));
+  var lockEl=document.querySelector('.lock-status .item div');
+  var state='closed', pinned=false, over=false, ct=0, played=false, pt=[];
+  function play(){
+    if(played) return; played=true; clearAll(pt); feed.innerHTML='';
+    later(pt,function(){ feed.insertAdjacentHTML('beforeend', gmailTray()); feed.appendChild(el('div','isl-msg user isl-rise','summarize my unread inbox')); },220);
+    var st;
+    later(pt,function(){ st=el('div','isl-status isl-rise','<span class="isl-dot"></span><span class="isl-lbl">Working…</span>'); feed.appendChild(st); },1200);
+    later(pt,function(){ if(st) st.remove(); feed.appendChild(el('div','isl-msg agent isl-rise','Done. <b>2 need a reply today</b>: Maya (the Q3 deck) and Finance (the invoice). The rest are newsletters and CI noise. Want me to draft both replies?')); if(lockEl) lockEl.textContent='BlitzOS · 2 flagged for you'; },3000);
+  }
+  function open(){ if(state==='open') return; state='open'; gl.classList.add('is-open'); gr.classList.add('is-open'); islandHost.classList.add('open'); fit(); play(); }
+  function close(){ if(state==='closed') return; state='closed'; gl.classList.remove('is-open'); gr.classList.remove('is-open'); islandHost.classList.remove('open'); }
+  function enter(){ over=true; clearTimeout(ct); open(); }
+  function leave(){ over=false; clearTimeout(ct); ct=window.setTimeout(function(){ if(!over && !pinned) close(); },140); }
+  var notch=top.querySelector('.hero-notch');
+  [gl,gr,notch,islandHost].forEach(function(e){ if(!e) return; e.addEventListener('mouseenter',enter); e.addEventListener('mouseleave',leave); });
+  [gl,gr,notch].forEach(function(e){ if(!e) return; e.addEventListener('click',function(){ pinned=true; open(); }); });
+  document.addEventListener('keydown',function(e){
+    if(e.altKey && (e.key==='Enter'||e.key==='Return')){ e.preventDefault(); if(state==='open'){ pinned=false; close(); } else { pinned=true; open(); } }
+    else if(e.key==='Escape' && state==='open'){ pinned=false; close(); }
+  });
+}
+
+var BUILD={ chat:buildChat, working:buildWorking, tabs:buildTabs, connections:buildConnections, kanban:buildKanban };
+(function(){
+  var hosts=document.querySelectorAll('[data-island]');
+  for(var i=0;i<hosts.length;i++){
+    var kind=hosts[i].getAttribute('data-island'); var fn=BUILD[kind];
+    var w=parseInt(hosts[i].getAttribute('data-w')||'0',10);
+    if(fn) fn(hosts[i], w?{w:w}:undefined);
+  }
+  initHero();
+})();
+(function(){
+  function pad(n){ return n<10?'0'+n:''+n; }
+  var DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function tick(){ var d=new Date(); var tm=document.getElementById('lockTime'); if(tm) tm.textContent=pad(d.getHours())+':'+pad(d.getMinutes()); var dt=document.getElementById('lockDate'); if(dt) dt.textContent=DAYS[d.getDay()]+', '+d.getDate()+' '+MONTHS[d.getMonth()]; }
+  tick(); setInterval(tick, 1000);
+})();
+
+/* reveal-on-scroll */
+(function(){
+  var els = document.querySelectorAll('.reveal');
+  if (reduce || !('IntersectionObserver' in window)){
+    els.forEach(function(e){ e.classList.add('in'); }); return;
+  }
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, {threshold:.18});
+  els.forEach(function(e){ io.observe(e); });
+})();
+
+
+</script>
+</body>
+</html>
