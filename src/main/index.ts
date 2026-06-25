@@ -332,22 +332,46 @@ const notchGated =
 // This menu keeps every standard role but wires that one item to the pair toggle. The NATIVE traffic
 // lights are hidden (sandwich.ts) and the renderer draws its own (App.tsx); their green light drives
 // this same pair fullscreen via os:shell-fullscreen (handled below), so the button is live now.
+// Ask the island to show Settings: open the island (App pins it) + navigate to the settings view, restoring the
+// chat tab + the half-typed draft on exit (renderer side). The menu is only reachable while BlitzOS is frontmost,
+// so no focus juggling is needed here.
+function showIslandSettings(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('os:notch-show-settings')
+}
+
 function installAppMenu(): void {
   const isMac = process.platform === 'darwin'
+  // The macOS App menu, built MANUALLY (not role:'appMenu') so we can slot in the standard "Settings… ⌘," item
+  // between About and Services. macOS forces the first menu's title to the bundle name regardless of `label`
+  // (CFBundleName, patched to 'BlitzOS' by scripts/rebrand-dev-electron.mjs in dev / productName when packaged),
+  // so the bold app-menu title still reads 'BlitzOS'; the role items below read 'About BlitzOS' / 'Quit BlitzOS'.
+  const appMenu: MenuItemConstructorOptions = {
+    label: app.name,
+    submenu: [
+      { role: 'about' },
+      { type: 'separator' },
+      { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => showIslandSettings() },
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit' }
+    ]
+  }
   const template: MenuItemConstructorOptions[] = [
-    // role:'appMenu' titles the app menu from app.name (set to 'BlitzOS' via app.setName at module
-    // load) so the inner items read 'About BlitzOS' / 'Quit BlitzOS'. The OS-level bold app-menu title
-    // + the ⌘Tab App Switcher read the BUNDLE name, not app.name (Electron docs: setName 'does not
-    // affect the name that the OS uses'), so in dev scripts/rebrand-dev-electron.mjs (predev) patches the
-    // prebuilt Electron.app's CFBundleName/CFBundleDisplayName to 'BlitzOS'. Only the executable process
-    // name (Activity Monitor / ps) still reads 'Electron' in dev — the Mach-O isn't renamed. Packaged
-    // builds brand everything via productName (electron-builder.yml).
-    ...(isMac ? ([{ role: 'appMenu' }] as MenuItemConstructorOptions[]) : []),
+    ...(isMac ? [appMenu] : []),
     { role: 'fileMenu' },
     { role: 'editMenu' },
     {
       label: 'View',
       submenu: [
+        // On non-mac there's no App menu, so Settings lives here instead (with the ⌘,/Ctrl+, accelerator).
+        ...(!isMac
+          ? ([{ label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => showIslandSettings() }, { type: 'separator' }] as MenuItemConstructorOptions[])
+          : []),
         { role: 'reload' },
         { role: 'forceReload' },
         { role: 'toggleDevTools' },
@@ -781,17 +805,6 @@ app.whenReady().then(() => {
       return { ok: false, error: (e as Error)?.message || 'open failed' }
     }
   })
-  // The handoff card's tap → collapse the island first (it superimposes on every window), then bring the
-  // connection's surface to the foreground. Without the collapse the island stays on top and the user
-  // can't interact with the revealed tab.
-  ipcMain.handle('os:reveal-connection', async (_e, connId: string) => {
-    try {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('os:notch-close')
-      return await electronConnections.connectionReveal(String(connId || ''))
-    } catch (e) {
-      return { ok: false, error: (e as Error)?.message || 'reveal failed' }
-    }
-  })
   // File-manager listing for a normal folder tile (the Electron counterpart of server /api/os/dir).
   ipcMain.handle('os:dir', (_e, rel: string) => osListDir(String(rel || '')))
   // Close = delete the closed window's backing content file (so it doesn't pop back up on reconcile).
@@ -839,6 +852,21 @@ app.whenReady().then(() => {
       return r
     } catch (e) { return { ok: false, error: (e as Error)?.message } }
   })
+  // Native right-click menu for an agent chat tab (Rename / Archive). The renderer awaits the chosen action and
+  // dispatches it (rename → inline edit, archive → osArchiveAgent). Archive is omitted for the primary agent '0'.
+  // popup() with no x/y anchors at the cursor (standard macOS); the callback resolves on dismiss → resolve(null).
+  ipcMain.handle('os:agent-tab-menu', (e, p: { isPrimary?: boolean }) =>
+    new Promise<'rename' | 'archive' | null>((resolve) => {
+      try {
+        let chosen: 'rename' | 'archive' | null = null
+        const items: MenuItemConstructorOptions[] = [{ label: 'Rename', click: () => { chosen = 'rename' } }]
+        if (!p?.isPrimary) items.push({ label: 'Archive', click: () => { chosen = 'archive' } })
+        const win = BrowserWindow.fromWebContents(e.sender) ?? mainWindow ?? undefined
+        Menu.buildFromTemplate(items).popup({ window: win, callback: () => resolve(chosen) })
+      } catch {
+        resolve(null)
+      }
+    }))
   // The orchestrators (dynamic-workflows) toggle: flip the durable per-agent flag + wake it live (delivery B).
   ipcMain.handle('os:agent-orchestrators', (_e, p: { id: string; on?: boolean }) => { try { return osSetOrchestrators(String(p?.id), p?.on === undefined ? true : !!p.on) } catch (e) { return { ok: false, error: (e as Error)?.message } } })
   // One-shot snapshot for the dynamic island on open: the session roster + transcripts + status. The island

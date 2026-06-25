@@ -78,7 +78,8 @@ export function IslandSettings({
   onSimulateStatus,
   archivedSessions,
   onRestoreAgent,
-  onDeleteAgent
+  onDeleteAgent,
+  onClose
 }: {
   menuBarH: number
   workflowAlwaysShow: boolean
@@ -90,6 +91,7 @@ export function IslandSettings({
   archivedSessions: IslandSession[]
   onRestoreAgent: (id: string) => void
   onDeleteAgent: (id: string) => void
+  onClose: () => void // exit Settings → back to the chat tab the user was on
 }): JSX.Element {
   const top = Math.max(28, menuBarH) + 8
   const [archivedOpen, setArchivedOpen] = useState(false)
@@ -148,6 +150,11 @@ export function IslandSettings({
     <div className="nh-island isl-settings" style={{ paddingTop: top }}>
       <div className="isl-settings-head">
         <span className="isl-settings-title">Settings</span>
+        <button type="button" className="isl-settings-close" onClick={onClose} title="Close settings" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+            <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+          </svg>
+        </button>
       </div>
       <div className="isl-settings-list">
         <div className="isl-setting-row">

@@ -25,8 +25,6 @@ const AGENT_NAME_MAX = 24
 
 // A "+" glyph for the new-chat button (spawns + enters a fresh agent). The attach "+" lives in the composer.
 const PLUS_PATH = 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z'
-const ARCHIVE_PATH =
-  'M4 7h16M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 11h6M5 3h14a1 1 0 0 1 1 1v3H4V4a1 1 0 0 1 1-1Z'
 
 // Raw host status → status symbol: warming/reconnecting pulses blue, working spins, everything else is quiet.
 const dotStatus = (s: string): string =>
@@ -79,6 +77,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     activeTerminal,
     onArchiveAgent,
     onRenameAgent,
+    onHoldOpen,
     alwaysShowWorkflow
   } = props
   // In-chat workflow boards are durable now: each run is event-sourced on disk (index.json + events.jsonl +
@@ -429,6 +428,18 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     setEditingName(title.slice(0, AGENT_NAME_MAX))
     setRenameBusy(false)
   }
+  // Right-click an agent tab → the native macOS menu (Rename / Archive). Blitz '0' has no menu (can't be
+  // renamed/archived). Hold the island open across the menu's lifecycle so dismissing it can't retract the island.
+  const openTabMenu = (sessionId: string, title: string, tabIndex: number): void => {
+    if (sessionId === '0') return
+    onSelectPage(tabIndex + 1) // act on the tab you right-clicked
+    onHoldOpen?.()
+    void window.agentOS?.agentTabMenu?.({ isPrimary: false }).then((action) => {
+      onHoldOpen?.()
+      if (action === 'rename') startRename(sessionId, title)
+      else if (action === 'archive') onArchiveAgent(sessionId)
+    })
+  }
   const cancelRename = (skipBlur = false): void => {
     skipRenameBlurRef.current = skipBlur
     committingRenameRef.current = null
@@ -607,11 +618,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
             onContextMenu={(e) => {
               e.preventDefault()
               e.stopPropagation()
-              if (s.id === '0') return
-              onSelectPage(i + 1)
-              startRename(s.id, s.title)
+              openTabMenu(s.id, s.title, i)
             }}
-            title={s.id === '0' ? 'Blitz' : 'Right-click to rename'}
+            title={s.id === '0' ? 'Blitz' : 'Right-click for options'}
           >
             <span className="isl-chip-album" style={{ background: agentGradient(s.id) }} aria-hidden />
             <span className="isl-chip-label">{s.title}</span>
@@ -818,8 +827,10 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       {!openApp && (
         // The active agent's chat (Blitz '0' or a peer): real messages + inline activity details — KEPT in attach mode.
         <>
-          <div className="isl-agent-meta">
-            {debugTerminalEnabled && activeId && (
+          {/* Rename + Archive moved to the tab's native right-click menu (openTabMenu). This row now holds ONLY the
+              debug Terminal button, so it renders solely when that debug flag is on — no empty gap for normal users. */}
+          {debugTerminalEnabled && activeId && (
+            <div className="isl-agent-meta">
               <button
                 type="button"
                 className="isl-termbtn"
@@ -834,23 +845,8 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                 </svg>
                 <span>Terminal</span>
               </button>
-            )}
-            {/* Blitz '0' can't be archived (intentional) — no placeholder, so its Terminal button sits in the archive slot. */}
-            {activeId && activeId !== '0' && (
-              <button
-                type="button"
-                className="isl-archive"
-                onClick={() => onArchiveAgent(activeId)}
-                title="Archive agent"
-                aria-label="Archive agent"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden focusable="false">
-                  <path d={ARCHIVE_PATH} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span>Archive</span>
-              </button>
-            )}
-          </div>
+            </div>
+          )}
           <div className="isl-feed" ref={feedRef}>
             {messages.length === 0 && runs.length === 0 ? (
               // BRAND-NEW / pre-transcript agent: there's no message bubble to anchor the inline status under yet, but

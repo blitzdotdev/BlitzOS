@@ -11,8 +11,9 @@ import './notch.css'
 import { useEffect, useRef, useState } from 'react'
 import { clearStaged } from './stagingStore'
 import { clearLiveTray, dropChat } from './sentTrayStore'
+import { onIslandViewRequest } from './islandNavStore'
+import { useDoneAgents, clearDone } from './doneStore'
 import IslandPanel from './IslandPanel'
-import IslandHome from './IslandHome'
 import IslandSettings, { type SimStatus } from './IslandSettings'
 import IslandOnboarding from './IslandOnboarding'
 import type { AgentError, IslandAppMessagePart, IslandSession, IslandMessage, IslandMilestone, IslandTerminalMeta, IslandWfRun, IslandView } from './types'
@@ -20,40 +21,11 @@ import { applyWfRun } from '../../../main/wf-run-state.mjs'
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const DEBUG_ACTIVE_TERMINAL_KEY = 'blitzos.debug.showActiveAgentTerminal'
-const DEBUG_FAKE_HOME_AGENTS_KEY = 'blitzos.debug.showFakeHomeAgents'
 const DEBUG_SIMULATE_STATUS_KEY = 'blitzos.debug.simulateStatus' // armed fake status injected on the next send (debug)
 // Real (non-debug) preference: workflow kanban boards render expanded by default instead of the collapsed pill.
 // Defaults ON (unset key reads true) so workflow always shows; the user can toggle it off in Settings.
 const WORKFLOW_ALWAYS_SHOW_KEY = 'blitzos.workflowAlwaysShow'
-const HOME_DONE_AGENTS_KEY = 'blitzos.home.doneAgents'
-const HOME_SEEN_WORKING_AGENTS_KEY = 'blitzos.home.seenWorkingAgents'
 const AGENT_NAME_MAX = 24
-const isHomeActiveStatus = (value?: string): boolean => value === 'working' || value === 'starting'
-const isHomeWorkingStatus = (value?: string): boolean => value === 'working'
-const isHomeWaitingStatus = (value?: string): boolean => value === 'waiting'
-const isHomeDoneReviewStatus = (value?: string): boolean => !!value && !isHomeActiveStatus(value) && !isHomeWaitingStatus(value) && value !== 'error'
-const FAKE_HOME_AGENTS: IslandSession[] = [
-  { id: 'fake-home-1', title: 'Research', status: 'working' },
-  { id: 'fake-home-2', title: 'Build pass', status: 'working' },
-  { id: 'fake-home-3', title: 'Review queue', status: 'idle' },
-  { id: 'fake-home-4', title: 'Browser QA', status: 'working' },
-  { id: 'fake-home-5', title: 'Docs sweep', status: 'waiting' },
-  { id: 'fake-home-6', title: 'Deploy check', status: 'working' },
-  { id: 'fake-home-7', title: 'Inbox triage', status: 'idle' },
-  { id: 'fake-home-8', title: 'Data pull', status: 'working' },
-  { id: 'fake-home-9', title: 'Long agent name test', status: 'stopped' },
-  { id: 'fake-home-10', title: 'Fix pass', status: 'working' }
-]
-const FAKE_HOME_STATUS = FAKE_HOME_AGENTS.reduce<Record<string, string>>((acc, s) => {
-  acc[s.id] = s.status
-  return acc
-}, {})
-const FAKE_HOME_DONE_IDS = FAKE_HOME_AGENTS.filter((s) => isHomeDoneReviewStatus(s.status)).map((s) => s.id)
-// peek toggle glyphs: compress (corners in → enter peek) / expand (corners out → back to chat).
-const PEEK_IN = 'M5 9h4a1 1 0 0 0 1-1V4M19 9h-4a1 1 0 0 1-1-1V4M5 15h4a1 1 0 0 1 1 1v4M19 15h-4a1 1 0 0 0-1 1v4'
-const PEEK_OUT = 'M9 4H5a1 1 0 0 0-1 1v4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4M15 20h4a1 1 0 0 0 1-1v-4'
-const SETTINGS_PATH =
-  'M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5ZM19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-.6a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 .6-1a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 .6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.18.35.39.68.6 1H20a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-.5 1Z'
 
 // The chat broadcast / snapshot shapes (subset we use). The host sends raw host statuses + role'd transcripts.
 type ChatAction = {
@@ -102,13 +74,6 @@ function readDebugActiveTerminal(): boolean {
     return false
   }
 }
-function readDebugFakeHomeAgents(): boolean {
-  try {
-    return window.localStorage.getItem(DEBUG_FAKE_HOME_AGENTS_KEY) === '1'
-  } catch {
-    return false
-  }
-}
 const SIM_STATUS_VALUES: readonly SimStatus[] = ['off', 'connection', 'usage-limit', 'server-error', 'rate-limit', 'auth', 'crash', 'reconnecting']
 function readDebugSimulateStatus(): SimStatus {
   try {
@@ -124,50 +89,6 @@ function readWorkflowAlwaysShow(): boolean {
     return v === null ? true : v === '1' // default ON: an unset preference means workflow boards always show
   } catch {
     return true
-  }
-}
-function readHomeDoneAgents(): Record<string, true> {
-  try {
-    const raw = window.sessionStorage.getItem(HOME_DONE_AGENTS_KEY)
-    const ids = JSON.parse(raw || '[]')
-    if (!Array.isArray(ids)) return {}
-    return ids.reduce<Record<string, true>>((acc, id) => {
-      if (id != null) acc[String(id)] = true
-      return acc
-    }, {})
-  } catch {
-    return {}
-  }
-}
-function writeHomeDoneAgents(value: Record<string, true>): void {
-  try {
-    const ids = Object.keys(value)
-    if (!ids.length) window.sessionStorage.removeItem(HOME_DONE_AGENTS_KEY)
-    else window.sessionStorage.setItem(HOME_DONE_AGENTS_KEY, JSON.stringify(ids))
-  } catch {
-    /* session persistence is best-effort */
-  }
-}
-function readHomeSeenWorkingAgents(): Record<string, true> {
-  try {
-    const raw = window.sessionStorage.getItem(HOME_SEEN_WORKING_AGENTS_KEY)
-    const ids = JSON.parse(raw || '[]')
-    if (!Array.isArray(ids)) return {}
-    return ids.reduce<Record<string, true>>((acc, id) => {
-      if (id != null) acc[String(id)] = true
-      return acc
-    }, {})
-  } catch {
-    return {}
-  }
-}
-function writeHomeSeenWorkingAgents(value: Record<string, true>): void {
-  try {
-    const ids = Object.keys(value)
-    if (!ids.length) window.sessionStorage.removeItem(HOME_SEEN_WORKING_AGENTS_KEY)
-    else window.sessionStorage.setItem(HOME_SEEN_WORKING_AGENTS_KEY, JSON.stringify(ids))
-  } catch {
-    /* session persistence is best-effort */
   }
 }
 const cleanAgentName = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, AGENT_NAME_MAX)
@@ -205,7 +126,7 @@ export function NotchHost({
   onChassisHoverChange,
   onAttachChange,
   onStateChange,
-  initialView = 'home',
+  initialView = 'session',
   initialPage = 1,
   initialAttachOpen = false,
   initialActiveApp = null,
@@ -218,14 +139,13 @@ export function NotchHost({
   onChassisHoverChange?: (on: boolean) => void
   onAttachChange?: (open: boolean) => void // attach panel (the macOS window picker) opened/closed → App pins the island open
   onStateChange?: (view: IslandView, page: number, attachOpen: boolean, activeApp: IslandAppMessagePart | null) => void // report state so App restores it on the next open
-  initialView?: IslandView // the view to open into — RESTORED from the last open (NotchHost remounts per open)
-  initialPage?: number // the tab to open into (0 = composer, 1..N = agent) — also restored from the last open
+  initialView?: Exclude<IslandView, 'home'> // the view to open into — RESTORED from the last open (NotchHost remounts per open)
+  initialPage?: number // the tab to open into (1..N = agent) — also restored from the last open
   initialAttachOpen?: boolean // the attach panel's open/closed state — also restored from the last open
   initialActiveApp?: IslandAppMessagePart | null // generated app preview restored after hover-close/remount
   onOnboardingComplete?: () => void
   onIslandHoldOpen?: () => void // onboarding step changes resize the chassis → re-stamp App's keep-open hold
 }): JSX.Element {
-  // 'home' = the icon grid; 'settings' = debug settings; 'session' = today's agent chat/session UI; 'onboarding' = first-run setup.
   const [view, setView] = useState<IslandView>(initialView)
   const [page, setPage] = useState(initialPage) // 1..N = the agent at page-1 (Blitz '0' is page 1); page 0 retired
   const [attachOpen, setAttachOpen] = useState(initialAttachOpen)
@@ -238,27 +158,20 @@ export function NotchHost({
   const [runs, setRuns] = useState<Record<string, IslandWfRun[]>>({}) // per-agent live workflow runs (inline kanban)
   const [terminals, setTerminals] = useState<Record<string, IslandTerminalMeta>>({})
   const [debugActiveTerminal, setDebugActiveTerminal] = useState(readDebugActiveTerminal)
-  const [debugFakeHomeAgents, setDebugFakeHomeAgents] = useState(readDebugFakeHomeAgents)
   const [debugSimStatus, setDebugSimStatus] = useState<SimStatus>(readDebugSimulateStatus)
   const debugSimStatusRef = useRef<SimStatus>(debugSimStatus)
   debugSimStatusRef.current = debugSimStatus
   const [workflowAlwaysShow, setWorkflowAlwaysShow] = useState(readWorkflowAlwaysShow)
   const [activeApp, setActiveApp] = useState<IslandAppMessagePart | null>(initialActiveApp)
   const [appViewerOpen, setAppViewerOpen] = useState(Boolean(initialActiveApp))
-  const [homeDoneAgents, setHomeDoneAgentsState] = useState<Record<string, true>>(() => readHomeDoneAgents())
-  const [homeSeenWorkingAgents, setHomeSeenWorkingAgentsState] = useState<Record<string, true>>(() => readHomeSeenWorkingAgents())
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
   const pendingJump = useRef<string | null>(null) // after a spawn, jump to the new session once it appears
   const activeIdRef = useRef('') // the active chat id, mirrored for the picker arm (computed below the effect)
   const sessionsRef = useRef<IslandSession[]>([])
-  const viewRef = useRef(view)
   const statusRef = useRef<Record<string, string>>({})
-  const homeDoneAgentsRef = useRef(homeDoneAgents)
-  const homeSeenWorkingAgentsRef = useRef(homeSeenWorkingAgents)
   const nRef = useRef(0)
   nRef.current = sessions.length
   sessionsRef.current = sessions
-  viewRef.current = view
 
   // Report the island's view + tab up to App so reopening it (hover OR ⌥Space) restores where the user left off,
   // instead of resetting to Home. App stashes these and feeds them back as initialView/initialPage on the next open.
@@ -266,6 +179,11 @@ export function NotchHost({
     onStateChange?.(view, page, attachOpen, activeApp)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, page, attachOpen, activeApp])
+
+  // Imperative view nav from out-of-tree (the native menu's "Show Settings" → App → islandNavStore). When the
+  // island is already open, App can't change our `view` via the mount-only initialView, so it pushes through here.
+  // Switching to settings leaves `page` (the chat tab) untouched, so the exit X lands back on the same tab.
+  useEffect(() => onIslandViewRequest((next) => setView(next)), [])
 
   // Tell the host whenever the chassis SIZE changes (attach panel opens/closes, peek toggles) so its hover-close
   // grace timer holds the island open: a shrink otherwise pulls the chassis out from under the cursor and the
@@ -277,20 +195,12 @@ export function NotchHost({
       return
     }
     onChassisResize?.()
-  }, [appViewerOpen, attachOpen, debugActiveTerminal, debugFakeHomeAgents, peek, view]) // view/debug changes resize the chassis too — hold the island open across the transit
+  }, [appViewerOpen, attachOpen, debugActiveTerminal, peek, view]) // view/debug changes resize the chassis too — hold the island open across the transit
 
   const chooseDebugActiveTerminal = (on: boolean): void => {
     setDebugActiveTerminal(on)
     try {
       window.localStorage.setItem(DEBUG_ACTIVE_TERMINAL_KEY, on ? '1' : '0')
-    } catch {
-      /* debug-only persistence */
-    }
-  }
-  const chooseDebugFakeHomeAgents = (on: boolean): void => {
-    setDebugFakeHomeAgents(on)
-    try {
-      window.localStorage.setItem(DEBUG_FAKE_HOME_AGENTS_KEY, on ? '1' : '0')
     } catch {
       /* debug-only persistence */
     }
@@ -311,169 +221,15 @@ export function NotchHost({
       /* preference persistence is best-effort */
     }
   }
-  const updateHomeDoneAgents = (update: (prev: Record<string, true>) => Record<string, true>): void => {
-    const prev = homeDoneAgentsRef.current
-    const next = update(prev)
-    if (next === prev) return
-    homeDoneAgentsRef.current = next
-    writeHomeDoneAgents(next)
-    setHomeDoneAgentsState(next)
-  }
-  const clearHomeDoneAgents = (id?: string): void => {
-    updateHomeDoneAgents((prev) => {
-      if (!id) return {}
-      if (!prev[id]) return prev
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-  }
-  const updateHomeSeenWorkingAgents = (update: (prev: Record<string, true>) => Record<string, true>): void => {
-    const prev = homeSeenWorkingAgentsRef.current
-    const next = update(prev)
-    if (next === prev) return
-    homeSeenWorkingAgentsRef.current = next
-    writeHomeSeenWorkingAgents(next)
-    setHomeSeenWorkingAgentsState(next)
-  }
-  const clearHomeSeenWorkingAgents = (id?: string): void => {
-    updateHomeSeenWorkingAgents((prev) => {
-      if (!id) return {}
-      if (!prev[id]) return prev
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-  }
-  const clearHomeReviewAgents = (id?: string): void => {
-    clearHomeDoneAgents(id)
-    clearHomeSeenWorkingAgents(id)
-  }
-  const reconcileHomeAgentReviewState = (nextSessions = sessionsRef.current, nextStatus = statusRef.current): void => {
-    const liveStatus = nextSessions.reduce<Record<string, string>>((acc, session) => {
-      acc[session.id] = nextStatus[session.id] || session.status
-      return acc
-    }, {})
-    const liveIds = new Set(nextSessions.map((session) => session.id))
-    const seenPrev = homeSeenWorkingAgentsRef.current
-    let seenNext = seenPrev
-    const doneAdd: string[] = []
-    const doneClear: string[] = []
-
-    const ensureSeen = (id: string): void => {
-      if (seenNext[id]) return
-      if (seenNext === seenPrev) seenNext = { ...seenPrev }
-      seenNext[id] = true
-    }
-    const clearSeen = (id: string): void => {
-      if (!seenNext[id]) return
-      if (seenNext === seenPrev) seenNext = { ...seenPrev }
-      delete seenNext[id]
-    }
-
-    for (const session of nextSessions) {
-      const rawStatus = liveStatus[session.id]
-      if (isHomeActiveStatus(rawStatus) || isHomeWaitingStatus(rawStatus)) doneClear.push(session.id)
-      if (viewRef.current === 'home' && isHomeWorkingStatus(rawStatus)) ensureSeen(session.id)
-    }
-    for (const id of Object.keys(seenPrev)) {
-      if (!liveIds.has(id)) {
-        clearSeen(id)
-        doneClear.push(id)
-        continue
-      }
-      const rawStatus = liveStatus[id]
-      if (isHomeDoneReviewStatus(rawStatus)) {
-        doneAdd.push(id)
-        clearSeen(id)
-      } else if (isHomeWaitingStatus(rawStatus)) {
-        doneClear.push(id)
-        clearSeen(id)
-      } else if (isHomeActiveStatus(rawStatus)) {
-        doneClear.push(id)
-      }
-    }
-    if (seenNext !== seenPrev) updateHomeSeenWorkingAgents(() => seenNext)
-    if (doneAdd.length || doneClear.length) {
-      updateHomeDoneAgents((prev) => {
-        let changed = false
-        const next = { ...prev }
-        for (const id of doneClear) {
-          if (next[id]) {
-            delete next[id]
-            changed = true
-          }
-        }
-        for (const id of Object.keys(next)) {
-          if (!liveIds.has(id)) {
-            delete next[id]
-            changed = true
-          }
-        }
-        for (const id of doneAdd) {
-          if (!next[id]) {
-            next[id] = true
-            changed = true
-          }
-        }
-        return changed ? next : prev
-      })
-    }
-  }
   const applyStatus = (nextStatus: Record<string, string>): void => {
-    const prevStatus = statusRef.current
-    const doneIds: string[] = []
-    const activeIds: string[] = []
-    for (const [id, next] of Object.entries(nextStatus)) {
-      if (isHomeActiveStatus(next) || isHomeWaitingStatus(next)) {
-        activeIds.push(id)
-        continue
-      }
-      if (viewRef.current === 'home' && isHomeWorkingStatus(prevStatus[id]) && isHomeDoneReviewStatus(next)) {
-        doneIds.push(id)
-      }
-    }
-    if (doneIds.length || activeIds.length) {
-      updateHomeDoneAgents((prev) => {
-        let changed = false
-        const next = { ...prev }
-        for (const id of activeIds) {
-          if (next[id]) {
-            delete next[id]
-            changed = true
-          }
-        }
-        for (const id of doneIds) {
-          if (!next[id]) {
-            next[id] = true
-            changed = true
-          }
-        }
-        return changed ? next : prev
-      })
-    }
     statusRef.current = nextStatus
     setStatus(nextStatus)
-    reconcileHomeAgentReviewState(sessionsRef.current, nextStatus)
   }
 
   // Apply a roster update; if we just spawned a session and it now exists, jump to its tab.
   const applySessions = (arr: IslandSession[]): void => {
     sessionsRef.current = arr
     setSessions(arr)
-    updateHomeSeenWorkingAgents((prev) => {
-      const live = new Set(arr.map((s) => s.id))
-      const next = { ...prev }
-      let changed = false
-      for (const id of Object.keys(next)) {
-        if (!live.has(id)) {
-          delete next[id]
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-    reconcileHomeAgentReviewState(arr, statusRef.current)
     if (pendingJump.current) {
       const idx = arr.findIndex((s) => s.id === pendingJump.current)
       if (idx >= 0) {
@@ -605,6 +361,18 @@ export function NotchHost({
       live = false
     }
   }, [activeTabId])
+
+  // Clear an agent's "unseen DONE" glance pip once the user actually VIEWS it: the island is open (visible) and this
+  // agent's chat (IslandPanel, i.e. not the settings/onboarding view) is the active tab. Covers a tab click
+  // (activeTabId changes), opening straight onto an already-active agent (visible flips), and an agent finishing
+  // while you are already looking at it (doneAgents changes). The pip only ever shows in the COLLAPSED bar, so
+  // clearing on view means it is gone before the next collapse — no stale pip.
+  const doneAgents = useDoneAgents()
+  const showingAgentChat = view !== 'settings' && view !== 'onboarding'
+  useEffect(() => {
+    if (!visible || !showingAgentChat || !activeTabId) return
+    if (doneAgents.has(activeTabId)) clearDone(activeTabId)
+  }, [visible, showingAgentChat, activeTabId, doneAgents])
 
   // Tell App when the attach panel opens/closes so it can pin the island open (the picker needs the cursor to roam
   // off the chassis onto other windows). Reset on unmount so a closed island never stays pinned.
@@ -795,7 +563,6 @@ export function NotchHost({
   const archiveAgent = (id: string): void => {
     if (id === '0') return
     if (!sessions.some((s) => s.id === id)) return
-    clearHomeReviewAgents(id)
     requestArchiveAgent(id)
       .then((r) => {
         if (r?.ok) {
@@ -916,15 +683,10 @@ export function NotchHost({
     window.setTimeout(() => onChassisResize?.(), 220)
   }
 
-  // The CHASSIS is invariant black + the original NotchShape, and grows wide when the attach panel opens. The
-  // PEEK toggle lives at the very top (the notch / menu-bar band), top-right, ALWAYS visible across every view.
-  const onHome = view === 'home'
-  const inSession = view === 'session'
-  const dataView = onHome ? 'home' : view === 'settings' ? 'settings' : view === 'onboarding' ? 'onboarding' : safePage === 0 ? 'session' : 'process'
+  const dataView = view === 'settings' ? 'settings' : view === 'onboarding' ? 'onboarding' : safePage === 0 ? 'session' : 'process'
   const holdChassisHover = (): void => onChassisHoverChange?.(true)
   const openChat = (): void => {
     holdChassisHover()
-    clearHomeReviewAgents()
     // Chat → Blitz ('0'); sending there continues '0', it never spawns. ('0' is always present once booted.)
     const i = sessionsRef.current.findIndex((s) => s.id === '0')
     setPage(i >= 0 ? i + 1 : 1)
@@ -935,7 +697,6 @@ export function NotchHost({
   // Pen "new session" button: spawn a fresh agent immediately and jump into its tab once it appears (pendingJump).
   const onNewAgent = (): void => {
     holdChassisHover()
-    clearHomeReviewAgents()
     setPeek(false)
     setAttachOpen(false)
     setView('session')
@@ -957,30 +718,10 @@ export function NotchHost({
         /* spawn failed; the chat error surfaces in the host */
       })
   }
-  const openAgentChat = (id: string): void => {
-    if (debugFakeHomeAgents && id.startsWith('fake-home-')) {
-      holdChassisHover()
-      return
-    }
-    holdChassisHover()
-    const idx = sessions.findIndex((s) => s.id === id)
-    if (idx < 0) {
-      openChat()
-      return
-    }
-    clearHomeReviewAgents(id)
-    setPage(idx + 1)
-    setPeek(false)
-    setAttachOpen(false)
-    setView('session')
-  }
-  const homeSessions = debugFakeHomeAgents ? FAKE_HOME_AGENTS : displaySessions
-  const homeStatus = debugFakeHomeAgents ? FAKE_HOME_STATUS : status
-  const homeDoneAgentIds = debugFakeHomeAgents ? FAKE_HOME_DONE_IDS : Object.keys(homeDoneAgents)
   return (
     <div className="nhost" data-view={dataView} data-visible={visible ? 'true' : 'false'}>
       <div
-        className={`nh-chassis${!visible ? ' nh-parked' : ''}${attachOpen && !onHome ? ' nh-wide' : ''}${appViewerOpen ? ' nh-app-viewing' : ''}`}
+        className={`nh-chassis${!visible ? ' nh-parked' : ''}${attachOpen ? ' nh-wide' : ''}${appViewerOpen ? ' nh-app-viewing' : ''}`}
         data-view={dataView}
         aria-hidden={!visible}
         onPointerEnter={holdChassisHover}
@@ -988,61 +729,7 @@ export function NotchHost({
         onPointerDownCapture={holdChassisHover}
         onPointerLeave={() => onChassisHoverChange?.(false)}
       >
-        {/* Settings is notch chrome, not a widget tile. It expands the home view into a settings list. */}
-        {onHome && (
-          <button
-            type="button"
-            className="nh-settings-btn"
-            onClick={() => setView('settings')}
-            title="Settings"
-            aria-label="Settings"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden focusable="false">
-              <path d={SETTINGS_PATH} fill="currentColor" />
-            </svg>
-          </button>
-        )}
-        {/* The HOME button + Peek toggle live inside expanded island views; the home widget row stays widget-only. */}
-        {!onHome && view !== 'onboarding' && !appViewerOpen && (
-          <button type="button" className="nh-home-btn" onClick={() => setView('home')} title="Home" aria-label="Home">
-            <svg viewBox="0 0 24 24" aria-hidden focusable="false">
-              <path
-                d="M3 11.4 12 4l9 7.4M5.5 9.8V20h4V14.5h5V20h4V9.8"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                fill="none"
-              />
-            </svg>
-          </button>
-        )}
-        {/* Peek toggle hidden for now (not needed). Restore this block to bring it back.
-        {inSession && (
-          <button
-            type="button"
-            className={`nh-peek-toggle${peek ? ' on' : ''}`}
-            onClick={togglePeek}
-            aria-pressed={peek}
-            title={peek ? 'Expand to chat' : 'Peek all sessions'}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden focusable="false">
-              <path d={peek ? PEEK_OUT : PEEK_IN} stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
-            </svg>
-            <span>{peek ? 'Expand' : 'Peek'}</span>
-          </button>
-        )}
-        */}
-        {onHome ? (
-          <IslandHome
-            menuBarH={menuBarH}
-            sessions={homeSessions}
-            status={homeStatus}
-            doneAgentIds={homeDoneAgentIds}
-            onOpenChat={openChat}
-            onOpenAgent={openAgentChat}
-          />
-        ) : view === 'settings' ? (
+        {view === 'settings' ? (
           <IslandSettings
             menuBarH={menuBarH}
             workflowAlwaysShow={workflowAlwaysShow}
@@ -1054,6 +741,10 @@ export function NotchHost({
             archivedSessions={archivedSessions}
             onRestoreAgent={restoreAgent}
             onDeleteAgent={deleteArchivedAgent}
+            onClose={() => {
+              holdChassisHover()
+              setView('session') // back to the chat tab the user was on (page is untouched; draft is in draftStore)
+            }}
           />
         ) : view === 'onboarding' ? (
           <IslandOnboarding
@@ -1105,6 +796,7 @@ export function NotchHost({
             activeTerminal={activeId ? terminals[activeId] : undefined}
             onArchiveAgent={archiveAgent}
             onRenameAgent={renameAgent}
+            onHoldOpen={onIslandHoldOpen}
             alwaysShowWorkflow={workflowAlwaysShow}
           />
         )}

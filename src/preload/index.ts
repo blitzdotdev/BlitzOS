@@ -10,7 +10,7 @@ export interface AgentRuntimeStatus {
 }
 
 export interface OsAction {
-  type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme' | 'handoff' | 'cinematic'
+  type: 'create' | 'move' | 'update' | 'close' | 'focus' | 'goToPrimary' | 'chat' | 'activity' | 'group' | 'hydrate' | 'switch' | 'reconcile' | 'permission-request' | 'surface-contextmenu' | 'agentStatus' | 'terminal-spawn' | 'terminal-data' | 'terminal-exit' | 'terminal-stop' | 'agent-remove' | 'agent-rename' | 'action-item' | 'action-item-removed' | 'set-theme' | 'cinematic'
   [k: string]: unknown
 }
 
@@ -129,6 +129,10 @@ const api = {
   renameAgent(agentId: string, newTitle: string): Promise<{ ok: boolean; error?: string }> {
     return (ipcRenderer.invoke('os:rename-agent', { id: agentId, title: newTitle }) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
+  /** Open the native right-click menu for an agent chat tab; resolves the chosen action (or null if dismissed). */
+  agentTabMenu(opts: { isPrimary?: boolean }): Promise<'rename' | 'archive' | null> {
+    return (ipcRenderer.invoke('os:agent-tab-menu', opts) as Promise<'rename' | 'archive' | null>).catch(() => null)
+  },
   /** List every terminal in the active workspace (running + persisted) — for the Terminals & Agents tray. */
   terminalList(): Promise<unknown[]> {
     return (ipcRenderer.invoke('os:terminal-list') as Promise<unknown[]>).catch(() => [])
@@ -178,10 +182,6 @@ const api = {
   },
   actionClear(id: string): void {
     ipcRenderer.send('os:action-clear', id)
-  },
-  /** The handoff card's tap → bring the surface behind a connection to the foreground (instant, no agent round-trip). */
-  revealConnection(connId: string): Promise<{ ok?: boolean; error?: string }> {
-    return (ipcRenderer.invoke('os:reveal-connection', connId) as Promise<{ ok?: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
   /** Connections — connect a browser tab / macOS window into BlitzOS (the radial "Connect" entry). */
   connections: {
@@ -653,6 +653,13 @@ const api = {
       const listener = (_e: unknown, on: boolean): void => cb(!!on)
       ipcRenderer.on('os:island-veil', listener)
       return () => ipcRenderer.removeListener('os:island-veil', listener)
+    },
+    // Main asks the island to open + show the Settings view (the native "Settings… ⌘," menu item). App opens/pins
+    // the island and navigates; the chat tab + half-typed draft are preserved across the round-trip.
+    onShowSettings(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on('os:notch-show-settings', listener)
+      return () => ipcRenderer.removeListener('os:notch-show-settings', listener)
     },
     // Listened to BY the overlay renderer: the hit-window's click toggles fullscreen, its hover opens/closes the panel.
     onHandleClick(cb: () => void): () => void {

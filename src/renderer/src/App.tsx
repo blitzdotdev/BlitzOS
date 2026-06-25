@@ -7,8 +7,9 @@ import type { Surface } from './types'
 import { isRuntimePanel } from './types'
 import { NotchHost } from './notch/NotchHost'
 import { GlanceBar, type GlancePeek } from './notch/GlanceBar'
-import { applyHandoffAction } from './notch/handoffStore'
+import { markDone, clearDone, reconcileDone } from './notch/doneStore'
 import { isOnboardingHoverLocked } from './notch/onboardingHoverLock'
+import { requestIslandView } from './notch/islandNavStore'
 import type { IslandAppMessagePart, IslandView } from './notch/types'
 import { ConnectPicker } from './components/ConnectPicker'
 import { IconCheck } from './components/Icons'
@@ -94,7 +95,7 @@ export default function App(): JSX.Element {
   // The island RESTORES its last view + tab on EVERY open (hover OR ⌥Space), instead of resetting to Home. NotchHost
   // reports its view+page via onStateChange; we stash them in refs and feed them back as initialView/initialPage on
   // the next open (NotchHost remounts per open). Refs, not state, so updating them never re-renders App.
-  const islandViewRef = useRef<IslandView>('home')
+  const islandViewRef = useRef<IslandView>('session')
   const islandPageRef = useRef(1) // default to the first agent tab (Blitz '0'); page 0 (the old composer) is retired
   // Also remember the attach panel (open/closed) so reopening the island restores it, not just the view+tab. (The
   // per-chat staging TRAY lives in stagingStore — a module store that survives the remount on its own.)
@@ -130,6 +131,9 @@ export default function App(): JSX.Element {
   // Aggregate agent activity for the COLLAPSED notch's live compact presentation (working / needs-you / total).
   // GlancePeek also carries the per-agent list so the glance bar shows one avatar per active agent.
   const [notchPeek, setNotchPeek] = useState<GlancePeek>({ working: 0, attn: 0, err: 0, total: 0, agents: [] })
+  // Previous per-agent status from the last chat broadcast — lets the broadcast handler spot the working→idle edge
+  // ("this agent just finished") and raise its DONE pip in the glance bar (doneStore). Renderer-only, not persisted.
+  const prevAgentStatusRef = useRef<Map<string, string>>(new Map())
   const setNotchPinnedBoth = (on: boolean): void => {
     notchPinnedRef.current = on
     setNotchPinned(on)
@@ -284,6 +288,27 @@ export default function App(): JSX.Element {
   useEffect(() => window.agentOS?.notch?.onToggle?.(() => toggleIsland()), [])
   // Main asks us to collapse — an outbound link in an app preview just opened in the real browser.
   useEffect(() => window.agentOS?.notch?.onClose?.(() => closeIsland()), [])
+  // Native menu bar "Settings… ⌘," → open + pin the island and navigate it to the Settings view. islandViewRef
+  // covers the case where the island is CLOSED (NotchHost reads it as initialView on its next mount);
+  // requestIslandView covers the case where it is ALREADY OPEN (pushes setView into the live NotchHost). The chat
+  // tab (NotchHost `page`) + the half-typed draft (draftStore, keyed by agent id) survive the round-trip untouched.
+  const openIslandSettings = (): void => {
+    if (notchVeiledRef.current) {
+      notchVeiledRef.current = false
+      document.body.classList.remove('island-veiled')
+    }
+    islandViewRef.current = 'settings'
+    if (notchStateRef.current === 'closed') {
+      setNotchPinnedBoth(true) // a menu-opened panel stays open (like ⌥Space) so Settings doesn't hover-retract
+      setNotchInteractive(true)
+      applyNotchState('panel')
+    } else {
+      setNotchPinnedBoth(true)
+      setNotchInteractive(true)
+    }
+    requestIslandView('settings')
+  }
+  useEffect(() => window.agentOS?.notch?.onShowSettings?.(() => openIslandSettings()), [])
   // Main asks us to VEIL the island (onboarding drag step) or unveil it. Veil = invisible + click-through but still
   // MOUNTED (a collapse here would unmount onboarding and close its drag-helper). On veil, immediately go
   // click-through; on unveil, the next hover restores interactivity.
@@ -702,9 +727,6 @@ export default function App(): JSX.Element {
           saveTheme(theme as Theme)
           st.setOsAccent(theme.accent)
         }
-      } else if (a.type === 'handoff') {
-        // A handoff card create/resolve broadcast → the runtime handoffStore (the card looks itself up by cardId).
-        applyHandoffAction(a as { cardId?: unknown; connId?: unknown; reason?: unknown; img?: unknown; status?: unknown })
       } else if (a.type === 'chat') {
         // The OS owns every agent transcript and sends the hub props to the ONE primary Chat surface.
         // Legacy messages-only payloads are still accepted for older transports.
@@ -725,6 +747,22 @@ export default function App(): JSX.Element {
             const attn = agents.filter((x) => x.status === 'waiting').length
             const err = agents.filter((x) => x.status === 'error').length
             setNotchPeek({ working, attn, err, total: agents.length, agents })
+            // DONE-pip edges. These are the RAW host statuses (see notch/types.ts): an agent that just finished its
+            // turn settles to 'watching' (turn ended clean, after the host's ~10s quiet debounce) or 'idle' (no live
+            // terminal) — NOT a per-tool-call flicker. Mark that working→finished edge so the at-rest glance bar
+            // shows a quiet green pip until the user views that agent (NotchHost clears it). Any move back into an
+            // active status supersedes the mark; reconcile drops marks for agents that left the roster so a pip
+            // never outlives its agent.
+            const prev = prevAgentStatusRef.current
+            const liveIds = new Set<string>()
+            for (const { id, status } of agents) {
+              liveIds.add(id)
+              if (prev.get(id) === 'working' && (status === 'watching' || status === 'idle')) markDone(id)
+              else if (status === 'working' || status === 'starting' || status === 'waiting' || status === 'reconnecting' || status === 'error') clearDone(id)
+              prev.set(id, status)
+            }
+            for (const id of [...prev.keys()]) if (!liveIds.has(id)) prev.delete(id)
+            reconcileDone((id) => liveIds.has(id))
           }
         }
         const chat = st.surfaces.find((s) => s.id === 'chat') || st.surfaces.find((s) => s.role === 'chat' || (s.kind === 'native' && s.component === 'chat'))

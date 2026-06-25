@@ -3,7 +3,7 @@
 // shared: tab 0 is the new-session tab, tabs 1..N are the live agents. The body is the new-session composer when
 // page===0, else the active agent's transcript + steer bar.
 
-export type IslandView = 'home' | 'settings' | 'session' | 'onboarding'
+export type IslandView = 'settings' | 'session' | 'onboarding'
 
 // One agent session as the island needs it. `status` is the raw host status (working/starting/watching/waiting/
 // idle/stopped/error); IslandPanel maps it to the dot + a label.
@@ -56,13 +56,9 @@ export type IslandMessagePart =
   | { type: 'attachment'; title: string; sourceType?: string }
   | { type: 'status'; text: string; tone?: 'info' | 'working' | 'warning' | 'error' }
   | { type: 'error'; text: string }
-  // A human-takeover handoff (login / 2FA / captcha / consent). The fence carries ONLY the cardId; the screenshot +
-  // reason + status live in the runtime handoffStore (fed by the os:action {type:'handoff'} broadcast).
-  | { type: 'handoff'; cardId: string }
 
 export type IslandChoicePart = Extract<IslandMessagePart, { type: 'choice' }>
 export type IslandAppMessagePart = Extract<IslandMessagePart, { type: 'app' }>
-export type IslandHandoffPart = Extract<IslandMessagePart, { type: 'handoff' }>
 
 // A summarized step from the narrator (Haiku): one plain past-tense line of what the agent did.
 export interface IslandMilestone {
@@ -125,5 +121,6 @@ export interface IslandPanelProps {
   activeTerminal?: IslandTerminalMeta // metadata for activeId's managed terminal; activeId remains the terminal id
   onArchiveAgent: (id: string) => void
   onRenameAgent: (id: string, title: string) => Promise<boolean>
+  onHoldOpen?: () => void // stamp App's keep-open hold (e.g. while the native tab menu is up, so the island can't retract)
   alwaysShowWorkflow: boolean // when on, each workflow run renders EXPANDED by default (vs the collapsed status pill)
 }
