@@ -13,7 +13,7 @@
 // Deliberately NOT electron-updater/Squirrel: Squirrel refuses unsigned updates; this works signed
 // or not (quarantine re-stripped after the swap — a no-op on notarized builds). Private-repo auth:
 // GH_TOKEN env or ~/.blitzos/github-token.
-import { app, dialog, BrowserWindow } from 'electron'
+import { app, dialog, BrowserWindow, nativeImage } from 'electron'
 import { execFileSync, spawn } from 'child_process'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync } from 'fs'
 import { join } from 'path'
@@ -165,6 +165,20 @@ open "${appBundle}"
   app.quit()
 }
 
+/** The BlitzOS logo for the native update dialog: the shipped dock icon (process.resourcesPath in a
+ *  packaged build; the source asset in dev). undefined if missing, so the dialog falls back cleanly. */
+function updateIcon(): Electron.NativeImage | undefined {
+  const p = app.isPackaged
+    ? join(process.resourcesPath, 'blitz-dock-icon.png')
+    : join(__dirname, '..', '..', 'src', 'renderer', 'src', 'assets', 'blitz-dock-icon.png')
+  try {
+    const img = nativeImage.createFromPath(p)
+    return img.isEmpty() ? undefined : img
+  } catch {
+    return undefined
+  }
+}
+
 /** Download + stage one build, then offer the restart-swap. The picker path allows ANY build
  *  (older / other branch); the auto-poll path only ever passes a newer same-branch one. */
 async function installBuild(b: Build, tok: string | null): Promise<void> {
@@ -184,13 +198,13 @@ async function installBuild(b: Build, tok: string | null): Promise<void> {
     if (!appName) throw new Error('no .app in artifact')
     staged = { tag: b.tag, appPath: join(dir, 'unzipped', appName) }
   }
-  const me = buildMeta()
   const { response } = await dialog.showMessageBox({
-    type: 'info',
+    icon: updateIcon(),
     buttons: ['Restart Now', 'Later'],
     defaultId: 0,
-    message: `BlitzOS ${b.tag} is ready`,
-    detail: `You're on ${me.branch} #${me.run || '?'} (v${app.getVersion()}). Restart to switch — your workspaces are untouched.`
+    cancelId: 1,
+    message: 'A new version of BlitzOS is ready',
+    detail: 'Restart to update. Everything you have open will be right back where you left it.'
   })
   if (response === 0 && staged) applyOnQuit(staged.appPath)
 }
