@@ -1,0 +1,15 @@
+{
+  "react": "https://esm.sh/react@19.2.7",
+  "react/jsx-runtime": "https://esm.sh/react@19.2.7/jsx-runtime",
+  "react-dom": "https://esm.sh/react-dom@19.2.7?external=react",
+  "react-dom/client": "https://esm.sh/react-dom@19.2.7/client?external=react",
+  "clsx": "https://esm.sh/clsx@2.1.1",
+  "lucide-react": "https://esm.sh/lucide-react@1.18.0?external=react",
+  "recharts": "https://esm.sh/recharts@3.8.1?external=react,react-dom",
+  "date-fns": "https://esm.sh/date-fns@4.4.0",
+  "framer-motion": "https://esm.sh/framer-motion@12.40.0?external=react,react-dom",
+  "react-markdown": "https://esm.sh/react-markdown@10.1.0?external=react",
+  "remark-gfm": "https://esm.sh/remark-gfm@4.0.1",
+  "@xyflow/react": "https://esm.sh/@xyflow/react@12.3.5?external=react,react-dom",
+  "@dagrejs/dagre": "https://esm.sh/@dagrejs/dagre@1.1.4"
+}

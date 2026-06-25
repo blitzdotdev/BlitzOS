@@ -1,0 +1,43 @@
+<!doctype html><meta charset="utf-8"><title>Toolbox</title>
+<!-- Thinking-widget: an inventory of chips in labelled sections (tools, tags, ingredients —
+     any flat sets). Drive with update_surface{props:{sections:[{label,items:[{name,n?}]}]}}. -->
+<style>
+  .wrap{padding:13px 15px}
+  .sec{margin-bottom:13px}
+  .sec:last-child{margin-bottom:4px}
+  .lb{font:9px ui-monospace,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--blitz-text-dim);margin-bottom:7px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .ch{font-size:11.5px;padding:4px 9px;border-radius:999px;background:var(--blitz-surface-2);border:1px solid var(--blitz-hairline);white-space:nowrap}
+  .ch.hot{border-color:var(--blitz-accent);font-weight:600}
+  .ch .n{font:9px ui-monospace,monospace;color:var(--blitz-text-dim);margin-left:5px}
+  .wrap.intro .ch{animation:in .3s both}
+  .wrap.intro .ch:nth-child(2n){animation-delay:.04s}.wrap.intro .ch:nth-child(3n){animation-delay:.08s}
+  @keyframes in{from{opacity:0;transform:scale(.92)}}
+  /* gist mode (an m/s tile): the first section only — pop out for the full inventory */
+  @media (max-height:219px){
+    .wrap{padding:11px 13px}
+    .sec:nth-child(n+2){display:none}
+  }
+</style>
+<div class="wrap" id="wrap"></div>
+<script>
+  // props: { title?, sections:[{label, items:[{name, n?}]}] } — items with n in the top
+  // quartile of their section render emphasized (.hot).
+  const SAMPLE={title:'Toolbox',sections:[
+    {label:'Daily drivers',items:[{name:'tool',n:120},{name:'tool',n:80},{name:'tool',n:12}]},
+    {label:'Stack',items:[{name:'thing'},{name:'thing'},{name:'thing'},{name:'thing'}]}]}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  function render(d){
+    // no titlebar (widget language): the section labels carry all the identity needed
+    const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
+    w.innerHTML=(d.sections||[]).map(s=>{
+      const ns=(s.items||[]).map(i=>i.n||0).filter(Boolean).sort((a,b)=>b-a)
+      const hot=ns.length?ns[Math.max(0,Math.ceil(ns.length/4)-1)]:Infinity
+      return '<div class="sec"><div class="lb">'+esc(s.label)+'</div><div class="chips">'+
+        (s.items||[]).map(i=>'<span class="ch'+(i.n&&i.n>=hot?' hot':'')+'">'+esc(i.name)+(i.n?'<span class="n">'+i.n+'</span>':'')+'</span>').join('')+'</div></div>'
+    }).join('')
+  }
+  render(data)
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.sections){data=p;render(p)}})
+</script>

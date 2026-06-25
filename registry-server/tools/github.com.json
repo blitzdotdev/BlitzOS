@@ -1,0 +1,20 @@
+[
+  {
+    "name": "pr_title",
+    "description": "Title of the pull request / issue currently open.",
+    "kind": "read",
+    "code": "return document.querySelector('.js-issue-title, bdi.js-issue-title')?.innerText?.trim()||document.title"
+  },
+  {
+    "name": "list_changed_files",
+    "description": "Paths of the files changed in the current PR's Files-changed tab.",
+    "kind": "read",
+    "code": "return [...document.querySelectorAll('.file-info a.Link--primary, .file-header [data-path]')].map(a=>a.getAttribute('title')||a.getAttribute('data-path')||a.innerText.trim()).filter(Boolean)"
+  },
+  {
+    "name": "open_files_tab",
+    "description": "Click the 'Files changed' tab on a PR (effect = the resulting URL).",
+    "kind": "act",
+    "code": "var a=document.querySelector('a[data-tab-item=\"files_tab\"], a#files_tab');if(!a)return null;a.click();return location.href"
+  }
+]
