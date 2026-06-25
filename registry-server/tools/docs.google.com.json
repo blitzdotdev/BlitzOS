@@ -1,0 +1,26 @@
+[
+  {
+    "name": "read_text",
+    "description": "Full text of the current Google DOC (the kix editor).",
+    "kind": "read",
+    "code": "var ed=document.querySelector('.kix-appview-editor');return ed?ed.innerText:null"
+  },
+  {
+    "name": "doc_title",
+    "description": "Title of the current Google Doc.",
+    "kind": "read",
+    "code": "return document.querySelector('.docs-title-input')?.value||document.title"
+  },
+  {
+    "name": "read_text_sheets",
+    "description": "Values of the visible cells in the current Google SHEET (Docs/Sheets share docs.google.com — this is the Sheets variant of read_text).",
+    "kind": "read",
+    "code": "return [...document.querySelectorAll('.waffle .cell-input, .grid-table-container .cell')].map(c=>c.innerText).filter(Boolean).slice(0,500)"
+  },
+  {
+    "name": "rename_doc",
+    "description": "Rename the current Google Doc. args:{title}. Verified: sets the title input + commits via Enter; the browser tab title (document.title) reflects the committed name.",
+    "kind": "act",
+    "code": "var t=document.querySelector('.docs-title-input');if(!t)return{error:'no title input'};t.focus();if(t.select)t.select();t.value=String((args&&args.title)||'');t.dispatchEvent(new Event('input',{bubbles:true}));t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,which:13,bubbles:true}));t.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',keyCode:13,which:13,bubbles:true}));t.blur();return{renamed:t.value}"
+  }
+]

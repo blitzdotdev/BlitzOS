@@ -1,0 +1,9 @@
+# Cloudflare Worker config for the first-party Connection Tool Registry (worker.mjs).
+# Deploy:  cd registry-server && npx wrangler deploy
+# Dev:     cd registry-server && npx wrangler dev   (then BLITZ_TOOL_REGISTRY_URL=http://127.0.0.1:8787)
+name = "blitz-tool-registry"
+main = "worker.mjs"
+compatibility_date = "2026-06-01"
+
+# Vetted tools are bundled from registry-data.mjs (the tools/*.json seeds). No KV/D1/R2 — data ships with the
+# Worker and updates on redeploy; that IS the internal-only write path. crypto.subtle (Web Crypto) needs no flag.

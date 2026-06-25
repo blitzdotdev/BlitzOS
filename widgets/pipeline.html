@@ -1,0 +1,70 @@
+<!doctype html><meta charset="utf-8"><title>Pipeline</title>
+<!-- A BlitzOS thinking-widget: a live work queue. The agent drives it by pushing props
+     (update_surface{props:{items}}); the CSS does the pop/drain/check motion. With no agent
+     driving, it self-demos so it's never a dead box. Built on the injected UI kit (window.blitz + --blitz-* tokens). -->
+<style>
+  .wrap{padding:12px 13px}
+  .lab{font:10px ui-monospace,'SF Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--blitz-text-dim);margin:0 0 6px}
+  .ct{font:11px ui-monospace,monospace;color:var(--blitz-text-dim);letter-spacing:.04em;margin-left:auto}
+  .now{border:1px solid var(--blitz-hairline);border-radius:var(--blitz-radius);background:var(--blitz-surface-2);padding:11px 13px;margin-bottom:13px;position:relative;overflow:hidden}
+  .now.empty{opacity:.55;font-style:italic;color:var(--blitz-text-dim)}
+  .now .t{font-weight:600;font-size:14px}
+  .now .s{color:var(--blitz-text-dim);font-size:12px;margin-top:2px}
+  .now .spin{position:absolute;top:12px;right:12px;width:14px;height:14px;border:2px solid var(--blitz-hairline);border-top-color:var(--blitz-accent);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .now .bar{position:absolute;left:0;bottom:0;height:2px;background:var(--blitz-accent);width:0;animation:fill 1.7s linear forwards}
+  @keyframes fill{to{width:100%}}
+  .q{display:flex;flex-direction:column;gap:6px}
+  .qi{display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--blitz-hairline);border-radius:var(--blitz-radius-sm);background:var(--blitz-surface);animation:pop .42s cubic-bezier(.2,.9,.3,1.25)}
+  @keyframes pop{from{transform:translateY(-9px) scale(.97);opacity:0}}
+  .qi .dot{width:7px;height:7px;border-radius:50%;border:1.5px solid var(--blitz-text-dim);flex:0 0 auto}
+  .qi .l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .qi .n{font:10px ui-monospace,monospace;color:var(--blitz-text-dim)}
+  .done{margin-top:13px;display:flex;flex-direction:column;gap:1px}
+  .di{display:flex;align-items:center;gap:9px;padding:5px 10px;color:var(--blitz-text-dim);font-size:12px;animation:pop .4s}
+  .di .ck{width:15px;height:15px;border-radius:50%;background:var(--blitz-accent);color:var(--blitz-accent-ink);display:grid;place-items:center;font-size:9px;flex:0 0 auto}
+  .di .l{text-decoration:line-through;text-decoration-color:var(--blitz-hairline)}
+</style>
+<blitz-titlebar><span id="title">Pipeline</span><span class="ct" id="count"></span></blitz-titlebar>
+<div class="wrap">
+  <div class="lab">Now processing</div>
+  <div class="now empty" id="now">idle</div>
+  <div class="lab">Queue</div>
+  <div class="q" id="queue"></div>
+  <div class="done" id="done"></div>
+</div>
+<script>
+  // props: { title?, items:[{label, sub?, status:'done'|'active'|'queued'}], autoClose? }.
+  // `props.items` is canonical; `props.steps` is accepted as a compatibility alias because agents often say steps.
+  // Advance it with update_surface{props:{items}}; the widget animates the transitions.
+  // Task-start pipelines auto-close after all real items are done; pass autoClose:false to keep one.
+  // Demo rows are only for an untouched widget; real task props without items render idle, not fake progress.
+  const SAMPLE={title:'Pipeline',items:[
+    {label:'Item one',sub:'context',status:'done'},
+    {label:'Item two',sub:'context',status:'active'},
+    {label:'Item three',sub:'context',status:'queued'},
+    {label:'Item four',sub:'context',status:'queued'},
+    {label:'Item five',sub:'context',status:'queued'}]}
+  let data={title:SAMPLE.title,items:SAMPLE.items.map(i=>({...i})),autoClose:true}, demo=true, closeTimer=null
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  const propItems=p=>Array.isArray(p.items)?p.items:Array.isArray(p.steps)?p.steps:null
+  function render(d){
+    document.getElementById('title').textContent=d.title||'Pipeline'
+    const items=d.items||[], done=items.filter(i=>i.status==='done'), active=items.find(i=>i.status==='active'), queue=items.filter(i=>i.status==='queued')
+    document.getElementById('count').textContent=done.length+' / '+items.length
+    const now=document.getElementById('now')
+    if(active){now.className='now';now.innerHTML='<div class="t">'+esc(active.label)+'</div>'+(active.sub?'<div class="s">'+esc(active.sub)+'</div>':'')+'<div class="spin"></div><div class="bar"></div>'}
+    else{now.className='now empty';now.textContent=items.length&&!queue.length?'all done':'idle'}
+    document.getElementById('queue').innerHTML=queue.map((q,i)=>'<div class="qi"><span class="dot"></span><span class="l">'+esc(q.label)+(q.sub?' <span style="color:var(--blitz-text-dim)">· '+esc(q.sub)+'</span>':'')+'</span><span class="n">'+(i+1)+'</span></div>').join('')||'<div style="color:var(--blitz-text-dim);font-size:12px;padding:4px 10px">empty</div>'
+    document.getElementById('done').innerHTML=done.map(x=>'<div class="di"><span class="ck">✓</span><span class="l">'+esc(x.label)+'</span></div>').join('')
+    const complete=!demo&&d.autoClose!==false&&items.length>0&&!active&&!queue.length&&done.length===items.length
+    if(complete&&!closeTimer)closeTimer=setTimeout(()=>{if(window.blitz&&window.blitz.tool)window.blitz.tool('close_surface',{}).catch(()=>{})},1400)
+    else if(!complete&&closeTimer){clearTimeout(closeTimer);closeTimer=null}
+  }
+  render(data)
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(!p)return;const nextItems=propItems(p),hasItems=Array.isArray(nextItems),customTitle=p.title&&p.title!==SAMPLE.title,hasTaskProps=hasItems||customTitle||p.autoClose!==undefined;if(hasTaskProps&&!hasItems&&demo)data.items=[];if(hasTaskProps)demo=false;if(p.title)data.title=p.title;if(p.autoClose!==undefined)data.autoClose=p.autoClose!==false;if(hasItems)data.items=nextItems;render(data)})
+  setInterval(()=>{if(!demo)return;const it=data.items;const ai=it.findIndex(i=>i.status==='active');if(ai<0){it.forEach((i,k)=>i.status=k===0?'active':'queued');render(data);return}
+    it[ai].status='done';const nx=it.findIndex(i=>i.status==='queued')
+    if(nx>=0)it[nx].status='active';else it.forEach((i,k)=>i.status=k<1?'done':k===1?'active':'queued')
+    render(data)},1700)
+</script>
