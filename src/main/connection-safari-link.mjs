@@ -10,17 +10,24 @@
 import { execFile } from 'node:child_process'
 import { READ_JS, ACT_JS, faviconForUrl } from './connection-page-js.mjs'
 
-const osa = (args, timeout = 15000) =>
-  new Promise((resolve) =>
-    execFile('/usr/bin/osascript', args, { timeout, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) =>
-      resolve({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || '') })
-    )
-  )
-
 // READ_JS + ACT_JS (the page-context read/act blobs) are shared with the Chrome Apple-Events adapter —
 // the one canonical copy lives in connection-page-js.mjs so the two adapters never drift.
 
-export function makeSafariLink({ connectionOps } = {}) {
+export function makeSafariLink({ connectionOps, helper } = {}) {
+  // Run AppleScript THROUGH the helper when it's up, so the "control Safari" Automation grant lives on the HELPER
+  // (granted once in onboarding), not BlitzOS — which would re-prompt in chat. Fall back to a direct osascript only
+  // when the helper is absent.
+  const osa = async (args, timeout = 15000) => {
+    if (helper && helper.connected && helper.connected()) {
+      const r = await helper.call('osa', { args }, timeout + 2000)
+      if (!r.error) return { ok: !!r.ok, stdout: String(r.stdout || ''), stderr: String(r.stderr || '') }
+    }
+    return new Promise((resolve) =>
+      execFile('/usr/bin/osascript', args, { timeout, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) =>
+        resolve({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || '') })
+      )
+    )
+  }
   const refToConn = new Map() // dedup: this exact Safari tab (safari:w:t) → its connection
   async function doJS(code, w, t) {
     const r = await osa([

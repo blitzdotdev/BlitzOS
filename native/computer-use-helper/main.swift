@@ -109,6 +109,38 @@ func runScan(_ conn: HelperConnection, id: Int, node: String, script: String, ar
     }
 }
 
+// Like runScan but CAPTURES stdout (runScan discards it). The browser CONNECTION tools run their AppleScript
+// THROUGH this, so the "control Chrome/Safari" Automation grant lives on the HELPER (granted once in onboarding),
+// not on BlitzOS — otherwise driving the browser in chat re-prompts on the Electron app. Drains both pipes
+// concurrently (no 64KB deadlock) and replies {ok=(exit==0), stdout, stderr, exit}.
+func runOsa(_ conn: HelperConnection, id: Int, args: [String]) {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    proc.arguments = args
+    let outPipe = Pipe()
+    let errPipe = Pipe()
+    proc.standardOutput = outPipe
+    proc.standardError = errPipe
+    do {
+        try proc.run()
+    } catch {
+        conn.send(["type": "reply", "id": id, "ok": false, "error": "osa spawn failed: \(error)"])
+        return
+    }
+    let group = DispatchGroup()
+    var outData = Data()
+    var errData = Data()
+    group.enter()
+    DispatchQueue.global().async { outData = outPipe.fileHandleForReading.readDataToEndOfFile(); group.leave() }
+    group.enter()
+    DispatchQueue.global().async { errData = errPipe.fileHandleForReading.readDataToEndOfFile(); group.leave() }
+    group.notify(queue: .global()) {
+        proc.waitUntilExit()
+        conn.send(["type": "reply", "id": id, "ok": proc.terminationStatus == 0, "exit": Int(proc.terminationStatus),
+                   "stdout": String(data: outData, encoding: .utf8) ?? "", "stderr": String(data: errData, encoding: .utf8) ?? ""])
+    }
+}
+
 // ===== Computer-use: window enumeration + AX (read/act) + vision (per-window screenshot) + CGEvent input =====
 // The WINDOW adapter for BlitzOS connections. AX read/act work on BACKGROUND windows; coordinate input +
 // per-window screenshots are the "vision" path for apps AX can't read (needs the window raised/visible).
@@ -753,6 +785,10 @@ conn.run { msg in
             let sargs = msg["args"] as? [String] ?? []
             let senv = msg["env"] as? [String: String] ?? [:]
             if node.isEmpty || script.isEmpty { reply(["ok": false, "error": "scan: node+script required"]) } else { runScan(conn, id: id, node: node, script: script, args: sargs, env: senv) }
+        case "osa":
+            // Run osascript under the helper + RETURN its stdout (the browser connection links route through this
+            // so the Automation grant stays on the helper). Reply comes async on exit.
+            runOsa(conn, id: id, args: msg["args"] as? [String] ?? [])
         case "list_windows": reply(["ok": true, "windows": listWindows()])
         case "ax_tree", "ax_read":
             let pid = msg["pid"] as? Int ?? -1

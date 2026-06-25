@@ -15,4 +15,9 @@ export interface ChromeAppleScriptLink {
   connectTab(tabId: string, opts?: { title?: string; sourceId?: string; agentId?: string }): Promise<Record<string, unknown>>
 }
 
-export function makeChromeAppleScriptLink(opts: { connectionOps: ConnectionOps }): ChromeAppleScriptLink
+// The computer-use helper, used to route the AppleScript through it so the Automation grant lands on the helper.
+export interface OsaHelperLike {
+  call(cmd: string, args?: Record<string, unknown>, ms?: number): Promise<Record<string, unknown>>
+  connected(): boolean
+}
+export function makeChromeAppleScriptLink(opts: { connectionOps: ConnectionOps; helper?: OsaHelperLike }): ChromeAppleScriptLink

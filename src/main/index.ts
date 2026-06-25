@@ -1714,29 +1714,35 @@ app.whenReady().then(() => {
   // a window connect. Scoped to Google Chrome only: the AppleScript targets "Google Chrome"; other Chromium browsers
   // (Brave/Edge/Arc) have no Apple-Events tab adapter, so they connect as a window instead.
   const matchChromeTabByBounds = async (b: { x: number; y: number; w: number; h: number }): Promise<string | null> => {
-    const run = (): Promise<string> =>
-      new Promise((resolve) =>
-        execFile(
-          '/usr/bin/osascript',
-          [
-            '-e', 'on run',
-            '-e', 'tell application "Google Chrome"',
-            '-e', 'if (count of windows) is 0 then return ""',
-            '-e', 'set out to ""',
-            '-e', 'repeat with w from 1 to count of windows',
-            '-e', 'try',
-            '-e', 'set bnds to bounds of window w',
-            '-e', 'set out to out & w & "|" & (item 1 of bnds) & "|" & (item 2 of bnds) & "|" & (item 3 of bnds) & "|" & (item 4 of bnds) & "|" & (active tab index of window w) & linefeed',
-            '-e', 'end try',
-            '-e', 'end repeat',
-            '-e', 'return out',
-            '-e', 'end tell',
-            '-e', 'end run'
-          ],
-          { timeout: 8000 },
-          (err, stdout) => resolve(err ? '' : String(stdout || ''))
-        )
+    const osaArgs = [
+      '-e', 'on run',
+      '-e', 'tell application "Google Chrome"',
+      '-e', 'if (count of windows) is 0 then return ""',
+      '-e', 'set out to ""',
+      '-e', 'repeat with w from 1 to count of windows',
+      '-e', 'try',
+      '-e', 'set bnds to bounds of window w',
+      '-e', 'set out to out & w & "|" & (item 1 of bnds) & "|" & (item 2 of bnds) & "|" & (item 3 of bnds) & "|" & (item 4 of bnds) & "|" & (active tab index of window w) & linefeed',
+      '-e', 'end try',
+      '-e', 'end repeat',
+      '-e', 'return out',
+      '-e', 'end tell',
+      '-e', 'end run'
+    ]
+    // Route the Chrome AppleScript THROUGH the helper so the "control Google Chrome" Automation grant stays on the
+    // helper (granted in onboarding). A direct Electron osascript here RE-PROMPTS when you drop a Chrome window into
+    // the dropbox. Ensure the helper (it's needed for the window-fallback anyway); fall back to direct only if absent.
+    const helper = computerUseHelper()
+    if (helper.available()) await helper.ensure().catch(() => {})
+    const run = async (): Promise<string> => {
+      if (helper.connected()) {
+        const r = await helper.call('osa', { args: osaArgs }, 10000)
+        if (!r.error) return String(r.stdout || '')
+      }
+      return new Promise<string>((resolve) =>
+        execFile('/usr/bin/osascript', osaArgs, { timeout: 8000 }, (err, stdout) => resolve(err ? '' : String(stdout || '')))
       )
+    }
     const matchOnce = async (): Promise<string | null> => {
       const out = await run()
       let best: { id: string; score: number } | null = null
@@ -1802,10 +1808,11 @@ app.whenReady().then(() => {
     }
   })
   // Safari tabs via Apple Events `do JavaScript` (merged into connection_list_tabs as browser:'safari').
-  electronConnections.setSafariLink(makeSafariLink({ connectionOps: electronConnections }))
+  electronConnections.setSafariLink(makeSafariLink({ connectionOps: electronConnections, helper: computerUseHelper() }))
   // Chrome tabs via Apple Events `execute … javascript` (browser:'chrome') — the connector extension is deprecated,
-  // so this is the Chrome tab path. Focus-safe: it drives Chrome only through executed JS, never `set URL`.
-  electronConnections.setChromeAsLink(makeChromeAppleScriptLink({ connectionOps: electronConnections }))
+  // so this is the Chrome tab path. Focus-safe: it drives Chrome only through executed JS, never `set URL`. The
+  // helper routes the AppleScript so the "control Chrome" Automation grant stays on the helper (granted in onboarding).
+  electronConnections.setChromeAsLink(makeChromeAppleScriptLink({ connectionOps: electronConnections, helper: computerUseHelper() }))
   // Chrome is connectable out of the box via Apple Events (setChromeAsLink above; one-time "Allow JavaScript
   // from Apple Events" in View ▸ Developer). There is no connector extension.
 

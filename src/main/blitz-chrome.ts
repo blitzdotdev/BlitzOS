@@ -25,6 +25,7 @@ import { join } from 'node:path'
 import http from 'node:http'
 import net from 'node:net'
 import { WebSocket } from 'ws'
+import { computerUseHelper } from './computer-use-helper'
 // We register each opened window as a FIRST-CLASS connection through these ops, so the whole connection_* toolset
 // (run_js / read / act / navigate / save_tool / registry / call_tool) drives it — no parallel API, no extension.
 import type { ConnectionOps, ConnectionAdapter } from './connection-ops.d.mts'
@@ -745,7 +746,16 @@ class BlitzChrome {
       // instance specifically — `open -a <bundle>` is ambiguous when the user's own Chrome is also open and
       // macOS would focus their window instead of ours.
       if (this.chromePid) {
-        spawn('osascript', ['-e', `tell application "System Events" to set frontmost of (first process whose unix id is ${this.chromePid}) to true`], { stdio: 'ignore' }).on('error', () => {})
+        // Foreground Blitz Chrome via the helper's NSRunningApplication.activate (precise by pid, NO Automation
+        // consent) instead of `tell System Events to set frontmost` — that direct-from-Electron Apple Event
+        // prompted "BlitzOS wants to control System Events". Fall back to the osascript only if the helper is absent.
+        const pid = this.chromePid
+        const helper = computerUseHelper()
+        if (helper.connected()) {
+          void helper.call('activate', { pid }).catch(() => {})
+        } else {
+          spawn('osascript', ['-e', `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`], { stdio: 'ignore' }).on('error', () => {})
+        }
       } else {
         // PID not yet resolved (rare: CDP up but lsof hasn't run yet) — fall back to app-level activate.
         const bin = findChromeBin()

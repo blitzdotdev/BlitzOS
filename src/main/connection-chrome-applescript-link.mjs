@@ -17,14 +17,22 @@
 import { execFile } from 'node:child_process'
 import { READ_JS, ACT_JS, faviconForUrl } from './connection-page-js.mjs'
 
-const osa = (args, timeout = 15000) =>
-  new Promise((resolve) =>
-    execFile('/usr/bin/osascript', args, { timeout, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) =>
-      resolve({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || '') })
+export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
+  // Run AppleScript THROUGH the helper when it's up, so the "control Google Chrome" Automation grant lives on the
+  // HELPER (granted once in onboarding) — not BlitzOS, which would otherwise re-prompt in every chat session. Fall
+  // back to a direct osascript only when the helper is absent (the grant then lands on BlitzOS, with its own consent).
+  const osa = async (args, timeout = 15000) => {
+    if (helper && helper.connected && helper.connected()) {
+      const r = await helper.call('osa', { args }, timeout + 2000)
+      if (!r.error) return { ok: !!r.ok, stdout: String(r.stdout || ''), stderr: String(r.stderr || '') }
+      // a helper-LEVEL failure (disconnect/timeout, not the osascript itself) → fall through to direct
+    }
+    return new Promise((resolve) =>
+      execFile('/usr/bin/osascript', args, { timeout, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) =>
+        resolve({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || '') })
+      )
     )
-  )
-
-export function makeChromeAppleScriptLink({ connectionOps } = {}) {
+  }
   const refToConn = new Map() // dedup: this exact Chrome tab (chrome:w:t) → its connection
 
   // Run page-context JS in tab t of window w via `execute … javascript`. NEVER navigates via `set URL`.
