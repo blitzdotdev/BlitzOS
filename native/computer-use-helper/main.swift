@@ -771,6 +771,13 @@ conn.run { msg in
             } else { reply(["error": "cg_click needs {x,y} or {windowId,px,py}"]) }
         case "cg_type": cgType(msg["text"] as? String ?? ""); reply(["ok": true, "effect": ["typed": msg["text"] as? String ?? ""]])
         case "cg_key": reply(cgKey(msg["key"] as? String ?? "") ? ["ok": true, "effect": ["key": msg["key"] as? String ?? ""]] : ["error": "unknown key name"])
+        case "activate":
+            // Bring the app (and its windows) to the front — connection_reveal for a window. CGEvent input lands
+            // on the FOCUSED app, so the agent reveals the target window before key/type/paste.
+            let apid = msg["pid"] as? Int ?? -1
+            if apid > 0, let app = NSRunningApplication(processIdentifier: pid_t(apid)) {
+                app.activate(options: [.activateAllWindows]); reply(["ok": true, "effect": ["activated": apid]])
+            } else { reply(["error": "activate needs a valid pid"]) }
         case "ax_observe":
             let pid = msg["pid"] as? Int ?? -1
             if pid < 0 { reply(["error": "pid required"]) } else { reply(["ok": axObserve(pid: pid)]) }

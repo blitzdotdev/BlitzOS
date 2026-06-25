@@ -33,6 +33,24 @@ each against the CURRENT code (the agent ran an older build; the connection refa
   points at the act vocab. Typecheck clean (my files).
 - C: no fix; optionally document the `image` field (folded into D).
 
+## VM self-test follow-up (2026-06-24, chat-8)
+The VM ran the test against a build whose Electron app had the new TS (paste routed to `cg_key('cmd+v')`)
+but a **STALE native helper** — `End`/`cmd+End`/`paste` all returned `"unknown key name"` (the old 9-key
+`cg_key`). Root cause: `build.sh` never bumped `CFBundleVersion`, and `install()` only redeploys the helper
+when the version changed, so every helper edit was silently dropped. So B/paste were never actually exercised.
+- [x] **deploy fix** — `build.sh` now bumps `CFBundleVersion` to epoch seconds every build, so the installer
+  always replaces the stale helper. Verified: version `14` → epoch. (TCC is keyed to the signing identity,
+  not the version, so the grant survives.)
+- [x] **reveal** — new native `activate` (NSRunningApplication.activate by pid) + adapter `verb === 'reveal'`.
+  cg input lands on the FOCUSED app, so the agent must reveal the window before key/type/paste. Was the
+  `"verb 'reveal' is not supported"` failure in the self-test.
+- [ ] **VM still needs the helper's TCC grants** — the screenshot `-3801` is "Screen Recording declined";
+  keystrokes need Accessibility. Once the new helper deploys, grant it both (onboarding pre-board / System
+  Settings). This is the whole point of the helper holding the grants; not a code bug.
+- [ ] **blitz CLI broken in packaged builds** (separate) — `bash .blitzos/blitz capabilities/check` →
+  `Cannot find module .../app.asar/out/main/blitzscript/run.mjs`. `run_workflow` works (in-process); only the
+  `blitz check` CLI is unavailable. Likely needs `blitzscript/` in `asarUnpack`.
+
 ## Doctrine (separate, committed cb49bbb)
 `blitzos-agents.md` already steers canvas-app typing to the official API or the helper window and forbids
 self-synthesized OS keystrokes. Right direction, but it points at the helper path B must finish.

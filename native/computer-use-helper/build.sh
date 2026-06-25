@@ -25,6 +25,14 @@ swiftc -O -target "${ARCH}-apple-macos13.0" -framework AppKit -framework CoreGra
 
 cp Info.plist "${BUNDLE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "${BUNDLE}/Contents/Info.plist" >/dev/null # validate
+# Bump CFBundleVersion every build (epoch seconds) so the runtime installer ALWAYS redeploys the helper.
+# install() copies the bundle ONLY when CFBundleVersion changed (computer-use-helper.ts), so a constant
+# version silently left helper edits undeployed — the running binary stayed stale and the cg_key/reveal fixes
+# never reached it (the 2026-06-24 self-test). TCC is keyed to the signing identity, not the version, so a
+# bump never costs the user's grant.
+HELPER_VER="$(date +%s)"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${HELPER_VER}" "${BUNDLE}/Contents/Info.plist" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${HELPER_VER}" "${BUNDLE}/Contents/Info.plist"
 
 # Brand the helper with the BlitzOS mark (so the FDA/Accessibility list + the drag tile show
 # "BlitzOS" with the product icon, not the generic executable/helper icon).

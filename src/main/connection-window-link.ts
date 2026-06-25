@@ -99,6 +99,7 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
           const find = (a.find as Record<string, unknown>) || { role: a.role, title: a.title ?? a.selector }
           return helper.call('ax_act', { pid, find, action: a.action === 'set' ? 'setValue' : 'press', value: a.text })
         }
+        if (verb === 'reveal') return helper.call('activate', { pid })
         return { error: `verb "${verb}" is not supported for a window connection` }
       }
     }
