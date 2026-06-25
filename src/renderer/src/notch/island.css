@@ -3144,6 +3144,7 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-msg-tray .att-pill-items,
 .nh-island .isl-msg-tray .att-singles {
+  flex-wrap: nowrap; /* tabs/chips never wrap in the horizontal tray strip; overflow-x:auto scrolls instead (BLI-39) */
   gap: 6px;
 }
 .nh-island .isl-msg-tray .att-pill-app .att-favicon,
