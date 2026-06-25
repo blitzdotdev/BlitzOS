@@ -13,7 +13,6 @@ import { publishLiveTray } from './sentTrayStore'
 type Tab = { tabId: number | string; title?: string; url?: string; browser?: string; windowId?: number; active?: boolean; favIconUrl?: string; discarded?: boolean }
 type Win = { windowId: number; app?: string; title?: string; icon?: string }
 type Conn = { connId: string; type?: string; ref?: number | string | null; title?: string; sourceId?: string; origin?: string }
-type BlitzChromeStatus = { available: boolean; running: boolean; connected: boolean; windows: number }
 type ConnBridge = {
   listTabs(): Promise<{ tabs?: Tab[]; error?: string }>
   listWindows(): Promise<{ windows?: Win[]; error?: string }>
@@ -25,9 +24,6 @@ type ConnBridge = {
 
 const bridge = (): ConnBridge | undefined =>
   (window as unknown as { agentOS?: { connections?: ConnBridge } }).agentOS?.connections
-type BlitzChromeBridge = { status(): Promise<BlitzChromeStatus>; open(agentId?: string): Promise<{ connId?: string; error?: string }> }
-const blitzBridge = (): BlitzChromeBridge | undefined =>
-  (window as unknown as { agentOS?: { blitzChrome?: BlitzChromeBridge } }).agentOS?.blitzChrome
 
 // One browser window = one expandable group, numbered per browser in discovery order ("Chrome", "Chrome (1)", …).
 type Group = { id: string; label: string; tabs: Tab[] }
@@ -75,8 +71,6 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<string | null>(null) // a row id mid connect/disconnect, or 'install'
   const [installNote, setInstallNote] = useState<string | null>(null)
-  const [blitzStatus, setBlitzStatus] = useState<BlitzChromeStatus>({ available: false, running: false, connected: false, windows: 0 })
-  const [blitzBusy, setBlitzBusy] = useState(false)
   // Live feedback from the macOS window picker (NotchHost arms it while this panel is open).
   const [dragOver, setDragOver] = useState(false)
   // Live feedback for an INTERNAL drag: a connectors-list row (or child tab) being dragged onto the drop zone.
@@ -162,25 +156,15 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     void refresh()
   }, [refresh])
 
-  const refreshBlitzStatus = useCallback(async (): Promise<void> => {
-    const s = await blitzBridge()?.status().catch(() => undefined)
-    if (s) setBlitzStatus(s)
-  }, [])
-
-  useEffect(() => {
-    void refreshBlitzStatus()
-  }, [refreshBlitzStatus])
-
   // Live updates while open: the connector/helper attach with latency, so poll the CHEAP sources (tabs +
   // connections, not the heavy window-icon fetch) so the list tracks reality without a manual re-open.
   useEffect(() => {
     const id = window.setInterval(() => {
       void refreshTabs()
       void refreshConnections()
-      void refreshBlitzStatus()
     }, 2500)
     return () => clearInterval(id)
-  }, [refreshTabs, refreshConnections, refreshBlitzStatus])
+  }, [refreshTabs, refreshConnections])
 
   useEffect(() => {
     const off = window.agentOS?.pick?.onEvent?.((m) => {
@@ -393,20 +377,6 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     setInstallNote('To connect Chrome, turn on Chrome ▸ View ▸ Developer ▸ “Allow JavaScript from Apple Events” once, then open a tab. Its tabs then appear here automatically.')
   }
 
-  // Blitz Chrome: launch (or surface) the agent's own dedicated browser and connect it.
-  async function openBlitzChrome(): Promise<void> {
-    if (blitzBusy) return
-    setBlitzBusy(true)
-    const r = await blitzBridge()?.open(activeSessionId).catch((): { error: string } => ({ error: 'unavailable' }))
-    const cid = r && 'connId' in r ? r.connId : undefined
-    if (cid) markStaged('conn:' + cid)
-    await Promise.all([refreshBlitzStatus(), refreshConnections()])
-    setBlitzBusy(false)
-  }
-
-  // Blitz Chrome connections: live connections owned by this session with origin 'blitz-chrome'.
-  const blitzConns = connections.filter((c) => c.origin === 'blitz-chrome')
-
   const groups = browserGroups(tabs)
   const hasChrome = tabs.some((t) => t.browser === 'chrome')
   // The browser app icon for a group row (chevron → icon → name): reuse the helper's real app-window icon for the
@@ -414,6 +384,16 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   const iconByApp = new Map<string, string>()
   for (const w of windows) if (w.app && w.icon) iconByApp.set(w.app, w.icon)
   const groupIcon = (b?: string): string | undefined => iconByApp.get(b === 'chrome' ? 'Google Chrome' : b === 'safari' ? 'Safari' : b || '')
+  // Browsers are shown ABOVE as tab GROUPS, so hide their app-window rows from the helper's window list — otherwise
+  // the same open Chrome/Safari window ALSO appears as a flat "window" row (the duplicate the user sees). Only hide a
+  // browser whose tabs we actually surfaced (JS bridge on); if its tabs aren't available, keep the window row as a fallback.
+  const browserAppsShown = new Set<string>()
+  for (const g of groups) {
+    const b = g.tabs[0]?.browser
+    if (b === 'chrome') browserAppsShown.add('Google Chrome')
+    else if (b === 'safari') browserAppsShown.add('Safari')
+  }
+  const appWindows = windows.filter((w) => !browserAppsShown.has(w.app || ''))
   // The dropbox tray (LEFT box) = the staged sources, grouped — built by the SHARED buildTrayGroups so the live
   // dropbox and the frozen in-chat snapshot can never drift. Memoized so the published live copy + the AttachTray
   // only churn when the staged set / lists actually change.
@@ -452,47 +432,6 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
 
         {/* RIGHT: the connectors list — browser windows (expand to tabs) + app windows. Click a row to connect it. */}
         <div className="att-apps" role="list">
-          {/* Blitz Chrome — the agent's own dedicated browser, shown at the top with its live tabs. */}
-          {blitzStatus.available && (
-            <div className="att-app-group att-blitz-chrome">
-              <div className="att-blitz-header">
-                <AppIcon src={undefined} name="Blitz" brand="chrome" />
-                <span className="att-app-name">Blitz Chrome</span>
-                <span className="att-blitz-tag">agent browser</span>
-              </div>
-              {blitzStatus.running && blitzConns.length > 0
-                ? blitzConns.map((c) => {
-                    const staged = !!stagedSet?.has('conn:' + c.connId)
-                    return (
-                      <button
-                        key={c.connId}
-                        type="button"
-                        className={`att-tab${staged ? ' connected' : ''}`}
-                        aria-pressed={staged}
-                        onClick={() => {
-                          staged ? unstageSources(activeSessionId, 'conn:' + c.connId) : markStaged('conn:' + c.connId)
-                        }}
-                      >
-                        <Favicon src={undefined} />
-                        <span className="att-tab-title">{c.title || c.sourceId || 'Blitz Chrome'}</span>
-                      </button>
-                    )
-                  })
-                : blitzStatus.running
-                  ? <div className="att-note att-blitz-note">Blitz Chrome is open — no active tab yet.</div>
-                  : (
-                    <button
-                      type="button"
-                      className="att-install"
-                      disabled={blitzBusy}
-                      onClick={() => void openBlitzChrome()}
-                    >
-                      {blitzBusy ? 'Opening…' : 'Open Blitz Chrome'}
-                    </button>
-                  )
-              }
-            </div>
-          )}
           {groups.map((g) => {
             const isExp = expanded.has(g.id)
             const connCount = g.tabs.filter((t) => connForTab(t)).length
@@ -557,7 +496,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
           })}
 
           {/* app windows (from the computer-use helper) — single connectables, no children. */}
-          {windows.map((w, i) => {
+          {appWindows.map((w, i) => {
             const connected = !!connForWin(w)
             const label = (w.title || '').trim() && w.title !== w.app ? w.title! : `${w.app || 'window'} ${i + 1}`
             return (
