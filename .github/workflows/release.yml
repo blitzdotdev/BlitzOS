@@ -49,7 +49,7 @@ jobs:
           echo "$MAC_CERT_P12" | base64 -d > $RUNNER_TEMP/cert.p12
           security import $RUNNER_TEMP/cert.p12 -k "$KC" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
-      # The Computer Use sidecar (BlitzComputerUse.app) ships as an extraResource (electron-builder.yml)
+      # The Computer Use sidecar (BlitzOS.app) ships as an extraResource (electron-builder.yml)
       # and the onboarding TCC pre-board drags it; if it is not built here the packaged app has NO helper
       # and the drag is dead on a fresh install (issues/open/preboard-cu-helper-drag-missing-vm.md). Build
       # it AFTER the cert import so it signs with the same identity. Cached on the sidecar source + signing
@@ -65,8 +65,8 @@ jobs:
         run: bash native/computer-use-helper/build.sh
       - name: Verify the sidecar is present (refuse to ship without it)
         run: |
-          test -x native/computer-use-helper/build/BlitzComputerUse.app/Contents/MacOS/BlitzComputerUse \
-            || { echo "::error::BlitzComputerUse.app missing — refusing to package; a fresh install would have a dead pre-board TCC drag"; exit 1; }
+          test -x native/computer-use-helper/build/BlitzOS.app/Contents/MacOS/BlitzOS \
+            || { echo "::error::BlitzOS.app (computer-use helper) missing — refusing to package; a fresh install would have a dead pre-board TCC drag"; exit 1; }
       - name: Build app
         run: npm run build
       - name: Package
