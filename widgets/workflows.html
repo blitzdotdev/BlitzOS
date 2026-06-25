@@ -1,0 +1,63 @@
+<!doctype html><meta charset="utf-8"><title>Workflows</title>
+<!-- Thinking-widget: the web tools someone lives in, as an ICON GRID (the Shortcuts-widget look) —
+     tap an icon to open the site as a live surface. No titlebar, no buttons, no prose.
+     Drive with update_surface{props:{items:[{name,host,color?,integration?}]}}. -->
+<style>
+  .wrap{padding:14px 14px 10px;height:100%;display:flex;flex-direction:column;box-sizing:border-box}
+  .lb{font:600 9px ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--blitz-accent);margin-bottom:11px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(62px,1fr));gap:10px 6px;overflow:auto}
+  .it{display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;border:none;background:none;padding:0;font-family:var(--blitz-font)}
+  .tile{position:relative;width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:var(--blitz-surface);box-shadow:0 1px 2px rgba(0,0,0,.08),inset 0 0 0 1px var(--blitz-hairline);transition:transform .12s}
+  .it:hover .tile{transform:scale(1.06)}
+  .it:active .tile{transform:scale(.96)}
+  .tile img{width:26px;height:26px}
+  .tile b{position:absolute;inset:0;display:none;place-items:center;border-radius:13px;font:700 17px var(--blitz-font)}
+  .tile.fb{box-shadow:none}
+  .tile.fb img{display:none}
+  .tile.fb b{display:grid}
+  .dot{position:absolute;right:-2px;top:-2px;width:8px;height:8px;border-radius:99px;background:var(--blitz-accent);border:2px solid var(--blitz-bg)}
+  .nm{font-size:9.5px;color:var(--blitz-text-dim);max-width:62px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wrap.intro .it{animation:in .3s both}
+  .wrap.intro .it:nth-child(2){animation-delay:.04s}.wrap.intro .it:nth-child(3){animation-delay:.08s}.wrap.intro .it:nth-child(4){animation-delay:.12s}.wrap.intro .it:nth-child(5){animation-delay:.16s}.wrap.intro .it:nth-child(6){animation-delay:.2s}.wrap.intro .it:nth-child(7){animation-delay:.24s}.wrap.intro .it:nth-child(8){animation-delay:.28s}
+  @keyframes in{from{opacity:0;transform:scale(.85)}}
+  /* gist mode (an m/s tile): one clean row of icons, no names — pop out for the full grid */
+  @media (max-height:219px){
+    .wrap{padding:12px 13px 8px}
+    .lb{margin-bottom:9px}
+    .nm{display:none}
+    .tile{width:42px;height:42px;border-radius:12px}
+    .grid{grid-template-columns:repeat(auto-fill,minmax(48px,1fr));overflow:hidden}
+  }
+</style>
+<div class="wrap" id="wrap">
+  <div class="lb" id="lb">Workflows</div>
+  <div class="grid" id="grid"></div>
+</div>
+<script>
+  // props: { title?, items:[{name, host, color?, integration?}] } — tap = open the site as a live
+  // web surface (blitz.tool open_window). `integration` (an OS OAuth provider) shows as a dot.
+  // Icon = the site's real favicon; if it can't load, a brand-colored letter tile (item.color).
+  const SAMPLE={items:[
+    {name:'Tool',host:'tool.example.com',color:'#5B78AA'},
+    {name:'Another',host:'app.example.com',color:'#7FA98C',integration:'x'},
+    {name:'Third',host:'three.example.com',color:'#FF8D61'}]}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  const inkFor=c=>{try{const v=parseInt(String(c).slice(1),16),L=.299*((v>>16)&255)+.587*((v>>8)&255)+.114*(v&255);return L>150?'#1a1b1d':'#fff'}catch(e){return '#fff'}}
+  function render(d){
+    const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
+    document.getElementById('lb').textContent=d.title||'Workflows'
+    const g=document.getElementById('grid')
+    g.innerHTML=(d.items||[]).map((it,i)=>{
+      const c=it.color||'#5B78AA'
+      return '<button class="it" data-i="'+i+'" title="Open '+esc(it.name)+'"><span class="tile" id="t'+i+'"><img src="https://icons.duckduckgo.com/ip3/'+esc(it.host||'')+'.ico" alt=""><b style="background:'+esc(c)+';color:'+inkFor(c)+'">'+esc(String(it.name||'?')[0].toUpperCase())+'</b>'+(it.integration?'<span class="dot"></span>':'')+'</span><span class="nm">'+esc(it.name)+'</span></button>'
+    }).join('')
+    g.querySelectorAll('.tile img').forEach(img=>{img.addEventListener('error',()=>img.parentElement.classList.add('fb'))})
+    g.querySelectorAll('.it').forEach(b=>b.addEventListener('click',()=>{
+      const it=(data.items||[])[+b.dataset.i]; if(!it||!it.host)return
+      if(window.blitz&&window.blitz.tool)window.blitz.tool('open_window',{url:'https://'+it.host,title:it.name})
+    }))
+  }
+  render(data)
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
+</script>

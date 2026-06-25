@@ -1,0 +1,40 @@
+<!doctype html><meta charset="utf-8"><title>Graph</title>
+<!-- Thinking-widget: a hub-and-spoke relationship graph. Drive with update_surface{props:{center,nodes}}. -->
+<style>
+  :root{--ac:var(--blitz-accent,#1a1b1d);--bg:var(--blitz-bg,#fff);--sf:var(--blitz-surface,#f5f5f3);
+        --tx:var(--blitz-text,#1a1b1d);--dim:var(--blitz-text-dim,#8a8d90);--line:var(--blitz-hairline,rgba(0,0,0,.12))}
+  .wrap{padding:14px}
+  svg{width:100%;display:block;overflow:visible}
+  .edge{stroke:var(--line);stroke-width:1.5}
+  svg.intro .edge{animation:draw .6s ease both}
+  @keyframes draw{from{stroke-dashoffset:200}}
+  .node circle{fill:var(--bg);stroke:var(--dim);stroke-width:1.5;transition:transform .15s}
+  .node.c circle{fill:var(--ac);stroke:var(--ac)}
+  .node text{font:11px -apple-system,system-ui;fill:var(--tx);text-anchor:middle}
+  .node.c text{fill:var(--bg);font-weight:600}
+  .node .sub{font:9px ui-monospace,monospace;fill:var(--dim)}
+  .node:hover circle{transform:scale(1.08);transform-origin:center}
+  svg.intro .node{animation:pin .4s both}
+  @keyframes pin{from{opacity:0;transform:scale(.6)}}
+</style>
+<blitz-titlebar><span id="hd">Graph</span></blitz-titlebar>
+<div class="wrap"><svg id="svg" viewBox="0 0 340 280"></svg></div>
+<script>
+  // props: { title?, center:{label}, nodes:[{label, sub?}] } — a hub + its relationships.
+  const SAMPLE={title:'Graph',center:{label:'Hub'},nodes:[
+    {label:'Node A',sub:'rel'},{label:'Node B',sub:'rel'},{label:'Node C',sub:'rel'},
+    {label:'Node D',sub:'rel'},{label:'Node E',sub:'rel'},{label:'Node F',sub:'rel'}]}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  function render(d){
+    document.getElementById('hd').textContent=d.title||'Graph'
+    const cx=170,cy=140,R=98,n=(d.nodes||[]).length||1
+    let edges='',nodes=''
+    ;(d.nodes||[]).forEach((nd,i)=>{const a=-Math.PI/2+i*2*Math.PI/n,x=cx+R*Math.cos(a),y=cy+R*Math.sin(a)
+      edges+='<line class="edge" x1="'+cx+'" y1="'+cy+'" x2="'+x+'" y2="'+y+'" stroke-dasharray="200" style="animation-delay:'+(i*.05)+'s"/>'
+      nodes+='<g class="node" style="animation-delay:'+(.2+i*.05)+'s"><circle cx="'+x+'" cy="'+y+'" r="26"/><text x="'+x+'" y="'+(y-1)+'">'+esc(nd.label)+'</text>'+(nd.sub?'<text class="sub" x="'+x+'" y="'+(y+11)+'">'+esc(nd.sub)+'</text>':'')+'</g>'})
+    const sv=document.getElementById('svg');sv.classList.toggle('intro',!__p);__p=true;sv.innerHTML=edges+'<g class="node c"><circle cx="'+cx+'" cy="'+cy+'" r="34"/><text x="'+cx+'" y="'+(cy+4)+'">'+esc((d.center||{}).label||'')+'</text></g>'+nodes
+  }
+  render(data)
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.nodes){data=p;render(p)}})
+</script>

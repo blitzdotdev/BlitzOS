@@ -1,0 +1,226 @@
+<!-- The DEFAULT chat UI: a full chat app on the shared Blitz tokens. It is just a file — customize it by
+     rewriting blitz-chat.html in the workspace ("make the chat look like X"). The OS pushes ALL sessions in
+     props (sessions[], threads{id:msgs}, status{id}); this hub renders a left SESSION SIDEBAR + the active
+     thread, sends with blitz.sendMessage(text, activeSessionId), and manages sessions with blitz.chat(op).
+     Agent replies render RICH: markdown-lite + inline images/svg + structured cards parsed from a fenced
+     ```blitz-ui {json} block (type: confirm | choice | grid | status). Clicking a card option sends its
+     label back as the user's answer. A per-session "thinking…" indicator follows props.status. -->
+<style>
+  :root { --line: var(--blitz-hairline, rgba(0,0,0,.1)); --vio: #5b5bd6; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--blitz-surface, #fff); color: var(--blitz-text, #1a1b1d);
+    font: 13px/1.5 var(--blitz-font, -apple-system, system-ui, sans-serif); -webkit-font-smoothing: antialiased; }
+  .app { display: flex; height: 100vh; overflow: hidden; }
+
+  /* session sidebar */
+  .side { width: 158px; flex: 0 0 auto; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--blitz-surface-2, #f1f1ee); }
+  .side-top { padding: 9px; }
+  .newbtn { width: 100%; border: 1px solid var(--line); background: var(--blitz-surface, #fff); color: var(--blitz-text); border-radius: 9px; padding: 8px; font: 600 12px var(--blitz-font); cursor: pointer; }
+  .newbtn:hover { border-color: var(--blitz-accent, #1a1b1d); }
+  .side-list { flex: 1; overflow-y: auto; padding: 0 7px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .sess { display: flex; align-items: center; gap: 7px; padding: 8px 9px; border-radius: 8px; cursor: pointer; color: var(--blitz-text-dim, #797c7f); }
+  .sess:hover { background: rgba(0,0,0,.04); }
+  .sess.on { background: var(--blitz-surface, #fff); color: var(--blitz-text); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .sess .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 560; }
+  .sess .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+  .sess .dot.think { background: var(--vio); animation: pulse 1s ease-in-out infinite; }
+  .sess .dot.unread { background: var(--vio); }
+  @keyframes pulse { 0%,100% { opacity: .3 } 50% { opacity: 1 } }
+
+  /* main pane */
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .head { flex: 0 0 auto; padding: 9px 10px 9px 14px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .head #title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctxbtn { flex: 0 0 auto; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--blitz-muted, #6b7280); padding: 4px 9px; font: 600 11px var(--blitz-font); cursor: pointer; opacity: 0.8; }
+  .ctxbtn:hover { opacity: 1; background: rgba(0,0,0,0.04); color: var(--blitz-ink, #1a1b1d); }
+  .log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .row { display: flex; }
+  .row.user { justify-content: flex-end; }
+  .bub { max-width: 86%; padding: 8px 12px; border-radius: 13px; line-height: 1.5; word-wrap: break-word; }
+  .row.user .bub { background: var(--blitz-accent, #1a1b1d); color: var(--blitz-accent-ink, #fff); border-bottom-right-radius: 4px; }
+  .row.agent .bub { background: var(--blitz-surface-2, #f1f1ee); color: var(--blitz-text); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .bub p { margin: 0 0 7px; } .bub p:last-child { margin-bottom: 0; }
+  /* item 5b: a grounded annotation message — clickable; a pin fades in on hover ("show on the surface"). */
+  .bub.anno { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .bub.anno .anno-pin { opacity: 0; font-size: 12px; transition: opacity .12s ease; }
+  .bub.anno:hover { box-shadow: inset 0 0 0 1.5px var(--blitz-info, #3f72b8); }
+  .bub.anno:hover .anno-pin { opacity: 1; }
+  .bub strong { font-weight: 680; } .bub a { color: var(--vio); }
+  .bub ul { margin: 5px 0; padding-left: 18px; } .bub li { margin: 2px 0; }
+  .bub img { max-width: 100%; border-radius: 9px; margin: 6px 0; display: block; }
+  .bub svg { max-width: 100%; height: auto; margin: 6px 0; }
+  .bub code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 5px; font: 12px ui-monospace, monospace; }
+
+  /* structured cards */
+  .card { margin: 8px 0 2px; border: 1px solid var(--line); border-radius: 12px; background: var(--blitz-surface, #fff); overflow: hidden; }
+  .card .q { padding: 11px 13px 9px; font-weight: 620; }
+  .card.answered { opacity: .7; }
+  .opts { display: flex; gap: 7px; padding: 0 11px 11px; flex-wrap: wrap; }
+  .opts.vert { flex-direction: column; }
+  .opts.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  .opt { border: 1px solid var(--line); background: var(--blitz-surface-2, #f1f1ee); border-radius: 9px; padding: 9px 13px; font: 600 13px var(--blitz-font); color: var(--blitz-text); cursor: pointer; text-align: left; transition: border-color .12s, background .12s; }
+  .opt:hover:not(:disabled) { border-color: var(--vio); background: #fff; }
+  .opt:disabled { cursor: default; }
+  .opt.chosen { border-color: var(--vio); background: color-mix(in srgb, var(--vio) 12%, #fff); }
+  .opt .ol { font-weight: 680; } .opt .os { display: block; color: var(--blitz-text-dim); font-weight: 400; font-size: 12px; margin-top: 2px; }
+  .opt img { width: 100%; aspect-ratio: 16/10; object-fit: cover; border-radius: 6px; margin-bottom: 6px; }
+  .opts.confirm .opt:first-child { border-color: var(--vio); background: var(--vio); color: #fff; }
+
+  /* thinking + composer */
+  .think { display: flex; align-items: center; gap: 8px; color: var(--blitz-text-dim); padding: 2px 4px; font-size: 12.5px; }
+  .dots span { display: inline-block; width: 5px; height: 5px; margin: 0 1px; border-radius: 50%; background: var(--blitz-text-dim); animation: bob 1s infinite; }
+  .dots span:nth-child(2) { animation-delay: .15s } .dots span:nth-child(3) { animation-delay: .3s }
+  @keyframes bob { 0%,80%,100% { transform: translateY(0); opacity: .4 } 40% { transform: translateY(-4px); opacity: 1 } }
+  .composer { flex: 0 0 auto; display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+  .composer input { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 10px 13px; font: 13px var(--blitz-font); color: var(--blitz-text); background: var(--blitz-surface, #fff); outline: none; }
+  .composer input:focus { border-color: var(--blitz-accent, #1a1b1d); }
+  .composer button { border: none; border-radius: 10px; background: var(--blitz-accent, #1a1b1d); color: var(--blitz-accent-ink, #fff); padding: 0 16px; font: 600 13px var(--blitz-font); cursor: pointer; }
+  .empty { color: var(--blitz-text-dim); text-align: center; margin: auto; padding: 30px; line-height: 1.6; }
+</style>
+
+<div class="app">
+  <div class="side">
+    <div class="side-top"><button class="newbtn" id="new">+ New chat</button></div>
+    <div class="side-list" id="sessions"></div>
+  </div>
+  <div class="main">
+    <div class="head"><span id="title">Chat</span><button class="ctxbtn" id="clearctx" title="Start a fresh context for this agent — restarts it with an empty conversation. Your chat history here is kept.">↻ New context</button></div>
+    <div class="log" id="log"></div>
+    <div class="composer"><input id="msg" placeholder="Message the agent..." autocomplete="off" spellcheck="false"/><button id="send">Send</button></div>
+  </div>
+</div>
+
+<script>
+  var S = { sessions: [{ id: '0', title: 'Main', status: '' }], threads: { '0': [] }, status: {}, active: '0', seen: {} };
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  // parse an agent message into ordered parts: md text | raw svg | ui-card spec
+  function parseParts(text) {
+    var parts = [], re = /```blitz-ui\s*([\s\S]*?)```|(<svg[\s\S]*?<\/svg>)/gi, last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) parts.push({ t: 'md', v: text.slice(last, m.index) });
+      if (m[1] != null) { try { parts.push({ t: 'ui', v: JSON.parse(m[1].trim()) }); } catch (e) { parts.push({ t: 'md', v: m[1] }); } }
+      else parts.push({ t: 'svg', v: m[2] });
+      last = re.lastIndex;
+    }
+    if (last < text.length) parts.push({ t: 'md', v: text.slice(last) });
+    return parts;
+  }
+  // markdown-lite -> safe HTML. Escape FIRST, then substitute a tiny allowlist (images included; the src is
+  // &-escaped by esc, which browsers decode fine, so no placeholder dance is needed).
+  function md(text) {
+    var h = esc(String(text))
+      .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img alt="$1" src="$2">')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    h = h.replace(/(?:^|\n)((?:[-*] .+(?:\n|$))+)/g, function (_, blk) { return '<ul>' + blk.trim().split(/\n/).map(function (l) { return '<li>' + l.replace(/^[-*]\s+/, '') + '</li>'; }).join('') + '</ul>'; });
+    h = h.split(/\n{2,}/).map(function (p) { return /<ul>/.test(p) ? p : '<p>' + p.replace(/\n/g, '<br>') + '</p>'; }).join('');
+    return h;
+  }
+  function answer(label) { send(label); }
+
+  function renderCard(spec) {
+    if (spec.type === 'status') { var s = document.createElement('div'); s.className = 'think'; s.innerHTML = '<span class="dots"><span></span><span></span><span></span></span> ' + esc(spec.text || spec.prompt || 'Working...'); return s; }
+    var card = document.createElement('div'); card.className = 'card';
+    var kind = spec.type === 'grid' ? 'grid' : spec.type === 'choice' ? 'vert' : 'confirm';
+    var q = document.createElement('div'); q.className = 'q'; q.innerHTML = md(spec.prompt || spec.question || '');
+    card.appendChild(q);
+    var opts = document.createElement('div'); opts.className = 'opts ' + kind;
+    (spec.options || []).forEach(function (o) {
+      var label = typeof o === 'string' ? o : (o.label || '');
+      var b = document.createElement('button'); b.className = 'opt';
+      var html = (typeof o === 'object' && o.img) ? '<img src="' + esc(o.img) + '">' : '';
+      html += '<span class="ol">' + esc(label) + '</span>' + (typeof o === 'object' && o.sub ? '<span class="os">' + esc(o.sub) + '</span>' : '');
+      b.innerHTML = html;
+      b.onclick = function () {
+        if (card.classList.contains('answered')) return;
+        card.classList.add('answered'); b.classList.add('chosen');
+        [].forEach.call(opts.children, function (c) { c.disabled = true; });
+        answer(label);
+      };
+      opts.appendChild(b);
+    });
+    card.appendChild(opts);
+    return card;
+  }
+
+  function renderMsg(m) {
+    var row = document.createElement('div'); row.className = 'row ' + (m.role === 'user' ? 'user' : 'agent');
+    var bub = document.createElement('div'); bub.className = 'bub';
+    // Item 5b: a user message carrying a `ref` is a GROUNDED ANNOTATION — render it as a special clickable
+    // bubble (a pin appears on hover). Clicking re-shows the speech bubble at that spot on the surface.
+    if (m.role === 'user' && m.ref && m.ref.surfaceId) {
+      bub.className += ' anno';
+      var t = document.createElement('span'); t.textContent = m.text || ''; bub.appendChild(t);
+      var pin = document.createElement('span'); pin.className = 'anno-pin'; pin.textContent = '📍'; pin.title = 'Show on the surface'; bub.appendChild(pin);
+      bub.onclick = function () { try { window.blitz.focusAnnotation(m.ref); } catch (e) {} };
+      row.appendChild(bub); return row;
+    }
+    if (m.role === 'user') { bub.textContent = m.text || ''; }
+    else {
+      parseParts(m.text || '').forEach(function (p) {
+        if (p.t === 'md') { var d = document.createElement('div'); d.innerHTML = md(p.v); bub.appendChild(d); }
+        else if (p.t === 'svg') { var s = document.createElement('div'); s.innerHTML = p.v; bub.appendChild(s); }
+        else if (p.t === 'ui') bub.appendChild(renderCard(p.v));
+      });
+    }
+    row.appendChild(bub); return row;
+  }
+
+  function renderLog() {
+    var log = $('log'); log.innerHTML = '';
+    var msgs = S.threads[S.active] || [];
+    if (!msgs.length) { var e = document.createElement('div'); e.className = 'empty'; e.innerHTML = 'New chat.<br>Ask the agent anything — it works on your desktop and replies here.'; log.appendChild(e); }
+    msgs.forEach(function (m) { log.appendChild(renderMsg(m)); });
+    if ((S.status[S.active] || '') === 'thinking') { var t = document.createElement('div'); t.className = 'think'; t.innerHTML = 'thinking <span class="dots"><span></span><span></span><span></span></span>'; log.appendChild(t); }
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function renderSide() {
+    var list = $('sessions'); list.innerHTML = '';
+    (S.sessions || []).forEach(function (s) {
+      var row = document.createElement('div'); row.className = 'sess' + (s.id === S.active ? ' on' : '');
+      var st = (S.status[s.id] || s.status || '');
+      var unread = s.id !== S.active && (S.threads[s.id] || []).length > (S.seen[s.id] || 0);
+      var dot = st === 'thinking' ? '<span class="dot think"></span>' : (unread ? '<span class="dot unread"></span>' : '');
+      row.innerHTML = '<span class="nm">' + esc(s.title || ('Chat ' + s.id)) + '</span>' + dot;
+      row.onclick = function () { S.active = s.id; S.seen[s.id] = (S.threads[s.id] || []).length; renderSide(); renderLog(); $('title').textContent = s.title || 'Chat'; $('msg').focus(); };
+      row.ondblclick = function () { var t = prompt('Rename this chat', s.title || ''); if (t && t.trim()) window.blitz.chat('rename', { id: s.id, title: t.trim() }); };
+      list.appendChild(row);
+    });
+    var act = (S.sessions || []).filter(function (s) { return s.id === S.active; })[0];
+    $('title').textContent = act ? (act.title || 'Chat') : 'Chat';
+  }
+
+  function send(text) {
+    text = String(text || '').trim(); if (!text) return;
+    window.blitz.sendMessage(text, S.active);
+    $('msg').value = '';
+  }
+  $('send').onclick = function () { send($('msg').value); };
+  $('msg').addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(this.value); } });
+  $('new').onclick = function () { window.blitz.chat('new', {}).then(function (r) { if (r && r.id) { S.active = String(r.id); renderSide(); renderLog(); } }); };
+  // Clear context: rotate THIS agent's claude session + restart → empty conversation. The chat.md transcript
+  // (this thread) is kept; only the agent's in-context memory resets. Uniform for every agent incl the primary.
+  $('clearctx').onclick = function () {
+    var act = (S.sessions || []).filter(function (s) { return s.id === S.active; })[0];
+    var nm = act ? (act.title || ('Chat ' + act.id)) : 'this agent';
+    if (confirm('Start a fresh context for "' + nm + '"?\n\nThe agent restarts with an empty conversation. Your chat history here is kept — it re-reads it on boot.')) {
+      window.blitz.chat('clear', { id: S.active });
+    }
+  };
+
+  window.blitz.onProps(function (p) {
+    if (!p) return;
+    if (Array.isArray(p.sessions)) S.sessions = p.sessions;
+    if (p.threads && typeof p.threads === 'object') S.threads = p.threads;
+    if (p.status && typeof p.status === 'object') S.status = p.status;
+    if (Array.isArray(p.messages)) { var sid = String(p.sessionId || '0'); S.threads[sid] = p.messages; } // legacy single-session push
+    if (S.sessions.length && !S.sessions.some(function (s) { return s.id === S.active; })) S.active = S.sessions[0].id;
+    if (S.seen[S.active] == null) S.seen[S.active] = (S.threads[S.active] || []).length;
+    renderSide(); renderLog();
+  });
+</script>

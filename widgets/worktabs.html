@@ -1,0 +1,66 @@
+<!doctype html><meta charset="utf-8"><title>Open right now</title>
+<!-- Thinking-widget: the LIVE working set — the browser tabs someone has open right now, grouped by
+     window (their own grouping). The titles are the signal: what they are doing this moment. Tap a
+     row to open that exact tab as a live surface. No titlebar, no prose.
+     Drive with update_surface{props:{title?,sub?,items:[{title,host,url,win?}]}}. -->
+<style>
+  .wrap{padding:13px 12px 9px;height:100%;display:flex;flex-direction:column;box-sizing:border-box}
+  .hd{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:9px}
+  .lb{font:600 9px ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--blitz-accent)}
+  .sub{font:500 9.5px var(--blitz-font);color:var(--blitz-text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .list{display:flex;flex-direction:column;gap:1px;overflow:auto;margin:0 -6px}
+  .win{font:600 8.5px ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--blitz-text-dim);opacity:.7;padding:7px 6px 3px}
+  .row{display:flex;align-items:center;gap:8px;cursor:pointer;border:none;background:none;text-align:left;width:100%;padding:5px 6px;border-radius:8px;font-family:var(--blitz-font);transition:background .1s}
+  .row:hover{background:var(--blitz-surface)}
+  .row:active{transform:translateY(.5px)}
+  .fav{width:15px;height:15px;flex:none;border-radius:4px;background:var(--blitz-surface)}
+  .fav.fb{visibility:hidden}
+  .tx{min-width:0;flex:1;display:flex;flex-direction:column}
+  .ti{font-size:11.5px;color:var(--blitz-text);line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ho{font-size:9px;color:var(--blitz-text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wrap.intro .row{animation:in .3s both}
+  .wrap.intro .row:nth-child(2){animation-delay:.03s}.wrap.intro .row:nth-child(3){animation-delay:.06s}.wrap.intro .row:nth-child(4){animation-delay:.09s}.wrap.intro .row:nth-child(5){animation-delay:.12s}.wrap.intro .row:nth-child(6){animation-delay:.15s}
+  @keyframes in{from{opacity:0;transform:translateX(-5px)}}
+  /* gist mode (an m/s tile): drop the host subline + window dividers, tighten rows */
+  @media (max-height:219px){
+    .wrap{padding:11px 11px 7px}
+    .ho,.win{display:none}
+    .row{padding:3px 6px}
+  }
+</style>
+<div class="wrap" id="wrap">
+  <div class="hd"><span class="lb" id="lb">Open right now</span><span class="sub" id="sub"></span></div>
+  <div class="list" id="list"></div>
+</div>
+<script>
+  // props: { title?, sub?, items:[{title, host, url, win?}] } — tap a row = open that exact tab as a
+  // live web surface (blitz.tool open_window {url}). Favicon = the site's real icon; hidden if missing.
+  const SAMPLE={title:'Open right now',sub:'3 tabs · 1 window',items:[
+    {title:'xwatch — live dashboard',host:'app.example.com',url:'https://app.example.com',win:1},
+    {title:'Apply to Y Combinator',host:'apply.ycombinator.com',url:'https://apply.ycombinator.com',win:1},
+    {title:'LLM Daydreaming',host:'gwern.net',url:'https://gwern.net',win:1}]}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  function render(d){
+    const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
+    document.getElementById('lb').textContent=d.title||'Open right now'
+    document.getElementById('sub').textContent=d.sub||''
+    const list=document.getElementById('list'),items=(d.items||[])
+    let html='',lastWin=null
+    items.forEach((it,i)=>{
+      if(it.win!=null&&it.win!==lastWin&&items.some(x=>x.win!=null&&x.win!==it.win)){html+='<div class="win">Window '+esc(it.win)+'</div>';lastWin=it.win}
+      html+='<button class="row" data-i="'+i+'" title="Open: '+esc(it.title)+'">'
+        +'<img class="fav" src="https://icons.duckduckgo.com/ip3/'+esc(it.host||'')+'.ico" alt="">'
+        +'<span class="tx"><span class="ti">'+esc(it.title||it.host||'Tab')+'</span><span class="ho">'+esc(it.host||'')+'</span></span></button>'
+    })
+    list.innerHTML=html
+    list.querySelectorAll('.fav').forEach(img=>img.addEventListener('error',()=>img.classList.add('fb')))
+    list.querySelectorAll('.row').forEach(b=>b.addEventListener('click',()=>{
+      const it=(data.items||[])[+b.dataset.i]; if(!it)return
+      const url=it.url||(it.host?'https://'+it.host:''); if(!url)return
+      if(window.blitz&&window.blitz.tool)window.blitz.tool('open_window',{url,title:it.title||it.host})
+    }))
+  }
+  render(data)
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
+</script>

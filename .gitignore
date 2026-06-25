@@ -1,0 +1,62 @@
+node_modules
+out/
+dist/
+# …but the VENDORED agent-socket SDK's dist must be IN the repo (CI builds from a clean checkout)
+!vendor/agent-socket-sdk/dist/
+*.log
+.DS_Store
+
+# BlitzOS Connector extension: the signing key is a SECRET (it signs the self-hosted .crx) — never commit.
+extension/key.pem
+extension/*.pem
+extension/*.crx
+/extension.crx
+
+# real OAuth client ids / secrets — still gitignored even though the OAuth subsystem was removed
+# (629b40d): the file lingers on dev machines with real discord/gmail/github/jira creds, so it must
+# never be committable. Safe to delete the local file; it is unused now.
+integrations.config.json
+
+# preview backend: stored OAuth tokens (real account creds) — never commit
+
+# saved cloudflared tunnel token — never commit
+
+# persistent server-browser profile (the user's logged-in cookies/sessions) — never commit
+.blitz-chrome-profile/
+
+# workspaces Phase 1: the server-mode sandbox workspace folder (materialized canvas)
+
+# agent-authored widgets saved at runtime (the tracked widget library is widgets/*.html)
+widgets/authored/
+
+# parked vision dump (ignore claude mono)
+claude-mono*.md
+
+# Spatial.app design-reference screenshots (third-party pixels — local only)
+design/spatial-reference/
+
+# BlitzOS onboarding artifacts — the user's private scanned context, never commit
+# (onboarding-scan.mjs default-writes to ~/.blitzos/fs/journal/, outside the repo)
+onboarding-context.txt
+onboarding-context*.md
+onboarding-session*.md
+plans/mirror-*.md
+release/
+
+# runtime layout / journal state (per-machine workspace + boot journal) — never commit
+.blitzos/
+# local Claude Code state (settings.local.json, locks, locally generated workflows) — never commit
+.claude/
+# session-local scratch + agent comm folders — never commit
+/tmp/
+# electron-vite TEMP build configs (the canonical config is electron.vite.config.ts) — never commit
+electron.vite.config.*.mjs
+# reference repos cloned for porting/RE (Blender, three.js, etc.) — local only, can be huge, never commit
+.repos/
+
+# demo video assets + plan (own local repo, not part of BlitzOS)
+demo-video/
+/out
+/release
+*.crx
+.env

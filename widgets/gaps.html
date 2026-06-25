@@ -1,0 +1,40 @@
+<!doctype html><meta charset="utf-8"><title>Gaps</title>
+<!-- Thinking-widget: open questions as a clean checklist — what is NOT known yet. No titlebar,
+     no footer prose. Drive with update_surface{props:{items:[{q,hint?,done?}]}}. -->
+<style>
+  .wrap{padding:14px 16px 10px;height:100%;display:flex;flex-direction:column;box-sizing:border-box;overflow:auto}
+  .lb{font:600 9px ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--blitz-accent);margin-bottom:10px}
+  .g{display:flex;gap:10px;align-items:flex-start;margin-bottom:11px}
+  .g:last-child{margin-bottom:4px}
+  .g .mark{flex:0 0 20px;height:20px;border-radius:99px;display:grid;place-items:center;font:700 11px ui-monospace,monospace;margin-top:1px;
+    border:1.5px dashed color-mix(in srgb,var(--blitz-text) 30%,transparent);color:var(--blitz-text-dim)}
+  .g .q{font-size:12.5px;font-weight:600;line-height:1.4;letter-spacing:-.01em}
+  .g .h{font-size:10.5px;color:var(--blitz-text-dim);margin-top:2px;line-height:1.4}
+  .g.done .mark{border:none;background:var(--blitz-accent);color:var(--blitz-accent-ink)}
+  .g.done .q{color:var(--blitz-text-dim);font-weight:500}
+  .wrap.intro .g{animation:in .35s both}
+  .wrap.intro .g:nth-child(3){animation-delay:.07s}.wrap.intro .g:nth-child(4){animation-delay:.14s}.wrap.intro .g:nth-child(5){animation-delay:.21s}
+  @keyframes in{from{opacity:0;transform:translateY(6px)}}
+</style>
+<div class="wrap" id="wrap"></div>
+<script>
+  // props: { title?, items:[{q, hint?, done?}] } — done flips a slot to "answered".
+  const SAMPLE={items:[
+    {q:'An open question',hint:'why it matters'},
+    {q:'Another unknown'}]}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  function render(d){
+    const w=document.getElementById('wrap');w.classList.toggle('intro',!__p);__p=true
+    // size-adaptive: two open questions + a count as the gist (m tile), the full list when bigger
+    const items=d.items||[]
+    const max=window.innerHeight<220?2:items.length
+    const more=items.length-max
+    w.innerHTML='<div class="lb">'+esc(d.title||'Open questions')+'</div>'
+      +items.slice(0,max).map(g=>'<div class="g'+(g.done?' done':'')+'"><div class="mark">'+(g.done?'✓':'?')+'</div><div><div class="q">'+esc(g.q)+'</div>'+(g.hint&&max>2?'<div class="h">'+esc(g.hint)+'</div>':'')+'</div></div>').join('')
+      +(more>0?'<div class="g"><div class="mark" style="border:none;color:var(--blitz-text-dim)">+</div><div class="q" style="color:var(--blitz-text-dim);font-weight:500">'+more+' more</div></div>':'')
+  }
+  render(data)
+  window.addEventListener('resize',()=>render(data))
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
+</script>

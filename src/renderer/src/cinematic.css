@@ -1,0 +1,61 @@
+/* cinematic.css — full-screen pre-onboarding intro animation overlay.
+   All elements are position:fixed body-portals; #cin-root sits above everything. */
+
+#cin-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600; /* above the island chassis (2147483000) */
+  pointer-events: all;
+  overflow: hidden;
+}
+
+#cin-scrim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+}
+
+/* ── Glass bar ── */
+#cin-bar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  opacity: 0;
+  will-change: top, width, height, opacity, filter;
+  isolation: isolate;
+}
+#cin-bar-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(8, 10, 14, 0.72);
+  backdrop-filter: blur(40px) saturate(1.8) brightness(0.85);
+  -webkit-backdrop-filter: blur(40px) saturate(1.8) brightness(0.85);
+}
+#cin-bar-rim {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.38),
+    inset 0 0 0 0.75px rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+    0 16px 48px rgba(0, 0, 0, 0.70),
+    0 4px 12px rgba(0, 0, 0, 0.55);
+}
+#cin-bar-sheen {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 52%;
+  border-radius: 999px 999px 0 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.00) 100%);
+}
+#cin-bar-glow {
+  position: absolute;
+  inset: -8px;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+}
