@@ -205,7 +205,7 @@ button {
 
 /* ── The GLANCE BAR — the at-rest island: two BLACK bars that EXTEND the notch sideways along the menu-bar line,
    split by the physical notch (it reads as the notch growing wider). Pure-black fill + the SAME 1px obsidian rim as
-   the island chassis (.nh-chassis). LEFT bar = circled BlitzOS icon + status summary; RIGHT bar = peer avatars.
+   the island chassis (.nh-chassis). LEFT bar = circled BlitzOS icon; RIGHT bar = peer avatars.
    Always mounted; .is-open collapses each bar INTO the notch (slide + fade) so the island grows out of / shrinks
    to it. Display-only (pointer-events:none) — App's mousemove (the overlay forwards moves while click-through)
    drives hover-to-open. Inner edge tucks ~8px UNDER the black notch-handle so there is no seam. */
@@ -286,28 +286,12 @@ button {
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 11px rgba(56, 189, 248, 0.75);
   }
 }
-.glance-sum {
-  font: 600 12px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  color: rgba(255, 255, 255, 0.82);
-  white-space: nowrap;
-}
-.glance-sum .gl-working {
-  color: #7db9ff;
-}
-.glance-sum .gl-attn {
-  color: #ffcf6b;
-}
-.glance-sum .gl-error {
-  color: #ff8a80;
-}
-.glance-sum .gl-sep {
-  color: rgba(255, 255, 255, 0.42);
-}
 .glance-avas {
   display: flex;
   align-items: center;
 }
 .glance-ava {
+  position: relative; /* anchors the DONE pip (.glance-ava.done::after) */
   flex: none;
   width: 20px;
   height: 20px;
@@ -318,6 +302,50 @@ button {
 }
 .glance-ava:first-child {
   margin-left: 0;
+}
+/* DONE state — an agent that just finished its turn (raw host status working→'watching'/'idle') sits settled in the
+   bar until the user opens the island and views it (NotchHost clears the mark). ACTIVE look: a solid green RING (the
+   success counterpart of the red .error ring), no motion. The liquid-glass ring (::before) and corner pip (::after)
+   are kept but TEMPORARILY DISABLED via their display lines — delete a display:none to try that one instead. Raised
+   above its right-hand neighbor so the avatar overlap (margin-left:-7px) can't clip the ring. */
+.glance-ava.done {
+  z-index: 2;
+  box-shadow: 0 0 0 2px #000, 0 0 0 3px #30d158; /* solid green ring (Apple system green), the success twin of .error */
+}
+/* green liquid-glass ring — the island chassis rim technique (a mask-composite gradient hairline, see notch.css)
+   tinted green, sitting just outside the avatar's black rim. Bright at the top, soft at the bottom = liquid-glass
+   sheen, plus a faint outer green glow. */
+.glance-ava.done::before {
+  display: none; /* TEMP: glass ring disabled while trying the solid green ring — delete this line to bring it back */
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  padding: 2px; /* ring thickness */
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(150, 245, 185, 0.95) 0%,
+    rgba(48, 209, 88, 0.18) 28%,
+    rgba(48, 209, 88, 0.05) 60%,
+    rgba(48, 209, 88, 0.5) 100%
+  );
+  box-shadow: 0 0 6px rgba(48, 209, 88, 0.28);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.glance-ava.done::after {
+  display: none; /* TEMP: pip hidden to try ring-only — delete this one line to bring the pip back */
+  content: '';
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #30d158; /* Apple system green (matches island.css) */
+  box-shadow: 0 0 0 1.5px #000; /* black gap so the dot reads against both the avatar and the next one */
 }
 .glance-ava.working {
   animation: glance-ava-pulse 1.5s ease-in-out infinite;
