@@ -267,12 +267,40 @@ func cgType(_ text: String) {
         if let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) { up.keyboardSetUnicodeString(stringLength: u.count, unicodeString: &u); up.post(tap: .cghidEventTap) }
     }
 }
-let keyCodes: [String: CGKeyCode] = ["return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51, "backspace": 51, "escape": 53, "esc": 53, "left": 123, "right": 124, "down": 125, "up": 126]
-func cgKey(_ name: String) -> Bool {
-    guard let code = keyCodes[name.lowercased()] else { return false }
+let keyCodes: [String: CGKeyCode] = [
+    // editing + navigation
+    "return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51, "backspace": 51,
+    "forwarddelete": 117, "fwddelete": 117, "escape": 53, "esc": 53,
+    "left": 123, "right": 124, "down": 125, "up": 126,
+    "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
+    // letters
+    "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4, "i": 34, "j": 38,
+    "k": 40, "l": 37, "m": 46, "n": 45, "o": 31, "p": 35, "q": 12, "r": 15, "s": 1, "t": 17,
+    "u": 32, "v": 9, "w": 13, "x": 7, "y": 16, "z": 6,
+    // digits
+    "0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25,
+    // function keys
+    "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98, "f8": 100,
+    "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+    // punctuation
+    "minus": 27, "equal": 24, "comma": 43, "period": 47, "slash": 44, "semicolon": 41,
+    "quote": 39, "leftbracket": 33, "rightbracket": 30, "backslash": 42, "grave": 50
+]
+let modifierFlags: [String: CGEventFlags] = [
+    "cmd": .maskCommand, "command": .maskCommand, "meta": .maskCommand, "super": .maskCommand,
+    "shift": .maskShift, "alt": .maskAlternate, "option": .maskAlternate, "opt": .maskAlternate,
+    "ctrl": .maskControl, "control": .maskControl, "fn": .maskSecondaryFn
+]
+// Accepts a single named key ("end", "v", "f5") OR a modifier combo ("cmd+End", "cmd+shift+v"):
+// split on '+', the LAST token is the key, the rest fold into the event flags. Unknown key/modifier → false.
+func cgKey(_ spec: String) -> Bool {
+    var parts = spec.lowercased().split(separator: "+").map(String.init)
+    guard let keyName = parts.popLast(), let code = keyCodes[keyName] else { return false }
+    var flags: CGEventFlags = []
+    for m in parts { guard let f = modifierFlags[m] else { return false }; flags.insert(f) }
     let src = CGEventSource(stateID: .hidSystemState)
-    CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)?.post(tap: .cghidEventTap)
-    CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false)?.post(tap: .cghidEventTap)
+    if let d = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true) { d.flags = flags; d.post(tap: .cghidEventTap) }
+    if let u = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false) { u.flags = flags; u.post(tap: .cghidEventTap) }
     return true
 }
 

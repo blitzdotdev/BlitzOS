@@ -4,6 +4,7 @@
 // connection whose ADAPTER forwards verbs to the helper. The helper holds the Accessibility + Screen-Recording
 // TCC grants. Window connect is intentionally Electron+local only (a remote server would need a local
 // companion on the user's Mac — deferred per the design).
+import { clipboard } from 'electron'
 import type { ConnectionOps } from './connection-ops.mjs'
 
 interface HelperLike {
@@ -86,6 +87,12 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
         if (verb === 'act') {
           if (a.action === 'type') return helper.call('cg_type', { text: String(a.text ?? '') })
           if (a.action === 'key') return helper.call('cg_key', { key: String(a.key ?? '') })
+          // paste: put text on the system clipboard (if given) then ⌘V via the helper — sidesteps per-char cg_type
+          // and AX entirely; the focused field consumes the clipboard (best for a block of text into a canvas editor)
+          if (a.action === 'paste') {
+            if (a.text != null) { try { clipboard.writeText(String(a.text)) } catch { /* clipboard unavailable */ } }
+            return helper.call('cg_key', { key: 'cmd+v' })
+          }
           // coordinate click (needs the window raised): {x,y} global points, or {px,py}+windowId pixel-in-shot
           if (a.x != null || a.px != null) return helper.call('cg_click', { windowId: Number(windowId), x: a.x, y: a.y, px: a.px, py: a.py, button: a.button })
           // ref act (background-capable): AX press / setValue on a role+title match

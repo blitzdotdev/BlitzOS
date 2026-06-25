@@ -23,11 +23,14 @@ each against the CURRENT code (the agent ran an older build; the connection refa
   `process.env.PATH`; called from `claudeCliPath()`/`codexCliPath()` (run before any agent → before any
   run_workflow). Closes the whole ENOENT class (claude, enrichment, git, …), not just claude. Verified the
   merge makes `/opt/homebrew/bin/claude` resolvable under the truncated PATH.
-- [ ] **B** — native `main.swift cgKey`: expand `keyCodes` (End/Home/PageUp/Down/Fn/letters/digits) and parse
-  modifier combos (`cmd+`, `shift+`, …) into CGEvent flags. Needs a helper rebuild to live-test.
-- [ ] **D** — `os-tools.mjs`: per-action examples + the key vocabulary in `connection_act`/`connect_window`
-  descriptions; note `connection_read` screenshot returns `image`. Consider `action:'paste'` (clipboard →
-  focused field) per the agent's suggestion — sidesteps the key/AX cul-de-sac.
+- [x] **B** — native `main.swift cgKey`: `keyCodes` expanded (End/Home/Page/ForwardDelete, a–z, 0–9, F1–F12,
+  punctuation) and modifier combos parsed (`cmd+`/`shift+`/`alt+`/`ctrl+`/`fn+`) into CGEvent flags. Helper
+  rebuilt + re-signed (build exit 0). `key:'cmd+End'`, `key:'cmd+v'`, etc. now resolve.
+- [x] **paste** — `connection-window-link.ts` `action:'paste'`: Electron `clipboard.writeText(text)` (if given)
+  then `cg_key 'cmd+v'`. Sidesteps per-char cg_type + AX; the clean way to drop a block of text into a canvas.
+- [x] **D** — `os-tools.mjs`: `connection_act` description now has one example per action + the key vocabulary
+  + `paste`; `connection_read` documents the screenshot `{image,width,height,frame}` shape; `connect_window`
+  points at the act vocab. Typecheck clean (my files).
 - C: no fix; optionally document the `image` field (folded into D).
 
 ## Doctrine (separate, committed cb49bbb)

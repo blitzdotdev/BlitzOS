@@ -563,7 +563,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_connect_window',
       description:
-        "Connect a macOS app window (a windowId from connection_list_windows) into BlitzOS as a per-source tool provider. Read via its accessibility tree (or a screenshot when AX is thin); act via AXPress/set (background) or coordinate CGEvent (needs the window raised). Args: {windowId, title?}. Returns { connId, sourceId, savedTools, registryTools } — check savedTools/registryTools before deriving.",
+        "Connect a macOS app window (a windowId from connection_list_windows) into BlitzOS as a per-source tool provider. Read via its accessibility tree, or a `screenshot` when AX is thin; act with connection_act — AXPress/set (background), keys/combos (action:'key', e.g. 'cmd+End'), a clipboard paste (action:'paste', best for a block of text into a canvas editor like Google Docs), or coordinate CGEvent (needs the window raised). Args: {windowId, title?}. Returns { connId, sourceId, savedTools, registryTools } — check savedTools/registryTools before deriving.",
       input_schema: { type: 'object', required: ['windowId'], properties: { windowId: { type: 'number' }, title: { type: 'string' }, agent: { type: 'string', description: 'your agent/session id — owns this connection (for connection_list scoping)' } } },
       handler: async ({ body, transport }) => {
         if (transport !== 'localhost') return CONNECT_RELAY_DENIED
@@ -593,7 +593,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_read',
       description:
-        "Read a connected source — a TAB: DOM/text (pass a CSS `selector` to scope it); a WINDOW: its accessibility tree/value, or a `screenshot` when the structure is too thin to read. SCOPED + CAPPED by default (pass {max} bytes to read more) — never dump a whole tree into context. Args: {connection, selector?, screenshot?, max?}. Returns { result }.",
+        "Read a connected source — a TAB: DOM/text (pass a CSS `selector` to scope it); a WINDOW: its accessibility tree/value, or `screenshot:true` → { image:<base64 png>, width, height, frame } (a per-window shot for apps AX can't read; inline it in chat as ![](data:image/png;base64,<image>)). SCOPED + CAPPED by default (pass {max} bytes to read more) — never dump a whole tree into context. Args: {connection, selector?, screenshot?, max?}. Returns { result }.",
       input_schema: { type: 'object', required: ['connection'], properties: { connection: { type: 'string' }, selector: { type: 'string' }, screenshot: { type: 'boolean' }, max: { type: 'number' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionRead !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
@@ -605,7 +605,7 @@ export function makeOsTools(ops) {
     {
       path: '/connection_act',
       description:
-        "Act on a connected source: click / type / set — BY REF (a tab: CSS `selector`; a window: AXPress on a role/label — both work in the BACKGROUND) or BY COORDINATE ({x,y} — needs the window raised; macOS-local). Args: {connection, action:'click'|'type'|'set'|'key', selector?, x?, y?, text?, key?}. Returns { ok, effect } — the observed change, so you verify the act actually landed.",
+        "Act on a connected source. FLAT shape {connection, action, …}. ONE call per action — click: {action:'click', selector:'button[aria-label=\"Send\"]'} (tab/window ref, BACKGROUND) or {action:'click', x, y} (window coordinate, needs the window raised); type: {action:'type', text:'hello'} (types at the focused field); set: {action:'set', selector:'#title', text:'replace value'}; key: {action:'key', key:'Cmd+End'} — a named key OR a modifier combo; key names are letters/digits, arrows, End/Home/PageUp/PageDown, F1–F12, Return/Tab/Space/Esc/Delete/ForwardDelete; modifiers Cmd/Shift/Alt/Ctrl (e.g. 'cmd+a', 'cmd+shift+v'); paste: {action:'paste', text?:'…'} — sets the clipboard to text (if given) then ⌘V into the focused field, the clean way to drop a BLOCK of text into a canvas editor (Google Docs) with no per-keystroke typing. For a WINDOW, type/key/paste/coord-click reach the FOCUSED window — connection_reveal it first if it is not frontmost. Returns { ok, effect } — the observed change, so you verify the act landed.",
       input_schema: { type: 'object', required: ['connection'], properties: { connection: { type: 'string' }, action: { type: 'string' }, selector: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, text: { type: 'string' }, key: { type: 'string' } } },
       handler: async ({ body }) => {
         if (typeof ops.connectionAct !== 'function') return { status: 501, body: { error: 'connections not supported on this transport' } }
