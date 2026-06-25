@@ -1319,8 +1319,9 @@ app.whenReady().then(() => {
     }
   }
 
-  // The chat.md TAIL: a pure-node poller emitting reply LINES + status/auto-name UPSERTS. Chat files live in
-  // the WORKSPACE ROOT, named by chatFileName(id) ('0'→chat.md, N→chat-N.md), written by appendChatMessage
+  // The chat TAIL: a pure-node poller emitting reply LINES + status/auto-name UPSERTS. Chat files live in a
+  // PRIVATE per-agent dir, named by chatFileName(id) ('.blitzos/agents/<id>/chat.md' — relocated out of the
+  // shared root for cross-agent isolation; see plans/blitzos-agent-chat-isolation.md), written by appendChatMessage
   // (workspace.mjs). NOT under .blitzos/terminals/<id>/ (that's the raw TUI tape, a different stream). Poll
   // (700ms) over fs.watch on purpose: a workspace switch changes the file set + paths wholesale, and the
   // chat file is atomic-created then appendFileSync-grown — both break a single long-lived watch. seed()

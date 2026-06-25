@@ -2,6 +2,7 @@
 // reconcile, with the new folder broadcast to renderers. Drives the real host with a fake adapter +
 // a real temp dir (the host is transport-agnostic; this is exactly what backend.mjs / osActions call).
 import { createWorkspaceHost } from '../../src/main/workspace-host.mjs'
+import { chatFileName } from '../../src/main/workspace.mjs'
 import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -112,7 +113,7 @@ console.log('\nworkspace-host chat — file-backed widget (appendChat → chat.m
 osState = { surfaces: [{ id: 'chat', kind: 'srcdoc', role: 'chat', x: 0, y: 0, w: 360, h: 460, z: 5, props: { messages: [] } }], camera: { x: 0, y: 0, scale: 1 }, mode: 'desktop' }
 const chatProps = () => osState.surfaces.find((s) => s.role === 'chat')?.props || {}
 const m1 = host.appendChat('user', 'hello chat')
-ok('appendChat writes chat.md', existsSync(join(ws, 'chat.md')) && m1.length === 1 && m1[0].text === 'hello chat', m1)
+ok('appendChat writes the transcript', existsSync(join(ws, chatFileName())) && m1.length === 1 && m1[0].text === 'hello chat', m1)
 ok('appendChat broadcasts {type:chat, messages}', broadcasts.some((b) => b && b.type === 'chat' && Array.isArray(b.messages) && b.messages.length === 1))
 ok('appendChat syncs osState chat surface props (fresh hydrate shows it)', (osState.surfaces.find((s) => s.role === 'chat')?.props?.messages || []).length === 1)
 ok('appendChat exposes hub threads', Array.isArray(osState.surfaces.find((s) => s.role === 'chat')?.props?.threads?.['0']))

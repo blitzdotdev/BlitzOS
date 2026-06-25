@@ -74,8 +74,13 @@ export function resolveWorkspace(root: string, name: string, opts: { mustExist: 
 /** Append one chat message to a workspace folder's chat[-<sessionId>].md (path-based; any workspace). */
 export function appendChatMessage(dir: string, role: 'user' | 'agent', text: string, sessionId?: string, meta?: Record<string, unknown>): void
 
-/** The chat transcript file name for an agent id: '0' → 'chat.md', N → 'chat-N.md'. (Workspace-root relative.) */
+/** The chat transcript path for an agent id (workspace-root relative): `.blitzos/agents/<id>/chat.md`.
+ *  Private per-agent so no sibling chat is readable from the shared root (cross-agent context isolation). */
 export function chatFileName(sessionId?: string): string
+
+/** One-time migration: move any root-resident transcript (chat.md / chat-<id>.md) into its private
+ *  per-agent dir (chatFileName). Idempotent + history-preserving; runs at workspace-open and before launch. */
+export function relocateLegacyChats(dir: string): void
 
 /** List workspace folders under root, newest-edited first. */
 export function listWorkspaces(root: string): WorkspaceEntry[]

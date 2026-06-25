@@ -1753,7 +1753,9 @@ export function removeAgentFiles(dir, agentId) {
   }
   // The agent record dir lives under .blitzos/terminals (the engine renamed it from the legacy .blitzos/sessions);
   // clean up BOTH locations in case the migration hasn't run (agent runtime off ⇒ no terminal-ops, no rename).
-  for (const sub of ['terminals', 'sessions']) {
+  // .blitzos/agents/<id> holds the now-private transcript (chatFileName) — drop the whole dir so a re-minted id
+  // can't inherit a stale chat.
+  for (const sub of ['terminals', 'sessions', 'agents']) {
     const sdir = safeJoin(dir, join('.blitzos', sub, id))
     if (sdir && existsSync(sdir)) { try { markWrite(resolve(sdir)); rmSync(sdir, { recursive: true, force: true }) } catch { /* best-effort */ } }
   }
@@ -1786,10 +1788,63 @@ const SYSTEM_LANGS = ['tsx', 'jsx', 'html']
 const SYSTEM_PREFIX = 'blitz-'
 const CHAT_FILE = 'chat.md'
 
-// Per-session chat (one agent per session): session '0' (the primary chat) keeps the LEGACY names
-// (chat.md, blitz-chat.html/tsx) so it needs ZERO migration; any other session gets chat-<id>.md and
-// blitz-<id>-chat.*. Both naming families are recognized as system files (never surfaced as tiles).
-export function chatFileName(sessionId = '0') { return sessionId && String(sessionId) !== '0' ? `chat-${sessionId}.md` : CHAT_FILE }
+// Per-agent chat transcript path (workspace-root RELATIVE). ISOLATION (the cross-agent context leak,
+// plans/blitzos-agent-chat-isolation.md): transcripts used to be sibling files in the workspace ROOT
+// (chat.md / chat-<id>.md), where any agent that listed the folder could `cat` another agent's
+// conversation and absorb its task. They now live in a PRIVATE per-agent dir under .blitzos (OS-internal,
+// hidden from a plain `ls`, never descended by the file manager): `.blitzos/agents/<id>/chat.md`. The id
+// is sanitized (no separators/dots) so a crafted id can never traverse out of the agent dir. `chat-<id>.md`
+// in the root is still recognized as a system file for the one-time relocateLegacyChats() migration.
+export function chatFileName(sessionId = '0') {
+  const raw = String(sessionId ?? '0')
+  // Empty / null → the primary, preserving the legacy contract (a falsy sessionId meant agent '0').
+  if (!raw) return join('.blitzos', 'agents', '0', 'chat.md')
+  // Agent ids are numeric here ('0' primary, positive ints for peers). A filesystem-safe id is its own bucket;
+  // a MALFORMED id (e.g. a relay agent passing '1.5' / '0 ' / 'foo/bar' on say/steer — both take an
+  // unconstrained string) gets a JAILED, collision-resistant bucket. It must NEVER silently funnel onto '0':
+  // that would be a cross-agent WRITE into the primary's private chat — the exact bleed this file prevents.
+  const id = /^[a-z0-9_-]+$/i.test(raw) ? raw : `x-${Buffer.from(raw).toString('hex')}`
+  return join('.blitzos', 'agents', id, 'chat.md')
+}
+/** One-time migration: move any ROOT-resident transcript (chat.md, chat-<id>.md) into its private
+ *  per-agent dir, so the shared workspace root exposes no sibling chat for another agent to read. Runs
+ *  at workspace-open and defensively before every agent launch; idempotent and history-preserving. If
+ *  the destination already exists, the stale root copy is deleted (it must never be left readable). */
+export function relocateLegacyChats(dir) {
+  let base
+  try { base = resolve(dir) } catch { return }
+  let names = []
+  try { names = readdirSync(base) } catch { return }
+  for (const name of names) {
+    // The CANONICAL legacy names only: chat.md → id '0', chat-<id>.md (id ≠ '0') → that peer. A stray
+    // chat-0.md is NOT a real live transcript (the primary always used chat.md), so skip it — folding it onto
+    // id '0' would make it race chat.md for the same destination and one would clobber the other.
+    let id = null
+    if (name === CHAT_FILE) id = '0'
+    else {
+      const m = name.match(/^chat-([a-z0-9_-]+)\.md$/i)
+      if (m && m[1] !== '0') id = m[1]
+    }
+    if (id == null) continue
+    const src = join(base, name)
+    try { if (!lstatSync(src).isFile()) continue } catch { continue }
+    const dest = safeJoin(base, chatFileName(id))
+    if (!dest || resolve(dest) === resolve(src)) continue
+    try {
+      mkdirSync(dirname(dest), { recursive: true })
+      if (existsSync(dest)) {
+        // The private transcript already exists (a prior migration). NEVER destroy the root copy and never
+        // leave it readable in the root: move it aside, preserved, INSIDE the private agent dir for forensics.
+        const aside = join(dirname(dest), `chat.legacy-${randomUUID().slice(0, 8)}.md`)
+        markWrite(resolve(src)); markWrite(resolve(aside))
+        renameSync(src, aside)
+      } else {
+        markWrite(resolve(src)); markWrite(resolve(dest))
+        renameSync(src, dest)
+      }
+    } catch { /* best-effort; a failed move leaves the root file, but no agent is pointed at it anymore */ }
+  }
+}
 function systemLang(lang, fallback = 'html') {
   const v = String(lang || fallback).toLowerCase()
   return SYSTEM_LANGS.includes(v) ? v : fallback

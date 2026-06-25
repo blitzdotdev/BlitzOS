@@ -3,7 +3,7 @@
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { appendChatMessage, readChatMessages, ensureSystemRenderer, readSystemRenderer, readSystemRendererInfo, isSystemFile, systemRoleOf, writeWorkspace, readWorkspace } from '../../src/main/workspace.mjs'
+import { appendChatMessage, readChatMessages, chatFileName, ensureSystemRenderer, readSystemRenderer, readSystemRendererInfo, isSystemFile, systemRoleOf, writeWorkspace, readWorkspace } from '../../src/main/workspace.mjs'
 
 let pass = 0
 let fail = 0
@@ -16,7 +16,7 @@ appendChatMessage(dir, 'agent', 'Opened Photopea.\nIt may take a moment.')
 appendChatMessage(dir, 'agent', 'Generated app: Launch Dashboard', '0', {
   parts: [{ type: 'app', title: 'Launch Dashboard', url: 'https://launch-dashboard.app.blitz.dev/', icon: 'dashboard', tone: 'sky' }]
 })
-ok('chat.md created in the workspace folder', existsSync(join(dir, 'chat.md')))
+ok('chat.md created in the workspace folder', existsSync(join(dir, chatFileName())))
 let msgs = readChatMessages(dir)
 ok('three messages parsed back', msgs.length === 3)
 ok('roles + order correct', msgs[0].role === 'user' && msgs[1].role === 'agent')
@@ -24,12 +24,12 @@ ok('user text round-trips', msgs[0].text === 'open photopea')
 ok('multi-line agent text round-trips', msgs[1].text === 'Opened Photopea.\nIt may take a moment.')
 ok('typed app parts round-trip from chat metadata', msgs[2].text === 'Generated app: Launch Dashboard' && msgs[2].parts?.[0]?.type === 'app' && msgs[2].parts?.[0]?.url === 'https://launch-dashboard.app.blitz.dev/')
 ok('timestamps captured', msgs[0].ts > 0)
-ok('chat.md is human-readable markdown', /^# Chat/.test(readFileSync(join(dir, 'chat.md'), 'utf8')) && readFileSync(join(dir, 'chat.md'), 'utf8').includes('### user'))
+ok('chat.md is human-readable markdown', /^# Chat/.test(readFileSync(join(dir, chatFileName()), 'utf8')) && readFileSync(join(dir, chatFileName()), 'utf8').includes('### user'))
 
 console.log('\n# transcript recreated on append after a delete')
-unlinkSync(join(dir, 'chat.md'))
+unlinkSync(join(dir, chatFileName()))
 appendChatMessage(dir, 'user', 'again')
-ok('append recreates chat.md', existsSync(join(dir, 'chat.md')) && readChatMessages(dir).length === 1)
+ok('append recreates chat.md', existsSync(join(dir, chatFileName())) && readChatMessages(dir).length === 1)
 
 console.log('\n# system renderer (blitz-chat.tsx) — default / recreate-on-missing / customize')
 const r1 = ensureSystemRenderer(dir, 'chat')

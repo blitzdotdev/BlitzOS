@@ -28,6 +28,7 @@ import {
   writeSystemRenderer,
   readChatMessages,
   appendChatMessage,
+  relocateLegacyChats,
   readConsent,
   writeConsent,
   wasSelfWrite,
@@ -1325,9 +1326,10 @@ export function createWorkspaceHost(a) {
   function hydrateOnBoot() {
     try {
       const h = readWorkspace(activeWorkspace)
-      // The chat is now a srcdoc widget backed by blitz-chat.* + chat.md/chat-<id>.md transcript files. The
+      // The chat is now a srcdoc widget backed by blitz-chat.* + per-agent transcript files. The
       // activity feed still lives in .blitzos/state/panels.json. Merge both back on boot.
-      migrateChatToFile() // seed chat.md from an old panels.json transcript, once
+      relocateLegacyChats(activeWorkspace) // ISOLATION: move any root-resident transcript into its private per-agent dir BEFORE agents boot
+      migrateChatToFile() // seed the transcript from an old panels.json one, once
       const panels = readRuntimePanels(activeWorkspace).filter((p) => p.component === 'activity')
       const base = h || { surfaces: [] }
       const surfaces = [...base.surfaces, ...buildAgentSurfaces(), ...panels]
@@ -1415,6 +1417,7 @@ export function createWorkspaceHost(a) {
       const next = readWorkspace(newPath) || blank()
       // Per-workspace chat/activity: the DESTINATION's own chat (its blitz-chat.* + chat transcripts) and its
       // activity panel — never carry the previous workspace's over.
+      relocateLegacyChats(newPath) // ISOLATION: relocate the destination's root-resident transcripts before its agents resume
       migrateChatToFile()
       const surfaces = [...next.surfaces, ...buildAgentSurfaces(), ...readRuntimePanels(newPath).filter((p) => p.component === 'activity')]
       a.setState({ surfaces })

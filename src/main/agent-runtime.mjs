@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { chatFileName, relocateLegacyChats } from './workspace.mjs'
 
 // ── blitzscript runtime paths + the orchestrators-toggle assets ─────────────────────────────────
 // Absolute paths to the blitzscript runtime, from THIS module's location. In dev these are real repo files
@@ -100,9 +101,11 @@ export function setUserInstructionsProvider(fn) {
  *  (blitzos-agents.md) is the SINGLE source of truth for identity, the /events loop, every tool, window
  *  management, and the design language — this stays a thin pointer and does NOT restate behavior. Multi-line
  *  is fine: it lives in a file, so it never touches the tmux control-mode command line (which rejects LF). */
-export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace = null, userInstructions = null) {
+export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace = null, userInstructions = null, resume = false) {
   const primary = !sessionId || String(sessionId) === '0'
-  const chatFile = primary ? 'chat.md' : `chat-${sessionId}.md`
+  // The agent's OWN private transcript path (relative to its cwd = the workspace). ISOLATION: every agent's
+  // chat now lives under .blitzos/agents/<id>/ so no sibling chat is visible in the root (see chatFileName).
+  const chatFile = chatFileName(sessionId)
   // v2 bleed fix: an agent is PINNED to its workspace — every /events + /say carries it, so a
   // background workspace's agent never sees (or answers into) another workspace's chat.
   const wsPin = workspace ? `,"workspace":"${String(workspace).replace(/"/g, '')}"` : ''
@@ -117,7 +120,16 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
     : `Your full operating guide is at ${B}/agents.md. Please read it first (\`curl -s ${B}/agents.md\`) and follow it; if that request doesn't succeed, give it another try before continuing.`
   const web = `Hard web rule: do web work in Blitz Chrome, your own background browser (open it with blitz_chrome_open, drive it with the connection_* tools). Use your backend's internal web-search/browser tool only as a discovery index to find candidate URLs or query angles; do not treat invisible snippets as final evidence. Before presenting findings, open every source you rely on in Blitz Chrome (connection_read / connection_act). For open-ended research, use multiple query angles when useful.`
   const progress = `Hard visible-work rule: for any non-trivial user task (multi-step, research/current info, build/customize, compare, troubleshoot, browse, organize, or longer than a quick direct answer), say a one-line plan in chat BEFORE doing hidden work, then say a short line as each step lands. Going dark during active work is a failure; saying "I'm working" once with nothing after it is too. Keep it tight: if a result needs more than a couple of lines, write it to a deliverable. Use share_app for generated blitz.dev apps, complex visuals, dashboards, reports, rich tables/charts, or anything the user should inspect/manipulate. Never paste an *.app.blitz.dev preview URL through say; call share_app first, then summarize without the URL. Use normal markdown for quick prose. Tiny one-shot answers/actions can stay direct.`
-  const recover = `Get your bearings first: you may have been restarted, so recover the conversation before doing anything. Call \`list_state\` to get \`workspace_path\`, then read the recent chat: \`tail -n 60 "$workspace_path/${chatFile}"\`. That file is your saved conversation with the user and it carries over between restarts (the live event feed does not). Reading it helps you understand follow-ups like "continue the X thing" or "go". If the last line is a user message you haven't answered, answer it now.`
+  // Read your OWN transcript to pick up the task / catch up. The "you may have been restarted, recover the
+  // conversation" framing is the LURE that made a fresh agent go hunting and `cat` a sibling's chat.md (the
+  // cross-agent leak) — so only a real RESUME gets it; a fresh spawn just reads its own file for the task.
+  const recover = resume
+    ? `You may have just been restarted, so catch up before acting: call \`list_state\` for \`workspace_path\`, then \`tail -n 60 "$workspace_path/${chatFile}"\` — your saved conversation (it persists across restarts; the live event feed does not). If its last line is a user message you haven't answered, answer it now.`
+    : `Read your own conversation first: call \`list_state\` for \`workspace_path\`, then \`tail -n 60 "$workspace_path/${chatFile}"\`. If its last line is a user message you haven't answered, that is your task — answer it now.`
+  // ISOLATION (defense in depth behind the structural relocation): only ever read your OWN chat file. Other
+  // agents' conversations are private; reading one injects their task into your context and makes you act on
+  // the wrong thing (the exact bug this closes).
+  const isolation = `Your conversation with the user lives ONLY in \`${chatFile}\`. Other agents have their own separate, private conversations; never read another agent's chat or transcript — only ever read \`${chatFile}\`. Reading another agent's conversation pulls their task into yours and makes you do the wrong thing.`
   // The OS can hand a session ONE standing duty (e.g. the onboarding interview); the duty text licenses
   // unprompted action for its own scope and is re-read per (re)launch, so a finished duty disappears.
   const duty = bootTask ? `The app has given you one standing task to handle first, right after you've caught up on the conversation (it applies only to its own scope): ${bootTask}` : null
@@ -138,7 +150,7 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   const userBlock = typeof userInstructions === 'string' && userInstructions.trim()
     ? `The user has set standing custom instructions that apply to every session. Follow them as if the user asked you directly, unless they conflict with a rule above:\n<user-instructions>\n${userInstructions.trim()}\n</user-instructions>`
     : null
-  return [identity, relay, guide, web, progress, recover, duty, onConnect, waitLoop, keepChecking, say, scope, userBlock].filter(Boolean).join('\n')
+  return [identity, relay, guide, web, progress, recover, isolation, duty, onConnect, waitLoop, keepChecking, say, scope, userBlock].filter(Boolean).join('\n')
 }
 
 /** POSIX single-quote a value for a shell command line (wrap in '…', escape embedded ' as '\''). */
@@ -236,6 +248,11 @@ export function ensureClaudeSessionId(sessionsDir, id) {
  *  rebuildAgentCommand) — one definition, no divergence. */
 export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_RUNTIME_CLAUDE }) {
   const agentRuntime = normalizeAgentRuntime(runtime)
+  // ISOLATION safety net: before ANY agent process starts, relocate any transcript still sitting in the shared
+  // workspace root into its private per-agent dir, so this agent can't `cat` a sibling's chat (the cross-agent
+  // context leak, plans/blitzos-agent-chat-isolation.md). Idempotent + cheap; the workspace host also runs this
+  // at open, but this guarantees it for EVERY launch path (boot-resume and new spawn alike).
+  try { relocateLegacyChats(dirname(dirname(sessionsDir))) } catch { /* best-effort; a launch never blocks on it */ }
   const claudeState = agentRuntime === AGENT_RUNTIME_CLAUDE ? ensureClaudeSessionId(sessionsDir, id) : { claudeSessionId: undefined, established: false }
   const agentSessionId = agentRuntime === AGENT_RUNTIME_CODEX_SERVERLESS ? randomUUID() : undefined
   const file = bootstrapPath(sessionsDir, id)
@@ -251,7 +268,7 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
   const workspace = basename(dirname(dirname(sessionsDir)))
   try {
     mkdirSync(sessionDir(sessionsDir, id), { recursive: true })
-    writeFileSync(file, buildBootstrap(url, id, bootTask, workspace, userInstructions))
+    writeFileSync(file, buildBootstrap(url, id, bootTask, workspace, userInstructions, claudeState.established))
     writeRelayUrl(dirname(sessionsDir), url) // <ws>/.blitzos/relay-url — the live base the agent re-reads per call
     writeWaitScript(dirname(sessionsDir)) // <ws>/.blitzos/wait.sh — the blocking event-wait the bootstrap points at
     writeBlitzShim(dirname(sessionsDir)) // <ws>/.blitzos/blitz + orchestrator.md — the workflow runner + duty (orchestrators toggle)
