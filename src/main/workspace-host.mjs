@@ -981,10 +981,12 @@ export function createWorkspaceHost(a) {
     for (const id of allAgentIds()) { const n = Number(id); if (Number.isInteger(n) && n > max) max = n }
     const id = String(max + 1)
     // IDs are REUSED: a closed agent frees its number (allAgentIds drops the deleted dir), so this fresh agent can be
-    // reborn onto a previous agent's id. Wipe any leftover attachment snapshot for that id NOW so the new chat starts
-    // clean — this also heals orphans left by deletes from before close-time cleanup existed. newAgentId is called
-    // ONLY for a brand-new spawn (osSpawnAgent), never on boot reconstruction, so this never touches a live agent.
-    removeAgentAttachments(activeWorkspace, id)
+    // reborn onto a previous agent's id. Wipe all leftover files for that id NOW so the new chat starts clean — the
+    // chat file (chat-N.md) is the critical one: if a previous session crashed without calling closeAgent, the file
+    // survives and the new agent inherits the old messages (the context-leak bug). removeAgentFiles also covers the
+    // attachment snapshot + the terminal dir (a no-op if they don't exist). newAgentId is called ONLY for a brand-new
+    // spawn (osSpawnAgent), never on boot reconstruction, so this never touches a live agent.
+    removeAgentFiles(activeWorkspace, id)
     return id
   }
   /** Register a new agent: write its meta (kind:'agent'), refresh the chat hub's thread list, and launch

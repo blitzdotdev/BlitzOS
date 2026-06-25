@@ -10,7 +10,7 @@ import { useStagedSet, stageSources, unstageSources } from './stagingStore'
 import { buildTrayGroups, AttachTray, Favicon, AppIcon, type TrayGroup } from './attachTray'
 import { publishLiveTray } from './sentTrayStore'
 
-type Tab = { tabId: number | string; title?: string; url?: string; browser?: string; windowId?: number; active?: boolean; favIconUrl?: string }
+type Tab = { tabId: number | string; title?: string; url?: string; browser?: string; windowId?: number; active?: boolean; favIconUrl?: string; discarded?: boolean }
 type Win = { windowId: number; app?: string; title?: string; icon?: string }
 type Conn = { connId: string; type?: string; ref?: number | string | null; title?: string; sourceId?: string; origin?: string }
 type BlitzChromeStatus = { available: boolean; running: boolean; connected: boolean; windows: number }
@@ -534,7 +534,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
                         <button
                           key={String(t.tabId)}
                           type="button"
-                          className={`att-tab${connected ? ' connected' : ''}`}
+                          className={`att-tab${connected ? ' connected' : ''}${t.discarded ? ' discarded' : ''}`}
                           disabled={busy === 't' + t.tabId}
                           aria-pressed={connected}
                           onClick={() => void toggleTab(t)}
@@ -542,7 +542,11 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
                           onDragStart={(e) => onDragStartItem(e, { kind: 'tab', tabId: t.tabId })}
                         >
                           <Favicon src={t.favIconUrl} />
-                          <span className="att-tab-title">{t.title || t.url || String(t.tabId)}</span>
+                          <span className="att-tab-title">
+                            {t.discarded
+                              ? <span className="att-tab-discarded">Tab {Number(t.tabId?.toString().split(':')[2] ?? 0)} — not loaded</span>
+                              : (t.title || t.url || String(t.tabId))}
+                          </span>
                         </button>
                       )
                     })}

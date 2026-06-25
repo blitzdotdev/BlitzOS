@@ -3,7 +3,7 @@ export function agentGradient(id: string): string {
   // Blitz (the primary agent '0') is the OS itself, not just another peer — so it wears the BlitzOS theme:
   // the island blue fading into obsidian black, instead of a random golden-angle hue.
   if (id === '0') {
-    return 'radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.4) 0%, transparent 42%), linear-gradient(150deg, #2a93ff 0%, #0066d6 40%, #08203c 72%, #05060a 100%)'
+    return 'radial-gradient(120% 120% at 28% 18%, rgba(255,255,255,0.48) 0%, transparent 40%), linear-gradient(145deg, #a78bfa 0%, #6366f1 30%, #2563eb 62%, #0ea5e9 100%)'
   }
   // Spread hues by the golden angle so sequential peer ids ('1','2'...) get maximally different colors.
   let n = 0

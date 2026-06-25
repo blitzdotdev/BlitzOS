@@ -37,9 +37,11 @@ export function makeChromeAppleScriptLink({ connectionOps } = {}) {
     ])
     if (!r.ok) {
       const msg = r.stderr || 'osascript failed'
-      // Chrome's exact message when the toggle is off: "Executing JavaScript through AppleScript is turned off."
+      // Chrome's error when the toggle is off OR when Chrome 149+ has a regression where it reports
+      // the setting as off even when it's on (the pref file and menu show enabled but execution fails).
+      // Do NOT claim the setting is off — it might be on. Give actionable guidance for both cases.
       if (/JavaScript through AppleScript|Allow JavaScript from Apple Events|not allowed|Apple ?events|-1743|automation/i.test(msg)) {
-        return { error: 'Chrome blocked Apple Events — enable Chrome ▸ View ▸ Developer ▸ "Allow JavaScript from Apple Events" and grant Automation to BlitzOS, then retry' }
+        return { error: 'Chrome denied JavaScript via Apple Events. If View ▸ Developer ▸ "Allow JavaScript from Apple Events" is already checked, Chrome 149 has a regression — do a full Chrome quit-and-relaunch. If unchecked, enable it first. Use the CDP extension or a Drive/Docs MCP connector as an alternative.' }
       }
       return { error: msg.trim() }
     }
@@ -66,8 +68,22 @@ export function makeChromeAppleScriptLink({ connectionOps } = {}) {
       const m = line.match(/^(\d+):(\d+):(.*?):::(.*)$/)
       if (!m) continue
       const url = m[3]
-      if (!/^https?:/i.test(url)) continue
-      tabs.push({ tabId: `chrome:${m[1]}:${m[2]}`, window: Number(m[1]), tab: Number(m[2]), url, title: m[4], favIconUrl: faviconForUrl(url) })
+      const title = m[4]
+      // Chrome discards inactive tabs — their URL becomes "about:blank" and title becomes empty.
+      // Keep them in the list so the user can see they exist; mark them discarded so the UI can label them.
+      // Connecting a discarded tab will reload it and reveal the real URL/title.
+      // Only drop genuinely empty lines (no url field at all).
+      if (!url) continue
+      const discarded = url === 'about:blank' && !title
+      tabs.push({
+        tabId: `chrome:${m[1]}:${m[2]}`,
+        window: Number(m[1]),
+        tab: Number(m[2]),
+        url: discarded ? '' : url,
+        title: discarded ? '' : title,
+        favIconUrl: discarded ? undefined : faviconForUrl(url),
+        discarded: discarded || undefined
+      })
     }
     return tabs
   }

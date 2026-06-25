@@ -499,6 +499,14 @@
 .nh-island .att-tab.connected .att-favicon-fallback {
   color: #fff;
 }
+/* discarded = Chrome tab that hasn't loaded yet (about:blank) — shown dimmed so user knows it exists */
+.nh-island .att-tab.discarded {
+  opacity: 0.45;
+}
+.nh-island .att-tab-discarded {
+  font-style: italic;
+  color: #6b7280;
+}
 /* the "Connect Chrome" install affordance + status note. */
 .nh-island .att-install {
   margin: 4px 4px 2px;
