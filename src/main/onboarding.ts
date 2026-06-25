@@ -1076,8 +1076,33 @@ function ensureInterviewArtifacts(wsPath: string): void {
 
 // Agent CLI detection — resolved through a LOGIN shell because GUI Electron's PATH often lacks
 // /opt/homebrew/bin. The resolved absolute path doubles as the agent cmd (index.ts launch backend).
+
+// GUI Electron launched from Finder/Dock inherits launchd's truncated PATH (/usr/bin:/bin:/usr/sbin:/sbin),
+// missing /opt/homebrew/bin etc. — so ANY bare-command child spawn (a workflow LEAF spawning `claude`, the
+// run_workflow enrichment agent, git, node) dies with `spawn … ENOENT`. Resolve the login shell's real PATH
+// once and merge it into process.env.PATH so every child inherits it. Idempotent; called from the CLI
+// resolvers below, which run before any agent exists (and an agent must exist before it can run_workflow), so
+// the global PATH is repaired before bare `claude` is ever spawned. Closes the whole ENOENT class, not just claude.
+let pathPatched = false
+export function ensureFullPath(): void {
+  if (pathPatched) return
+  pathPatched = true
+  let login: string | null = null
+  try {
+    login = execFileSync('/bin/zsh', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8', timeout: 8000 }).trim() || null
+  } catch {
+    login = null
+  }
+  if (!login) return
+  const seen = new Set<string>()
+  process.env.PATH = [...login.split(':'), ...(process.env.PATH || '').split(':')]
+    .filter((d) => d && !seen.has(d) && seen.add(d))
+    .join(':')
+}
+
 let claudePath: string | null | undefined // undefined = not probed yet
 export function claudeCliPath(): string | null {
+  ensureFullPath()
   if (claudePath !== undefined) return claudePath
   try {
     claudePath = execFileSync('/bin/zsh', ['-lc', 'command -v claude'], { encoding: 'utf8', timeout: 8000 }).trim() || null
@@ -1088,6 +1113,7 @@ export function claudeCliPath(): string | null {
 }
 let codexPath: string | null | undefined
 export function codexCliPath(): string | null {
+  ensureFullPath()
   if (codexPath !== undefined) return codexPath
   try {
     codexPath = execFileSync('/bin/zsh', ['-lc', 'command -v codex'], { encoding: 'utf8', timeout: 8000 }).trim() || null
