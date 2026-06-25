@@ -518,6 +518,11 @@ const api = {
     dragHover(): void {
       ipcRenderer.send('onboarding:drag-hover')
     },
+    /** Veil/unveil the island while a macOS consent dialog is up — the automation rows hide it on Enable and
+     *  bring it back when the grant resolves, so the dialog isn't covered by the island. */
+    setIslandVeil(on: boolean): void {
+      ipcRenderer.send('onboarding:island-veil', on)
+    },
     /** Open a drag-list permission step (fda|accessibility|screen): main navigates Settings to the
      *  pane + raises the floating drag-helper window over it + polls until granted. */
     openPermissionDrag(kind: 'fda' | 'accessibility' | 'screen'): Promise<{ ok: boolean; appName?: string }> {
@@ -561,10 +566,9 @@ const api = {
       ipcRenderer.on('onboarding:chromejs-ready', listener)
       return () => ipcRenderer.removeListener('onboarding:chromejs-ready', listener)
     },
-    /** Ask for Automation (AppleEvents) consent to the detected browser — raises the macOS prompt
-     *  on first call; resolves AFTER the user answers, with live window/tab counts on grant. */
-    requestAutomation(): Promise<{ status: 'granted' | 'denied' | 'unavailable'; windows?: number; tabs?: number; browser?: string }> {
-      return ipcRenderer.invoke('onboarding:request-automation')
+    /** "Enable" on an automation permission row: fire the helper-held Automation consent for one target. */
+    requestHelperAutomation(target: 'systemevents' | 'browser'): Promise<{ granted: boolean; error?: string }> {
+      return ipcRenderer.invoke('onboarding:request-helper-automation', target)
     },
     openAutomationSettings(): Promise<{ ok: boolean }> {
       return ipcRenderer.invoke('onboarding:open-automation-settings')

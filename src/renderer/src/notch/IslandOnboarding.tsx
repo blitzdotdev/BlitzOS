@@ -42,11 +42,27 @@ function ShortcutKeys({ accel }: { accel: string }): JSX.Element {
   )
 }
 
-const PERMISSIONS: Array<{ key: DragKind; name: string; why: string }> = [
-  { key: 'fda', name: 'Full Disk Access', why: 'Lets Blitz build local context from your Mac.' },
+type AutoTarget = 'systemevents' | 'browser'
+type PermRow = { key: string; name: string; why: string; auto?: AutoTarget }
+const PERMISSIONS: PermRow[] = [
   { key: 'accessibility', name: 'Accessibility', why: 'Lets Blitz read and operate apps when you ask.' },
   { key: 'screen', name: 'Screen Recording', why: 'Lets Blitz see enough of the screen to click accurately.' }
 ]
+// The gate enforces the two drag grants (Accessibility + Screen Recording) PLUS, when Chrome is the DEFAULT browser, two Automation grants the
+// helper needs to drive apps without a usage-time prompt: System Events (the "Allow JavaScript" menu-drive) and
+// the browser itself. Obtained up-front in the permission step; gated to Chrome-default since the menu-drive is
+// Chrome-only. Their "Enable" fires the helper-held consent (openAutomation), so the grant lands on the helper.
+const effectivePermissions = (state: PreboardState): PermRow[] => {
+  const b = state.browser
+  const rows: PermRow[] = [...PERMISSIONS]
+  if (b && b.id === 'com.google.Chrome') {
+    rows.push(
+      { key: 'automation:systemevents', name: 'System Events', why: 'Lets Blitz open menus and drive apps for you.', auto: 'systemevents' },
+      { key: 'automation:browser', name: b.name, why: `Lets Blitz drive ${b.name} for you.`, auto: 'browser' }
+    )
+  }
+  return rows
+}
 const CHECK_PATH = 'm5 12 4 4L19 6'
 const ALERT_PATH = 'M12 8v5M12 16h.01'
 // Padlock glyph for a not-yet-granted permission row (neutral state), drawn in the same 24x24 stroked
@@ -77,8 +93,8 @@ const INTRO_SLIDES: IntroSlide[] = [
   },
 ]
 
-const isGranted = (state: PreboardState, key: DragKind): boolean => !!state[key] || state.steps[key] === 'granted'
-const permissionPending = (state: PreboardState): boolean => PERMISSIONS.some((permission) => !isGranted(state, permission.key))
+const isGranted = (state: PreboardState, key: string): boolean => !!(state as Record<string, unknown>)[key] || state.steps[key] === 'granted'
+const permissionPending = (state: PreboardState): boolean => effectivePermissions(state).some((permission) => !isGranted(state, permission.key))
 // The Chrome "Allow JavaScript from Apple Events" step only applies to Google Chrome (the View ▸ Developer
 // row + the bridge target are Chrome-specific). No Chrome detected → skip the step entirely.
 const CHROME_BROWSER_ID = 'com.google.Chrome'
@@ -96,6 +112,16 @@ type OnboardingChromeJsApi = {
 }
 const chromeJsApi = (api: NonNullable<typeof window.agentOS>['onboarding'] | undefined): OnboardingChromeJsApi | undefined =>
   api as (OnboardingChromeJsApi & typeof api) | undefined
+
+// Same optional-method bridge for the automation permission rows (Enable → fire the helper-held consent;
+// denied → open Privacy ▸ Automation). Optional-typed so a build lacking them no-ops rather than failing.
+type OnboardingAutoApi = {
+  requestHelperAutomation?: (target: AutoTarget) => Promise<{ granted: boolean; error?: string }>
+  openAutomationSettings?: () => Promise<{ ok: boolean }>
+  setIslandVeil?: (on: boolean) => void
+}
+const autoApi = (api: NonNullable<typeof window.agentOS>['onboarding'] | undefined): OnboardingAutoApi | undefined =>
+  api as (OnboardingAutoApi & typeof api) | undefined
 
 function nextStep(state: PreboardState, permissionsDone: boolean): StepKey {
   if (!permissionsDone && permissionPending(state)) return 'permissions'
@@ -118,7 +144,7 @@ export function IslandOnboarding({
   // Progress lives in a module store so a hide+reopen (which remounts this component) resumes where the user was,
   // instead of snapping back to the first intro slide. Transient UI (drag/connect/error) is fine as local state.
   const { introIndex, introDone, permissionsDone, step, preboard: state } = useOnboardingProgress()
-  const [activeKind, setActiveKind] = useState<DragKind | null>(null)
+  const [activeKind, setActiveKind] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Keeps the island locked open until the user mouses into it for the first time. Without this,
   // if the cursor is elsewhere when onboarding first appears, the island immediately collapses.
@@ -348,6 +374,41 @@ export function IslandOnboarding({
       .catch(() => setError('Could not open the permission helper.'))
   }
 
+  // An automation permission row's "Enable": the helper fires a benign Apple Event at the target, raising the
+  // macOS consent (blocks until the user chooses). Granted → mark it (gate clears); denied/dismissed → open
+  // Privacy ▸ Automation so they can flip it on, then re-click Enable. Same Enable/checkmark UI as the drag rows.
+  const openAutomation = (target: AutoTarget, key: string): void => {
+    setActiveKind(key)
+    setError(null)
+    // Veil the island so the macOS consent dialog (which lands near the notch) isn't covered by it; bring it back
+    // the moment the grant resolves (granted → row flips; denied → row stays + Settings opens).
+    autoApi(api)?.setIslandVeil?.(true)
+    const unveil = (): void => autoApi(api)?.setIslandVeil?.(false)
+    const req = autoApi(api)?.requestHelperAutomation?.(target)
+    if (!req) {
+      unveil()
+      setActiveKind(null)
+      setError('Could not reach the BlitzOS helper.')
+      return
+    }
+    req
+      .then((r) => {
+        unveil()
+        setActiveKind(null)
+        if (r?.granted) {
+          markPreboardGranted(key)
+          void api?.preboardMark?.(key, 'granted')
+        } else {
+          void autoApi(api)?.openAutomationSettings?.()
+        }
+      })
+      .catch(() => {
+        unveil()
+        setActiveKind(null)
+        setError('Could not request automation access.')
+      })
+  }
+
   const continuePermissions = (): void => {
     if (!state || permissionPending(state)) return
     setPermissionsDone(true)
@@ -355,7 +416,7 @@ export function IslandOnboarding({
     goNext(state, true)
   }
 
-  const grantedCount = state ? PERMISSIONS.filter((permission) => isGranted(state, permission.key)).length : 0
+  const grantedCount = state ? effectivePermissions(state).filter((permission) => isGranted(state, permission.key)).length : 0
   const introSlide = INTRO_SLIDES[introIndex] ?? INTRO_SLIDES[0]
   const finishIntro = (): void => {
     setIntroDone(true)
@@ -486,19 +547,20 @@ export function IslandOnboarding({
           <div className="isl-onb-card-head">
             <span>Mac access</span>
             <span>
-              {grantedCount} of {PERMISSIONS.length} granted
+              {grantedCount} of {effectivePermissions(state).length} granted
             </span>
           </div>
           <div className="isl-onb-perms">
-            {PERMISSIONS.map((permission) => {
+            {effectivePermissions(state).map((permission) => {
               const granted = isGranted(state, permission.key)
               const active = activeKind === permission.key && !granted
+              const auto = permission.auto
               return (
                 <button
                   key={permission.key}
                   type="button"
                   className={`isl-onb-row${granted ? ' granted' : ''}${active ? ' active' : ''}`}
-                  onClick={granted ? undefined : () => openPermission(permission.key)}
+                  onClick={granted ? undefined : auto ? () => openAutomation(auto, permission.key) : () => openPermission(permission.key as DragKind)}
                   disabled={granted}
                 >
                   <span className="isl-onb-row-icon" aria-hidden>
@@ -527,7 +589,11 @@ export function IslandOnboarding({
             })}
           </div>
           {activeKind && (
-            <div className="isl-onb-hint">Settings is open. Drag the BlitzOS icon into the permission list, then flip it on.</div>
+            <div className="isl-onb-hint">
+              {activeKind.startsWith('automation:')
+                ? 'Click “Allow” when macOS asks, so Blitz can drive apps for you.'
+                : 'Settings is open. Drag the BlitzOS icon into the permission list, then flip it on.'}
+            </div>
           )}
           <div className="isl-onb-actions">
             <button type="button" className="isl-onb-primary" onClick={continuePermissions} disabled={!state || permissionPending(state)}>

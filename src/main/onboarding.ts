@@ -168,6 +168,26 @@ function detectBrowser(): { id: string; name: string } | null {
   return null
 }
 
+// The user's DEFAULT browser (LaunchServices https handler), mapped to a known BROWSERS entry when possible.
+// GATES the Chrome "Allow JavaScript from Apple Events" step: the renderer shows it only when
+// browser.id === 'com.google.Chrome', so merely having Chrome INSTALLED (what detectBrowser reports) must not
+// trigger it — the AppleScript Chrome bridge is only worth setting up when Chrome is the actual default.
+// Reads the BINARY plist via plutil→json; falls back to detectBrowser() if the default can't be read.
+function defaultBrowser(): { id: string; name: string } | null {
+  try {
+    const p = join(process.env.HOME || '', 'Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist')
+    if (!existsSync(p)) return detectBrowser()
+    const json = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', p], { timeout: 4000 }).toString()) as { LSHandlers?: Array<Record<string, unknown>> }
+    const h = (json.LSHandlers || []).find((x) => x.LSHandlerURLScheme === 'https')
+    const def = h && typeof h.LSHandlerRoleAll === 'string' ? h.LSHandlerRoleAll : null
+    if (def) {
+      const b = BROWSERS.find((x) => x.id.toLowerCase() === def.toLowerCase())
+      return b ? { id: b.id, name: b.name } : { id: def, name: def }
+    }
+  } catch { /* default unreadable — fall through */ }
+  return detectBrowser()
+}
+
 // ---- drag-list TCC permissions (FDA / Accessibility / Screen Recording), Codex Computer Use flow
 // (plans/codex-computer-use-tcc-reference.md). Each: a Settings deep link + a poll + ONE shared
 // floating drag-helper window that hosts the startDrag tile over the Settings list. (Automation /
@@ -383,12 +403,16 @@ const CHROME_JS_HELPER_H = 92
 const CHROME_JS_TEARDOWN_DEBOUNCE_MS = 600
 
 /** Returns the number of open Chrome windows (0 if Chrome is not running or has no windows). */
+// "Is Chrome running?" WITHOUT an Apple Event. The old version osascript'd `tell "Google Chrome" to count
+// windows`, which raised an Automation consent ("BlitzOS wants to control Chrome") at onboarding. pgrep the
+// main Chrome process instead (no AE, no prompt). The caller only branches on ===0 (launch Chrome) vs >0
+// (proceed to the instruction card), so an exact window count is no longer needed now that the System-Events
+// menu-arrow (openChromeJsRow) is gone and the step just shows manual instructions.
 function countChromeWindows(): Promise<number> {
   return new Promise((resolve) => {
-    const script = 'if application "Google Chrome" is running then\n  tell application "Google Chrome" to return count of windows\nelse\n  return 0\nend if'
-    execFile('/usr/bin/osascript', ['-e', script], { timeout: 5000 }, (err, stdout) => {
-      if (err) return resolve(0)
-      resolve(parseInt(String(stdout).trim(), 10) || 0)
+    execFile('/usr/bin/pgrep', ['-x', 'Google Chrome'], { timeout: 5000 }, (err, stdout) => {
+      if (err) return resolve(0) // pgrep exits 1 when there's no match → Chrome not running
+      resolve(String(stdout).trim().split('\n').filter(Boolean).length)
     })
   })
 }
@@ -455,6 +479,9 @@ function chromeJsHelperHtml(pointed: boolean, iconUrl: string | null): string {
  *  "Apple Events"` to stay robust to the exact label. */
 async function openChromeJsRow(): Promise<{ x: number; y: number; w: number; h: number } | null> {
   if (process.platform !== 'darwin') return null
+  // Runs THROUGH the helper (runScan spawns osascript), so the System-Events Automation grant lands on the
+  // helper, not BlitzOS. That grant is obtained up-front in the permission step (the "System Events" automation
+  // row), so by the time we reach here this is silent — no Automation consent.
   const applescript = [
     'tell application "Google Chrome" to activate',
     'delay 0.25',
@@ -487,6 +514,29 @@ async function openChromeJsRow(): Promise<{ x: number; y: number; w: number; h: 
     12_000
   )
   return row
+}
+
+// Trigger + detect a helper-held Automation grant for ONE target (System Events, or the user's default browser),
+// driven by the "Enable" button on the automation permission rows. The helper runs a benign Apple Event via
+// runScan-osascript, so the grant attaches to the HELPER (not BlitzOS): the FIRST send raises the macOS consent
+// ("BlitzOS wants to control X") and blocks until the user chooses; thereafter it's silent. ok=granted (osascript
+// exit 0), denied=-1743/non-zero. No new helper Swift — reuses the osascript path openChromeJsRow already uses.
+async function requestHelperAutomation(target: 'systemevents' | 'browser'): Promise<{ granted: boolean; error?: string }> {
+  if (process.platform !== 'darwin') return { granted: false, error: 'macOS only' }
+  if (!computerUseHelper().available()) return { granted: false, error: 'helper unavailable' }
+  if (!(await computerUseHelper().ensure()).ok) return { granted: false, error: 'helper not connected' }
+  // Use a CONTROL op, NOT "get name". macOS answers "get name" WITHOUT requiring the Automation grant, so it
+  // exited 0 and the row marked granted with no prompt — then the real menu-click prompted later (the bug the
+  // user hit). count-login-items / count-windows genuinely require the grant: a not-yet-granted target BLOCKS on
+  // the consent dialog, then exits 0 (allowed) or -1743 (denied). The helper reports ok=(exit==0), so r.ok is the
+  // real outcome. Login items needs ONLY Automation (no Accessibility), so the System-Events probe is independent
+  // of the Accessibility row's order.
+  const tell = target === 'systemevents'
+    ? 'tell application "System Events" to get the name of every login item'
+    : (() => { const b = defaultBrowser(); return b ? `tell application id "${b.id}" to count windows` : '' })()
+  if (!tell) return { granted: false, error: 'no default browser' }
+  const r = await computerUseHelper().runScan({ node: '/usr/bin/osascript', script: '-e', args: [tell], env: {} }, () => {}, 120_000)
+  return { granted: !!r.ok, error: r.ok ? undefined : r.error }
 }
 
 // Detecting the bridge toggle WITHOUT Apple Events. Sending ANY Apple Event to Chrome from the frontmost
@@ -547,6 +597,12 @@ async function openChromeJsPhase2(): Promise<void> {
     return
   }
   if (gen !== chromeJsGeneration) return // step was closed/skipped while checking
+  // Foreground Chrome FIRST and let it settle. System Events can only open the menu bar of the FRONTMOST app, and
+  // the background helper's in-osascript `activate` does NOT reliably steal focus from the active island — so the
+  // menu opened but was non-interactable. `open -a` (LaunchServices) reliably makes Chrome the active app.
+  await new Promise<void>((r) => execFile('/usr/bin/open', ['-a', 'Google Chrome'], { timeout: 5000 }, () => r()))
+  await new Promise((r) => setTimeout(r, 400))
+  if (gen !== chromeJsGeneration) return
   const [row, iconUrl] = await Promise.all([openChromeJsRow(), blitzVisualIconDataUrl()])
   // Check cancellation: the step may have been closed/skipped during the 12s openChromeJsRow script.
   // If so, the menu may have opened — closeChromeJsHelper already sent an Escape. Exit without showing
@@ -698,6 +754,12 @@ function stopChromeJsWatch(): void {
 }
 
 function closeChromeJsHelper(): void {
+  // Capture whether a menu session was actually live BEFORE we reset the flag. The teardown's Esc-dismiss
+  // (closeChromeMenuAsync) runs a System Events Apple Event, so it must ONLY fire when a menu was really
+  // opened. The renderer's mount-once cleanup calls closeChromeJsStep() on every island unmount — including
+  // at launch, before the Chrome step is ever reached — and that spurious teardown was poking System Events
+  // and raising the "control System Events" prompt at boot (attributed to the helper). No active menu → no Esc.
+  const hadActiveMenu = chromeJsActive
   chromeJsGeneration++ // invalidate any in-flight openChromeJsPhase2 so it exits on next check
   chromeJsActive = false
   stopChromeJsWatch()
@@ -714,7 +776,7 @@ function closeChromeJsHelper(): void {
   if (chromeJsHelper && !chromeJsHelper.isDestroyed()) chromeJsHelper.close()
   chromeJsHelper = null
   chromeJsOpening = false
-  closeChromeMenuAsync()
+  if (hadActiveMenu) closeChromeMenuAsync() // only dismiss the View ▸ Developer menu if one was actually open
 }
 
 /** Renderer-driven close. The auto-open effect's cleanup fires on EVERY unmount — including StrictMode's
@@ -846,64 +908,10 @@ function markPreboard(step: string, outcome: PreboardOutcome): void {
   }
 }
 
-/** Where the captured live working set (open tabs) is persisted — machine-level (pre-workspace), so
- *  the scan child (run later by the director) can fold it in via --open-tabs. */
-function preboardTabsPath(): string { return join(app.getPath('userData'), 'preboard-tabs.json') }
-
-/** Probe Automation (AppleEvents) consent by ASKING: ONE AppleScript to the detected browser that
- *  dumps the title+URL of every open tab, grouped by window. The FIRST call raises the macOS consent
- *  prompt (attributed to this app — the scan-child pattern); the promise resolves AFTER the user
- *  answers. On success we PERSIST the working set (the single highest-signal browser artifact — what
- *  the user is doing RIGHT NOW) to userData for the scan to fold in, and return live counts as the
- *  immediate visible reward. Errors: -1743 = user denied; -600/-10810 = browser not running (the
- *  tell launches it, so these are rare). */
-function requestAutomation(): Promise<{ status: 'granted' | 'denied' | 'unavailable'; windows?: number; tabs?: number; browser?: string }> {
-  const browser = detectBrowser()
-  if (process.platform !== 'darwin' || !browser) return Promise.resolve({ status: 'unavailable' })
-  return new Promise((resolve) => {
-    // Delimited dump: a @@WIN@@ line opens each window, then "title @@T@@ url" per tab. URLs never
-    // contain newlines, so a title that somehow does just yields a skipped row (no @@T@@) — it can
-    // never corrupt the parse or the JSON we persist.
-    const script = [
-      `tell application id "${browser.id}"`,
-      '  set out to ""',
-      '  repeat with w in windows',
-      '    set out to out & "@@WIN@@" & linefeed',
-      '    repeat with t in tabs of w',
-      '      set out to out & (title of t) & "@@T@@" & (URL of t) & linefeed',
-      '    end repeat',
-      '  end repeat',
-      '  return out',
-      'end tell'
-    ].join('\n')
-    execFile('/usr/bin/osascript', ['-e', script], { timeout: 180_000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        const denied = /-1743/.test(String(stderr)) || /not allowed/i.test(String(stderr))
-        resolve({ status: denied ? 'denied' : 'unavailable', browser: browser.name })
-        return
-      }
-      const windows: { tabs: { title: string; url: string }[] }[] = []
-      let cur: { tabs: { title: string; url: string }[] } | null = null
-      let tabs = 0
-      for (const line of String(stdout).split('\n')) {
-        if (line.startsWith('@@WIN@@')) { cur = { tabs: [] }; windows.push(cur); continue }
-        const i = line.indexOf('@@T@@')
-        if (i < 0 || !cur) continue
-        const url = line.slice(i + 5).trim()
-        if (!/^https?:/i.test(url)) continue // skip chrome://, about:, file:// — not working-set signal
-        cur.tabs.push({ title: line.slice(0, i), url })
-        tabs++
-      }
-      const live = windows.filter((w) => w.tabs.length)
-      try {
-        writeFileSync(preboardTabsPath(), JSON.stringify({ browser: browser.name, capturedAt: Date.now(), windows: live }, null, 2))
-      } catch (e) {
-        console.error('[onboarding] could not persist open tabs:', (e as Error).message)
-      }
-      resolve({ status: 'granted', windows: live.length, tabs, browser: browser.name })
-    })
-  })
-}
+// NOTE: the old `requestAutomation()` (a DIRECT Electron osascript that dumped every browser tab and
+// raised the "control <browser>" consent attributed to BlitzOS) was removed. It is superseded by
+// `requestHelperAutomation()` — the consent must land on the computer-use helper, never on BlitzOS.
+// Do NOT reintroduce a direct Electron Apple Event to a browser; route every osascript through the helper.
 
 // ---- the scan child --------------------------------------------------------------------------
 function onboardingDir(wsPath: string): string {
@@ -922,70 +930,18 @@ function feedScanProgress(line: string): void {
 }
 
 async function runScan(wsPath: string): Promise<ScanJson | null> {
+  // SCAN NUKED. The local personalization scan scraped TCC-protected locations (Desktop/Documents/Downloads/
+  // Music/Media Library, Messages/Mail/Calendar, login items via System Events) and spammed macOS permission
+  // dialogs at launch, attributed to BlitzOS. It is fully disabled: onboarding primes ONLY from the
+  // interviewer prompt and the agent learns about the user by ASKING during the interview. To restore a
+  // prompt-free scan, recover the body from git history and gate EVERY protected-folder/Media/System-Events
+  // source behind a REAL (TCC-enforced) grant on the helper.
   const dir = onboardingDir(wsPath)
   mkdirSync(dir, { recursive: true })
-  const script = join(appRoot(), 'scripts', 'onboarding-scan.mjs')
-  const jsonPath = join(dir, 'scan.json')
-  if (!existsSync(script)) {
-    progress({ phase: 'error', error: 'scan script not found' })
-    return null
-  }
-  // --prompt prepends the interviewer instructions, so context.md = the brain's full briefing
-  // (rules + scan) in one read. Missing prompt file (packaged build) just degrades to scan-only.
   const promptMd = join(appRoot(), 'src', 'main', 'blitzos-onboarding.md')
-  const args = ['--quiet', '--progress', '--out', join(dir, 'context.md'), '--json', jsonPath, ...(existsSync(promptMd) ? ['--prompt', promptMd] : [])]
-  // Fold the pre-board live working set (open tabs) into the scan when it was captured. Absolute
-  // userData path, readable by both the direct spawn AND the helper's child (--open-tabs).
-  const tabsSnap = preboardTabsPath()
-  if (existsSync(tabsSnap)) args.push('--open-tabs', tabsSnap)
-  const readOut = (ok: boolean): ScanJson | null => {
-    if (!ok) {
-      progress({ phase: 'error', error: 'scan failed' })
-      return null
-    }
-    try {
-      return JSON.parse(readFileSync(jsonPath, 'utf8')) as ScanJson
-    } catch {
-      progress({ phase: 'error', error: 'scan output unreadable' })
-      return null
-    }
-  }
-
-  // PREFERRED: run the scan UNDER the helper, so it reads Messages/Mail/Safari with the HELPER's
-  // Full Disk Access — BlitzOS itself never needs FDA (the grant that forces a quit-and-reopen). The
-  // helper spawns process.execPath (Electron-as-node) as ITS child, so the responsible process is the
-  // helper. BlitzOS reads only the scan's output files.
-  if (computerUseHelper().available()) {
-    const ok = await computerUseHelper().ensure()
-    if (ok.ok) {
-      const r = await computerUseHelper().runScan(
-        { node: process.execPath, script, args, env: { ELECTRON_RUN_AS_NODE: '1' } },
-        (line) => feedScanProgress(line)
-      )
-      if (r.ok) return readOut(true)
-      // Helper ran but the scan failed (e.g. FDA not granted on the helper yet) → fall through to a
-      // direct attempt (covers a dev machine where BlitzOS itself already has inherited FDA).
-      console.error(`[computer-use] helper scan failed (${r.error || 'exit ' + r.exit}); trying direct`)
-    }
-  }
-
-  // FALLBACK: spawn directly (BlitzOS's own FDA — dev-inherited, or non-macOS). On a packaged build
-  // with FDA on the helper this would hit the no-permission scan branch; the helper path above is the
-  // real one. Kept so dev + non-mac + helper-absent still produce a board.
-  return await new Promise<ScanJson | null>((resolve) => {
-    const child = spawn(process.execPath, [script, ...args], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'ignore', 'pipe'] })
-    let buf = ''
-    child.stderr.on('data', (c: Buffer) => {
-      buf += c.toString()
-      let nl
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        feedScanProgress(buf.slice(0, nl))
-        buf = buf.slice(nl + 1)
-      }
-    })
-    child.on('error', () => resolve(readOut(false)))
-    child.on('exit', (code) => resolve(readOut(code === 0)))
-  })
+  const primer = existsSync(promptMd) ? readFileSync(promptMd, 'utf8') : '# BlitzOS\nNo local scan — interview the user directly.\n'
+  writeFileSync(join(dir, 'context.md'), primer, 'utf8')
+  return { meta: { fda: false } }
 }
 
 // ---- the interview (P2): resident brain only --------------------------------------------------
@@ -1273,7 +1229,7 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     accessibility: false,
     screen: false,
     appName: fdaAppName(),
-    browser: detectBrowser(),
+    browser: defaultBrowser(), // gate the Chrome-bridge step on the DEFAULT browser, not first-installed
     canDrag: !!appBundlePath(),
     appIcon: await appIconDataUrl(),
     // Chromium profiles available to import a Google sign-in from (the account picker). Read-only,
@@ -1318,6 +1274,9 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
   // Hovering the floating drag-helper (the user is heading to grab the icon) VEILS the island (hidden but still
   // mounted) so the full Settings window is visible to drop into; closeDragHelper unveils it (grant / skip / leave).
   ipcMain.on('onboarding:drag-hover', () => send('os:island-veil', true))
+  // The automation rows veil the island WHILE the macOS consent dialog is up (so it isn't covered by the island),
+  // then unveil when the grant resolves — a two-way version of drag-hover (which only veils).
+  ipcMain.on('onboarding:island-veil', (_e, on) => send('os:island-veil', !!on))
   // Open a drag-list permission step (FDA / Accessibility / Screen Recording): navigate Settings to
   // the pane + raise the floating drag-helper over it + poll until granted (→ permission-granted).
   ipcMain.handle('onboarding:open-permission-drag', async (_e, kind: DragPerm) => {
@@ -1340,7 +1299,9 @@ export function registerOnboarding(getWindow: () => BrowserWindow | null): void 
     requestCloseChromeJs(!!immediate)
     return { ok: true }
   })
-  ipcMain.handle('onboarding:request-automation', () => requestAutomation())
+  // The automation permission rows' "Enable": fire the helper-held Automation consent for one target.
+  ipcMain.handle('onboarding:request-helper-automation', (_e, target?: 'systemevents' | 'browser') =>
+    requestHelperAutomation(target === 'browser' ? 'browser' : 'systemevents'))
   ipcMain.handle('onboarding:open-automation-settings', () => {
     void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Automation')
     return { ok: true }

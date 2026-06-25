@@ -218,10 +218,13 @@ function hashContact(id) { return '[contact-' + createHash('sha256').update(SALT
 
 function hasFDA() {
   if (CFG.fda !== null) return CFG.fda
-  const tcc = join(HOME, 'Library/Application Support/com.apple.TCC/TCC.db')
-  try { const fd = openSync(tcc, 'r'); const b = Buffer.alloc(1); readSync(fd, b, 0, 1, 0); closeSync(fd); return true }
-  catch (e) { if (e.code === 'EPERM' || e.code === 'EACCES') return false }
-  try { accessSync(join(HOME, 'Library/Safari/History.db'), constants.R_OK); return true } catch { return false }
+  // Probe FDA with a REAL, TCC-enforced byte read of an FDA-only file. access()/stat() only check POSIX
+  // bits and FALSE-POSITIVE under TCC (the actual read is still blocked and would PROMPT) — that made the
+  // scan believe it had FDA and scrape Desktop/Documents/Downloads/Music, a wall of permission dialogs.
+  // ANY failure here (EPERM, or TCC hiding the file as ENOENT) = no FDA. TCC.db is in the deny-silently
+  // class, so a failed probe never itself raises a prompt. (The old accessSync(Safari) fallback was the bug.)
+  try { const fd = openSync(join(HOME, 'Library/Application Support/com.apple.TCC/TCC.db'), 'r'); const b = Buffer.alloc(1); readSync(fd, b, 0, 1, 0); closeSync(fd); return true }
+  catch { return false }
 }
 
 // ---- ctx buckets + push helpers ------------------------------------------------------
@@ -671,6 +674,12 @@ function srcAccounts(ctx) {
 }
 
 // ---- source registry -----------------------------------------------------------------
+// tier 'fda' = needs Full Disk Access OR touches a TCC-PROTECTED location that would POP a macOS
+// permission dialog without a covering grant. git/downloads/census/spotlight reach Desktop/Documents/
+// Downloads/Music (srcGit walks HOME into them; srcDownloads reads ~/Downloads), and loginItems sends an
+// Apple Event to System Events. The no-FDA boot scan skips every 'fda' source (filter near "fdaOn"), so
+// first-run onboarding never spams prompts before the helper holds FDA; the post-FDA enrich re-scan
+// (src/main/onboarding.ts → enrichScanAfterFda) then runs them under the FDA'd helper, silently.
 const SOURCES = [
   { id: 'claude', tier: 'none', run: loadClaude },
   { id: 'codex', tier: 'none', run: loadCodex },
@@ -678,16 +687,16 @@ const SOURCES = [
   { id: 'chromium', tier: 'none', run: srcChromium },
   { id: 'firefox', tier: 'none', run: srcFirefox },
   { id: 'openTabs', tier: 'none', run: srcOpenTabs },
-  { id: 'spotlight', tier: 'none', run: srcSpotlightFiles },
+  { id: 'spotlight', tier: 'fda', run: srcSpotlightFiles }, // mdls over recent files in protected folders
   { id: 'apps', tier: 'none', run: srcInstalledApps },
   { id: 'dock', tier: 'none', run: srcDock },
-  { id: 'loginItems', tier: 'none', run: srcLoginItems },
+  { id: 'loginItems', tier: 'fda', run: srcLoginItems }, // System Events Apple Event → Automation prompt
   { id: 'defaultBrowser', tier: 'none', run: srcDefaultBrowser },
   { id: 'shell', tier: 'none', run: srcShell },
-  { id: 'git', tier: 'none', run: srcGit },
+  { id: 'git', tier: 'fda', run: srcGit }, // walks HOME → Desktop/Documents/Downloads/Music (protected)
   { id: 'editor', tier: 'none', run: srcEditor },
-  { id: 'downloads', tier: 'none', run: srcDownloads },
-  { id: 'census', tier: 'none', run: srcDocCensus },
+  { id: 'downloads', tier: 'fda', run: srcDownloads }, // readdir ~/Downloads (protected)
+  { id: 'census', tier: 'fda', run: srcDocCensus }, // mdfind across content types incl. media library
   { id: 'locale', tier: 'none', run: srcLocale },
   { id: 'knowledgeC', tier: 'fda', run: srcKnowledgeC },
   { id: 'safari', tier: 'fda', run: srcSafari },

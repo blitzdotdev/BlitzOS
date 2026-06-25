@@ -67,10 +67,12 @@ export const setOnbBrowserResult = (browserResult: BrowserResult | null): void =
 
 /** Idempotently flip a TCC permission to granted in the mirrored preboard state (the on-disk mark is written
  *  separately via preboardMark). No-op until preboardState has loaded. */
-export const markPreboardGranted = (kind: DragKind): void => {
+export const markPreboardGranted = (key: DragKind | string): void => {
   const p = snap.preboard
   if (!p) return
-  set({ preboard: { ...p, [kind]: true, steps: { ...p.steps, [kind]: 'granted' } } })
+  // Drag grants (fda/accessibility/screen) also flip the live boolean; automation grants live only in `steps`.
+  const isDrag = key === 'fda' || key === 'accessibility' || key === 'screen'
+  set({ preboard: { ...p, ...(isDrag ? { [key]: true } : {}), steps: { ...p.steps, [key]: 'granted' } } })
 }
 
 /** Apply a fresh preboardState() read on island (re)open. It may ADD newly-detected grants, but it must NEVER
