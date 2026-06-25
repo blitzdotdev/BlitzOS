@@ -69,4 +69,23 @@ if [[ "${NOTARIZE_DMG:-0}" == "1" ]]; then
   done
 fi
 
+# Install the freshly built .app to /Applications/BlitzOS.app so the local Dock icon always launches the
+# latest build (the rebuild-and-test loop). Opt out with BLITZ_NO_INSTALL=1 for a pure release-artifact
+# build. CI never runs this script (release.yml calls electron-builder directly), so this only touches a dev Mac.
+APP_SRC="release/mac-arm64/BlitzOS.app"
+if [[ "${BLITZ_NO_INSTALL:-0}" != "1" && -d "$APP_SRC" ]]; then
+  DEST="/Applications/BlitzOS.app"
+  [[ -w /Applications ]] || { DEST="$HOME/Applications/BlitzOS.app"; mkdir -p "$HOME/Applications"; }
+  # Quit a running packaged instance BY BUNDLE ID (so the dev `npm run dev` Electron is never touched) so the
+  # swap is clean and the journal is marked clean — no false "recovered from a crash" banner next launch.
+  if pgrep -f "/BlitzOS\.app/Contents/MacOS/BlitzOS" >/dev/null 2>&1; then
+    osascript -e 'tell application id "dev.blitz.os" to quit' >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do pgrep -f "/BlitzOS\.app/Contents/MacOS/BlitzOS" >/dev/null 2>&1 || break; sleep 0.5; done
+  fi
+  rm -rf "$DEST"
+  ditto "$APP_SRC" "$DEST"
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister" -f "$DEST" >/dev/null 2>&1 || true
+  echo "[dist] installed -> $DEST"
+fi
+
 ls -lhd release/*.dmg release/*.zip release/mac-arm64/*.app 2>/dev/null || true
