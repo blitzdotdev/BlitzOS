@@ -603,6 +603,11 @@ async function openChromeJsPhase2(): Promise<void> {
   await new Promise<void>((r) => execFile('/usr/bin/open', ['-a', 'Google Chrome'], { timeout: 5000 }, () => r()))
   await new Promise((r) => setTimeout(r, 400))
   if (gen !== chromeJsGeneration) return
+  // Mark the menu-driving flow active BEFORE openChromeJsRow opens the View ▸ Developer menu, so a teardown that
+  // fires while the menu is open (user Skip, or an island unmount during the multi-second openChromeJsRow) STILL
+  // sends the dismiss Escape. Setting it only AFTER the menu opened left a window where teardown skipped the Escape
+  // and orphaned the menu. At launch — when phase2 never runs — it stays false, so teardown never pokes System Events.
+  chromeJsActive = true
   const [row, iconUrl] = await Promise.all([openChromeJsRow(), blitzVisualIconDataUrl()])
   // Check cancellation: the step may have been closed/skipped during the 12s openChromeJsRow script.
   // If so, the menu may have opened — closeChromeJsHelper already sent an Escape. Exit without showing
@@ -660,7 +665,7 @@ async function openChromeJsPhase2(): Promise<void> {
   startChromeJsPoll()
   // Session is live. openChromeJsRow already activated Chrome before opening the menu and the helper is a
   // non-activating panel, so Chrome stays frontmost — no post-show re-activate (it disrupted the open menu).
-  chromeJsActive = true
+  // (chromeJsActive was set true ABOVE, before the menu opened, so a mid-flow teardown still dismisses it.)
 }
 
 async function openChromeJsHelper(force = false): Promise<void> {
@@ -1045,37 +1050,62 @@ export function ensureFullPath(): void {
   pathPatched = true
   let login: string | null = null
   try {
-    login = execFileSync('/bin/zsh', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8', timeout: 8000 }).trim() || null
+    // NON-interactive login shell (-lc), deliberately NOT -lic: an interactive shell runs the user's FULL ~/.zshrc,
+    // which can touch TCC-protected resources and raise a permission prompt attributed to BlitzOS. -lc is the
+    // proven, side-effect-light baseline. The fix for the missing ~/.local/bin is NOT a fatter shell — it's the
+    // explicit `common` dirs below + the direct filesystem probe in resolveCli (no shell, no TCC surface at all).
+    login = execFileSync('/bin/zsh', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null
   } catch {
     login = null
   }
-  if (!login) return
+  // ALWAYS fold in the dirs where the CLIs actually install — this makes ~/.local/bin reachable even though ~/.zshrc
+  // (where the Claude installer adds it) is NOT sourced by a non-interactive shell. Closes the ENOENT class.
+  const home = app.getPath('home')
+  const common = [join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', join(home, '.claude', 'local'), join(home, '.npm-global', 'bin')]
   const seen = new Set<string>()
-  process.env.PATH = [...login.split(':'), ...(process.env.PATH || '').split(':')]
+  process.env.PATH = [...(login ? login.split(':') : []), ...common, ...(process.env.PATH || '').split(':')]
     .filter((d) => d && !seen.has(d) && seen.add(d))
     .join(':')
+}
+
+// Resolve a CLI by DIRECT filesystem probe (deterministic, NO shell, NO TCC surface) FIRST, then a NON-interactive
+// login shell as a fallback for non-standard locations. The probe is what fixes the ~/.local/bin/claude case the
+// login-non-interactive `command -v` missed: the Claude Code installer puts the launcher at ~/.local/bin/<bin>.
+function resolveCli(bin: 'claude' | 'codex'): string | null {
+  const home = app.getPath('home')
+  const candidates = [
+    join(home, '.local', 'bin', bin),
+    `/opt/homebrew/bin/${bin}`,
+    `/usr/local/bin/${bin}`,
+    join(home, '.claude', 'local', bin),
+    join(home, '.npm-global', 'bin', bin)
+  ]
+  for (const c of candidates) {
+    // accessSync(X_OK), not existsSync: a present-but-non-executable file would otherwise be reported "installed"
+    // and then EACCES at spawn. This also follows symlinks (a broken ~/.local/bin/<bin> link → throws → skipped).
+    try { accessSync(c, constants.X_OK); return c } catch { /* missing or not executable — skip */ }
+  }
+  try {
+    const out = execFileSync('/bin/zsh', ['-lc', `command -v ${bin}`], { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    if (out.startsWith('/') && existsSync(out)) return out
+  } catch {
+    /* not found via shell */
+  }
+  return null
 }
 
 let claudePath: string | null | undefined // undefined = not probed yet
 export function claudeCliPath(): string | null {
   ensureFullPath()
   if (claudePath !== undefined) return claudePath
-  try {
-    claudePath = execFileSync('/bin/zsh', ['-lc', 'command -v claude'], { encoding: 'utf8', timeout: 8000 }).trim() || null
-  } catch {
-    claudePath = null
-  }
+  claudePath = resolveCli('claude')
   return claudePath
 }
 let codexPath: string | null | undefined
 export function codexCliPath(): string | null {
   ensureFullPath()
   if (codexPath !== undefined) return codexPath
-  try {
-    codexPath = execFileSync('/bin/zsh', ['-lc', 'command -v codex'], { encoding: 'utf8', timeout: 8000 }).trim() || null
-  } catch {
-    codexPath = null
-  }
+  codexPath = resolveCli('codex')
   return codexPath
 }
 
