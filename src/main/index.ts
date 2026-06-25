@@ -893,6 +893,10 @@ app.whenReady().then(() => {
     trackActivity('connector.disconnected', { success: !(r as { error?: unknown })?.error, source: 'main' })
     return r
   })
+  ipcMain.handle('os:blitz-chrome-status', () => blitzChrome().status())
+  ipcMain.handle('os:blitz-chrome-open', async (_e, agentId?: string) =>
+    blitzChrome().open(agentId != null ? String(agentId) : '', {})
+  )
   // Per-message attachment snapshots (the frozen in-chat dropbox), persisted under <ws>/.blitzos/attachments/<chat>.json.
   const attachmentStore = makeAttachmentStore({ getWorkspacePath: () => osWorkspaceContext().workspace_path || null })
   ipcMain.handle('os:attach-get', (_e, chat: string) => attachmentStore.listAttachments(String(chat ?? '')))

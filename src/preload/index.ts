@@ -206,6 +206,17 @@ const api = {
       return (ipcRenderer.invoke('os:conn-drop', connId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
     }
   },
+  /** Blitz Chrome — the agent's own dedicated background browser, driven over CDP. */
+  blitzChrome: {
+    status(): Promise<{ available: boolean; running: boolean; connected: boolean; windows: number }> {
+      return (ipcRenderer.invoke('os:blitz-chrome-status') as Promise<{ available: boolean; running: boolean; connected: boolean; windows: number }>)
+        .catch(() => ({ available: false, running: false, connected: false, windows: 0 }))
+    },
+    open(agentId?: string): Promise<{ connId?: string; error?: string }> {
+      return (ipcRenderer.invoke('os:blitz-chrome-open', agentId) as Promise<{ connId?: string; error?: string }>)
+        .catch((e) => ({ error: String(e) }))
+    }
+  },
   /** Per-message attachment SNAPSHOTS (the frozen in-chat dropbox), persisted on disk so they survive a restart.
    *  `get` returns `{ attachments: { "<msgKey>": TrayGroup[] } }` for a chat; `record` freezes one message's tray.
    *  msgKey = String(sendTs) — the renderer-generated timestamp that main mirrors into chat.md. */
