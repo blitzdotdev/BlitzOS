@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
-const bin = join(root, 'native/computer-use-helper/build/BlitzOS.app/Contents/MacOS/BlitzOS')
+const bin = join(root, 'native/computer-use-helper/build/BlitzOS Automation.app/Contents/MacOS/BlitzOS Automation')
 if (!existsSync(bin)) {
   console.error('FAIL: helper not built — run native/computer-use-helper/build.sh')
   process.exit(1)

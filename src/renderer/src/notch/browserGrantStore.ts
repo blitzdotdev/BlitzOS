@@ -14,13 +14,13 @@ export type BrowserStep = { grant: string; label: string; instruction: string }
 // live `steps` can be a subset (or, for Safari, a single row).
 export const BROWSER_STEPS: Record<Browser, BrowserStep[]> = {
   chrome: [
-    { grant: 'automation:systemevents', label: 'System Events', instruction: 'In Automation, find BlitzOS Helper, click ▸ to expand, then turn on System Events.' },
-    { grant: 'automation:chrome', label: 'Google Chrome', instruction: 'In Automation, find BlitzOS Helper, click ▸ to expand, then turn on Google Chrome.' },
+    { grant: 'automation:systemevents', label: 'System Events', instruction: 'In Automation, find BlitzOS Automation, click ▸ to expand, then turn on System Events.' },
+    { grant: 'automation:chrome', label: 'Google Chrome', instruction: 'In Automation, find BlitzOS Automation, click ▸ to expand, then turn on Google Chrome.' },
     { grant: 'allowjs:chrome', label: 'Allow JavaScript from Apple Events', instruction: "Blitz opens Chrome's View ▸ Developer menu — click the highlighted row." }
   ],
   // Safari: automation is the ONLY grant (no System Events, no Allow-JS path).
   safari: [
-    { grant: 'automation:safari', label: 'Safari', instruction: 'In Automation, find BlitzOS Helper, click ▸ to expand, then turn on Safari.' }
+    { grant: 'automation:safari', label: 'Safari', instruction: 'In Automation, find BlitzOS Automation, click ▸ to expand, then turn on Safari.' }
   ]
 }
 

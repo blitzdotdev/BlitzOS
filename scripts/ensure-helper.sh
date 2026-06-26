@@ -2,7 +2,7 @@
 # predev hook (package.json "predev"): make sure the native macOS helpers BlitzOS needs at runtime exist before
 # `npm run dev`, building each ONCE if missing (swiftc). macOS-only; NEVER blocks dev — a missing toolchain or a
 # failed build just warns and continues.
-#   1. Computer Use sidecar (BlitzOS.app) — the draggable helper the onboarding TCC pre-board needs
+#   1. Computer Use sidecar (BlitzOS Automation.app) — the draggable helper the onboarding TCC pre-board needs
 #      (issues/open/preboard-cu-helper-drag-missing-vm.md). Without it the pre-board drag is silently suppressed.
 #   2. notch-geometry CLI — the EXACT physical-notch read for the bulletproof notch hit-window. Without it
 #      readNotchGeometry returns null → no hit-window → the notch toggle is ⌥Space-only (the click band needs it).
@@ -21,7 +21,7 @@ if [[ "$have_swiftc" == "0" ]]; then
 fi
 
 # 1) Computer Use helper (build once if missing).
-CU_EXE="native/computer-use-helper/build/BlitzOS.app/Contents/MacOS/BlitzOS"
+CU_EXE="native/computer-use-helper/build/BlitzOS Automation.app/Contents/MacOS/BlitzOS Automation"
 CU_DIR="native/computer-use-helper"
 # (Re)build if MISSING or STALE — the source (.swift / Info.plist) is newer than the built binary. "build once if
 # missing" silently left edits uncompiled (you'd edit main.swift, restart dev, and run the old binary). `-nt` closes

@@ -48,13 +48,13 @@ if [[ -d "$APP" ]]; then
   hdr "TIER 1 — every shipped binary helper"
   # Named helpers the user explicitly ships (extraResources in electron-builder.yml).
   R="$APP/Contents/Resources"
-  [[ -d "$R/BlitzOS.app" ]]     && vet "$R/BlitzOS.app"     "helper: Computer-Use BlitzOS.app"     || b1 "helper Computer-Use BlitzOS.app MISSING"
+  [[ -d "$R/BlitzOS Automation.app" ]] && vet "$R/BlitzOS Automation.app" "helper: Computer-Use BlitzOS Automation.app" || b1 "helper Computer-Use BlitzOS Automation.app MISSING"
   [[ -d "$R/BlitzIsland.app" ]] && vet "$R/BlitzIsland.app" "helper: dynamic-island BlitzIsland.app" || b1 "helper BlitzIsland.app MISSING"
   [[ -f "$R/notch-geometry" ]]  && vet "$R/notch-geometry"  "helper: notch-geometry CLI"            || b1 "helper notch-geometry MISSING"
   [[ -f "$R/bin/tmux" ]]        && vet "$R/bin/tmux"        "helper: portable tmux"                 || b1 "helper tmux MISSING"
   # The CU helper carries a TCC entitlement that MUST survive electron-builder's deep re-sign.
-  if [[ -d "$R/BlitzOS.app" ]]; then
-    if codesign -d --entitlements - "$R/BlitzOS.app" 2>/dev/null | grep -q "com.apple.security.automation.apple-events"; then
+  if [[ -d "$R/BlitzOS Automation.app" ]]; then
+    if codesign -d --entitlements - "$R/BlitzOS Automation.app" 2>/dev/null | grep -q "com.apple.security.automation.apple-events"; then
       g "CU helper kept its apple-events entitlement through the deep re-sign"
     else
       b1 "CU helper LOST its apple-events entitlement (deep re-sign stripped it)"

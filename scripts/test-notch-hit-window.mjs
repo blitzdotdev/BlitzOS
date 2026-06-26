@@ -241,16 +241,16 @@ ok('permission drag helper shows a Blitz icon with a clear drag animation while 
     /<div class="c">Drag the Blitz Icon into \$\{label\}<\/div>/.test(onboardingMain) &&
     /const html = dragHelperHtml\(kind, await blitzVisualIconDataUrl\(\)\)/.test(onboardingMain) &&
     /const bundle = currentDragBundle[\s\S]*?e\.sender\.startDrag\(\{ file: bundle, icon \}\)/.test(onboardingMain) &&
-    /<key>CFBundleDisplayName<\/key>\s*<string>BlitzOS Helper<\/string>/.test(computerUseHelperPlist) &&
-    /<key>CFBundleName<\/key>\s*<string>BlitzOS Helper<\/string>/.test(computerUseHelperPlist) &&
-    /<key>CFBundleExecutable<\/key>\s*<string>BlitzOS<\/string>/.test(computerUseHelperPlist) &&
+    /<key>CFBundleDisplayName<\/key>\s*<string>BlitzOS Automation<\/string>/.test(computerUseHelperPlist) &&
+    /<key>CFBundleName<\/key>\s*<string>BlitzOS Automation<\/string>/.test(computerUseHelperPlist) &&
+    /<key>CFBundleExecutable<\/key>\s*<string>BlitzOS Automation<\/string>/.test(computerUseHelperPlist) &&
     /<key>CFBundleVersion<\/key>\s*<string>14<\/string>/.test(computerUseHelperPlist) &&
-    /APP_NAME="BlitzOS"/.test(computerUseHelperBuild) &&
-    /native\/computer-use-helper\/build\/BlitzOS\.app/.test(builderConfig) &&
-    /to: BlitzOS\.app/.test(builderConfig) &&
-    /build\/BlitzOS\.app\/Contents\/MacOS\/BlitzOS/.test(ensureHelper) &&
-    /build', 'BlitzOS\.app'/.test(computerUseHelperManager) &&
-    /return join\(app\.getPath\('appData'\), 'BlitzOS', 'BlitzOS\.app'\)/.test(computerUseHelperManager) &&
+    /APP_NAME="BlitzOS Automation"/.test(computerUseHelperBuild) &&
+    /native\/computer-use-helper\/build\/BlitzOS Automation\.app/.test(builderConfig) &&
+    /to: "BlitzOS Automation\.app"/.test(builderConfig) &&
+    /build\/BlitzOS Automation\.app\/Contents\/MacOS\/BlitzOS Automation/.test(ensureHelper) &&
+    /build', 'BlitzOS Automation\.app'/.test(computerUseHelperManager) &&
+    /return join\(app\.getPath\('appData'\), 'BlitzOS', 'BlitzOS Automation\.app'\)/.test(computerUseHelperManager) &&
     /assets\/blitz-app-icon\.png/.test(computerUseHelperBuild) &&
     /Drag the BlitzOS icon into the permission list/.test(islandOnboarding) &&
     !/Accessibility granted to BlitzComputerUse/.test(computerUseHelperSwift))

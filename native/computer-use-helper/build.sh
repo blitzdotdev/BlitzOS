@@ -1,7 +1,10 @@
 #!/bin/bash
-# Build + sign BlitzOS.app — the separate computer-use TCC helper
+# Build + sign "BlitzOS Automation.app" — the separate computer-use TCC helper
 # (plans/blitzos-computer-use-helper.md). Native Swift, arm64, Developer-ID signed so its TCC
-# identity is stable. Output: native/computer-use-helper/build/BlitzOS.app
+# identity is stable. Output: native/computer-use-helper/build/BlitzOS Automation.app
+# Distinct display name (NOT "BlitzOS Helper") so it never collides with the main app or Electron's
+# own "BlitzOS Helper" Chromium children in the Privacy panes. Bundle id stays dev.blitz.os.computeruse
+# so the user's existing TCC grant survives the rename.
 #
 # Signing: uses the "Developer ID Application" identity from the keychain (override with
 # BLITZ_HELPER_SIGN_IDENTITY). Unsigned ad-hoc fallback for dev mechanics testing (TCC identity is
@@ -9,7 +12,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP_NAME="BlitzOS"
+APP_NAME="BlitzOS Automation"
 BUNDLE="build/${APP_NAME}.app"
 EXEC_DIR="${BUNDLE}/Contents/MacOS"
 EXEC="${EXEC_DIR}/${APP_NAME}"
@@ -20,7 +23,7 @@ rm -rf build
 mkdir -p "$EXEC_DIR" "${BUNDLE}/Contents/Resources"
 
 echo "[helper] swiftc → ${EXEC} (${ARCH})"
-swiftc -O -target "${ARCH}-apple-macos13.0" -framework AppKit -framework CoreGraphics -framework ApplicationServices -framework CoreServices -framework ScreenCaptureKit \
+swiftc -O -target "${ARCH}-apple-macos13.0" -framework AppKit -framework CoreGraphics -framework ApplicationServices -framework CoreServices -framework ScreenCaptureKit -framework ScriptingBridge \
   -o "$EXEC" main.swift
 
 cp Info.plist "${BUNDLE}/Contents/Info.plist"

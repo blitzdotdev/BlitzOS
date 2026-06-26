@@ -37,7 +37,7 @@ export interface ScanRequest {
 // __dirname = <repo>/out/main in dev). Overridable with BLITZ_COMPUTER_USE_APP.
 let helperPathLogged = false
 function bundledHelperApp(): string {
-  const rel = ['native', 'computer-use-helper', 'build', 'BlitzOS.app']
+  const rel = ['native', 'computer-use-helper', 'build', 'BlitzOS Automation.app']
   const legacyRel = ['native', 'computer-use-helper', 'build', 'BlitzComputerUse.app']
   const here = (() => {
     try {
@@ -48,7 +48,7 @@ function bundledHelperApp(): string {
   })()
   const candidates = [
     process.env.BLITZ_COMPUTER_USE_APP,
-    app.isPackaged ? join(process.resourcesPath, 'BlitzOS.app') : null,
+    app.isPackaged ? join(process.resourcesPath, 'BlitzOS Automation.app') : null,
     join(app.getAppPath(), ...rel),
     here ? join(here, '..', '..', ...rel) : null, // out/main → repo root in dev
     !app.isPackaged ? join(process.cwd(), ...rel) : null, // electron-vite dev runs with cwd = repo root
@@ -68,11 +68,15 @@ function bundledHelperApp(): string {
 // Stable install location (same in dev + packaged, independent of userData naming) so the bundle the
 // user GRANTED stays put across app updates and never needs re-granting — Codex's installer pattern.
 function installedHelperApp(): string {
-  return join(app.getPath('appData'), 'BlitzOS', 'BlitzOS.app')
+  return join(app.getPath('appData'), 'BlitzOS', 'BlitzOS Automation.app')
 }
 
-function legacyInstalledHelperApp(): string {
-  return join(app.getPath('appData'), 'BlitzOS', 'BlitzComputerUse.app')
+// Older helper bundle names we may have installed before the rename to "BlitzOS Automation.app"
+// (BlitzOS.app collided with the main app; BlitzComputerUse.app was the original). Removed after a
+// successful install so a renamed upgrade leaves no orphan bundle behind.
+function legacyInstalledHelperApps(): string[] {
+  const dir = join(app.getPath('appData'), 'BlitzOS')
+  return [join(dir, 'BlitzOS.app'), join(dir, 'BlitzComputerUse.app')]
 }
 
 function plistVersion(appPath: string): string | null {
@@ -115,11 +119,12 @@ class HelperManager {
       if (existsSync(dst)) rmSync(dst, { recursive: true, force: true })
       const r = await exec('/bin/cp', ['-R', src, dst])
       if (r.ok) {
-        try {
-          const legacy = legacyInstalledHelperApp()
-          if (legacy !== dst && existsSync(legacy)) rmSync(legacy, { recursive: true, force: true })
-        } catch {
-          /* best-effort legacy cleanup */
+        for (const legacy of legacyInstalledHelperApps()) {
+          try {
+            if (legacy !== dst && existsSync(legacy)) rmSync(legacy, { recursive: true, force: true })
+          } catch {
+            /* best-effort legacy cleanup */
+          }
         }
       }
       return r.ok && existsSync(dst)
