@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Electron's hardened-runtime defaults (V8 JIT + native modules). -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- REQUIRED: BlitzOS + its computer-use helper drive other apps via Apple Events (Chrome/Safari/System
+       Events, e.g. onboarding's countChromeWindows + openChromeJsRow). Under hardened runtime, sending an
+       Apple Event WITHOUT this entitlement makes macOS spam a "requires entitlement
+       com.apple.security.automation.apple-events" prompt per attempt. electron-builder's default
+       entitlements omit it (and overwrote the helper's own), which was the launch-time prompt spam. -->
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+</dict>
+</plist>

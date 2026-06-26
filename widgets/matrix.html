@@ -1,0 +1,43 @@
+<!doctype html><meta charset="utf-8"><title>Matrix</title>
+<!-- Thinking-widget: a comparison matrix (options × criteria). Drive with update_surface{props:{rows}}. -->
+<style>
+  :root{--ac:var(--blitz-accent,#1a1b1d);--bg:var(--blitz-bg,#fff);--sf:var(--blitz-surface,#f5f5f3);
+        --tx:var(--blitz-text,#1a1b1d);--dim:var(--blitz-text-dim,#8a8d90);--line:var(--blitz-hairline,rgba(0,0,0,.09))}
+  .wrap{padding:14px}
+  table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}
+  th,td{padding:9px 10px;text-align:center;border-bottom:1px solid var(--line)}
+  thead th{font:9px ui-monospace,'SF Mono',monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:500;vertical-align:bottom}
+  tbody th{text-align:left;font-weight:600;white-space:nowrap}
+  tbody.intro tr{animation:in .3s both}tbody.intro tr:nth-child(2){animation-delay:.05s}tbody.intro tr:nth-child(3){animation-delay:.1s}
+  @keyframes in{from{opacity:0;transform:translateY(5px)}}
+  tbody tr:hover td,tbody tr:hover th{background:var(--sf)}
+  .cell{display:inline-flex;align-items:center;justify-content:center;min-width:30px}
+  .yes{color:var(--ac)}.no{color:var(--dim);opacity:.45}
+  .pill{padding:2px 9px;border-radius:999px;font:11px ui-monospace,monospace}
+  .h0{background:color-mix(in srgb,var(--ac) 4%,var(--bg))}.h1{background:color-mix(in srgb,var(--ac) 11%,var(--bg))}
+  .h2{background:color-mix(in srgb,var(--ac) 20%,var(--bg))}.h3{background:color-mix(in srgb,var(--ac) 32%,var(--bg))}
+</style>
+<blitz-titlebar><span id="hd">Matrix</span></blitz-titlebar>
+<div class="wrap"><table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table></div>
+<script>
+  // props: { title?, cols:[...], rows:[{ name, cells:[ value ] }] }  value: true/false | number(0-3 heat) | "text"
+  const SAMPLE={title:'Matrix',cols:['Criterion A','Criterion B','Speed','Score'],rows:[
+    {name:'Option one',cells:[false,false,3,1]},
+    {name:'Option two',cells:[false,true,3,2]},
+    {name:'Option three',cells:[true,true,1,3]}]}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  function cell(v){
+    if(v===true)return '<span class="cell yes">●</span>'
+    if(v===false)return '<span class="cell no">○</span>'
+    if(typeof v==='number'){const h=['h0','h1','h2','h3'][Math.max(0,Math.min(3,v))];return '<span class="pill '+h+'">'+v+'</span>'}
+    return '<span class="cell">'+esc(v)+'</span>'
+  }
+  function render(d){
+    document.getElementById('hd').textContent=d.title||'Matrix'
+    document.getElementById('head').innerHTML='<th></th>'+(d.cols||[]).map(c=>'<th>'+esc(c)+'</th>').join('')
+    const tb=document.getElementById('body');tb.classList.toggle('intro',!__p);__p=true;tb.innerHTML=(d.rows||[]).map(r=>'<tr><th>'+esc(r.name)+'</th>'+(r.cells||[]).map(c=>'<td>'+cell(c)+'</td>').join('')+'</tr>').join('')
+  }
+  render(data)
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.rows){data=p;render(p)}})
+</script>

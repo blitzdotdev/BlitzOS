@@ -1,0 +1,234 @@
+/* notch.css — the design-agnostic shell for the island: the host overlay, the INVARIANT chassis, and the shared
+   ChatInput baseline. IslandPanel (island.css) paints the interior. The host is a top-level portal overlay
+   (escapes the #root-canvas clip): a full-width fixed strip under the notch; only the chassis takes pointer events. */
+.nhost {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 2147483000;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* ── THE CHASSIS (invariant) ──────────────────────────────────────────────────────────────────────────────────
+   The original dynamic-island shell, ported verbatim from the pre-design-pass `.notch-entry`: pure BLACK + the
+   exact NotchShape (square top corners flush to the bezel, 28px rounded bottom). User constraint: the island's
+   background color + shape NEVER change — IslandPanel paints NO chassis (transparent root, no bg/border/radius/
+   shadow). overflow:hidden masks interior content to the rounded bottom, so nothing can leak the black shape. */
+.nh-chassis {
+  pointer-events: auto;
+  box-sizing: border-box;
+  width: 696px; /* base island width (was 580px, +20%) */
+  max-width: 84vw;
+  background: #000;
+  color: #ededed;
+  /* obsidian-glass rim tokens (ported from lab/choice-cards, "obsidian" preset). The fill stays pure black and
+     the NotchShape is invariant — these drive ONLY the 1px outline (::before) + the outer lift below. */
+  --isl-rim-top: rgba(198, 217, 255, 0.6);
+  --isl-rim-mid: rgba(150, 172, 212, 0.14);
+  --isl-rim-bot: rgba(140, 176, 255, 0.34);
+  border-radius: 0 0 28px 28px;
+  overflow: hidden;
+  position: relative; /* positioning context for the peek toggle in the notch band */
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  /* TOP-EDGE BLEED: paint 4px of solid black ABOVE the top edge. The square top corners sit flush at the screen
+     edge, so this strip is normally clipped off by the physical display edge (invisible). But while the entry
+     transform settles onto y=0, the chassis's GPU layer can land a sub-pixel low for a frame, exposing ~1px of
+     desktop between the screen edge and the island top. The bleed is part of the chassis's OWN layer (no seam) and
+     fills that gap. box-shadow, not a child, so overflow:hidden can't clip it and it adds no layout. The 2nd +
+     3rd layers are the obsidian outer LIFT: a faint cool-blue ambient so the island floats off a black backdrop
+     (a black website) instead of merging — visible on the sides/bottom, clipped by the screen at the top. */
+  box-shadow: 0 -4px 0 0 #000, 0 12px 44px -10px rgba(30, 64, 140, 0.24), 0 1px 5px rgba(120, 160, 255, 0.1);
+  animation: nhost-in 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  /* the island EXPANDS sideways when the attachment panel opens (NotchHost adds .nh-wide). */
+  transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.12s ease, transform 0.12s ease;
+}
+
+/* VEIL (onboarding drag step): hide the island WITHOUT collapsing it (it stays mounted so its drag-helper window is
+   not torn down) and make it click-through, so System Settings shows through while the user drags the icon in. The
+   window-level click-through is enforced separately (setNotchInteractive forced off while veiled). */
+body.island-veiled .nh-chassis,
+body.island-veiled .notch-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.nh-chassis.nh-parked {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-8px) scale(0.985);
+  animation: none;
+}
+
+/* ── OBSIDIAN-GLASS RIM — the "liquid-glass" OUTLINE (the only thing separating the all-black island from a black
+   backdrop). A 1px gradient hairline on the LEFT, RIGHT, and BOTTOM edges only — the TOP edge is deliberately
+   UNPAINTED (`padding-top: 0`, so the exclude-mask leaves no strip there): the chassis top is flush to the bezel
+   and gets no outline. Masked to a hairline (mask-composite: exclude), ported from lab/choice-cards. The gradient
+   stays brightest at the top of the side rails and fades into the signature rounded-bottom curve. pointer-events:
+   none so it never eats clicks; sits at the border-box so overflow:hidden keeps the full hairline. NEVER fill the
+   interior here — the black background + NotchShape are invariant; this is edge light only. */
+.nh-chassis::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border-radius: inherit;
+  padding: 0 1px 1px; /* top:0 → no rim on the top edge; only left/right/bottom */
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    var(--isl-rim-top) 0%,
+    var(--isl-rim-mid) 24%,
+    rgba(255, 255, 255, 0.03) 60%,
+    var(--isl-rim-bot) 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.nh-chassis.nh-wide {
+  width: 888px; /* attach-panel-open width (was 740px, +20%) */
+}
+
+.nh-chassis.nh-app-viewing {
+  width: min(1200px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+}
+
+/* the PEEK toggle: a macOS-menu-bar-style control pinned to the very top (the notch band), top-right, ALWAYS
+   visible across every view. The physical notch is centered, so the right side is clear (like the status cluster). */
+.nh-peek-toggle {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px;
+  transition: color 0.15s ease-out;
+}
+.nh-peek-toggle:hover,
+.nh-peek-toggle.on {
+  color: #fff;
+}
+.nh-peek-toggle svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+/* Home-view settings: shell chrome, not part of the widget icon grid. */
+.nh-settings-btn {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  padding: 4px;
+  transition: color 0.15s ease-out, background 0.15s ease-out;
+}
+.nh-settings-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+.nh-settings-btn svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+/* the HOME button: the ONLY chrome in the island (user constraint), pinned top-LEFT in the notch band, mirroring
+   the peek toggle. Shown only inside a widget (the chat/session view); tapping it returns to the home grid. */
+.nh-home-btn {
+  position: absolute;
+  top: 8px;
+  left: 16px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.55);
+  padding: 4px;
+  transition: color 0.15s ease-out;
+}
+.nh-home-btn:hover {
+  color: #fff;
+}
+.nh-home-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+@keyframes nhost-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Shared ChatInput baseline (themed per view via the .isl-bar class in island.css). ───────────────────────── */
+.ci {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: #1e1e1e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 8px 8px 8px 12px;
+}
+.ci-field {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  resize: none;
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+  max-height: 140px;
+}
+.ci-field::placeholder {
+  color: #777;
+}
+.ci-send {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  align-self: flex-end;
+  border: 0;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+.ci-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}

@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "BlitzOS CDP Bridge",
+  "version": "0.1",
+  "description": "Minimal chrome.debugger CDP relay — trusted input into background tabs. One permission.",
+  "permissions": ["debugger", "alarms"],
+  "background": { "service_worker": "sw.js" }
+}
