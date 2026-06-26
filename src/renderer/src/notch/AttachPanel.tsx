@@ -99,18 +99,6 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   // Windows DROPPED into the dropbox: their real app icons live here (keyed by connId), hover one for its detail.
   const [dropped, setDropped] = useState<Record<string, AddedSource>>({})
 
-  // JIT permissions: enumerating the user's REAL browser tabs (listTabs = an Apple Event → "control Chrome")
-  // and app windows (listWindows) PROMPTS for a macOS grant. So we do NOT auto-list on open — the panel is
-  // prompt-free until the user explicitly opts in (persisted, so a returning user whose grant already exists
-  // auto-lists with no prompt). The drop zone (drag a window in) stays available and JIT-prompts on its own.
-  const [sourcesOptedIn, setSourcesOptedIn] = useState<boolean>(() => {
-    try { return localStorage.getItem('blitz.attach.sources') === '1' } catch { return false }
-  })
-  const optInSources = useCallback((): void => {
-    try { localStorage.setItem('blitz.attach.sources', '1') } catch { /* private mode — won't persist, fine */ }
-    setSourcesOptedIn(true)
-  }, [])
-
   // The dropbox is a STAGING tray, not a mirror of every live connection: it shows only sources the USER staged
   // (dropped in, or connected from the right list) for their NEXT message, keyed per chat. The tray lives in a
   // module-level external store (stagingStore) so it SURVIVES the island close+reopen — AttachPanel remounts per
@@ -154,13 +142,10 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     // list() is scoped to THIS chat (its owned connections); the available tabs/windows are global.
     const listScoped = (): Promise<Record<string, unknown>> =>
       typeof conn.list === 'function' ? conn.list(activeSessionId).then((x) => x || {}).catch(() => ({})) : Promise.resolve({})
-    // Only enumerate the user's real browser tabs / app windows once they've opted in — those calls PROMPT.
-    // Passing null when not opted-in routes through get()'s non-function branch (→ {}), keeping the typing.
-    const [t, w, c] = await Promise.all([
-      get(sourcesOptedIn ? conn.listTabs : null),
-      get(sourcesOptedIn ? conn.listWindows : null),
-      listScoped()
-    ])
+    // List the user's real browser tabs + app windows immediately on open. These no longer PROMPT: listTabs is gated
+    // on a no-prompt Automation status probe (an ungranted browser returns a state with no Apple Event), and
+    // listWindows runs through the helper. So there is nothing to defer behind an opt-in — show sources right away.
+    const [t, w, c] = await Promise.all([get(conn.listTabs), get(conn.listWindows), listScoped()])
     if (seq !== refreshSeq.current) return // a newer refresh superseded this one — don't apply stale data
     setTabs(Array.isArray(t.tabs) ? (t.tabs as Tab[]) : [])
     setWindows(Array.isArray(w.windows) ? (w.windows as Win[]) : [])
@@ -168,7 +153,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     if (connSeq.current === connSeqAtStart) {
       applyBackendConns(Array.isArray(c.connections) ? (c.connections as Conn[]) : [])
     }
-  }, [activeSessionId, sourcesOptedIn])
+  }, [activeSessionId])
 
   // Light reconcile after a toggle: re-fetch ONLY the connection set (cheap), NOT tabs/windows — those re-pull
   // every window's app icon (hundreds of KB) and don't change when you connect/disconnect.
@@ -185,10 +170,10 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   // the connector connects, even while the panel stays open.
   const refreshTabs = useCallback(async (): Promise<void> => {
     const conn = bridge()
-    if (!conn || typeof conn.listTabs !== 'function' || !sourcesOptedIn) return // don't poll the prompting op until opt-in
+    if (!conn || typeof conn.listTabs !== 'function') return
     const t = (await conn.listTabs().then((x) => x || {}).catch(() => ({}))) as { tabs?: Tab[] }
     setTabs(Array.isArray(t.tabs) ? t.tabs : [])
-  }, [sourcesOptedIn])
+  }, [])
 
   useEffect(() => {
     void refresh()
@@ -616,19 +601,11 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
           )}
         </div>
 
-        {/* RIGHT: the connectors list — browser windows (expand to tabs) + app windows. Click a row to connect it. */}
+        {/* RIGHT: the connectors list — browser windows (expand to tabs) + app windows. Click a row to connect it.
+            Tabs + windows are listed IMMEDIATELY on open (no opt-in gate): the listing no longer prompts (listTabs is
+            gated on a no-prompt status probe; listWindows runs through the helper). There are NO synthetic Chrome/
+            Safari "set up" rows — an ungranted browser is set up by DROPPING it (that opens the onboarding card). */}
         <div className="att-apps" role="list">
-          {/* JIT: until the user opts in, we never list their real tabs/windows (those calls prompt). One click
-              opts in, lists them, and the first connect raises the macOS grant — because they just asked for it. */}
-          {!sourcesOptedIn && (
-            <button type="button" className="att-optin" onClick={optInSources}>
-              <span className="att-optin-cta">Show my tabs and windows</span>
-              <span className="att-optin-sub">Blitz asks permission the first time you connect one</span>
-            </button>
-          )}
-          {/* NOTE: there are NO synthetic Chrome/Safari "set up" rows here. An ungranted browser is set up by DROPPING
-              it into the dropbox (that opens the "Let Blitz work in {Chrome|Safari}" onboarding). The connectors list
-              shows only REAL connectables — granted browser tab groups + app windows. */}
           {groups.map((g) => {
             const isExp = expanded.has(g.id)
             const connCount = g.tabs.filter((t) => connForTab(t)).length

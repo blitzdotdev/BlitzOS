@@ -24,50 +24,7 @@
   border-radius: 14px;
 }
 
-/* JIT opt-in call-to-action: fills the RIGHT box until the user asks to see their tabs/windows, so the panel
-   never auto-runs the (prompting) listTabs/listWindows. One click opts in and lists them. */
-.nh-island .att-optin {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: 100%;
-  height: 100%;
-  min-height: 96px;
-  padding: 12px;
-  border: 0;
-  background: transparent;
-  border-radius: 14px;
-  cursor: pointer;
-  text-align: center;
-}
-/* A definite, clear, BIG action button (filled accent) so this reads as "click me", not a label. */
-.nh-island .att-optin-cta {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 12px 24px;
-  border-radius: 12px;
-  background: var(--isl-accent, #3c82f6);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 660;
-  letter-spacing: -0.01em;
-  box-shadow: 0 6px 20px rgba(60, 130, 246, 0.38);
-  transition: filter 0.14s ease-out, transform 0.14s ease-out;
-}
-.nh-island .att-optin:hover .att-optin-cta {
-  filter: brightness(1.08);
-}
-.nh-island .att-optin:active .att-optin-cta {
-  transform: translateY(1px);
-}
-.nh-island .att-optin-sub {
-  color: var(--isl-dim);
-  font-size: 11px;
-  line-height: 1.3;
-}
+/* (The JIT opt-in CTA was removed — tabs/windows now list immediately on open since the listing no longer prompts.) */
 
 /* P0 permission card: clear, human, with an action button — shown IN the dropbox in place of a red jargon string. */
 .nh-island .att-grant {

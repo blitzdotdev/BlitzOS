@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- Applied to nested code (Electron renderer/GPU/plugin helpers AND the bundled computer-use BlitzOS.app,
+  <!-- Applied to nested code (Electron renderer/GPU/plugin helpers AND the bundled computer-use BlitzOS Automation.app,
        which electron-builder re-signs). The CU helper sends Apple Events (osascript) and is the responsible
        process, so it needs apple-events here too — without it the deep re-sign strips the helper's own grant
        and the helper prompts at launch. No com.apple.security.inherit (the helper is LaunchServices-launched
