@@ -9,6 +9,12 @@
 // <img>'s onError (attachTray.tsx Favicon), so sites whose fast path already works (x.com, github) never reach
 // here. Privacy is preserved: we hit only the site the user already has open, never a third-party favicon service.
 //
+// Second-level fallback: many sites (e.g. blitzos.app) serve NO /favicon.ico and instead DECLARE their icon via a
+// <link rel="icon"> at another path (/favicon.png, a CDN url, ...). So when /favicon.ico yields no image, we fetch
+// the origin page ONCE (capped to the <head>), read the declared icon, and fetch that. Strictly bounded: one shared
+// AbortController + a single TIMEOUT_MS budget across every sub-fetch, a 64KB HTML cap, HTML-only, the same SSRF
+// guard, and it's reached only on the fallback path (then cached), so the common case adds zero work.
+//
 // Returns a `data:<mime>;base64,...` string on success, or null (→ the renderer keeps the globe). Never throws.
 
 import { isIP } from 'node:net'
@@ -24,6 +30,8 @@ const MAX_BYTES = 256 * 1024 // a favicon is tiny; cap so a misbehaving host can
 const TIMEOUT_MS = 5000 // a slow host must not pin a concurrency slot
 const MAX_CONCURRENT = 5 // enumerating many failing tabs must not fire a fetch storm
 const MAX_ENTRIES = 512 // bound memory across a long session (insertion-order eviction, not strict LRU)
+const HTML_CAP = 64 * 1024 // when hunting <link rel=icon>, read only the <head>-ish top of the page, never the whole doc
+const MAX_ICON_LINKS = 64 // cap <link> tags scanned in that HTML (paranoia against a pathological page)
 
 /** url(normalized) -> { value: string|null, expires: number } */
 const CACHE = new Map()
@@ -209,39 +217,125 @@ async function assertPublicHost(hostname, deadline) {
   if (!addrs.length || addrs.some((a) => isPrivateIp(a.address))) throw new Error('blocked resolved ip')
 }
 
-async function fetchFavicon(startUrl) {
+// A GET that follows redirects MANUALLY so we can vet each hop's host (redirect:'follow' would chase a 302 into
+// 127.0.0.1). Returns the final non-redirect Response (caller reads the body, capped), or null. Shares the caller's
+// AbortController + deadline so the whole resolve stays inside ONE time budget. The neutral UA dodges the bot-wall;
+// Node's fetch adds no Sec-Fetch metadata, which is the point.
+async function guardedFetch(startUrl, ctrl, deadline, accept) {
+  let url = startUrl
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    await assertPublicHost(new URL(url).hostname, deadline) // throws on a private/loopback target → caught by caller → null
+    const res = await fetch(url, { method: 'GET', redirect: 'manual', signal: ctrl.signal, headers: { 'User-Agent': UA, Accept: accept } })
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location')
+      if (!loc) return null
+      const next = new URL(loc, url) // resolve relative redirects against the current hop
+      if (next.protocol !== 'http:' && next.protocol !== 'https:') return null // no file:/data: redirect targets
+      url = next.toString()
+      continue
+    }
+    return res.ok ? res : null
+  }
+  return null // too many redirects
+}
+
+// Fetch an image URL → a base64 data: URL, or null. Magic-byte validated (a mislabeled HTML wall can't become a
+// broken data URL). A LEAF op: never triggers page parsing, so the fallback below can't loop.
+async function fetchImage(url, ctrl, deadline) {
+  const res = await guardedFetch(url, ctrl, deadline, 'image/*,*/*;q=0.8')
+  if (!res) return null
+  const buf = await readCapped(res, MAX_BYTES)
+  if (!buf || buf.length === 0) return null
+  const mime = imageMime(res.headers.get('content-type'), buf)
+  return mime ? `data:${mime};base64,${buf.toString('base64')}` : null
+}
+
+// Read up to `maxBytes` of a (text) body and return it TRUNCATED as a string — unlike readCapped (which fails on
+// overrun) because we only need the <head> at the top of the page, not the whole document.
+async function readHeadHtml(res, maxBytes) {
+  const reader = res.body && typeof res.body.getReader === 'function' ? res.body.getReader() : null
+  if (!reader) {
+    const ab = await res.arrayBuffer()
+    return Buffer.from(ab).subarray(0, maxBytes).toString('utf8')
+  }
+  const chunks = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    const take = total + value.length > maxBytes ? value.subarray(0, maxBytes - total) : value
+    chunks.push(Buffer.from(take))
+    total += take.length
+    if (total >= maxBytes) {
+      try {
+        await reader.cancel() // stop the download the moment we have enough — don't pull the whole page
+      } catch {
+        /* best-effort */
+      }
+      break
+    }
+  }
+  return Buffer.concat(chunks, total).toString('utf8')
+}
+
+// The site's declared favicon: the href of a <link rel="...icon..."> from the (capped) <head>, preferring a plain
+// "icon"/"shortcut icon" over apple-touch/mask, resolved to an absolute http(s) URL. Regexes use negated character
+// classes (linear — no catastrophic backtracking) on already-capped HTML. Returns null if none.
+function parseIconHref(html, baseUrl) {
+  const links = (html.match(/<link\b[^>]*>/gi) || []).slice(0, MAX_ICON_LINKS)
+  let best = null
+  let bestScore = 0
+  for (const tag of links) {
+    const rel = (tag.match(/\brel\s*=\s*["']([^"']*)["']/i) || [])[1] || ''
+    if (!/icon/i.test(rel)) continue // matches "icon", "shortcut icon", "apple-touch-icon", "mask-icon"
+    const href = (tag.match(/\bhref\s*=\s*["']([^"']*)["']/i) || [])[1]
+    if (!href) continue
+    const score = rel.toLowerCase().split(/\s+/).includes('icon') ? 2 : 1 // a real favicon beats apple-touch/mask
+    if (score <= bestScore) continue
+    try {
+      const abs = new URL(href, baseUrl)
+      if (abs.protocol === 'http:' || abs.protocol === 'https:') {
+        best = abs.toString()
+        bestScore = score
+      }
+    } catch {
+      /* skip a malformed href */
+    }
+  }
+  return best
+}
+
+// Second-level fallback: a site may serve no /favicon.ico but DECLARE its icon via <link rel="icon"> at another path
+// (e.g. blitzos.app → /favicon.png). Fetch the origin page (capped to the <head>), read the declared icon, fetch it.
+// Shares the caller's single deadline + AbortController, so this whole detour stays inside the same time budget.
+async function fetchViaPageLink(faviconUrl, ctrl, deadline) {
+  let origin
+  try {
+    origin = new URL(faviconUrl).origin
+  } catch {
+    return null
+  }
+  const res = await guardedFetch(origin + '/', ctrl, deadline, 'text/html,application/xhtml+xml,*/*;q=0.8')
+  if (!res) return null
+  const ct = (res.headers.get('content-type') || '').toLowerCase()
+  if (ct && !ct.includes('html')) return null // only parse real HTML, never a giant binary body
+  const html = await readHeadHtml(res, HTML_CAP)
+  const iconUrl = parseIconHref(html, origin + '/')
+  if (!iconUrl || iconUrl === faviconUrl) return null // nothing declared, or it points back at the .ico we already tried
+  return fetchImage(iconUrl, ctrl, deadline)
+}
+
+// Resolve ONE favicon URL to a data: URL (or null), owning the SINGLE time budget shared by every sub-fetch: the
+// direct /favicon.ico, then (only if that yields no image) the <link rel=icon> page-parse fallback. One AbortController
+// + one timer bound the whole thing to TIMEOUT_MS — a slow site fails to the globe, never hangs or pins a slot.
+async function resolveOne(url) {
   const ctrl = new AbortController()
-  const deadline = Date.now() + TIMEOUT_MS // one budget for the whole chain: every fetch hop + every DNS lookup
+  const deadline = Date.now() + TIMEOUT_MS
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
   try {
-    let url = startUrl
-    // Follow redirects MANUALLY so we can vet each hop's host (redirect:'follow' would chase a 302 into 127.0.0.1).
-    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      await assertPublicHost(new URL(url).hostname, deadline) // throws on a private/loopback target → caught below → null
-      const res = await fetch(url, {
-        method: 'GET',
-        redirect: 'manual',
-        signal: ctrl.signal,
-        // The neutral UA dodges the bot-wall; Accept is harmless (verified it does not trigger the wall) and nudges
-        // a content-negotiating server toward an image. Node's fetch adds no Sec-Fetch metadata, which is the point.
-        headers: { 'User-Agent': UA, Accept: 'image/*,*/*;q=0.8' }
-      })
-      if (res.status >= 300 && res.status < 400) {
-        const loc = res.headers.get('location')
-        if (!loc) return null
-        const next = new URL(loc, url) // resolve relative redirects against the current hop
-        if (next.protocol !== 'http:' && next.protocol !== 'https:') return null // no file:/data: redirect targets
-        url = next.toString()
-        continue
-      }
-      if (!res.ok) return null
-      const buf = await readCapped(res, MAX_BYTES)
-      if (!buf || buf.length === 0) return null
-      const mime = imageMime(res.headers.get('content-type'), buf)
-      if (!mime) return null
-      return `data:${mime};base64,${buf.toString('base64')}`
-    }
-    return null // too many redirects
+    const direct = await fetchImage(url, ctrl, deadline)
+    if (direct) return direct
+    return await fetchViaPageLink(url, ctrl, deadline)
   } catch {
     return null // network error, timeout/abort, blocked host, malformed response — fall back to the globe
   } finally {
@@ -270,8 +364,8 @@ export async function resolveFavicon(rawUrl) {
   if (hit && hit.expires > Date.now()) return hit.value
   const existing = PENDING.get(url)
   if (existing) return existing
-  const p = withSlot(() => fetchFavicon(url))
-    .catch(() => null) // withSlot/fetchFavicon shouldn't throw, but never let a caller see a rejection
+  const p = withSlot(() => resolveOne(url))
+    .catch(() => null) // withSlot/resolveOne shouldn't throw, but never let a caller see a rejection
     .then((value) => {
       cachePut(url, value)
       PENDING.delete(url)
@@ -282,4 +376,4 @@ export async function resolveFavicon(rawUrl) {
 }
 
 // Exposed for tests only.
-export const __test = { normalize, imageMime, isPrivateIp, assertPublicHost, CACHE, PENDING }
+export const __test = { normalize, imageMime, isPrivateIp, assertPublicHost, parseIconHref, CACHE, PENDING }

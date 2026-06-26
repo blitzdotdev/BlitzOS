@@ -12,6 +12,7 @@ export const __test: {
   imageMime(contentType: string | null, buf: Buffer): string | null
   isPrivateIp(ip: string): boolean
   assertPublicHost(hostname: string): Promise<void>
+  parseIconHref(html: string, baseUrl: string): string | null
   CACHE: Map<string, { value: string | null; expires: number }>
   PENDING: Map<string, Promise<string | null>>
 }

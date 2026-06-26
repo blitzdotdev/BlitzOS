@@ -63,6 +63,18 @@ ok('assertPublicHost blocks localhost', await assertPublicHost('localhost').then
 ok('assertPublicHost blocks literal 127.0.0.1', await assertPublicHost('127.0.0.1').then(() => false, () => true))
 ok('assertPublicHost blocks *.local', await assertPublicHost('printer.local').then(() => false, () => true))
 
+console.log('parseIconHref() (declared <link rel=icon> fallback):')
+const { parseIconHref } = __test
+ok('finds rel=icon href (relative → absolute)', parseIconHref('<link rel="icon" type="image/png" href="favicon.png">', 'https://blitzos.app/') === 'https://blitzos.app/favicon.png')
+ok('resolves root-relative against base', parseIconHref('<link rel="icon" href="/assets/i.png">', 'https://x.com/home') === 'https://x.com/assets/i.png')
+ok('prefers rel=icon over apple-touch-icon', parseIconHref('<link rel="apple-touch-icon" href="/a.png"><link rel="icon" href="/b.png">', 'https://s.com/') === 'https://s.com/b.png')
+ok('handles "shortcut icon"', parseIconHref('<link rel="shortcut icon" href="/f.ico">', 'https://s.com/') === 'https://s.com/f.ico')
+ok('keeps an absolute CDN href', parseIconHref('<link rel="icon" href="https://cdn.s.com/i.png">', 'https://s.com/') === 'https://cdn.s.com/i.png')
+ok('falls back to apple-touch-icon when no plain icon', parseIconHref('<link rel="apple-touch-icon" href="/a.png">', 'https://s.com/') === 'https://s.com/a.png')
+ok('no icon link → null', parseIconHref('<link rel="stylesheet" href="/s.css">', 'https://s.com/') === null)
+ok('rejects javascript: href (non-http(s))', parseIconHref('<link rel="icon" href="javascript:alert(1)">', 'https://s.com/') === null)
+ok('empty/garbage html → null (no throw)', parseIconHref('', 'https://s.com/') === null)
+
 console.log('resolveFavicon() guards (offline):')
 ok('bad scheme → null', (await resolveFavicon('chrome://favicon')) === null)
 ok('empty → null', (await resolveFavicon('')) === null)
@@ -147,6 +159,13 @@ if (!(await reachable())) {
 
   const bogus = await resolveFavicon('https://no-such-host-blitzos-xyz.invalid/favicon.ico')
   ok('bogus host → null (not a throw)', bogus === null)
+
+  // Declared-icon fallback end-to-end: blitzos.app serves NO /favicon.ico (404) but declares /favicon.png via
+  // <link rel="icon">. resolveFavicon must page-parse and return the real PNG. (If the site/network changes this
+  // can go stale — it asserts the FALLBACK path against a real server, the whole point of this feature.)
+  const blitz = await resolveFavicon('https://blitzos.app/favicon.ico')
+  ok('blitzos.app (no .ico, declares /favicon.png) → real image via page-parse', typeof blitz === 'string' && blitz.startsWith('data:image/'))
+  console.log('    blitzos.app →', blitz ? blitz.slice(0, 40) + '… (' + blitz.length + ' chars)' : blitz)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)
