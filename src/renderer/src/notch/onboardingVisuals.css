@@ -1,0 +1,1337 @@
+/* onboardingVisuals.css — animated mini-mockups of the live island UI for the intro slides. Decorative only
+   (pointer-events:none). Values mirror island.css / wf.css / IslandHome / IslandPanel / IslandKanban so the
+   teaser matches the product. Tokens (--isl-*) cascade from the .nh-island ancestor; --kb-* are redeclared
+   locally on the board. Stage carve-color for bubble tails is the stage base (#050608). */
+
+/* (Text-only slides used to special-case centring here; the fixed-height .isl-onb-slide body now centres every
+   intro slide uniformly, so no per-visual override is needed.) */
+
+.oba-stage {
+  position: relative;
+  width: 100%;
+  height: 200px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background:
+    radial-gradient(120% 90% at 50% -16%, rgba(10, 132, 255, 0.12), transparent 58%),
+    radial-gradient(circle at 84% 122%, rgba(53, 214, 255, 0.08), transparent 42%),
+    #050608;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── completion hero (the redesigned 'done' step) ───────────────────────────────────────────────────────────── */
+.oba-stage.oba-done {
+  display: grid;
+  place-items: center;
+}
+.oba-done-icon {
+  position: relative;
+  z-index: 2;
+  width: 78px;
+  height: 78px;
+  border-radius: 22px;
+  box-shadow: 0 18px 44px rgba(10, 132, 255, 0.42), inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+  animation: oba-done-pop 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.oba-done-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 22px;
+  object-fit: cover;
+}
+.oba-done-badge {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #30d158;
+  color: #000;
+  border: 2.5px solid #050608;
+  animation: oba-done-pop 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.22s both;
+}
+.oba-done-badge svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+.oba-done-badge path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.oba-done-ring {
+  position: absolute;
+  z-index: 1;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  border: 1px solid rgba(10, 132, 255, 0.42);
+  opacity: 0;
+  animation: oba-done-ring 2.8s ease-out infinite;
+}
+.oba-done-ring.r2 {
+  animation-delay: 0.9s;
+}
+.oba-done-ring.r3 {
+  animation-delay: 1.8s;
+}
+@keyframes oba-done-ring {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.72);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+@keyframes oba-done-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ── shared bits: spinner, status glyphs, status dots, chat bubbles ──────────────────────────────────────────── */
+.oba-spin {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  border-radius: 50%;
+  animation: oba-spin 0.8s linear infinite;
+}
+.oba-spin.sm {
+  width: 10px;
+  height: 10px;
+}
+@keyframes oba-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.oba-check,
+.oba-alert {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  color: #000;
+}
+.oba-check {
+  background: #30d158;
+}
+.oba-alert {
+  background: #ffd60a;
+}
+.oba-check svg,
+.oba-alert svg {
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+.oba-check path,
+.oba-alert path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.oba-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--isl-dim);
+}
+.oba-dot-working {
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  background: transparent;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  animation: oba-spin 0.8s linear infinite;
+}
+.oba-dot-waiting {
+  background: #ffd60a;
+  box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.14);
+}
+.oba-dot-done {
+  background: #30d158;
+}
+
+.oba-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 16px;
+}
+/* In the connect visual, the feed appears at the bottom of the body */
+.oba-feed.bottom {
+  margin-top: auto;
+}
+.oba-msg {
+  position: relative;
+  width: fit-content;
+  max-width: 72%;
+  padding: 6px 12px;
+  border-radius: 17px;
+  color: #fff;
+  font-size: 13.5px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  animation: oba-rise 0.3s ease-out both;
+}
+.oba-msg-user {
+  align-self: flex-end;
+  background: var(--isl-accent);
+}
+.oba-msg-agent {
+  align-self: flex-start;
+  background: #3b3b3d;
+}
+.oba-msg-user::before {
+  content: '';
+  position: absolute;
+  right: -6px;
+  bottom: 0;
+  width: 16px;
+  height: 15px;
+  background: var(--isl-accent);
+  border-bottom-left-radius: 15px 13px;
+}
+.oba-msg-user::after {
+  content: '';
+  position: absolute;
+  right: -13px;
+  bottom: 0;
+  width: 13px;
+  height: 15px;
+  background: #050608;
+  border-bottom-left-radius: 9px;
+}
+.oba-msg-agent::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  bottom: 0;
+  width: 16px;
+  height: 15px;
+  background: #3b3b3d;
+  border-bottom-right-radius: 15px 13px;
+}
+.oba-msg-agent::after {
+  content: '';
+  position: absolute;
+  left: -13px;
+  bottom: 0;
+  width: 13px;
+  height: 15px;
+  background: #050608;
+  border-bottom-right-radius: 9px;
+}
+@keyframes oba-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── slide 1: home grid ─────────────────────────────────────────────────────────────────────────────────────── */
+.oba-home {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.18fr);
+  align-items: center;
+  gap: 24px;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 16px 26px;
+}
+.oba-home-chat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding-right: 24px;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+.oba-home-icon {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
+.oba-home-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 18px;
+  object-fit: cover;
+}
+.oba-home-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #30d158;
+  border: 2px solid #050608;
+  animation: oba-badge 1.8s ease-out infinite;
+}
+@keyframes oba-badge {
+  0% {
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(48, 209, 88, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0);
+  }
+}
+.oba-home-name {
+  color: var(--isl-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.oba-home-agents {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9px;
+}
+.oba-home-agents-title {
+  color: var(--isl-dim);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.oba-home-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.oba-agent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 6px 10px 6px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.05);
+  animation: oba-rise 0.32s ease-out both;
+}
+.oba-agent:nth-child(2) {
+  animation-delay: 0.07s;
+}
+.oba-agent:nth-child(3) {
+  animation-delay: 0.14s;
+}
+.oba-agent[data-state='done'] {
+  border-color: rgba(48, 209, 88, 0.22);
+  background: rgba(48, 209, 88, 0.08);
+}
+.oba-agent[data-state='waiting'] {
+  border-color: rgba(255, 214, 10, 0.24);
+  background: rgba(255, 214, 10, 0.08);
+}
+.oba-agent-icon {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+}
+.oba-agent-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+.oba-agent-name {
+  overflow: hidden;
+  color: var(--isl-text);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oba-agent-status {
+  overflow: hidden;
+  color: var(--isl-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oba-agent[data-state='done'] .oba-agent-status {
+  color: #8ff0a4;
+}
+.oba-agent[data-state='waiting'] .oba-agent-status {
+  color: #ffe27a;
+}
+
+/* ── slide 2: chat tab strip + per-tab conversation ─────────────────────────────────────────────────────────── */
+.oba-chat {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 12px 16px;
+}
+.oba-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* scrollable agent-tab rail — tabs live here, "+" is a sibling pinned right */
+.oba-tab-rail {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 6px;
+  overflow: hidden;
+}
+/* "+" new-chat circle, pinned to the right of the rail (Chrome-style) */
+.oba-tab-new {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 1px solid var(--isl-faint);
+  border-radius: 50%;
+  background: var(--isl-surface);
+  color: var(--isl-muted);
+  margin-left: auto;
+}
+.oba-tab-new svg {
+  width: 14px;
+  height: 14px;
+}
+.oba-tab-new svg path {
+  fill: currentColor;
+}
+.oba-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px 4px 4px;
+  border: 1px solid var(--isl-faint);
+  border-radius: 9999px;
+  background: var(--isl-surface);
+  color: var(--isl-muted);
+  font-size: 12.5px;
+  transition: background 0.22s ease, color 0.22s ease, border-color 0.22s ease;
+}
+.oba-tab.on {
+  border-color: #ffffff1f;
+  background: var(--isl-surface2);
+  color: var(--isl-text);
+  font-weight: 600;
+}
+.oba-tab-album {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+}
+.oba-tab-label {
+  white-space: nowrap;
+}
+.oba-chat .oba-feed {
+  flex: 1;
+  justify-content: center;
+  padding: 14px 4px 4px;
+}
+
+/* ── slide 3: connect a source → type → send → live status ──────────────────────────────────────────────────── */
+.oba-connect {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 10px 16px 12px;
+}
+.oba-connect-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+/* Attach panel sits BELOW the composer (real island order: feed → composer → attach) */
+.oba-attach {
+  position: relative;
+  overflow: hidden;
+  max-height: 150px;
+  margin-top: 8px;
+  transition: max-height 0.5s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.35s ease;
+}
+.oba-attach.collapsed {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+}
+.oba-attach-grid {
+  display: flex;
+  gap: 10px;
+  height: 134px;
+}
+.oba-drop,
+.oba-apps {
+  flex: 1;
+  box-sizing: border-box;
+  border: 1.5px dashed rgba(255, 255, 255, 0.22);
+  border-radius: 14px;
+}
+.oba-drop {
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  transition: border-color 0.3s ease, background 0.3s ease;
+}
+.oba-drop.filled {
+  border-style: solid;
+  border-color: rgba(10, 132, 255, 0.34);
+  background: rgba(10, 132, 255, 0.06);
+}
+.oba-drop-hint {
+  color: var(--isl-dim);
+  font-size: 12px;
+}
+.oba-conn-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 8px;
+  border: 1px solid var(--isl-faint);
+  border-radius: 20px;
+  background: var(--isl-surface);
+  color: var(--isl-text);
+  font-size: 12px;
+  animation: oba-rise 0.3s ease-out both;
+}
+.oba-apps {
+  overflow: hidden;
+  padding: 8px 10px;
+}
+.oba-app {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  color: var(--isl-text);
+  font-size: 13px;
+}
+.oba-twisty {
+  color: var(--isl-muted);
+  font-size: 11px;
+}
+.oba-chrome {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  background: conic-gradient(from -90deg, #ea4335 0 25%, #fbbc05 0 50%, #34a853 0 75%, #4285f4 0 100%);
+}
+.oba-chrome::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: #fff;
+}
+.oba-chrome::before {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 6px;
+  border-radius: 50%;
+  background: #4285f4;
+}
+.oba-app-name {
+  flex: 1;
+}
+.oba-app-count {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 9999px;
+  background: var(--isl-surface);
+  color: var(--isl-dim);
+  font-family: var(--isl-round);
+  font-size: 11px;
+}
+.oba-srctabs {
+  display: flex;
+  flex-direction: column;
+  margin-top: 2px;
+  padding-left: 20px;
+}
+.oba-srctab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: var(--isl-muted);
+  font-size: 12.5px;
+}
+.oba-srctab.connected {
+  background: var(--isl-accent);
+  color: #fff;
+  animation: oba-connect-pop 0.5s ease-out;
+}
+@keyframes oba-connect-pop {
+  0% {
+    box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 0 9px rgba(10, 132, 255, 0);
+  }
+}
+.oba-fav {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+.oba-fav[data-c='g'] {
+  background: #ea4335;
+}
+.oba-fav[data-c='a'] {
+  background: #0a84ff;
+}
+.oba-fav[data-c='c'] {
+  background: #34a853;
+}
+.oba-composer {
+  margin-top: 8px;
+}
+.oba-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 3px 4px 3px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 18px;
+}
+.oba-attach-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  color: var(--isl-muted);
+  font-size: 16px;
+  font-weight: 300;
+}
+.oba-bar-field {
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  color: var(--isl-text);
+  font-size: 14px;
+  white-space: nowrap;
+}
+.oba-ph {
+  color: var(--isl-muted);
+}
+.oba-caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 15px;
+  margin-left: 1px;
+  vertical-align: -3px;
+  background: var(--isl-accent);
+  animation: oba-caret 1s steps(1) infinite;
+}
+@keyframes oba-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.oba-send {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--isl-accent);
+  color: #fff;
+  font-size: 16px;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.oba-send.hide {
+  opacity: 0;
+  transform: scale(0.6);
+}
+.oba-status {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 4px;
+  animation: oba-rise 0.25s ease-out both;
+}
+.oba-status-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--isl-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.oba-status-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-left: 4px;
+  padding: 1px 0 1px 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+.oba-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  opacity: 0;
+  animation: oba-row-in 0.4s ease-out forwards;
+}
+.oba-status-row::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.32);
+}
+.oba-status-row.latest {
+  color: var(--isl-text);
+}
+.oba-status-row.latest::before {
+  background: var(--isl-accent);
+}
+@keyframes oba-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── slide 4: workflow pill → kanban board ──────────────────────────────────────────────────────────────────── */
+.oba-wf {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 10px 16px;
+}
+.oba-wf-ctx {
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden;
+  max-height: 36px;
+  transition: max-height 0.4s ease, opacity 0.3s ease;
+}
+.oba-wf-ctx.hidden {
+  max-height: 0;
+  opacity: 0;
+}
+.oba-wf-pill {
+  --glass-fill-top: rgba(24, 28, 38, 0.74);
+  --glass-fill-bot: rgba(9, 11, 16, 0.8);
+  --glass-lift: rgba(64, 94, 150, 0.22);
+  position: relative;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  color: var(--isl-muted);
+  font-size: 11px;
+  isolation: isolate;
+  background:
+    radial-gradient(120% 140% at 50% -30%, var(--glass-lift), transparent 62%),
+    linear-gradient(180deg, var(--glass-fill-top), var(--glass-fill-bot));
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.oba-wf-pill::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(196, 216, 255, 0.66) 0%,
+    rgba(150, 172, 212, 0.1) 30%,
+    rgba(255, 255, 255, 0.02) 64%,
+    rgba(196, 216, 255, 0.224) 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+.oba-wf-pill.pressing {
+  animation: oba-press 0.4s ease-out;
+}
+@keyframes oba-press {
+  50% {
+    transform: scale(0.97);
+  }
+}
+.oba-wf-caret {
+  color: var(--isl-muted);
+  font-size: 12px;
+}
+.oba-wf-dot {
+  width: 7px;
+  height: 7px;
+  background: #2f9bff;
+  animation: oba-wf-pulse 1.3s ease-in-out infinite;
+}
+.oba-wf-pill.done .oba-wf-dot {
+  background: #3ddc84;
+  animation: none;
+}
+@keyframes oba-wf-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.72);
+  }
+}
+.oba-wf-status {
+  color: var(--isl-text);
+  font-weight: 600;
+}
+.oba-wf-stats {
+  color: var(--isl-dim);
+  font-variant-numeric: tabular-nums;
+}
+.oba-board-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-height: 0;
+  transition: grid-template-rows 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.oba-board-wrap.open {
+  grid-template-rows: 1fr;
+}
+.oba-board {
+  overflow: hidden;
+  min-height: 0;
+  border: 1px solid var(--kb-line);
+  border-radius: 12px;
+  background-color: #11151a;
+  background-image: radial-gradient(#a4b4c121 1px, transparent 1px);
+  background-size: 18px 18px;
+  font-family: Inter, -apple-system, system-ui, sans-serif;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --kb-line: #2c323a;
+  --kb-sheet: #1b2026;
+  --kb-faint: #ffffff14;
+  --kb-text: #ecf4fa;
+  --kb-muted: #9da5ad;
+  --kb-dim: #626a72;
+  --kb-yellow: #fec84b;
+  --kb-blue: #2f9bff;
+  --kb-green: #3ddc84;
+}
+.oba-kb-head,
+.oba-kb-row {
+  display: grid;
+  grid-template-columns: 76px 1fr 1fr 1fr;
+}
+.oba-kb-head > * {
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--kb-line);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.oba-kb-head > * + * {
+  border-left: 1px solid var(--kb-line);
+}
+.oba-kb-phase {
+  color: var(--kb-dim);
+}
+.oba-kb-col.todo {
+  color: var(--kb-yellow);
+}
+.oba-kb-col.doing {
+  color: var(--kb-blue);
+}
+.oba-kb-col.done {
+  color: var(--kb-green);
+}
+.oba-kb-rowh {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px;
+  border-bottom: 1px solid var(--kb-line);
+}
+.oba-kb-rowh-name {
+  color: var(--kb-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+.oba-kb-rowh-n {
+  color: var(--kb-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.oba-kb-cell {
+  display: flex;
+  min-width: 0;
+  min-height: 42px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-bottom: 1px solid var(--kb-line);
+  border-left: 1px solid var(--kb-line);
+}
+.oba-kc {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border: 1px solid var(--kb-faint);
+  border-radius: 9px;
+  background: var(--kb-sheet);
+  color: var(--kb-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  animation: oba-card-in 0.35s ease-out both;
+}
+@keyframes oba-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.oba-kc-label-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.oba-kc-label {
+  flex: 1;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.oba-kc-model {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--kb-muted);
+  font-size: 9px;
+  font-weight: 600;
+}
+.oba-kc-todo {
+  border-style: dashed;
+  border-color: rgba(254, 200, 75, 0.32);
+  background: rgba(254, 200, 75, 0.05);
+}
+.oba-kc-doing {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(47, 155, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(47, 155, 255, 0.18), 0 0 16px -6px rgba(47, 155, 255, 0.7);
+}
+.oba-kc-done {
+  border-left: 2px solid var(--kb-green);
+}
+.oba-kc-out {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--kb-muted);
+  font-size: 10.5px;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+.oba-kc-spark {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 40%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--kb-blue), transparent);
+  animation: oba-spark 1.3s ease-in-out infinite;
+}
+@keyframes oba-spark {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+
+/* ── slide 6: notch hover → island expands ─────────────────────────────────────────────────────────────────── */
+.oba-notch-scene {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* macOS-style menu bar */
+.oba-notch-menubar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  background: rgba(22, 22, 26, 0.9);
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.07);
+  z-index: 5;
+}
+.oba-notch-mb-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.oba-notch-mb-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.oba-notch-mb-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+}
+.oba-notch-mb-item {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.oba-notch-mb-icon {
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Desktop wallpaper */
+.oba-notch-desktop {
+  position: absolute;
+  inset: 26px 0 0;
+  background:
+    radial-gradient(ellipse at 65% 55%, rgba(15, 40, 80, 0.7), transparent 60%),
+    radial-gradient(ellipse at 25% 80%, rgba(30, 15, 60, 0.5), transparent 50%),
+    #060810;
+}
+
+/* The island chassis — sits at top-center, starts as the glance-bar pill, expands on hover */
+.oba-notch-chassis {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 118px;
+  height: 30px;
+  background: #000;
+  border-radius: 0 0 20px 20px;
+  z-index: 10;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* obsidian-glass rim tokens — matches .nh-chassis */
+  --isl-rim-top: rgba(198, 217, 255, 0.6);
+  --isl-rim-mid: rgba(150, 172, 212, 0.14);
+  --isl-rim-bot: rgba(140, 176, 255, 0.34);
+  box-shadow: 0 8px 28px -6px rgba(30, 64, 140, 0.22), 0 1px 4px rgba(120, 160, 255, 0.08);
+  transition:
+    width 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    height 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Obsidian-glass hairline rim — left/right/bottom only, same technique as .nh-chassis::before */
+.oba-notch-chassis::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border-radius: inherit;
+  padding: 0 1px 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    var(--isl-rim-top) 0%,
+    var(--isl-rim-mid) 24%,
+    rgba(255, 255, 255, 0.03) 60%,
+    var(--isl-rim-bot) 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.oba-notch-chassis.open {
+  width: 284px;
+  height: 138px;
+  border-radius: 0 0 26px 26px;
+}
+
+/* ── Island tab strip — scrollable rail + "+" pinned right (mirrors isl-tabs / isl-tab-rail / isl-chip-new) */
+.oba-notch-chat {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+.oba-notch-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px 5px;
+  flex: none;
+}
+.oba-notch-tab-rail {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 5px;
+  overflow: hidden;
+}
+.oba-notch-tab-new {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.35);
+  margin-left: 2px;
+}
+.oba-notch-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 3px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 10.5px;
+  flex: none;
+}
+.oba-notch-tab.on {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+}
+.oba-notch-tab-album {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+}
+.oba-notch-tab-label {
+  white-space: nowrap;
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* message body / empty placeholder */
+.oba-notch-feed {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 0 12px 4px;
+  overflow: hidden;
+}
+.oba-notch-bubble {
+  align-self: flex-start;
+  max-width: 86%;
+  padding: 5px 9px;
+  border-radius: 12px 12px 12px 3px;
+  background: rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 10px;
+  line-height: 14px;
+  animation: oba-rise 0.22s ease-out 0.28s both;
+}
+.oba-notch-bubble.user {
+  align-self: flex-end;
+  border-radius: 12px 12px 3px 12px;
+  background: rgba(10, 132, 255, 0.75);
+  color: #fff;
+}
+/* Glance content inside the pill — BlitzOS icon left, agent circles right */
+.oba-notch-glance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0 9px;
+  box-sizing: border-box;
+}
+.oba-glance-logo {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #0d0f14;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+.oba-glance-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  -webkit-user-drag: none;
+}
+.oba-glance-avas {
+  display: flex;
+  align-items: center;
+}
+.oba-glance-ava {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-left: -6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px #000;
+}
+.oba-glance-ava:first-child {
+  margin-left: 0;
+}
+.oba-notch-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.oba-notch-ph {
+  color: rgba(255, 255, 255, 0.18);
+  font-size: 10.5px;
+  font-style: italic;
+}
+/* composer bar at the bottom of the expanded island */
+.oba-notch-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 7px;
+  flex: none;
+}
+.oba-notch-attach-btn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 14px;
+  font-weight: 300;
+}
+.oba-notch-input-pill {
+  flex: 1;
+  min-height: 22px;
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+}
+
+/* Mouse cursor — starts in the middle of the desktop, glides up to the notch */
+.oba-notch-cursor {
+  position: absolute;
+  /* resting: roughly centered horizontally, two-thirds down */
+  top: 138px;
+  left: calc(50% + 18px);
+  z-index: 20;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+  transition: top 0.72s cubic-bezier(0.22, 1, 0.36, 1), left 0.72s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* at-notch: cursor tip lands just below the notch center */
+.oba-notch-cursor.up {
+  top: 19px;
+  left: calc(50% + 4px);
+}

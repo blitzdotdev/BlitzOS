@@ -1,0 +1,50 @@
+<!doctype html><meta charset="utf-8"><title>Dossiers</title>
+<!-- Thinking-widget: a grid of scored entity cards. Drive with update_surface{props:{items}}. -->
+<style>
+  .wrap{padding:13px 14px}
+  .lb{font:600 9px ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--blitz-accent);margin-bottom:10px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px}
+  .card{border:1px solid var(--blitz-hairline);border-radius:var(--blitz-radius);background:var(--blitz-surface-2);padding:13px;transition:transform .15s,box-shadow .15s}
+  .grid.intro .card{animation:in .3s}
+  @keyframes in{from{opacity:0;transform:translateY(6px)}}
+  .card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.08)}
+  .top{display:flex;align-items:flex-start;gap:10px;margin-bottom:9px}
+  .nm{flex:1;min-width:0}
+  .nm b{font-size:13px;font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nm .s{font-size:11px;color:var(--blitz-text-dim);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ring{flex:0 0 auto;width:38px;height:38px;position:relative}
+  .ring svg{transform:rotate(-90deg)}
+  .ring .v{position:absolute;inset:0;display:grid;place-items:center;font:600 12px ui-monospace,monospace}
+  .stats{display:flex;gap:12px;margin:9px 0}
+  .st .k{font:9px ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--blitz-text-dim)}
+  .st .n{font-size:14px;font-weight:600;letter-spacing:-.02em}
+  .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+  .tg{font:10px ui-monospace,monospace;padding:3px 7px;border-radius:999px;background:var(--blitz-surface);border:1px solid var(--blitz-hairline);color:var(--blitz-text-dim)}
+</style>
+<div class="wrap"><div class="lb" id="hd">Dossiers</div><div class="grid" id="grid"></div></div>
+<script>
+  // props: { title?, items:[{name, sub?, score?(0-100), stats?:[{k,n}], tags?:[..]}] }
+  const SAMPLE={title:'Dossiers',items:[
+    {name:'Item A',sub:'subtitle',score:88,stats:[{k:'Metric',n:'42'},{k:'Grade',n:'A'}],tags:['tag','tag','tag']},
+    {name:'Item B',sub:'subtitle',score:74,stats:[{k:'Metric',n:'31'},{k:'Grade',n:'B+'}],tags:['tag','tag']},
+    {name:'Item C',sub:'subtitle',score:91,stats:[{k:'Metric',n:'55'},{k:'Grade',n:'A+'}],tags:['tag','tag','tag']},
+    {name:'Item D',sub:'subtitle',score:69,stats:[{k:'Metric',n:'120'},{k:'Grade',n:'B'}],tags:['tag','tag']}]}
+  let data=SAMPLE, __p=false
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+  function ring(v){const r=16,c=2*Math.PI*r,off=c*(1-(v||0)/100);return '<div class="ring"><svg width="38" height="38"><circle cx="19" cy="19" r="'+r+'" fill="none" stroke="var(--blitz-hairline)" stroke-width="3.5"/><circle cx="19" cy="19" r="'+r+'" fill="none" stroke="var(--blitz-accent)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="'+c+'" stroke-dashoffset="'+off+'" style="transition:stroke-dashoffset .6s"/></svg><span class="v">'+(v==null?'—':v)+'</span></div>'}
+  function render(d){
+    document.getElementById('hd').textContent=d.title||'Dossiers'
+    const g=document.getElementById('grid');g.classList.toggle('intro',!__p);__p=true
+    // size-adaptive gist (m tile): name chips with a score figure — pop out for the full cards
+    if(window.innerHeight<220){
+      g.style.display='flex';g.style.flexWrap='wrap';g.style.gap='6px';g.style.alignContent='flex-start'
+      g.innerHTML=(d.items||[]).map(it=>'<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:var(--blitz-surface-2);font-size:11.5px;font-weight:600">'+(it.score!=null?'<b style="font:700 10px ui-monospace,monospace;color:var(--blitz-accent)">'+it.score+'</b>':'')+esc(it.name)+'</span>').join('')
+      return
+    }
+    g.style.display='';g.style.flexWrap='';g.style.gap='';g.style.alignContent=''
+    g.innerHTML=(d.items||[]).map(it=>'<div class="card"><div class="top"><div class="nm"><b>'+esc(it.name)+'</b>'+(it.sub?'<span class="s">'+esc(it.sub)+'</span>':'')+'</div>'+(it.score!=null?ring(it.score):'')+'</div>'+(it.stats?'<div class="stats">'+it.stats.map(s=>'<div class="st"><div class="k">'+esc(s.k)+'</div><div class="n">'+esc(s.n)+'</div></div>').join('')+'</div>':'')+(it.tags?'<div class="tags">'+it.tags.map(t=>'<span class="tg">'+esc(t)+'</span>').join('')+'</div>':'')+'</div>').join('')
+  }
+  render(data)
+  window.addEventListener('resize',()=>render(data))
+  if(window.blitz&&window.blitz.onProps)window.blitz.onProps(p=>{if(p&&p.items){data=p;render(p)}})
+</script>

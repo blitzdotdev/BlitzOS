@@ -1,0 +1,3149 @@
+/* island.css — THE BlitzOS dynamic-island interior (LOCKED design: the macOS/iOS Dynamic Island direction from the
+   design pass; the other prototypes + the ⌥←/→ switcher are retired). Deliberately MINIMAL — no header row, no
+   icons, no agent title/subtitle. The BLACK chassis + the original NotchShape are owned by `.nh-chassis`
+   (notch.css) and are INVARIANT; this file paints ONLY the interior, white-on-black, and never sets a background
+   or border-radius on the panel root. Session view = the composer + a slim footer; process view = the tab strip
+   (agent identity + status) over the activity feed, both above the bottom STEER bar. SF Pro for body, SF Pro
+   Rounded for numerals/timestamps. */
+.nh-island {
+  /* palette (white-on-black, Apple system colors) */
+  --isl-text: #ffffff;
+  --isl-muted: #ffffff99;
+  --isl-dim: #ffffff66;
+  --isl-faint: #ffffff14;
+  --isl-surface: #0a0a0a;
+  --isl-surface2: #161616;
+  --isl-accent: #0a84ff; /* Apple system blue (dark mode) — the ONLY accent (send, active state, running) */
+  --isl-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial,
+    sans-serif;
+  --isl-round: ui-rounded, 'SF Pro Rounded', system-ui, var(--isl-font);
+
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--isl-text);
+  font-family: var(--isl-font);
+  padding: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.nh-island.isl-session {
+  min-height: 108px;
+}
+.nh-island.isl-process {
+  min-height: 288px;
+  max-height: 72vh;
+}
+.nh-island.isl-process.isl-app-viewing {
+  max-height: none;
+}
+
+/* ── HOME SCREEN: Chat + Settings chrome + active agents. V1 has no widget placeholders. ─────────────────────── */
+.nh-island.isl-home {
+  min-height: 204px;
+  align-items: stretch;
+  justify-content: center;
+  padding-right: 24px;
+  padding-bottom: 20px;
+  padding-left: 24px;
+}
+.nh-island.isl-home.has-working {
+  min-height: 204px;
+}
+.isl-home-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 220px);
+  align-items: center;
+  gap: 28px;
+  width: min(100%, 468px);
+  margin: 0 auto;
+}
+.isl-home-chat-zone {
+  display: grid;
+  place-items: center;
+  min-height: 132px;
+  padding-right: 28px;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+.isl-app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+button.isl-app {
+  cursor: pointer;
+}
+.isl-app-icon {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  border-radius: 22px; /* iOS app-icon squircle radius (~29% of the tile) */
+  display: grid;
+  place-items: center;
+}
+.isl-app-icon svg {
+  width: 38px;
+  height: 38px;
+  display: block;
+}
+/* the one functional widget — its tile is the actual Blitz macOS app icon (a dark pre-masked squircle PNG), so
+   no blue gradient here. A neutral drop-shadow + a faint rim keep it from dissolving into the island black. */
+.isl-app-chat .isl-app-icon {
+  background: transparent;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  transition: transform 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.isl-app-chat .isl-app-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+button.isl-app-chat:hover .isl-app-icon {
+  transform: translateY(-2px);
+}
+button.isl-app-chat:active .isl-app-icon {
+  transform: scale(0.95);
+}
+.isl-app-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--isl-muted);
+}
+/* a live-activity dot when an agent is working */
+.isl-app-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #30d158; /* Apple system green */
+  border: 2px solid #000;
+  box-shadow: 0 0 0 0 rgba(48, 209, 88, 0.5);
+  animation: isl-app-pulse 1.8s ease-out infinite;
+}
+@keyframes isl-app-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(48, 209, 88, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0);
+  }
+}
+.isl-home-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.isl-home-agents-title {
+  padding-left: 2px;
+  color: var(--isl-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+}
+.isl-home-working {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+  max-height: 146px;
+  box-sizing: border-box;
+  padding: 0 4px 0 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+.isl-home-working::-webkit-scrollbar {
+  width: 4px;
+}
+.isl-home-working::-webkit-scrollbar-thumb {
+  background: #ffffff26;
+  border-radius: 9999px;
+}
+.isl-home-empty {
+  padding: 12px 2px 0;
+  color: var(--isl-dim);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 16px;
+}
+.isl-working-agent {
+  width: 100%;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  box-sizing: border-box;
+  padding: 6px 9px 6px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--isl-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.14s ease-out, background 0.14s ease-out, border-color 0.14s ease-out;
+}
+.isl-working-agent:hover {
+  color: var(--isl-text);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.isl-working-agent[data-home-state='done'] {
+  border-color: rgba(48, 209, 88, 0.22);
+  background: rgba(48, 209, 88, 0.08);
+}
+.isl-working-agent[data-home-state='done']:hover {
+  border-color: rgba(48, 209, 88, 0.34);
+  background: rgba(48, 209, 88, 0.12);
+}
+.isl-working-agent[data-home-state='waiting'] {
+  border-color: rgba(255, 214, 10, 0.24);
+  background: rgba(255, 214, 10, 0.08);
+}
+.isl-working-agent[data-home-state='waiting']:hover {
+  border-color: rgba(255, 214, 10, 0.38);
+  background: rgba(255, 214, 10, 0.12);
+}
+/* error → a red-tinted card (mirrors the chat chip-dot + inline-detail error language, #ff453a) so a failed
+   agent never reads as a green 'Done'. reconnecting → the same neutral surface as working (it IS reviving). */
+.isl-working-agent[data-home-state='error'] {
+  border-color: rgba(255, 69, 58, 0.26);
+  background: rgba(255, 69, 58, 0.09);
+}
+.isl-working-agent[data-home-state='error']:hover {
+  border-color: rgba(255, 69, 58, 0.4);
+  background: rgba(255, 69, 58, 0.13);
+}
+.isl-working-agent:active {
+  transform: scale(0.98);
+}
+.isl-working-agent-icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+}
+.isl-working-agent-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+}
+.isl-working-agent-name {
+  display: block;
+  max-width: 100%;
+  min-height: 16px;
+  overflow: hidden;
+  color: var(--isl-text);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.isl-working-agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--isl-muted);
+  font-size: 10px;
+  font-weight: 600;
+  min-height: 14px;
+  line-height: 14px;
+}
+.isl-working-agent-dot {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  border-radius: 50%;
+  background: transparent;
+  animation: isl-spin 0.8s linear infinite;
+}
+.isl-working-agent-check {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  background: #30d158;
+  color: #000;
+}
+.isl-working-agent-check svg {
+  width: 10px;
+  height: 10px;
+  display: block;
+}
+.isl-working-agent-check path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.isl-working-agent-alert {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  background: #ffd60a;
+  color: #000;
+}
+.isl-working-agent-alert svg {
+  width: 10px;
+  height: 10px;
+  display: block;
+}
+.isl-working-agent-alert path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.isl-working-agent[data-home-state='done'] .isl-working-agent-status {
+  color: #8ff0a4;
+}
+.isl-working-agent[data-home-state='waiting'] .isl-working-agent-status {
+  color: #ffe27a;
+}
+.isl-working-agent[data-home-state='error'] .isl-working-agent-status {
+  color: #ffb4ad;
+}
+/* the shared alert glyph turns red for an error card (it stays yellow for 'waiting'). */
+.isl-working-agent[data-home-state='error'] .isl-working-agent-alert {
+  background: #ff453a;
+}
+
+/* ── SETTINGS SCREEN: debug-only controls surfaced in the notch home flow. ─────────────────────────────────── */
+.nh-island.isl-settings {
+  min-height: 170px;
+  gap: 14px;
+  padding-bottom: 22px;
+  max-height: 72vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+.nh-island .isl-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  animation: isl-rise 0.22s ease-out both;
+}
+.nh-island .isl-settings-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-dim);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.nh-island .isl-settings-close:hover {
+  color: var(--isl-text);
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+}
+.nh-island .isl-settings-close svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+.nh-island .isl-debug-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 21px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: #ffd84d;
+  color: #1c1500;
+  font: 900 10px/1 var(--isl-round);
+  letter-spacing: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58), 0 0 0 1px rgba(255, 216, 77, 0.16);
+}
+.nh-island .isl-settings-title {
+  color: var(--isl-text);
+  font-size: 16px;
+  font-weight: 650;
+}
+.nh-island .isl-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nh-island .isl-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+  animation: isl-rise 0.24s ease-out 0.04s both;
+}
+.nh-island .isl-setting-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.nh-island .isl-setting-name {
+  color: var(--isl-text);
+  font-size: 14px;
+  font-weight: 560;
+  line-height: 18px;
+}
+.nh-island .isl-setting-note {
+  color: var(--isl-muted);
+  font-size: 12px;
+  line-height: 15px;
+}
+/* Debug "Simulate agent status" row: stack the segmented control under its label (it isn't a tappable row). */
+.nh-island .isl-setting-row.isl-setting-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  cursor: default;
+}
+.nh-island .isl-debug-seg {
+  display: flex;
+  flex-wrap: wrap; /* 8 cause options wrap to ~2 rows instead of squeezing into one */
+  gap: 6px;
+}
+.nh-island .isl-debug-seg-btn {
+  flex: 1 1 auto;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.14s ease-out, background 0.14s ease-out, border-color 0.14s ease-out;
+}
+.nh-island .isl-debug-seg-btn:hover {
+  color: var(--isl-text);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.nh-island .isl-debug-seg-btn.active {
+  color: var(--isl-text);
+  background: var(--isl-surface2);
+  border-color: #ffffff2e;
+}
+/* Rebind control: a tappable chip of key caps; arms (sky tint) while capturing the next combo. */
+.nh-island .isl-keybind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-text);
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.nh-island .isl-keybind:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.07);
+}
+.nh-island .isl-keybind.capturing {
+  border-color: rgba(77, 190, 255, 0.5);
+  background: rgba(77, 190, 255, 0.1);
+}
+.nh-island .isl-keybind-hint {
+  padding: 0 4px;
+  color: #7dccff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.nh-island .isl-kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+  color: var(--isl-text);
+  font-family: var(--isl-round);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+}
+.nh-island .isl-setting-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.nh-island .isl-setting-toggle {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  flex: none;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.16);
+  transition: background 0.16s ease-out;
+}
+.nh-island .isl-setting-toggle span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nh-island .isl-setting-input:checked + .isl-setting-toggle {
+  background: rgba(255, 255, 255, 0.55);
+}
+.nh-island .isl-setting-input:checked + .isl-setting-toggle span {
+  transform: translateX(20px);
+}
+.nh-island .isl-settings-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  animation: isl-rise 0.24s ease-out 0.07s both;
+}
+.nh-island .isl-settings-disclosure:hover,
+.nh-island .isl-settings-disclosure.open {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.07);
+}
+/* Quit row — a disclosure-shaped button that closes the app; reads red on hover since it's destructive. */
+.nh-island .isl-settings-quit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+  animation: isl-rise 0.24s ease-out 0.07s both;
+}
+.nh-island .isl-settings-quit:hover {
+  border-color: rgba(255, 69, 58, 0.4);
+  background: rgba(255, 69, 58, 0.1);
+}
+.nh-island .isl-settings-quit:hover .isl-setting-name {
+  color: #ffb4ad;
+}
+.nh-island .isl-settings-quit-glyph {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: var(--isl-dim);
+  transition: color 0.14s ease;
+}
+.nh-island .isl-settings-quit:hover .isl-settings-quit-glyph {
+  color: #ffb4ad;
+}
+.nh-island .isl-settings-quit-glyph svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+.nh-island .isl-settings-quit-glyph svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.nh-island .isl-settings-count {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--isl-muted);
+  background: rgba(255, 255, 255, 0.1);
+  font: 700 11px/1 var(--isl-round);
+}
+.nh-island .isl-settings-chevron {
+  width: 12px;
+  color: var(--isl-dim);
+  font-size: 12px;
+}
+.nh-island .isl-archived-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 0;
+  animation: isl-rise 0.2s ease-out both;
+}
+.nh-island .isl-archived-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+.nh-island .isl-archived-row.confirming {
+  border-color: rgba(255, 69, 58, 0.34);
+  background: rgba(255, 69, 58, 0.08);
+}
+.nh-island .isl-archived-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nh-island .isl-archived-title {
+  overflow: hidden;
+  color: var(--isl-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-archived-preview,
+.nh-island .isl-archived-empty {
+  color: var(--isl-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+.nh-island .isl-archived-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-archived-empty {
+  padding: 8px 2px;
+  color: var(--isl-dim);
+}
+.nh-island .isl-archived-actions,
+.nh-island .isl-archived-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: none;
+}
+.nh-island .isl-archived-confirm {
+  color: var(--isl-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+.nh-island .isl-archived-btn {
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--isl-text);
+  font: 600 11px/1 var(--isl-font);
+  padding: 0 10px;
+  cursor: pointer;
+}
+.nh-island .isl-archived-btn:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.1);
+}
+.nh-island .isl-archived-btn.danger {
+  color: #ffb4ad;
+  border-color: rgba(255, 69, 58, 0.28);
+}
+.nh-island .isl-archived-btn.danger:hover {
+  color: #fff;
+  background: rgba(255, 69, 58, 0.24);
+}
+
+/* ── ISLAND ONBOARDING: setup-only first-run flow inside the notch. ─────────────────────────────────────────── */
+.nh-island.isl-onboarding {
+  min-height: 244px;
+  max-height: 72vh;
+  gap: 12px;
+  padding-right: 18px;
+  padding-bottom: 20px;
+  padding-left: 18px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+.nh-island.isl-onboarding::-webkit-scrollbar {
+  width: 4px;
+}
+.nh-island.isl-onboarding::-webkit-scrollbar-thumb {
+  background: #ffffff26;
+  border-radius: 9999px;
+}
+.nh-island .isl-onb-head {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  animation: isl-rise 0.22s ease-out both;
+}
+.nh-island .isl-onb-intro {
+  display: flex;
+  min-height: 230px;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  animation: isl-rise 0.22s ease-out both;
+}
+/* Every intro slide is the SAME fixed height so navigating between them never resizes the island. The body
+   (visual/card + head) is vertically centred and fills; the footer (dots + Back/Next) is pinned at the bottom. */
+.nh-island .isl-onb-slide {
+  height: 330px;
+  min-height: 0;
+}
+/* The setup phase (permissions / chrome-js / browser steps) hugs its card instead of the fixed 430px the intro
+ * carousel needs, so the island shrinks to the card and whatever is behind it (e.g. Chrome's Developer menu in
+ * the Allow-JavaScript-from-Apple-Events step) shows fully instead of being covered by dead space. */
+.nh-island .isl-onb-slide.isl-onb-setup {
+  height: auto;
+}
+.nh-island .isl-onb-slide-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  /* top-align, not center: every slide's content (the visual or the QUICK ACCESS-style head) begins at the same
+   * height from the top, instead of floating to a different Y per slide based on how tall its content is. */
+  justify-content: flex-start;
+  gap: 14px;
+}
+.nh-island .isl-onb-slide-foot {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.nh-island .isl-onb-head.intro {
+  gap: 7px;
+  animation: none;
+}
+.nh-island .isl-onb-kicker {
+  color: #7dccff;
+  font: 800 10px/1 var(--isl-round);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.nh-island .isl-onb-title {
+  margin: 0;
+  color: var(--isl-text);
+  font-size: 19px;
+  font-weight: 720;
+  line-height: 23px;
+}
+.nh-island .isl-onb-copy {
+  margin: 0;
+  color: var(--isl-muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+.nh-island .isl-onb-slide .isl-onb-title {
+  max-width: 430px;
+  font-size: 24px;
+  line-height: 29px;
+  letter-spacing: -0.02em;
+}
+.nh-island .isl-onb-slide .isl-onb-copy {
+  max-width: 410px;
+  color: rgba(245, 245, 247, 0.68);
+  font-size: 13px;
+  line-height: 18px;
+}
+.nh-island .isl-onb-copy .isl-shortcut-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: middle;
+  margin: 0 1px;
+}
+.nh-island .isl-onb-copy .isl-kbd {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+/* The per-slide intro visual is now an animated mockup (onboardingVisuals.tsx / .css), not a static card. */
+.nh-island .isl-onb-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nh-island .isl-onb-progress button {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  transition: width 0.18s ease, background 0.18s ease;
+}
+.nh-island .isl-onb-progress button.on {
+  width: 19px;
+  background: #0a84ff;
+}
+.nh-island .isl-onb-error {
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 69, 58, 0.3);
+  border-radius: 12px;
+  background: rgba(255, 69, 58, 0.08);
+  color: #ffb4ad;
+  font-size: 12px;
+  line-height: 16px;
+}
+/* Requirements slide: the Claude Code (+ Codex) install-status rows. green = installed, yellow = missing. */
+.nh-island .isl-onb-req {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: isl-rise 0.24s ease-out 0.04s both;
+}
+.nh-island .isl-onb-req-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 52px;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.nh-island .isl-onb-req-row.ok {
+  border-color: rgba(10, 132, 255, 0.3);
+  background: rgba(10, 132, 255, 0.07);
+}
+.nh-island .isl-onb-req-row.warn {
+  border-color: rgba(255, 214, 10, 0.32);
+  background: rgba(255, 214, 10, 0.07);
+}
+.nh-island .isl-onb-req-row.soon {
+  opacity: 0.62;
+}
+.nh-island .isl-onb-req-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--isl-dim);
+}
+.nh-island .isl-onb-req-row.ok .isl-onb-req-icon {
+  background: #0a84ff;
+  color: #fff;
+}
+.nh-island .isl-onb-req-row.warn .isl-onb-req-icon {
+  background: #ffd60a;
+  color: #000;
+}
+.nh-island .isl-onb-req-icon svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+.nh-island .isl-onb-req-icon svg path,
+.nh-island .isl-onb-req-icon svg circle {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.nh-island .isl-onb-req-spin {
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--isl-text);
+  border-radius: 50%;
+  animation: isl-spin 0.8s linear infinite;
+}
+.nh-island .isl-onb-req-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.nh-island .isl-onb-req-name {
+  color: var(--isl-text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.nh-island .isl-onb-req-note {
+  color: var(--isl-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+.nh-island .isl-onb-req-row.ok .isl-onb-req-note {
+  color: #7dccff;
+}
+.nh-island .isl-onb-req-row.warn .isl-onb-req-note {
+  color: #ffe27a;
+}
+.nh-island .isl-onb-req-status {
+  flex: none;
+  font-size: 11px;
+  font-weight: 650;
+}
+.nh-island .isl-onb-req-status.ok {
+  color: #7dccff;
+}
+.nh-island .isl-onb-req-status.soon {
+  color: var(--isl-dim);
+}
+.nh-island .isl-onb-req-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.nh-island .isl-onb-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(150, 175, 220, 0.46);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 86% 10%, rgba(46, 147, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(31, 35, 48, 0.82), rgba(12, 14, 21, 0.9));
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.46),
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  -webkit-backdrop-filter: blur(40px) saturate(1.35);
+  backdrop-filter: blur(40px) saturate(1.35);
+  animation: isl-rise 0.24s ease-out 0.04s both;
+}
+.nh-island .isl-onb-card::before {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 0;
+  height: 34px;
+  content: '';
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+  pointer-events: none;
+}
+.nh-island .isl-onb-card > * {
+  position: relative;
+  z-index: 1;
+}
+.nh-island .isl-onb-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--isl-text);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 20px;
+}
+.nh-island .isl-onb-card-head span:last-child {
+  flex: none;
+  color: rgba(77, 190, 255, 0.8);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.nh-island .isl-onb-perms {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+/* Permission row — mirrors the Claude/Codex requirement card (.isl-onb-req-row): a flat card with a round
+   status icon. Not-granted = neutral faint glass + gray lock icon; granted = the .ok blue tint + blue check. */
+.nh-island .isl-onb-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 52px;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.12s ease;
+}
+.nh-island .isl-onb-row:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
+}
+.nh-island .isl-onb-row:active:not(:disabled) {
+  transform: translateY(0);
+}
+/* "active" = System Settings opened for this row, waiting on the user (the icon shows a spinner). */
+.nh-island .isl-onb-row.active {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.055);
+}
+/* "granted" = the requirement card's .ok state: blue tint + blue check icon. */
+.nh-island .isl-onb-row.granted {
+  border-color: rgba(10, 132, 255, 0.3);
+  background: rgba(10, 132, 255, 0.07);
+  cursor: default;
+}
+.nh-island .isl-onb-row:disabled {
+  cursor: default;
+  transform: none;
+}
+/* Round status icon — mirrors .isl-onb-req-icon (gray by default, solid blue when granted). */
+.nh-island .isl-onb-row-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--isl-dim);
+}
+.nh-island .isl-onb-row.granted .isl-onb-row-icon {
+  background: #0a84ff;
+  color: #fff;
+}
+.nh-island .isl-onb-row-icon svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+.nh-island .isl-onb-row-icon svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.nh-island .isl-onb-row-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.nh-island .isl-onb-row-title {
+  color: var(--isl-text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.nh-island .isl-onb-row-note {
+  color: var(--isl-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+.nh-island .isl-onb-row.granted .isl-onb-row-note {
+  color: #7dccff;
+}
+/* "Enable" / "Reopen" label on a not-granted row. */
+.nh-island .isl-onb-row-cta {
+  flex: none;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+  font-weight: 600;
+}
+.nh-island .isl-onb-row.active .isl-onb-row-cta {
+  color: rgba(255, 255, 255, 0.7);
+}
+/* "Granted" status text — mirrors .isl-onb-req-status.ok (the check now lives in the round icon). */
+.nh-island .isl-onb-row-status {
+  flex: none;
+  color: #7dccff;
+  font-size: 11px;
+  font-weight: 650;
+}
+/* Big bold one-line CTA for the Chrome step — the single "do this now" instruction (pick a profile, or
+   tick the Apple-Events row). One simple bold line, no supporting copy. */
+.nh-island .isl-onb-profile-cta {
+  margin: 6px 0 2px;
+  color: var(--isl-text);
+  font-size: 18px;
+  font-weight: 720;
+  letter-spacing: -0.025em;
+  line-height: 1.22;
+}
+/* Positive "connected" confirmation shown once the Chrome toggle is detected. */
+.nh-island .isl-onb-connected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  color: var(--isl-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.nh-island .isl-onb-connected-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #30d158; /* Apple system green */
+  box-shadow: 0 0 0 4px rgba(48, 209, 88, 0.18);
+}
+.nh-island .isl-onb-hint {
+  padding: 9px 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--isl-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+.nh-island .isl-onb-hint.good {
+  border-style: solid;
+  border-color: rgba(48, 209, 88, 0.24);
+  background: rgba(48, 209, 88, 0.08);
+  color: #8ff0a4;
+}
+.nh-island .isl-onb-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* All onboarding buttons share the obsidian liquid-glass material of the in-chat choice cards
+   (.isl-ask-option): a faint top-lit glass fill, hairline rim, inset highlight, hover lift. */
+.nh-island .isl-onb-primary,
+.nh-island .isl-onb-secondary,
+.nh-island .isl-onb-quiet {
+  font-family: inherit;
+  cursor: pointer;
+}
+.nh-island .isl-onb-primary,
+.nh-island .isl-onb-secondary,
+.nh-island .isl-onb-quiet {
+  height: 32px;
+  flex: none;
+  padding: 0 15px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 11px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 rgba(0, 0, 0, 0.2);
+  color: var(--isl-text);
+  font-size: 12.5px;
+  font-weight: 700;
+  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+.nh-island .isl-onb-primary:hover,
+.nh-island .isl-onb-secondary:hover,
+.nh-island .isl-onb-quiet:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.052));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 10px 20px rgba(0, 0, 0, 0.22);
+  transform: translateY(-1px);
+}
+.nh-island .isl-onb-primary:active,
+.nh-island .isl-onb-secondary:active,
+.nh-island .isl-onb-quiet:active {
+  transform: translateY(0);
+}
+/* Primary CTA = the sky-tinted "selected" variant of the same glass, so it still reads as primary. */
+.nh-island .isl-onb-primary {
+  border-color: rgba(77, 190, 255, 0.32);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.16), rgba(255, 255, 255, 0.04));
+}
+.nh-island .isl-onb-primary:hover {
+  border-color: rgba(77, 190, 255, 0.5);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.22), rgba(255, 255, 255, 0.06));
+}
+.nh-island .isl-onb-primary:disabled {
+  cursor: default;
+  opacity: 0.45;
+  transform: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 0 rgba(0, 0, 0, 0.18);
+}
+/* Quiet = lowest emphasis: ghost until hover, then the same faint glass. */
+.nh-island .isl-onb-quiet {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--isl-muted);
+  font-weight: 650;
+}
+.nh-island .isl-onb-quiet:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  color: var(--isl-text);
+}
+/* content rises in under the chassis reveal (opacity only — the chassis owns the shape + the slide). */
+@keyframes isl-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── the composer ROW: an attach "+" (opens the connectors view) to the left of the iMessage pill ─────────────── */
+.nh-island .isl-composer {
+  display: flex;
+  flex: none; /* never shrink: the message bar keeps its OWN height, invariant to feed height. The feed (flex:1) is
+                 the sole height absorber, so a tall/scrolling feed can never squeeze + clip the input (BLI-41). */
+  align-items: center; /* the attach button + send sit centered in the ONE message bar */
+  gap: 2px;
+  margin-top: auto; /* process view: pinned to the bottom (the feed flex:1 fills above it) */
+  min-height: 38px;
+  padding: 3px 5px;
+  /* The WHOLE composer is the message bar now — the attach "+" lives INSIDE it (left), the send inside on the right. */
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 19px;
+  transition: border-color 0.14s ease-out;
+  animation: isl-rise 0.26s ease-out 0.05s both;
+}
+.nh-island .isl-composer:focus-within {
+  border-color: rgba(255, 255, 255, 0.34);
+}
+.nh-island.isl-session .isl-composer {
+  margin-top: 12px; /* new-session view: sits right under the tab strip (no feed to push it down) */
+}
+.nh-island .isl-attach {
+  flex: none;
+  align-self: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 0; /* no ring — just the glyph + a hover wash, inside the message bar */
+  background: transparent;
+  color: var(--isl-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.14s ease-out, background 0.14s ease-out;
+}
+.nh-island .isl-attach:hover {
+  color: var(--isl-text);
+  background: rgba(255, 255, 255, 0.08);
+}
+.nh-island .isl-attach.on {
+  color: var(--isl-text);
+  background: rgba(255, 255, 255, 0.12);
+}
+.nh-island .isl-attach-glyph {
+  font-size: 19px;
+  font-weight: 300;
+  line-height: 1;
+  margin-top: -1px;
+}
+/* the inline attachment panel: a grid-rows height animation (0fr → 1fr) so it grows/springs smoothly above the
+   message bar (paired with the chassis width grow in notch.css). */
+.nh-island .isl-attach-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nh-island .isl-attach-wrap.open {
+  grid-template-rows: 1fr;
+}
+.nh-island .isl-attach-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── attach mode: ONLY the tab strip collapses (grid-rows pop, same motion the attach panel opens with). In an agent
+   chat the chat itself is kept; the island height is locked in JS so the attach panel rises only to its own content
+   and the feed (flex:1, min-height:0) shrinks to fit. ──────────────────────────────────────────────────────────── */
+.nh-island .isl-tabwrap {
+  flex: none;
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nh-island .isl-tabwrap.collapsed {
+  grid-template-rows: 0fr;
+}
+.nh-island .isl-tabwrap-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── active-agent chrome below tabs: compact archive action; live status now lives in the transcript. ────────── */
+.nh-island .isl-agent-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex: none;
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 6px 2px 12px;
+}
+.nh-island .isl-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  font-size: 13px;
+  color: var(--isl-muted);
+  min-width: 0;
+  padding: 4px 0;
+}
+.nh-island .isl-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--isl-dim);
+}
+/* working = a compact "live activity" pill (a faint accent wash that hugs its content), so the expanded island's
+   running state visually rhymes with the collapsed notch's pulsing blue dot — one language across both states. */
+.nh-island .isl-status[data-status='working'] {
+  color: var(--isl-text);
+  align-self: flex-start;
+  background: rgba(10, 132, 255, 0.12);
+  border-radius: 9999px;
+  padding: 4px 12px 4px 10px;
+}
+.nh-island .isl-status[data-status='warming'] {
+  color: var(--isl-text);
+  align-self: flex-start;
+  background: rgba(10, 132, 255, 0.12);
+  border-radius: 9999px;
+  padding: 4px 12px 4px 10px;
+}
+.nh-island .isl-status[data-status='waiting'] {
+  color: var(--isl-text);
+  align-self: flex-start;
+  background: rgba(255, 214, 10, 0.12);
+  border-radius: 9999px;
+  padding: 4px 12px 4px 10px;
+}
+.nh-island .isl-status[data-status='warming'] .isl-status-dot {
+  background: var(--isl-accent);
+  animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-status[data-status='waiting'] .isl-status-dot {
+  background: #ffd60a;
+  box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.14);
+}
+.nh-island .isl-status[data-status='working'] .isl-status-dot {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  background: transparent;
+  animation: isl-spin 0.8s linear infinite;
+}
+/* The read-only terminal toggle — the agent meta row's only button now (Rename/Archive moved to the tab's native
+   right-click menu); accent-tinted when open. */
+.nh-island .isl-termbtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.nh-island .isl-termbtn:hover {
+  color: var(--isl-text);
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+}
+.nh-island .isl-termbtn svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.nh-island .isl-empty {
+  margin: auto;
+  color: var(--isl-dim);
+  font-size: 13px;
+}
+
+/* ── the per-session Details expand (raw tool rows; the chat itself is PURE messages, no summaries) ──────────── */
+.nh-island .isl-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex: none;
+  min-height: 20px;
+  margin-top: 1px;
+}
+.nh-island .isl-details {
+  flex: none;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--isl-dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.nh-island .isl-details:hover {
+  color: var(--isl-muted);
+}
+.nh-island .isl-details-caret {
+  font-size: 9px;
+}
+.nh-island .isl-detail-rows {
+  flex: none;
+  max-height: 116px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 2px 6px;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+.nh-island .isl-detail-row,
+.nh-island .isl-detail-empty {
+  font-family: var(--isl-round);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--isl-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nh-island .isl-detail-empty {
+  color: var(--isl-dim);
+}
+
+/* ── Option A: Claude-like inline activity details inside the transcript. ──────────────────────────────────── */
+.nh-island .isl-inline-details {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 100%;
+  margin: 2px 0 3px;
+  color: var(--isl-muted);
+  animation: isl-rise 0.18s ease-out both;
+}
+.nh-island .isl-inline-details-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 600 13px/18px var(--isl-font);
+  text-align: left;
+  cursor: pointer;
+}
+.nh-island .isl-inline-details-summary:hover {
+  color: var(--isl-text);
+}
+.nh-island .isl-inline-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--isl-dim);
+}
+.nh-island .isl-inline-details[data-status='warming'] .isl-inline-status-dot {
+  background: var(--isl-accent);
+  animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-inline-details[data-status='working'] .isl-inline-status-dot {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  background: transparent;
+  animation: isl-spin 0.8s linear infinite;
+}
+.nh-island .isl-inline-details[data-status='waiting'] .isl-inline-status-dot {
+  background: #ffd60a;
+  box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.14);
+}
+.nh-island .isl-inline-details[data-status='error'] .isl-inline-status-dot {
+  background: #ff453a;
+  box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.14);
+}
+.nh-island .isl-inline-details-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-inline-details[data-status='working'] .isl-inline-details-text,
+.nh-island .isl-inline-details[data-status='warming'] .isl-inline-details-text {
+  animation: isl-detail-fade 2.4s ease-in-out infinite;
+}
+.nh-island .isl-inline-details[data-status='waiting'] {
+  color: #ffe27a;
+}
+.nh-island .isl-inline-details[data-status='error'] {
+  color: #ffb4ad;
+}
+.nh-island .isl-inline-details-caret {
+  flex: none;
+  color: currentColor;
+  font-size: 15px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+.nh-island .isl-inline-detail-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 132px;
+  overflow-y: auto;
+  margin-left: 3px;
+  padding: 2px 0 3px 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+/* The error sub-row under the inline status: the "what to do" hint + an optional Retry. Shown whenever the active
+   agent carries an error detail, independent of the steps expand — so a problem is never silent. */
+.nh-island .isl-inline-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 5px 0 1px 17px; /* indent under the status text, past the dot */
+  padding-right: 2px;
+}
+.nh-island .isl-inline-error-hint {
+  flex: 1;
+  min-width: 0;
+  color: rgba(255, 180, 173, 0.86);
+  font: 500 12px/16px var(--isl-font);
+}
+.nh-island .isl-inline-retry {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px solid rgba(255, 69, 58, 0.42);
+  border-radius: 8px;
+  background: rgba(255, 69, 58, 0.12);
+  color: #ffd9d4;
+  font: 600 12px/1 var(--isl-font);
+  cursor: pointer;
+  transition: background 0.14s ease-out, border-color 0.14s ease-out;
+}
+.nh-island .isl-inline-retry:hover {
+  background: rgba(255, 69, 58, 0.2);
+  border-color: rgba(255, 69, 58, 0.62);
+}
+.nh-island .isl-inline-retry:active {
+  transform: scale(0.97);
+}
+.nh-island .isl-inline-detail-row,
+.nh-island .isl-inline-detail-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.72);
+  font: 500 12px/16px var(--isl-font);
+}
+.nh-island .isl-inline-detail-row span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-inline-detail-row.latest {
+  color: var(--isl-text);
+}
+.nh-island .isl-inline-detail-bullet {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.32);
+}
+.nh-island .isl-inline-detail-row.latest .isl-inline-detail-bullet {
+  background: var(--isl-accent);
+}
+.nh-island .isl-inline-detail-empty {
+  color: var(--isl-dim);
+}
+@keyframes isl-detail-fade {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  45% {
+    opacity: 1;
+  }
+}
+
+/* ── the PEEK view: the active agent's "now playing" BELOW the kept tab bar (the toggle is .nh-peek-toggle) ─────── */
+.nh-island.isl-peek-mode {
+  min-height: 240px;
+  max-height: 74vh;
+}
+/* the now-playing group (lyrics + album/title/status) pinned FLUSH to the island bottom. */
+.nh-island .isl-peek-body {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* past summaries = "lyrics": smaller, white-on-black, dim → bright, fading out at the top. Shows ~3 lines and
+   SCROLLS for older (scroll pinned to the newest). The fade mask hints there is more above. */
+.nh-island .isl-peek-lyrics {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 8px 2px 4px;
+  max-height: 104px; /* ~3 lyric lines */
+  overflow-y: auto;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 100%);
+}
+.nh-island .isl-peek-lyrics::-webkit-scrollbar {
+  display: none;
+}
+.nh-island .isl-peek-ly {
+  font-size: 17px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--isl-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the "now playing": the big gradient agent album + the latest summary as the bold title. */
+.nh-island .isl-peek-now {
+  display: flex;
+  align-items: flex-start; /* the title's top is flush with the album's top */
+  gap: 18px;
+  margin-top: 16px; /* breathing room between the lyrics and the album */
+}
+.nh-island .isl-peek-album {
+  position: relative;
+  width: 92px;
+  height: 92px;
+  flex: none;
+  border-radius: 24px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 10px 28px rgba(0, 0, 0, 0.45);
+  animation: isl-peek-breathe 4s ease-in-out infinite;
+}
+@keyframes isl-peek-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.025);
+  }
+}
+.nh-island .isl-peek-eq {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  padding-bottom: 7px;
+}
+.nh-island .isl-peek-eq i {
+  width: 2.5px;
+  border-radius: 2px;
+  background: #fff;
+  height: 5px;
+  animation: isl-peek-bars 0.9s ease-in-out infinite;
+}
+.nh-island .isl-peek-eq i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.nh-island .isl-peek-eq i:nth-child(3) {
+  animation-delay: 0.36s;
+}
+@keyframes isl-peek-bars {
+  0%,
+  100% {
+    height: 4px;
+  }
+  50% {
+    height: 13px;
+  }
+}
+.nh-island .isl-peek-nowtext {
+  min-width: 0;
+  flex: 1;
+}
+/* clamp the title to 2 lines so the status tag below ALWAYS fits within the album's height (top-aligned). */
+.nh-island .isl-peek-title {
+  font-size: 27px;
+  line-height: 1.12;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--isl-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* the status tag, always shown directly below the title. */
+.nh-island .isl-peek-status {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--isl-muted);
+}
+.nh-island .isl-peek-status[data-status='working'] {
+  color: var(--isl-text);
+}
+.nh-island .isl-peek-statusdot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--isl-dim);
+}
+.nh-island .isl-peek-status[data-status='working'] {
+  color: var(--isl-text);
+}
+.nh-island .isl-peek-status[data-status='warming'] {
+  color: var(--isl-text);
+}
+.nh-island .isl-peek-status[data-status='warming'] .isl-peek-statusdot {
+  background: var(--isl-accent);
+  animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-peek-status[data-status='working'] .isl-peek-statusdot {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  background: transparent;
+  animation: isl-spin 0.8s linear infinite;
+}
+/* ── tab chip strip (the process header — carries agent identity + status; swipe scrolls it, never pages) ─────── */
+.nh-island .isl-tabs {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  width: 100%;
+  box-sizing: border-box;
+  animation: isl-rise 0.26s ease-out 0.03s both;
+}
+/* The agent tabs scroll INSIDE this rail so the new-chat + (a sibling, pinned right) is always visible —
+   Chrome-style. flex:0 1 auto keeps the rail only as wide as its tabs until they overflow, then it shrinks
+   (min-width:0) and scrolls, holding the + hard against the right edge. The vertical padding/margin gives the
+   active/editing chip's shadow the room that overflow-x:auto would otherwise clip. */
+.nh-island .isl-tab-rail {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 6px;
+  padding: 4px 0;
+  margin: -4px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nh-island .isl-tab-rail::-webkit-scrollbar {
+  display: none;
+}
+.nh-island .isl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+  color: var(--isl-muted);
+  background: var(--isl-surface);
+  border: 1px solid var(--isl-faint);
+  border-radius: 9999px;
+  padding: 7px 12px 7px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 168px;
+  transition: color 0.14s ease-out, background 0.14s ease-out, border-color 0.14s ease-out;
+}
+.nh-island .isl-chip:hover {
+  color: var(--isl-text);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.nh-island .isl-chip.active {
+  color: var(--isl-text);
+  font-weight: 600;
+  background: var(--isl-surface2);
+  border-color: #ffffff1f;
+}
+.nh-island .isl-chip-label {
+  min-height: 18px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nh-island .isl-chip-editing {
+  cursor: text;
+  color: var(--isl-text);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.34), 0 8px 22px rgba(0, 0, 0, 0.22);
+}
+.nh-island .isl-chip-input {
+  width: 96px;
+  min-width: 42px;
+  max-width: 112px;
+  height: 20px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 7px;
+  padding: 2px 5px;
+  margin: -2px 0;
+  outline: none;
+  color: var(--isl-text);
+  background: rgba(0, 0, 0, 0.28);
+  font: inherit;
+  font-weight: 600;
+}
+.nh-island .isl-chip-input::selection {
+  background: rgba(10, 132, 255, 0.55);
+}
+.nh-island .isl-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--isl-dim); /* gray = not running */
+}
+/* warming = a pulsing BLUE dot; true working = a spinning BLUE ring. */
+.nh-island .isl-chip-dot[data-status='warming'] {
+  background: var(--isl-accent);
+  animation: isl-dot-pulse 1.5s ease-in-out infinite;
+}
+.nh-island .isl-chip-dot[data-status='working'] {
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  border: 2px solid rgba(10, 132, 255, 0.28);
+  border-top-color: var(--isl-accent);
+  background: transparent;
+  animation: isl-spin 0.8s linear infinite;
+}
+.nh-island .isl-chip-dot[data-status='waiting'] {
+  width: 8px;
+  height: 8px;
+  background: #ffd60a;
+  box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.14);
+}
+.nh-island .isl-chip-dot[data-status='error'] {
+  width: 8px;
+  height: 8px;
+  background: #ff453a;
+  box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.14);
+}
+
+/* Album-pill tabs: each agent chip carries a mini gradient "album", then its name, then the status dot. */
+.nh-island .isl-chip-agent {
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+}
+.nh-island .isl-chip-album {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+}
+
+/* the new-session "+" tab — a circle pinned to the RIGHT of the rail, always visible (Chrome's new-tab button). */
+.nh-island .isl-chip-new {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  justify-content: center;
+}
+/* the pen (compose) glyph — follows the chip's currentColor (muted → text on hover/active). */
+.nh-island .isl-pen {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+/* ── activity feed (scrolls above the pinned steer bar) ──────────────────────────────────────────────────────── */
+.nh-island .isl-feed {
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 16px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+  animation: isl-rise 0.3s ease-out 0.07s both;
+}
+.nh-island .isl-feed::-webkit-scrollbar {
+  width: 6px;
+}
+.nh-island .isl-feed::-webkit-scrollbar-thumb {
+  background: #ffffff26;
+  border-radius: 9999px;
+}
+
+/* ── DEBUG TERMINAL: read-only active-agent terminal view, scoped to the selected chat tab. ─────────────────── */
+.nh-island .isl-terminal-debug {
+  flex: none;
+  overflow: hidden;
+  border: 1px solid rgba(255, 216, 77, 0.24);
+  border-radius: 10px;
+  animation: isl-rise 0.22s ease-out both;
+}
+.nh-island .isl-terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 9px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.nh-island .isl-terminal-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #fff;
+  font: 600 12px/1 var(--isl-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-terminal-status {
+  flex: none;
+  color: var(--isl-muted);
+  font: 10px/1 var(--isl-round);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.nh-island .isl-terminal-status.isl-term-err {
+  max-width: 180px;
+  overflow: hidden;
+  color: #ff6b6b;
+  text-transform: none;
+  text-overflow: ellipsis;
+}
+.nh-island .isl-term-external {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 216, 77, 0.32);
+  border-radius: 7px;
+  background: rgba(255, 216, 77, 0.1);
+  color: #ffd84d;
+  font: 600 10px/1 var(--isl-round);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.nh-island .isl-term-external:hover {
+  background: rgba(255, 216, 77, 0.18);
+  border-color: rgba(255, 216, 77, 0.5);
+}
+.nh-island .isl-term-external:active {
+  transform: translateY(0.5px);
+}
+.nh-island .isl-term-close {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--isl-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.nh-island .isl-term-close:hover {
+  color: var(--isl-text);
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+}
+.nh-island .isl-term-close svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+.nh-island .isl-act {
+  display: grid;
+  grid-template-columns: 6px auto 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.nh-island .isl-act-glyph {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  align-self: center;
+  background: var(--isl-dim);
+}
+.nh-island .isl-act-label {
+  font-weight: 600;
+  color: #ffffffe6;
+  white-space: nowrap;
+}
+.nh-island .isl-act-detail {
+  color: var(--isl-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-act-ts {
+  justify-self: end;
+  font-family: var(--isl-round);
+  font-size: 12px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--isl-dim);
+  white-space: nowrap;
+}
+.nh-island .isl-act[data-status='running'] .isl-act-label {
+  color: var(--isl-accent);
+}
+.nh-island .isl-act[data-status='running'] .isl-act-glyph {
+  background: var(--isl-accent);
+  animation: isl-pulse 1.4s ease-in-out infinite;
+}
+/* the blue "live" ping for running status dots (a soft expanding accent ring). */
+@keyframes isl-dot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgba(10, 132, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(10, 132, 255, 0);
+  }
+}
+@keyframes isl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes isl-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* iMessage-style bubbles: incoming (agent) = grey, left + tail; outgoing (user) = Apple blue, right + tail. The
+   tail is the classic two-pseudo trick — a same-color ::before juts past the bottom corner, a chassis-black ::after
+   carves it to a point (the ::after MUST match the chassis #000 the feed sits on). */
+.nh-island .isl-msg {
+  position: relative;
+  font-size: 16px; /* 12pt (Google Docs size) */
+  line-height: 22px;
+  padding: 7px 13px;
+  border-radius: 18px;
+  max-width: 76%;
+  width: fit-content;
+  overflow-wrap: anywhere;
+}
+.nh-island .isl-msg.isl-md-msg {
+  min-width: 0;
+}
+.nh-island .isl-msg.user {
+  align-self: flex-end;
+  background: var(--isl-accent);
+  color: #fff;
+}
+.nh-island .isl-msg.agent {
+  align-self: flex-start;
+  background: #3b3b3d; /* iOS dark-mode incoming grey */
+  color: #fff;
+}
+.nh-island .isl-msg.agent.isl-md-msg {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 2px 2px 4px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--isl-text);
+}
+.nh-island .isl-msg.agent.isl-md-msg.isl-say-divider {
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.nh-island .isl-msg::before,
+.nh-island .isl-msg::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  height: 17px;
+}
+.nh-island .isl-msg.agent.isl-md-msg::before,
+.nh-island .isl-msg.agent.isl-md-msg::after {
+  display: none;
+}
+.nh-island .isl-msg.user::before {
+  right: -7px;
+  width: 18px;
+  background: var(--isl-accent);
+  border-bottom-left-radius: 16px 14px;
+}
+.nh-island .isl-msg.user::after {
+  right: -15px;
+  width: 15px;
+  background: #000;
+  border-bottom-left-radius: 10px;
+}
+.nh-island .isl-msg.agent::before {
+  left: -7px;
+  width: 18px;
+  background: #3b3b3d;
+  border-bottom-right-radius: 16px 14px;
+}
+.nh-island .isl-msg.agent::after {
+  left: -15px;
+  width: 15px;
+  background: #000;
+  border-bottom-right-radius: 10px;
+}
+
+/* Markdown transcript: compact, selectable, and safe inside the small island. */
+.nh-island .isl-md-msg :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, .isl-md-table-wrap) {
+  margin: 0;
+}
+.nh-island .isl-md-msg > :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, .isl-md-table-wrap, img) + :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, .isl-md-table-wrap, img) {
+  margin-top: 8px;
+}
+.nh-island .isl-md-msg :where(h1, h2, h3, h4, h5, h6) {
+  font-size: 17px; /* keep headings just above the 16px (12pt) body */
+  font-weight: 700;
+  line-height: 22px;
+  letter-spacing: 0;
+}
+.nh-island .isl-md-msg :where(ul, ol) {
+  padding-left: 18px;
+}
+.nh-island .isl-md-msg li {
+  margin: 2px 0;
+  padding-left: 2px;
+}
+.nh-island .isl-md-msg li::marker {
+  color: currentColor;
+}
+.nh-island .isl-md-msg .contains-task-list {
+  list-style: none;
+  padding-left: 2px;
+}
+.nh-island .isl-md-msg .task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.nh-island .isl-md-msg .task-list-item input {
+  flex: none;
+  margin: 3px 0 0;
+}
+.nh-island .isl-md-msg blockquote {
+  padding-left: 10px;
+  border-left: 2px solid rgba(255, 255, 255, 0.24);
+  color: var(--isl-muted);
+}
+.nh-island .isl-md-msg a,
+.nh-island .isl-md-link {
+  color: #8ec5ff;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.nh-island .isl-msg.user a {
+  color: #fff;
+}
+/* user bubbles are blue; keep markdown chrome light enough to read without punching white holes through the pill. */
+.nh-island .isl-msg.user.isl-md-msg :not(pre) > code {
+  background: rgba(255, 255, 255, 0.2);
+}
+.nh-island .isl-msg.user.isl-md-msg pre {
+  background: rgba(0, 0, 0, 0.16);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.nh-island .isl-msg.user.isl-md-msg blockquote {
+  border-left-color: rgba(255, 255, 255, 0.34);
+  color: rgba(255, 255, 255, 0.84);
+}
+.nh-island .isl-msg.user.isl-md-msg :where(th, td) {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.nh-island .isl-msg.user.isl-md-msg th {
+  background: rgba(255, 255, 255, 0.14);
+}
+.nh-island .isl-md-link.inert {
+  color: currentColor;
+  text-decoration: none;
+  opacity: 0.78;
+}
+.nh-island .isl-md-msg :not(pre) > code {
+  border-radius: 5px;
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.12);
+  font: 0.92em/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.nh-island .isl-md-msg pre {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff30 transparent;
+}
+.nh-island .isl-md-msg pre code {
+  display: block;
+  min-width: max-content;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre;
+}
+.nh-island .isl-md-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff30 transparent;
+}
+.nh-island .isl-md-msg table {
+  width: max-content;
+  min-width: min(100%, 360px);
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 16px;
+}
+.nh-island .isl-md-msg th,
+.nh-island .isl-md-msg td {
+  padding: 5px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  text-align: left;
+  vertical-align: top;
+}
+.nh-island .isl-md-msg th {
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 700;
+}
+.nh-island .isl-md-msg img {
+  display: block;
+  max-width: 100%;
+  max-height: min(260px, 38vh);
+  margin-inline: auto;
+  border-radius: 8px;
+  object-fit: contain;
+}
+.nh-island .isl-md-image-blocked {
+  color: var(--isl-muted);
+  font-size: 12px;
+}
+.nh-island .isl-msg-part + .isl-msg-part {
+  margin-top: 8px;
+}
+.nh-island .isl-msg-part.status,
+.nh-island .isl-msg-part.error,
+.nh-island .isl-msg-part.tool,
+.nh-island .isl-msg-part.attachment {
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--isl-muted);
+  font-size: 12px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+.nh-island .isl-msg-part.error,
+.nh-island .isl-msg-part.status.error {
+  border-color: rgba(255, 99, 99, 0.24);
+  background: rgba(255, 99, 99, 0.09);
+  color: #ffd1d1;
+}
+.nh-island .isl-msg-part.tool {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.nh-island .isl-msg-part.tool code {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  color: var(--isl-text);
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.nh-island .isl-ask-msg {
+  width: 100%;
+}
+.nh-island .isl-ask-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  box-sizing: border-box;
+  width: min(100%, 520px);
+  padding: 14px;
+  border: 1px solid rgba(150, 175, 220, 0.46);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 86% 10%, rgba(46, 147, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(31, 35, 48, 0.82), rgba(12, 14, 21, 0.9));
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.46),
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  -webkit-backdrop-filter: blur(40px) saturate(1.35);
+  backdrop-filter: blur(40px) saturate(1.35);
+}
+.nh-island .isl-ask-card::before {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 0;
+  height: 34px;
+  content: '';
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+  pointer-events: none;
+}
+.nh-island .isl-ask-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.nh-island .isl-ask-card.answered {
+  border-color: rgba(77, 190, 255, 0.46);
+  background:
+    radial-gradient(circle at 86% 10%, rgba(46, 147, 255, 0.18), transparent 30%),
+    linear-gradient(180deg, rgba(32, 40, 58, 0.86), rgba(10, 15, 26, 0.92));
+}
+.nh-island .isl-ask-prompt {
+  color: var(--isl-text);
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 21px;
+  letter-spacing: 0;
+  margin: 0 0 13px;
+  overflow-wrap: anywhere;
+}
+.nh-island .isl-ask-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 11px;
+  padding: 8px 10px;
+  border: 1px solid rgba(77, 190, 255, 0.38);
+  border-radius: 11px;
+  background:
+    radial-gradient(circle at 86% 52%, rgba(77, 190, 255, 0.18), transparent 28%),
+    rgba(10, 132, 255, 0.11);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 10px 22px rgba(10, 132, 255, 0.08);
+}
+.nh-island .isl-ask-selected-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.nh-island .isl-ask-selected-kicker {
+  color: #80d7ff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 14px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.nh-island .isl-ask-selected-answer {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--isl-text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-ask-selected-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 999px;
+  background: #4dbfff;
+  color: #061016;
+  box-shadow: 0 8px 18px rgba(77, 190, 255, 0.26);
+}
+.nh-island .isl-ask-selected-mark svg {
+  width: 14px;
+  height: 14px;
+}
+.nh-island .isl-ask-selected-mark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.nh-island .isl-ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 0;
+}
+.nh-island .isl-ask-card.confirm .isl-ask-options {
+  flex-flow: row wrap;
+}
+.nh-island .isl-ask-card.grid .isl-ask-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+.nh-island .isl-ask-option {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 12px;
+  padding: 9px 11px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 0 rgba(0, 0, 0, 0.2);
+  color: var(--isl-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+.nh-island .isl-ask-card.confirm .isl-ask-option {
+  flex: 1 1 128px;
+  text-align: center;
+}
+.nh-island .isl-ask-card.answered .isl-ask-option {
+  opacity: 0.46;
+}
+.nh-island .isl-ask-card.answered .isl-ask-option.selected {
+  border-color: rgba(77, 190, 255, 0.24);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.09), rgba(255, 255, 255, 0.028));
+}
+.nh-island .isl-ask-option:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.052));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 10px 20px rgba(0, 0, 0, 0.22);
+  transform: translateY(-1px);
+}
+.nh-island .isl-ask-option:active {
+  transform: translateY(0);
+}
+.nh-island .isl-ask-option:focus-visible {
+  outline: 2px solid rgba(46, 147, 255, 0.72);
+  outline-offset: 2px;
+}
+.nh-island .isl-ask-option:disabled {
+  cursor: default;
+  opacity: 0.52;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 0 rgba(0, 0, 0, 0.18);
+  transform: none;
+}
+.nh-island .isl-ask-card.answered .isl-ask-option:disabled:hover {
+  border-color: rgba(255, 255, 255, 0.11);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+}
+.nh-island .isl-ask-card.answered .isl-ask-option.selected:disabled:hover {
+  border-color: rgba(77, 190, 255, 0.24);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.09), rgba(255, 255, 255, 0.028));
+}
+.nh-island .isl-ask-option img {
+  width: 100%;
+  max-height: 88px;
+  margin-bottom: 7px;
+  border-radius: 9px;
+  object-fit: cover;
+}
+.nh-island .isl-ask-label,
+.nh-island .isl-ask-sub {
+  display: block;
+  min-width: 0;
+  /* WRAP, never truncate. A choice option must always show its FULL label — the agent writes meaningful,
+     sometimes long labels, and clipping them ("Run the full matrix…") hides the actual choice. The old
+     overflow:hidden + text-overflow:ellipsis + white-space:nowrap clipped labels in the narrow confirm/grid
+     columns. Now the text wraps; the button grows taller and the card (no fixed height) grows with it, so
+     nothing is ever cut off in any layout (confirm row, grid, or the vertical choice list). */
+  overflow-wrap: anywhere;
+}
+.nh-island .isl-ask-label {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 17px;
+}
+.nh-island .isl-ask-sub {
+  margin-top: 3px;
+  color: var(--isl-muted);
+  font-size: 11.5px;
+  font-weight: 560;
+  line-height: 15px;
+  /* WRAP the sub too — it was single-line nowrap, which (now the shared ellipsis safety is gone) overflowed and
+     got hard-clipped by the card's overflow:hidden in the vertical choice list. Same wrap rule as the label. */
+  white-space: normal;
+}
+.nh-island [data-tone='sky'] {
+  --isl-app-a: #31c6ff;
+  --isl-app-b: #426dff;
+}
+.nh-island [data-tone='mint'] {
+  --isl-app-a: #5ef0a6;
+  --isl-app-b: #43d1d8;
+}
+.nh-island [data-tone='amber'] {
+  --isl-app-a: #ffd247;
+  --isl-app-b: #ff6f5f;
+}
+.nh-island [data-tone='violet'] {
+  --isl-app-a: #9b7cff;
+  --isl-app-b: #ed4ac8;
+}
+.nh-island [data-tone='lime'] {
+  --isl-app-a: #a9ff5c;
+  --isl-app-b: #33df6a;
+}
+.nh-island [data-tone='rose'] {
+  --isl-app-a: #ff66c4;
+  --isl-app-b: #ff8361;
+}
+.nh-island .isl-app-msg {
+  width: 100%;
+  max-width: 100%;
+}
+.nh-island .isl-app-card {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 13px;
+  width: min(100%, 410px);
+  min-height: 72px;
+  margin-top: 9px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(40, 40, 40, 0.7), rgba(18, 18, 18, 0.7));
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 18px 40px rgba(0, 0, 0, 0.45);
+  color: var(--isl-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.14s ease, border-color 0.14s ease;
+}
+.nh-island .isl-app-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.nh-island .isl-app-card:active {
+  transform: translateY(0);
+}
+.nh-island .isl-app-card:focus-visible {
+  outline: 2px solid rgba(255, 177, 20, 0.82);
+  outline-offset: 2px;
+}
+.nh-island .isl-app-card.invalid {
+  opacity: 0.58;
+  cursor: default;
+}
+.nh-island .isl-app-card.invalid:hover {
+  transform: none;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+/* P4: a bespoke agent-authored card face rendered as a sandboxed srcdoc iframe (static HTML/CSS). The
+   iframe IS the card; pointer-events:none so the button captures the click -> expand to the live app. */
+.nh-island .isl-app-card.preview {
+  display: block;
+  grid-template-columns: none;
+  width: 460px;
+  max-width: 100%;
+  min-height: 0;
+  margin: 9px auto 0;
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(22, 27, 38, 0.92), rgba(9, 11, 16, 0.96));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 20px 50px rgba(0, 0, 0, 0.52);
+}
+.nh-island .isl-app-card.preview:hover {
+  transform: translateY(-3px);
+  box-shadow:
+    inset 0 0 0 1px rgba(86, 181, 255, 0.5),
+    0 26px 60px rgba(8, 40, 80, 0.5),
+    0 0 0 4px rgba(10, 132, 255, 0.08);
+}
+.nh-island .isl-app-card-preview {
+  display: block;
+  width: 100%;
+  height: 300px;
+  border: 0;
+  pointer-events: none;
+  background: #05060a;
+}
+.nh-island .isl-app-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: linear-gradient(140deg, var(--isl-app-a), var(--isl-app-b));
+  color: #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 6px 16px color-mix(in srgb, var(--isl-app-b) 34%, transparent);
+}
+.nh-island .isl-app-card-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  width: 24px;
+  height: 24px;
+}
+.nh-island .isl-app-card-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.nh-island .isl-app-card-kicker {
+  color: #fff;
+  font-size: 14.5px;
+  font-weight: 800;
+  line-height: 18px;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-app-card-sub {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-app-card-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.nh-island.isl-app-viewing {
+  width: min(1200px, calc(100vw - 32px));
+  height: min(800px, calc(100vh - 22px));
+  min-height: 0;
+  padding-right: 8px;
+  padding-bottom: 8px;
+  padding-left: 8px;
+  overflow: hidden;
+  animation: isl-rise 0.18s ease-out both;
+}
+.nh-island .isl-app-viewer {
+  position: relative;
+  color-scheme: dark;
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+  border: 0;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 50% 24%, color-mix(in srgb, var(--isl-app-a) 13%, transparent), transparent 34%),
+    #050608;
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  animation: isl-app-viewer-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.nh-island .isl-app-scroll {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  border-radius: inherit;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.24) rgba(0, 0, 0, 0.42);
+}
+.nh-island .isl-app-viewer[data-loaded='false'] .isl-app-scroll {
+  pointer-events: none;
+}
+/* Prewarm state: the app iframe is mounted and loading, but kept invisible + click-through ON-screen (so the
+   browser does NOT throttle the load) until the user opens it. Promoting to `.viewing` just drops these overrides,
+   so the already-loaded iframe is revealed instantly with no remount. The latest app stays warm while the island
+   is open (bounded to ONE app). */
+.nh-island .isl-app-viewer.isl-app-warm:not(.viewing) {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+  animation: none;
+}
+.nh-island .isl-app-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.nh-island .isl-app-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.42);
+}
+.nh-island .isl-app-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(0, 0, 0, 0.42);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.nh-island .isl-app-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 40;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(18, 20, 25, 0.74);
+  color: rgba(255, 255, 255, 0.78);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-close:hover {
+  background: rgba(30, 33, 40, 0.86);
+  color: #fff;
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-close svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+/* Claim pill: same glass chrome as the close X, sat just left of it, accent-tinted as the primary action
+   (keep this app past the ~12h anon expiry). Shown only when the part carries a claimUrl. */
+.nh-island.isl-app-viewing > .isl-app-viewer-claim {
+  position: absolute;
+  top: 12px;
+  right: 50px;
+  z-index: 40;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 24%, rgba(18, 20, 25, 0.78));
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: var(--text-ui);
+  font-weight: 600;
+  line-height: 1;
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-claim:hover {
+  background: color-mix(in srgb, var(--accent) 34%, rgba(18, 20, 25, 0.86));
+}
+.nh-island.isl-app-viewing > .isl-app-viewer-claim svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.nh-island .isl-app-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  background: #fff;
+  border-radius: 0;
+  color-scheme: dark;
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 0.18s ease-out;
+}
+.nh-island .isl-app-viewer[data-loaded='false'] .isl-app-frame {
+  opacity: 0;
+}
+.nh-island .isl-app-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  gap: 14px;
+  align-content: center;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.06), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
+  color: var(--isl-text);
+  text-align: center;
+  animation: isl-app-loading-in 0.16s ease-out both;
+}
+.nh-island .isl-app-loading-mark {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  border-radius: 15px;
+  background:
+    radial-gradient(120% 120% at 28% 18%, rgba(255, 255, 255, 0.4) 0%, transparent 42%),
+    linear-gradient(150deg, #2a93ff 0%, #0066d6 40%, #08203c 72%, #05060a 100%);
+  box-shadow:
+    0 16px 32px rgba(42, 147, 255, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+.nh-island .isl-app-loading-mark::after {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.34);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: isl-spin 0.78s linear infinite;
+}
+.nh-island .isl-app-loading-copy {
+  display: grid;
+  gap: 4px;
+}
+.nh-island .isl-app-loading-copy span:first-child {
+  font-size: 13px;
+  font-weight: 780;
+  letter-spacing: 0;
+}
+.nh-island .isl-app-loading-copy span:last-child {
+  max-width: 300px;
+  overflow: hidden;
+  color: var(--isl-muted);
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@keyframes isl-app-viewer-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes isl-app-loading-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* the in-chat attachment SNAPSHOT — a frozen, read-only, scaled-down copy of the dropbox above the user message it
+   rode on. Glass pill (the agent-tab .isl-chip look: dark surface + faint hairline), right-aligned like the bubble.
+   Scrolls (capped height) and keeps tooltips; the read-only AttachTray drops every delete control. */
+/* a user turn that carried attachments: the frozen snapshot strip sits FLUSH atop its bubble as ONE unit (the group
+   + its bubble scroll together), so a partial scroll reads as the message scrolling, not a broken floating chip.
+   See plans/blitzos-connector-snapshot-clip-fix.md. */
+.nh-island .isl-msg-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.nh-island .isl-msg-tray {
+  align-self: flex-end;
+  max-width: 80%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 14px;
+  background: var(--isl-surface);
+  border: 1px solid var(--isl-faint);
+}
+/* reuse the dropbox markup (.att-added-stack/.att-pill/…) but the in-chat snapshot is a SINGLE horizontal STRIP
+   (sideways-scroll), never the dropbox's vertical column: a vertical stack hit the tray's old max-height and clipped
+   the TOP connector, and being tall made the snapshot the first thing the feed clipped when scrolled. One short row
+   can't vertical-clip and stays ~1 tile tall. Every 44px tile SCALES DOWN to 28px for the compact copy. */
+.nh-island .isl-msg-tray .att-added-stack {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.nh-island .isl-msg-tray .att-added-stack::-webkit-scrollbar {
+  display: none;
+}
+/* pills + the single-window row keep their size and never wrap inside the strip (they scroll sideways instead). */
+.nh-island .isl-msg-tray .att-pill {
+  flex: none;
+  gap: 7px;
+  padding: 4px 9px 4px 6px;
+  border-radius: 15px;
+}
+.nh-island .isl-msg-tray .att-singles {
+  flex: none;
+  flex-wrap: nowrap;
+}
+.nh-island .isl-msg-tray .att-pill-items,
+.nh-island .isl-msg-tray .att-singles {
+  flex-wrap: nowrap; /* tabs/chips never wrap in the horizontal tray strip; overflow-x:auto scrolls instead (BLI-39) */
+  gap: 6px;
+}
+.nh-island .isl-msg-tray .att-pill-app .att-favicon,
+.nh-island .isl-msg-tray .att-pill-item,
+.nh-island .isl-msg-tray .att-pill-item .att-favicon,
+.nh-island .isl-msg-tray .att-pill-letter,
+.nh-island .isl-msg-tray .att-added-chip,
+.nh-island .isl-msg-tray .att-added-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+.nh-island .isl-msg-tray .att-pill-letter,
+.nh-island .isl-msg-tray .att-pill-app .att-favicon-fallback,
+.nh-island .isl-msg-tray .att-pill-app .att-app-fallback,
+.nh-island .isl-msg-tray .att-pill-item .att-favicon-fallback,
+.nh-island .isl-msg-tray .att-added-fallback {
+  font-size: 12px;
+}
+
+/* ── the STEER / new-session composer = the iMessage input pill. Transparent fill, a hairline grey capsule; the
+   blue send circle appears ONLY when there is text (empty = a bare pill, like iMessage with the attach/voice/emoji
+   icons removed). The .ci base layout is in notch.css; theme it here. */
+.nh-island .isl-bar.ci {
+  flex: 1;
+  min-width: 0;
+  align-items: flex-end;
+  gap: 6px;
+  min-height: 30px;
+  background: transparent;
+  border: 0; /* the surrounding .isl-composer is the bar now; this just holds the textarea + send, blended in */
+  border-radius: 0;
+  padding: 0 2px 0 4px;
+  transition: none;
+}
+.nh-island .isl-bar.ci:focus-within {
+  border-color: rgba(255, 255, 255, 0.34);
+}
+.nh-island .isl-bar .ci-field {
+  color: var(--isl-text);
+  font-family: var(--isl-font);
+  font-size: 16px; /* iMessage-comfortable */
+  line-height: 21px;
+  padding: 5px 0;
+}
+.nh-island .isl-bar .ci-field::placeholder {
+  color: var(--isl-muted);
+}
+.nh-island .isl-bar .ci-send {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  align-self: center; /* vertically center in the bar (was flex-end, which biased it low on a single line) */
+  border: 0;
+  border-radius: 50%;
+  background: var(--isl-accent); /* send circle = the island's one accent (Apple system blue) */
+  color: #fff; /* light arrow on the accent */
+  font-size: 17px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.12s ease-out, opacity 0.12s ease-out;
+}
+.nh-island .isl-bar .ci-send:active {
+  transform: scale(0.9);
+}
+/* empty draft = no send button (iMessage shows the waveform/emoji here, which we removed). */
+.nh-island .isl-bar .ci-send:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* reduced motion: cut the pulse/rise to quiet swaps. */
+@media (prefers-reduced-motion: reduce) {
+  .nh-island .isl-composer,
+  .nh-island .isl-tabs,
+  .nh-island .isl-feed {
+    animation: isl-rise 0.12s ease-out both;
+  }
+  .nh-island .isl-act[data-status='running'] .isl-act-glyph {
+    animation: none;
+  }
+}

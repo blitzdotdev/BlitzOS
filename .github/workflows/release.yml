@@ -1,0 +1,127 @@
+# CI/CD (docs/prod-ci.md): every push to these branches builds the mac app and publishes it as a
+# GitHub (pre)release. The in-app updater (src/main/update.ts) polls releases and offers the swap.
+# Version = 0.0.1-<run_number> (monotonic, stamped into the bundle, compared against the tag).
+#
+# Signing is OPTIONAL: with the secrets below the artifact is Developer-ID-signed + notarized
+# (Gatekeeper-clean); without them it builds unsigned (the updater strips quarantine on swap).
+# Secrets are hoisted into job env because the `secrets` context is not usable in step `if:`.
+#   MAC_CERT_P12 / MAC_CERT_PASSWORD                base64 .p12 of "Developer ID Application" + password
+#   APPLE_API_KEY_P8 / APPLE_API_KEY_ID / APPLE_API_ISSUER   App Store Connect key (.p8 content, key id, issuer)
+name: release
+on:
+  push:
+    branches: ['**'] # every branch gets its own build channel (tag build-<branch>-<run>)
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    env:
+      MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+      MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+      ASC_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      ASC_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      ASC_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Stamp version (0.0.1-<run>)
+        run: npm version "0.0.1-${{ github.run_number }}" --no-git-tag-version
+      - name: Branch channel
+        run: |
+          SAFE="${GITHUB_REF_NAME//\//-}"
+          echo "SAFE_BRANCH=$SAFE" >> $GITHUB_ENV
+          echo "BUILD_TAG=build-$SAFE-${{ github.run_number }}" >> $GITHUB_ENV
+      - name: Import signing cert (when configured)
+        if: env.MAC_CERT_P12 != ''
+        run: |
+          KC=$RUNNER_TEMP/build.keychain
+          security create-keychain -p ci "$KC"
+          security default-keychain -s "$KC"
+          security unlock-keychain -p ci "$KC"
+          echo "$MAC_CERT_P12" | base64 -d > $RUNNER_TEMP/cert.p12
+          security import $RUNNER_TEMP/cert.p12 -k "$KC" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
+      # The Computer Use sidecar (BlitzOS Automation.app) ships as an extraResource (electron-builder.yml)
+      # and the onboarding TCC pre-board drags it; if it is not built here the packaged app has NO helper
+      # and the drag is dead on a fresh install (issues/open/preboard-cu-helper-drag-missing-vm.md). Build
+      # it AFTER the cert import so it signs with the same identity. Cached on the sidecar source + signing
+      # mode, so it only REBUILDS when the sidecar code (or signed/unsigned mode) actually changes.
+      - name: Cache Computer Use sidecar (rebuild only when its source changes)
+        id: cu-helper
+        uses: actions/cache@v4
+        with:
+          path: native/computer-use-helper/build
+          key: cu-helper-${{ runner.os }}-${{ env.MAC_CERT_P12 != '' && 'signed' || 'unsigned' }}-${{ hashFiles('native/computer-use-helper/main.swift', 'native/computer-use-helper/Info.plist', 'native/computer-use-helper/entitlements.plist', 'native/computer-use-helper/build.sh') }}
+      - name: Build Computer Use sidecar (on source change)
+        if: steps.cu-helper.outputs.cache-hit != 'true'
+        run: bash native/computer-use-helper/build.sh
+      - name: Verify the sidecar is present (refuse to ship without it)
+        run: |
+          test -x "native/computer-use-helper/build/BlitzOS Automation.app/Contents/MacOS/BlitzOS Automation" \
+            || { echo "::error::BlitzOS Automation.app (computer-use helper) missing — refusing to package; a fresh install would have a dead pre-board TCC drag"; exit 1; }
+      # The notch-geometry CLI (exact physical-notch read) is an extraResource (electron-builder.yml); without it
+      # readNotchGeometry() returns null → NO notch hit-window → hover-over-notch can't open the island and the
+      # toggle is ⌥Space-ONLY (the exact "hover does nothing on a fresh install" bug). dev (ensure-helper.sh) and
+      # local dist (scripts/dist-mac.sh) build it, but CI called electron-builder directly and skipped it — so it
+      # never shipped. Build it here (swiftc; the runner already has it for the sidecar); ad-hoc signed by build.sh,
+      # re-signed by electron-builder during packaging.
+      - name: Build notch-geometry CLI (the notch hit-window needs it)
+        run: bash native/notch-geometry/build.sh
+      - name: Verify notch-geometry is present (refuse to ship a hover-broken build)
+        run: |
+          test -x native/notch-geometry/notch-geometry \
+            || { echo "::error::notch-geometry binary missing — refusing to package; hover-over-notch to open the island would be dead (⌥Space-only)"; exit 1; }
+      - name: Build app
+        run: npm run build
+      - name: Package
+        run: |
+          # stamp the channel into the app: the updater follows ITS OWN branch; the dev picker shows all.
+          # Build BOTH dmg + zip: the zip carries the notarized .app (the updater consumes it); the dmg is the
+          # human download. (CLI flag overrides electron-builder.yml's zip-only mac.target, like scripts/dist-mac.sh.)
+          ARGS="--mac dmg zip --arm64 --publish never -c.extraMetadata.buildBranch=$SAFE_BRANCH -c.extraMetadata.buildRun=${{ github.run_number }} -c.extraMetadata.buildRepo=${{ github.repository }}"
+          if [ -z "$MAC_CERT_P12" ]; then
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            echo "[ci] unsigned build (no MAC_CERT_P12 secret)"
+          elif [ -n "$ASC_KEY_P8" ]; then
+            echo "$ASC_KEY_P8" > $RUNNER_TEMP/asc.p8
+            export APPLE_API_KEY=$RUNNER_TEMP/asc.p8
+            export APPLE_API_KEY_ID="$ASC_KEY_ID"
+            export APPLE_API_ISSUER="$ASC_ISSUER"
+            ARGS="$ARGS -c.mac.notarize=true"
+            echo "[ci] signed + notarized build"
+          else
+            echo "[ci] signed build (no notarization key)"
+          fi
+          npx electron-builder $ARGS
+          # electron-builder notarizes the .app (the .zip carries it) but leaves the .dmg CONTAINER
+          # unsigned + unstapled, so a downloaded dmg warns on mount. Sign + notarize + staple it ourselves
+          # (mirrors scripts/dist-mac.sh ~L61-70). Only with full notarization creds; same shell, so the
+          # APPLE_API_* exports + asc.p8 above are still in scope. The identity is derived from the keychain.
+          if [ -n "$MAC_CERT_P12" ] && [ -n "$ASC_KEY_P8" ]; then
+            IDENTITY=$(security find-identity -v -p codesigning | awk '/Developer ID Application/{print $2; exit}')
+            for dmg in release/*.dmg; do
+              [ -e "$dmg" ] || continue
+              echo "[ci] sign + notarize + staple dmg: $dmg"
+              codesign --force --sign "$IDENTITY" --timestamp "$dmg"
+              xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+              xcrun stapler staple "$dmg"
+              xcrun stapler validate "$dmg"
+            done
+          fi
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$BUILD_TAG" release/*.dmg release/*.zip \
+            --prerelease \
+            --target "${{ github.sha }}" \
+            --title "BlitzOS ${{ github.ref_name }} #${{ github.run_number }}" \
+            --notes "Auto-build of ${{ github.ref_name }} @ ${{ github.sha }}"

@@ -1,0 +1,30 @@
+<!-- The default note (post-it) UI. It IS a file: customize by editing blitz-note.html (ask the agent).
+     It renders props.text in a colored textarea and writes edits straight back with blitz.setProps({text})
+     — the OS persists the text to the note's .md file. props.color picks the paper (yellow|pink|blue|green). -->
+<style>
+  :root { --note-bg: #fff7c0; --note-ink: #3b3320; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--note-bg); color: var(--note-ink); }
+  textarea {
+    width: 100%; height: 100%; box-sizing: border-box;
+    border: none; outline: none; resize: none; background: transparent; color: inherit;
+    font: inherit; font-size: 14px; line-height: 1.5; padding: 12px;
+  }
+  textarea::placeholder { color: color-mix(in srgb, var(--note-ink) 45%, transparent); }
+</style>
+<textarea id="t" placeholder="Note…"></textarea>
+<script>
+  var PAPER = { yellow: ['#fff7c0', '#3b3320'], pink: ['#ffd8e2', '#3a2530'], blue: ['#cfe6ff', '#1f3040'], green: ['#cdeed3', '#1f3a28'] }
+  var t = document.getElementById('t')
+  var last = ''
+  function apply(p) {
+    p = p || {}
+    // don't yank the caret while the user is typing — only adopt external text when not focused
+    if (typeof p.text === 'string' && p.text !== t.value && document.activeElement !== t) { t.value = p.text; last = p.text }
+    var c = PAPER[p.color] || PAPER.yellow
+    document.documentElement.style.setProperty('--note-bg', c[0])
+    document.documentElement.style.setProperty('--note-ink', c[1])
+  }
+  blitz.onProps(apply)
+  t.addEventListener('input', function () { if (t.value !== last) { last = t.value; blitz.setProps({ text: t.value }) } })
+</script>

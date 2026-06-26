@@ -1,0 +1,71 @@
+# BlitzOS packaging (docs/prod-ci.md). Dead-simple by design: one arm64 zip artifact.
+# Signing: electron-builder picks the "Developer ID Application" identity from the keychain
+# (local: your login keychain; CI: the imported temp keychain) — or builds UNSIGNED when
+# CSC_IDENTITY_AUTO_DISCOVERY=false (the updater's xattr-strip keeps unsigned builds usable).
+# Notarization is opt-in via -c.mac.notarize=true (scripts/dist-mac.sh + CI add it when creds exist).
+appId: dev.blitz.os
+productName: BlitzOS
+# NSHumanReadableCopyright (the macOS "About BlitzOS" panel). Set explicitly so it doesn't fall back to
+# electron-builder's "Copyright © <year> <author>" (which differs per channel: empty author locally, "Palash
+# Bansal" on the OSS package.json). TODO: bump the year each year — an explicit copyright is not auto-dated.
+copyright: Copyright © 2026 Minjune Song, Palash Bansal, and Brandon Hresko
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+  # The widget library + shipped system renderers are read at runtime THROUGH Electron's
+  # asar-patched fs (BLITZ_WIDGETS_DIR defaults to appPath/widgets) — inside the asar is fine.
+  - widgets/**
+  # The onboarding scan runs as a CHILD process (plain node — no asar fs), so these also ship
+  # UNPACKED below; onboarding.ts swaps app.asar -> app.asar.unpacked when packaged.
+  - scripts/onboarding-scan.mjs
+  - src/main/blitzos-onboarding.md
+extraResources:
+  # Portable tmux (arm64, static libevent + system curses, Developer-ID signed): the agent-terminal
+  # runtime ships WITH the app — the user never installs dependencies (docs/prod-ci.md).
+  - from: vendor/bin/tmux
+    to: bin/tmux
+  # The Computer Use helper (separate Developer-ID-signed .app that holds Accessibility + Screen
+  # Recording TCC, so BlitzOS never quits/reopens for them — plans/blitzos-computer-use-helper.md).
+  # Built + signed by scripts/dist-mac.sh before packaging; the lifecycle manager (computer-use-
+  # helper.ts) installs it to ~/Library/Application Support/BlitzOS and launches it via LaunchServices.
+  - from: "native/computer-use-helper/build/BlitzOS Automation.app"
+    to: "BlitzOS Automation.app"
+  # The native dynamic-island HUD (faceless ⌥Space notch helper — plans/blitzos-dynamic-island.md).
+  # Built + signed by scripts/dist-mac.sh before packaging (same as the CU helper above); index.ts
+  # resolves it at process.resourcesPath/BlitzIsland.app and launchIslandHelper (island-bridge.mjs)
+  # `open`s it. Without this copy the packaged candidate never exists and the HUD never starts in prod.
+  - from: native/island-helper/build/BlitzIsland.app
+    to: BlitzIsland.app
+  # The runtime Dock-icon source for dev/notch-mode branding (index.ts app.dock.setIcon) — an INSET copy (the
+  # standard macOS icon grid, ~86% / 7% margin) so app.dock.setIcon renders it at the same Dock tile size as
+  # the other mac apps. Shipped UNPACKED so the packaged build reads it at process.resourcesPath/blitz-dock-icon.png.
+  - from: src/renderer/src/assets/blitz-dock-icon.png
+    to: blitz-dock-icon.png
+  # The notch-geometry CLI: reads the EXACT physical notch from NSScreen so the always-interactive notch hit-window
+  # sits over the real cutout (src/main/notch-overlay.ts readNotchGeometry resolves it at process.resourcesPath/
+  # notch-geometry). No notch => hasNotch:false and BlitzOS draws no band. Plain binary, no TCC/entitlement needed.
+  - from: native/notch-geometry/notch-geometry
+    to: notch-geometry
+asarUnpack:
+  - scripts/onboarding-scan.mjs
+  - src/main/blitzos-onboarding.md
+mac:
+  category: public.app-category.productivity
+  icon: src/renderer/src/assets/blitz-dock-icon.png # the Blitz macOS app icon, inset to the standard macOS grid (~86% of canvas, 7% margin) so it renders at the same Dock size as other mac apps — electron-builder generates the .icns from it
+  target:
+    - target: zip
+      arch: [arm64]
+  hardenedRuntime: true
+  # Custom hardened-runtime entitlements: electron's defaults PLUS com.apple.security.automation.apple-events
+  # so BlitzOS + the CU helper can send Apple Events (Chrome/Safari/System Events) without macOS spamming a
+  # "requires entitlement com.apple.security.automation.apple-events" prompt at launch. entitlementsInherit
+  # also re-grants the bundled helper its apple-events (electron-builder's deep re-sign strips it otherwise).
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  gatekeeperAssess: false
+  extendInfo:
+    # the scan reads user data (Branch B/A) and the app drives local automation
+    NSAppleEventsUsageDescription: BlitzOS automates apps on your behalf.
+npmRebuild: false

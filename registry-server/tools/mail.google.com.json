@@ -1,0 +1,20 @@
+[
+  {
+    "name": "unread_count",
+    "description": "Number of unread conversations in the current Gmail view.",
+    "kind": "read",
+    "code": "return document.querySelectorAll('tr.zE').length"
+  },
+  {
+    "name": "list_inbox",
+    "description": "Sender, subject and snippet of the visible inbox rows.",
+    "kind": "read",
+    "code": "return [...document.querySelectorAll('tr.zA')].slice(0,50).map(r=>({from:r.querySelector('.yX .yW span')?.getAttribute('email')||r.querySelector('.yW span')?.innerText||'',subject:r.querySelector('.y6 .bog')?.innerText||'',snippet:r.querySelector('.y2')?.innerText?.trim()||'',unread:r.classList.contains('zE')}))"
+  },
+  {
+    "name": "archive_top",
+    "description": "Archive the topmost conversation in the list (returns the archived subject as its effect).",
+    "kind": "act",
+    "code": "var row=document.querySelector('tr.zA');if(!row)return null;var subj=row.querySelector('.y6 .bog')?.innerText||'';var btn=row.querySelector('[aria-label=\"Archive\"],[data-tooltip=\"Archive\"]');if(!btn)return null;btn.click();return subj"
+  }
+]
