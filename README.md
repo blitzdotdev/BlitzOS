@@ -11,7 +11,12 @@ This repo is the source for that app. The easiest way to get BlitzOS is to downl
 - **Lives in your notch** and shows live progress as your agent works.
 - **Runs many agents at once**, each its own thread, in parallel.
 - **Connects to your apps** through the browser you're already signed into. No tokens, no setup.
-- **Handles big jobs** by fanning the work out across agents on a live kanban board.
+- **Handles big jobs** with blitzscript, a small workflow layer that fans a job out across many agents and tracks them live on a kanban board.
+
+## Under the hood
+
+- **Bring your own agent.** BlitzOS supplies the loop; your agent supplies the intelligence. Claude Code is supported in the beta today, with Pi and Codex coming.
+- **Open transport.** Agents drive BlitzOS over [agent-socket](https://agentsocket.dev): a plain HTTP/JSON transport, not MCP, that we're building as an open standard so any agent can connect.
 
 ## Build from source
 
@@ -20,7 +25,7 @@ BlitzOS is a macOS app for Apple Silicon. You'll need:
 - macOS on Apple Silicon (arm64)
 - Node 20+ (`.nvmrc` pins 20)
 - Xcode command-line tools: `xcode-select --install` (for the native helpers)
-- Claude Code (`claude`) or Codex (`codex`) on your `PATH` — the agent you bring to the island
+- Claude Code (`claude`) on your `PATH` — the agent you bring to the island
 
 Then:
 
