@@ -17,6 +17,24 @@ type TabLike = { tabId: number | string; title?: string; url?: string; browser?:
 type WinLike = { windowId: number; app?: string; title?: string; icon?: string }
 type DroppedLike = Record<string, { app?: string; icon?: string; title?: string }>
 
+// A connected tab carries its origin host as `sourceId` (e.g. "x.com"). When the tab isn't in the live `tabs` list
+// (the user hasn't opted into listing tabs, or the tab was discarded/closed while its connection stays staged), we
+// have no live favIconUrl, so derive the favicon from that host. The <Favicon> direct-load + main-fetch fallback
+// then handle it. Returns undefined for non-web sourceIds (a window bundle id, "newtab", etc.) → globe.
+function faviconFromSourceId(sourceId?: string): string | undefined {
+  const s = (sourceId || '').trim()
+  if (!s) return undefined
+  if (s.includes('://')) {
+    try {
+      return new URL(s).origin + '/favicon.ico'
+    } catch {
+      return undefined
+    }
+  }
+  if (s.includes('/') || s.includes(' ') || !s.includes('.')) return undefined // not a bare web host
+  return `https://${s}/favicon.ico`
+}
+
 // Build the grouped tray from the live lists, filtered to the staged sources. Tabs → one pill per browser (a favicon
 // per tab); windows → grouped by app (a letter tile per window). A window group of one renders as a lone icon chip;
 // everything else is a pill (decided in AttachTray). Pure — the live dropbox and the frozen snapshot share it.
@@ -55,7 +73,7 @@ export function buildTrayGroups(
         g = { key: 'b:' + browser, type: 'tab', label: browser === 'safari' ? 'Safari' : 'Chrome', appIcon: groupIcon(browser), items: [] }
         tabG.set(browser, g)
       }
-      g.items.push({ connId: c.connId, favicon: t?.favIconUrl, title: t?.title || t?.url || c.title || c.sourceId || 'Tab' })
+      g.items.push({ connId: c.connId, favicon: t?.favIconUrl || faviconFromSourceId(c.sourceId), title: t?.title || t?.url || c.title || c.sourceId || 'Tab' })
     }
   }
   return [...tabG.values(), ...winG.values()]
