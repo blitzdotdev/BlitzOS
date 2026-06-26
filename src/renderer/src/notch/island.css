@@ -2592,14 +2592,17 @@ button.isl-app-chat:active .isl-app-icon {
 .nh-island .isl-ask-sub {
   display: block;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* WRAP, never truncate. A choice option must always show its FULL label — the agent writes meaningful,
+     sometimes long labels, and clipping them ("Run the full matrix…") hides the actual choice. The old
+     overflow:hidden + text-overflow:ellipsis + white-space:nowrap clipped labels in the narrow confirm/grid
+     columns. Now the text wraps; the button grows taller and the card (no fixed height) grows with it, so
+     nothing is ever cut off in any layout (confirm row, grid, or the vertical choice list). */
+  overflow-wrap: anywhere;
 }
 .nh-island .isl-ask-label {
   font-size: 13px;
   font-weight: 700;
   line-height: 17px;
-  white-space: nowrap;
 }
 .nh-island .isl-ask-sub {
   margin-top: 3px;
@@ -2607,7 +2610,9 @@ button.isl-app-chat:active .isl-app-icon {
   font-size: 11.5px;
   font-weight: 560;
   line-height: 15px;
-  white-space: nowrap;
+  /* WRAP the sub too — it was single-line nowrap, which (now the shared ellipsis safety is gone) overflowed and
+     got hard-clipped by the card's overflow:hidden in the vertical choice list. Same wrap rule as the label. */
+  white-space: normal;
 }
 .nh-island [data-tone='sky'] {
   --isl-app-a: #31c6ff;

@@ -340,9 +340,18 @@ button {
   background: #30d158; /* Apple system green (matches island.css) */
   box-shadow: 0 0 0 1.5px #000; /* black gap so the dot reads against both the avatar and the next one */
 }
-/* errored agent avatar — a steady red ring, distinct from working. */
-.glance-ava.error {
-  box-shadow: 0 0 0 2px #000, 0 0 0 3.5px rgba(255, 69, 58, 0.9);
+/* errored agent avatar — a red corner PIP, identical in shape to the green DONE pip (green = done, red = error).
+   No ring; the avatar keeps the base black rim, only the dot color differs. */
+.glance-ava.error::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff453a; /* Apple system red (matches the chat chip-dot + inline-detail error language) */
+  box-shadow: 0 0 0 1.5px #000; /* black gap so the dot reads against the avatar and its neighbor */
 }
 .glance-ava-more {
   display: grid;
