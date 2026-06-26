@@ -16,6 +16,7 @@ import { makeWindowLink } from './connection-window-link'
 import { makeAttachmentStore } from './attachment-store.mjs'
 import { makeSafariLink } from './connection-safari-link.mjs'
 import { makeChromeAppleScriptLink } from './connection-chrome-applescript-link.mjs'
+import { resolveFavicon } from './favicon-resolver.mjs'
 import { blitzChrome } from './blitz-chrome'
 import { wireLauncher, registerLauncher } from './launcher'
 import { wireWorkflowHost, subscribe as wfSubscribe, snapshot as wfSnapshot } from './workflow-host.mjs'
@@ -927,6 +928,10 @@ app.whenReady().then(() => {
     trackActivity('connector.disconnected', { success: !(r as { error?: unknown })?.error, source: 'main' })
     return r
   })
+  // Favicon reliability fallback: the renderer <img> loads `<origin>/favicon.ico` directly (fast), but some sites
+  // (Instagram, Threads) serve an HTML wall to any browser request and only a neutral main-process fetch gets the
+  // real bytes. The renderer calls this ONLY when its direct <img> errors; we return a data: URL or null. Cached.
+  ipcMain.handle('os:conn-favicon', (_e, url: string) => resolveFavicon(String(url)))
   ipcMain.handle('os:blitz-chrome-status', () => blitzChrome().status())
   ipcMain.handle('os:blitz-chrome-open', async (_e, agentId?: string) =>
     blitzChrome().open(agentId != null ? String(agentId) : '', {})

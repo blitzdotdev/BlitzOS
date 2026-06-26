@@ -204,6 +204,12 @@ const api = {
     },
     disconnect(connId: string): Promise<Record<string, unknown>> {
       return (ipcRenderer.invoke('os:conn-drop', connId) as Promise<Record<string, unknown>>).catch((e) => ({ error: String(e) }))
+    },
+    // Reliability fallback for a tab favicon: when the renderer's direct <img src="<origin>/favicon.ico"> fails
+    // (e.g. a site serving an HTML login wall to browser requests), main re-fetches it neutrally. Returns a base64
+    // data: URL or null. Called only from the <img>'s onError, so working favicons never hit this.
+    resolveFavicon(url: string): Promise<string | null> {
+      return (ipcRenderer.invoke('os:conn-favicon', url) as Promise<string | null>).catch(() => null)
     }
   },
   /** Blitz Chrome — the agent's own dedicated background browser, driven over CDP. */

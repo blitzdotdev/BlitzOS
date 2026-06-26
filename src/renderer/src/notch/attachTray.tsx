@@ -1,7 +1,7 @@
 // The shared attachment-tray render — used by BOTH the live dropbox (AttachPanel, interactive) and the frozen
 // in-chat snapshot (IslandPanel, read-only). One grouping + one component so the two can never drift. The grouping
 // is a pure function; the component owns its own hover tooltip (portaled to <body>). Scroll is the parent's job.
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { brandGlyph } from './browserIcons'
 import './attach.css'
@@ -173,17 +173,56 @@ export function RemoveX(): JSX.Element {
   )
 }
 
-// A favicon with a globe-glyph fallback (some favIconUrls are chrome-internal and won't load cross-context).
+// Resolve a failed favicon via the main process (a neutral fetch dodges sites that serve an HTML wall to the
+// renderer's browser-flavored <img> request). Best-effort; null = keep the globe.
+function resolveFaviconRemote(url: string): Promise<string | null> {
+  const api = (window as unknown as { agentOS?: { connections?: { resolveFavicon?: (u: string) => Promise<string | null> } } }).agentOS?.connections
+  if (!api?.resolveFavicon) return Promise.resolve(null)
+  return api.resolveFavicon(url).catch(() => null)
+}
+
+// Per-src state, so a row reused for another tab (or a tab that navigates) never flashes a stale icon or globe:
+// the render reads state ONLY when it belongs to the current src. `resolving` = direct load failed and the main
+// fetch is in flight (show the globe meanwhile); `done` = a main-fetched data: URL; `failed` = give up.
+type FaviconState = { src: string; phase: 'resolving' | 'done' | 'failed'; dataUrl?: string }
+
+// A favicon with a globe-glyph fallback. Fast path: load `<origin>/favicon.ico` directly. If that <img> errors
+// (a site serving an HTML wall, a 404, a cross-context chrome-internal URL), fall back ONCE to a main-process
+// fetch that returns the real bytes as a data: URL. Working favicons (x.com, github) never trigger the fallback.
 export function Favicon({ src }: { src?: string }): JSX.Element {
-  const [failed, setFailed] = useState(false)
-  if (!src || failed) {
-    return (
-      <span className="att-favicon att-favicon-fallback" aria-hidden>
-        ◍
-      </span>
-    )
+  const [st, setSt] = useState<FaviconState | null>(null)
+  const seqRef = useRef(0) // a newer attempt invalidates an older in-flight resolve (stale-response guard)
+  const cur = st && st.src === src ? st : null // ignore state left over from a previous src
+
+  const globe = (
+    <span className="att-favicon att-favicon-fallback" aria-hidden>
+      ◍
+    </span>
+  )
+  if (!src || cur?.phase === 'failed' || cur?.phase === 'resolving') return globe
+  if (cur?.phase === 'done' && cur.dataUrl) {
+    // The main-resolved data URL is validated bytes, so it should never error; if it somehow does, give up to the globe.
+    return <img className="att-favicon" src={cur.dataUrl} alt="" aria-hidden draggable={false} onError={() => setSt({ src, phase: 'failed' })} />
   }
-  return <img className="att-favicon" src={src} alt="" aria-hidden draggable={false} onError={() => setFailed(true)} />
+  // Fast path: the site's own favicon, loaded directly. On error, kick the one-shot neutral main fetch.
+  return (
+    <img
+      className="att-favicon"
+      src={src}
+      alt=""
+      aria-hidden
+      draggable={false}
+      onError={() => {
+        setSt({ src, phase: 'resolving' })
+        const forSrc = src
+        const mySeq = ++seqRef.current
+        void resolveFaviconRemote(src).then((dataUrl) => {
+          if (mySeq !== seqRef.current) return // a newer src/attempt superseded this one — drop the stale result
+          setSt({ src: forSrc, phase: dataUrl ? 'done' : 'failed', dataUrl: dataUrl || undefined })
+        })
+      }}
+    />
+  )
 }
 
 // A macOS app icon (base64 PNG the helper resolves per window). When the helper icon is missing/broken, fall back to

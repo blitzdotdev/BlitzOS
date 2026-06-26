@@ -5,7 +5,9 @@
 // A tab's favicon for the connector UI. The old connector extension passed Chrome's native `favIconUrl`; the
 // Apple-Events adapters don't get that, so derive the site's OWN root favicon (privacy-preserving — it hits only
 // the site the user is already on, no third-party favicon service, and no extra per-tab osascript). The UI's
-// <Favicon> shows a globe fallback when a site doesn't serve /favicon.ico.
+// <Favicon> loads this directly; if that <img> fails (a 404, or a site like Instagram serving an HTML wall to the
+// renderer's browser-flavored request), it falls back to a neutral main-process re-fetch (favicon-resolver.mjs),
+// then to a globe glyph if even that can't get an image.
 export function faviconForUrl(url) {
   try {
     const u = new URL(url)
