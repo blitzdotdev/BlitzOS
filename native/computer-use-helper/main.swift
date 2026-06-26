@@ -15,6 +15,7 @@ import CoreGraphics
 import ApplicationServices
 import CoreServices // AEDeterminePermissionToAutomateTarget (no-prompt Automation status)
 import ScreenCaptureKit
+import ScriptingBridge // PID-pinned Chrome tab driving (SBApplication(processIdentifier:))
 
 // The live connection to BlitzOS — assigned in main(), referenced by the AXObserver C callback (which can't
 // capture Swift context, so it reads this global).
@@ -158,6 +159,130 @@ func automationStatus(_ bundleId: String) -> [String: Any] {
     defer { AEDisposeDesc(&target) }
     let status = AEDeterminePermissionToAutomateTarget(&target, AEEventClass(typeWildCard), AEEventID(typeWildCard), false)
     return ["ok": true, "status": Int(status), "granted": status == noErr]
+}
+
+// ===== Chrome tab driving via ScriptingBridge, PID-PINNED =====
+// The user's Chrome tabs are driven HERE instead of `tell application "Google Chrome"`. That tell resolves by bundle
+// id (com.google.Chrome), which is AMBIGUOUS when BlitzOS's own "Blitz Chrome" (a SECOND instance of the same bundle,
+// launched with -n + its own --user-data-dir) is alive: the Apple Event can route to the wrong instance, so the
+// user's tabs vanish or a tab index throws -1719 (the shadowing bug). Pinning the Apple Event to the USER's Chrome
+// PID via SBApplication(processIdentifier:) removes the ambiguity. TCC is UNCHANGED: Apple Events authorization is
+// keyed by the TARGET's bundle id, not its PID, so the helper's existing "control Google Chrome" Automation grant
+// covers this with no new prompt. Addressing is by the tab's STABLE `id` (index fallback) so a window reorder / tab
+// move can't silently re-point a live connection.
+
+// Minimal subset of Chrome's scripting interface, declared as @objc optional so SBApplication / SBObject forward the
+// selectors dynamically (no generated sdef header to couple to). `windows`/`tabs` are element accessors; `URL`/`title`
+// /`id` are tab properties; `executeJavascript:` is the Chrome "execute" command (gated by Allow-JS-from-Apple-Events).
+@objc protocol ChromeSBApp { @objc optional func windows() -> [AnyObject] }
+@objc protocol ChromeSBWindow { @objc optional func tabs() -> [AnyObject] }
+@objc protocol ChromeSBTab {
+    @objc optional var id: NSNumber { get }
+    @objc optional var URL: String { get }
+    @objc optional var title: String { get }
+    @objc optional func executeJavascript(_ js: String) -> Any
+}
+extension SBApplication: ChromeSBApp {}
+extension SBObject: ChromeSBWindow, ChromeSBTab {}
+
+// Captures the AppleEvent error ScriptingBridge would otherwise just log+swallow, so we can report WHY a call failed
+// (e.g. Allow-JS off / Automation denied) instead of a silent nil. delegate is weak → hold a strong ref per call.
+final class ChromeSBErr: NSObject, SBApplicationDelegate {
+    var err: NSError?
+    func eventDidFail(_ event: UnsafePointer<AppleEvent>, withError error: Error) -> Any? {
+        err = error as NSError
+        return nil
+    }
+}
+func chromeSBErrString(_ e: NSError) -> String {
+    let msg = (e.userInfo["ErrorString"] as? String) ?? (e.userInfo[NSLocalizedDescriptionKey] as? String) ?? e.localizedDescription
+    return "\(msg) (\(e.code))"
+}
+
+// The user's main Chrome browser PID = a running com.google.Chrome app process that is NOT Blitz's. Helper processes
+// (renderers/GPU) are NOT in runningApplications, so this yields only real browser instances. `excluding` is Blitz
+// Chrome's real PID (passed from Node). If several remain (user runs two of their own), prefer the active one.
+func userChromePid(excluding: Int) -> Int? {
+    let chromes = NSWorkspace.shared.runningApplications.filter {
+        $0.bundleIdentifier == "com.google.Chrome" && !$0.isTerminated && Int($0.processIdentifier) != excluding
+    }
+    if chromes.isEmpty { return nil }
+    if let active = chromes.first(where: { $0.isActive }) { return Int(active.processIdentifier) }
+    return Int(chromes[0].processIdentifier)
+}
+
+func chromeListTabs(excludePid: Int) -> [String: Any] {
+    guard let pid = userChromePid(excluding: excludePid) else {
+        return ["ok": false, "reason": "no-user-chrome", "error": "Google Chrome isn't running"]
+    }
+    guard let sb = SBApplication(processIdentifier: pid_t(pid)) else {
+        return ["ok": false, "error": "could not attach to Chrome pid \(pid)"]
+    }
+    let errCatch = ChromeSBErr()
+    sb.delegate = errCatch
+    sb.timeout = 900 // ticks (1/60s) ~15s — bound a hung Chrome instead of the 2-min AE default
+    let app = sb as ChromeSBApp
+    guard let wins = app.windows?() else {
+        if let e = errCatch.err { return ["ok": false, "error": chromeSBErrString(e), "code": e.code] }
+        return ["ok": false, "error": "no Chrome windows"]
+    }
+    var out: [[String: Any]] = []
+    for (wi, w) in wins.enumerated() {
+        let wtabs = (w as? ChromeSBWindow)?.tabs?() ?? []
+        for (ti, t) in wtabs.enumerated() {
+            guard let tb = t as? ChromeSBTab else { continue }
+            out.append([
+                "window": wi + 1,
+                "tab": ti + 1,
+                "id": tb.id?.intValue ?? -1,
+                "url": tb.URL ?? "",
+                "title": tb.title ?? ""
+            ])
+        }
+    }
+    return ["ok": true, "tabs": out]
+}
+
+// Run page JS in a user-Chrome tab. Address by stable tab `id` when known (robust to reorder/move), else by 1-based
+// window/tab index. ALWAYS returns the resolved tab's stable `id` so the caller can bind to it after the first call.
+func chromeExecJS(excludePid: Int, tabId: Int?, window: Int?, tab: Int?, code: String) -> [String: Any] {
+    guard let pid = userChromePid(excluding: excludePid) else {
+        return ["ok": false, "reason": "no-user-chrome", "error": "Google Chrome isn't running"]
+    }
+    guard let sb = SBApplication(processIdentifier: pid_t(pid)) else {
+        return ["ok": false, "error": "could not attach to Chrome pid \(pid)"]
+    }
+    let errCatch = ChromeSBErr()
+    sb.delegate = errCatch
+    sb.timeout = 900
+    let app = sb as ChromeSBApp
+    guard let wins = app.windows?() else {
+        if let e = errCatch.err { return ["ok": false, "error": chromeSBErrString(e), "code": e.code] }
+        return ["ok": false, "error": "no Chrome windows"]
+    }
+    var target: ChromeSBTab?
+    if let wantId = tabId {
+        outer: for w in wins {
+            for t in ((w as? ChromeSBWindow)?.tabs?() ?? []) {
+                if let tb = t as? ChromeSBTab, tb.id?.intValue == wantId { target = tb; break outer }
+            }
+        }
+        if target == nil { return ["ok": false, "reason": "tab-not-found", "error": "Chrome tab id \(wantId) not found"] }
+    } else if let wi = window, let ti = tab {
+        if wi >= 1, wi <= wins.count, let wtabs = (wins[wi - 1] as? ChromeSBWindow)?.tabs?(), ti >= 1, ti <= wtabs.count {
+            target = wtabs[ti - 1] as? ChromeSBTab
+        }
+        if target == nil { return ["ok": false, "reason": "bad-index", "error": "no tab \(ti) of window \(wi)"] }
+    } else {
+        return ["ok": false, "error": "chrome_js needs id or window+tab"]
+    }
+    let resolvedId = target?.id?.intValue ?? -1
+    let raw: Any? = target?.executeJavascript?(code)
+    if let e = errCatch.err { return ["ok": false, "error": chromeSBErrString(e), "code": e.code] }
+    let result = (raw as? String) ?? (raw != nil ? String(describing: raw!) : "")
+    // NB: key is "tabId", NOT "id" — the socket envelope uses "id" for message correlation, and the dispatcher
+    // overwrites r["id"] with the message id on reply, so a tab id under "id" would be clobbered.
+    return ["ok": true, "result": result, "tabId": resolvedId]
 }
 
 // ===== Computer-use: window enumeration + AX (read/act) + vision (per-window screenshot) + CGEvent input =====
@@ -791,6 +916,21 @@ conn.run { msg in
         conn.send(out)
     }
     DispatchQueue.main.async {
+        // Ops that READ another app via Accessibility, or DRIVE one via synthetic CGEvents, are SILENT failures
+        // without the Accessibility grant: macOS hands back an empty AX tree (ax_read) and quietly DROPS posted
+        // key/mouse events (cg_*) while the call still "succeeds". That made writes report {ok:true,typed} with
+        // nothing typed, and reads return {root:{},nodes:1} — indistinguishable from a genuinely empty app. Fail
+        // LOUD instead, exactly like the screenshot path, with an error string permissionFromError() already maps
+        // to the Accessibility grant (connection-grants.mjs), so the agent surfaces the grant card instead of a
+        // phantom success / empty read. No-op when the grant IS present (identical behavior to before).
+        let needsAccessibility: Set<String> = ["ax_tree", "ax_read", "ax_act", "ax_observe", "cg_click", "cg_type", "cg_key"]
+        if needsAccessibility.contains(cmd) && !accessibilityGranted() {
+            reply(["ok": false,
+                   "error": "Accessibility not granted to the BlitzOS helper (AXIsProcessTrusted=false) — it cannot read or control app windows. Enable it in System Settings ▸ Privacy & Security ▸ Accessibility.",
+                   "code": "accessibility_denied",
+                   "needsPermission": "accessibility"])
+            return
+        }
         switch cmd {
         case "tcc_status": reply(["tcc": tccStatus()])
         case "request_accessibility": requestAccessibility(); reply(["tcc": tccStatus()])
@@ -811,6 +951,32 @@ conn.run { msg in
         case "automation_status":
             // No-prompt: is the helper already allowed to automate this bundle id? (skips re-prompting a granted target)
             reply(automationStatus(msg["bundleId"] as? String ?? ""))
+        case "chrome_pid":
+            // No-prompt PID probe (NSWorkspace only, no Apple Event): which user-Chrome pid we'd pin, given the
+            // Blitz pid to exclude. Used by the verify harness to prove exclusion without needing Automation.
+            let ex = msg["excludePid"] as? Int ?? -1
+            let cands = NSWorkspace.shared.runningApplications
+                .filter { $0.bundleIdentifier == "com.google.Chrome" && !$0.isTerminated }
+                .map { Int($0.processIdentifier) }
+            reply(["ok": true, "pid": userChromePid(excluding: ex) ?? -1, "candidates": cands, "excluded": ex])
+        case "chrome_list_tabs":
+            // The user's Chrome tabs, PID-pinned (excludes Blitz Chrome). Reply async — the Apple Event round-trip
+            // runs off the main thread so it can't block the helper's other RPCs.
+            let ex = msg["excludePid"] as? Int ?? -1
+            DispatchQueue.global().async {
+                var r = chromeListTabs(excludePid: ex); r["type"] = "reply"; r["id"] = id; conn.send(r)
+            }
+        case "chrome_js":
+            // Run page JS in a user-Chrome tab, PID-pinned. Address by stable id or window/tab index. Reply async.
+            let ex = msg["excludePid"] as? Int ?? -1
+            let code = msg["code"] as? String ?? ""
+            let tid = msg["tabId"] as? Int // the STABLE Chrome tab id (NOT the envelope "id" = message correlation)
+            let win = msg["window"] as? Int
+            let tb = msg["tab"] as? Int
+            DispatchQueue.global().async {
+                var r = chromeExecJS(excludePid: ex, tabId: tid, window: win, tab: tb, code: code)
+                r["type"] = "reply"; r["id"] = id; conn.send(r)
+            }
         case "list_windows": reply(["ok": true, "windows": listWindows()])
         case "ax_tree", "ax_read":
             let pid = msg["pid"] as? Int ?? -1

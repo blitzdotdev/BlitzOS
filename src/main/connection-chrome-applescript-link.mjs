@@ -1,105 +1,98 @@
-// The CHROME tab adapter — via Apple Events `execute … javascript` (extension-free, the connector is deprecated).
-// Behind the SAME connection vocabulary as the Safari link: read / run_js / act / navigate. The JS runs in the
-// page's own context (Chrome MAIN world), so run_js is unrestricted.
+// The CHROME tab adapter — drives the USER's Chrome tabs via the helper's PID-pinned ScriptingBridge path
+// (`chrome_js` / `chrome_list_tabs`), NOT `tell application "Google Chrome"`. Behind the SAME connection vocabulary
+// as the Safari link: read / run_js / act / navigate.
 //
-// FOCUS-SAFETY IS THE DESIGN CONSTRAINT (measured by a live agent): `execute … javascript` NEVER steals focus
-// (0/50 reads, 0/55 navigations via injected location.href). AppleScript `set URL` / `make new tab` / `open`
-// stole focus ~30% of the time. So this adapter does EVERYTHING through `execute javascript` — including navigate
-// (inject `location.href=…`) — and NEVER touches `set URL` / `open` / `make new tab` on the hot path. The only
-// unavoidable steal is opening a site that has no tab yet; that is the user's job (or an explicit foreground act),
-// never something this adapter does silently.
+// WHY PID-PINNED (the bug this fixes): `tell application "Google Chrome"` resolves by bundle id, which is AMBIGUOUS
+// when BlitzOS's own "Blitz Chrome" (a second com.google.Chrome instance, blitz-chrome.ts) is alive — the Apple
+// Event can route to the wrong instance, so the user's tabs vanish or a tab index throws -1719 and the agent wrongly
+// concludes the tab is closed. The helper pins the Apple Event to the USER's Chrome PID (excluding Blitz's pid),
+// removing the ambiguity. TCC is UNCHANGED: Apple Events auth is keyed by the TARGET bundle id, not pid, so the
+// helper's existing "control Google Chrome" grant covers it with no new prompt. See plans/blitzos-chrome-pid-targeting.md.
 //
-// Honest caveats (same class as Safari): `execute javascript` is synchronous with NO background event stream (no
-// live "source changed" wake — the agent re-reads on demand), and it needs a one-time setup: Chrome ▸ View ▸
-// Developer ▸ "Allow JavaScript from Apple Events" + an Automation grant. JS is passed as an osascript ARGUMENT
-// (item 1 of argv) so there is no string-escaping to get wrong.
+// FOCUS-SAFETY (measured by a live agent): `execute … javascript` NEVER steals focus. So this adapter does
+// EVERYTHING through it — including navigate (inject `location.href=…`) — and NEVER touches `set URL` / `open` /
+// `make new tab`. The only unavoidable steal is opening a site that has no tab yet; that is the user's job.
+//
+// ROBUST ADDRESSING: a connection binds to the tab's STABLE Chrome `id` (captured on connect), re-resolved by id on
+// every call, so a window reorder / focus change / tab move can't silently re-point it at the WRONG tab. Falls back
+// to the 1-based window/tab index when the id isn't available — never worse than the old positional behavior.
+//
+// Honest caveat (same as Safari): no background event stream (the agent re-reads on demand), and a one-time setup:
+// Chrome ▸ View ▸ Developer ▸ "Allow JavaScript from Apple Events" + an Automation grant on the helper.
 
 import { READ_JS, ACT_JS, faviconForUrl } from './connection-page-js.mjs'
 import { classifyBrowserState, browserListTabsGate } from './connection-grants.mjs'
 
-export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
-  // EVERY osascript runs THROUGH the computer-use helper so the "control Google Chrome" Automation grant stays on
-  // the HELPER (granted once in onboarding) and BlitzOS is NEVER the responsible process for an Apple Event. A
-  // direct Electron osascript would run as BlitzOS and re-prompt "control Google Chrome" in every chat session, so
-  // there is NO direct-osascript fallback: if the helper can't run it we FAIL (ok:false) and the caller degrades.
-  // Ensure the helper first if it isn't up yet (it is prewarmed at boot, so this is usually a no-op).
-  const osa = async (args, timeout = 15000) => {
-    if (!helper || !helper.available || !helper.available()) {
-      return { ok: false, stdout: '', stderr: 'computer-use helper unavailable' }
+export function makeChromeAppleScriptLink({ connectionOps, helper, blitzPid } = {}) {
+  // Blitz Chrome's real browser pid, to EXCLUDE from the user-Chrome enumeration (so the agent's own browser never
+  // shadows the user's). -1 = nothing to exclude (Blitz not running / pid not resolved yet).
+  const getBlitzPid = () => {
+    try {
+      const p = typeof blitzPid === 'function' ? blitzPid() : null
+      return typeof p === 'number' && p > 0 ? p : -1
+    } catch {
+      return -1
     }
-    if (!helper.connected() && helper.ensure) {
-      try { await helper.ensure() } catch { /* reported by the not-connected check below */ }
-    }
-    if (!helper.connected()) {
-      return { ok: false, stdout: '', stderr: 'computer-use helper not connected' }
-    }
-    const r = await helper.call('osa', { args }, timeout + 2000)
-    if (r.error) return { ok: false, stdout: '', stderr: String(r.error) }
-    return { ok: !!r.ok, stdout: String(r.stdout || ''), stderr: String(r.stderr || '') }
   }
   const refToConn = new Map() // dedup: this exact Chrome tab (chrome:w:t) → its connection
 
-  // Run page-context JS in tab t of window w via `execute … javascript`. NEVER navigates via `set URL`.
-  async function execJS(code, w, t) {
-    const r = await osa([
-      '-e', 'on run argv',
-      '-e', 'tell application "Google Chrome" to execute (tab (item 2 of argv as integer) of window (item 3 of argv as integer)) javascript (item 1 of argv)',
-      '-e', 'end run',
-      code, String(t), String(w)
-    ])
-    if (!r.ok) {
-      const msg = r.stderr || 'osascript failed'
-      // Chrome's error when the toggle is off OR when Chrome 149+ has a regression where it reports
-      // the setting as off even when it's on (the pref file and menu show enabled but execution fails).
-      // Do NOT claim the setting is off — it might be on. Give actionable guidance for both cases.
-      if (/JavaScript through AppleScript|Allow JavaScript from Apple Events|not allowed|Apple ?events|-1743|automation/i.test(msg)) {
+  // Every Chrome helper RPC goes through here so the availability/ensure checks live in ONE place. There is NO
+  // direct-osascript fallback: the Automation grant must stay on the HELPER (else BlitzOS re-prompts every session),
+  // so if the helper can't run it we FAIL (the caller degrades).
+  const hcall = async (cmd, payload = {}, timeout = 20000) => {
+    if (!helper || !helper.available || !helper.available()) return { error: 'computer-use helper unavailable' }
+    if (!helper.connected() && helper.ensure) {
+      try { await helper.ensure() } catch { /* reported by the not-connected check below */ }
+    }
+    if (!helper.connected()) return { error: 'computer-use helper not connected' }
+    const r = await helper.call(cmd, payload, timeout)
+    return r || { error: 'no reply from helper' }
+  }
+
+  // Run page-context JS in a user-Chrome tab (by stable `id` if known, else window/tab index). Returns
+  // { stdout, id } (id = the resolved tab's STABLE id, so the caller can bind to it) or { error }.
+  async function chromeJS(code, { id, w, t } = {}) {
+    // `tabId` (NOT `id`) on the wire — the helper socket reserves `id` for message correlation.
+    const r = await hcall('chrome_js', { excludePid: getBlitzPid(), code, ...(id != null ? { tabId: id } : { window: w, tab: t }) })
+    if (r.error || r.ok === false) {
+      if (r.reason === 'no-user-chrome') return { error: "Google Chrome isn't running" }
+      const msg = String(r.error || r.reason || 'chrome_js failed')
+      // Chrome's error when the Allow-JS toggle is off OR the Chrome 149+ regression (reports off even when on).
+      // Do NOT claim the setting is off — give actionable guidance for both cases.
+      if (/JavaScript through AppleScript|Allow JavaScript from Apple Events|not allowed|Apple ?events|-1743|automation|turned off/i.test(msg)) {
         return { error: 'Chrome denied JavaScript via Apple Events. If View ▸ Developer ▸ "Allow JavaScript from Apple Events" is already checked, Chrome 149 has a regression — do a full Chrome quit-and-relaunch. If unchecked, enable it first. Use the CDP extension or a Drive/Docs MCP connector as an alternative.' }
       }
       return { error: msg.trim() }
     }
-    return { stdout: r.stdout.trim() }
+    return { stdout: String(r.result ?? '').trim(), id: typeof r.tabId === 'number' && r.tabId >= 0 ? r.tabId : undefined }
   }
 
   async function listTabs() {
     // NO-PROMPT gate: only send the (prompting) Apple Event when the helper ALREADY holds "control Google Chrome".
     // A passive poll must NEVER raise the consent dialog — it pops UNDER the picker overlay, unclickable. When not
     // granted, report the connector state from the no-prompt status so the UI shows a grant row (no prompt fires).
-    // (Automation-granted but Allow-JS off still runs below and surfaces 'allowjs' — that path raises no TCC prompt.)
     const auth = helper && helper.automationGranted ? await helper.automationGranted('com.google.Chrome').catch(() => 'unknown') : 'granted'
     const gate = browserListTabsGate(auth)
     if (gate) return { tabs: [], state: gate }
-    const r = await osa([
-      '-e', 'tell application "Google Chrome"',
-      '-e', 'set out to ""',
-      '-e', 'repeat with w from 1 to count of windows',
-      '-e', 'repeat with t from 1 to count of tabs of window w',
-      '-e', 'try',
-      '-e', 'set out to out & w & ":" & t & ":" & (URL of tab t of window w) & ":::" & (title of tab t of window w) & linefeed',
-      '-e', 'end try',
-      '-e', 'end repeat',
-      '-e', 'end repeat',
-      '-e', 'return out',
-      '-e', 'end tell'
-    ])
-    // Surface WHY there are no tabs (Automation denied / Allow-JS off / not running) so the connector list can show
-    // a special "grant permission" row for Chrome instead of just hiding it (the confusing half-state).
-    if (!r.ok) return { tabs: [], state: classifyBrowserState(r.stderr) }
+    const r = await hcall('chrome_list_tabs', { excludePid: getBlitzPid() }, 15000)
+    if (r.error || r.ok === false) {
+      // No user Chrome running is a DISTINCT, honest result (not a permission gap) → 'unreachable'.
+      if (r.reason === 'no-user-chrome') return { tabs: [], state: 'unreachable' }
+      return { tabs: [], state: classifyBrowserState(String(r.error || '')) }
+    }
     const tabs = []
-    for (const line of r.stdout.split('\n')) {
-      const m = line.match(/^(\d+):(\d+):(.*?):::(.*)$/)
-      if (!m) continue
-      const url = m[3]
-      const title = m[4]
-      // Chrome discards inactive tabs — their URL becomes "about:blank" and title becomes empty.
-      // Keep them in the list so the user can see they exist; mark them discarded so the UI can label them.
-      // Connecting a discarded tab will reload it and reveal the real URL/title.
-      // Only drop genuinely empty lines (no url field at all).
+    for (const row of Array.isArray(r.tabs) ? r.tabs : []) {
+      const url = String(row.url || '')
+      // Chrome discards inactive tabs — URL becomes "about:blank", title empty. Keep them (so the user sees they
+      // exist) but mark discarded; connecting one reloads it. Only drop rows with no url field at all.
       if (!url) continue
+      const title = String(row.title || '')
       const discarded = url === 'about:blank' && !title
       tabs.push({
-        tabId: `chrome:${m[1]}:${m[2]}`,
-        window: Number(m[1]),
-        tab: Number(m[2]),
+        tabId: `chrome:${row.window}:${row.tab}`,
+        window: Number(row.window),
+        tab: Number(row.tab),
+        chromeId: typeof row.id === 'number' && row.id >= 0 ? row.id : undefined, // stable id the connection binds to
         url: discarded ? '' : url,
         title: discarded ? '' : title,
         favIconUrl: discarded ? undefined : faviconForUrl(url),
@@ -133,7 +126,9 @@ export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
         return { ...info, tab: { tabId } }
       }
     }
-    const got = await execJS('(function(){return JSON.stringify({url:location.href,title:document.title})})()', ref.w, ref.t)
+    // Initial read by window/tab index — this ALSO captures the tab's STABLE Chrome id, which the connection binds
+    // to so later calls survive a window reorder / tab move (the positional-drift root cause).
+    const got = await chromeJS('(function(){return JSON.stringify({url:location.href,title:document.title})})()', { w: ref.w, t: ref.t })
     if (got.error) return got
     let info = {}
     try {
@@ -141,12 +136,21 @@ export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
     } catch {
       /* ignore */
     }
+    // The bound stable id. Re-confirmed from every call's reply (in case it was unknown at connect). When null we
+    // fall back to the window/tab ordinal — never worse than the old behavior.
+    let chromeId = got.id
+    const target = () => (chromeId != null ? { id: chromeId } : { w: ref.w, t: ref.t })
+    const runVerb = async (code) => {
+      const r = await chromeJS(code, target())
+      if (!r.error && r.id != null) chromeId = r.id
+      return r
+    }
     const sourceId = opts.sourceId || hostOf(info.url || '')
     const adapter = {
       call: async (verb, args) => {
         if (verb === 'run_js') {
           const code = `(function(){try{return JSON.stringify((function(args){${String((args && args.code) || '')}})(${JSON.stringify((args && args.args) || {})}))}catch(e){return JSON.stringify({error:String(e)})}})()`
-          const r = await execJS(code, ref.w, ref.t)
+          const r = await runVerb(code)
           if (r.error) return r
           try {
             const v = JSON.parse(r.stdout)
@@ -156,7 +160,7 @@ export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
           }
         }
         if (verb === 'read') {
-          const r = await execJS(`${READ_JS}(${JSON.stringify(args || {})})`, ref.w, ref.t)
+          const r = await runVerb(`${READ_JS}(${JSON.stringify(args || {})})`)
           if (r.error) return r
           try {
             return JSON.parse(r.stdout)
@@ -165,7 +169,7 @@ export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
           }
         }
         if (verb === 'act') {
-          const r = await execJS(`${ACT_JS}(${JSON.stringify(args || {})})`, ref.w, ref.t)
+          const r = await runVerb(`${ACT_JS}(${JSON.stringify(args || {})})`)
           if (r.error) return r
           try {
             return JSON.parse(r.stdout)
@@ -178,7 +182,7 @@ export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
           const url = String((args && args.url) || '')
           if (!url) return { error: 'navigate needs a url' }
           const code = `(function(u){location.href=u;return JSON.stringify({navigated:u})})(${JSON.stringify(url)})`
-          const r = await execJS(code, ref.w, ref.t)
+          const r = await runVerb(code)
           if (r.error) return r
           return { effect: { navigated: url } }
         }

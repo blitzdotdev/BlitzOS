@@ -155,6 +155,12 @@ class BlitzChrome {
   isRunning(): boolean {
     return this.alive
   }
+  /** Blitz Chrome's REAL browser PID (resolved from the debug port), or null if not running. The user-Chrome
+   *  Apple-Events bridge EXCLUDES this pid so the agent's own browser never shadows the user's Chrome (the
+   *  shared com.google.Chrome bundle-id collision — see plans/blitzos-chrome-pid-targeting.md). */
+  browserPid(): number | null {
+    return this.chromePid
+  }
   private isWsOpen(): boolean {
     return !!this.ws && this.ws.readyState === WebSocket.OPEN
   }

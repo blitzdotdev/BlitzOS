@@ -1719,6 +1719,9 @@ app.whenReady().then(() => {
   // Chrome isn't scriptable yet (Automation not granted) or no window matches, in which case the caller falls back to
   // a window connect. Scoped to Google Chrome only: the AppleScript targets "Google Chrome"; other Chromium browsers
   // (Brave/Edge/Arc) have no Apple-Events tab adapter, so they connect as a window instead.
+  // TODO(blitzos-chrome-pid-targeting): this still uses `tell application "Google Chrome"`, so it shares the
+  // Blitz-Chrome bundle-id collision (it can match against the wrong instance). Lower stakes than the live tab path
+  // (drop-time, user-initiated, transient) — fold it onto a PID-pinned helper RPC as a follow-up.
   const matchChromeTabByBounds = async (b: { x: number; y: number; w: number; h: number }): Promise<string | null> => {
     const osaArgs = [
       '-e', 'on run',
@@ -1855,7 +1858,9 @@ app.whenReady().then(() => {
   // Chrome tabs via Apple Events `execute … javascript` (browser:'chrome') — the connector extension is deprecated,
   // so this is the Chrome tab path. Focus-safe: it drives Chrome only through executed JS, never `set URL`. The
   // helper routes the AppleScript so the "control Chrome" Automation grant stays on the helper (granted in onboarding).
-  electronConnections.setChromeAsLink(makeChromeAppleScriptLink({ connectionOps: electronConnections, helper: computerUseHelper() }))
+  // blitzPid EXCLUDES the agent's own Blitz Chrome (a second com.google.Chrome instance) from the user-Chrome
+  // enumeration, so it can never shadow the user's tabs over Apple Events. See plans/blitzos-chrome-pid-targeting.md.
+  electronConnections.setChromeAsLink(makeChromeAppleScriptLink({ connectionOps: electronConnections, helper: computerUseHelper(), blitzPid: () => blitzChrome().browserPid() }))
   // Chrome is connectable out of the box via Apple Events (setChromeAsLink above; one-time "Allow JavaScript
   // from Apple Events" in View ▸ Developer). There is no connector extension.
 
