@@ -246,8 +246,10 @@ const api = {
     ): Promise<{ ok: boolean; error?: string }> {
       return (ipcRenderer.invoke('os:pick-start', dropZone, selfRect, activeSessionId) as Promise<{ ok: boolean; error?: string }>).catch((e) => ({ ok: false, error: String(e) }))
     },
-    stop(): void {
-      void ipcRenderer.invoke('os:pick-stop').catch(() => {})
+    /** Returns once the helper has actually torn down the overlay, so callers can AWAIT it before raising a prompt
+     *  (otherwise the overlay still intercepts the click on the macOS dialog). */
+    stop(): Promise<void> {
+      return (ipcRenderer.invoke('os:pick-stop') as Promise<unknown>).then(() => {}).catch(() => {})
     },
     onEvent(cb: (m: { kind: string; [k: string]: unknown }) => void): () => void {
       const listener = (_e: unknown, m: { kind: string; [k: string]: unknown }): void => cb(m)
@@ -477,6 +479,24 @@ const api = {
     forceVisible: process.env.BLITZ_FORCE_ONBOARDING === '1',
     start(): Promise<{ ok: boolean; cached?: boolean }> {
       return ipcRenderer.invoke('onboarding:start')
+    },
+    /** P0: trigger the macOS grant for ONE connection permission (on the helper) from a permission card's button.
+     *  Returns whether it landed + whether we raised a prompt or opened Settings (denied → Settings, the way back). */
+    requestGrant(grant: string): Promise<{ granted: boolean; opened: 'prompt' | 'settings' | 'none' }> {
+      return ipcRenderer.invoke('os:request-grant', grant)
+    },
+    /** Which of a browser's connection grants are ALREADY satisfied (prompt-free), so the mini-onboarding shows only
+     *  the rows that still need granting. Returns a map { '<grant>': granted } — Chrome: systemevents/chrome/allowjs,
+     *  Safari: automation only. */
+    browserGrantStates(browser: string): Promise<Record<string, boolean>> {
+      return (ipcRenderer.invoke('os:browser-grant-states', browser) as Promise<Record<string, boolean>>).catch(() => ({}))
+    },
+    /** P0: fires when a connection grant lands (after the user toggles it in Settings / clicks Allow), so a permission
+     *  card can clear itself and retry the connection without the user reopening the panel. */
+    onGrantChanged(cb: (m: { grant: string; granted: boolean }) => void): () => void {
+      const h = (_e: unknown, m: { grant: string; granted: boolean }): void => cb(m)
+      ipcRenderer.on('os:grant-changed', h)
+      return () => ipcRenderer.removeListener('os:grant-changed', h)
     },
     /** Is the Claude Code CLI installed? `recheck` busts the cached probe (after the user just installed it). */
     claudeStatus(recheck?: boolean): Promise<{ installed: boolean; path: string | null }> {

@@ -1162,24 +1162,33 @@ export function makeConnectionOps({
     chromeAsLink = link
   }
   // Connectable tabs = Chrome + Safari, both via Apple Events, tagged by `browser`.
-  async function connectionListTabs() {
+  // `only` ('chrome'|'safari') scopes the enumeration to ONE browser — the drop path passes it so dropping Chrome
+  // never runs a Safari Apple Event (which would spuriously prompt for Safari). No arg = both (the connector list).
+  async function connectionListTabs(only) {
     const out = []
-    if (chromeAsLink && typeof chromeAsLink.listTabs === 'function') {
+    // P0: carry each browser's coarse reachability state ('ok' | 'denied' | 'allowjs' | 'unreachable' | 'helper')
+    // so the connector list can show a dedicated grant row for a browser it can't reach, instead of just hiding it.
+    const browsers = {}
+    if (only !== 'safari' && chromeAsLink && typeof chromeAsLink.listTabs === 'function') {
       try {
-        for (const t of (await chromeAsLink.listTabs()) || []) out.push({ ...t, browser: 'chrome' })
+        const cr = await chromeAsLink.listTabs()
+        for (const t of (cr && cr.tabs) || []) out.push({ ...t, browser: 'chrome' })
+        browsers.chrome = (cr && cr.state) || 'unreachable'
       } catch {
-        /* Chrome not scriptable yet — "Allow JavaScript from Apple Events" is off */
+        browsers.chrome = 'unreachable'
       }
     }
-    if (safariLink && typeof safariLink.listTabs === 'function') {
+    if (only !== 'chrome' && safariLink && typeof safariLink.listTabs === 'function') {
       try {
-        for (const t of (await safariLink.listTabs()) || []) out.push({ ...t, browser: 'safari' })
+        const sr = await safariLink.listTabs()
+        for (const t of (sr && sr.tabs) || []) out.push({ ...t, browser: 'safari' })
+        browsers.safari = (sr && sr.state) || 'unreachable'
       } catch {
-        /* Safari not scriptable yet */
+        browsers.safari = 'unreachable'
       }
     }
     if (!chromeAsLink && !safariLink) return { error: 'no browser link — enable "Allow JavaScript from Apple Events" in Chrome (View ▸ Developer) or Safari (Develop)' }
-    return { tabs: out }
+    return { tabs: out, browsers }
   }
   // Enrich a connect result with the source's BRIEFING — savedTools (banked here) + registryTools (vetted,
   // available to add) — so the agent SEES reusable tools in the very response it gets on connect, before it
@@ -1215,9 +1224,20 @@ export function makeConnectionOps({
   function setWindowLink(link) {
     windowLink = link
   }
+  // P0: Chrome/Safari are connected as TABS (Apple Events), never as generic windows — so their windows must NOT
+  // appear in the app-window list (they showed up as "Google Chrome 7", confusing). The connector list shows a
+  // dedicated browser row instead.
+  const isBrowserWindow = (w) => {
+    const b = String((w && w.bundleId) || '').toLowerCase()
+    if (b) return b === 'com.google.chrome' || b.startsWith('com.google.chrome.') || b === 'com.apple.safari'
+    const app = String((w && w.app) || '').toLowerCase()
+    return /\bgoogle chrome\b/.test(app) || app === 'safari'
+  }
   async function connectionListWindows() {
     if (!windowLink || typeof windowLink.listWindows !== 'function') return { error: 'no window link — window connect needs the BlitzOS helper (macOS, local only)' }
-    return windowLink.listWindows()
+    const r = await windowLink.listWindows()
+    if (r && Array.isArray(r.windows)) return { ...r, windows: r.windows.filter((w) => !isBrowserWindow(w)) }
+    return r
   }
   async function connectionConnectWindow(windowId, opts) {
     if (!windowLink || typeof windowLink.connectWindow !== 'function') return { error: 'no window link — window connect needs the BlitzOS helper (macOS, local only)' }

@@ -15,6 +15,7 @@
 // (item 1 of argv) so there is no string-escaping to get wrong.
 
 import { READ_JS, ACT_JS, faviconForUrl } from './connection-page-js.mjs'
+import { classifyBrowserState, browserListTabsGate } from './connection-grants.mjs'
 
 export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
   // EVERY osascript runs THROUGH the computer-use helper so the "control Google Chrome" Automation grant stays on
@@ -60,6 +61,13 @@ export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
   }
 
   async function listTabs() {
+    // NO-PROMPT gate: only send the (prompting) Apple Event when the helper ALREADY holds "control Google Chrome".
+    // A passive poll must NEVER raise the consent dialog — it pops UNDER the picker overlay, unclickable. When not
+    // granted, report the connector state from the no-prompt status so the UI shows a grant row (no prompt fires).
+    // (Automation-granted but Allow-JS off still runs below and surfaces 'allowjs' — that path raises no TCC prompt.)
+    const auth = helper && helper.automationGranted ? await helper.automationGranted('com.google.Chrome').catch(() => 'unknown') : 'granted'
+    const gate = browserListTabsGate(auth)
+    if (gate) return { tabs: [], state: gate }
     const r = await osa([
       '-e', 'tell application "Google Chrome"',
       '-e', 'set out to ""',
@@ -73,7 +81,9 @@ export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
       '-e', 'return out',
       '-e', 'end tell'
     ])
-    if (!r.ok) return []
+    // Surface WHY there are no tabs (Automation denied / Allow-JS off / not running) so the connector list can show
+    // a special "grant permission" row for Chrome instead of just hiding it (the confusing half-state).
+    if (!r.ok) return { tabs: [], state: classifyBrowserState(r.stderr) }
     const tabs = []
     for (const line of r.stdout.split('\n')) {
       const m = line.match(/^(\d+):(\d+):(.*?):::(.*)$/)
@@ -96,7 +106,7 @@ export function makeChromeAppleScriptLink({ connectionOps, helper } = {}) {
         discarded: discarded || undefined
       })
     }
-    return tabs
+    return { tabs, state: 'ok' }
   }
 
   function parseRef(id) {

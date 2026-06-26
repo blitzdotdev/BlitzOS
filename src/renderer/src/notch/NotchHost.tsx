@@ -10,6 +10,7 @@
 import './notch.css'
 import { useEffect, useRef, useState } from 'react'
 import { clearStaged } from './stagingStore'
+import { usePickSuspended } from './pickSuspendStore'
 import { clearLiveTray, dropChat } from './sentTrayStore'
 import { onIslandViewRequest } from './islandNavStore'
 import { useDoneAgents, clearDone } from './doneStore'
@@ -386,10 +387,25 @@ export function NotchHost({
   // cursor and lets you drag its app icon into the drop-zone (.att-drop) to connect it. Arm it with the drop-zone's
   // ON-SCREEN rect, re-measuring across the open transition (the chassis grows + the panel expands, so the rect
   // settles a few frames late). Cleanup (panel closed / island unmounted) disarms the overlay.
+  const pickSuspended = usePickSuspended()
   useEffect(() => {
-    if (!attachOpen) return
     const pick = window.agentOS?.pick
     if (!pick) return
+    const stop = (): void => {
+      try {
+        void pick.stop()
+      } catch {
+        /* best-effort */
+      }
+    }
+    // The picker is armed ONLY while attach is open AND not suspended by a grant flow. In EVERY other state — attach
+    // closed via the X, a grant card up, the island unmounting — the overlay MUST come down. The old guard returned
+    // early WITHOUT stopping, so a close that happened while the picker was suspended left the overlay stuck on
+    // screen (the "X doesn't clear it" bug). Stop unconditionally here for the non-armed states.
+    if (!attachOpen || pickSuspended) {
+      stop()
+      return
+    }
     let stopped = false
     // viewport rect → on-screen rect (top-left global points; the overlay window's origin + the element offset).
     const measure = (sel: string): { x: number; y: number; w: number; h: number } | null => {
@@ -412,13 +428,9 @@ export function NotchHost({
       stopped = true
       cancelAnimationFrame(raf)
       timers.forEach(clearTimeout)
-      try {
-        pick.stop()
-      } catch {
-        /* best-effort */
-      }
+      stop()
     }
-  }, [attachOpen])
+  }, [attachOpen, pickSuspended])
 
   // Track managed agent terminals for the debug pane. The active agent id is the canonical terminal id, but the
   // metadata gives the pane a title/status and lets terminal lifecycle actions update without reopening surfaces.

@@ -13,6 +13,7 @@ import Foundation
 import AppKit
 import CoreGraphics
 import ApplicationServices
+import CoreServices // AEDeterminePermissionToAutomateTarget (no-prompt Automation status)
 import ScreenCaptureKit
 
 // The live connection to BlitzOS — assigned in main(), referenced by the AXObserver C callback (which can't
@@ -139,6 +140,24 @@ func runOsa(_ conn: HelperConnection, id: Int, args: [String]) {
         conn.send(["type": "reply", "id": id, "ok": proc.terminationStatus == 0, "exit": Int(proc.terminationStatus),
                    "stdout": String(data: outData, encoding: .utf8) ?? "", "stderr": String(data: errData, encoding: .utf8) ?? ""])
     }
+}
+
+// No-prompt check of whether THIS process (the helper) is ALREADY permitted to send Apple Events to `bundleId`.
+// AEDeterminePermissionToAutomateTarget with askUserIfNeeded=false returns the CURRENT authorization WITHOUT
+// raising the consent dialog: noErr(0)=granted · errAEEventNotPermitted(-1743)=denied ·
+// errAEEventWouldRequireUserConsent(-1744)=never asked · procNotFound(-600)=target not running. Lets BlitzOS skip
+// the PROMPTING probe (`count windows`) when the grant is already there, so it never re-pops "control Safari/Chrome".
+func automationStatus(_ bundleId: String) -> [String: Any] {
+    if bundleId.isEmpty { return ["ok": false, "error": "bundleId required"] }
+    let bytes = Array(bundleId.utf8)
+    var target = AEAddressDesc()
+    let created = bytes.withUnsafeBytes { raw in
+        AECreateDesc(typeApplicationBundleID, raw.baseAddress, raw.count, &target)
+    }
+    if created != noErr { return ["ok": false, "error": "AECreateDesc failed \(created)"] }
+    defer { AEDisposeDesc(&target) }
+    let status = AEDeterminePermissionToAutomateTarget(&target, AEEventClass(typeWildCard), AEEventID(typeWildCard), false)
+    return ["ok": true, "status": Int(status), "granted": status == noErr]
 }
 
 // ===== Computer-use: window enumeration + AX (read/act) + vision (per-window screenshot) + CGEvent input =====
@@ -789,6 +808,9 @@ conn.run { msg in
             // Run osascript under the helper + RETURN its stdout (the browser connection links route through this
             // so the Automation grant stays on the helper). Reply comes async on exit.
             runOsa(conn, id: id, args: msg["args"] as? [String] ?? [])
+        case "automation_status":
+            // No-prompt: is the helper already allowed to automate this bundle id? (skips re-prompting a granted target)
+            reply(automationStatus(msg["bundleId"] as? String ?? ""))
         case "list_windows": reply(["ok": true, "windows": listWindows()])
         case "ax_tree", "ax_read":
             let pid = msg["pid"] as? Int ?? -1

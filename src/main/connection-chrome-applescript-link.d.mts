@@ -11,7 +11,7 @@ export interface ChromeTabInfo {
 }
 
 export interface ChromeAppleScriptLink {
-  listTabs(): Promise<ChromeTabInfo[]>
+  listTabs(): Promise<{ tabs: ChromeTabInfo[]; state: 'ok' | 'denied' | 'allowjs' | 'helper' | 'unreachable' }>
   connectTab(tabId: string, opts?: { title?: string; sourceId?: string; agentId?: string }): Promise<Record<string, unknown>>
 }
 

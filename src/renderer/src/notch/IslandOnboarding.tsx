@@ -72,7 +72,7 @@ const LOCK_BODY = 'M7 11h10v8H7z'
 const INTRO_SLIDES: IntroSlide[] = [
   {
     title: 'Meet BlitzOS',
-    copy: 'A quiet island at the top of your screen. Hover in to see every agent in motion: working, done, or waiting on you.',
+    copy: 'One place to manage your agent sessions. Move your mouse to the center of the top of your screen to open BlitzOS, or press',
     shortcut: 'Alt+Space',
     visual: 'home'
   },
@@ -88,7 +88,7 @@ const INTRO_SLIDES: IntroSlide[] = [
   },
   {
     title: 'Blitz runs on Claude Code',
-    copy: 'Blitz uses Claude Code as its agent engine. Make sure it\'s installed before continuing.',
+    copy: 'BlitzOS uses your existing Claude Code as its agent engine. Make sure it\'s installed before continuing.',
     visual: 'requirement'
   },
 ]
@@ -123,10 +123,12 @@ type OnboardingAutoApi = {
 const autoApi = (api: NonNullable<typeof window.agentOS>['onboarding'] | undefined): OnboardingAutoApi | undefined =>
   api as (OnboardingAutoApi & typeof api) | undefined
 
-function nextStep(state: PreboardState, permissionsDone: boolean): StepKey {
-  if (!permissionsDone && permissionPending(state)) return 'permissions'
-  // Chrome JS bridge sits immediately after the Mac permissions (it depends on the Automation/AX grants).
-  if (wantsChromeJs(state) && !state.steps.chromejs) return 'chromejs'
+// JIT permissions (plans/blitzos-jit-permissions.md): onboarding NO LONGER walls the user behind a row of scary
+// macOS grants. Every TCC grant is now requested at the moment the user first reaches for the capability that
+// needs it (connect a browser tab → Automation; connect an app window → Accessibility + Screen Recording), so a
+// fresh launch is just intro → chat with ZERO permission prompts. The 'permissions' / 'chromejs' render branches
+// and their grant mechanisms are KEPT — the JIT connection flow reuses them — they're simply not flow steps.
+function nextStep(_state: PreboardState, _permissionsDone: boolean): StepKey {
   return 'done'
 }
 
@@ -451,7 +453,7 @@ export function IslandOnboarding({
             <p className="isl-onb-copy">
               {introSlide.copy}
               {introSlide.shortcut && (
-                <> Press <ShortcutKeys accel={introSlide.shortcut} /> to show or hide it anytime.</>
+                <> <ShortcutKeys accel={introSlide.shortcut} /> to show or hide BlitzOS anytime.</>
               )}
             </p>
           </div>
@@ -528,7 +530,7 @@ export function IslandOnboarding({
                 else setIntroIndex(Math.min(INTRO_SLIDES.length - 1, introIndex + 1))
               }}
             >
-              {introIndex >= INTRO_SLIDES.length - 1 ? 'Start setup' : 'Next'}
+              {introIndex >= INTRO_SLIDES.length - 1 ? 'Start BlitzOS' : 'Next'}
             </button>
           </div>
           </div>

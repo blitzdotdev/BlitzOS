@@ -13,6 +13,7 @@ import { installGuestSessionPolicy, resolvePermissionPrompt, attachGuestWindowPo
 import { startAgentSocket, getAgentSocketUrl } from './agentSocket'
 import { electronTerminalOps, electronActionItems, electronOps, electronConnections, setTerminalGetUrl, setTerminalAgentRuntime } from './electron-os-tools'
 import { makeWindowLink } from './connection-window-link'
+import { permissionFromError, grantForConnection, grantForBrowserState } from './connection-grants.mjs'
 import { makeAttachmentStore } from './attachment-store.mjs'
 import { makeSafariLink } from './connection-safari-link.mjs'
 import { makeChromeAppleScriptLink } from './connection-chrome-applescript-link.mjs'
@@ -950,14 +951,17 @@ app.whenReady().then(() => {
     const helper = computerUseHelper()
     const e = await helper.ensure()
     if (!e.ok) {
-      mainWindow?.webContents.send('os:pick-event', { kind: 'error', error: e.error || 'computer-use helper unavailable' })
+      const error = e.error || 'computer-use helper unavailable'
+      mainWindow?.webContents.send('os:pick-event', { kind: 'error', error, permission: permissionFromError(error) })
       return { ok: false, error: e.error }
     }
     const r = await helper.call('pick_start', { dropZone, selfRect, excludePids: [process.pid] })
     if (r.error || r.ok === false) {
-      void helper.request('accessibility').catch(() => {}) // most likely the tap needs Accessibility — raise the prompt
-      const error = String(r.error || 'enable Accessibility for BlitzOS, then reopen the attach panel')
-      mainWindow?.webContents.send('os:pick-event', { kind: 'error', error })
+      // P0: do NOT auto-fire the raw prompt here. The "could not create event tap" failure means Accessibility
+      // isn't granted; surface it as a permission descriptor so the renderer shows a clear card with an Enable
+      // button (which routes through os:request-grant), instead of a bare red string the user can't act on.
+      const error = String(r.error || 'could not start the window picker — Accessibility may not be granted')
+      mainWindow?.webContents.send('os:pick-event', { kind: 'error', error, permission: permissionFromError(error) || grantForConnection({ type: 'window' }) })
       return { ok: false, error }
     }
     return { ok: true }
@@ -1772,6 +1776,13 @@ app.whenReady().then(() => {
     if (b) return b === 'com.google.chrome' || b.startsWith('com.google.chrome.')
     return /\bgoogle chrome\b/.test(app.toLowerCase())
   }
+  const isSafariApp = (bundleId: string, app: string): boolean => {
+    const b = bundleId.toLowerCase()
+    if (b) return b === 'com.apple.safari'
+    return app.toLowerCase() === 'safari'
+  }
+  const droppedBrowser = (bundleId: string, app: string): 'chrome' | 'safari' | undefined =>
+    isGoogleChrome(bundleId, app) ? 'chrome' : isSafariApp(bundleId, app) ? 'safari' : undefined
   computerUseHelper().onEvent((m) => {
     const kind = m?.kind
     if (kind === 'pick_drop' && typeof m.windowId === 'number') {
@@ -1784,22 +1795,55 @@ app.whenReady().then(() => {
       // ONE terminal-event emit point: it ALWAYS stamps windowId (+ the drop's identity), so the renderer can clear
       // its optimistic placeholder no matter which branch ends the drop (success, loud error, or a thrown connect).
       const finish = (extra: Record<string, unknown>): void => {
-        mainWindow?.webContents.send('os:pick-event', { kind: 'connected', windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon, ...extra })
+        // P0: a FAILED drop carries the permission it needs (Accessibility for a window, control-<browser> for a
+        // browser tab) so the dropbox can show the inline grant screen (Give permission / Don't) instead of just a
+        // red error. permissionFromError maps the raw failure; grantForConnection is the up-front fallback.
+        const browser = droppedBrowser(bundleId, app)
+        const permission =
+          extra.permission !== undefined
+            ? extra.permission
+            : extra.ok === false
+              ? permissionFromError(extra.error, browser) || grantForConnection({ type: browser ? 'tab' : 'window', browser })
+              : null
+        mainWindow?.webContents.send('os:pick-event', { kind: 'connected', windowId: m.windowId, pid: m.pid, app, bundleId, title: String(m.title || ''), icon: m.icon, permission, ...extra })
       }
       void (async () => {
-        // A Google Chrome drop resolves to its active TAB (Apple Events, extension-free) so the agent gets the real
-        // page; any other window — a non-Chrome browser or a plain app — connects as a window. Only Google Chrome
-        // attempts the tab match, so a non-browser window with coincidentally-matching bounds never becomes a tab.
-        const chrome = isGoogleChrome(bundleId, app)
-        const chromeTabId = chrome ? await matchChromeTabByBounds(bounds) : null
-        const action: 'tab' | 'window' = chrome && chromeTabId ? 'tab' : 'window'
-        const res =
-          action === 'tab' && chromeTabId != null
-            ? await electronConnections.connectionConnectTab(chromeTabId, { agentId: pickActiveSession })
-            : await electronConnections.connectionConnectWindow(Number(m.windowId), { agentId: pickActiveSession })
+        // A browser drop (Chrome/Safari) connects a TAB (Apple Events) so the agent gets the real page. If the
+        // browser's Automation isn't granted, show the inline grant card in the dropbox — NEVER silently fall back to
+        // a window connect (the confusing bug the user hit). A plain app connects as a window via the helper (AX).
+        const browser = droppedBrowser(bundleId, app)
+        let res: { error?: string; connId?: string } | undefined
+        let action: 'tab' | 'window' | 'grant' = 'window'
+        if (browser) {
+          // STOP the picker overlay FIRST (awaited — it was intercepting clicks). We do NOT veil here: connectionListTabs
+          // is now gated to NEVER raise a prompt (a not-granted browser returns a state with no Apple Event), so an
+          // ungranted drop just shows the onboarding card (which owns its own veil) and a FULLY-GRANTED drop connects
+          // silently. Veiling here flashed the island on→off within ~1s on every granted browser drop (the regression).
+          await computerUseHelper().call('pick_stop').catch(() => {})
+          const tabsRes = (await (electronConnections.connectionListTabs as (only?: string) => Promise<unknown>)(browser).catch(() => ({}))) as {
+            tabs?: Array<{ tabId: string; browser?: string }>
+            browsers?: Record<string, string>
+          }
+          const state = (tabsRes.browsers || {})[browser]
+          if (state && state !== 'ok') {
+            const grant = grantForBrowserState(browser, state) || grantForConnection({ type: 'tab', browser })
+            finish({ ok: false, error: `${browser} needs permission`, permission: grant })
+            return
+          }
+          action = 'tab'
+          const tabId =
+            browser === 'chrome'
+              ? await matchChromeTabByBounds(bounds)
+              : (tabsRes.tabs || []).find((t) => t.browser === 'safari')?.tabId || null
+          res = tabId
+            ? await electronConnections.connectionConnectTab(tabId, { agentId: pickActiveSession })
+            : ((action = 'window'), await electronConnections.connectionConnectWindow(Number(m.windowId), { agentId: pickActiveSession }))
+        } else {
+          res = await electronConnections.connectionConnectWindow(Number(m.windowId), { agentId: pickActiveSession })
+        }
         const ok = !!res && !res.error
         const connId = typeof res?.connId === 'string' ? res.connId : ''
-        console.log(`[blitzos] drop → ${action}${action === 'tab' ? ` tab=${chromeTabId}` : ''} ok=${ok} (${app || bundleId})`)
+        console.log(`[blitzos] drop → ${action} ok=${ok} (${app || bundleId})`)
         finish({ ok, connId, error: res?.error })
       })().catch((err) => finish({ ok: false, error: String(err) }))
     } else if (kind === 'pick_over' || kind === 'pick_hover' || kind === 'pick_cancel') {

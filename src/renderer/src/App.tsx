@@ -10,6 +10,7 @@ import { GlanceBar, type GlancePeek } from './notch/GlanceBar'
 import { markDone, clearDone, reconcileDone } from './notch/doneStore'
 import { isOnboardingHoverLocked } from './notch/onboardingHoverLock'
 import { requestIslandView } from './notch/islandNavStore'
+import { usePickSuspended } from './notch/pickSuspendStore'
 import type { IslandAppMessagePart, IslandView } from './notch/types'
 import { ConnectPicker } from './components/ConnectPicker'
 import { IconCheck } from './components/Icons'
@@ -309,6 +310,20 @@ export default function App(): JSX.Element {
     requestIslandView('settings')
   }
   useEffect(() => window.agentOS?.notch?.onShowSettings?.(() => openIslandSettings()), [])
+  // While a JIT grant flow is active (the Chrome mini-onboarding), PIN the island open so a hover-away to System
+  // Settings can't collapse + unmount the flow (which lost its state + stranded the veil/picker — the user's bug).
+  // We only release the pin WE took, so a Settings/⌥Space pin isn't clobbered.
+  const grantFlowActive = usePickSuspended()
+  const grantPinnedRef = useRef(false)
+  useEffect(() => {
+    if (grantFlowActive) {
+      grantPinnedRef.current = true
+      setNotchPinnedBoth(true)
+    } else if (grantPinnedRef.current) {
+      grantPinnedRef.current = false
+      setNotchPinnedBoth(false)
+    }
+  }, [grantFlowActive])
   // Main asks us to VEIL the island (onboarding drag step) or unveil it. Veil = invisible + click-through but still
   // MOUNTED (a collapse here would unmount onboarding and close its drag-helper). On veil, immediately go
   // click-through; on unveil, the next hover restores interactivity.
@@ -341,6 +356,15 @@ export default function App(): JSX.Element {
       window.agentOS?.notch?.onHandleHover?.((on) => {
         notchOverRef.current = on
         if (on) {
+          // VEILED (any veil path — a grant flow hid the island)? Hovering the notch is the GENERAL escape hatch:
+          // unveil it, mirroring ⌥Space / Esc / Settings which already clear the veil. Must run BEFORE
+          // setNotchInteractive(true), which is forced to false while notchVeiledRef is set (so without this, hover
+          // could never restore a veiled island — only ⌥Space could). The island is already in 'panel' state under
+          // the veil, so clearing the class makes it visible again with no re-open needed.
+          if (notchVeiledRef.current) {
+            notchVeiledRef.current = false
+            document.body.classList.remove('island-veiled')
+          }
           if (notchHoverGraceRef.current) {
             clearTimeout(notchHoverGraceRef.current)
             notchHoverGraceRef.current = 0
@@ -537,13 +561,15 @@ export default function App(): JSX.Element {
   const [cinematicGlanceOpen, setCinematicGlanceOpen] = useState(false)
   const isServer = !!window.agentOS?.serverMode
 
-  // Onboarding auto-OPENS on launch so the first slide is visible without hovering the notch — but it is NOT pinned:
-  // normal hover behaviour (hover the notch to peek, glide away to dismiss, ⌥Space) all work. The hold below keeps it
-  // up long enough to notice; slide changes (which resize the chassis) re-stamp the hold via onIslandHoldOpen so a
-  // step never yanks the island shut under the cursor — a genuine hover-away still closes it after the hold.
+  // Onboarding auto-OPENS on launch so the first slide ("Meet BlitzOS") is visible without hovering the notch — but
+  // it is NOT pinned: normal hover behaviour (hover the notch to peek, glide away to dismiss, ⌥Space) all work. The
+  // hold below keeps it up long enough to notice; slide changes (which resize the chassis) re-stamp the hold via
+  // onIslandHoldOpen so a step never yanks the island shut under the cursor — a genuine hover-away still closes it.
   useEffect(() => {
     if (!onboarding || isServer || !notchOn) return
-    // Pre-stage the island view so it's ready when the cinematic hands off.
+    // Open the island STRAIGHT to the onboarding intro — no cinematic preamble. (The dev-only /replay-cinematic
+    // path still triggers the animation; it's just not in the user's first-launch flow anymore.) Pre-stage the
+    // onboarding view, then open the panel directly — same as completeIslandOnboarding does for the chat view.
     islandViewRef.current = 'onboarding'
     islandPageRef.current = 1
     islandAttachOpenRef.current = false
@@ -551,15 +577,7 @@ export default function App(): JSX.Element {
     setIslandKeepMounted(false)
     setNotchInteractive(true)
     notchHoldUntilRef.current = performance.now() + NOTCH_ATTACH_CLOSE_HOLD_MS
-    // Play the cinematic intro instead of opening the island directly.
-    // The cinematic's onComplete callback calls applyNotchState('panel') after the animation.
-    setNotchPeek({ working: 0, attn: 0, err: 0, total: 3, agents: [
-      { id: '0', status: 'working' },
-      { id: '5', status: 'working' },
-      { id: '1', status: 'working' },
-    ]})
-    setCinematicGlanceOpen(true)
-    triggerCinematic()
+    applyNotchState('panel')
   }, [onboarding, isServer, notchOn])
 
   const completeIslandOnboarding = (): void => {

@@ -438,26 +438,34 @@ function chromeJsHelperHtml(pointed: boolean, iconUrl: string | null): string {
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
 <style>
-  :root { color-scheme: light dark; }
+  :root { color-scheme: dark; }
   html,body { margin:0; height:100%; overflow:hidden; -webkit-user-select:none; user-select:none; font-family:-apple-system,system-ui,sans-serif; }
-  .h { height:100%; display:flex; align-items:center; gap:10px; padding:0 16px; box-sizing:border-box;
-       background:rgba(245,245,247,0.86); border-radius:16px; border:1px solid rgba(0,0,0,0.10);
-       -webkit-backdrop-filter:saturate(1.3) blur(20px); backdrop-filter:saturate(1.3) blur(20px);
-       box-shadow:0 8px 30px rgba(0,0,0,0.22); }
-  @media (prefers-color-scheme: dark){ .h{ background:rgba(40,42,46,0.86); border-color:rgba(255,255,255,0.12); color:#f5f5f7; } }
-  .icon { flex:0 0 auto; width:30px; height:30px; display:grid; place-items:center; }
-  .icon img { width:30px; height:30px; border-radius:7px; pointer-events:none; }
-  .fallback { width:30px; height:30px; display:grid; place-items:center; border-radius:7px;
-    background:linear-gradient(150deg,#2a93ff,#0066d6 60%,#05060a); color:#fff; font-weight:800; font-size:15px; }
-  /* The arrow points LEFT toward the menu row (the card sits just to the row's right). */
-  .arrow { position:relative; width:36px; height:24px; flex:0 0 auto; color:#0a84ff; animation:chromeArrowHint 1.65s cubic-bezier(.22,1,.36,1) infinite; }
-  .arrow:before { content:''; position:absolute; left:4px; top:11px; width:28px; height:2px; border-radius:999px; background:currentColor; }
-  .arrow:after { content:''; position:absolute; left:2px; top:6px; width:11px; height:11px; border-bottom:2px solid currentColor; border-left:2px solid currentColor; transform:rotate(45deg); }
-  .c { min-width:0; color:inherit; font-size:14px; line-height:1.25; font-weight:700; letter-spacing:-0.01em; }
-  @keyframes chromeArrowHint {
-    0%,62%,100% { opacity:.42; transform:translateX(0); }
-    32% { opacity:1; transform:translateX(-6px); }
-  }
+  /* SOLID near-black card (no transparency / no blur — it must read clearly over Chrome's menu), with a bright cool
+     rim, a soft breathing bloom, and a glint that sweeps the border so it pops next to the menu row. */
+  .h { position:relative; height:100%; display:flex; align-items:center; gap:14px; padding:0 18px; box-sizing:border-box;
+       background:#0c0e13; border-radius:18px; color:#f4f6fb;
+       box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 12px 36px rgba(0,0,0,0.55); }
+  /* the shining glint sweeping AROUND the card (a 2px gradient ring, masked to the border). */
+  .h:before { content:''; position:absolute; inset:-2px; border-radius:20px; padding:2px; pointer-events:none;
+       background:linear-gradient(115deg, rgba(74,168,255,0) 22%, rgba(120,190,255,0.95) 42%, rgba(74,168,255,0) 62%);
+       background-size:260% 100%;
+       -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor;
+       mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite:exclude;
+       animation:chromeGlint 2.4s linear infinite; }
+  /* a soft outer bloom that breathes. */
+  .h:after { content:''; position:absolute; inset:0; border-radius:18px; pointer-events:none; animation:chromeBloom 2.4s ease-in-out infinite; }
+  .icon { flex:0 0 auto; width:48px; height:48px; display:grid; place-items:center; }
+  .icon img { width:48px; height:48px; border-radius:12px; pointer-events:none; box-shadow:0 2px 12px rgba(0,0,0,0.5); }
+  .fallback { width:48px; height:48px; display:grid; place-items:center; border-radius:12px;
+    background:linear-gradient(150deg,#2a93ff,#0066d6 60%,#05060a); color:#fff; font-weight:800; font-size:22px; }
+  /* a big LEFT-pointing arrow toward the menu row (the card sits just to the row's right), sliding continuously. */
+  .arrow { position:relative; width:46px; height:30px; flex:0 0 auto; color:#4aa8ff; filter:drop-shadow(0 0 7px rgba(74,168,255,0.75)); animation:chromeArrowHint 1.45s cubic-bezier(.4,0,.2,1) infinite; }
+  .arrow:before { content:''; position:absolute; left:6px; top:13px; width:36px; height:3px; border-radius:999px; background:currentColor; }
+  .arrow:after { content:''; position:absolute; left:2px; top:7px; width:15px; height:15px; border-bottom:3px solid currentColor; border-left:3px solid currentColor; transform:rotate(45deg); }
+  .c { min-width:0; flex:1; color:#f4f6fb; font-size:15px; line-height:1.25; font-weight:700; letter-spacing:-0.01em; }
+  @keyframes chromeArrowHint { 0%,70%,100% { opacity:.5; transform:translateX(0); } 35% { opacity:1; transform:translateX(-10px); } }
+  @keyframes chromeGlint { 0% { background-position:130% 0; } 100% { background-position:-130% 0; } }
+  @keyframes chromeBloom { 0%,100% { box-shadow:0 0 22px 2px rgba(40,130,255,0.14); } 50% { box-shadow:0 0 36px 7px rgba(40,130,255,0.32); } }
 </style></head><body>
 <div class="h">
   ${arrow}
@@ -521,7 +529,7 @@ async function openChromeJsRow(): Promise<{ x: number; y: number; w: number; h: 
 // runScan-osascript, so the grant attaches to the HELPER (not BlitzOS): the FIRST send raises the macOS consent
 // ("BlitzOS wants to control X") and blocks until the user chooses; thereafter it's silent. ok=granted (osascript
 // exit 0), denied=-1743/non-zero. No new helper Swift — reuses the osascript path openChromeJsRow already uses.
-async function requestHelperAutomation(target: 'systemevents' | 'browser'): Promise<{ granted: boolean; error?: string }> {
+async function requestHelperAutomation(target: 'systemevents' | 'browser', bundleId?: string): Promise<{ granted: boolean; error?: string }> {
   if (process.platform !== 'darwin') return { granted: false, error: 'macOS only' }
   if (!computerUseHelper().available()) return { granted: false, error: 'helper unavailable' }
   if (!(await computerUseHelper().ensure()).ok) return { granted: false, error: 'helper not connected' }
@@ -531,12 +539,153 @@ async function requestHelperAutomation(target: 'systemevents' | 'browser'): Prom
   // the consent dialog, then exits 0 (allowed) or -1743 (denied). The helper reports ok=(exit==0), so r.ok is the
   // real outcome. Login items needs ONLY Automation (no Accessibility), so the System-Events probe is independent
   // of the Accessibility row's order.
+  // For 'browser', target the SPECIFIC app when a bundleId is given (so "Grant" on the Safari row probes Safari, not
+  // whatever the default browser is). `count windows` is a real CONTROL op, so an ungranted target BLOCKS on the
+  // consent dialog then exits 0 (allowed) / -1743 (denied) — i.e. the prompt actually fires.
   const tell = target === 'systemevents'
     ? 'tell application "System Events" to get the name of every login item'
-    : (() => { const b = defaultBrowser(); return b ? `tell application id "${b.id}" to count windows` : '' })()
-  if (!tell) return { granted: false, error: 'no default browser' }
+    : (() => { const id = bundleId || defaultBrowser()?.id; return id ? `tell application id "${id}" to count windows` : '' })()
+  if (!tell) return { granted: false, error: 'no browser' }
   const r = await computerUseHelper().runScan({ node: '/usr/bin/osascript', script: '-e', args: [tell], env: {} }, () => {}, 120_000)
   return { granted: !!r.ok, error: r.ok ? undefined : r.error }
+}
+
+/** The macOS bundle id each Automation grant targets — for the no-prompt status probe below. */
+const AUTOMATION_TARGET: Record<string, string> = {
+  'automation:systemevents': 'com.apple.systemevents',
+  'automation:chrome': 'com.google.Chrome',
+  'automation:safari': 'com.apple.Safari'
+}
+
+/** True ONLY when the helper ALREADY holds this Automation grant — checked with no prompt (the helper's
+ *  AEDeterminePermissionToAutomateTarget). 'denied'/'undetermined'/'unknown' (helper down, or the target app
+ *  isn't running so macOS can't report) all return false, so the caller still attempts the real prompting path. */
+async function automationAlreadyGranted(grant: string): Promise<boolean> {
+  const bundleId = AUTOMATION_TARGET[grant]
+  if (!bundleId) return false
+  if (!computerUseHelper().available()) return false
+  if (!(await computerUseHelper().ensure().catch(() => ({ ok: false }))).ok) return false
+  return (await computerUseHelper().automationGranted(bundleId).catch(() => 'unknown')) === 'granted'
+}
+
+/** Which of a browser's connection grants are ALREADY satisfied, so the mini-onboarding shows ONLY the missing rows
+ *  (don't show a grant that's already on). Every probe is PROMPT-FREE — automation via the helper's status check,
+ *  Allow-JS via Chrome's on-disk pref. Chrome = System Events + Chrome automation + Allow-JS; Safari = automation
+ *  ONLY (Safari has no other path). */
+async function browserGrantStates(browser: string): Promise<Record<string, boolean>> {
+  if (browser === 'safari') {
+    return { 'automation:safari': await automationAlreadyGranted('automation:safari') }
+  }
+  const [systemevents, chrome] = await Promise.all([
+    automationAlreadyGranted('automation:systemevents'),
+    automationAlreadyGranted('automation:chrome')
+  ])
+  return {
+    'automation:systemevents': systemevents,
+    'automation:chrome': chrome,
+    'allowjs:chrome': chromeAeJsAlreadyOn()
+  }
+}
+
+/** P0 (plans/blitzos-permissions-helper-todo.md): trigger the macOS grant for ONE connection permission, ALWAYS
+ *  on the helper, with a real way back when macOS won't re-prompt. AX/Screen can only be granted from Settings
+ *  (no inline Allow) — so raise the system prompt (lists the helper in the pane) AND open the exact pane, then
+ *  poll + relaunch the helper to apply it. Automation is an inline Allow the first time; if it comes back denied
+ *  (macOS then refuses to re-prompt), open Privacy ▸ Automation so the user isn't dead-ended. Allow-JS drives
+ *  Chrome's View ▸ Developer toggle. Returns whether it landed and whether we raised a prompt or opened Settings. */
+export async function requestGrant(grant: string): Promise<{ granted: boolean; opened: 'prompt' | 'settings' | 'none' }> {
+  if (process.platform !== 'darwin') return { granted: false, opened: 'none' }
+  const helper = computerUseHelper()
+  if (grant === 'accessibility' || grant === 'screen') {
+    if (helper.available()) {
+      await helper.ensure().catch(() => {})
+      await helper.request(grant).catch(() => {}) // raises the system prompt + adds the helper to the pane's list
+    }
+    try { await shell.openExternal(PERM_DEEPLINK[grant]) } catch { /* best-effort: the pane just won't pop */ }
+    void pollAndApplyGrant(grant) // when it lands, relaunch the helper so it takes effect, then notify the renderer
+    return { granted: false, opened: 'settings' }
+  }
+  if (grant === 'automation:systemevents' || grant === 'automation:chrome' || grant === 'automation:safari') {
+    // ALREADY granted to the helper? Then NEVER raise the consent again — macOS itself wouldn't, and re-running the
+    // PROMPTING probe (`count windows`) on an allowed target is what re-popped "control Safari/Chrome" after the user
+    // had granted it. Confirm via the no-prompt AEDeterminePermissionToAutomateTarget status and short-circuit.
+    if (await automationAlreadyGranted(grant)) {
+      send('os:grant-changed', { grant, granted: true })
+      return { granted: true, opened: 'none' }
+    }
+    // Tear the picker overlay down (awaited) so the consent dialog is clickable. We DON'T veil here: the mini-
+    // onboarding store OWNS the veil (it hid the island on the Grant click and reveals it on os:grant-changed), so
+    // toggling it here too raced the hide/reveal — for the DENIED→Settings path main unveiled the instant the probe
+    // returned, leaving the island visible during Settings with no reveal-on-success. We only report the outcome.
+    await computerUseHelper().call('pick_stop').catch(() => {})
+    // Probe the SPECIFIC target so the right prompt fires ("control Safari"/"System Events"), not the default browser.
+    const r =
+      grant === 'automation:systemevents'
+        ? await requestHelperAutomation('systemevents')
+        : await requestHelperAutomation('browser', grant === 'automation:safari' ? 'com.apple.Safari' : 'com.google.Chrome')
+    if (r.granted) {
+      send('os:grant-changed', { grant, granted: true }) // → store reveals the island + advances
+      return { granted: true, opened: 'prompt' }
+    }
+    // Denied / never landed → macOS won't re-prompt; open Privacy ▸ Automation AND poll for the toggle so the
+    // mini-onboarding advances (and reveals) the instant the user flips it on. The island STAYS hidden meanwhile
+    // (the store's veil), so System Settings is the focus; the store's safety timer reveals it if they walk away.
+    try { await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Automation') } catch { /* */ }
+    pollAutomationGrant(grant)
+    return { granted: false, opened: 'settings' }
+  }
+  if (grant === 'allowjs:chrome') {
+    // The menu-drive (open View ▸ Developer, read the row's position) is a System Events action, so it needs System
+    // Events Automation. JIT removed the up-front grant, so ensure it HERE. If System Events is DENIED (macOS won't
+    // re-prompt), driving the menu would just fail silently into the manual "no arrow" fallback — so instead open the
+    // Automation pane for the user to toggle it on, then they retry. (Unasked → the prompt fires and we proceed.)
+    const sysev = await requestHelperAutomation('systemevents').catch(() => ({ granted: false }))
+    if (!sysev.granted) {
+      try { await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Automation') } catch { /* */ }
+      return { granted: false, opened: 'settings' }
+    }
+    // System Events is granted → drive the menu. The island is already hidden by the store (it veiled on the Grant
+    // click), so the menu + the floating helper popup are unobscured; closeChromeJsHelper reveals it on success.
+    await openChromeJsHelper(true).catch(() => {})
+    return { granted: false, opened: 'prompt' }
+  }
+  return { granted: false, opened: 'none' }
+}
+
+/** After a Settings-toggle grant (AX/Screen): poll the helper's TCC status for ~30s and relaunch it the instant
+ *  the grant lands, so it takes effect with no user restart. Notifies the renderer via os:grant-changed. */
+async function pollAndApplyGrant(kind: 'accessibility' | 'screen'): Promise<void> {
+  const helper = computerUseHelper()
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 500))
+    const tcc = await helper.status().catch(() => null)
+    if (tcc && helper.grantedFor(kind, tcc)) {
+      await helper.relaunchForGrant().catch(() => {})
+      send('os:grant-changed', { grant: kind, granted: true })
+      return
+    }
+  }
+}
+
+/** After opening Privacy ▸ Automation for a DENIED grant: re-probe the helper every ~2.5s and fire os:grant-changed
+ *  the instant the user flips it on, so the mini-onboarding advances without a manual re-check. Re-probing a denied
+ *  grant returns -1743 silently (never re-prompts); once toggled on it returns ok. ~100s cap; one poll at a time. */
+let automationPollTimer: ReturnType<typeof setInterval> | null = null
+function pollAutomationGrant(grant: string): void {
+  if (automationPollTimer) clearInterval(automationPollTimer)
+  const target: 'systemevents' | 'browser' = grant === 'automation:systemevents' ? 'systemevents' : 'browser'
+  const bundleId = grant === 'automation:safari' ? 'com.apple.Safari' : grant === 'automation:chrome' ? 'com.google.Chrome' : undefined
+  let tries = 0
+  automationPollTimer = setInterval(async () => {
+    if (++tries > 40) { if (automationPollTimer) clearInterval(automationPollTimer); automationPollTimer = null; return }
+    const r = await requestHelperAutomation(target, bundleId).catch(() => ({ granted: false }))
+    if (r.granted) {
+      if (automationPollTimer) clearInterval(automationPollTimer)
+      automationPollTimer = null
+      send('os:grant-changed', { grant, granted: true })
+    }
+  }, 2500)
+  if (automationPollTimer.unref) automationPollTimer.unref()
 }
 
 // Detecting the bridge toggle WITHOUT Apple Events. Sending ANY Apple Event to Chrome from the frontmost
@@ -594,6 +743,7 @@ async function openChromeJsPhase2(): Promise<void> {
   // Re-check the bridge first: the user may have ticked it while we were waiting for their profile.
   if (chromeAeJsAlreadyOn()) {
     send('onboarding:chromejs-granted', {})
+    send('os:grant-changed', { grant: 'allowjs:chrome', granted: true }) // advance the mini-onboarding card too
     return
   }
   if (gen !== chromeJsGeneration) return // step was closed/skipped while checking
@@ -696,6 +846,7 @@ async function openChromeJsHelper(force = false): Promise<void> {
     // the helper (e.g. a relaunch after the user ticked it on a prior run).
     if (chromeAeJsAlreadyOn()) {
       send('onboarding:chromejs-granted', {})
+      send('os:grant-changed', { grant: 'allowjs:chrome', granted: true }) // advance the mini-onboarding card too
       return
     }
     stopChromeWindowPoll()
@@ -758,7 +909,16 @@ function stopChromeJsWatch(): void {
   chromeJsWatchers = []
 }
 
-function closeChromeJsHelper(): void {
+function closeChromeJsHelper(grantedHint?: boolean): void {
+  // Bring the island back: it was veiled when the user clicked "Turn it on" so it wouldn't cover Chrome's menu /
+  // the helper popup. This fires on BOTH the grant (the poll's grant() calls us) and any teardown, so the island
+  // always returns. Also tell the connector card the allow-JS grant is settled so it clears + re-lists.
+  send('os:island-veil', false)
+  // grantedHint is load-bearing: the success path (grant()) detected the toggle IN-MEMORY (instant), but Chrome's
+  // on-disk pref flush lags ~10s, so re-reading chromeAeJsAlreadyOn() here returned FALSE and the mini-onboarding
+  // ignored it (it only advances on granted:true) — the "Allow-JS step never completes" bug. Trust the caller's
+  // explicit result; only fall back to the disk read for a plain teardown (no hint).
+  send('os:grant-changed', { grant: 'allowjs:chrome', granted: grantedHint ?? chromeAeJsAlreadyOn() })
   // Capture whether a menu session was actually live BEFORE we reset the flag. The teardown's Esc-dismiss
   // (closeChromeMenuAsync) runs a System Events Apple Event, so it must ONLY fire when a menu was really
   // opened. The renderer's mount-once cleanup calls closeChromeJsStep() on every island unmount — including
@@ -843,7 +1003,7 @@ function startChromeJsPoll(): void {
   const watchDirs = Object.keys(baseline).filter((p) => baseline[p] === false)
   if (watchDirs.length === 0) {
     // Every profile is already on (rare — the up-front check usually catches this). Nothing to wait for.
-    closeChromeJsHelper()
+    closeChromeJsHelper(true)
     send('onboarding:chromejs-granted', {})
     return
   }
@@ -851,7 +1011,7 @@ function startChromeJsPoll(): void {
   const grant = (): void => {
     if (done) return
     done = true
-    closeChromeJsHelper()
+    closeChromeJsHelper(true) // detected the toggle (in-memory or disk) → tell the card granted:true, NOT lagged disk
     send('onboarding:chromejs-granted', {})
   }
   const fileCheck = (): void => {
@@ -1224,6 +1384,10 @@ async function start(): Promise<{ ok: boolean; cached?: boolean }> {
 export function registerOnboarding(getWindow: () => BrowserWindow | null): void {
   mainWindow = getWindow
   ipcMain.handle('onboarding:start', () => start())
+  // P0 JIT/recovery: the renderer (attach panel cards) + the agent (TCC choice card) trigger a connection grant here.
+  ipcMain.handle('os:request-grant', (_e, grant?: string) => requestGrant(String(grant || '')))
+  // Which of a browser's connection grants are already satisfied (prompt-free), so the mini-onboarding hides granted rows.
+  ipcMain.handle('os:browser-grant-states', (_e, browser?: string) => browserGrantStates(String(browser || 'chrome')))
   ipcMain.handle('onboarding:claude-status', (_e, opts?: { recheck?: boolean }) => claudeCliStatus(!!opts?.recheck))
   ipcMain.handle('onboarding:fda-status', async () => ({ fda: await fdaGrantedEffective(), appName: fdaAppName() }))
   ipcMain.handle('onboarding:open-fda-settings', () => {

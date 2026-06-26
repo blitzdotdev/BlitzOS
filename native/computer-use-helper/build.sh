@@ -20,7 +20,7 @@ rm -rf build
 mkdir -p "$EXEC_DIR" "${BUNDLE}/Contents/Resources"
 
 echo "[helper] swiftc → ${EXEC} (${ARCH})"
-swiftc -O -target "${ARCH}-apple-macos13.0" -framework AppKit -framework CoreGraphics -framework ApplicationServices -framework ScreenCaptureKit \
+swiftc -O -target "${ARCH}-apple-macos13.0" -framework AppKit -framework CoreGraphics -framework ApplicationServices -framework CoreServices -framework ScreenCaptureKit \
   -o "$EXEC" main.swift
 
 cp Info.plist "${BUNDLE}/Contents/Info.plist"

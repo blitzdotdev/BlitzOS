@@ -327,6 +327,22 @@ class HelperManager {
     return kind === 'accessibility' ? tcc.accessibility : kind === 'screen' ? tcc.screenRecording : tcc.fullDisk
   }
 
+  /** NO-PROMPT Automation (Apple Events) grant check for a target bundle id, via the helper's
+   *  AEDeterminePermissionToAutomateTarget(askUserIfNeeded:false). Reports the CURRENT state without ever
+   *  raising the consent dialog, so callers can skip the prompting probe (`count windows`) on an already-allowed
+   *  target — the fix for "control Safari" re-popping after it was granted. 'unknown' = helper down or target not
+   *  running (status -600), so the caller still falls through to the normal (prompting) path. */
+  async automationGranted(bundleId: string): Promise<'granted' | 'denied' | 'undetermined' | 'unknown'> {
+    if (!this.hello) return 'unknown'
+    const r = (await this.call('automation_status', { bundleId }).catch(() => ({ error: 'call failed' }))) as Record<string, unknown>
+    if (r.error || r.ok !== true) return 'unknown'
+    const status = Number(r.status)
+    if (status === 0) return 'granted' // noErr
+    if (status === -1743) return 'denied' // errAEEventNotPermitted (user said no)
+    if (status === -1744) return 'undetermined' // errAEEventWouldRequireUserConsent (never asked)
+    return 'unknown' // -600 procNotFound (target not running), or any unexpected code
+  }
+
   /** Ask the helper to request a grant — raises the system prompt AND lists the helper in the pane.
    *  FDA has NO request API (the user adds the app manually / by drag), so for fda we just return
    *  the current status; the pre-board's drag tile + poll drive it. */

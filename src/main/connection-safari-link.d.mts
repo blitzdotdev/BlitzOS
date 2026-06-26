@@ -11,7 +11,7 @@ export interface SafariTabInfo {
 }
 
 export interface SafariLink {
-  listTabs(): Promise<SafariTabInfo[]>
+  listTabs(): Promise<{ tabs: SafariTabInfo[]; state: 'ok' | 'denied' | 'allowjs' | 'helper' | 'unreachable' }>
   connectTab(tabId: string, opts?: { title?: string; sourceId?: string }): Promise<Record<string, unknown>>
 }
 

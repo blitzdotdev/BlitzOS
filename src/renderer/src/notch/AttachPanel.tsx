@@ -8,6 +8,17 @@ import './attach.css'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { useStagedSet, stageSources, unstageSources } from './stagingStore'
 import { buildTrayGroups, AttachTray, Favicon, AppIcon, type TrayGroup } from './attachTray'
+// The browser connection mini-onboarding ("Let Blitz work in Chrome/Safari") lives in a MODULE store
+// (browserGrantStore) so it survives the panel remounting while the user is in System Settings — see that file.
+import { useBrowserOnboard, openBrowserOnboard, closeBrowserOnboard, grantActiveStep, browserLabel } from './browserGrantStore'
+import { setPickSuspended } from './pickSuspendStore'
+
+// A dropped Chrome/Safari window — its connect runs an Apple Event that may prompt, so we suspend the picker + pin
+// the island around the drop (a window connects as a window, no prompt; only browsers gate on a grant).
+const isBrowserApp = (app?: string): boolean => {
+  const a = String(app || '').toLowerCase()
+  return a.includes('google chrome') || a === 'safari'
+}
 import { publishLiveTray } from './sentTrayStore'
 
 type Tab = { tabId: number | string; title?: string; url?: string; browser?: string; windowId?: number; active?: boolean; favIconUrl?: string; discarded?: boolean }
@@ -69,15 +80,36 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   const [windows, setWindows] = useState<Win[]>([])
   const [connections, setConnections] = useState<Conn[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [busy, setBusy] = useState<string | null>(null) // a row id mid connect/disconnect, or 'install'
-  const [installNote, setInstallNote] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null) // a row id mid connect/disconnect
   // Live feedback from the macOS window picker (NotchHost arms it while this panel is open).
   const [dragOver, setDragOver] = useState(false)
   // Live feedback for an INTERNAL drag: a connectors-list row (or child tab) being dragged onto the drop zone.
   const [listDragOver, setListDragOver] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+  // P0 permission cards: when the picker / a drop fails because a macOS grant is missing, main sends the grant
+  // descriptor. We show a clear card (title + why + an action button) RIGHT IN THE DROPBOX instead of a red jargon
+  // string. mode 'picker' = the window picker itself needs Accessibility (just an Enable button); 'drop' = an app
+  // was dropped but needs a grant first (Give permission / Don't; on grant we retry connecting that windowId).
+  type PendingGrant = { grant: string; title: string; why: string; button: string; mode: 'picker' | 'drop'; windowId?: number }
+  const [pendingGrant, setPendingGrant] = useState<PendingGrant | null>(null)
+  const [grantWaiting, setGrantWaiting] = useState(false)
+  // The browser mini-onboarding (Chrome 3-step / Safari 1-step) — read from the MODULE store so it survives the
+  // panel remounting mid-flow (the user is in System Settings).
+  const browserOnboard = useBrowserOnboard()
   // Windows DROPPED into the dropbox: their real app icons live here (keyed by connId), hover one for its detail.
   const [dropped, setDropped] = useState<Record<string, AddedSource>>({})
+
+  // JIT permissions: enumerating the user's REAL browser tabs (listTabs = an Apple Event → "control Chrome")
+  // and app windows (listWindows) PROMPTS for a macOS grant. So we do NOT auto-list on open — the panel is
+  // prompt-free until the user explicitly opts in (persisted, so a returning user whose grant already exists
+  // auto-lists with no prompt). The drop zone (drag a window in) stays available and JIT-prompts on its own.
+  const [sourcesOptedIn, setSourcesOptedIn] = useState<boolean>(() => {
+    try { return localStorage.getItem('blitz.attach.sources') === '1' } catch { return false }
+  })
+  const optInSources = useCallback((): void => {
+    try { localStorage.setItem('blitz.attach.sources', '1') } catch { /* private mode — won't persist, fine */ }
+    setSourcesOptedIn(true)
+  }, [])
 
   // The dropbox is a STAGING tray, not a mirror of every live connection: it shows only sources the USER staged
   // (dropped in, or connected from the right list) for their NEXT message, keyed per chat. The tray lives in a
@@ -122,7 +154,13 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     // list() is scoped to THIS chat (its owned connections); the available tabs/windows are global.
     const listScoped = (): Promise<Record<string, unknown>> =>
       typeof conn.list === 'function' ? conn.list(activeSessionId).then((x) => x || {}).catch(() => ({})) : Promise.resolve({})
-    const [t, w, c] = await Promise.all([get(conn.listTabs), get(conn.listWindows), listScoped()])
+    // Only enumerate the user's real browser tabs / app windows once they've opted in — those calls PROMPT.
+    // Passing null when not opted-in routes through get()'s non-function branch (→ {}), keeping the typing.
+    const [t, w, c] = await Promise.all([
+      get(sourcesOptedIn ? conn.listTabs : null),
+      get(sourcesOptedIn ? conn.listWindows : null),
+      listScoped()
+    ])
     if (seq !== refreshSeq.current) return // a newer refresh superseded this one — don't apply stale data
     setTabs(Array.isArray(t.tabs) ? (t.tabs as Tab[]) : [])
     setWindows(Array.isArray(w.windows) ? (w.windows as Win[]) : [])
@@ -130,7 +168,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     if (connSeq.current === connSeqAtStart) {
       applyBackendConns(Array.isArray(c.connections) ? (c.connections as Conn[]) : [])
     }
-  }, [activeSessionId])
+  }, [activeSessionId, sourcesOptedIn])
 
   // Light reconcile after a toggle: re-fetch ONLY the connection set (cheap), NOT tabs/windows — those re-pull
   // every window's app icon (hundreds of KB) and don't change when you connect/disconnect.
@@ -147,10 +185,10 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   // the connector connects, even while the panel stays open.
   const refreshTabs = useCallback(async (): Promise<void> => {
     const conn = bridge()
-    if (!conn || typeof conn.listTabs !== 'function') return
+    if (!conn || typeof conn.listTabs !== 'function' || !sourcesOptedIn) return // don't poll the prompting op until opt-in
     const t = (await conn.listTabs().then((x) => x || {}).catch(() => ({}))) as { tabs?: Tab[] }
     setTabs(Array.isArray(t.tabs) ? t.tabs : [])
-  }, [])
+  }, [sourcesOptedIn])
 
   useEffect(() => {
     void refresh()
@@ -177,6 +215,13 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
         setDragOver(false)
         const wid = Number(m.windowId)
         if (!Number.isFinite(wid)) return
+        // A browser drop connects as a TAB and may raise the Automation prompt — pin the island open (so a hover-away
+        // to the dialog can't collapse + unmount the panel) and suspend the picker. We show NO optimistic icon: it
+        // lands only on Allow; on deny nothing should appear. (main also tears down the overlay + veils around it.)
+        if (isBrowserApp(m.app as string | undefined)) {
+          setPickSuspended(true)
+          return
+        }
         markStaged('window:' + wid)
         setConnections((prev) => (prev.some((c) => c.type === 'window' && String(c.ref) === String(wid)) ? prev : [...prev, { connId: 'pending:w' + wid, type: 'window', ref: wid }]))
         setDropped((prev) => ({ ...prev, ['pending:w' + wid]: { connId: 'pending:w' + wid, app: String(m.app || 'Window'), icon: typeof m.icon === 'string' && m.icon ? m.icon : undefined, title: String(m.title || '') } }))
@@ -196,9 +241,30 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
               return n
             })
           }
+          // P0: a permission gap → show the inline grant screen IN the dropbox (Give permission / Don't), not a red
+          // string. On grant we retry connecting this exact window so the app then lands in the dropbox.
+          const perm = m.permission as { grant: string; title: string; why: string; button: string } | undefined
+          if (perm && perm.grant) {
+            // A BROWSER grant → the dedicated "Let Blitz work in {Chrome|Safari}" mini-onboarding (Chrome = 3 steps,
+            // Safari = 1), never the single jargon card. The store suspends the picker + owns the veil for its life.
+            if (perm.grant === 'automation:safari') {
+              openBrowserOnboard('safari', Number.isFinite(wid) ? wid : undefined)
+              return
+            }
+            if (perm.grant.startsWith('automation:chrome') || perm.grant === 'allowjs:chrome' || perm.grant === 'automation:systemevents') {
+              openBrowserOnboard('chrome', Number.isFinite(wid) ? wid : undefined)
+              return
+            }
+            // A non-browser grant (Accessibility for a dropped app window) → the single card. It suspends the picker
+            // for its whole lifetime (the pendingGrant effect below) so its prompt is clickable — do NOT re-arm here.
+            setPendingGrant({ ...perm, mode: 'drop', windowId: Number.isFinite(wid) ? wid : undefined })
+            return
+          }
+          setPickSuspended(false)
           setNotice({ ok: false, text: String(m.error || `Couldn't add ${String(m.app || 'window')}`) })
           return
         }
+        setPickSuspended(false) // connected (Allow / a window) → re-arm the picker now the drop resolved
         const connId = String(m.connId || '')
         if (!connId) return
         markStaged('conn:' + connId) // a macOS-window drop = the user staging it
@@ -224,7 +290,13 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
           return n
         })
         void refreshConnections() // accurate conn list; preserve-pending keeps any other in-flight drops
-      } else if (m.kind === 'error') setNotice({ ok: false, text: String(m.error || 'window picker unavailable') })
+      } else if (m.kind === 'error') {
+        // P0: the picker couldn't arm — usually Accessibility isn't granted ("could not create event tap"). Show a
+        // clear card with an Enable button instead of the raw red string.
+        const perm = m.permission as { grant: string; title: string; why: string; button: string } | undefined
+        if (perm && perm.grant) setPendingGrant({ ...perm, mode: 'picker' })
+        else setNotice({ ok: false, text: String(m.error || 'window picker unavailable') })
+      }
     })
     return () => {
       try {
@@ -234,6 +306,81 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
       }
     }
   }, [refreshConnections])
+
+  // P0: ask main to trigger the macOS grant for ONE permission on the helper (raises the prompt, or opens the exact
+  // Settings pane when previously denied — the way back). Returns the outcome so callers can refresh/clear.
+  const fireGrant = useCallback((grant: string) => {
+    type GrantApi = { onboarding?: { requestGrant?: (g: string) => Promise<{ granted?: boolean; opened?: string }> } }
+    return (window as unknown as { agentOS?: GrantApi }).agentOS?.onboarding?.requestGrant?.(grant)
+  }, [])
+
+  // Veil control for the SINGLE-card (Accessibility) path; the browser mini-onboarding veils via its own store.
+  const setVeil = useCallback((on: boolean): void => {
+    type VeilApi = { onboarding?: { setIslandVeil?: (on: boolean) => void } }
+    ;(window as unknown as { agentOS?: VeilApi }).agentOS?.onboarding?.setIslandVeil?.(on)
+  }, [])
+
+  // Veil SAFETY for the single card: the island must NEVER stay hidden indefinitely if the user clicked Enable, then
+  // walked away from Settings. Reveal (and drop the "Waiting…" state) after this window; the grant poll can still
+  // land later. Mirrors the browser onboarding store's safety.
+  const veilSafetyRef = useRef<number | null>(null)
+  const clearVeilSafety = useCallback((): void => {
+    if (veilSafetyRef.current) { window.clearTimeout(veilSafetyRef.current); veilSafetyRef.current = null }
+  }, [])
+  const armVeilSafety = useCallback((): void => {
+    clearVeilSafety()
+    veilSafetyRef.current = window.setTimeout(() => {
+      veilSafetyRef.current = null
+      setVeil(false)
+      setGrantWaiting(false)
+    }, 30000)
+  }, [clearVeilSafety, setVeil])
+
+  // The dropbox permission card's button (e.g. "Enable Accessibility"). HIDE the island so System Settings / the
+  // macOS prompt is the focus, then fire the grant; os:grant-changed REVEALS + clears us on success (the safety
+  // timer reveals if they walk away). Same hide → auto-show-on-success pattern as the browser onboarding card.
+  const requestGrant = useCallback((pg: PendingGrant): void => {
+    setGrantWaiting(true)
+    setVeil(true) // HIDE
+    armVeilSafety()
+    const r = fireGrant(pg.grant)
+    if (!r) { clearVeilSafety(); setVeil(false); setGrantWaiting(false); return }
+    void r.finally(() => setTimeout(() => setGrantWaiting(false), 4000))
+  }, [fireGrant, setVeil, armVeilSafety, clearVeilSafety])
+
+  // While a single grant card is up, SUSPEND the window picker for its whole lifetime: its overlay would intercept
+  // the macOS consent dialog (the unclickable-"control Safari" bug), and an armed picker would keep grabbing windows
+  // behind the card. Re-arm automatically when the card closes/resolves (NotchHost re-arms on pickSuspended→false).
+  useEffect(() => {
+    if (!pendingGrant) return
+    setPickSuspended(true)
+    return () => setPickSuspended(false)
+  }, [pendingGrant])
+
+  // P0: when a grant lands, clear the card; for a dropped app (mode 'drop') retry connecting THAT window so it then
+  // lands in the dropbox (what the user asked for), and refresh the list.
+  useEffect(() => {
+    type GrantEvtApi = { onboarding?: { onGrantChanged?: (cb: (m: { grant: string; granted: boolean }) => void) => () => void } }
+    const off = (window as unknown as { agentOS?: GrantEvtApi }).agentOS?.onboarding?.onGrantChanged?.((m) => {
+      if (!m.granted) return
+      clearVeilSafety()
+      setGrantWaiting(false)
+      setNotice(null)
+      setVeil(false) // a grant landed → bring the island back (single-card path; the mini-onboarding store does its own)
+      // NOTE: the browser mini-onboarding advance + veil are handled in browserGrantStore's module-level grant
+      // listener so they work even while this panel is unmounted (the user is in Settings) — do NOT advance it here.
+      setPendingGrant((cur) => {
+        // A real app window: retry connecting it so it lands in the dropbox. A browser grant: don't connectWindow
+        // (that would attach it as a window, the bug) — refresh() below makes the now-reachable browser show its tabs.
+        if (cur?.mode === 'drop' && cur.windowId != null && cur.grant === 'accessibility') {
+          void bridge()?.connectWindow(cur.windowId, activeSessionId).catch(() => {}).then(() => refreshConnections())
+        }
+        return null
+      })
+      void refresh()
+    })
+    return off
+  }, [activeSessionId, refresh, refreshConnections, setVeil, clearVeilSafety])
 
   useEffect(() => {
     if (!notice) return
@@ -371,14 +518,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     }
   }
 
-  // Chrome is driven extension-free via Apple Events, so “Connect Chrome” installs nothing — it just shows the
-  // ONE-TIME toggle Chrome needs (View ▸ Developer ▸ Allow JavaScript from Apple Events) before its tabs surface here.
-  function install(): void {
-    setInstallNote('To connect Chrome, turn on Chrome ▸ View ▸ Developer ▸ “Allow JavaScript from Apple Events” once, then open a tab. Its tabs then appear here automatically.')
-  }
-
   const groups = browserGroups(tabs)
-  const hasChrome = tabs.some((t) => t.browser === 'chrome')
   // The browser app icon for a group row (chevron → icon → name): reuse the helper's real app-window icon for the
   // matching browser (Chrome/Safari is also an open macOS app), falling back to a letter tile.
   const iconByApp = new Map<string, string>()
@@ -410,6 +550,35 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
 
   return (
     <div className="att">
+      {browserOnboard ? (
+        <div className="att-onboard">
+          <span className="att-onboard-title">Let Blitz work in {browserLabel(browserOnboard.browser)}</span>
+          <span className="att-onboard-sub">
+            {browserOnboard.steps.length} quick permission{browserOnboard.steps.length === 1 ? '' : 's'} so Blitz can drive your tabs
+          </span>
+          <div className="att-onboard-rows">
+            {browserOnboard.steps.map((step, i) => {
+              const st = i < browserOnboard.granted ? 'done' : i === browserOnboard.granted ? 'active' : 'locked'
+              return (
+                <div key={step.grant} className={`att-onboard-row ${st}`}>
+                  <span className="att-onboard-num">{st === 'done' ? '✓' : i + 1}</span>
+                  <span className="att-onboard-main">
+                    <span className="att-onboard-label">{step.label}</span>
+                    {st === 'active' && <span className="att-onboard-instr">{step.instruction}</span>}
+                  </span>
+                  {st === 'active' && (
+                    <button type="button" className="att-onboard-grant" disabled={browserOnboard.busy} onClick={() => void grantActiveStep()}>
+                      {browserOnboard.busy ? 'Waiting…' : 'Grant'}
+                    </button>
+                  )}
+                  {st === 'locked' && <span className="att-onboard-lock" aria-hidden="true">🔒</span>}
+                </div>
+              )
+            })}
+          </div>
+          <button type="button" className="att-onboard-dismiss" onClick={() => closeBrowserOnboard()}>Not now</button>
+        </div>
+      ) : (
       <div className="att-boxes">
         {/* LEFT: the attached tray (canonical, from `connections`) — also still the live macOS-window drop zone. */}
         <div
@@ -421,7 +590,24 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
           onDragLeave={onBoxDragLeave}
           onDrop={onBoxDrop}
         >
-          {!hasAttached ? (
+          {pendingGrant ? (
+            // P0: clear, human permission screen RIGHT in the dropbox (replaces the red jargon). 'drop' = an app
+            // was dropped and needs a grant (Give permission / Don't); 'picker' = the window picker needs Accessibility.
+            <div className="att-grant" role="group" aria-label={pendingGrant.title}>
+              <span className="att-grant-title">{pendingGrant.title}</span>
+              <span className="att-grant-why">{pendingGrant.why}</span>
+              {grantWaiting ? (
+                <span className="att-grant-wait">Waiting for you to allow it…</span>
+              ) : (
+                <div className="att-grant-actions">
+                  <button type="button" className="att-grant-go" onClick={() => requestGrant(pendingGrant)}>{pendingGrant.button}</button>
+                  {pendingGrant.mode === 'drop' && (
+                    <button type="button" className="att-grant-no" onClick={() => { clearVeilSafety(); setVeil(false); setPendingGrant(null) }}>Not now</button>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : !hasAttached ? (
             <div className="att-drop-hint" data-notice={notice && !notice.ok ? 'err' : undefined}>
               <span>{notice && !notice.ok ? notice.text : dragOver || listDragOver ? 'Release to add' : 'Drag a macOS window here'}</span>
             </div>
@@ -432,6 +618,17 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
 
         {/* RIGHT: the connectors list — browser windows (expand to tabs) + app windows. Click a row to connect it. */}
         <div className="att-apps" role="list">
+          {/* JIT: until the user opts in, we never list their real tabs/windows (those calls prompt). One click
+              opts in, lists them, and the first connect raises the macOS grant — because they just asked for it. */}
+          {!sourcesOptedIn && (
+            <button type="button" className="att-optin" onClick={optInSources}>
+              <span className="att-optin-cta">Show my tabs and windows</span>
+              <span className="att-optin-sub">Blitz asks permission the first time you connect one</span>
+            </button>
+          )}
+          {/* NOTE: there are NO synthetic Chrome/Safari "set up" rows here. An ungranted browser is set up by DROPPING
+              it into the dropbox (that opens the "Let Blitz work in {Chrome|Safari}" onboarding). The connectors list
+              shows only REAL connectables — granted browser tab groups + app windows. */}
           {groups.map((g) => {
             const isExp = expanded.has(g.id)
             const connCount = g.tabs.filter((t) => connForTab(t)).length
@@ -516,18 +713,13 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
             )
           })}
 
-          {/* empty / install affordances */}
-          {!hasChrome && (
-            <button type="button" className="att-install" disabled={busy === 'install'} onClick={() => void install()}>
-              {busy === 'install' ? 'Installing…' : '+ Connect Chrome'}
-            </button>
-          )}
-          {installNote && <div className="att-note">{installNote}</div>}
-          {groups.length === 0 && windows.length === 0 && !installNote && (
+          {/* empty state */}
+          {groups.length === 0 && windows.length === 0 && (
             <div className="att-note">Open a tab in Chrome/Safari, or a macOS app window, to connect it.</div>
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }

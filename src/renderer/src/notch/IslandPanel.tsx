@@ -10,6 +10,7 @@ import './wf.css'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
+import { useBrowserOnboard } from './browserGrantStore'
 import { AttachTray, type TrayGroup } from './attachTray'
 import { useSentTray, recordSentTray, getLiveTray } from './sentTrayStore'
 import MarkdownMessage from './MarkdownMessage'
@@ -84,6 +85,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   // skeleton.json), reloaded on tab-open (NotchHost.wfLoadAgentRuns), and evicted from memory only after 15 min
   // of tab inactivity — so a finished or long-past board never vanishes. See plans/blitzos-kanban-persistence.md.
   const runs = runsProp
+  // The browser grant mini-onboarding (in the attach panel) takes over the whole island: while it's active we hide the
+  // chat transcript AND the message bar so the grant card is the only thing on screen (the user asked for exactly this).
+  const onboarding = !!useBrowserOnboard()
   const top = Math.max(28, menuBarH) + 8
   const feedRef = useRef<HTMLDivElement>(null)
   const lyricsRef = useRef<HTMLDivElement>(null)
@@ -477,29 +481,33 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   // grows when open). Vertical order: message bar, then skills, then the dropboxes.
   const composerBlock = (placeholder: string, maxHeight: number, autoFocus: boolean): JSX.Element => (
     <>
-      <div className="isl-composer">
-        <button
-          type="button"
-          className={`isl-attach${attachOpen ? ' on' : ''}`}
-          aria-label={attachOpen ? 'Close attachments' : 'Add attachments'}
-          aria-pressed={attachOpen}
-          onClick={onToggleAttach}
-        >
-          <span className="isl-attach-glyph" aria-hidden>
-            {attachOpen ? '×' : '+'}
-          </span>
-        </button>
-        <ChatInput
-          className="isl-bar"
-          placeholder={placeholder}
-          onSend={handleSend}
-          autoFocus={autoFocus}
-          maxHeight={maxHeight}
-          sendLabel="↑"
-          draftKey={activeId ?? ''}
-        />
-      </div>
-      <div className={`isl-attach-wrap${attachOpen ? ' open' : ''}`} aria-hidden={!attachOpen}>
+      {/* The message bar is HIDDEN during the grant mini-onboarding — the grant card owns the island then. */}
+      {!onboarding && (
+        <div className="isl-composer">
+          <button
+            type="button"
+            className={`isl-attach${attachOpen ? ' on' : ''}`}
+            aria-label={attachOpen ? 'Close attachments' : 'Add attachments'}
+            aria-pressed={attachOpen}
+            onClick={onToggleAttach}
+          >
+            <span className="isl-attach-glyph" aria-hidden>
+              {attachOpen ? '×' : '+'}
+            </span>
+          </button>
+          <ChatInput
+            className="isl-bar"
+            placeholder={placeholder}
+            onSend={handleSend}
+            autoFocus={autoFocus}
+            maxHeight={maxHeight}
+            sendLabel="↑"
+            draftKey={activeId ?? ''}
+          />
+        </div>
+      )}
+      {/* Keep the attach panel mounted+open during onboarding (it renders the grant card), even if attach was toggled. */}
+      <div className={`isl-attach-wrap${attachOpen || onboarding ? ' open' : ''}`} aria-hidden={!attachOpen && !onboarding}>
         <div className="isl-attach-inner">
           <AttachPanel activeSessionId={activeId ?? ''} />
         </div>
@@ -699,7 +707,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   // ATTACH MODE: the tab strip always collapses (grid-rows pop). In an AGENT chat the chat STAYS — the island height
   // is locked to what it was, so the attachment panel rises only as tall as its own content and the feed shrinks to
   // fit (still scrollable + bottom-pinned). Locks the height while the attach panel is open in any agent chat.
-  const lockHeight = attachOpen ? closedHeightRef.current ?? undefined : undefined
+  // During onboarding we don't floor the height to the pre-attach height (the chat is hidden), so the island shrinks
+  // to fit just the grant card instead of leaving a tall empty gap above it.
+  const lockHeight = attachOpen && !onboarding ? closedHeightRef.current ?? undefined : undefined
   const lastVisibleTurnIndex = (() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i]
@@ -814,17 +824,17 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   return (
     <div
       ref={panelRef}
-      className={`nh-island isl-process${attachOpen ? ' isl-attaching' : ''}${openApp ? ' isl-app-viewing' : ''}`}
+      className={`nh-island isl-process${attachOpen || onboarding ? ' isl-attaching' : ''}${openApp ? ' isl-app-viewing' : ''}`}
       style={lockHeight && !openApp ? { paddingTop: top, minHeight: lockHeight } : { paddingTop: top }}
     >
       {appLayer}
       {viewerControls}
       {!openApp && (
-        <div className={`isl-tabwrap${attachOpen ? ' collapsed' : ''}`}>
+        <div className={`isl-tabwrap${attachOpen || onboarding ? ' collapsed' : ''}`}>
           <div className="isl-tabwrap-inner">{tabStrip}</div>
         </div>
       )}
-      {!openApp && (
+      {!openApp && !onboarding && (
         // The active agent's chat (Blitz '0' or a peer): real messages + inline activity details — KEPT in attach mode.
         <>
           {/* Rename + Archive moved to the tab's native right-click menu (openTabMenu). This row now holds ONLY the

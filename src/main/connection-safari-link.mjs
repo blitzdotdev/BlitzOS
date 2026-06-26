@@ -8,6 +8,7 @@
 // passed as an osascript ARGUMENT (item 1 of argv) so there is no string-escaping to get wrong.
 
 import { READ_JS, ACT_JS, faviconForUrl } from './connection-page-js.mjs'
+import { classifyBrowserState, browserListTabsGate } from './connection-grants.mjs'
 
 // READ_JS + ACT_JS (the page-context read/act blobs) are shared with the Chrome Apple-Events adapter —
 // the one canonical copy lives in connection-page-js.mjs so the two adapters never drift.
@@ -50,6 +51,12 @@ export function makeSafariLink({ connectionOps, helper } = {}) {
   }
 
   async function listTabs() {
+    // NO-PROMPT gate: only send the (prompting) Apple Event when the helper ALREADY holds "control Safari". A
+    // passive poll must NEVER raise the consent dialog — it pops UNDER the picker overlay, unclickable. When not
+    // granted, report the connector state from the no-prompt status so the UI shows a grant row (no prompt fires).
+    const auth = helper && helper.automationGranted ? await helper.automationGranted('com.apple.Safari').catch(() => 'unknown') : 'granted'
+    const gate = browserListTabsGate(auth)
+    if (gate) return { tabs: [], state: gate }
     const r = await osa([
       '-e', 'tell application "Safari"',
       '-e', 'set out to ""',
@@ -63,7 +70,7 @@ export function makeSafariLink({ connectionOps, helper } = {}) {
       '-e', 'return out',
       '-e', 'end tell'
     ])
-    if (!r.ok) return []
+    if (!r.ok) return { tabs: [], state: classifyBrowserState(r.stderr) }
     const tabs = []
     for (const line of r.stdout.split('\n')) {
       const m = line.match(/^(\d+):(\d+):(.*?):::(.*)$/)
@@ -72,7 +79,7 @@ export function makeSafariLink({ connectionOps, helper } = {}) {
       if (!/^https?:/i.test(url)) continue
       tabs.push({ tabId: `safari:${m[1]}:${m[2]}`, window: Number(m[1]), tab: Number(m[2]), url, title: m[4], favIconUrl: faviconForUrl(url) })
     }
-    return tabs
+    return { tabs, state: 'ok' }
   }
 
   function parseRef(id) {
