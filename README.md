@@ -1,6 +1,13 @@
-# BlitzOS
+<div align="center">
+  <h1>BlitzOS</h1>
+  <p><b>Your agents in one place.</b></p>
 
-**Your agents in one place.**
+  [![Website](https://img.shields.io/badge/blitzos.com-website-black)](https://blitzos.com)
+  [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/v3vQdAgPq6)
+  [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+</div>
+
+<br />
 
 BlitzOS brings the agents you already use, like Claude and Codex, into one place and connects them to your apps so they can work across them. It's a free, open source Mac app that lives in your notch: a quiet pill that unfurls into a full agent chat the moment you need it.
 
@@ -18,6 +25,10 @@ This repo is the source for that app. The easiest way to get BlitzOS is to downl
 - **Bring your own agent.** BlitzOS supplies the loop; your agent supplies the intelligence. Claude Code is supported in the beta today, with Pi and Codex coming.
 - **Open transport.** Agents drive BlitzOS over [agent-socket](https://agentsocket.dev): a plain HTTP/JSON transport, not MCP, that we're building as an open standard so any agent can connect.
 
+## Community
+
+Questions, ideas, or want to help shape BlitzOS? Join us on [Discord](https://discord.gg/v3vQdAgPq6).
+
 ## Build from source
 
 BlitzOS is a macOS app for Apple Silicon. You'll need:
@@ -25,7 +36,7 @@ BlitzOS is a macOS app for Apple Silicon. You'll need:
 - macOS on Apple Silicon (arm64)
 - Node 20+ (`.nvmrc` pins 20)
 - Xcode command-line tools: `xcode-select --install` (for the native helpers)
-- Claude Code (`claude`) on your `PATH` — the agent you bring to the island
+- Claude Code (`claude`) on your `PATH`, the agent you bring to the island
 
 Then:
 
