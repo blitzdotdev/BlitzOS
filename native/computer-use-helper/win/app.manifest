@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+
+  <assemblyIdentity version="1.0.0.0" name="BlitzOS.ComputerUseHelper" type="win32" />
+
+  <!-- PerMonitorV2 is the fix for the overlay-misplacement TODO: it makes GetWindowRect, the
+       WH_MOUSE_LL point, and UpdateLayeredWindow all report/consume the SAME physical pixels, so the
+       glow lands on the target across mixed-DPI monitors. dpiAware is the down-level fallback for
+       Win8.1/older Win10. Without this the process is system-DPI-virtualized and coords drift on any
+       secondary monitor whose scale differs from the primary. -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/PM</dpiAware>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+
+  <!-- OS compatibility (Win10 + Win11). UpdateLayeredWindow, WH_MOUSE_LL, UIA all predate these, but
+       declaring support keeps the process out of compatibility-shim virtualization. -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" /> <!-- Win10 / Win11 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" /> <!-- Win8.1 -->
+    </application>
+  </compatibility>
+
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <!-- asInvoker: NO UAC prompt, helper runs at the user's integrity level. The cost is the ceiling
+             flagged earlier — it cannot read or send input to ELEVATED windows.
+
+             THE clean fix for that ceiling (better than shipping the whole helper elevated): set
+             uiAccess="true". A uiAccess process is allowed to drive higher-integrity UI — it's exactly how
+             screen readers and other a11y tools reach elevated windows WITHOUT a UAC prompt. Requirements
+             are strict and non-negotiable:
+               1. The exe MUST be Authenticode-signed (self-signed won't do; needs a trusted cert).
+               2. It MUST launch from a trusted path (Program Files\... — not Downloads, not %LOCALAPPDATA%).
+             Flip to uiAccess="true" only once signing + an installer into Program Files are in place;
+             until then it silently fails to launch. -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+</assembly>

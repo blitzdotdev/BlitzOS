@@ -1,6 +1,12 @@
 node_modules
 out/
 dist/
+# native helper build outputs (Mac CU helper .app + Win blitz-cu-helper.exe) are built on demand by
+# dist-mac.sh / dist-win.ps1 and bundled via extraResources; never commit the large binaries or the
+# .NET intermediates from the Windows helper project.
+native/computer-use-helper/build/
+native/computer-use-helper/win/bin/
+native/computer-use-helper/win/obj/
 # …but the VENDORED agent-socket SDK's dist must be IN the repo (CI builds from a clean checkout)
 !vendor/agent-socket-sdk/dist/
 *.log

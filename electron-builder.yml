@@ -75,4 +75,25 @@ mac:
   extendInfo:
     # the scan reads user data (Branch B/A) and the app drives local automation
     NSAppleEventsUsageDescription: BlitzOS automates apps on your behalf.
+win:
+  # The Windows Computer Use helper ships as ONE self-contained .NET single-file exe (the analog of the
+  # Mac "BlitzOS Automation.app"), built by native/computer-use-helper/build-win.ps1 to
+  # native/computer-use-helper/build/blitz-cu-helper.exe. computer-use-helper.ts resolves it at
+  # process.resourcesPath/blitz-cu-helper.exe (installedHelperExe) and spawns it with the named-pipe
+  # socket path; Windows has no TCC, so there is no install-to-AppData step. Build everything with
+  # `npm run dist:win` (scripts/dist-win.ps1), which builds the helper first then packages.
+  icon: src/renderer/src/assets/blitz-dock-icon.png # 1024x1024; electron-builder generates the .ico
+  target:
+    - target: nsis
+      arch: [x64]
+  extraResources:
+    - from: native/computer-use-helper/build/blitz-cu-helper.exe
+      to: blitz-cu-helper.exe
+nsis:
+  # perMachine installs into Program Files, the trusted path required before app.manifest uiAccess="true"
+  # (+ Authenticode signing) can let the helper drive ELEVATED windows. oneClick:false shows the standard
+  # wizard so the install elevation prompt is explicit.
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
 npmRebuild: false
