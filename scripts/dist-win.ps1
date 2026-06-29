@@ -8,6 +8,12 @@
 #   $env:CSC_LINK = 'path\to\cert.pfx'; $env:CSC_KEY_PASSWORD = '...'
 # Signing is a prerequisite for flipping app.manifest uiAccess="true" + a perMachine (Program Files)
 # install, which is what lets the helper drive ELEVATED windows. Until then it stays asInvoker.
+#
+# SYNCED-FOLDER GOTCHA: electron-builder extracts Electron to <output>/win-unpacked.tmp then RENAMES it to
+# win-unpacked. On a OneDrive / Dropbox / Google-Drive-synced checkout the sync client locks the freshly
+# written files and the rename fails with "EPERM: operation not permitted, rename ... win-unpacked". Fix:
+# point directories.output (electron-builder.yml) at a path OUTSIDE the synced tree (e.g. under %LOCALAPPDATA%),
+# or pause sync for the repo before building. CI / non-synced checkouts are unaffected and use `release`.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot               # repo root
 Set-Location $root
