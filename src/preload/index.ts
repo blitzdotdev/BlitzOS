@@ -687,6 +687,12 @@ const api = {
       ipcRenderer.on('os:notch-show-settings', listener)
       return () => ipcRenderer.removeListener('os:notch-show-settings', listener)
     },
+    // Main asks the island to open + show a specific agent chat (notification click).
+    onShowAgent(cb: (id: string) => void): () => void {
+      const listener = (_e: unknown, p: { id?: unknown }): void => cb(String(p?.id ?? '0'))
+      ipcRenderer.on('os:notch-show-agent', listener)
+      return () => ipcRenderer.removeListener('os:notch-show-agent', listener)
+    },
     // Listened to BY the overlay renderer: the hit-window's click toggles fullscreen, its hover opens/closes the panel.
     onHandleClick(cb: () => void): () => void {
       const listener = (): void => cb()

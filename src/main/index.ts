@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen, nativeImage, shell, webFrameMain } from 'electron'
+import { app, BrowserWindow, protocol, ipcMain, crashReporter, Menu, globalShortcut, screen, nativeImage, shell, webFrameMain, Notification } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
@@ -43,6 +43,7 @@ import { resolveTmuxBin } from './tmux-host.mjs'
 import { computerUseHelper } from './computer-use-helper'
 import { launchIslandHelper, setIslandDeps } from './island-bridge.mjs'
 import type { IslandHelperHandle } from './island-bridge.mjs'
+import { showAgentDoneNotification } from './agent-notifications.mjs'
 // The island isolation boundary (the ONE shared membership core, pure-node so a node test imports the REAL
 // filter): only ids the island itself spawned (recordIslandId) are ever listed/tailed (islandLiveIds), so the
 // HUD never mirrors the user's main canvas chat ('0') or a sibling peer agent. See island-membership.mjs.
@@ -171,6 +172,39 @@ function activityBuildMeta(): { branch: string; run: number; channel: 'productio
   const normalized = branch.toLowerCase()
   const channel = !app.isPackaged ? 'development' : (normalized === 'main' || normalized === 'master' || normalized === 'production' ? 'production' : 'preview')
   return { branch, run, channel }
+}
+
+function maybeShowNotificationSmoke(): void {
+  if (process.env.BLITZ_NOTIFICATION_SMOKE !== '1') return
+  const context = {
+    isPackaged: app.isPackaged,
+    appName: app.name,
+    appPath: app.getAppPath(),
+    notificationSupported: typeof Notification?.isSupported === 'function' ? Notification.isSupported() : null
+  }
+  const shown = showAgentDoneNotification({
+    Notification,
+    agentTitle: 'BlitzOS notification smoke test',
+    onShow: () => console.log('[agent-notification] smoke show event', context),
+    onClick: () => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          if (mainWindow.isMinimized()) mainWindow.restore()
+          mainWindow.show()
+          mainWindow.focus()
+        }
+      } catch {
+        /* smoke click is diagnostic only */
+      }
+    },
+    onError: (error) => {
+      console.warn('[agent-notification] smoke failed', {
+        ...context,
+        error: error instanceof Error ? error.message : error
+      })
+    }
+  })
+  console.log('[agent-notification] smoke requested', { ...context, shown })
 }
 
 // The widget library lives in <appRoot>/widgets; tell the shared catalog where it
@@ -616,6 +650,7 @@ app.whenReady().then(() => {
   initOsActions({
     getWindow: () => mainWindow
   })
+  maybeShowNotificationSmoke()
 
   // Session telemetry (plans/blitzos-telemetry.md): events + frames → the replay dashboard. Off unless
   // ~/.blitzos/telemetry.json exists; BLITZ_TELEMETRY=0 kills it. After initOsActions so the taps see

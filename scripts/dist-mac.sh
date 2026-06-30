@@ -54,6 +54,17 @@ fi
 
 npx electron-builder "${ARGS[@]}"
 
+# In the unsigned local-dir path, electron-builder leaves the app with Electron's
+# linker ad-hoc executable signature and no sealed bundle resources. That launches,
+# but macOS services that key off the app bundle identity (notably Notification
+# Center) do not reliably treat it as dev.blitz.os. Re-seal the .app ad-hoc for
+# local testing. Real distributable builds still use Developer ID above.
+APP_SRC="release/mac-arm64/BlitzOS.app"
+if [[ "$(uname)" == "Darwin" && -z "${APPLE_SIGNING_IDENTITY:-}" && " ${TARGETS[*]} " == *" dir "* && -d "$APP_SRC" ]]; then
+  echo "[dist] ad-hoc signing local app bundle for macOS app identity"
+  codesign --force --deep --sign - "$APP_SRC"
+fi
+
 # Notarize + staple the DMG container itself (Apple's recommended dmg-distribution flow). electron-builder
 # only notarizes the .app (which the .zip carries), so without this a downloaded .dmg is quarantined +
 # unsigned and Gatekeeper warns on mount even though the app inside is fine. APPLE_API_KEY/_KEY_ID/_ISSUER
@@ -72,7 +83,6 @@ fi
 # Install the freshly built .app to /Applications/BlitzOS.app so the local Dock icon always launches the
 # latest build (the rebuild-and-test loop). Opt out with BLITZ_NO_INSTALL=1 for a pure release-artifact
 # build. CI never runs this script (release.yml calls electron-builder directly), so this only touches a dev Mac.
-APP_SRC="release/mac-arm64/BlitzOS.app"
 if [[ "${BLITZ_NO_INSTALL:-0}" != "1" && -d "$APP_SRC" ]]; then
   DEST="/Applications/BlitzOS.app"
   [[ -w /Applications ]] || { DEST="$HOME/Applications/BlitzOS.app"; mkdir -p "$HOME/Applications"; }

@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { clearStaged } from './stagingStore'
 import { usePickSuspended } from './pickSuspendStore'
 import { clearLiveTray, dropChat } from './sentTrayStore'
-import { onIslandViewRequest } from './islandNavStore'
+import { onIslandAgentRequest, onIslandViewRequest } from './islandNavStore'
 import { useDoneAgents, clearDone } from './doneStore'
 import IslandPanel from './IslandPanel'
 import IslandSettings, { type SimStatus } from './IslandSettings'
@@ -706,6 +706,36 @@ export function NotchHost({
     setAttachOpen(false)
     setView('session')
   }
+  const openAgent = (rawId: string): void => {
+    const id = String(rawId || '0')
+    holdChassisHover()
+    setPeek(false)
+    setAttachOpen(false)
+    setView('session')
+    const i = sessionsRef.current.findIndex((s) => s.id === id)
+    if (i >= 0) {
+      pendingJump.current = null
+      setPage(i + 1)
+      return
+    }
+    pendingJump.current = id
+    window.agentOS
+      ?.agents?.()
+      .then((snap) => {
+        if (!snap) return
+        applySessions((snap.sessions || []).map(mapSession))
+        applyArchivedSessions((snap.archivedSessions || []).map(mapSession))
+        setThreads(mapThreads(snap.threads))
+        applyStatus(snap.status || {})
+        setErrors((snap.errors || {}) as Record<string, AgentError>)
+        setMilestones((snap.milestones || {}) as Record<string, IslandMilestone[]>)
+        setRuns((snap.runs || {}) as Record<string, IslandWfRun[]>)
+      })
+      .catch(() => {
+        /* live broadcast remains the backstop if the roster is not ready */
+      })
+  }
+  useEffect(() => onIslandAgentRequest((id) => openAgent(id)), [])
   // Pen "new session" button: spawn a fresh agent immediately and jump into its tab once it appears (pendingJump).
   const onNewAgent = (): void => {
     holdChassisHover()

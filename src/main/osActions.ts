@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, webContents, app, screen } from 'electron'
+import { BrowserWindow, ipcMain, webContents, app, screen, Notification } from 'electron'
 import { randomUUID } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, pinchSurface, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
@@ -13,6 +13,7 @@ import * as wfStore from './wf-store.mjs'
 import { snapshot as busSnapshot, hydrate as busHydrate, subCount as busSubCount, clearRun as busClearRun } from './workflow-bus.mjs'
 import { tel } from './telemetry'
 import { trackActivity } from './activity-logging.mjs'
+import { agentStatusNotificationKind, showAgentStatusNotification } from './agent-notifications.mjs'
 import type { WebContents } from 'electron'
 
 // A web surface is now an in-DOM <webview> guest. The renderer reports its guest WebContents id via
@@ -137,6 +138,32 @@ function osWebContentNavigated(id: string, url: string, title?: string): void {
   send('update', { id, patch })
 }
 
+function agentTitleForNotification(agentId: string): string {
+  const id = String(agentId || '0')
+  try {
+    const props = wsHost?.chatHubProps(id)
+    const sessions = [...(props?.sessions || []), ...(props?.archivedSessions || [])]
+    const session = sessions.find((s) => String(s?.id) === id)
+    if (session?.title) return String(session.title)
+  } catch {
+    /* best-effort: the notification can fall back to a generic title */
+  }
+  return id === '0' ? 'Blitz' : 'Agent'
+}
+
+function openAgentFromNotification(agentId: string): void {
+  const w = getWin()
+  if (!w || w.isDestroyed()) return
+  try {
+    if (w.isMinimized()) w.restore()
+    w.show()
+    w.focus()
+    w.webContents.send('os:notch-show-agent', { id: String(agentId || '0') })
+  } catch {
+    /* notification clicks should never affect the agent status pipeline */
+  }
+}
+
 /** Wire the renderer<->main control channel. Renderer pushes state on change. */
 export function initOsActions(opts: {
   /** The single app window (the renderer; every os:action/IPC send targets it). */
@@ -196,8 +223,34 @@ export function initOsActions(opts: {
     onSurfaces: () => {}, // Electron web surfaces are in-DOM <webview> guests (renderer-owned)
     getActionItems: () => (actionItemsProvider ? actionItemsProvider() : []), // authoritative inbox items (index.ts wires it)
     generateAgentTitle: ({ agentId, text, workspacePath }) => generateAgentTitle({ agentId, text, workspacePath }),
-    onChatStatusTransition: ({ agentId, previousStatus, status, source }) =>
-      trackActivity('agent.status_changed', { agentId, previousStatus, status, source }),
+    onChatStatusTransition: ({ agentId, previousStatus, status, source }) => {
+      trackActivity('agent.status_changed', { agentId, previousStatus, status, source })
+      const notificationKind = agentStatusNotificationKind(previousStatus, status)
+      if (notificationKind) {
+        const shown = showAgentStatusNotification({
+          Notification,
+          kind: notificationKind,
+          agentTitle: agentTitleForNotification(agentId),
+          onClick: () => openAgentFromNotification(agentId),
+          onError: (error) => {
+            console.warn('[agent-notification] failed to show native notification', {
+              agentId,
+              previousStatus,
+              status,
+              error: error instanceof Error ? error.message : error
+            })
+          }
+        })
+        if (!shown) {
+          console.warn('[agent-notification] native notifications are unavailable', {
+            agentId,
+            previousStatus,
+            status,
+            isSupported: typeof Notification?.isSupported === 'function' ? Notification.isSupported() : null
+          })
+        }
+      }
+    },
     // An agent backend runs in a VISIBLE terminal; index.ts wires this from the shared agent-runtime
     // core + the terminal-ops (it owns the relay url). Absent ⇒ no agent auto-launch.
     launchAgent: (id, home, title) => launchAgentHook?.(id, home, title),
