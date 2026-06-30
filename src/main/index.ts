@@ -1804,6 +1804,11 @@ app.whenReady().then(() => {
       const bounds = { x: Number(m.x) || 0, y: Number(m.y) || 0, w: Number(m.w) || 0, h: Number(m.h) || 0 }
       const app = String(m.app || '')
       const bundleId = String(m.bundleId || '')
+      // Windows has no bundleIds and no Apple-Events tab bridge, so a browser drop must NOT take the tab path
+      // there: every Windows drop is a WINDOW connect driven by the helper's UIA (HWND). Browser-TAB attach on
+      // Windows belongs in the CDP layer BlitzOS already has (a follow-up), never here. Hoisted once so finish()
+      // and the async IIFE below share ONE value instead of recomputing it twice.
+      const browser = process.platform === 'darwin' ? droppedBrowser(bundleId, app) : undefined
       // Show the dropped app's icon in the dropbox INSTANTLY (optimistic), before the async tab-resolve + connect
       // (a Chrome bounds-match can take a beat). The `connected` event below firms up the real connId.
       mainWindow?.webContents.send('os:pick-event', { kind: 'dropped', windowId: m.windowId, app, icon: m.icon, title: String(m.title || '') })
@@ -1813,7 +1818,7 @@ app.whenReady().then(() => {
         // P0: a FAILED drop carries the permission it needs (Accessibility for a window, control-<browser> for a
         // browser tab) so the dropbox can show the inline grant screen (Give permission / Don't) instead of just a
         // red error. permissionFromError maps the raw failure; grantForConnection is the up-front fallback.
-        const browser = droppedBrowser(bundleId, app)
+        // (browser is hoisted above and is always undefined off-darwin, so Windows shows a window grant.)
         const permission =
           extra.permission !== undefined
             ? extra.permission
@@ -1826,7 +1831,7 @@ app.whenReady().then(() => {
         // A browser drop (Chrome/Safari) connects a TAB (Apple Events) so the agent gets the real page. If the
         // browser's Automation isn't granted, show the inline grant card in the dropbox — NEVER silently fall back to
         // a window connect (the confusing bug the user hit). A plain app connects as a window via the helper (AX).
-        const browser = droppedBrowser(bundleId, app)
+        // browser is hoisted above the IIFE (undefined off-darwin), so Windows always window-connects below.
         let res: { error?: string; connId?: string } | undefined
         let action: 'tab' | 'window' | 'grant' = 'window'
         if (browser) {

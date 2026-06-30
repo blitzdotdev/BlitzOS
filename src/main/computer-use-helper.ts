@@ -12,7 +12,7 @@
 
 import { app } from 'electron'
 import net from 'node:net'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -71,6 +71,35 @@ function installedHelperApp(): string {
   return join(app.getPath('appData'), 'BlitzOS', 'BlitzOS Automation.app')
 }
 
+// Windows analog of bundledHelperApp(): the single self-contained .NET exe shipped via electron-builder
+// extraResources (packaged -> resourcesPath; dev -> native/computer-use-helper/build, mirroring the Mac
+// .app location). Same robust candidate walk; overridable with BLITZ_COMPUTER_USE_EXE.
+function bundledHelperExe(): string {
+  const rel = ['native', 'computer-use-helper', 'build', 'blitz-cu-helper.exe']
+  const here = (() => {
+    try {
+      return typeof __dirname !== 'undefined' ? __dirname : fileURLToPath(new URL('.', import.meta.url))
+    } catch {
+      return ''
+    }
+  })()
+  const candidates = [
+    process.env.BLITZ_COMPUTER_USE_EXE,
+    app.isPackaged ? join(process.resourcesPath, 'blitz-cu-helper.exe') : null,
+    join(app.getAppPath(), ...rel),
+    here ? join(here, '..', '..', ...rel) : null, // out/main -> repo root in dev
+    !app.isPackaged ? join(process.cwd(), ...rel) : null
+  ].filter((p): p is string => !!p)
+  for (const c of candidates) if (existsSync(c)) return c
+  return candidates[candidates.length - 1] ?? join(app.getAppPath(), ...rel)
+}
+
+// Windows has no TCC, so there is no stable-install copy dance (the Mac copy exists only so a GRANTED
+// bundle keeps its identity across updates). Launch the packaged exe in place.
+function installedHelperExe(): string {
+  return bundledHelperExe()
+}
+
 // Older helper bundle names we may have installed before the rename to "BlitzOS Automation.app"
 // (BlitzOS.app collided with the main app; BlitzComputerUse.app was the original). Removed after a
 // successful install so a renamed upgrade leaves no orphan bundle behind.
@@ -95,7 +124,13 @@ const exec = (cmd: string, args: string[]): Promise<{ ok: boolean; stdout: strin
 class HelperManager {
   private server: net.Server | null = null
   private sock: net.Socket | null = null
-  private sockPath = join(tmpdir(), `blitzcu-${process.pid}.sock`)
+  // node:net IPC is a Unix domain socket on macOS but a NAMED PIPE on Windows (paths must live under
+  // \\.\pipe\; a plain filesystem path gives listen EACCES). The helper reads this exact string as argv[0]
+  // and selects AF_UNIX vs named-pipe from its shape, so the newline-JSON contract is byte-identical.
+  private sockPath =
+    process.platform === 'win32'
+      ? `\\\\.\\pipe\\blitzcu-${process.pid}`
+      : join(tmpdir(), `blitzcu-${process.pid}.sock`)
   private buf = ''
   private pending = new Map<number, (m: Record<string, unknown>) => void>()
   private scanProgress = new Map<number, (line: string) => void>()
@@ -106,10 +141,13 @@ class HelperManager {
   private connectWaiters: Array<() => void> = []
   private supervise = false
   private ensuring: Promise<{ ok: boolean; error?: string }> | null = null // single-flight ensure()
+  private winProc: ReturnType<typeof spawn> | null = null // win32 child handle (mac uses LaunchServices, no handle)
 
   /** Copy the signed bundle to the stable install location if missing or version-changed. cp -R
    *  (not fs.cp) preserves the code signature + symlinks the signature depends on. */
   private async install(): Promise<boolean> {
+    // Windows ships the exe in resources and launches it in place; nothing to install at runtime.
+    if (process.platform === 'win32') return existsSync(bundledHelperExe())
     const src = bundledHelperApp()
     if (!existsSync(src)) return false
     const dst = installedHelperApp()
@@ -212,6 +250,20 @@ class HelperManager {
 
   /** LaunchServices launch (own TCC identity). `-n` forces a fresh instance (used by relaunch). */
   private async launch(): Promise<boolean> {
+    if (process.platform === 'win32') {
+      // No LaunchServices / TCC identity on Windows: just spawn the exe with the pipe path as argv[0].
+      // Supervision still rides the socket exactly like macOS (onClose -> ensure() respawn), so no exit
+      // handler is needed here; the handle is kept only so shutdown() can hard-kill an orphan.
+      const exe = installedHelperExe()
+      if (!existsSync(exe)) return false
+      try {
+        this.winProc = spawn(exe, [this.sockPath], { stdio: 'ignore', windowsHide: true })
+        this.winProc.on('error', () => {})
+        return true
+      } catch {
+        return false
+      }
+    }
     const appPath = installedHelperApp()
     if (!existsSync(appPath)) return false
     const r = await exec('/usr/bin/open', ['-n', appPath, '--args', '--connect', this.sockPath])
@@ -289,7 +341,8 @@ class HelperManager {
    *  concurrent callers (e.g. the prewarm + a step) share one in-flight ensure, so two installs never
    *  race on the same dst (one rm -rf while the other cp -R, which produced a spurious "not found"). */
   ensure(): Promise<{ ok: boolean; error?: string }> {
-    if (process.platform !== 'darwin') return Promise.resolve({ ok: false, error: 'macOS only' })
+    if (process.platform !== 'darwin' && process.platform !== 'win32')
+      return Promise.resolve({ ok: false, error: 'unsupported platform' })
     if (this.hello) return Promise.resolve({ ok: true })
     if (this.ensuring) return this.ensuring
     this.ensuring = (async () => {
@@ -307,6 +360,7 @@ class HelperManager {
   }
 
   available(): boolean {
+    if (process.platform === 'win32') return existsSync(bundledHelperExe())
     return process.platform === 'darwin' && existsSync(bundledHelperApp())
   }
 
@@ -386,6 +440,8 @@ class HelperManager {
   /** THE insight: quit + relaunch the HELPER so a just-granted permission takes effect, leaving
    *  BlitzOS running. Returns once the fresh helper has reconnected. */
   async relaunchForGrant(): Promise<{ ok: boolean }> {
+    // No TCC on Windows, so there is no just-granted permission to apply by relaunching; report liveness.
+    if (process.platform === 'win32') return { ok: this.connected() }
     if (process.platform !== 'darwin') return { ok: false }
     this.wantQuit = true
     if (this.sock) await this.rpc('quit', 3000)
@@ -410,6 +466,13 @@ class HelperManager {
     }
     try {
       this.server?.close()
+    } catch {
+      /* gone */
+    }
+    try {
+      // Windows child: it exits on its own when the pipe closes (EOF) + the quit above, but hard-kill the
+      // handle so a wedged helper can never outlive BlitzOS. No-op on macOS (LaunchServices, no handle).
+      this.winProc?.kill()
     } catch {
       /* gone */
     }

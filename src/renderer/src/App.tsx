@@ -297,6 +297,23 @@ export default function App(): JSX.Element {
       }),
     []
   )
+  // Non-macOS has NO notch overlay: main's notchGated is false, so the os:notch-geometry push that carries
+  // `synthetic` never fires and the island has no hover/Alt+Space entry point (Alt+Space is the Win32 window
+  // menu). Pin it OPEN on first mount so the chat + attach UI is always visible in the normal window. Same
+  // effect as the VM/synthetic geometry path above; gated on platform so macOS is untouched.
+  useEffect(() => {
+    if (syntheticRef.current) return
+    const isMac = /Mac/i.test((navigator.platform || '') + ' ' + (navigator.userAgent || ''))
+    if (!isMac) {
+      syntheticRef.current = true
+      setNotchOn(true) // NotchHost portal is gated on notchOn (normally set by the geometry push, which is macOS-only)
+      setHasNotch(false)
+      setNotchPinnedBoth(true)
+      applyNotchState('panel')
+      setNotchInteractive(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // Collapse the island (panel → closed). Shared by Esc and the main-driven os:notch-close.
   const closeIsland = (): void => {
     if (syntheticRef.current) return // VM/synthetic: Esc / os:notch-close never hide it — ⌥Space (toggleIsland) is the SOLE show/hide toggle there

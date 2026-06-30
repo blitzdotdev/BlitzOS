@@ -81,7 +81,11 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
         const a = args || {}
         if (verb === 'read') {
           if (a.screenshot) return helper.call('window_screenshot', { windowId: Number(windowId) }, 15000)
-          const r = await helper.call('ax_read', { pid, maxDepth: a.maxDepth ?? 12, limit: a.max ?? 600 })
+          // Send BOTH windowId and pid. The macOS helper reads `pid` (app-level AX) and ignores windowId;
+          // the Windows helper PREFERS windowId so it resolves the EXACT dropped window via UIA FromHandle.
+          // pid -> MainWindowHandle is only approximate on Windows and is wrong for UWP/WinUI apps (whose
+          // visible window is owned by ApplicationFrameHost.exe, a different pid). WINDOWS-INTEGRATION.md §3.
+          const r = await helper.call('ax_read', { pid, windowId: Number(windowId), maxDepth: a.maxDepth ?? 12, limit: a.max ?? 600 })
           return r.error ? r : { result: r.tree }
         }
         if (verb === 'act') {
@@ -97,9 +101,9 @@ export function makeWindowLink({ connectionOps, helper }: { connectionOps: Conne
           if (a.x != null || a.px != null) return helper.call('cg_click', { windowId: Number(windowId), x: a.x, y: a.y, px: a.px, py: a.py, button: a.button })
           // ref act (background-capable): AX press / setValue on a role+title match
           const find = (a.find as Record<string, unknown>) || { role: a.role, title: a.title ?? a.selector }
-          return helper.call('ax_act', { pid, find, action: a.action === 'set' ? 'setValue' : 'press', value: a.text })
+          return helper.call('ax_act', { pid, windowId: Number(windowId), find, action: a.action === 'set' ? 'setValue' : 'press', value: a.text })
         }
-        if (verb === 'reveal') return helper.call('activate', { pid })
+        if (verb === 'reveal') return helper.call('activate', { pid, windowId: Number(windowId) })
         return { error: `verb "${verb}" is not supported for a window connection` }
       }
     }
