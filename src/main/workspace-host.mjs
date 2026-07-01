@@ -48,7 +48,7 @@ import {
   openFolderEntry
 } from './workspace.mjs'
 // The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
-import { writeRelayUrl } from './agent-runtime.mjs'
+import { writeCallScript, writeRelayUrl, writeWaitScript } from './agent-runtime.mjs'
 // Agent settings ride the same terminal meta.json the manager owns.
 import { readTerminalMeta, setTerminalOrchestrators, setTerminalEffort, writeTerminalMeta } from './terminal-manager.mjs'
 import { sessionJsonlPath, lastAssistantStop, lastAssistantError } from './agent-transcript.mjs'
@@ -1211,6 +1211,8 @@ export function createWorkspaceHost(a) {
     const dir = join(activeWorkspace, '.blitzos')
     try { markWrite(join(dir, 'relay-url')) } catch { /* ignore */ } // our own write — the watcher must skip it
     writeRelayUrl(dir, url)
+    writeCallScript(dir)
+    writeWaitScript(dir)
   }
   /** One-time: an OLD workspace kept the transcript in panels.json — seed chat.md from it so no history is lost. */
   function migrateChatToFile() {

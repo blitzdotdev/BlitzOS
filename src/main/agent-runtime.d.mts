@@ -36,7 +36,11 @@ export function prepareAgentLaunch(opts: { sessionsDir: string; id: string; url:
  *  spawn can never stall on the trust dialog (headless -p skipped it; the live TUI does not). */
 export function ensureWorkspaceTrusted(wsPath: string): void
 export function writeRelayUrl(blitzDir: string, url: string | null | undefined): void
+export function writeCallScript(blitzDir: string | null | undefined): void
+export function writeWaitScript(blitzDir: string | null | undefined): void
 export const RELAY_URL_FILE: string
+export const CALL_SCRIPT_FILE: string
+export const CALL_SCRIPT: string
 export const RESIDENT_EFFORT: string
 export const AGENT_RUNTIME_CLAUDE: 'claude'
 export const AGENT_RUNTIME_CODEX_SERVERLESS: 'codex-serverless'

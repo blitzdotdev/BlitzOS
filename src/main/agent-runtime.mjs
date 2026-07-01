@@ -81,6 +81,7 @@ export function normalizeAgentRuntime(value) {
 // cwd=workspace) + updates it on every change; the agent INLINES `$(cat <this>)` into every curl, so the shell
 // re-reads the live url on each call and a reattached agent self-heals after a restart. Single source of truth.
 export const RELAY_URL_FILE = '.blitzos/relay-url'
+export const CALL_SCRIPT_FILE = '.blitzos/call.sh'
 
 // Optional per-session STANDING DUTY (e.g. onboarding interview, then resident initiatives): a
 // policy-free seam. The transport registers a provider, and prepareAgentLaunch re-reads it on EVERY
@@ -113,14 +114,15 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   // background workspace's agent never sees (or answers into) another workspace's chat.
   const wsPin = workspace ? `,"workspace":"${String(workspace).replace(/"/g, '')}"` : ''
   const sess = (primary ? '' : `,"agent":"${sessionId}"`) + wsPin // non-primary agents MUST scope /events + /say to their agent id
-  const B = '"$(cat ' + RELAY_URL_FILE + ')"' // every URL is built fresh from the file on each curl
+  const B = '"$(cat ' + RELAY_URL_FILE + ')"' // remote relay fallback; call.sh prefers localhost when available
+  const CALL = 'bash .blitzos/call.sh'
   const identity = primary
     ? 'You are the primary chat agent of BlitzOS, an agent OS the user watches live. BlitzOS makes NO decisions; YOU decide everything.'
     : `You are a Blitz agent — one of several independent agents in BlitzOS (an agent OS). You serve ONLY your own chat; other agents have their own chats. Refer to yourself as a Blitz agent, never by a number.`
-  const relay = `BlitzOS runs locally on this Mac and gives you a small local HTTP API to talk to it. It tells you its current address in the file ${RELAY_URL_FILE} in your working folder, and that address can change when the app restarts, so read it from the file each time rather than remembering it: \`curl -sX POST ${B}/<tool> -H 'content-type: application/json' -d '{…}'\`. The \`$(cat …)\` just reads the app's current address. If a call ever returns a connection error or 404, the app most likely restarted with a new address; reading the file again and retrying picks it up.`
+  const relay = `BlitzOS runs locally on this Mac and gives you a small local HTTP API to talk to it. Use the workspace helper for tool calls: \`${CALL} <tool> '{…}'\` (example: \`${CALL} list_state '{}'\`). It reads the localhost control server from \`~/.blitzos/session.json\` and adds the bearer token, then falls back to the relay address in \`${RELAY_URL_FILE}\` if localhost is unavailable. If you hand-write curl anyway, read \`${RELAY_URL_FILE}\` each time: \`curl -sX POST ${B}/<tool> -H 'content-type: application/json' -d '{…}'\`.`
   const guide = bootTask
-    ? `Your full operating guide is at ${B}/agents.md, with the complete tool set. You do NOT need it for the first step of your standing duty below, so do that FIRST and fetch the guide (\`curl -s ${B}/agents.md\`) only afterward, when you need a tool the duty did not give you. Do not let reading the guide delay your first action.`
-    : `Your full operating guide is at ${B}/agents.md. Please read it first (\`curl -s ${B}/agents.md\`) and follow it; if that request doesn't succeed, give it another try before continuing.`
+    ? `Your full operating guide is available through \`${CALL} agents.md\`, with the complete tool set. You do NOT need it for the first step of your standing duty below, so do that FIRST and fetch the guide only afterward, when you need a tool the duty did not give you. Do not let reading the guide delay your first action.`
+    : `Your full operating guide is available through \`${CALL} agents.md\`. Please read it first and follow it; if that request doesn't succeed, give it another try before continuing.`
   const web = `Hard web rule: do web work in Blitz Chrome, your own background browser (open it with blitz_chrome_open, drive it with the connection_* tools). Use your backend's internal web-search/browser tool only as a discovery index to find candidate URLs or query angles; do not treat invisible snippets as final evidence. Before presenting findings, open every source you rely on in Blitz Chrome (connection_read / connection_act). For open-ended research, use multiple query angles when useful.`
   const progress = `Hard visible-work rule: for any non-trivial user task (multi-step, research/current info, build/customize, compare, troubleshoot, browse, organize, or longer than a quick direct answer), say a one-line plan in chat BEFORE doing hidden work, then say a short line as each step lands. Going dark during active work is a failure; saying "I'm working" once with nothing after it is too. Keep it tight: if a result needs more than a couple of lines, write it to a deliverable. Use share_app for generated blitz.dev apps, complex visuals, dashboards, reports, rich tables/charts, or anything the user should inspect/manipulate. Never paste an *.app.blitz.dev preview URL through say; call share_app first, then summarize without the URL. Use normal markdown for quick prose. Tiny one-shot answers/actions can stay direct.`
   // Read your OWN transcript to pick up the task / catch up. The "you may have been restarted, recover the
@@ -140,10 +142,10 @@ export function buildBootstrap(_url, sessionId = '0', bootTask = null, workspace
   // shared blocking helper `.blitzos/wait.sh` — one LLM turn per REAL message instead of one per empty 25s
   // poll. These three fragments describe wait.sh, NOT a raw /events poll loop (do not regress them to the
   // pre-wait.sh long-poll text the branch carried forward). wait.sh re-reads relay-url, so it survives a restart.
-  const onConnect = `Your job is to help the user in their chat. ON CONNECT, read anything already waiting once: \`curl -sX POST ${B}/events -d '{"since":0,"wait":0${sess}}'\` — then use the returned \`latest\` as your cursor.`
-  const waitLoop = `To see new messages, run \`bash .blitzos/wait.sh <cursor> '${sess}'\` AS A BACKGROUND task (set run_in_background:true on your Bash tool), NEVER as a blocking foreground call (a blocking call suspends you in a tool forever so you never yield). It returns a task id immediately and waits in the background, then RE-INVOKES you when a real message arrives, writing \`{"events":[…],"latest":N}\` to its task output. (Under the hood it long-polls \`/events\` and re-reads the relay url each loop, so it survives an app restart.)`
+  const onConnect = `Your job is to help the user in their chat. ON CONNECT, read anything already waiting once: \`${CALL} events '{"since":0,"wait":0${sess}}'\` — then use the returned \`latest\` as your cursor.`
+  const waitLoop = `To see new messages, run \`bash .blitzos/wait.sh <cursor> '${sess}'\` AS A BACKGROUND task (set run_in_background:true on your Bash tool), NEVER as a blocking foreground call (a blocking call suspends you in a tool forever so you never yield). It returns a task id immediately and waits in the background, then RE-INVOKES you when a real message arrives, writing \`{"events":[…],"latest":N}\` to its task output. (Under the hood it long-polls \`/events\` through the local-first helper when present, with relay fallback, so it survives app restarts and relay congestion.)`
   const keepChecking = `After launching the background wait.sh, do NOT block on it: finish your turn (or continue any work already underway) and let it re-invoke you when a real message arrives. Running it in the BACKGROUND is REQUIRED so you yield between messages instead of hanging in a tool. On each re-invoke, read its task output, handle every \`trigger:'message'\` (do what it asks), set your cursor to the new \`latest\`, and launch wait.sh in the background AGAIN. Always keep exactly one background wait.sh running; it is the only way the app delivers messages to you.`
-  const say = `Keep the user in the loop: send your replies and progress with \`curl -sX POST ${B}/say -d '{"text":"…"${sess}}'\` (it appears in their chat). When a message comes in, a quick note of your plan first is nice, then a short line as you go. It's best not to act unless the user has asked for something, and to say what you're doing as you do it rather than working silently.`
+  const say = `Keep the user in the loop: send your replies and progress with \`${CALL} say '{"text":"…"${sess}}'\` (it appears in their chat). When a message comes in, a quick note of your plan first is nice, then a short line as you go. It's best not to act unless the user has asked for something, and to say what you're doing as you do it rather than working silently.`
   const scope = primary
     ? null
     : `You are one of several Blitz agents; you serve ONLY your own chat thread. Include "agent":"${sessionId}" on your /events, /say, and open_terminal calls so they stay on your own thread and don't disturb the user or the other agents. That id is an internal routing handle, not your name; to the user you are just a Blitz agent.`
@@ -273,6 +275,7 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
     mkdirSync(sessionDir(sessionsDir, id), { recursive: true })
     writeFileSync(file, buildBootstrap(url, id, bootTask, workspace, userInstructions, claudeState.established))
     writeRelayUrl(dirname(sessionsDir), url) // <ws>/.blitzos/relay-url — the live base the agent re-reads per call
+    writeCallScript(dirname(sessionsDir)) // <ws>/.blitzos/call.sh — local-control first, relay fallback
     writeWaitScript(dirname(sessionsDir)) // <ws>/.blitzos/wait.sh — the blocking event-wait the bootstrap points at
     writeBlitzShim(dirname(sessionsDir)) // <ws>/.blitzos/blitz + orchestrator.md — the workflow runner + duty (orchestrators toggle)
     ensureWorkspaceTrusted(dirname(dirname(sessionsDir))) // unattended spawn must never stall on the trust dialog
@@ -337,20 +340,89 @@ export function writeRelayUrl(blitzDir, url) {
   try { mkdirSync(blitzDir, { recursive: true }); writeFileSync(join(blitzDir, 'relay-url'), base) } catch { /* best-effort */ }
 }
 
+// Local-first tool caller. Resident agents run on the same Mac as BlitzOS, so routine tool calls should use the
+// trusted loopback control server from ~/.blitzos/session.json instead of spending slots on the shared relay.
+// It falls back to `.blitzos/relay-url` when the app restarted, the local port is stale, or the helper is used remotely.
+export const CALL_SCRIPT = `#!/bin/sh
+# BlitzOS local-first tool caller: bash .blitzos/call.sh <tool> '<json>'
+TOOL="$1"
+[ -z "$TOOL" ] && { printf '%s\\n' '{"error":"tool required"}'; exit 2; }
+shift || true
+BODY="$1"
+[ -n "$BODY" ] || BODY='{}'
+case "$TOOL" in
+  /*) PATH_PART="$TOOL" ;;
+  *) PATH_PART="/$TOOL" ;;
+esac
+METHOD=POST
+case "$PATH_PART" in
+  /agents.md|/tools.json) METHOD=GET ;;
+esac
+
+SESSION_FILE="\${BLITZOS_SESSION_JSON:-$HOME/.blitzos/session.json}"
+LOCAL=""
+if [ -f "$SESSION_FILE" ]; then
+  LOCAL=$(node -e 'const fs=require("fs"); try { const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (s.local && s.local.url && s.local.token) process.stdout.write(String(s.local.url)+"\\n"+String(s.local.token)); } catch {}' "$SESSION_FILE" 2>/dev/null)
+fi
+
+try_local() {
+  [ -n "$LOCAL" ] || return 1
+  URL=$(printf '%s\\n' "$LOCAL" | sed -n '1p')
+  TOK=$(printf '%s\\n' "$LOCAL" | sed -n '2p')
+  [ -n "$URL" ] && [ -n "$TOK" ] || return 1
+  TMP=$(mktemp "\${TMPDIR:-/tmp}/blitz-call.XXXXXX" 2>/dev/null) || return 1
+  if [ "$METHOD" = GET ]; then
+    STATUS=$(curl --connect-timeout 2 --max-time 35 -sS -o "$TMP" -w '%{http_code}' -X GET "$URL$PATH_PART" -H "authorization: Bearer $TOK" 2>/dev/null)
+  else
+    STATUS=$(curl --connect-timeout 2 --max-time 35 -sS -o "$TMP" -w '%{http_code}' -X POST "$URL$PATH_PART" -H "authorization: Bearer $TOK" -H 'content-type: application/json' -d "$BODY" 2>/dev/null)
+  fi
+  case "$STATUS" in
+    000|401|404|'') rm -f "$TMP"; return 1 ;;
+    *) cat "$TMP"; rm -f "$TMP"; return 0 ;;
+  esac
+}
+
+if try_local; then
+  exit 0
+fi
+
+B=$(cat .blitzos/relay-url 2>/dev/null)
+[ -z "$B" ] && { printf '%s\\n' '{"error":"no BlitzOS local session or relay URL"}'; exit 1; }
+if [ "$METHOD" = GET ]; then
+  curl --connect-timeout 2 --max-time 35 -sS "$B$PATH_PART"
+else
+  curl --connect-timeout 2 --max-time 35 -sS -X POST "$B$PATH_PART" -H 'content-type: application/json' -d "$BODY"
+fi
+`
+
+export function writeCallScript(blitzDir) {
+  if (!blitzDir) return
+  try {
+    mkdirSync(blitzDir, { recursive: true })
+    const p = join(blitzDir, 'call.sh')
+    writeFileSync(p, CALL_SCRIPT)
+    try { chmodSync(p, 0o755) } catch { /* best-effort */ }
+  } catch { /* best-effort */ }
+}
+
 // The agent's BLOCKING event-wait, run as `bash .blitzos/wait.sh <since> '<scopeJson>'` (cwd = workspace).
 // It loops the 25s `/events` long-poll IN THE SHELL and returns ONLY on a real event — so the agent's LLM is
 // woken once per actual message instead of once per empty 25s poll (~24× fewer idle turns). It re-reads
-// `.blitzos/relay-url` each iteration, so a relay-url change after a BlitzOS restart self-heals mid-wait.
+// `.blitzos/call.sh` when present and `.blitzos/relay-url` otherwise, so it self-heals mid-wait.
 // $1 = the `since` cursor (a number); $2 = the scope JSON fragment (e.g. `,"agent":"1","workspace":"main"`).
 export const WAIT_SCRIPT = `#!/bin/sh
 # BlitzOS agent event-wait — blocks until the next event, prints {"events":[…],"latest":N}, exits. See agent-runtime.mjs.
 S="\${1:-0}"; SC="$2"
 while :; do
-  B=$(cat .blitzos/relay-url 2>/dev/null)
-  [ -z "$B" ] && { sleep 1; continue; }
-  R=$(curl -sS -X POST "$B/events" -H 'content-type: application/json' -d "{\\"since\\":$S,\\"wait\\":25$SC}" 2>/dev/null)
+  if [ -f .blitzos/call.sh ]; then
+    R=$(bash .blitzos/call.sh events "{\\"since\\":$S,\\"wait\\":25$SC}" 2>/dev/null)
+  else
+    B=$(cat .blitzos/relay-url 2>/dev/null)
+    [ -z "$B" ] && { sleep 1; continue; }
+    R=$(curl --connect-timeout 2 --max-time 35 -sS -X POST "$B/events" -H 'content-type: application/json' -d "{\\"since\\":$S,\\"wait\\":25$SC}" 2>/dev/null)
+  fi
   case "$R" in
-    '' ) sleep 1 ;;                                            # transient failure / url change — retry (relay-url re-read next loop)
+    '' ) sleep 1 ;;                                            # transient failure / url change — retry (session/relay re-read next loop)
     *'"events":[]'* ) sleep 1 ;;                              # nothing new — brief sleep so an instant-returning server can't peg the CPU
     *'"events":'*'"latest":'* ) printf '%s\\n' "$R"; exit 0 ;; # a REAL events payload — hand it to the agent's turn
     * ) sleep 1 ;;                                            # garbage (HTML error / 404 body) — never feed it to the agent; retry

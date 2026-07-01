@@ -6,7 +6,7 @@
 // interview anymore, so no low/medium split and no fast-model pin. The codex-serverless peer backend carries
 // no effort knob here (medium by default). Pure: a temp sessionsDir.
 import { ensureClaudeSessionId, prepareAgentLaunch, buildClaudeCommand, buildCodexServerlessCommand, setBootTaskProvider, RESIDENT_EFFORT } from '../../src/main/agent-runtime.mjs'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -19,6 +19,7 @@ const ok = (name, cond, detail = '') => {
 // a workspace-shaped temp dir: <root>/<ws>/.blitzos/terminals
 const root = mkdtempSync(join(tmpdir(), 'blitz-session-'))
 const sessionsDir = join(root, 'case-file', '.blitzos', 'terminals')
+const blitzDir = join(root, 'case-file', '.blitzos')
 const metaOf = (id) => join(sessionsDir, String(id), 'meta.json')
 const seedMeta = (id, m) => {
   mkdirSync(join(sessionsDir, String(id)), { recursive: true })
@@ -39,6 +40,13 @@ ok('primary command uses --resume (continues its session)', cmd0.includes('--res
 const prep = prepareAgentLaunch({ sessionsDir, id: '0', url: 'http://127.0.0.1:1/agents.md' })
 ok('prepareAgentLaunch returns established=true for an established primary', prep.established === true)
 ok('prepareAgentLaunch command resumes the persisted id', prep.command.includes('--resume PRIMARY-UUID'))
+const callScript = join(blitzDir, 'call.sh')
+const waitScript = join(blitzDir, 'wait.sh')
+const callSource = existsSync(callScript) ? readFileSync(callScript, 'utf8') : ''
+const waitSource = existsSync(waitScript) ? readFileSync(waitScript, 'utf8') : ''
+ok('prepareAgentLaunch writes a local-first call helper', callSource.includes('session.json') && callSource.includes('authorization: Bearer') && callSource.includes('relay-url'))
+ok('wait.sh routes /events through the local-first helper when present', waitSource.includes('bash .blitzos/call.sh events'))
+ok('wait.sh keeps the relay fallback for partial/old workspaces', waitSource.includes('cat .blitzos/relay-url') && waitSource.includes('$B/events'))
 // Every Claude agent (primary or spawned) runs at RESIDENT_EFFORT (xhigh) so it decides well within the
 // act/ask boundary; only EFFORT is raised — the user's own MODEL is kept (no fast-model pin anywhere).
 ok(`primary with NO duty runs at RESIDENT effort (--effort ${RESIDENT_EFFORT}), user model kept`, prep.command.includes(`--effort ${RESIDENT_EFFORT}`) && !prep.command.includes('--model '))

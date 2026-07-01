@@ -1,11 +1,28 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { randomBytes } from 'crypto'
-import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, osBroadcast, type SurfaceDescriptor } from './osActions'
-import { OS_TOOLS_BY_PATH } from './electron-os-tools'
+import { osOpenWindow, osCreateSurface, osGetState, osControlSurface, osBroadcast, osNoteAgentActivity, type SurfaceDescriptor } from './osActions'
+import { OS_TOOLS } from './electron-os-tools'
 import type { ControlAction } from './cdp'
 import { waitForEvents, latestSeq, EVENTS_REMINDER } from './events'
 import { setLocal } from './sessionFile'
 import { attachIslandWebSocket } from './island-bridge.mjs'
+import AGENTS_MD from './blitzos-agents.md?raw'
+import { withActivity } from './activity.mjs'
+
+const LOCAL_TOOLS_BY_PATH = Object.fromEntries(
+  withActivity(
+    OS_TOOLS.map((t) => ({
+      path: t.path,
+      description: t.description,
+      ...(t.input_schema ? { input_schema: t.input_schema } : {}),
+      handler: (ctx: { body?: string }) => t.handler({ body: ctx?.body ?? '', transport: 'localhost' })
+    })),
+    (ev) => {
+      osNoteAgentActivity(ev.agentId || '0', ev.tool === '/say' ? 'say' : 'tool')
+      osBroadcast({ ...ev })
+    }
+  ).map((t) => [t.path, t])
+)
 
 /**
  * Minimal localhost control API (the LOCAL agent path; agent-socket is the
@@ -25,6 +42,23 @@ export function startControlServer(): void {
     if (req.headers['authorization'] !== `Bearer ${token}`) {
       res.writeHead(401, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'unauthorized' }))
+      return
+    }
+
+    if (req.method === 'GET' && req.url === '/agents.md') {
+      res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' })
+      res.end(AGENTS_MD)
+      return
+    }
+
+    if (req.method === 'GET' && req.url === '/tools.json') {
+      const tools = OS_TOOLS.map((t) => ({
+        path: t.path,
+        description: t.description,
+        ...(t.input_schema ? { input_schema: t.input_schema } : {})
+      }))
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ tools }))
       return
     }
 
@@ -119,7 +153,7 @@ export function startControlServer(): void {
         if (body.length > 100_000) req.destroy()
       })
       req.on('end', async () => {
-        let p: { since?: number; wait?: number } = {}
+        let p: { since?: number; wait?: number; agent?: string | number; workspace?: string } = {}
         try {
           p = body ? JSON.parse(body) : {}
         } catch {
@@ -127,7 +161,7 @@ export function startControlServer(): void {
         }
         const since = Number(p.since) || 0
         const wait = Math.min(Math.max(Number(p.wait) || 0, 0), 25)
-        const events = await waitForEvents(since, wait * 1000)
+        const events = await waitForEvents(since, wait * 1000, p.agent != null ? String(p.agent) : '0', p.workspace != null ? String(p.workspace) : null)
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ events, latest: latestSeq(), reminder: EVENTS_REMINDER }))
       })
@@ -140,7 +174,7 @@ export function startControlServer(): void {
     // transport: eval allowed, DOM reads + moments unredacted. The legacy aliases above (/state, /windows,
     // /surface, /group, /events, /surfaces/:id/control) are kept for back-compat (caught first).
     const toolPath = req.url ? req.url.split('?')[0] : ''
-    const tool = req.method === 'POST' ? OS_TOOLS_BY_PATH[toolPath] : undefined
+    const tool = req.method === 'POST' ? LOCAL_TOOLS_BY_PATH[toolPath] : undefined
     if (tool) {
       let body = ''
       req.on('data', (chunk) => {
@@ -149,7 +183,7 @@ export function startControlServer(): void {
       })
       req.on('end', async () => {
         try {
-          const out = (await tool.handler({ body, transport: 'localhost' })) as Record<string, unknown> | null
+          const out = (await tool.handler({ body })) as Record<string, unknown> | null
           if (out && typeof out === 'object' && typeof out.status === 'number' && 'body' in out) {
             res.writeHead(out.status, { 'content-type': 'application/json' })
             res.end(JSON.stringify(out.body))
