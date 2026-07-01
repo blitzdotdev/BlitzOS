@@ -2107,15 +2107,20 @@ button.isl-app-chat:active .isl-app-icon {
    (min-width:0) and scrolls, holding the + hard against the right edge. The vertical padding/margin gives the
    active/editing chip's shadow the room that overflow-x:auto would otherwise clip. */
 .nh-island .isl-tab-rail {
-  display: flex;
-  align-items: center;
+  position: relative; /* offset parent + scroll container for the absolutely-positioned, drag-reorderable tabs */
   flex: 0 1 auto;
   min-width: 0;
-  gap: 6px;
-  padding: 4px 0;
-  margin: -4px 0;
+  height: 40px;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
+}
+/* invisible sizer: a static child whose width = total tab width, so the rail has a scrollWidth to scroll (the tabs are
+   position:absolute and would otherwise give it none). useTabReorder sets its width imperatively. */
+.nh-island .isl-tab-spacer {
+  height: 1px;
+  flex: none;
+  pointer-events: none;
 }
 .nh-island .isl-tab-rail::-webkit-scrollbar {
   display: none;
@@ -2217,9 +2222,44 @@ button.isl-app-chat:active .isl-app-icon {
 }
 
 /* Album-pill tabs: each agent chip carries a mini gradient "album", then its name, then the status dot. */
+/* Draggable agent tabs: position:absolute inside the rail; their X (`left`) is slotted by useTabReorder, animated via
+   the `left` transition, so reordering slides the others out of the way. Vertical center via transform (kept free of X
+   so the drag's `left` never fights it). `touch-action:none` + `user-select:none` let a pointer drag reorder cleanly. */
 .nh-island .isl-chip-agent {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
   gap: 8px;
   padding: 4px 12px 4px 4px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  transition: left 0.24s cubic-bezier(0.2, 0.85, 0.25, 1), transform 0.18s ease, color 0.14s ease-out,
+    background 0.14s ease-out, border-color 0.14s ease-out;
+}
+.nh-island .isl-chip-agent.isl-chip-pinned {
+  cursor: pointer; /* Blitz '0' is pinned first — clickable, not draggable */
+}
+/* the lifted, cursor-following tab: brighter, a crisp ring + modest shadow (kept small so overflow-y:hidden doesn't
+   clip it), scaled up a touch. `left` is driven directly (transition:none) during the drag. */
+.nh-island .isl-chip-agent.isl-chip-dragging {
+  z-index: 6;
+  transform: translateY(-50%) scale(1.05);
+  cursor: grabbing;
+  color: var(--isl-text);
+  background: #1c1c1f;
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+.nh-island .isl-chip-agent.isl-chip-settling {
+  z-index: 6; /* stay above the others while it glides into its slot */
+}
+/* the rename form carries .isl-chip-agent but must stay text-editable, not a drag handle */
+.nh-island .isl-chip-agent.isl-chip-editing {
+  cursor: text;
+  touch-action: auto;
+  user-select: auto;
 }
 .nh-island .isl-chip-album {
   width: 24px;

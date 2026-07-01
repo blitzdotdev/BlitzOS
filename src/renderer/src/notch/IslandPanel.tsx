@@ -10,6 +10,8 @@ import './wf.css'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { ChatInput } from './ChatInput'
 import { useEffort, setEffort, EFFORT_LEVELS, EFFORT_LABEL, type EffortLevel } from './effortStore'
+import { useTabOrder, setTabOrder, orderTabs } from './tabOrderStore'
+import { useTabReorder } from './tabReorder'
 import { AttachPanel } from './AttachPanel'
 import { useBrowserOnboard } from './browserGrantStore'
 import { AttachTray, buildTrayGroups, type TrayGroup } from './attachTray'
@@ -512,6 +514,20 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const renameInputRef = useRef<HTMLInputElement>(null)
   const skipRenameBlurRef = useRef(false)
   const committingRenameRef = useRef<string | null>(null)
+  // Draggable agent tabs: the persisted display order (Blitz '0' pinned first) → the visual slot each tab sits at.
+  // The tabs render in raw `sessions` order (so click→page mapping is untouched); this only drives their `left`.
+  const tabOrder = useTabOrder()
+  const orderedIds = useMemo(() => orderTabs(sessions, tabOrder).map((s) => s.id), [sessions, tabOrder])
+  const { onTabPointerDown } = useTabReorder({
+    railRef: tabRailRef,
+    order: orderedIds,
+    pinnedId: '0',
+    onCommit: (ids) => setTabOrder(ids),
+    // Re-measure + re-place whenever the tab set/order/titles change, OR the rail REMOUNTS — which happens on peek↔chat
+    // (a different return branch) and openApp↔chat (the tab strip is gated by !openApp). Those must re-run positioning.
+    signature: `${orderedIds.join('|')}|${sessions.map((s) => s.title).join('|')}|${editingId ?? ''}|${peek ? 'peek' : 'main'}|${openApp ? 'app' : ''}`,
+    enabled: !editingId
+  })
   const latestMessageText = messages[messages.length - 1]?.text || ''
 
   // The chat is PURE messages (the agent's real say() + your steers). The narrator's summaries do NOT appear here
@@ -836,6 +852,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       {/* The agent tabs scroll INSIDE this rail; the new-chat + is a sibling pinned to the RIGHT (Chrome-style),
           so it stays visible no matter how many tabs there are — the tabs scroll under it instead of pushing it off. */}
       <div className="isl-tab-rail" ref={tabRailRef}>
+      {/* Drives the rail's scrollWidth so it scrolls when tabs overflow (the tabs themselves are position:absolute,
+          slotted via `left` by useTabReorder). Width set imperatively to the total tab width. */}
+      <div className="isl-tab-spacer" aria-hidden />
       {sessions.map((s, i) => {
         const selected = page === i + 1
         const editing = editingId === s.id
@@ -844,6 +863,7 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
             <form
               key={s.id}
               role="tab"
+              data-agent-id={s.id}
               aria-selected={selected}
               className={`isl-chip isl-chip-agent isl-chip-editing${selected ? ' active' : ''}`}
               onSubmit={(e) => {
@@ -888,15 +908,17 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
             key={s.id}
             type="button"
             role="tab"
+            data-agent-id={s.id}
             aria-selected={selected}
-            className={`isl-chip isl-chip-agent${selected ? ' active' : ''}`}
+            className={`isl-chip isl-chip-agent${selected ? ' active' : ''}${s.id === '0' ? ' isl-chip-pinned' : ''}`}
+            onPointerDown={(e) => onTabPointerDown(e, s.id)}
             onClick={() => onSelectPage(i + 1)}
             onContextMenu={(e) => {
               e.preventDefault()
               e.stopPropagation()
               openTabMenu(s.id, s.title, i)
             }}
-            title={s.id === '0' ? 'Blitz' : 'Right-click for options'}
+            title={s.id === '0' ? 'Blitz' : 'Drag to reorder · right-click for options'}
           >
             <span className="isl-chip-album" style={{ background: agentGradient(s.id) }} aria-hidden />
             <span className="isl-chip-label">{s.title}</span>
