@@ -87,6 +87,7 @@ export interface WorkspaceHost {
   newAgentId(): string
   addAgent(agentId: string, title?: string, opts?: { focus?: boolean; orchestrators?: boolean }): Record<string, unknown>
   setAgentOrchestrators(agentId: string, on: boolean): { ok: boolean; error?: string; orchestrators?: boolean }
+  setAgentEffort(agentId: string, level: string): { ok: boolean; error?: string; effort?: string | null }
   archiveAgent(agentId: string): { ok: boolean; error?: string; archived?: boolean }
   unarchiveAgent(agentId: string): { ok: boolean; error?: string; archived?: boolean }
   closeAgent(agentId: string): { ok: boolean; error?: string }

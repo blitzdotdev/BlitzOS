@@ -58,6 +58,9 @@ const bootstrapPath = (sessionsDir, id) => join(sessionDir(sessionsDir, id), 'bo
 // precisely and make better autonomous calls, keeping the USER's own model. Tunable here. (Earlier
 // "always low" pinned the resident low too, which made it over-ask on reversible work.)
 export const RESIDENT_EFFORT = 'xhigh'
+// The reasoning-effort tiers a user may pick (Claude Code's `--effort` scale). xhigh is the default (RESIDENT_EFFORT).
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh']
+export const normalizeEffort = (v) => (EFFORT_LEVELS.includes(String(v)) ? String(v) : null)
 export const AGENT_RUNTIME_CLAUDE = 'claude'
 export const AGENT_RUNTIME_CODEX_SERVERLESS = 'codex-serverless'
 // Claude Code is the default backend (codex-serverless stays selectable via BLITZ_AGENT_BACKEND). The
@@ -274,10 +277,12 @@ export function prepareAgentLaunch({ sessionsDir, id, url, cmd, runtime = AGENT_
     writeBlitzShim(dirname(sessionsDir)) // <ws>/.blitzos/blitz + orchestrator.md — the workflow runner + duty (orchestrators toggle)
     ensureWorkspaceTrusted(dirname(dirname(sessionsDir))) // unattended spawn must never stall on the trust dialog
   } catch { /* best-effort; if the dir is unwritable the spawn will surface it */ }
-  // Reasoning effort (Claude). The RESIDENT agent runs XHIGH (RESIDENT_EFFORT) so it follows the act/ask
-  // boundary and decides well, keeping the user's own model. Codex carries no effort knob here (null).
+  // Reasoning effort (Claude). Defaults to XHIGH (RESIDENT_EFFORT) so the agent follows the act/ask boundary and
+  // decides well, keeping the user's own model. A per-agent override in meta.json (set from the island's effort
+  // picker on a NEW chat) wins — re-read here on EVERY launch, so a pick + re-exec relaunches at the chosen level.
+  // Codex carries no effort knob here (null).
   const isClaude = agentRuntime === AGENT_RUNTIME_CLAUDE
-  const effort = isClaude ? RESIDENT_EFFORT : null
+  const effort = isClaude ? normalizeEffort(readMeta(sessionsDir, id).effort) || RESIDENT_EFFORT : null
   return {
     agentRuntime,
     agentSessionId,

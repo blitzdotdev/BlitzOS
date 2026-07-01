@@ -1377,6 +1377,175 @@ button.isl-app-chat:active .isl-app-icon {
   line-height: 1;
   margin-top: -1px;
 }
+/* ── Reasoning-effort picker (docked tray): a small pill in the message bar toggles a level tray that docks INSIDE the
+   chassis — above the composer when the attach panel is closed, below it (over the attach area) when open — so it never
+   overflows the notch and the cursor never leaves it (no hover-close). Empty-chat only; text labels, no level dots. ── */
+.nh-island .isl-effort-wrap {
+  position: relative;
+  flex: none;
+  align-self: center;
+}
+.nh-island .isl-effort-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 rgba(0, 0, 0, 0.2);
+  color: var(--isl-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+.nh-island .isl-effort-pill:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.052));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 10px 20px rgba(0, 0, 0, 0.22);
+  transform: translateY(-1px);
+}
+.nh-island .isl-effort-pill.on {
+  border-color: rgba(77, 190, 255, 0.32);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.16), rgba(255, 255, 255, 0.04));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+.nh-island .isl-effort-pill.on:hover {
+  border-color: rgba(77, 190, 255, 0.5);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.22), rgba(255, 255, 255, 0.06));
+}
+.nh-island .isl-effort-pill:active {
+  transform: translateY(0);
+}
+/* The level tray OVERLAYS adjacent content (absolute inside the composer-zone) rather than taking flow space, so the
+   input bar NEVER shifts. It docks just ABOVE the composer (over the feed) when the attach panel is closed, and just
+   BELOW it (over the attach area) when open. Grid-rows 0fr→1fr grows it open. It stays inside the chassis, so the
+   cursor never leaves the notch (no hover-close). */
+.nh-island .isl-effort-tray {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+.nh-island .isl-effort-tray.dir-up {
+  bottom: calc(100% + 6px);
+}
+.nh-island .isl-effort-tray.dir-down {
+  top: calc(100% + 6px);
+}
+.nh-island .isl-effort-tray.open {
+  grid-template-rows: 1fr;
+}
+.nh-island .isl-effort-tray-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+.nh-island .isl-effort-tray-card {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 11px 10px;
+  background: var(--isl-surface2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
+}
+.nh-island .isl-effort-head {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: baseline;
+  padding: 0 2px;
+}
+.nh-island .isl-effort-head-title {
+  grid-column: 1;
+  justify-self: start;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--isl-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.nh-island .isl-effort-head-model {
+  grid-column: 2;
+  justify-self: center;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+}
+.nh-island .isl-effort-opts {
+  display: flex;
+  gap: 6px;
+}
+.nh-island .isl-effort-option {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 11px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 rgba(0, 0, 0, 0.2);
+  color: var(--isl-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+.nh-island .isl-effort-option:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.052));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 10px 20px rgba(0, 0, 0, 0.22);
+  transform: translateY(-1px);
+  color: var(--isl-text);
+}
+.nh-island .isl-effort-option.active {
+  border-color: rgba(77, 190, 255, 0.32);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.16), rgba(255, 255, 255, 0.04));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 0 rgba(0, 0, 0, 0.2);
+  color: var(--isl-text);
+}
+.nh-island .isl-effort-option.active:hover {
+  border-color: rgba(77, 190, 255, 0.5);
+  background: linear-gradient(180deg, rgba(77, 190, 255, 0.22), rgba(255, 255, 255, 0.06));
+}
+.nh-island .isl-effort-option:active {
+  transform: translateY(0);
+}
+/* The persistent effort record at the TOP of the transcript: a centered text label flanked by thin rules — a
+   system-divider look, not a pill. */
+.nh-island .isl-effort-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 6px 12px;
+  color: var(--isl-dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+.nh-island .isl-effort-mid {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.nh-island .isl-effort-rule {
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+}
 /* the inline attachment panel: a grid-rows height animation (0fr → 1fr) so it grows/springs smoothly above the
    message bar (paired with the chassis width grow in notch.css). */
 .nh-island .isl-attach-wrap {

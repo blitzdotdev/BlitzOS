@@ -32,6 +32,9 @@ export interface TerminalMeta {
   /** the dynamic-workflows ("orchestrators") capability toggle: when true the boot-task provider hands this
    *  agent the orchestrator duty (author + run blitzscript workflows). Sticky across re-spawn (spawnTerminal). */
   orchestrators?: boolean
+  /** per-agent reasoning-effort override ('low'|'medium'|'high'|'xhigh'); absent ⇒ RESIDENT_EFFORT default (xhigh).
+   *  Read by prepareAgentLaunch on every (re)launch; sticky across re-spawn (spawnTerminal). */
+  effort?: string
   /** hidden from active chat tabs, but retained in settings + on disk for restore/delete. */
   archived?: boolean
   archivedAt?: number
@@ -57,6 +60,8 @@ export interface SpawnTerminalOpts {
   claudeEstablished?: boolean
   /** explicit orchestrators flag to carry onto the spawned meta; absent ⇒ inherit on-disk (re-spawn preserves it). */
   orchestrators?: boolean
+  /** explicit effort override to carry onto the spawned meta; absent ⇒ inherit on-disk (re-spawn preserves it). */
+  effort?: string
   /** hidden from active chat tabs; normally inherited from disk by spawnTerminal. */
   archived?: boolean
   archivedAt?: number
@@ -119,3 +124,5 @@ export function readTerminalMeta(terminalsDir: string, id: string): TerminalMeta
 export function writeTerminalMeta(terminalsDir: string, id: string, meta: TerminalMeta): void
 /** Set/clear the orchestrators (dynamic-workflows) flag on an agent's meta.json. Pure + testable. */
 export function setTerminalOrchestrators(terminalsDir: string, id: string, on: boolean): { ok: boolean; error?: string; orchestrators?: boolean }
+/** Set (or clear → default) the per-agent reasoning-effort override on meta.json. Pure + testable. */
+export function setTerminalEffort(terminalsDir: string, id: string, level: string): { ok: boolean; error?: string; effort?: string | null }

@@ -58,6 +58,19 @@ export function setTerminalOrchestrators(terminalsDir, id, on) {
   return { ok: true, orchestrators: !!on }
 }
 
+/** Set (or clear → default) the reasoning-EFFORT level on an agent's meta.json. Durable like `orchestrators`:
+ *  prepareAgentLaunch re-reads it every (re)launch and spawnTerminal carries it across re-exec. A falsy/invalid
+ *  level clears the override (agent reverts to the RESIDENT_EFFORT default). Caller re-execs to apply it live. */
+export function setTerminalEffort(terminalsDir, id, level) {
+  const meta = readTerminalMeta(terminalsDir, String(id))
+  if (!meta) return { ok: false, error: `no agent ${id}` }
+  const valid = ['low', 'medium', 'high', 'xhigh'].includes(String(level))
+  if (valid) meta.effort = String(level)
+  else delete meta.effort
+  writeTerminalMeta(terminalsDir, String(id), meta)
+  return { ok: true, effort: meta.effort || null }
+}
+
 export function createTerminalManager({ host, terminalsDir, emit = () => {}, markWrite = () => {}, rebuildAgentCommand = null }) {
   const live = new Map() // id -> { meta, buf, flushTimer, establishTimer, restartTimer, stopping, unsubData, unsubExit }
   const agentFails = new Map() // id -> consecutive fast-exit count (drives the auto-restart backoff)
@@ -199,6 +212,10 @@ export function createTerminalManager({ host, terminalsDir, emit = () => {}, mar
     // its orchestrator duty after the first launch. An explicit opts.orchestrators wins; else inherit on-disk.
     const carriedOrchestrators = opts.orchestrators != null ? opts.orchestrators : readMeta(id)?.orchestrators
     if (carriedOrchestrators) meta.orchestrators = true
+    // Same carry for the per-agent EFFORT override — a re-exec must not drop it, or prepareAgentLaunch would
+    // fall back to the default xhigh on the next relaunch.
+    const carriedEffort = opts.effort != null ? opts.effort : readMeta(id)?.effort
+    if (carriedEffort) meta.effort = carriedEffort
     const archivedMeta = readMeta(id)
     if (archivedMeta?.archived) {
       meta.archived = true

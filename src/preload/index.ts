@@ -129,6 +129,10 @@ const api = {
   renameAgent(agentId: string, newTitle: string): Promise<{ ok: boolean; error?: string }> {
     return (ipcRenderer.invoke('os:rename-agent', { id: agentId, title: newTitle }) as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false }))
   },
+  /** Set an agent's reasoning-effort level (island effort picker on a NEW chat). Persists + re-execs to apply. */
+  setAgentEffort(agentId: string, level: string): Promise<{ ok: boolean; error?: string; effort?: string | null }> {
+    return (ipcRenderer.invoke('os:agent-set-effort', { id: agentId, level }) as Promise<{ ok: boolean; error?: string; effort?: string | null }>).catch(() => ({ ok: false }))
+  },
   /** Open the native right-click menu for an agent chat tab; resolves the chosen action (or null if dismissed). */
   agentTabMenu(opts: { isPrimary?: boolean }): Promise<'rename' | 'archive' | null> {
     return (ipcRenderer.invoke('os:agent-tab-menu', opts) as Promise<'rename' | 'archive' | null>).catch(() => null)

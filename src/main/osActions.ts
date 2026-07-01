@@ -1009,6 +1009,17 @@ export function osSetOrchestrators(agentId: string, on = true): { ok: boolean; e
   try { osUserMessage(msg, String(agentId)) } catch { /* the flag still persisted; the duty lands on the next launch */ }
   return r
 }
+/** Set the per-agent reasoning-effort level (from the island's effort picker on a NEW chat). Persists to meta.json,
+ *  then RE-EXECS the agent's tmux process — effort is a launch-time `--effort` flag with no live change. The restart
+ *  resumes the same Claude session (--resume), so applying it to a brand-new empty chat is seamless. Scoped by the
+ *  UI to empty chats today; a restart mid-conversation would interrupt the current turn. */
+export function osSetAgentEffort(agentId: string, level: string): { ok: boolean; error?: string; effort?: string | null } {
+  if (!wsHost) return { ok: false, error: 'no workspace host' }
+  const r = wsHost.setAgentEffort(String(agentId), level)
+  if (!r.ok) return r
+  try { restartAgentHook?.(String(agentId)) } catch { /* the level is persisted; it applies on the next launch */ }
+  return r
+}
 /** Close a non-primary agent (stop its backend + remove its widget and files). */
 export function osCloseAgent(agentId: string): { ok: boolean; error?: string } {
   absorbTickEcho({ agents: [String(agentId)] }) // W2: a tool-origin close changes the agent SET — the next tick skips this close (one-shot, per-delta)

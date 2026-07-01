@@ -50,7 +50,7 @@ import {
 // The agent's volatile relay base url lives in a file the agent re-reads each call (self-heal across restarts).
 import { writeRelayUrl } from './agent-runtime.mjs'
 // Agent settings ride the same terminal meta.json the manager owns.
-import { readTerminalMeta, setTerminalOrchestrators, writeTerminalMeta } from './terminal-manager.mjs'
+import { readTerminalMeta, setTerminalOrchestrators, setTerminalEffort, writeTerminalMeta } from './terminal-manager.mjs'
 import { sessionJsonlPath, lastAssistantStop, lastAssistantError } from './agent-transcript.mjs'
 // The inbox is a runtime surface in osState; reconcileInboxItems keeps its items authoritative from the store.
 import { reconcileInboxItems } from './action-items.mjs'
@@ -1084,6 +1084,11 @@ export function createWorkspaceHost(a) {
   function setAgentOrchestrators(agentId, on) {
     return setTerminalOrchestrators(agentDir(), String(agentId), !!on)
   }
+  // Persist the per-agent reasoning-effort override to meta.json. The caller (osSetAgentEffort) re-execs the agent
+  // so the new level takes effect (effort is a launch-time CLI flag; there's no live change).
+  function setAgentEffort(agentId, level) {
+    return setTerminalEffort(agentDir(), String(agentId), level)
+  }
   /** Boot: (re)launch EVERY agent with the CURRENT relay url and persisted backend metadata. We deliberately
    *  re-exec rather than reattach a survivor: the relay url is re-minted each run, so a survivor would hold a
    *  DEAD url and silently disconnect. spawnTerminal replaces any existing window, so there's no duplicate.
@@ -1536,6 +1541,7 @@ export function createWorkspaceHost(a) {
     newAgentId,
     addAgent,
     setAgentOrchestrators,
+    setAgentEffort,
     archiveAgent,
     unarchiveAgent,
     closeAgent,

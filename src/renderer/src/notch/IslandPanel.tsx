@@ -9,6 +9,7 @@ import './island.css'
 import './wf.css'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { ChatInput } from './ChatInput'
+import { useEffort, setEffort, EFFORT_LEVELS, EFFORT_LABEL, type EffortLevel } from './effortStore'
 import { AttachPanel } from './AttachPanel'
 import { useBrowserOnboard } from './browserGrantStore'
 import { AttachTray, buildTrayGroups, type TrayGroup } from './attachTray'
@@ -146,6 +147,30 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   const stagedImageCountRef = useRef(stagedImages.length)
   const [attachNotice, setAttachNotice] = useState<{ ok: boolean; text: string } | null>(null)
   const [fileDragActive, setFileDragActive] = useState(false)
+  // Reasoning-effort picker (docked tray) — shown ONLY on a brand-new EMPTY chat (before the first message). Picking
+  // a level re-execs the agent at that effort; once the chat has messages the picker is gone (set-at-start only).
+  const activeEffort = useEffort(activeId ?? '')
+  const [effortMenuOpen, setEffortMenuOpen] = useState(false) // the docked effort tray: open/closed
+  const effortRef = useRef<HTMLDivElement>(null) // the pill wrap (the trigger)
+  const effortMenuRef = useRef<HTMLDivElement>(null) // the docked tray
+  const showEffortPicker = Boolean(activeId && messages.length === 0)
+  useEffect(() => {
+    if (!showEffortPicker) setEffortMenuOpen(false) // close if the chat is no longer empty / tab changed
+  }, [showEffortPicker, activeId])
+  // Toggling the attach panel flips which side the tray docks (above↔below) — close it so it re-opens cleanly on the
+  // new side instead of jumping.
+  useEffect(() => {
+    setEffortMenuOpen(false)
+  }, [attachOpen])
+  useEffect(() => {
+    if (!effortMenuOpen) return
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node
+      if (!effortRef.current?.contains(t) && !effortMenuRef.current?.contains(t)) setEffortMenuOpen(false)
+    }
+    window.addEventListener('mousedown', onDown, true)
+    return () => window.removeEventListener('mousedown', onDown, true)
+  }, [effortMenuOpen])
   useEffect(() => {
     if (!attachNotice) return
     const t = window.setTimeout(() => setAttachNotice(null), attachNotice.ok ? 2800 : 4500) // errors linger so the reason is readable
@@ -654,54 +679,109 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
 
   // The message bar (attach "+" to the left of the pill), then the inline attachment panel BELOW it (the island
   // grows when open). Vertical order: message bar, then skills, then the dropboxes.
-  const composerBlock = (placeholder: string, maxHeight: number, autoFocus: boolean): JSX.Element => (
-    <>
-      {/* The message bar is HIDDEN during the grant mini-onboarding — the grant card owns the island then. */}
-      {!onboarding && (
-        <div className={`isl-composer-zone${composerDragTone}`}>
-          {fileDragActive && <div className="isl-drop-signal" aria-hidden>Attach file</div>}
-          {/* Dragged-in screenshots: a preview strip (thumbnail + X + click-to-expand) shown right above the input,
-              even when the dropbox is closed. The transient notice surfaces wrong-type / unavailable errors. */}
-          {(composerImageGroups.length > 0 || attachNotice) && (
-            <div className="isl-composer-tray">
-              {composerImageGroups.length > 0 && <AttachTray groups={composerImageGroups} disableImagePreview={attachOpen} onRemoveConn={removeComposerImage} />}
-              {attachNotice && <div className={`isl-composer-notice${attachNotice.ok ? '' : ' err'}`} role="status">{attachNotice.text}</div>}
+  const composerBlock = (placeholder: string, maxHeight: number, autoFocus: boolean): JSX.Element => {
+    // The reasoning-effort tray — an ABSOLUTE overlay inside the composer-zone (never takes flow space, so the input
+    // bar never shifts). Docks just ABOVE the composer (over the feed) when the attach panel is closed, just BELOW it
+    // (over the attach area) when open. Kept mounted (collapsed) while the picker is available so it animates both ways.
+    const effortTray =
+      showEffortPicker && activeId ? (
+        <div
+          className={`isl-effort-tray ${attachOpen ? 'dir-down' : 'dir-up'}${effortMenuOpen ? ' open' : ''}`}
+          ref={effortMenuRef}
+          aria-hidden={!effortMenuOpen}
+        >
+          <div className="isl-effort-tray-inner">
+            <div className="isl-effort-tray-card" role="menu">
+              <div className="isl-effort-head">
+                <span className="isl-effort-head-title">Reasoning effort</span>
+                <span className="isl-effort-head-model">Model · Opus</span>
+              </div>
+              <div className="isl-effort-opts">
+                {EFFORT_LEVELS.map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={l === activeEffort}
+                    className={`isl-effort-option${l === activeEffort ? ' active' : ''}`}
+                    onClick={() => {
+                      setEffort(activeId, l as EffortLevel)
+                      setEffortMenuOpen(false)
+                    }}
+                  >
+                    <span className="isl-effort-name">{EFFORT_LABEL[l]}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          )}
-          <div className="isl-composer">
-            <button
-              type="button"
-              className={`isl-attach${attachOpen ? ' on' : ''}`}
-              aria-label={attachOpen ? 'Close attachments' : 'Add attachments'}
-              aria-pressed={attachOpen}
-              onClick={onToggleAttach}
-            >
-              <span className="isl-attach-glyph" aria-hidden>
-                {attachOpen ? '×' : '+'}
-              </span>
-            </button>
-            <ChatInput
-              className="isl-bar"
-              placeholder={placeholder}
-              dragPlaceholder={composerDragPlaceholder}
-              onSend={handleSend}
-              autoFocus={autoFocus}
-              maxHeight={maxHeight}
-              sendLabel="↑"
-              draftKey={activeId ?? ''}
-              hasAttachments={stagedImages.length > 0}
-            />
           </div>
         </div>
-      )}
-      {/* Keep the attach panel mounted+open during onboarding (it renders the grant card), even if attach was toggled. */}
-      <div className={`isl-attach-wrap${attachOpen || onboarding ? ' open' : ''}`} aria-hidden={!attachOpen && !onboarding}>
-        <div className="isl-attach-inner">
-          <AttachPanel activeSessionId={activeId ?? ''} />
+      ) : null
+    return (
+      <>
+        {/* The message bar is HIDDEN during the grant mini-onboarding — the grant card owns the island then. */}
+        {!onboarding && (
+          <div className={`isl-composer-zone${composerDragTone}`}>
+            {fileDragActive && <div className="isl-drop-signal" aria-hidden>Attach file</div>}
+            {/* Dragged-in screenshots: a preview strip (thumbnail + X + click-to-expand) shown right above the input,
+                even when the dropbox is closed. The transient notice surfaces wrong-type / unavailable errors. */}
+            {(composerImageGroups.length > 0 || attachNotice) && (
+              <div className="isl-composer-tray">
+                {composerImageGroups.length > 0 && <AttachTray groups={composerImageGroups} disableImagePreview={attachOpen} onRemoveConn={removeComposerImage} />}
+                {attachNotice && <div className={`isl-composer-notice${attachNotice.ok ? '' : ' err'}`} role="status">{attachNotice.text}</div>}
+              </div>
+            )}
+            <div className="isl-composer">
+              <button
+                type="button"
+                className={`isl-attach${attachOpen ? ' on' : ''}`}
+                aria-label={attachOpen ? 'Close attachments' : 'Add attachments'}
+                aria-pressed={attachOpen}
+                onClick={onToggleAttach}
+              >
+                <span className="isl-attach-glyph" aria-hidden>
+                  {attachOpen ? '×' : '+'}
+                </span>
+              </button>
+              {showEffortPicker && activeId && (
+                <div className="isl-effort-wrap" ref={effortRef}>
+                  <button
+                    type="button"
+                    className={`isl-effort-pill${effortMenuOpen ? ' on' : ''}`}
+                    aria-haspopup="menu"
+                    aria-expanded={effortMenuOpen}
+                    title="Reasoning effort for this chat (set before the first message)"
+                    onClick={() => setEffortMenuOpen((v) => !v)}
+                  >
+                    <span className="isl-effort-lvl">{EFFORT_LABEL[activeEffort]}</span>
+                  </button>
+                </div>
+              )}
+              <ChatInput
+                className="isl-bar"
+                placeholder={placeholder}
+                dragPlaceholder={composerDragPlaceholder}
+                onSend={handleSend}
+                autoFocus={autoFocus}
+                maxHeight={maxHeight}
+                sendLabel="↑"
+                draftKey={activeId ?? ''}
+                hasAttachments={stagedImages.length > 0}
+              />
+            </div>
+            {/* Absolute overlay — floats over the feed (above) or the attach area (below); the input never moves. */}
+            {effortTray}
+          </div>
+        )}
+        {/* Keep the attach panel mounted+open during onboarding (it renders the grant card), even if attach was toggled. */}
+        <div className={`isl-attach-wrap${attachOpen || onboarding ? ' open' : ''}`} aria-hidden={!attachOpen && !onboarding}>
+          <div className="isl-attach-inner">
+            <AttachPanel activeSessionId={activeId ?? ''} />
+          </div>
         </div>
-      </div>
-    </>
-  )
+      </>
+    )
+  }
 
   const showAppViewer = (part: IslandAppMessagePart): void => {
     const normalized = normalizedBlitzAppPart(part)
@@ -1058,6 +1138,15 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
               (dotStatus(status) !== 'idle' ? inlineDetails : null) || <div className="isl-empty">No messages yet</div>
             ) : (
               <>
+                {/* Persistent effort record: a thin divider pinned at the TOP of the transcript (above the first user
+                    message) showing the reasoning effort this chat was started at. Reads the persisted per-agent level. */}
+                {activeId && (
+                  <div className="isl-effort-line">
+                    <span className="isl-effort-rule" aria-hidden />
+                    <span className="isl-effort-mid">{EFFORT_LABEL[activeEffort]} reasoning</span>
+                    <span className="isl-effort-rule" aria-hidden />
+                  </div>
+                )}
                 {/* runs that started before any message render at the top; the rest are interleaved below */}
                 {leadingRuns.map((r) => renderBoard(r))}
                 {messages.map((m, i) => {
