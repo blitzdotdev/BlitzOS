@@ -9,7 +9,7 @@ import blitzAppIcon from '../assets/blitz-app-icon.png'
 import blitzGlanceIcon from '../assets/blitz-glance-icon.png'
 import { agentGradient } from './agentVisuals'
 
-export type IntroVisual = 'home' | 'tabs' | 'connect' | 'workflow' | 'final' | 'requirement' | 'notch'
+export type IntroVisual = 'home' | 'tabs' | 'connect' | 'workflow' | 'final' | 'requirement' | 'notch' | 'beta'
 
 const CHECK = 'm5 12 4 4L19 6'
 const ALERT = 'M12 7v6M12 17h.01'
@@ -418,6 +418,17 @@ export function OnboardingDoneHero(): JSX.Element {
   )
 }
 
+// ── Beta / feedback: a little feedback exchange under a BETA badge. ───────────────────────────────────────────
+function BetaVisual(): JSX.Element {
+  return (
+    <div className="oba-beta" aria-hidden>
+      <span className="oba-beta-badge">BETA</span>
+      <div className="oba-msg oba-msg-agent oba-beta-msg">How’s Blitz treating you?</div>
+      <div className="oba-msg oba-msg-user oba-beta-msg oba-beta-msg2">Loving it — I’ve got a couple ideas</div>
+    </div>
+  )
+}
+
 export function OnboardingVisual({ kind }: { kind: IntroVisual }): JSX.Element | null {
   if (kind === 'final' || kind === 'requirement') return null
   return (
@@ -427,6 +438,7 @@ export function OnboardingVisual({ kind }: { kind: IntroVisual }): JSX.Element |
       {kind === 'connect' && <ConnectVisual />}
       {kind === 'workflow' && <WorkflowVisual />}
       {kind === 'notch' && <NotchVisual />}
+      {kind === 'beta' && <BetaVisual />}
     </div>
   )
 }

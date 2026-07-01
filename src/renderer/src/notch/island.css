@@ -963,6 +963,41 @@ button.isl-app-chat:active .isl-app-icon {
   gap: 6px;
   flex: none;
 }
+/* Beta slide: the Discord CTA (blurple, centered — links to the invite). */
+.nh-island .isl-onb-discord {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: 0;
+  border-radius: 12px;
+  background: #5865f2;
+  color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(88, 101, 242, 0.34);
+  transition: transform 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+  animation: isl-rise 0.24s ease-out 0.04s both;
+}
+.nh-island .isl-onb-discord:hover {
+  background: #4b57e0;
+  box-shadow: 0 12px 28px rgba(88, 101, 242, 0.5);
+  transform: translateY(-1px);
+}
+.nh-island .isl-onb-discord:active {
+  transform: translateY(0);
+}
+.nh-island .isl-onb-discord svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+.nh-island .isl-onb-discord svg path {
+  fill: currentColor;
+}
 .nh-island .isl-onb-card {
   position: relative;
   isolation: isolate;

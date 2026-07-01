@@ -1335,3 +1335,41 @@
   top: 19px;
   left: calc(50% + 4px);
 }
+
+/* ── beta / feedback slide: a feedback exchange + a pulsing BETA badge + a floating Discord mark ─────────────── */
+.oba-beta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 16px;
+}
+.oba-beta-badge {
+  margin-top: 10px;
+  padding: 3px 11px;
+  border: 1px solid rgba(77, 190, 255, 0.42);
+  border-radius: 9999px;
+  background: rgba(10, 132, 255, 0.16);
+  color: #7dccff;
+  font: 800 10px/1 var(--isl-round);
+  letter-spacing: 0.14em;
+  animation: oba-beta-pulse 2.2s ease-in-out infinite;
+}
+.oba-beta-msg {
+  max-width: 78%;
+}
+.oba-beta-msg2 {
+  animation-delay: 0.14s;
+}
+@keyframes oba-beta-pulse {
+  0%,
+  100% {
+    opacity: 0.82;
+  }
+  50% {
+    opacity: 1;
+  }
+}

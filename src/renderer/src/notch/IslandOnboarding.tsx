@@ -65,6 +65,8 @@ const effectivePermissions = (state: PreboardState): PermRow[] => {
 }
 const CHECK_PATH = 'm5 12 4 4L19 6'
 const ALERT_PATH = 'M12 8v5M12 16h.01'
+const DISCORD_PATH =
+  'M19.3 5.3A17.9 17.9 0 0 0 14.9 4l-.25.5a16.6 16.6 0 0 1 3.9 1.25 15 15 0 0 0-12.9 0A16.6 16.6 0 0 1 9.6 4.5L9.35 4A17.9 17.9 0 0 0 5 5.3C2.2 9.5 1.5 13.6 1.85 17.6a18.1 18.1 0 0 0 5.4 2.7l.72-1.1a11.7 11.7 0 0 1-1.8-.87l.44-.32a12.9 12.9 0 0 0 11 0l.44.32a11.7 11.7 0 0 1-1.8.87l.72 1.1a18.1 18.1 0 0 0 5.4-2.7c.45-4.6-.72-8.7-3.4-12.3ZM8.55 15.2c-.9 0-1.63-.8-1.63-1.8s.72-1.8 1.63-1.8 1.64.82 1.63 1.8c0 1-.72 1.8-1.63 1.8Zm6.9 0c-.9 0-1.63-.8-1.63-1.8s.72-1.8 1.63-1.8 1.64.82 1.63 1.8c0 1-.72 1.8-1.63 1.8Z'
 // Padlock glyph for a not-yet-granted permission row (neutral state), drawn in the same 24x24 stroked
 // style as the requirement-card icons (shackle + body as two stroked paths).
 const LOCK_SHACKLE = 'M9 11V8a3 3 0 0 1 6 0v3'
@@ -85,6 +87,11 @@ const INTRO_SLIDES: IntroSlide[] = [
     title: 'Watch the work unfold',
     copy: 'Blitz breaks large tasks into a workflow you can open as a board. Every step moves from to-do to done.',
     visual: 'workflow'
+  },
+  {
+    title: 'Blitz is in beta',
+    copy: 'We’re building fast and want your feedback. Send it anytime with the Feedback button in Settings, or join our Discord to ask us questions directly.',
+    visual: 'beta'
   },
   {
     title: 'Blitz runs on Claude Code',
@@ -360,6 +367,9 @@ export function IslandOnboarding({
   const downloadClaude = (): void => {
     void window.agentOS?.openExternalUrl?.('https://claude.com/claude-code')
   }
+  const openDiscord = (): void => {
+    void window.agentOS?.openExternalUrl?.('https://discord.gg/VsywH6GNhB')
+  }
 
   const openPermission = (kind: DragKind): void => {
     setActiveKind(kind)
@@ -457,6 +467,14 @@ export function IslandOnboarding({
               )}
             </p>
           </div>
+          {introSlide.visual === 'beta' && (
+            <button type="button" className="isl-onb-discord" onClick={openDiscord}>
+              <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+                <path d={DISCORD_PATH} />
+              </svg>
+              Join our Discord
+            </button>
+          )}
           {introSlide.visual === 'requirement' && (
             <div className="isl-onb-req">
               <div className={`isl-onb-req-row${claude == null ? '' : claude.installed ? ' ok' : ' warn'}`}>
