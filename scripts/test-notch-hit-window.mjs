@@ -92,9 +92,10 @@ ok('the hit-window is INTERACTIVE (transparent, acceptFirstMouse, the main prelo
 ok('main creates the hit-window STRICTLY ABOVE the overlay (screen-saver relativeLevel 1) + only when a real notch exists',
   /new BrowserWindow\(notchHitWindowOptions/.test(index) && /setAlwaysOnTop\(true, 'screen-saver', 1\)/.test(index) &&
     /const rect = notchHitRect\(notchGeom, menuBarH\)/.test(index) && /if \(!rect\)/.test(index))
-ok('open island makes the notch hit-window click-through so it cannot steal tab hover or blank-strip clicks',
+ok('open island makes the notch hit-window click-through, then restores a plain interactive state when closed',
   /let notchOverlayInteractive = false/.test(index) && /notchOverlayInteractive = !!on/.test(index) &&
-    /notchHitWin\.setIgnoreMouseEvents\(notchOverlayInteractive, \{ forward: true \}\)/.test(index))
+    /notchHitWin\.setIgnoreMouseEvents\(true, \{ forward: true \}\)/.test(index) &&
+    /notchHitWin\.setIgnoreMouseEvents\(false\)/.test(index))
 ok('main forwards the hit-window click/hover to the overlay renderer + pushes the REAL notch width + hasNotch',
   /ipcMain\.on\('os:notch-click'[\s\S]*?'os:notch-handle-click'/.test(index) &&
     /ipcMain\.on\('os:notch-hover'[\s\S]*?'os:notch-handle-hover'/.test(index) &&

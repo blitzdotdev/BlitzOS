@@ -12,20 +12,25 @@ import { getDraft, setDraft } from './draftStore'
 export function ChatInput({
   className = '',
   placeholder = 'Message',
+  dragPlaceholder,
   onSend,
   maxHeight = 120,
   autoFocus = false,
   sendLabel = '↑',
-  draftKey
+  draftKey,
+  hasAttachments = false
 }: {
   className?: string
   placeholder?: string
+  dragPlaceholder?: string
   onSend?: (text: string) => void
   maxHeight?: number
   autoFocus?: boolean
   sendLabel?: string
   /** Persist the half-typed draft per chat so it survives the island close/reopen + tab switches. */
   draftKey?: string
+  /** When true, allow sending with EMPTY text (a staged screenshot can be sent on its own). */
+  hasAttachments?: boolean
 }): JSX.Element {
   const ref = useRef<HTMLTextAreaElement>(null)
   const [canSend, setCanSend] = useState(false)
@@ -37,7 +42,7 @@ export function ChatInput({
     el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px'
     el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden'
   }
-  const sync = (): void => setCanSend(!!ref.current?.value.trim())
+  const sync = (): void => setCanSend(!!ref.current?.value.trim() || hasAttachments)
 
   useEffect(() => {
     autosize()
@@ -69,10 +74,16 @@ export function ChatInput({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey])
 
+  // Staging/clearing a screenshot flips whether an empty-text send is allowed → re-evaluate the send affordance.
+  useEffect(() => {
+    sync()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasAttachments])
+
   const send = (): void => {
     const el = ref.current
-    const text = el?.value.trim()
-    if (!text) return
+    const text = (el?.value ?? '').trim()
+    if (!text && !hasAttachments) return // require text OR a staged screenshot
     onSend?.(text)
     if (el) {
       el.value = '' // uncontrolled: clear via the node, keep native undo stack intact otherwise
@@ -83,12 +94,12 @@ export function ChatInput({
   }
 
   return (
-    <div className={`ci ${className}`}>
+    <div className={`ci ${className}${dragPlaceholder ? ' ci-drag-placeholder' : ''}`}>
       <textarea
         ref={ref}
         className="ci-field"
         rows={1}
-        placeholder={placeholder}
+        placeholder={dragPlaceholder || placeholder}
         defaultValue=""
         onInput={() => {
           autosize()

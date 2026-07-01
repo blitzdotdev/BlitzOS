@@ -11,6 +11,7 @@ import { markDone, clearDone, reconcileDone } from './notch/doneStore'
 import { isOnboardingHoverLocked } from './notch/onboardingHoverLock'
 import { requestIslandAgent, requestIslandView } from './notch/islandNavStore'
 import { usePickSuspended } from './notch/pickSuspendStore'
+import { useLightbox } from './notch/lightboxStore'
 import type { IslandAppMessagePart, IslandView } from './notch/types'
 import { ConnectPicker } from './components/ConnectPicker'
 import { IconCheck } from './components/Icons'
@@ -103,6 +104,8 @@ export default function App(): JSX.Element {
   const islandAttachOpenRef = useRef(false)
   const islandActiveAppRef = useRef<IslandAppMessagePart | null>(null)
   const [islandKeepMounted, setIslandKeepMounted] = useState(false)
+  const lightbox = useLightbox()
+  const keepIslandMounted = islandKeepMounted || Boolean(lightbox)
   const onIslandStateChange = (
     view: IslandView,
     page: number,
@@ -398,19 +401,44 @@ export default function App(): JSX.Element {
       }),
     []
   )
+  // Screenshot drops: a file dropped ANYWHERE on the window must NOT navigate the webContents to file:// (Electron's
+  // default — it would replace the whole island). Prevent it at the window level for file drags only (internal
+  // connector-row drags are untouched); the actual drop is handled by the chat panel's own onDrop. Mirrors the launcher.
+  useEffect(() => {
+    const hasFiles = (e: DragEvent): boolean => {
+      try {
+        return Array.prototype.indexOf.call(e.dataTransfer?.types || [], 'Files') >= 0
+      } catch {
+        return false
+      }
+    }
+    const onWinDragOver = (e: DragEvent): void => {
+      if (hasFiles(e)) e.preventDefault()
+    }
+    const onWinDrop = (e: DragEvent): void => {
+      if (hasFiles(e)) e.preventDefault()
+    }
+    window.addEventListener('dragover', onWinDragOver)
+    window.addEventListener('drop', onWinDrop)
+    return () => {
+      window.removeEventListener('dragover', onWinDragOver)
+      window.removeEventListener('drop', onWinDrop)
+    }
+  }, [])
   // While the island is shown, Esc closes it (capture phase, preventDefault) so it never falls through to a surface.
   useEffect(() => {
     if (!notchOn) return
     const onKey = (e: KeyboardEvent): void => {
       if (notchStateRef.current === 'closed') return
       if (e.key === 'Escape') {
+        if (lightbox) return
         e.preventDefault()
         closeIsland()
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [notchOn])
+  }, [lightbox, notchOn])
   // Hover → interactive region: collapsed = only the notch handle (then expand to the panel).
   // The window is click-through (main set ignoreMouseEvents) so the renderer flips it via os:notch-interactive.
   useEffect(() => {
@@ -1087,7 +1115,7 @@ export default function App(): JSX.Element {
           sits ON TOP of it (higher z) so the notch stays clickable while the chat is open. App previews stay mounted
           while hidden so their iframe does not reload on hover-away / hover-back. */}
       {notchOn &&
-        (notchState === 'panel' || islandKeepMounted) &&
+        (notchState === 'panel' || keepIslandMounted) &&
         createPortal(
           <NotchHost
             menuBarH={notchMenuBarH}

@@ -7,12 +7,16 @@
 // the original NotchShape are owned by NotchHost and are INVARIANT; this paints ONLY the interior.
 import './island.css'
 import './wf.css'
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { ChatInput } from './ChatInput'
 import { AttachPanel } from './AttachPanel'
 import { useBrowserOnboard } from './browserGrantStore'
-import { AttachTray, type TrayGroup } from './attachTray'
+import { AttachTray, buildTrayGroups, type TrayGroup } from './attachTray'
 import { useSentTray, recordSentTray, getLiveTray } from './sentTrayStore'
+import { useStagedSet, getStagedSet, unstageSources } from './stagingStore'
+import { useImagesMap, imagesForStaged } from './imageAttachStore'
+import { ingestImagePaths } from './imageIngest'
+import { useLightbox, closeLightbox, stepLightbox } from './lightboxStore'
 import MarkdownMessage from './MarkdownMessage'
 import IslandKanban, { type WfStats } from './IslandKanban'
 import { isSubagentEvents } from './wfReduce'
@@ -133,6 +137,171 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   // the dropbox clears on send, so each message's snapshot is exactly what was staged at THAT send.
   const sentTray = useSentTray(activeId)
   const pendingNewSessionRef = useRef<TrayGroup[] | null>(null) // composer ('') tray, pinned to the spawned agent's msg 0
+  // Screenshot attachments staged for THIS chat (dragged into the chat or the dropbox). The composer shows their
+  // previews (with X + click-to-expand) even when the dropbox is closed, so a drag-into-chat is visible immediately.
+  const stagedSet = useStagedSet(activeId ?? '')
+  const imagesMap = useImagesMap()
+  const stagedImages = useMemo(() => imagesForStaged(stagedSet), [stagedSet, imagesMap])
+  const composerImageGroups = useMemo(() => buildTrayGroups([], [], [], {}, () => false, stagedImages), [stagedImages])
+  const stagedImageCountRef = useRef(stagedImages.length)
+  const [attachNotice, setAttachNotice] = useState<{ ok: boolean; text: string } | null>(null)
+  const [fileDragActive, setFileDragActive] = useState(false)
+  useEffect(() => {
+    if (!attachNotice) return
+    const t = window.setTimeout(() => setAttachNotice(null), attachNotice.ok ? 2800 : 4500) // errors linger so the reason is readable
+    return () => window.clearTimeout(t)
+  }, [attachNotice])
+  useEffect(() => {
+    const previousCount = stagedImageCountRef.current
+    stagedImageCountRef.current = stagedImages.length
+    if (stagedImages.length <= previousCount) return
+    const pinFeedToBottom = (): void => {
+      if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight
+    }
+    pinFeedToBottom()
+    const raf = window.requestAnimationFrame(pinFeedToBottom)
+    const timers = [80, 220, 360].map((ms) => window.setTimeout(pinFeedToBottom, ms))
+    return () => {
+      window.cancelAnimationFrame(raf)
+      timers.forEach(window.clearTimeout)
+    }
+  }, [stagedImages.length])
+  const stageDroppedImagePaths = useCallback((paths: string[]): void => {
+    if (!paths.length) return
+    void ingestImagePaths(activeId ?? '', paths, (notice) => {
+      setAttachNotice(notice)
+    }).then((count) => {
+      if (count > 0) setAttachNotice(null)
+    })
+  }, [activeId])
+  useEffect(() => {
+    const off = window.agentOS?.screenshotDrop?.onDrop?.((m) => {
+      const target = String(m?.agentId || '')
+      if (!activeId || (target && target !== String(activeId))) return
+      const paths = Array.isArray(m?.paths) ? m.paths.filter((p): p is string => typeof p === 'string' && p.length > 0) : []
+      setFileDragActive(false)
+      stageDroppedImagePaths(paths)
+    })
+    return () => {
+      try {
+        off?.()
+      } catch {
+        /* best-effort */
+      }
+    }
+  }, [activeId, stageDroppedImagePaths])
+  useEffect(() => {
+    const off = window.agentOS?.screenshotDrop?.onHover?.((m) => {
+      const target = String(m?.agentId || '')
+      if (!activeId || (target && target !== String(activeId))) {
+        if (!m?.on) setFileDragActive(false)
+        return
+      }
+      setFileDragActive(!!m?.on)
+    })
+    return () => {
+      try {
+        off?.()
+      } catch {
+        /* best-effort */
+      }
+    }
+  }, [activeId])
+  // Resolve dropped files → OS paths, then validate/dedupe/stage them as screenshots for this chat. This direct DOM
+  // path is a fallback; macOS usually reaches the native catcher instead of this transparent Electron overlay.
+  const onChatFileDrop = (e: DragEvent<HTMLElement>): void => {
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return
+    const files = Array.from(e.dataTransfer.files || [])
+    e.preventDefault()
+    setFileDragActive(false)
+    const paths = window.agentOS?.dropPaths?.(files) || []
+    stageDroppedImagePaths(paths)
+  }
+  const onChatFileDragOver = (e: DragEvent<HTMLElement>): void => {
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return // only file drags; let text/internal drags pass
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    setFileDragActive(true)
+  }
+  const onChatFileDragLeave = (e: DragEvent<HTMLElement>): void => {
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+    setFileDragActive(false)
+  }
+  const removeComposerImage = (connId: string): void => unstageSources(activeId ?? '', connId)
+  const composerDragTone = fileDragActive ? ' file-drag' : ''
+  const composerDragPlaceholder = fileDragActive ? 'Attach file' : undefined
+  // The screenshot lightbox (shared store): full-size images load lazily. Keep the carousel responsive by loading
+  // only the current image plus its immediate neighbors instead of flooding the bridge with the whole set on open.
+  const lightbox = useLightbox()
+  const [lightboxFullByPath, setLightboxFullByPath] = useState<Record<string, string>>({})
+  const [lightboxLoadByPath, setLightboxLoadByPath] = useState<Record<string, 'loading' | 'error'>>({})
+  const lightboxLoadingRef = useRef<Set<string>>(new Set())
+  const lightboxImage = lightbox?.image ?? null
+  const lightboxHasPrev = !!lightbox && lightbox.index > 0
+  const lightboxHasNext = !!lightbox && lightbox.index < lightbox.images.length - 1
+  const lightboxSrc = lightboxImage ? lightboxFullByPath[lightboxImage.path] || '' : ''
+  const lightboxLoading = !!lightboxImage && !lightboxSrc && lightboxLoadByPath[lightboxImage.path] !== 'error'
+  const lightboxError = !!lightboxImage && !lightboxSrc && lightboxLoadByPath[lightboxImage.path] === 'error'
+  useEffect(() => {
+    if (!lightbox) return
+    const targetIndexes = [lightbox.index, lightbox.index - 1, lightbox.index + 1]
+    const targets = targetIndexes
+      .filter((idx, i, arr) => idx >= 0 && idx < lightbox.images.length && arr.indexOf(idx) === i)
+      .map((idx) => lightbox.images[idx])
+    for (const img of targets) {
+      if (lightboxFullByPath[img.path]) continue
+      if (lightboxLoadingRef.current.has(img.path)) continue
+      lightboxLoadingRef.current.add(img.path)
+      setLightboxLoadByPath((cur) => ({ ...cur, [img.path]: 'loading' }))
+      const loadFull = window.agentOS?.attachImageFull
+      if (!loadFull) {
+        lightboxLoadingRef.current.delete(img.path)
+        setLightboxLoadByPath((cur) => ({ ...cur, [img.path]: 'error' }))
+        continue
+      }
+      void loadFull(img.path)
+        .then((r) => {
+          if (r?.ok && r.dataUrl) {
+            const dataUrl = r.dataUrl
+            setLightboxFullByPath((cur) => (cur[img.path] ? cur : { ...cur, [img.path]: dataUrl }))
+            setLightboxLoadByPath((cur) => {
+              if (!cur[img.path]) return cur
+              const next = { ...cur }
+              delete next[img.path]
+              return next
+            })
+            return
+          }
+          setLightboxLoadByPath((cur) => ({ ...cur, [img.path]: 'error' }))
+        })
+        .catch(() => {
+          setLightboxLoadByPath((cur) => ({ ...cur, [img.path]: 'error' }))
+        })
+        .finally(() => {
+          lightboxLoadingRef.current.delete(img.path)
+        })
+    }
+  }, [lightbox, lightboxFullByPath])
+  useEffect(() => {
+    if (!lightbox) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        closeLightbox()
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        e.stopPropagation()
+        stepLightbox(-1)
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        e.stopPropagation()
+        stepLightbox(1)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [lightbox])
   const seenChatRef = useRef<Set<string>>(new Set())
   const shownChoiceEventsRef = useRef<Set<string>>(new Set())
   // On first sight of a freshly spawned agent, pin the composer tray captured at its spawning send to its first message.
@@ -160,8 +329,15 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
   // Freeze an EXACT copy of the live dropbox (getLiveTray) onto the message being sent, THEN send (NotchHost.onSend
   // clears the live tray). New-session composer ('') → stash it to pin onto the spawned agent's first message.
   const handleSend = (text: string): void => {
+    const chat = activeId ?? ''
+    // Screenshot attachments (the agent reads these original paths). Build the frozen groups from the source of
+    // truth at send time: connection groups from the published live tray (AttachPanel owns those) + image groups
+    // rebuilt from the store — so a screenshot dropped straight into the chat (dropbox never opened) still freezes.
+    const stagedImgs = imagesForStaged(getStagedSet(chat))
+    const attachments = stagedImgs.map((m) => m.path)
+    const live = getLiveTray(chat).filter((g) => g.type !== 'image')
+    const groups = [...live, ...buildTrayGroups([], [], [], {}, () => false, stagedImgs)]
     if (activeId) {
-      const groups = getLiveTray(activeId)
       if (groups.length) {
         // Use the absolute user-message index from the last user message; the next message is idx+1.
         // Falls back to the windowed count if userIdx isn't present (old messages before this field existed).
@@ -171,12 +347,11 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
           : messages.filter((m) => m.role === 'user').length
         recordSentTray(activeId, String(newUserIdx), groups)
       }
-      onSend(text)
+      onSend(text, attachments)
       return
     }
-    const groups = getLiveTray('')
     if (groups.length) pendingNewSessionRef.current = groups
-    onSend(text)
+    onSend(text, attachments)
   }
   // The frozen tray per transcript index. Keyed by m.userIdx (absolute, survives the 400-message window cap);
   // falls back to positional ordinal for messages that predate userIdx (old transcripts without the field).
@@ -483,27 +658,40 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
     <>
       {/* The message bar is HIDDEN during the grant mini-onboarding — the grant card owns the island then. */}
       {!onboarding && (
-        <div className="isl-composer">
-          <button
-            type="button"
-            className={`isl-attach${attachOpen ? ' on' : ''}`}
-            aria-label={attachOpen ? 'Close attachments' : 'Add attachments'}
-            aria-pressed={attachOpen}
-            onClick={onToggleAttach}
-          >
-            <span className="isl-attach-glyph" aria-hidden>
-              {attachOpen ? '×' : '+'}
-            </span>
-          </button>
-          <ChatInput
-            className="isl-bar"
-            placeholder={placeholder}
-            onSend={handleSend}
-            autoFocus={autoFocus}
-            maxHeight={maxHeight}
-            sendLabel="↑"
-            draftKey={activeId ?? ''}
-          />
+        <div className={`isl-composer-zone${composerDragTone}`}>
+          {fileDragActive && <div className="isl-drop-signal" aria-hidden>Attach file</div>}
+          {/* Dragged-in screenshots: a preview strip (thumbnail + X + click-to-expand) shown right above the input,
+              even when the dropbox is closed. The transient notice surfaces wrong-type / unavailable errors. */}
+          {(composerImageGroups.length > 0 || attachNotice) && (
+            <div className="isl-composer-tray">
+              {composerImageGroups.length > 0 && <AttachTray groups={composerImageGroups} disableImagePreview={attachOpen} onRemoveConn={removeComposerImage} />}
+              {attachNotice && <div className={`isl-composer-notice${attachNotice.ok ? '' : ' err'}`} role="status">{attachNotice.text}</div>}
+            </div>
+          )}
+          <div className="isl-composer">
+            <button
+              type="button"
+              className={`isl-attach${attachOpen ? ' on' : ''}`}
+              aria-label={attachOpen ? 'Close attachments' : 'Add attachments'}
+              aria-pressed={attachOpen}
+              onClick={onToggleAttach}
+            >
+              <span className="isl-attach-glyph" aria-hidden>
+                {attachOpen ? '×' : '+'}
+              </span>
+            </button>
+            <ChatInput
+              className="isl-bar"
+              placeholder={placeholder}
+              dragPlaceholder={composerDragPlaceholder}
+              onSend={handleSend}
+              autoFocus={autoFocus}
+              maxHeight={maxHeight}
+              sendLabel="↑"
+              draftKey={activeId ?? ''}
+              hasAttachments={stagedImages.length > 0}
+            />
+          </div>
         </div>
       )}
       {/* Keep the attach panel mounted+open during onboarding (it renders the grant card), even if attach was toggled. */}
@@ -826,6 +1014,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       ref={panelRef}
       className={`nh-island isl-process${attachOpen || onboarding ? ' isl-attaching' : ''}${openApp ? ' isl-app-viewing' : ''}`}
       style={lockHeight && !openApp ? { paddingTop: top, minHeight: lockHeight } : { paddingTop: top }}
+      onDragOver={onChatFileDragOver}
+      onDragLeave={onChatFileDragLeave}
+      onDrop={onChatFileDrop}
     >
       {appLayer}
       {viewerControls}
@@ -880,6 +1071,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                     m.role === 'user' && previous?.role === 'agent' && Boolean(matchingChoiceAnswerForMessage(previous, m.text))
                   if (isSubmittedAskAnswer) return null
                   const hasTray = Boolean(trayByIndex[i] && trayByIndex[i]!.length > 0)
+                  // An image-only message (a screenshot sent with no text) strips to empty — show just its tray
+                  // thumbnail, no empty bubble pill beneath it.
+                  const emptyBubble = m.role === 'user' && !m.text.trim() && !(m.parts && m.parts.length)
                   // The bubble renders the same with or without attachments; only its WRAPPER differs.
                   const bubble = (
                     <MarkdownMessage
@@ -904,9 +1098,9 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
                         // itself scrolls sideways, never vertical-clips). See plans/blitzos-connector-snapshot-clip-fix.md.
                         <div className="isl-msg-group">
                           <div className="isl-msg-tray">
-                            <AttachTray groups={trayByIndex[i]!} readOnly />
+                            <AttachTray groups={trayByIndex[i]!} readOnly disableImagePreview={attachOpen} />
                           </div>
-                          {bubble}
+                          {!emptyBubble && bubble}
                         </div>
                       ) : (
                         bubble
@@ -927,6 +1121,48 @@ export default function IslandPanel(props: IslandPanelProps): JSX.Element {
       )}
       {/* the composer + attachment panel are ALWAYS visible. */}
       {!openApp && composerBlock(activeId === '0' ? 'Message Blitz' : 'Steer this agent…', 108, false)}
+      {/* Screenshot lightbox: click a thumbnail (composer / dropbox / sent message) → expand. Close only via × or Esc;
+          side/backdrop space is inert so missed carousel clicks do not dismiss the preview. */}
+      {lightbox && lightboxImage && (
+        <div className="isl-image-viewer" role="dialog" aria-modal="true" aria-label={lightboxImage.name}>
+          {lightboxHasPrev && (
+            <button
+              type="button"
+              className="isl-image-viewer-nav prev"
+              aria-label="Previous image"
+              onClick={(e) => {
+                e.stopPropagation()
+                stepLightbox(-1)
+              }}
+            >
+              ‹
+            </button>
+          )}
+          {lightboxSrc ? (
+            <img className="isl-image-viewer-img" src={lightboxSrc} alt={lightboxImage.name} draggable={false} onClick={(e) => e.stopPropagation()} />
+          ) : (
+            <div className={`isl-image-viewer-loading${lightboxError ? ' err' : ''}`} role="status" aria-live="polite">
+              {lightboxLoading && <span className="isl-image-viewer-spinner" aria-hidden />}
+              <span className="isl-image-viewer-loading-title">{lightboxError ? 'Image unavailable' : 'Loading image'}</span>
+              <span className="isl-image-viewer-loading-name">{lightboxImage.name}</span>
+            </div>
+          )}
+          {lightboxHasNext && (
+            <button
+              type="button"
+              className="isl-image-viewer-nav next"
+              aria-label="Next image"
+              onClick={(e) => {
+                e.stopPropagation()
+                stepLightbox(1)
+              }}
+            >
+              ›
+            </button>
+          )}
+          <button type="button" className="isl-image-viewer-close" aria-label="Close image" onClick={(e) => { e.stopPropagation(); closeLightbox() }} />
+        </div>
+      )}
     </div>
   )
 }

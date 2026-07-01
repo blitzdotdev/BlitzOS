@@ -7,6 +7,7 @@
 import './attach.css'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { useStagedSet, stageSources, unstageSources } from './stagingStore'
+import { ingestImagePaths } from './imageIngest'
 import { buildTrayGroups, AttachTray, Favicon, AppIcon, type TrayGroup } from './attachTray'
 // The browser connection mini-onboarding ("Let Blitz work in Chrome/Safari") lives in a MODULE store
 // (browserGrantStore) so it survives the panel remounting while the user is in System Settings — see that file.
@@ -473,7 +474,8 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     e.dataTransfer.effectAllowed = 'copy'
   }
   const onBoxDragOver = (e: DragEvent<HTMLElement>): void => {
-    if (!Array.from(e.dataTransfer.types).includes(DRAG_MIME)) return // only our internal rows, not files/text
+    const types = Array.from(e.dataTransfer.types)
+    if (!types.includes(DRAG_MIME) && !types.includes('Files')) return // our internal rows OR dropped screenshot files
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
     if (!listDragOver) setListDragOver(true)
@@ -483,6 +485,18 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
   }
   const onBoxDrop = (e: DragEvent<HTMLElement>): void => {
     setListDragOver(false)
+    // File drop (a dragged-in screenshot): resolve to OS paths, then validate/stage via the shared ingest flow.
+    // stopPropagation so the chat panel's own whole-area file-drop handler doesn't ALSO stage it (double).
+    const files = Array.from(e.dataTransfer.files || [])
+    if (files.length) {
+      e.preventDefault()
+      e.stopPropagation()
+      const paths = window.agentOS?.dropPaths?.(files) || []
+      void ingestImagePaths(activeSessionId, paths, setNotice).then((count) => {
+        if (count > 0) setNotice({ ok: true, text: count === 1 ? 'File attached' : `${count} files attached` })
+      })
+      return
+    }
     let p: DragPayload | null = null
     try {
       p = JSON.parse(e.dataTransfer.getData(DRAG_MIME)) as DragPayload
@@ -519,9 +533,8 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
     else if (b === 'safari') browserAppsShown.add('Safari')
   }
   const appWindows = windows.filter((w) => !browserAppsShown.has(w.app || ''))
-  // The dropbox tray (LEFT box) = the staged sources, grouped — built by the SHARED buildTrayGroups so the live
-  // dropbox and the frozen in-chat snapshot can never drift. Memoized so the published live copy + the AttachTray
-  // only churn when the staged set / lists actually change.
+  // The connector dropbox (LEFT box) shows only staged app/window context. Files live above the chat input instead;
+  // IslandPanel rebuilds those from the attachment store at send time, so the connector submenu stays app-only.
   const trayGroups = useMemo(
     () => buildTrayGroups(connections, tabs, windows, dropped, isStaged),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -597,7 +610,7 @@ export function AttachPanel({ activeSessionId = '' }: { activeSessionId?: string
               <span>{notice && !notice.ok ? notice.text : dragOver || listDragOver ? 'Release to add' : 'Drag a macOS window here'}</span>
             </div>
           ) : (
-            <AttachTray groups={trayGroups} onRemoveConn={removeConn} onRemoveGroup={removeGroup} />
+            <AttachTray groups={trayGroups} disableImagePreview onRemoveConn={removeConn} onRemoveGroup={removeGroup} />
           )}
         </div>
 

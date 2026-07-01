@@ -257,6 +257,35 @@ const api = {
       return () => ipcRenderer.removeListener('os:pick-event', listener)
     }
   },
+  /** Screenshot file-drop catcher: a tiny native drop surface behind the Electron island. The island reports its
+   *  on-screen chassis rect; main hosts the real macOS drop destination and reports dropped file paths back here. */
+  screenshotDrop: {
+    start(
+      rect: { x: number; y: number; w: number; h: number },
+      activeSessionId?: string
+    ): Promise<{ ok: boolean; error?: string }> {
+      return (ipcRenderer.invoke('os:screenshot-drop-start', rect, activeSessionId) as Promise<{ ok: boolean; error?: string }>).catch((e) => ({ ok: false, error: String(e) }))
+    },
+    stop(): Promise<void> {
+      return (ipcRenderer.invoke('os:screenshot-drop-stop') as Promise<unknown>).then(() => {}).catch(() => {})
+    },
+    complete(paths: string[]): void {
+      ipcRenderer.send('os:screenshot-drop-complete', Array.isArray(paths) ? paths : [])
+    },
+    hover(on: boolean): void {
+      ipcRenderer.send('os:screenshot-drop-hover', !!on)
+    },
+    onDrop(cb: (m: { paths: string[]; agentId?: string }) => void): () => void {
+      const listener = (_e: unknown, m: { paths: string[]; agentId?: string }): void => cb(m)
+      ipcRenderer.on('os:screenshot-drop', listener)
+      return () => ipcRenderer.removeListener('os:screenshot-drop', listener)
+    },
+    onHover(cb: (m: { on: boolean; agentId?: string }) => void): () => void {
+      const listener = (_e: unknown, m: { on: boolean; agentId?: string }): void => cb(m)
+      ipcRenderer.on('os:screenshot-drop-hover', listener)
+      return () => ipcRenderer.removeListener('os:screenshot-drop-hover', listener)
+    }
+  },
   /** The agent-socket paste URL (for the "Connect AI" affordance). */
   onAgentSocketUrl(cb: (url: string) => void): () => void {
     const listener = (_e: unknown, url: string): void => cb(url)
@@ -326,9 +355,10 @@ const api = {
   captureSurface(surfaceId: string): Promise<string | null> {
     return ipcRenderer.invoke('surface:capture', surfaceId)
   },
-  /** The user typed a message to an agent (agentId '0' = the primary chat). */
-  sendMessage(text: string, agentId = '0'): void {
-    ipcRenderer.send('os:user-message', { text, agentId })
+  /** The user typed a message to an agent (agentId '0' = the primary chat). `attachments` = absolute paths of any
+   *  dragged-in files; they ride to the agent as `[Attached image/file: <path>]` lines (the agent reads them). */
+  sendMessage(text: string, agentId = '0', attachments?: string[]): void {
+    ipcRenderer.send('os:user-message', { text, agentId, attachments: Array.isArray(attachments) ? attachments : [] })
   },
   /** DEBUG (Settings → Simulate agent status): force a fake status onto an agent so the four status surfaces +
    *  the inline error detail can be eyeballed without a real failure. `kind` is 'reconnecting' (the self-healing
@@ -436,6 +466,18 @@ const api = {
   },
   ingestPaths(paths: string[], x: number, y: number): Promise<{ ok: boolean; copied?: number; error?: string }> {
     return ipcRenderer.invoke('os:ingest-paths', paths, x, y)
+  },
+  // File attachments: validate a dropped PNG/JPG/PDF path. Images also carry a small thumbnail data URL for the chip.
+  attachFile(path: string): Promise<{ ok: boolean; id?: string; path?: string; name?: string; kind?: 'image' | 'pdf'; thumb?: string; error?: string }> {
+    return (ipcRenderer.invoke('os:attach-file', path) as Promise<{ ok: boolean; id?: string; path?: string; name?: string; kind?: 'image' | 'pdf'; thumb?: string; error?: string }>).catch(() => ({ ok: false, error: 'unavailable' }))
+  },
+  // Compatibility path for image-only callers.
+  attachImage(path: string): Promise<{ ok: boolean; id?: string; path?: string; name?: string; thumb?: string; error?: string }> {
+    return (ipcRenderer.invoke('os:attach-image', path) as Promise<{ ok: boolean; id?: string; path?: string; name?: string; thumb?: string; error?: string }>).catch(() => ({ ok: false, error: 'unavailable' }))
+  },
+  // The full-size image as a data URL, loaded on demand for the expand/lightbox view.
+  attachImageFull(path: string): Promise<{ ok: boolean; dataUrl?: string; error?: string }> {
+    return (ipcRenderer.invoke('os:attach-image-full', path) as Promise<{ ok: boolean; dataUrl?: string; error?: string }>).catch(() => ({ ok: false, error: 'unavailable' }))
   },
   // "New Folder" (files) / "New Board" (windows+widgets) — the right-click desktop action.
   newFolder(name: string, kind: 'board' | 'folder', x: number, y: number): Promise<{ ok: boolean; folder?: string; error?: string }> {

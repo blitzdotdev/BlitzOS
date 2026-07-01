@@ -4,7 +4,7 @@ import { join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { execFile, execFileSync } from 'node:child_process'
 import { startControlServer } from './control-server'
-import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osDebugSetChatStatus, osSurfaceChatError, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
+import { initOsActions, osCreateSurface, osReadThumb, osReadWorkspaceFile, osFlushWorkspace, osGroupIntoFolder, osIngestPaths, osAttachImage, osAttachFile, osAttachImageFull, osNewFolder, osRenameFolder, osMoveIntoFolder, osMoveOutOfFolder, osOpenFolderEntry, osListDir, osCloseSurfaceFile, osWorkspaceContext, osWorkspacesRoot, osSay, osSurfaceIdForWebContents, osActiveWorkspaceDir, setLaunchAgent, setPauseAgent, setRestartAgent, setStopAgent, setClearBrainContext, osResumeAgentsOnBoot, osSetRelayUrl, osSpawnAgent, osCloseAgent, osArchiveAgent, osUnarchiveAgent, osRenameAgent, osSetOrchestrators, osKickBrain, setOnUserMessage, setActionItemsProvider, setTerminalStatusProvider, osRadialPhase, osGetState, osAgentStatus, osDebugSetChatStatus, osSurfaceChatError, osAgentsSnapshot, osAgentDetails, osAgentClaudeSid, setMilestonesProvider, osBroadcast, osReadLeaf, osWfRunMemDir, osLoadAgentRuns, osNoteTabViewed, osWfHydrateIfCold, osSweepWfMemory } from './osActions'
 import { emitSystemMoment, emitWorkflowMoment, setMomentTap, setUndeliveredWakeHook, lastPollAt } from './events'
 import { createWakeWatchdog } from './agent-wake-watchdog.mjs'
 import { openBootJournal, chatFileName } from './workspace.mjs'
@@ -44,6 +44,7 @@ import { computerUseHelper } from './computer-use-helper'
 import { launchIslandHelper, setIslandDeps } from './island-bridge.mjs'
 import type { IslandHelperHandle } from './island-bridge.mjs'
 import { showAgentDoneNotification } from './agent-notifications.mjs'
+import { registerScreenshotDropCatcher } from './screenshot-drop-catcher'
 // The island isolation boundary (the ONE shared membership core, pure-node so a node test imports the REAL
 // filter): only ids the island itself spawned (recordIslandId) are ever listed/tailed (islandLiveIds), so the
 // HUD never mirrors the user's main canvas chat ('0') or a sibling peer agent. See island-membership.mjs.
@@ -639,6 +640,10 @@ app.whenReady().then(() => {
   }
   installAppMenu() // restores ⌃⌘F / View → Toggle Full Screen (pair-level; see installAppMenu)
   createWindow()
+  registerScreenshotDropCatcher({
+    getWindow: () => mainWindow,
+    preloadPath: join(__dirname, '../preload/index.js')
+  })
 
   // Durably flush cookies + localStorage to disk (web surfaces persist their logins;
   // otherwise the freshest auth token is lost on quit and sites log you back out).
@@ -826,6 +831,11 @@ app.whenReady().then(() => {
   ipcMain.handle('os:ingest-paths', (_e, paths: string[], x: number, y: number) =>
     osIngestPaths(Array.isArray(paths) ? paths : [], Number(x) || 0, Number(y) || 0)
   )
+  // Screenshot drag-drop attachments: validate a dropped PNG/JPG + return a thumbnail; load the full image lazily
+  // for the lightbox. The agent receives the original path (no copy) appended to its message (see osUserMessage).
+  ipcMain.handle('os:attach-file', (_e, p: string) => osAttachFile(String(p ?? '')))
+  ipcMain.handle('os:attach-image', (_e, p: string) => osAttachImage(String(p ?? '')))
+  ipcMain.handle('os:attach-image-full', (_e, p: string) => osAttachImageFull(String(p ?? '')))
   // "New Folder" (files) / "New Board" (windows+widgets) from the right-click desktop menu.
   ipcMain.handle('os:new-folder', (_e, name: string, kind: string, x: number, y: number) =>
     osNewFolder(String(name), kind === 'board' ? 'board' : 'folder', Number(x) || 0, Number(y) || 0)
@@ -1132,7 +1142,10 @@ app.whenReady().then(() => {
       try {
         // When the panel is open the full overlay owns interaction; the tiny notch catcher must become
         // click-through or it can steal hover/clicks from tabs rendered underneath the hardware notch column.
-        if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.setIgnoreMouseEvents(notchOverlayInteractive, { forward: true })
+        if (notchHitWin && !notchHitWin.isDestroyed()) {
+          if (notchOverlayInteractive) notchHitWin.setIgnoreMouseEvents(true, { forward: true })
+          else notchHitWin.setIgnoreMouseEvents(false)
+        }
       } catch { /* mid-teardown */ }
     })
     // Deep ON → an orchestrated workflow (electronOps.startWorkflow). Deep OFF → a conversational peer agent
@@ -1225,7 +1238,8 @@ app.whenReady().then(() => {
           // tabs). enableLargerThanScreen + this setBounds put it back over the notch; re-assert once more after the
           // clamp settles (matches the main overlay's 700ms re-assert).
           notchHitWin.setBounds(rect)
-          notchHitWin.setIgnoreMouseEvents(notchOverlayInteractive, { forward: true })
+          if (notchOverlayInteractive) notchHitWin.setIgnoreMouseEvents(true, { forward: true })
+          else notchHitWin.setIgnoreMouseEvents(false)
           setTimeout(() => { try { if (notchHitWin && !notchHitWin.isDestroyed()) notchHitWin.setBounds(rect) } catch { /* destroyed */ } }, 800)
         }
         notchHitWin.once('ready-to-show', showHit)
@@ -1235,7 +1249,8 @@ app.whenReady().then(() => {
         notchHitWin.setBounds(rect)
         notchHitWin.setAlwaysOnTop(true, 'screen-saver', 1)
         notchHitWin.showInactive()
-        notchHitWin.setIgnoreMouseEvents(notchOverlayInteractive, { forward: true })
+        if (notchOverlayInteractive) notchHitWin.setIgnoreMouseEvents(true, { forward: true })
+        else notchHitWin.setIgnoreMouseEvents(false)
       }
     }
     const refreshNotch = async (): Promise<void> => {

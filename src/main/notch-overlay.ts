@@ -73,7 +73,11 @@ export function showNotchOverlay(win: BrowserWindow): void {
  *  renderer re-enables it (the notch handle); on=true → fully interactive (the expanded canvas). forward keeps
  *  mousemove flowing so the renderer can keep detecting the notch hover and flip this back. */
 export function setNotchInteractive(win: BrowserWindow | null, on: boolean): void {
-  if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(!on, { forward: true })
+  if (!win || win.isDestroyed()) return
+  // When INTERACTIVE, don't pass { forward } — the mouse-forwarding tap (only meaningful while click-through) can
+  // leave residue that interferes with the window becoming a drag destination. Click-through still forwards moves.
+  if (on) win.setIgnoreMouseEvents(false)
+  else win.setIgnoreMouseEvents(true, { forward: true })
 }
 
 // ── The notch HIT-WINDOW: a tiny, always-interactive, transparent window placed EXACTLY over the physical notch so
@@ -153,9 +157,6 @@ export function notchHitWindowOptions(
     // browser tabs. enableLargerThanScreen (like the main overlay) lets it sit in the menu-bar/notch band; index.ts
     // re-asserts setBounds after show to defeat the clamp.
     enableLargerThanScreen: true,
-    // Show only on ready-to-show (see index.ts). A transparent macOS window shown before its first transparent frame
-    // paints keeps its opaque WHITE backing; this catcher page is otherwise empty so nothing repaints over it — that
-    // was the persistent "white pill" at the notch. Created hidden, shown after the first paint.
     show: false,
     hasShadow: false,
     resizable: false,

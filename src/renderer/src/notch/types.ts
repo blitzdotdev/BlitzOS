@@ -110,7 +110,7 @@ export interface IslandPanelProps {
   onRetry?: () => void // nudge the active agent to retry after a (retryable) error
   activeId?: string // the active session id (the Details expand + the peek now-playing)
   peek: boolean // peek: keep the tab bar, but the area BELOW becomes the active agent's "now playing"
-  onSend: (text: string) => void // send to the ACTIVE agent (Blitz '0' or a peer); never spawns
+  onSend: (text: string, attachments?: string[]) => void // send to the ACTIVE agent; attachments = local file paths
   menuBarH: number // notch height in px, for top alignment under the physical notch
   attachOpen: boolean // the attach "+" toggles the attachment panel INLINE (island grows)
   onToggleAttach: () => void

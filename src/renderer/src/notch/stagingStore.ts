@@ -51,3 +51,8 @@ export function clearStaged(chatId: string): void {
 export function useStagedSet(chatId: string): Set<string> | undefined {
   return useSyncExternalStore(subscribe, () => staged[chatId])
 }
+
+// Imperative read of a chat's staged keys (a drop handler dedupes a screenshot against what's already staged).
+export function getStagedSet(chatId: string): Set<string> | undefined {
+  return staged[chatId]
+}

@@ -14,6 +14,7 @@ import { usePickSuspended } from './pickSuspendStore'
 import { clearLiveTray, dropChat } from './sentTrayStore'
 import { onIslandAgentRequest, onIslandViewRequest } from './islandNavStore'
 import { useDoneAgents, clearDone } from './doneStore'
+import { useLightbox } from './lightboxStore'
 import IslandPanel from './IslandPanel'
 import IslandSettings, { type SimStatus } from './IslandSettings'
 import IslandOnboarding from './IslandOnboarding'
@@ -98,6 +99,11 @@ type WfRunAction = { type: 'workflow-run'; runId?: unknown; agentId?: unknown; f
 // Strip the legacy "Attached before you started …" brief that older builds appended to the user's message text
 // (it persisted in chat.md). New sends never inject it; this keeps already-persisted messages clean at display.
 const stripAttachBrief = (text: string): string => text.replace(/\n+Attached before you started \(drive these with[\s\S]*$/, '').trim()
+// Strip the `[Attached image/file: <path>]` reference lines we append for the AGENT (osUserMessage) from DISPLAYED
+// user bubbles — the attachment preview rides the frozen attachment tray, not the text. (chat.md keeps the marker so
+// the agent and a restart still see the path.) Anchored to the end where osUserMessage appends them.
+const ATTACH_IMAGE_REF_RE = /\s*\[Attached (?:image|file):[^\]]*\](?:\s*\[Attached (?:image|file):[^\]]*\])*\s*$/i
+const stripAttachRefs = (text: string): string => text.replace(ATTACH_IMAGE_REF_RE, '').trim()
 
 const mapMessageParts = (value: unknown): IslandMessage['parts'] | undefined => {
   if (!Array.isArray(value)) return undefined
@@ -109,13 +115,22 @@ const mapThreads = (raw?: Record<string, Array<{ role?: unknown; text?: unknown;
   const out: Record<string, IslandMessage[]> = {}
   for (const id of Object.keys(raw || {})) {
     out[id] = (raw![id] || [])
-      .map((m) => ({
-        role: m.role === 'user' ? ('user' as const) : ('agent' as const),
-        text: m.role === 'user' ? stripAttachBrief(String(m.text || '')) : String(m.text || ''),
-        ts: Number(m.ts) || undefined,
-        parts: mapMessageParts(m.parts)
-      }))
-      .filter((m) => m.text.trim() || m.parts?.length)
+      .map((m) => {
+        const rawText = String(m.text || '')
+        const isUser = m.role === 'user'
+        // A user message that was JUST attachments strips to empty — keep it so its frozen tray still anchors +
+        // renders (the preview rides the tray, not the text).
+        const hadImageRef = isUser && /\[Attached (?:image|file):/i.test(rawText)
+        return {
+          role: isUser ? ('user' as const) : ('agent' as const),
+          text: isUser ? stripAttachRefs(stripAttachBrief(rawText)) : rawText,
+          ts: Number(m.ts) || undefined,
+          parts: mapMessageParts(m.parts),
+          hadImageRef
+        }
+      })
+      .filter((m) => m.text.trim() || m.parts?.length || m.hadImageRef)
+      .map(({ hadImageRef: _omit, ...m }) => m)
   }
   return out
 }
@@ -165,6 +180,7 @@ export function NotchHost({
   const [workflowAlwaysShow, setWorkflowAlwaysShow] = useState(readWorkflowAlwaysShow)
   const [activeApp, setActiveApp] = useState<IslandAppMessagePart | null>(initialActiveApp)
   const [appViewerOpen, setAppViewerOpen] = useState(Boolean(initialActiveApp))
+  const lightbox = useLightbox()
   const [peek, setPeek] = useState(false) // the peek (now-playing) view collapses the chat to summaries
   const pendingJump = useRef<string | null>(null) // after a spawn, jump to the new session once it appears
   const activeIdRef = useRef('') // the active chat id, mirrored for the picker arm (computed below the effect)
@@ -375,6 +391,46 @@ export function NotchHost({
     if (doneAgents.has(activeTabId)) clearDone(activeTabId)
   }, [visible, showingAgentChat, activeTabId, doneAgents])
 
+  // Native screenshot drops: the Electron island is a transparent, high-level overlay, so Finder file drops do not
+  // reliably reach its DOM. While a real chat is visible, arm a tiny non-transparent native drop window behind the
+  // chassis and route its dropped paths back to this active agent.
+  useEffect(() => {
+    const drop = window.agentOS?.screenshotDrop
+    if (!drop) return
+    const stop = (): void => {
+      try {
+        void drop.stop()
+      } catch {
+        /* best-effort */
+      }
+    }
+    if (!visible || !showingAgentChat || !activeTabId || appViewerOpen) {
+      stop()
+      return
+    }
+    let stopped = false
+    const measure = (): { x: number; y: number; w: number; h: number } | null => {
+      const el = document.querySelector('.nh-chassis') as HTMLElement | null
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      if (r.width < 16 || r.height < 16) return null
+      return { x: window.screenX + r.left, y: window.screenY + r.top, w: r.width, h: r.height }
+    }
+    const arm = (): void => {
+      if (stopped) return
+      const rect = measure()
+      if (rect) void drop.start(rect, activeTabId)
+    }
+    const raf = requestAnimationFrame(arm)
+    const timers = [180, 420, 720].map((ms) => window.setTimeout(arm, ms))
+    return () => {
+      stopped = true
+      cancelAnimationFrame(raf)
+      timers.forEach(clearTimeout)
+      stop()
+    }
+  }, [visible, showingAgentChat, activeTabId, attachOpen, appViewerOpen, peek, view])
+
   // Tell App when the attach panel opens/closes so it can pin the island open (the picker needs the cursor to roam
   // off the chassis onto other windows). Reset on unmount so a closed island never stays pinned.
   useEffect(() => {
@@ -398,11 +454,10 @@ export function NotchHost({
         /* best-effort */
       }
     }
-    // The picker is armed ONLY while attach is open AND not suspended by a grant flow. In EVERY other state — attach
-    // closed via the X, a grant card up, the island unmounting — the overlay MUST come down. The old guard returned
-    // early WITHOUT stopping, so a close that happened while the picker was suspended left the overlay stuck on
-    // screen (the "X doesn't clear it" bug). Stop unconditionally here for the non-armed states.
-    if (!attachOpen || pickSuspended) {
+    // The picker is armed ONLY while attach is open, not suspended by a grant flow, and not covered by the image
+    // preview. In EVERY other state — attach closed, grant card up, lightbox open, island unmounting — the overlay
+    // MUST come down or it can steal clicks/drags from the preview controls.
+    if (!attachOpen || pickSuspended || lightbox) {
       stop()
       return
     }
@@ -430,7 +485,7 @@ export function NotchHost({
       timers.forEach(clearTimeout)
       stop()
     }
-  }, [attachOpen, pickSuspended])
+  }, [attachOpen, pickSuspended, lightbox])
 
   // Track managed agent terminals for the debug pane. The active agent id is the canonical terminal id, but the
   // metadata gives the pane a title/status and lets terminal lifecycle actions update without reopening surfaces.
@@ -643,12 +698,13 @@ export function NotchHost({
   }
 
   // page 0 (pen) = spawn a NEW session; an agent tab = steer that session. Both are real (no mock append).
-  const onSend = (text: string): void => {
+  const onSend = (text: string, attachments?: string[]): void => {
     // Always routes to the ACTIVE agent (Blitz '0' or a peer) — sending NEVER spawns. A new agent comes only from
     // the pen button (onNewAgent). Close the attach staging immediately; the staged sources rode this message (chips).
     setAttachOpen(false)
     // Clear staging under whatever key was used — including '' (the transient pre-boot composer). Hoisted
-    // above the early-return so the '' key is always wiped even when no live agent is present.
+    // above the early-return so the '' key is always wiped even when no live agent is present. This also drops the
+    // staged `image:*` screenshot keys, so the composer preview strip + dropbox empty out after the send.
     const clearKey = activeId ?? ''
     clearStaged(clearKey)
     clearLiveTray(clearKey) // IslandPanel already froze the tray onto this message; drop the mirror so it can't re-attach next send
@@ -665,7 +721,7 @@ export function NotchHost({
       return
     }
     try {
-      window.agentOS?.sendMessage?.(text, activeId)
+      window.agentOS?.sendMessage?.(text, activeId, attachments)
     } catch {
       /* no bridge */
     }

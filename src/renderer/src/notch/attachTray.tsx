@@ -4,18 +4,21 @@
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { brandGlyph } from './browserIcons'
+import { openLightbox } from './lightboxStore'
 import './attach.css'
 
-// One attached source (a tab carries a favicon; a window item just a title) and a group (one browser's tabs or one
-// app's windows). These are the frozen snapshot's on-disk shape too — keep them serializable (no functions).
-export type TrayItem = { connId: string; favicon?: string; title: string }
-export type TrayGroup = { key: string; type: 'tab' | 'window'; label: string; appIcon?: string; items: TrayItem[] }
+// One attached source (a tab carries a favicon; a window item just a title; an attachment carries a path + optional thumbnail)
+// and a group (one browser's tabs, one app's windows, or one image). These are the frozen snapshot's on-disk shape
+// too — keep them serializable (no functions). `path`/`thumb` are present only on image items.
+export type TrayItem = { connId: string; favicon?: string; title: string; path?: string; thumb?: string; kind?: 'image' | 'pdf' | 'file' }
+export type TrayGroup = { key: string; type: 'tab' | 'window' | 'image'; label: string; appIcon?: string; items: TrayItem[] }
 
-// The inputs the grouping reads (subsets of the connection / tab / window / pick-cache shapes).
+// The inputs the grouping reads (subsets of the connection / tab / window / pick-cache / image-store shapes).
 type ConnLike = { connId: string; type?: string; ref?: number | string | null; title?: string; sourceId?: string }
 type TabLike = { tabId: number | string; title?: string; url?: string; browser?: string; favIconUrl?: string }
 type WinLike = { windowId: number; app?: string; title?: string; icon?: string }
 type DroppedLike = Record<string, { app?: string; icon?: string; title?: string }>
+type ImageLike = { id: string; path: string; name: string; thumb: string; kind?: 'image' | 'pdf' | 'file' }
 
 // A connected tab carries its origin host as `sourceId` (e.g. "x.com"). When the tab isn't in the live `tabs` list
 // (the user hasn't opted into listing tabs, or the tab was discarded/closed while its connection stays staged), we
@@ -43,7 +46,8 @@ export function buildTrayGroups(
   tabs: TabLike[],
   windows: WinLike[],
   dropped: DroppedLike,
-  isStaged: (c: ConnLike) => boolean
+  isStaged: (c: ConnLike) => boolean,
+  images: ImageLike[] = []
 ): TrayGroup[] {
   const iconByApp = new Map<string, string>()
   for (const w of windows) if (w.app && w.icon) iconByApp.set(w.app, w.icon)
@@ -76,7 +80,15 @@ export function buildTrayGroups(
       g.items.push({ connId: c.connId, favicon: t?.favIconUrl || faviconFromSourceId(c.sourceId), title: t?.title || t?.url || c.title || c.sourceId || 'Tab' })
     }
   }
-  return [...tabG.values(), ...winG.values()]
+  // File attachments: one group per file (a single item) so each renders as its own removable chip. Images remain
+  // click-to-expand; PDFs render as file chips. connId IS the staging key so existing unstage paths work.
+  const imageGroups: TrayGroup[] = images.map((m) => ({
+    key: (m.kind === 'image' || !m.kind ? 'image:' : 'file:') + m.id,
+    type: 'image',
+    label: m.name,
+    items: [{ connId: (m.kind === 'image' || !m.kind ? 'image:' : 'file:') + m.id, title: m.name, path: m.path, thumb: m.thumb, kind: m.kind || 'image' }]
+  }))
+  return [...tabG.values(), ...winG.values(), ...imageGroups]
 }
 
 // The shared render. `readOnly` (the in-chat snapshot) drops every remove control + connect/drag handler but keeps the
@@ -84,11 +96,13 @@ export function buildTrayGroups(
 export function AttachTray({
   groups,
   readOnly = false,
+  disableImagePreview = false,
   onRemoveConn,
   onRemoveGroup
 }: {
   groups: TrayGroup[]
   readOnly?: boolean
+  disableImagePreview?: boolean
   onRemoveConn?: (connId: string) => void
   onRemoveGroup?: (g: TrayGroup) => void
 }): JSX.Element {
@@ -98,10 +112,15 @@ export function AttachTray({
     setHover({ app, title, x: r.left + r.width / 2, y: r.bottom + 8 })
   }
   // Tab groups are always a pill (even one tab → a Chrome pill); a window group is a pill at 2+, else a lone chip.
-  const pillGroups = groups.filter((g) => g.type === 'tab' || g.items.length >= 2)
+  const pillGroups = groups.filter((g) => g.type === 'tab' || (g.type === 'window' && g.items.length >= 2))
   const singleWindows = groups.filter((g) => g.type === 'window' && g.items.length === 1)
+  const imageGroups = groups.filter((g) => g.type === 'image')
+  const lightboxImages = imageGroups
+    .map((g) => g.items[0])
+    .filter((it): it is TrayItem & { path: string } => !!it?.path && (it.kind === 'image' || !it.kind))
+    .map((it) => ({ path: it.path, name: it.title, thumb: it.thumb || '' }))
   return (
-    <div className="att-added-stack">
+    <div className={`att-added-stack${readOnly ? ' read-only' : ''}`}>
       {pillGroups.map((g) => (
         <div className="att-pill" key={g.key}>
           {!readOnly && onRemoveGroup && (
@@ -165,6 +184,49 @@ export function AttachTray({
                     <RemoveX />
                   </button>
                 )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {imageGroups.length > 0 && (
+        <div className="att-images">
+          {imageGroups.map((g) => {
+            const it = g.items[0]
+            return (
+              <div
+                className="att-image-chip"
+                key={g.key}
+                onMouseEnter={(e) => showTip(e.currentTarget, it.kind === 'image' || !it.kind ? 'Image' : 'File', it.title)}
+                onMouseLeave={() => setHover(null)}
+              >
+                {it.kind === 'image' || !it.kind ? (
+                  <button
+                    type="button"
+                    className={`att-image-open${disableImagePreview ? ' no-preview' : ''}`}
+                    title={`Open ${it.title}`}
+                    aria-label={`Open ${it.title}`}
+                    aria-disabled={disableImagePreview || undefined}
+                    tabIndex={disableImagePreview ? -1 : undefined}
+                    onClick={() => {
+                      if (disableImagePreview || !it.path) return
+                      openLightbox({ path: it.path, name: it.title, thumb: it.thumb || '' }, lightboxImages)
+                    }}
+                  >
+                    {it.thumb ? <img className="att-image-thumb" src={it.thumb} alt={it.title} draggable={false} /> : <span className="att-image-thumb att-image-fallback" aria-hidden>IMG</span>}
+                  </button>
+                ) : (
+                  <div className="att-image-open att-file-open" aria-hidden>
+                    <span className="att-file-corner" />
+                    <span className="att-file-kind">{it.kind === 'pdf' ? 'PDF' : 'FILE'}</span>
+                  </div>
+                )}
+                {!readOnly && onRemoveConn && (
+                  <button type="button" className="att-added-remove" aria-label={`Remove ${it.title}`} title={`Remove ${it.title}`} onClick={() => onRemoveConn(it.connId)}>
+                    <RemoveX />
+                  </button>
+                )}
+                <span className="att-image-name" title={it.title}>{it.title}</span>
               </div>
             )
           })}

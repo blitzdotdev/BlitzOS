@@ -1,12 +1,12 @@
-import { BrowserWindow, ipcMain, webContents, app, screen, Notification } from 'electron'
-import { randomUUID } from 'crypto'
+import { BrowserWindow, ipcMain, webContents, app, screen, Notification, nativeImage } from 'electron'
+import { randomUUID, createHash } from 'crypto'
 import { join, dirname, basename, resolve } from 'path'
 import { controlWindow, pinchSurface, registerCdpSurface, unregisterCdpSurface, type ControlAction, type ControlResult } from './cdp'
 import { emitSurfaceAction, emitUserMessage, setContentShare, dropContentShare, setWorkspaceProvider, setTickSource, resetTickBaseline, absorbTickEcho } from './events'
 import { createWorkspaceHost } from './workspace-host.mjs'
 import { generateAgentTitle } from './chat-titleer.mjs'
 import { safeName, appendChatMessage, resolveWorkspace, readBookmarks, toggleBookmark } from './workspace.mjs'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { sessionJsonlPath, readSessionEvents, toolLabel } from './agent-transcript.mjs'
 import { applyWfRun, type WfRunRecord } from './wf-run-state.mjs'
 import * as wfStore from './wf-store.mjs'
@@ -341,8 +341,10 @@ export function initOsActions(opts: {
     // payload is { text, agentId } (object) — tolerate a bare string (older renderer) → agent '0'.
     const text = typeof payload === 'string' ? payload : String((payload as { text?: unknown })?.text ?? '')
     const aid = payload && typeof payload === 'object' && (payload as { agentId?: unknown }).agentId != null ? String((payload as { agentId?: unknown }).agentId) : '0'
+    const rawAtt = payload && typeof payload === 'object' ? (payload as { attachments?: unknown }).attachments : undefined
+    const attachments = Array.isArray(rawAtt) ? rawAtt.filter((x): x is string => typeof x === 'string') : []
     trackActivity('chat.message_sent', { agentId: aid, messageLength: text.length, source: 'chat' })
-    osUserMessage(text, aid)
+    osUserMessage(text, aid, attachments)
   })
   // Capture a web surface's current frame (capturePage — no debugger) for folder previews.
   ipcMain.handle('surface:capture', async (_e, surfaceId: string) => {
@@ -610,11 +612,36 @@ export function osShareApp(app: Record<string, unknown>, agentId = '0', workspac
  *  IPC and the localhost-only `user_say` test syscall both land here, so programmatic user input is
  *  indistinguishable from typed input — the test rig's input path. (No spawn hook: agents are
  *  boot-resident / spawned via spawn_agent in the Terminal/Agent model.) */
-export function osUserMessage(text: string, agentId = '0'): void {
-  if (!text.trim()) return
+type AttachmentRef = { path: string; kind: 'image' | 'file' }
+
+function validateAttachmentRefs(attachments: string[]): AttachmentRef[] {
+  const seen = new Set<string>()
+  const out: AttachmentRef[] = []
+  for (const raw of Array.isArray(attachments) ? attachments.slice(0, 20) : []) {
+    const candidate = typeof raw === 'string' ? raw.trim() : ''
+    if (!candidate) continue
+    const r = osAttachFile(candidate)
+    if (!r.ok || !r.path) continue
+    if (seen.has(r.path)) continue
+    seen.add(r.path)
+    out.push({ path: r.path, kind: r.kind === 'image' ? 'image' : 'file' })
+  }
+  return out
+}
+
+export function osUserMessage(text: string, agentId = '0', attachments: string[] = []): void {
+  const refs = validateAttachmentRefs(attachments)
+  if (!text.trim() && !refs.length) return // allow an image-only message (empty text + attachments)
   const aid = String(agentId)
-  wsHost?.appendChat('user', text, aid) // write to that agent's chat.md + echo to its widget
-  emitUserMessage(text, aid) // wake ONLY that agent (trigger:'message')
+  // Append a machine-readable reference per attached file so the agent reads it with its Read tool (mirrors the
+  // launcher contextRefs convention). It rides BOTH chat.md (restart-safe) and the wake payload (seen on the same
+  // turn). The renderer strips these lines from the displayed bubble — the attachment preview itself rides the
+  // frozen attachment tray, not this text.
+  const augmented = refs.length
+    ? `${text}${text ? '\n\n' : ''}${refs.map((r) => `[Attached ${r.kind}: ${r.path}]`).join('\n')}`
+    : text
+  wsHost?.appendChat('user', augmented, aid) // write to that agent's chat.md + echo to its widget
+  emitUserMessage(augmented, aid) // wake ONLY that agent (trigger:'message')
   onUserMessage?.(aid)
 }
 
@@ -1024,6 +1051,129 @@ export function osIngestPaths(paths: string[], x: number, y: number): { ok: bool
   if (!wsHost) return { ok: false, error: 'no workspace host' }
   const r = wsHost.ingestPaths(Array.isArray(paths) ? paths.map(String) : [], Number(x) || 0, Number(y) || 0)
   return 'ok' in r ? r : { ok: false, error: r.error }
+}
+
+// ── Screenshot attachments (PNG/JPG dragged into the island chat / dropbox) ─────────────────────────────────────
+// A user drops a screenshot; the agent reads it via the ORIGINAL file path (no copy — the user's call). These ops
+// are the trust boundary: extension gate + a magic-byte sniff (so a renamed non-image is rejected) + a downscaled
+// thumbnail (Electron nativeImage, no `sharp` dep). The path the renderer shows is exactly the path sent to the
+// agent. See plans/blitzos screenshot-attachment plan + AttachPanel/IslandPanel.
+const ATTACH_IMAGE_THUMB_W = 256
+const ATTACH_IMAGE_FULL_MAX_W = 1600
+const ATTACH_IMAGE_MAX_BYTES = 25 * 1024 * 1024
+const ATTACH_PDF_MAX_BYTES = 50 * 1024 * 1024
+
+/** Sniff the first bytes to confirm a real PNG/JPG (catches a .txt renamed to .png). Returns the kind or null. */
+function sniffPngJpg(path: string): 'png' | 'jpg' | null {
+  let fd: number | null = null
+  try {
+    fd = openSync(path, 'r')
+    const buf = Buffer.allocUnsafe(12)
+    const n = readSync(fd, buf, 0, 12, 0)
+    closeSync(fd)
+    fd = null
+    if (n >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'png' // \x89PNG
+    if (n >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg' // JFIF SOI
+    return null
+  } catch {
+    try {
+      if (fd != null) closeSync(fd)
+    } catch {
+      /* ignore */
+    }
+    return null
+  }
+}
+
+function sniffPdf(path: string): boolean {
+  let fd: number | null = null
+  try {
+    fd = openSync(path, 'r')
+    const buf = Buffer.allocUnsafe(5)
+    const n = readSync(fd, buf, 0, 5, 0)
+    closeSync(fd)
+    fd = null
+    return n >= 5 && buf.toString('ascii', 0, 5) === '%PDF-'
+  } catch {
+    try {
+      if (fd != null) closeSync(fd)
+    } catch {
+      /* ignore */
+    }
+    return false
+  }
+}
+
+/** Validate a dropped screenshot + return a small thumbnail data URL for the chip. The id is a stable hash of the
+ *  absolute path so the SAME screenshot dedupes. No copy — `path` is the original Finder path the agent will read. */
+export function osAttachImage(path: string): { ok: boolean; id?: string; path?: string; name?: string; thumb?: string; error?: string } {
+  const p = String(path || '')
+  if (!/\.(png|jpe?g)$/i.test(p)) return { ok: false, error: 'Only PNG and JPG images are supported' }
+  let st: ReturnType<typeof statSync>
+  try {
+    st = statSync(p)
+  } catch {
+    return { ok: false, error: 'That file no longer exists' }
+  }
+  if (!st.isFile()) return { ok: false, error: 'That file no longer exists' }
+  if (st.size > ATTACH_IMAGE_MAX_BYTES) return { ok: false, error: 'That image is too large (max 25 MB)' }
+  if (!sniffPngJpg(p)) return { ok: false, error: "That file isn't a valid PNG or JPG image" }
+  try {
+    const img = nativeImage.createFromPath(p)
+    if (img.isEmpty()) return { ok: false, error: "Couldn't read that image" }
+    const thumb = img.resize({ width: ATTACH_IMAGE_THUMB_W }).toDataURL() // height auto-scales (aspect preserved)
+    const id = 'img_' + createHash('sha1').update(p).digest('hex').slice(0, 12)
+    return { ok: true, id, path: p, name: basename(p), thumb }
+  } catch {
+    return { ok: false, error: "Couldn't read that image" }
+  }
+}
+
+/** Validate a dropped attachment. Images keep their thumbnail/lightbox behavior; PDFs render as file chips and ride
+ *  to the agent as original paths. No copy — this mirrors screenshot attachment trust + lifecycle semantics. */
+export function osAttachFile(path: string): { ok: boolean; id?: string; path?: string; name?: string; kind?: 'image' | 'pdf'; thumb?: string; error?: string } {
+  const p = String(path || '')
+  if (/\.(png|jpe?g)$/i.test(p)) {
+    const r = osAttachImage(p)
+    return r.ok ? { ...r, kind: 'image' } : r
+  }
+  if (!/\.pdf$/i.test(p)) return { ok: false, error: 'Only PNG, JPG, and PDF files are supported' }
+  let st: ReturnType<typeof statSync>
+  try {
+    st = statSync(p)
+  } catch {
+    return { ok: false, error: 'That file no longer exists' }
+  }
+  if (!st.isFile()) return { ok: false, error: 'That file no longer exists' }
+  if (st.size > ATTACH_PDF_MAX_BYTES) return { ok: false, error: 'That PDF is too large (max 50 MB)' }
+  if (!sniffPdf(p)) return { ok: false, error: "That file isn't a valid PDF" }
+  const id = 'file_' + createHash('sha1').update(p).digest('hex').slice(0, 12)
+  return { ok: true, id, path: p, name: basename(p), kind: 'pdf' }
+}
+
+/** The full-size image as a data URL, loaded on demand when the lightbox opens (kept out of the on-disk snapshot,
+ *  which carries only the small thumb). Downscales very large images to bound memory. Fails gracefully if gone. */
+export function osAttachImageFull(path: string): { ok: boolean; dataUrl?: string; error?: string } {
+  const p = String(path || '')
+  if (!/\.(png|jpe?g)$/i.test(p)) return { ok: false, error: 'Image unavailable' }
+  let st: ReturnType<typeof statSync>
+  try {
+    st = statSync(p)
+  } catch {
+    return { ok: false, error: 'Image unavailable' }
+  }
+  if (!st.isFile()) return { ok: false, error: 'Image unavailable' }
+  if (st.size > ATTACH_IMAGE_MAX_BYTES) return { ok: false, error: 'Image unavailable' }
+  if (!sniffPngJpg(p)) return { ok: false, error: 'Image unavailable' }
+  try {
+    const img = nativeImage.createFromPath(p)
+    if (img.isEmpty()) return { ok: false, error: 'Image unavailable' }
+    const { width } = img.getSize()
+    const dataUrl = width > ATTACH_IMAGE_FULL_MAX_W ? img.resize({ width: ATTACH_IMAGE_FULL_MAX_W }).toDataURL() : img.toDataURL()
+    return { ok: true, dataUrl }
+  } catch {
+    return { ok: false, error: 'Image unavailable' }
+  }
 }
 /** "New Folder" / "New Board" (the right-click desktop action): make an EMPTY real folder in the active
  *  workspace and reconcile at (x,y). kind:'board' → a '.board' on-canvas folder (#54). */

@@ -1265,7 +1265,7 @@ button.isl-app-chat:active .isl-app-icon {
   /* The WHOLE composer is the message bar now — the attach "+" lives INSIDE it (left), the send inside on the right. */
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 19px;
-  transition: border-color 0.14s ease-out;
+  transition: border-color 0.16s ease-out, background 0.16s ease-out, box-shadow 0.16s ease-out;
   animation: isl-rise 0.26s ease-out 0.05s both;
 }
 .nh-island .isl-composer:focus-within {
@@ -1273,6 +1273,80 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island.isl-session .isl-composer {
   margin-top: 12px; /* new-session view: sits right under the tab strip (no feed to push it down) */
+}
+/* The composer ZONE groups the dragged-in screenshot strip + the message bar, and takes over the bottom-pin so the
+   strip sits directly ABOVE the input. A screenshot dropped anywhere in this zone stages for the active chat. */
+.nh-island .isl-composer-zone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+  margin-top: auto; /* pin the whole composer area to the bottom (the feed flex:1 fills above it) */
+}
+.nh-island .isl-composer-zone.file-drag > .isl-composer {
+  border-color: var(--isl-accent);
+  background: rgba(60, 130, 246, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(10, 132, 255, 0.2),
+    0 0 24px -14px rgba(10, 132, 255, 0.9);
+}
+.nh-island .isl-drop-signal {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 12px);
+  z-index: 4;
+  transform: translateX(-50%);
+  padding: 7px 12px;
+  border: 1px solid var(--isl-accent);
+  border-radius: 999px;
+  background: rgba(10, 20, 34, 0.94);
+  color: #9bddff;
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1;
+  letter-spacing: 0;
+  box-shadow:
+    0 0 0 1px rgba(10, 132, 255, 0.2),
+    0 10px 28px -16px rgba(10, 132, 255, 0.9);
+  pointer-events: none;
+  animation: isl-drop-signal-in 0.16s ease-out both;
+}
+@keyframes isl-drop-signal-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(5px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+}
+.nh-island .isl-composer-zone > .isl-composer {
+  margin-top: 0; /* the zone owns the bottom-pin now */
+}
+.nh-island.isl-session .isl-composer-zone {
+  margin-top: 12px; /* new-session view: sits under the tab strip */
+}
+.nh-island.isl-session .isl-composer-zone > .isl-composer {
+  margin-top: 0;
+}
+.nh-island .isl-composer-tray {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 132px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.nh-island .isl-composer-notice {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--isl-muted);
+  padding: 0 4px;
+}
+.nh-island .isl-composer-notice.err {
+  color: #ffb4ad;
 }
 .nh-island .isl-attach {
   flex: none;
@@ -2881,6 +2955,137 @@ button.isl-app-chat:active .isl-app-icon {
   stroke-width: 2.2;
   stroke-linecap: round;
 }
+/* Screenshot lightbox: a dim full-bleed backdrop over the island interior with the image centered.
+   Close only via × or Esc; side/backdrop space stays inert so missed carousel clicks do not dismiss it. */
+.nh-island .isl-image-viewer {
+  --isl-image-control-size: 28px;
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(5, 6, 10, 0.82);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  cursor: default;
+  animation: isl-rise 0.16s ease-out both;
+}
+.nh-island .isl-image-viewer-img {
+  width: min(100%, 1040px);
+  height: min(100%, 840px);
+  max-width: calc(100% - 88px);
+  max-height: calc(100% - 64px);
+  object-fit: contain;
+  border-radius: 12px;
+  cursor: default;
+}
+.nh-island .isl-image-viewer-loading {
+  width: min(100%, 420px);
+  min-height: 170px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px;
+  color: rgba(255, 255, 255, 0.86);
+  text-align: center;
+  font-family: var(--font-ui);
+}
+.nh-island .isl-image-viewer-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(255, 255, 255, 0.78);
+  border-radius: 999px;
+  animation: isl-spin 0.82s linear infinite;
+}
+.nh-island .isl-image-viewer-loading-title {
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+.nh-island .isl-image-viewer-loading-name {
+  max-width: 100%;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nh-island .isl-image-viewer-loading.err .isl-image-viewer-loading-title {
+  color: rgba(255, 114, 114, 0.92);
+}
+.nh-island .isl-image-viewer-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  width: var(--isl-image-control-size);
+  height: var(--isl-image-control-size);
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(18, 20, 25, 0.7);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 25px;
+  font-weight: 300;
+  line-height: 1;
+  padding: 0 0 2px;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
+  transition: background 0.14s ease-out, border-color 0.14s ease-out, color 0.14s ease-out, transform 0.14s ease-out;
+}
+.nh-island .isl-image-viewer-nav.prev {
+  left: 14px;
+}
+.nh-island .isl-image-viewer-nav.next {
+  right: 14px;
+}
+.nh-island .isl-image-viewer-nav:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(30, 33, 40, 0.86);
+  color: #fff;
+  transform: translateY(-50%) scale(1.03);
+}
+.nh-island .isl-image-viewer-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  width: var(--isl-image-control-size);
+  height: var(--isl-image-control-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+  line-height: 1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(18, 20, 25, 0.74);
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.nh-island .isl-image-viewer-close::before {
+  content: '×';
+  display: block;
+  font-size: 23px;
+  font-weight: 300;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+.nh-island .isl-image-viewer-close:hover {
+  background: rgba(30, 33, 40, 0.86);
+  color: #fff;
+}
 /* Claim pill: same glass chrome as the close X, sat just left of it, accent-tinted as the primary action
    (keep this app past the ~12h anon expiry). Shown only when the part carries a claimUrl. */
 .nh-island.isl-app-viewing > .isl-app-viewer-claim {
@@ -3109,6 +3314,10 @@ button.isl-app-chat:active .isl-app-icon {
 }
 .nh-island .isl-bar .ci-field::placeholder {
   color: var(--isl-muted);
+  transition: color 0.16s ease-out;
+}
+.nh-island .isl-bar.ci-drag-placeholder .ci-field::placeholder {
+  color: #9bddff;
 }
 .nh-island .isl-bar .ci-send {
   width: 28px;
