@@ -1,0 +1,15 @@
+{
+  "name": "blitz-core",
+  "private": true,
+  "license": "Apache-2.0",
+  "workspaces": [
+    "packages/schema",
+    "packages/control-plane",
+    "packages/box/actor",
+    "packages/ui"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  }
+}
