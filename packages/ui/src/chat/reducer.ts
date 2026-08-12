@@ -1,0 +1,415 @@
+import type {
+  ContentBlock,
+  PermissionOption,
+  PlanEntry,
+  RequestPermissionRequest,
+  StopReason,
+  ToolCallContent,
+  ToolCallStatus,
+  ToolKind,
+} from "@agentclientprotocol/sdk";
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "agent" | "thought";
+  text: string;
+  otherContent: ContentBlock[];
+}
+
+export interface ChatTool {
+  toolCallId: string;
+  title: string;
+  kind: ToolKind | null;
+  status: ToolCallStatus | null;
+  content: ToolCallContent[];
+  rawInput?: unknown;
+  rawOutput?: unknown;
+}
+
+export interface ChatPermission {
+  toolCallId: string;
+  title: string;
+  options: PermissionOption[];
+  answeredOptionId: string | null;
+  cancelled: boolean;
+}
+
+export type ChatRow =
+  | { kind: "message"; id: string }
+  | { kind: "tool"; id: string }
+  | { kind: "plan"; id: "plan" }
+  | { kind: "permission"; id: string }
+  | { kind: "generic"; id: string; label: string };
+
+interface PendingCall {
+  method: "prompt" | "permission" | "other";
+  targetId?: string;
+}
+
+export interface ChatState {
+  rows: ChatRow[];
+  messages: Record<string, ChatMessage>;
+  tools: Record<string, ChatTool>;
+  plan: PlanEntry[] | null;
+  permissions: Record<string, ChatPermission>;
+  seenText: Record<string, string[]>;
+  streamText: Record<string, string>;
+  pendingCalls: Record<string, PendingCall>;
+  running: boolean;
+  stopReasons: Array<{ turnId: string; stopReason: StopReason }>;
+  sequence: number;
+}
+
+export const initialChatState: ChatState = {
+  rows: [],
+  messages: {},
+  tools: {},
+  plan: null,
+  permissions: {},
+  seenText: {},
+  streamText: {},
+  pendingCalls: {},
+  running: false,
+  stopReasons: [],
+  sequence: 0,
+};
+
+export type ChatAction =
+  | { type: "update"; update: unknown }
+  | { type: "begin-replay" }
+  | { type: "permission-request"; request: RequestPermissionRequest }
+  | { type: "permission-answered"; toolCallId: string; optionId: string | null }
+  | { type: "turn-started"; turnId: string }
+  | { type: "turn-ended"; turnId: string; stopReason: StopReason }
+  | { type: "generic"; label: string };
+
+export function chatReducer(state: ChatState, action: ChatAction): ChatState {
+  switch (action.type) {
+    case "begin-replay":
+      return { ...state, streamText: {} };
+    case "update":
+      return applyUpdate(state, action.update);
+    case "permission-request":
+      return addPermission(state, action.request);
+    case "permission-answered":
+      return answerPermission(state, action.toolCallId, action.optionId);
+    case "turn-started":
+      return state.running
+        ? state
+        : {
+            ...state,
+            running: true,
+            pendingCalls: { ...state.pendingCalls, [action.turnId]: { method: "prompt" } },
+          };
+    case "turn-ended":
+      return finishTurn(state, action.turnId, action.stopReason);
+    case "generic":
+      return addGeneric(state, action.label);
+  }
+}
+
+export function reduceAcpFrame(state: ChatState, frame: unknown): ChatState {
+  if (!isRecord(frame) || frame.jsonrpc !== "2.0") return state;
+  if (typeof frame.method === "string") {
+    if (frame.method === "session/load") return chatReducer(state, { type: "begin-replay" });
+    if (frame.method === "session/prompt" && isRequestId(frame.id)) {
+      return chatReducer(state, { type: "turn-started", turnId: String(frame.id) });
+    }
+    if (frame.method === "session/update") {
+      if (!isRecord(frame.params) || !isRecord(frame.params.update)) return state;
+      return chatReducer(state, { type: "update", update: frame.params.update });
+    }
+    if (frame.method === "session/request_permission" && isRequestId(frame.id)) {
+      const request = parsePermission(frame.params);
+      if (request === null) return state;
+      const next = chatReducer(state, { type: "permission-request", request });
+      return {
+        ...next,
+        pendingCalls: {
+          ...next.pendingCalls,
+          [String(frame.id)]: { method: "permission", targetId: request.toolCall.toolCallId },
+        },
+      };
+    }
+    return state;
+  }
+  if (!isRequestId(frame.id)) return state;
+  const callId = String(frame.id);
+  const pending = state.pendingCalls[callId];
+  if (pending === undefined || !("result" in frame) || !isRecord(frame.result)) return state;
+  if (pending.method === "prompt") {
+    const stopReason = parseStopReason(frame.result.stopReason);
+    return stopReason === null ? state : finishTurn(state, callId, stopReason);
+  }
+  if (pending.method === "permission" && pending.targetId !== undefined) {
+    const optionId = parsePermissionOutcome(frame.result.outcome);
+    if (optionId === undefined) return state;
+    const answered = answerPermission(state, pending.targetId, optionId);
+    return withoutPending(answered, callId);
+  }
+  return withoutPending(state, callId);
+}
+
+function applyUpdate(state: ChatState, value: unknown): ChatState {
+  if (!isRecord(value) || typeof value.sessionUpdate !== "string") return state;
+  switch (value.sessionUpdate) {
+    case "user_message_chunk":
+      return addMessageChunk(state, value, "user");
+    case "agent_message_chunk":
+      return addMessageChunk(state, value, "agent");
+    case "agent_thought_chunk":
+      return addMessageChunk(state, value, "thought");
+    case "tool_call":
+      return addTool(state, value);
+    case "tool_call_update":
+      return updateTool(state, value);
+    case "plan": {
+      const entries = parsePlanEntries(value.entries);
+      if (entries === null) return state;
+      return {
+        ...state,
+        plan: entries,
+        rows: hasRow(state.rows, "plan", "plan")
+          ? state.rows
+          : [...state.rows, { kind: "plan", id: "plan" }],
+      };
+    }
+    default:
+      return addGeneric(state, `Unsupported ACP update: ${value.sessionUpdate}`);
+  }
+}
+
+function addMessageChunk(
+  state: ChatState,
+  value: Record<string, unknown>,
+  role: ChatMessage["role"],
+): ChatState {
+  if (!isContentBlock(value.content)) return state;
+  const messageId = typeof value.messageId === "string"
+    ? value.messageId
+    : `anonymous-${state.sequence + 1}`;
+  const existing = state.messages[messageId] ?? {
+    id: messageId,
+    role,
+    text: "",
+    otherContent: [],
+  };
+  const rows = hasRow(state.rows, "message", messageId)
+    ? state.rows
+    : [...state.rows, { kind: "message" as const, id: messageId }];
+
+  if (value.content.type !== "text") {
+    return {
+      ...state,
+      rows,
+      messages: {
+        ...state.messages,
+        [messageId]: { ...existing, otherContent: [...existing.otherContent, value.content] },
+      },
+      sequence: state.sequence + 1,
+    };
+  }
+
+  const text = value.content.text as string;
+  const accumulated = `${state.streamText[messageId] ?? ""}${text}`;
+  const seen = state.seenText[messageId] ?? [];
+  const duplicate = seen.includes(accumulated);
+  return {
+    ...state,
+    rows,
+    messages: duplicate
+      ? state.messages
+      : { ...state.messages, [messageId]: { ...existing, text: `${existing.text}${text}` } },
+    seenText: duplicate
+      ? state.seenText
+      : { ...state.seenText, [messageId]: [...seen, accumulated] },
+    streamText: { ...state.streamText, [messageId]: accumulated },
+    sequence: state.sequence + 1,
+  };
+}
+
+function addTool(state: ChatState, value: Record<string, unknown>): ChatState {
+  if (typeof value.toolCallId !== "string" || typeof value.title !== "string") return state;
+  const id = value.toolCallId;
+  const content = parseToolContent(value.content);
+  if (content === null) return state;
+  const tool: ChatTool = {
+    toolCallId: id,
+    title: value.title,
+    kind: typeof value.kind === "string" ? (value.kind as ToolKind) : null,
+    status: typeof value.status === "string" ? (value.status as ToolCallStatus) : null,
+    content,
+    ...(Object.hasOwn(value, "rawInput") ? { rawInput: value.rawInput } : {}),
+    ...(Object.hasOwn(value, "rawOutput") ? { rawOutput: value.rawOutput } : {}),
+  };
+  return {
+    ...state,
+    tools: { ...state.tools, [id]: tool },
+    rows: hasRow(state.rows, "tool", id) ? state.rows : [...state.rows, { kind: "tool", id }],
+  };
+}
+
+function updateTool(state: ChatState, value: Record<string, unknown>): ChatState {
+  if (typeof value.toolCallId !== "string") return state;
+  const id = value.toolCallId;
+  const current = state.tools[id] ?? {
+    toolCallId: id,
+    title: typeof value.title === "string" ? value.title : "Tool call",
+    kind: null,
+    status: null,
+    content: [],
+  };
+  const content = parseToolContent(value.content);
+  if (content === null) return state;
+  const next: ChatTool = {
+    ...current,
+    ...(typeof value.title === "string" ? { title: value.title } : {}),
+    ...(typeof value.kind === "string" ? { kind: value.kind as ToolKind } : {}),
+    ...(typeof value.status === "string" ? { status: value.status as ToolCallStatus } : {}),
+    ...(value.content !== undefined ? { content } : {}),
+    ...(Object.hasOwn(value, "rawInput") ? { rawInput: value.rawInput } : {}),
+    ...(Object.hasOwn(value, "rawOutput") ? { rawOutput: value.rawOutput } : {}),
+  };
+  return {
+    ...state,
+    tools: { ...state.tools, [id]: next },
+    rows: hasRow(state.rows, "tool", id) ? state.rows : [...state.rows, { kind: "tool", id }],
+  };
+}
+
+function addPermission(state: ChatState, request: RequestPermissionRequest): ChatState {
+  const id = request.toolCall.toolCallId;
+  const existing = state.permissions[id];
+  const permission: ChatPermission = {
+    toolCallId: id,
+    title: request.toolCall.title ?? state.tools[id]?.title ?? "Permission required",
+    options: request.options,
+    answeredOptionId: existing?.answeredOptionId ?? null,
+    cancelled: existing?.cancelled ?? false,
+  };
+  return {
+    ...state,
+    permissions: { ...state.permissions, [id]: permission },
+    rows: hasRow(state.rows, "permission", id)
+      ? state.rows
+      : [...state.rows, { kind: "permission", id }],
+  };
+}
+
+function answerPermission(state: ChatState, id: string, optionId: string | null): ChatState {
+  const permission = state.permissions[id];
+  if (permission === undefined || permission.answeredOptionId !== null || permission.cancelled) return state;
+  return {
+    ...state,
+    permissions: {
+      ...state.permissions,
+      [id]: {
+        ...permission,
+        answeredOptionId: optionId,
+        cancelled: optionId === null,
+      },
+    },
+  };
+}
+
+function finishTurn(state: ChatState, turnId: string, stopReason: StopReason): ChatState {
+  if (!state.running || state.stopReasons.some((turn) => turn.turnId === turnId)) return state;
+  return withoutPending(
+    { ...state, running: false, stopReasons: [...state.stopReasons, { turnId, stopReason }] },
+    turnId,
+  );
+}
+
+function addGeneric(state: ChatState, label: string): ChatState {
+  const sequence = state.sequence + 1;
+  return {
+    ...state,
+    rows: [...state.rows, { kind: "generic", id: `generic-${sequence}`, label }],
+    sequence,
+  };
+}
+
+function withoutPending(state: ChatState, id: string): ChatState {
+  const pendingCalls = { ...state.pendingCalls };
+  delete pendingCalls[id];
+  return { ...state, pendingCalls };
+}
+
+function parsePermission(value: unknown): RequestPermissionRequest | null {
+  if (!isRecord(value) || typeof value.sessionId !== "string" || !isRecord(value.toolCall)) return null;
+  if (typeof value.toolCall.toolCallId !== "string" || !Array.isArray(value.options)) return null;
+  const options = value.options.filter((option): option is PermissionOption =>
+    isRecord(option) &&
+    typeof option.optionId === "string" &&
+    typeof option.name === "string" &&
+    typeof option.kind === "string"
+  );
+  if (options.length !== value.options.length) return null;
+  return value as unknown as RequestPermissionRequest;
+}
+
+function parsePlanEntries(value: unknown): PlanEntry[] | null {
+  if (!Array.isArray(value)) return null;
+  if (!value.every((entry) =>
+    isRecord(entry) &&
+    typeof entry.content === "string" &&
+    (entry.priority === "high" || entry.priority === "medium" || entry.priority === "low") &&
+    (entry.status === "pending" || entry.status === "in_progress" || entry.status === "completed")
+  )) return null;
+  return value as PlanEntry[];
+}
+
+function parseToolContent(value: unknown): ToolCallContent[] | null {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return null;
+  if (!value.every((item) => {
+    if (!isRecord(item) || typeof item.type !== "string") return false;
+    if (item.type === "content") return isContentBlock(item.content);
+    if (item.type === "terminal") return typeof item.terminalId === "string";
+    return item.type === "diff" &&
+      typeof item.path === "string" &&
+      typeof item.newText === "string" &&
+      (item.oldText === undefined || item.oldText === null || typeof item.oldText === "string");
+  })) return null;
+  return value as ToolCallContent[];
+}
+
+function isContentBlock(value: unknown): value is ContentBlock {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "text") return typeof value.text === "string";
+  if (value.type === "image" || value.type === "audio") {
+    return typeof value.data === "string" && typeof value.mimeType === "string";
+  }
+  if (value.type === "resource_link") return typeof value.name === "string" && typeof value.uri === "string";
+  if (value.type !== "resource" || !isRecord(value.resource) || typeof value.resource.uri !== "string") return false;
+  return typeof value.resource.text === "string" || typeof value.resource.blob === "string";
+}
+
+function parsePermissionOutcome(value: unknown): string | null | undefined {
+  if (!isRecord(value) || typeof value.outcome !== "string") return undefined;
+  if (value.outcome === "cancelled") return null;
+  if (value.outcome === "selected" && typeof value.optionId === "string") return value.optionId;
+  return undefined;
+}
+
+function parseStopReason(value: unknown): StopReason | null {
+  return value === "end_turn" ||
+    value === "max_tokens" ||
+    value === "max_turn_requests" ||
+    value === "refusal" ||
+    value === "cancelled"
+    ? value
+    : null;
+}
+
+function hasRow(rows: readonly ChatRow[], kind: ChatRow["kind"], id: string): boolean {
+  return rows.some((row) => row.kind === kind && row.id === id);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRequestId(value: unknown): value is string | number {
+  return typeof value === "string" || typeof value === "number";
+}

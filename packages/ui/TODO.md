@@ -43,19 +43,19 @@ adapters.
     terminal stopReason per turn. Unknown kinds render as a safe generic row.
   - Reducer tests replay the ACP conformance fixtures from `schema` — the same
     stream that gates box image publication (2026-08-11).
-- Files: WebDAV browser/editor/upload carries. Every write uses
-  server-enforced preconditions (If-Match / If-None-Match). No
-  check-then-write. Server resolved 2026-08-11: the box image ships dufs as
-  its fourth surface, loopback 7445, with a red-first precondition acceptance
-  check (sftpgo fallback).
+- Files: WebDAV browser/editor/upload carries. Server = dufs, loopback 7445
+  (founder, 2026-08-11, FINAL). Writes are plain PUT, LAST-WRITE-WINS: dufs
+  does not enforce preconditions; the founder accepted the lost-update class
+  rather than swap servers. Do NOT add client-side check-then-write — it
+  fakes safety the server does not give. Save honesty stays: report the PUT
+  result truthfully (the `FileEditor.tsx:305` class).
 - Preview panel: iframe + port validation carry. `/chat/ports` discovery is
   dead, permanently (decided 2026-08-11). The user types the port. No
   replacement discovery.
-- Standalone bootstrap (decided 2026-08-11): first login = the operator key,
-  exchanged for an HttpOnly opaque session. Then the user MAY register a
-  passkey (stock WebAuthn). Later logins assert the passkey instead of the
-  key. Optional; the key path stays. The key never enters a URL, logs, or
-  browser storage.
+- Standalone bootstrap (decided 2026-08-11; passkeys deleted same day at
+  implementation review): login = the operator key, exchanged for an HttpOnly
+  opaque session. No passkey, no SSO in core — the principal seam admits
+  them later. The key never enters a URL, logs, or browser storage.
 - Endpoint resolver seam: the host supplies box URLs. Standalone = tunnel
   ports or the user's own edge. Hosted = closed ingress URLs. Same cockpit
   code in all cases.
@@ -112,11 +112,12 @@ adapters.
   from `retryAction` only.
 - HIGH `CloudApp.tsx:137`: the endpoint map is append-only. A newer view must
   replace or clear targets.
-- HIGH `FileEditor.tsx:384`: HEAD-then-MOVE lost update. Use preconditions.
+- `FileEditor.tsx:384` (was HIGH): lost-update class ACCEPTED 2026-08-11.
+  dufs kept, last-write-wins, no preconditions, no check-then-write.
 - HIGH `FileEditor.tsx:305`: a failed verify still shows "Saved". Distinguish
   committed from verification-unknown.
-- HIGH `file-drop.ts:39`: uploads are unbounded and racy. Bound before read.
-  Use conditional create.
+- HIGH `file-drop.ts:39`: uploads are unbounded. Bound before read.
+  (Conditional create dropped with the precondition rule, 2026-08-11.)
 - MEDIUM `CloudApp.tsx:480`: a global paste event can lose the delivery
   silently. Use an explicit input sink.
 - HIGH `ChatPanel.tsx:834` class: reconnect must converge via replay. Never
@@ -152,8 +153,9 @@ The UI carve is complete only when this test passes.
    separate management page.
 2. Observe page: none in the open cockpit, for now. The read-only ttyd
    primitive stays available. Hosted operator observe stays closed.
-3. Standalone login: operator key once → opaque session → optional passkey
-   (stock WebAuthn) for later logins. See the bootstrap bullet.
+3. Standalone login: operator key once → opaque session. Passkeys deleted at
+   implementation review (2026-08-11): DELETE beat replace-with-SSO. The
+   seam admits passkey/SSO later.
 4. Hosted composition: hosted imports the open cockpit wholesale and wraps
    it. No fork.
 5. Preview discovery: dead, permanently. The user types the port.
