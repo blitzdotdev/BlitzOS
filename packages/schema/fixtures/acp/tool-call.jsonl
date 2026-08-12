@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-tool","update":{"sessionUpdate":"tool_call","toolCallId":"tool-1","title":"List files","kind":"execute","status":"pending","rawInput":{"command":"ls"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-tool","update":{"sessionUpdate":"tool_call_update","toolCallId":"tool-1","status":"in_progress"}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-tool","update":{"sessionUpdate":"tool_call_update","toolCallId":"tool-1","status":"completed","rawOutput":"README.md"}}}

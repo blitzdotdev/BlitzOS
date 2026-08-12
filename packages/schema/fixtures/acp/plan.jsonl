@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-plan","update":{"sessionUpdate":"plan","entries":[{"content":"Inspect the workspace","priority":"high","status":"in_progress"},{"content":"Apply the change","priority":"medium","status":"pending"}]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-plan","update":{"sessionUpdate":"plan","entries":[{"content":"Inspect the workspace","priority":"high","status":"completed"},{"content":"Apply the change","priority":"medium","status":"in_progress"}]}}}

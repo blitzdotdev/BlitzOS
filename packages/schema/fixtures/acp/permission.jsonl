@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":"permission-1","method":"session/request_permission","params":{"sessionId":"session-permission","toolCall":{"toolCallId":"tool-permission","title":"Delete build output","kind":"delete","status":"pending"},"options":[{"optionId":"allow-once","name":"Allow once","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}}
+{"jsonrpc":"2.0","id":"permission-1","result":{"outcome":{"outcome":"selected","optionId":"allow-once"}}}
