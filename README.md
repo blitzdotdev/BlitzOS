@@ -4,10 +4,7 @@ The open core of BlitzOS. Apache-2.0.
 
 ## What is BlitzOS
 
-BlitzOS is an open-source library for building your own cloud agent product
-(Cursor Cloud, AmpCode, Grok Bot are examples). "Cloud agent" is the concept
-of enabling AI agents do increasingly complex, long-horizon work by giving
-them dedicated computers. Cloud agent products package and sell this concept
+BlitzOS is an open-source library for building your own cloud agent. "Cloud agent" = AI agents in a computer that do increasingly complex, long-horizon work. Cloud agent products package and sell this concept
 as a product. While this is convenient, you pay extra for compute & storage
 and cannot customize cloud agents for your use case. BlitzOS exists so you
 can build & self-host your own cloud agent product as frictionlessly as
@@ -32,8 +29,8 @@ customization.
   holds the refresh token and issues short-lived tokens to boxes.
 - `control-plane` — the backend: the four-call workspace API (create · poll ·
   destroy · ssh) over your cloud, plus sessions and the broker registry.
-- `ui` — the cockpit web app: workspace rail, terminal, agent chat, files,
-  preview. It renders the server view.
+- `ui` — the web app: workspace manager, terminal, agent chat, filesystem viewer,
+  port preview.
 - `schema` — one contract for all packages: workspace types, enums, wire
   shapes, ACP conformance fixtures.
 
