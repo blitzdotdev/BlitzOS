@@ -1,0 +1,4 @@
+**/node_modules
+.git
+.idea
+packages/box/actor/dist

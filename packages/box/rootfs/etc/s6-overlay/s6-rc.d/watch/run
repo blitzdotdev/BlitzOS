@@ -1,0 +1,9 @@
+#!/command/with-contenv bash
+set -euo pipefail
+if [ ! -s /var/lib/blitz/broker.json ]; then
+  echo "watch: skipped (no broker config)"
+  exec /command/s6-pause
+fi
+exec /command/s6-setuidgid blitz /usr/bin/env \
+  HOME=/var/lib/blitz/home USER=blitz BLITZ_STATE_DIR=/var/lib/blitz \
+  /usr/local/bin/blitz-cred watch

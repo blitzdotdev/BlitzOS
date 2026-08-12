@@ -1,0 +1,11 @@
+#!/command/with-contenv bash
+set -euo pipefail
+if ! grep -Eq '^CapEff:[[:space:]]*[0-9A-Fa-f]*[2367ABEFabef][0-9A-Fa-f]{5}$' /proc/self/status; then
+  echo "dockerd: skipped (container is not privileged)"
+  exec /command/s6-pause
+fi
+exec /usr/local/bin/dockerd \
+  --host=unix:///run/docker.sock \
+  --data-root=/var/lib/blitz/docker \
+  --pidfile=/run/blitz-docker/dockerd.pid \
+  --group=docker

@@ -1,0 +1,87 @@
+#!/command/with-contenv bash
+set -euo pipefail
+
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+uid=${BLITZ_UID:-1000}
+gid=${BLITZ_GID:-1000}
+
+case "$state_dir" in
+  /*) ;;
+  *) echo "BLITZ_STATE_DIR must be absolute" >&2; exit 1 ;;
+esac
+if [ "$state_dir" = / ]; then
+  echo "BLITZ_STATE_DIR cannot be /" >&2
+  exit 1
+fi
+case "$uid:$gid" in
+  *[!0-9:]*|:*|*:|*:*:*) echo "BLITZ_UID and BLITZ_GID must be positive integers" >&2; exit 1 ;;
+esac
+if [ "$uid" -lt 1 ] || [ "$uid" -gt 60000 ] || [ "$gid" -lt 1 ] || [ "$gid" -gt 60000 ]; then
+  echo "BLITZ_UID and BLITZ_GID must be between 1 and 60000" >&2
+  exit 1
+fi
+
+current_uid=$(id -u blitz)
+current_gid=$(id -g blitz)
+if [ "$uid" != "$current_uid" ]; then
+  if getent passwd "$uid" >/dev/null; then
+    echo "BLITZ_UID is already assigned inside the image" >&2
+    exit 1
+  fi
+  usermod --uid "$uid" blitz
+fi
+if [ "$gid" != "$current_gid" ]; then
+  if getent group "$gid" >/dev/null; then
+    usermod --gid "$gid" blitz
+  else
+    groupmod --gid "$gid" blitz
+  fi
+fi
+
+install -d -m 0700 -o "$uid" -g "$gid" "$state_dir"
+install -d -m 0700 -o "$uid" -g "$gid" "$state_dir/home"
+install -d -m 0700 -o root -g root "$state_dir/ssh" "$state_dir/docker"
+install -d -m 0755 -o "$uid" -g "$gid" /workspace
+install -d -m 0755 -o root -g root /run/sshd /run/blitz-sshd /run/blitz-docker
+
+find "$state_dir" -maxdepth 1 -type f -exec chown "$uid:$gid" {} +
+chown -R "$uid:$gid" "$state_dir/home"
+chown "$uid:$gid" /workspace
+
+host_key="$state_dir/ssh/ssh_host_ed25519_key"
+if [ ! -f "$host_key" ]; then
+  key_stage=$(mktemp -d "$state_dir/ssh/.host-key.XXXXXX")
+  ssh-keygen -q -t ed25519 -N '' -C 'blitz-box' -f "$key_stage/key"
+  install -m 0600 -o root -g root "$key_stage/key" "$host_key.new"
+  mv -f "$host_key.new" "$host_key"
+  install -m 0644 -o root -g root "$key_stage/key.pub" "$host_key.pub.new"
+  mv -f "$host_key.pub.new" "$host_key.pub"
+  rm -r "$key_stage"
+elif [ ! -f "$host_key.pub" ]; then
+  ssh-keygen -y -f "$host_key" >"$host_key.pub.new"
+  chmod 0644 "$host_key.pub.new"
+  mv -f "$host_key.pub.new" "$host_key.pub"
+fi
+chown root:root "$host_key" "$host_key.pub"
+chmod 0600 "$host_key"
+chmod 0644 "$host_key.pub"
+
+if [ ! -s /run/blitz/authorized_key ]; then
+  echo "mount one caller public key at /run/blitz/authorized_key" >&2
+  exit 1
+fi
+ssh-keygen -l -f /run/blitz/authorized_key >/dev/null
+install -m 0644 -o root -g root /run/blitz/authorized_key "$state_dir/authorized_keys.new"
+mv -f "$state_dir/authorized_keys.new" "$state_dir/authorized_keys"
+
+if [ -n "${BLITZ_CP_ORIGIN:-}" ]; then
+  case "$BLITZ_CP_ORIGIN" in
+    *$'\n'*|*$'\r'*) echo "BLITZ_CP_ORIGIN must be one line" >&2; exit 1 ;;
+  esac
+  printf '%s\n' "$BLITZ_CP_ORIGIN" >"$state_dir/origin.new"
+  chown "$uid:$gid" "$state_dir/origin.new"
+  chmod 0644 "$state_dir/origin.new"
+  mv -f "$state_dir/origin.new" "$state_dir/origin"
+fi
+
+echo "init-state: ready"

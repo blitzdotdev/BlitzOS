@@ -1,0 +1,3 @@
+#!/command/with-contenv bash
+set -euo pipefail
+exec /usr/sbin/sshd -D -e -f /etc/blitz/sshd_config

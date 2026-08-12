@@ -51,12 +51,13 @@ Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
   ssh, once). The CP + broker are an opt-in overlay.
 - Image contents, all pinned by digest or version: `node:22-bookworm-slim` base
   (Node stays: the actor and the Claude SDK are Node; NodeSource dies),
-  openssh, tmux, git, ttyd (checksummed release), Claude Code,
+  openssh, tmux, git, ttyd (checksummed release), dufs 0.46.0 (checksummed
+  release), Claude Code,
   `@openai/codex`, compiled actor + lockfile, static `blitz-cred`.
-- Files server: dufs, pinned, loopback 7445. Serves `/workspace` + home.
-  Acceptance check, red-first: the server MUST enforce WebDAV preconditions
-  (If-Match / If-None-Match). The UI lost-update fix depends on this. Fallback
-  stock server: sftpgo. No Caddy in front.
+- Files server: dufs 0.46.0, pinned and checksummed for amd64 + arm64, on
+  loopback 7445. It serves `/workspace` + the blitz HOME through its stock
+  WebDAV surface. Decision reversal 2026-08-11: the precondition acceptance check is DELETED; last-write-wins is accepted. dufs has no stock Origin
+  allowlist, so no Origin gate or proxy is added.
 - Ports: sshd 22, published. ttyd 7443 + ACP 7444 + files 7445, loopback only.
   Standalone reaches them through the SSH tunnel. Hosted publishes them on the
   WG interface (closed bootstrap). `EXPOSE` is documentation, not publication.
@@ -118,8 +119,7 @@ Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
   coupling, Home materialization (drives/restic dead).
 - `/preview` + box-side Caddy + port discovery. Preview needs no box code: the
   user enters a port; hosted ingress routes host → WG:port; standalone uses
-  `ssh -L`. dufs is NOT deleted. It returns as the fourth surface
-  (2026-08-11), without Caddy.
+  `ssh -L`. dufs WebDAV is the fourth surface (2026-08-11), without Caddy.
 - Private `/chat` protocol, layout REST, marker files, client-asserted
   attribution, handoff synthesis, Codex SDK translation + rollout parsing +
   fallback catalogs + fabricated diffs (ACP + official App Server).
@@ -154,8 +154,9 @@ Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
   closes only that connection. This kills the null-frame crash class.
 - Bounded queues everywhere: prompt ingress, journal replay window,
   per-subscriber buffers. A slow subscriber disconnects alone.
-- Browser Origin gate on ttyd/ACP/files. An SSH tunnel does not stop a hostile
-  localhost webpage. Orchestrators use the SSH path.
+- Browser Origin gate on ttyd/ACP. An SSH tunnel does not stop a hostile
+  localhost webpage. dufs has no stock Origin allowlist; the files surface
+  accepts that limitation rather than adding a proxy.
 - One engine per session (actor map). Turn FIFO. Identical seq stream to N
   subscribers. Socket close ≠ cancel. A resume failure never re-runs a prompt.
 - Async per-turn Claude mint + resume. This kills the 1 h expiry and the 20 s
@@ -205,11 +206,11 @@ Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
 
 ## Resolved
 
-- Files gap: FOUR surfaces (founder, 2026-08-11). The image ships dufs
-  (pinned, loopback 7445; sftpgo fallback if the precondition check fails).
-  Hosted attach needs no box-side Caddy: the closed bootstrap publishes
-  7443/7444/7445 on the WG interface; ingress Caddy routes to them. Preview
-  needs no box code at all.
+- Files gap: FOUR surfaces (founder, 2026-08-11). dufs 0.46.0 is the files
+  server, with accepted last-write-wins behavior. Hosted attach needs no
+  box-side Caddy: the closed bootstrap
+  publishes 7443/7444/7445 on the WG interface; ingress Caddy routes to them.
+  Preview needs no box code at all.
 - Browser access for OSS users (2026-08-11): tunnel on the same machine, or
   the user's own edge from the docs recipe. No open ingress package.
 - Launcher (was open q 7, 2026-08-11): none. Install is docs only. The box is

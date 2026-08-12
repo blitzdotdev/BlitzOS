@@ -1,0 +1,19 @@
+Port 22
+AddressFamily inet
+ListenAddress 0.0.0.0
+HostKey /var/lib/blitz/ssh/ssh_host_ed25519_key
+PidFile /run/blitz-sshd/sshd.pid
+AuthorizedKeysFile /var/lib/blitz/authorized_keys
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin no
+AllowUsers blitz
+UsePAM no
+X11Forwarding no
+AllowTcpForwarding yes
+AllowAgentForwarding yes
+PermitUserEnvironment no
+PrintMotd no
+Subsystem sftp internal-sftp
