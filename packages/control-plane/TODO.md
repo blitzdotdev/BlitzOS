@@ -37,9 +37,9 @@ Decisions: `sessions/2026-08-11-box-redesign-acp-docker.md`.
 - Hetzner adapter: open. Plain hcloud calls. Nothing secret in it.
 - Sessions: opaque hashed rows. Standalone auth = one operator API key. The
   principal source is a seam. The closed side fills it with GitHub identity.
-  Optional passkey for the standalone cockpit (decided 2026-08-11): register
-  under an operator-key session; later logins assert it. Stock WebAuthn.
-  Sessions stay opaque hashed rows.
+  Passkeys DELETED (2026-08-11, implementation review): operator-key login
+  only. Sessions stay opaque hashed rows; the principal seam admits passkey/SSO
+  later without core changes.
 - Credential broker registry. Purpose: a subscription account can auth agents in
   every workspace its owner spawns.
   - Core holds pubkeys + routing only. Never a credential.
