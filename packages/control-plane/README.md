@@ -7,8 +7,8 @@ The workspace engine for fleets on your cloud.
   (idempotent, tombstone). The workspace view carries the public SSH endpoint
   and pinned host key.
 - The server owns the workspace view. Clients render it. Monotonic revision.
-- Two provider seams: `VmProvider` and `VolumeProvider`. Hetzner adapter
-  included. Your cloud = one adapter file, not a fork.
+- Two provider seams: `VmProvider` and `VolumeProvider`. Hetzner and microVM
+  pool adapters are included. Your cloud = one adapter file, not a fork.
 - Volumes are raw cloud primitives, passed through — no shadow tables. A
   volume survives workspace destroy.
 - Readiness = the VM bootstrap posts box host keys to a single-use capability
@@ -46,6 +46,25 @@ same deploy command:
 npx wrangler secret put HETZNER_API_TOKEN --config packages/control-plane/wrangler.toml
 npx wrangler secret put OPERATOR_API_KEY --config packages/control-plane/wrangler.toml
 ```
+
+`MICROVM_HOSTS` is a non-secret JSON array. Each entry has exactly `name`,
+`url`, and `tokenVar`; `tokenVar` names a Worker secret binding whose value is
+the host agent Bearer token. For example:
+
+```toml
+MICROVM_HOSTS = '[{"name":"lab","url":"https://microvm-lab.example","tokenVar":"MICROVM_LAB_TOKEN"}]'
+```
+
+Set the referenced value as a secret, never inside `MICROVM_HOSTS`:
+
+```sh
+npx wrangler secret put MICROVM_LAB_TOKEN --config packages/control-plane/wrangler.toml
+```
+
+Machine IDs are `mv-<cpu>c<memGb>g@<hostName>`. The included pool sizes are
+`2c2g` and `2c4g`; they appear only while the selected host's live
+`/v1/capacity` response has enough CPU, memory, and a VM slot. Non-`mv-`
+creates and all volume operations continue to use Hetzner.
 
 Session cookies expire after 30 days by default. Set `SESSION_TTL_DAYS` to an
 integer from 1 through 3650 to override that lifetime. Expired sessions return

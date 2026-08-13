@@ -8,9 +8,26 @@ import {
   d1DatabasePatch,
   missingSecretsMessage,
   parseD1Binding,
+  requiredSecretsForConfig,
 } from "../scripts/deploy-helpers.mjs";
 
 describe("control-plane deploy command", () => {
+  it("adds MICROVM_HOSTS tokenVar names to required secret metadata without reading values", () => {
+    expect(requiredSecretsForConfig({
+      vars: {
+        MICROVM_HOSTS: JSON.stringify([
+          { name: "lab", url: "https://microvm-lab.example", tokenVar: "MICROVM_LAB_TOKEN" },
+          { name: "edge", url: "https://microvm-edge.example", tokenVar: "MICROVM_EDGE_TOKEN" },
+        ]),
+      },
+    })).toEqual([
+      "HETZNER_API_TOKEN",
+      "OPERATOR_API_KEY",
+      "MICROVM_LAB_TOKEN",
+      "MICROVM_EDGE_TOKEN",
+    ]);
+  });
+
   it("cleans stale package output before rebuilding dist", async () => {
     const packageDirectory = await mkdtemp(path.join(tmpdir(), "blitz-control-plane-build-"));
     const staleFile = path.join(packageDirectory, "dist", "providers", "hetzner.js");

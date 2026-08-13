@@ -1,0 +1,107 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/command
+export PATH
+
+say() {
+  echo "BLITZ_STAGE $*"
+}
+
+die() {
+  echo "BLITZ_INIT_ERROR $*" >&2
+  exec /bin/sh
+}
+
+mkdir -p /proc /sys /dev /mnt/lower /mnt/rw /mnt/root
+mountpoint -q /proc || mount -t proc proc /proc
+mountpoint -q /sys || mount -t sysfs sysfs /sys
+mountpoint -q /dev || mount -t devtmpfs devtmpfs /dev
+
+i=0
+while [ ! -b /dev/vda ] || [ ! -b /dev/vdb ]; do
+  i=$((i + 1))
+  [ "$i" -lt 200 ] || die "virtio disks did not appear"
+  sleep 0.01
+done
+
+mount -t ext4 -o ro,noatime /dev/vda /mnt/lower
+mount -t ext4 -o rw,noatime /dev/vdb /mnt/rw
+mkdir -p /mnt/rw/upper /mnt/rw/work
+mount -t overlay overlay \
+  -o lowerdir=/mnt/lower,upperdir=/mnt/rw/upper,workdir=/mnt/rw/work \
+  /mnt/root
+
+mkdir -p /mnt/root/proc /mnt/root/sys /mnt/root/dev /mnt/root/run
+mount -t proc proc /mnt/root/proc
+mount -t sysfs sysfs /mnt/root/sys
+mount -t devtmpfs devtmpfs /mnt/root/dev
+mkdir -p /mnt/root/dev/pts /mnt/root/dev/shm /mnt/root/sys/fs/cgroup
+mount -t devpts devpts /mnt/root/dev/pts -o newinstance,ptmxmode=0666,mode=0620
+ln -sfn pts/ptmx /mnt/root/dev/ptmx
+mount -t tmpfs tmpfs /mnt/root/dev/shm -o mode=1777
+mount -t tmpfs tmpfs /mnt/root/run -o mode=0755
+mount -t cgroup2 cgroup2 /mnt/root/sys/fs/cgroup
+
+guest_ip=
+guest_gw=
+guest_prefix=30
+guest_name=blitz-vm
+phone_home_b64=
+cp_origin_b64=
+workspace_b64=
+for arg in $(cat /proc/cmdline); do
+  case "$arg" in
+    blitz_ip=*) guest_ip=${arg#blitz_ip=} ;;
+    blitz_gw=*) guest_gw=${arg#blitz_gw=} ;;
+    blitz_prefix=*) guest_prefix=${arg#blitz_prefix=} ;;
+    blitz_name=*) guest_name=${arg#blitz_name=} ;;
+    blitz_phone_home_b64=*) phone_home_b64=${arg#blitz_phone_home_b64=} ;;
+    blitz_cp_origin_b64=*) cp_origin_b64=${arg#blitz_cp_origin_b64=} ;;
+    blitz_workspace_b64=*) workspace_b64=${arg#blitz_workspace_b64=} ;;
+  esac
+done
+[ -n "$guest_ip" ] || die "missing blitz_ip kernel argument"
+[ -n "$guest_gw" ] || die "missing blitz_gw kernel argument"
+
+ip link set lo up
+ip link set eth0 up
+ip addr add "$guest_ip/$guest_prefix" dev eth0
+ip route add default via "$guest_gw" dev eth0
+hostname "$guest_name"
+
+mkdir -p /mnt/root/etc
+rm -f /mnt/root/etc/resolv.conf
+printf '%s\n' \
+  'nameserver 1.1.1.1' \
+  'nameserver 8.8.8.8' \
+  'options timeout:1 attempts:2' \
+  > /mnt/root/etc/resolv.conf
+
+mkdir -p /mnt/root/run/blitz /mnt/root/var/lib/blitz
+[ -s /mnt/rw/seed/authorized_key ] || die "missing vdb seed/authorized_key"
+install -m 0644 /mnt/rw/seed/authorized_key /mnt/root/run/blitz/authorized_key
+
+# Docker's overlayfs snapshotter cannot nest on the overlay root. Keep its
+# state on the writable vdb, exposed as a direct ext4-backed directory.
+mkdir -p /mnt/rw/docker-data /mnt/root/var/lib/blitz/docker
+mount --bind /mnt/rw/docker-data /mnt/root/var/lib/blitz/docker
+
+# The image's native enroll/register chain sees no BLITZ_CP_ORIGIN and skips.
+# This M2 one-shot waits for that chain to create the host key and start sshd,
+# then uses the explicit phone-home callback and atomically installs its reply.
+if [ -n "$phone_home_b64" ]; then
+  chroot /mnt/root /usr/bin/env -i \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/command \
+    HOME=/root BLITZ_MICROVM_PHONE_HOME_B64="$phone_home_b64" \
+    BLITZ_MICROVM_CP_ORIGIN_B64="$cp_origin_b64" \
+    BLITZ_MICROVM_WORKSPACE_B64="$workspace_b64" \
+    /usr/local/bin/node /usr/local/libexec/blitz-microvm-enroll.js \
+    >/mnt/root/run/blitz/microvm-enroll.log 2>&1 &
+fi
+
+say "kernel_init_ready ip=$guest_ip"
+exec chroot /mnt/root /usr/bin/env -i \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/command \
+  HOME=/var/lib/blitz/home USER=blitz BLITZ_STATE_DIR=/var/lib/blitz \
+  /init

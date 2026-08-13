@@ -1,0 +1,23 @@
+[Unit]
+Description=Blitz Firecracker microVM host agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=minjune
+Group=minjune
+WorkingDirectory=/home/minjune/blitz-microvm-lab
+Environment=HOME=/home/minjune
+Environment=USER=minjune
+Environment=BLITZ_LAB=/home/minjune/blitz-microvm-lab
+ExecStart=/home/minjune/blitz-microvm-lab/agent/bin/blitz-microvm-agent -config /home/minjune/blitz-microvm-lab/agent/config.json
+Restart=always
+RestartSec=1
+KillMode=process
+TimeoutStopSec=10
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

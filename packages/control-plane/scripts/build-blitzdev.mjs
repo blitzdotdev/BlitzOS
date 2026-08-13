@@ -33,8 +33,10 @@ export const CORE_MANIFEST = Object.freeze([
   "core/types.ts",
   "core/volumes.ts",
   "core/workspaces.ts",
+  "core/providers/composite.ts",
   "core/providers/types.ts",
   "core/providers/hetzner.ts",
+  "core/providers/microvm.ts",
 ]);
 
 export const UPLOAD_MANIFEST = Object.freeze([
@@ -227,9 +229,11 @@ export default config;
 export const WORKER_SOURCE = normalizeSource(`import { $Database, teenyHono } from "teenybase";
 import config from "virtual:teenybase";
 import {
+  CompositeVmProvider,
   createOperatorPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
+  MicrovmPoolProvider,
   maybeScheduleLazySweep,
   maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
@@ -256,6 +260,7 @@ type ManagedBindings = {
   BOX_IMAGE_TAG: string;
   SESSION_TTL_DAYS?: string;
   MAX_CONCURRENT_WORKSPACES?: string;
+  MICROVM_HOSTS?: string;
 };
 
 type ManagedEnv = {
@@ -282,6 +287,22 @@ interface ManagedFileRow {
   object: string;
   media_type: string;
   size_bytes: number;
+}
+
+function dynamicBinding(env: ManagedBindings, name: string): unknown {
+  return Reflect.get(env, name);
+}
+
+function providersFor(env: ManagedBindings): CoreRuntime["providers"] {
+  const hetzner = new HetznerProvider(env.HETZNER_API_TOKEN);
+  const microvm = new MicrovmPoolProvider(
+    env.MICROVM_HOSTS,
+    (tokenVar) => dynamicBinding(env, tokenVar),
+  );
+  return {
+    vm: new CompositeVmProvider(hetzner, microvm),
+    volume: hetzner,
+  };
 }
 
 const API_PREFIXES = [
@@ -339,7 +360,6 @@ function runtimeFor(context: CoreContext): CoreRuntime;
 function runtimeFor(context: ManagedContext): CoreRuntime;
 function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
   const env = context.env as ManagedBindings;
-  const provider = new HetznerProvider(env.HETZNER_API_TOKEN);
   return {
     db: context.get("$db") as Db,
     blobs: managedBlobStore(context.get("$db") as $Database, "box-image"),
@@ -350,7 +370,7 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
       sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
       maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(env.MAX_CONCURRENT_WORKSPACES),
     },
-    providers: { vm: provider, volume: provider },
+    providers: providersFor(env),
     principalSource: createOperatorPrincipalSource(env.OPERATOR_API_KEY),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
   };

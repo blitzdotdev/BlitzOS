@@ -19,7 +19,9 @@ const expected = [
   "janitors.ts",
   "oauth.ts",
   "principals.ts",
+  "providers/composite.ts",
   "providers/hetzner.ts",
+  "providers/microvm.ts",
   "providers/types.ts",
   "registry.ts",
   "runtime.ts",
@@ -46,6 +48,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(21);
+    expect(expected).toHaveLength(23);
   });
 });

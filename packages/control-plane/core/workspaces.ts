@@ -124,10 +124,13 @@ function providerOperationError(error: unknown): string {
 }
 
 function phoneHomeKeys(value: unknown): string[] {
-  if (isRecord(value) && Array.isArray(value.hostPublicKeys)) {
-    return value.hostPublicKeys.filter(isSshPublicKey);
-  }
   if (!isRecord(value)) return [];
+  for (const field of ["hostPublicKeys", "host_public_keys", "ssh_host_public_keys"]) {
+    const candidate = value[field];
+    if (!Array.isArray(candidate)) continue;
+    const keys = candidate.filter(isSshPublicKey);
+    if (keys.length > 0) return keys;
+  }
   return ["pub_key_ed25519", "pub_key_ecdsa", "pub_key_rsa", "pub_key_dsa"]
     .map((field) => value[field])
     .filter(isSshPublicKey);
@@ -223,6 +226,7 @@ export function addWorkspaceRoutes(
         workspaceId: id,
         machineTypeId: input.machineTypeId,
         sshPublicKey: input.sshPublicKey,
+        phoneHomeUrl,
         userData,
       });
       await rows(runtime.db, {

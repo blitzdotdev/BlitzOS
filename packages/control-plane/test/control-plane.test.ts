@@ -323,6 +323,7 @@ describe("control plane security and lifecycle", () => {
         workspaceId: "workspace-id",
         machineTypeId: "cx22@fsn1",
         sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+        phoneHomeUrl: "https://cp.example/workspaces/workspace-id/phone-home/token",
         userData: "#cloud-config",
       }),
     ).rejects.toThrow("server type 104 (cx22) is deprecated");
@@ -351,6 +352,7 @@ describe("control plane security and lifecycle", () => {
         workspaceId: "workspace-id",
         machineTypeId: "cx22@fsn1",
         sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+        phoneHomeUrl: "https://cp.example/workspaces/workspace-id/phone-home/token",
         userData: "#cloud-config",
       }),
     ).rejects.toThrow("server type 104 (cx22) is deprecated");
@@ -376,6 +378,7 @@ describe("control plane security and lifecycle", () => {
         workspaceId: "workspace-id",
         machineTypeId: "cx22@fsn1",
         sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+        phoneHomeUrl: "https://cp.example/workspaces/workspace-id/phone-home/token",
         userData: "#cloud-config",
       }),
     ).rejects.toThrow(/^server type 105 is unavailable$/u);

@@ -36,8 +36,10 @@ const expected = [
   "core/types.ts",
   "core/volumes.ts",
   "core/workspaces.ts",
+  "core/providers/composite.ts",
   "core/providers/types.ts",
   "core/providers/hetzner.ts",
+  "core/providers/microvm.ts",
 ] as const;
 
 function coreSources(): Map<string, string> {
@@ -55,7 +57,7 @@ describe("blitz.dev managed emitter", () => {
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(23);
+    expect(first.files).toHaveLength(25);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

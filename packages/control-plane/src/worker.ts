@@ -2,9 +2,11 @@ import type { DatabaseSettings } from "teenybase";
 import type { $Env } from "teenybase/worker";
 import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
 import {
+  CompositeVmProvider,
   createOperatorPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
+  MicrovmPoolProvider,
   maybeScheduleLazySweep,
   maxConcurrentWorkspacesFromEnv,
   runInvariantSweep,
@@ -23,6 +25,7 @@ type WorkerBindings = Env & {
   HETZNER_API_TOKEN: string;
   JWT_SECRET_MAIN: string;
   OPERATOR_API_KEY: string;
+  MICROVM_HOSTS?: string;
   SESSION_TTL_DAYS?: string;
   MAX_CONCURRENT_WORKSPACES?: string;
   RESPOND_WITH_ERRORS: string | boolean;
@@ -41,11 +44,26 @@ interface TargetContext {
   readonly executionCtx: { waitUntil(promise: Promise<unknown>): void };
 }
 
+function dynamicBinding(env: WorkerBindings, name: string): unknown {
+  return Reflect.get(env, name);
+}
+
+function providersFor(env: WorkerBindings): CoreRuntime["providers"] {
+  const hetzner = new HetznerProvider(env.HETZNER_API_TOKEN);
+  const microvm = new MicrovmPoolProvider(
+    env.MICROVM_HOSTS,
+    (tokenVar) => dynamicBinding(env, tokenVar),
+  );
+  return {
+    vm: new CompositeVmProvider(hetzner, microvm),
+    volume: hetzner,
+  };
+}
+
 function runtimeFor(context: CoreContext): CoreRuntime;
 function runtimeFor(context: TargetContext): CoreRuntime;
 function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
   const env = context.env as WorkerBindings;
-  const provider = new HetznerProvider(env.HETZNER_API_TOKEN);
   return {
     db: context.get("$db") as Db,
     blobs: env.BOX_IMAGES as BlobStore,
@@ -58,7 +76,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
         env.MAX_CONCURRENT_WORKSPACES,
       ),
     },
-    providers: { vm: provider, volume: provider },
+    providers: providersFor(env),
     principalSource: createOperatorPrincipalSource(env.OPERATOR_API_KEY),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
   };
@@ -69,7 +87,6 @@ function runtimeForScheduled(
   db: Db,
   executionContext: ExecutionContext,
 ): CoreRuntime {
-  const provider = new HetznerProvider(env.HETZNER_API_TOKEN);
   return {
     db,
     blobs: env.BOX_IMAGES as BlobStore,
@@ -82,7 +99,7 @@ function runtimeForScheduled(
         env.MAX_CONCURRENT_WORKSPACES,
       ),
     },
-    providers: { vm: provider, volume: provider },
+    providers: providersFor(env),
     principalSource: createOperatorPrincipalSource(env.OPERATOR_API_KEY),
     waitUntil: (promise) => executionContext.waitUntil(promise),
   };
@@ -106,7 +123,7 @@ export default {
     env: WorkerBindings,
     executionContext: ExecutionContext,
   ): Promise<Response> {
-    return app.fetch(request, env, executionContext);
+    return Promise.resolve(app.fetch(request, env, executionContext));
   },
   async scheduled(
     _event: ScheduledController,

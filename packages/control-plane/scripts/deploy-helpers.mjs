@@ -86,6 +86,26 @@ function secretNames(value) {
   );
 }
 
+export function requiredSecretsForConfig(rawConfig) {
+  const rawHosts = isRecord(rawConfig?.vars) ? rawConfig.vars.MICROVM_HOSTS : undefined;
+  if (rawHosts === undefined || rawHosts === "") return [...REQUIRED_SECRETS];
+  if (typeof rawHosts !== "string") throw new Error("MICROVM_HOSTS must be a JSON array");
+  let hosts;
+  try {
+    hosts = JSON.parse(rawHosts);
+  } catch {
+    throw new Error("MICROVM_HOSTS must be valid JSON");
+  }
+  if (!Array.isArray(hosts)) throw new Error("MICROVM_HOSTS must be a JSON array");
+  const dynamic = hosts.map((host, index) => {
+    if (!isRecord(host) || typeof host.tokenVar !== "string" || !/^[A-Z][A-Z0-9_]{0,127}$/u.test(host.tokenVar)) {
+      throw new Error(`MICROVM_HOSTS[${index}].tokenVar is invalid`);
+    }
+    return host.tokenVar;
+  });
+  return [...new Set([...REQUIRED_SECRETS, ...dynamic])];
+}
+
 export function missingSecretsMessage(missing) {
   const commands = missing.map(
     (name) => `npx wrangler secret put ${name} --config ${CONFIG_PATH}`,
@@ -152,7 +172,7 @@ export async function deployControlPlane({
     throw new Error(missingSecretsMessage(REQUIRED_SECRETS));
   }
   const present = secretNames(parseJson(secrets.stdout, "Wrangler secret list"));
-  const missing = REQUIRED_SECRETS.filter((name) => !present.has(name));
+  const missing = requiredSecretsForConfig(rawConfig).filter((name) => !present.has(name));
   if (missing.length > 0) throw new Error(missingSecretsMessage(missing));
 
   await invoke("npm", ["run", "build", "-w", "@blitzos/ui"]);

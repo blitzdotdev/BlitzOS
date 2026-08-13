@@ -9,6 +9,7 @@ export interface CreateVmInput {
   workspaceId: string;
   machineTypeId: string;
   sshPublicKey: string;
+  phoneHomeUrl: string;
   userData: string;
 }
 
