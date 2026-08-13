@@ -91,6 +91,32 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain('grep -Fqx "$fstab_entry" /etc/fstab');
   });
 
+  it("preserves pre-mount output and tees all later bootstrap output to the durable volume log", () => {
+    const userData = registryUserData();
+
+    const initialCapture = userData.indexOf('exec >>"$BOOTSTRAP_LOG" 2>&1');
+    const apt = userData.indexOf("retry apt-get update");
+    const mount = userData.indexOf('mount "$volume_device" /var/lib/blitz');
+    const durableCopy = userData.indexOf(
+      'cat "$BOOTSTRAP_LOG" >"$DURABLE_BOOTSTRAP_LOG"',
+    );
+    const durableTee = userData.indexOf(
+      'exec > >(tee -a "$BOOTSTRAP_LOG" "$DURABLE_BOOTSTRAP_LOG" >/dev/null) 2>&1',
+    );
+
+    expect(userData).toContain(
+      "readonly DURABLE_BOOTSTRAP_LOG=/var/lib/blitz/bootstrap.log",
+    );
+    expect(userData).toContain('chmod 0600 "$BOOTSTRAP_LOG"');
+    expect(userData).toContain('chmod 0600 "$DURABLE_BOOTSTRAP_LOG"');
+    expect(initialCapture).toBeGreaterThan(-1);
+    expect(apt).toBeGreaterThan(initialCapture);
+    expect(mount).toBeGreaterThan(apt);
+    expect(durableCopy).toBeGreaterThan(mount);
+    expect(durableTee).toBeGreaterThan(durableCopy);
+    expect(userData.indexOf("docker run", durableTee)).toBeGreaterThan(durableTee);
+  });
+
   it("installs a guest systemd shutdown hook that syncs and cleanly unmounts the Blitz volume", () => {
     const userData = registryUserData();
 
@@ -110,6 +136,69 @@ describe("production VM bootstrap", () => {
     expect(sync).toBeGreaterThan(hook);
     expect(unmount).toBeGreaterThan(sync);
     expect(runBox).toBeGreaterThan(unmount);
+  });
+
+  it("replaces the reused-volume authorized key and preserves idempotent workspace creation", () => {
+    const userData = registryUserData();
+
+    const workspace = userData.indexOf("mkdir -p /var/lib/blitz/workspace");
+    const replaceKey = userData.indexOf(
+      `printf '%s\\n' "$SSH_PUBLIC_KEY" >/var/lib/blitz/authorized_key`,
+    );
+    const keyOwner = userData.indexOf(
+      "chown root:root /var/lib/blitz/authorized_key",
+      replaceKey,
+    );
+    const keyMode = userData.indexOf(
+      "chmod 0644 /var/lib/blitz/authorized_key",
+      keyOwner,
+    );
+    const run = userData.indexOf("docker run", keyMode);
+
+    expect(workspace).toBeGreaterThan(-1);
+    expect(replaceKey).toBeGreaterThan(workspace);
+    expect(keyOwner).toBeGreaterThan(replaceKey);
+    expect(keyMode).toBeGreaterThan(keyOwner);
+    expect(run).toBeGreaterThan(keyMode);
+    expect(userData).not.toMatch(
+      /if[^\n]*\/var\/lib\/blitz\/authorized_key/u,
+    );
+  });
+
+  it("reinstalls and enables host SSH and volume-shutdown configuration on every bootstrap", () => {
+    const userData = registryUserData();
+
+    const hook = userData.indexOf(
+      "cat >/usr/local/sbin/blitz-volume-shutdown <<'SHUTDOWN_HOOK'",
+    );
+    const hookMode = userData.indexOf(
+      "chmod 0755 /usr/local/sbin/blitz-volume-shutdown",
+      hook,
+    );
+    const unit = userData.indexOf(
+      "cat >/etc/systemd/system/blitz-volume-shutdown.service <<'SHUTDOWN_UNIT'",
+      hookMode,
+    );
+    const reload = userData.indexOf("systemctl daemon-reload", unit);
+    const enableShutdown = userData.indexOf(
+      "systemctl enable --now blitz-volume-shutdown.service",
+      reload,
+    );
+    const sshDropIn = userData.indexOf(
+      "cat >/etc/ssh/sshd_config.d/blitz.conf <<'SSHD_CONFIG'",
+      enableShutdown,
+    );
+    const validateSsh = userData.indexOf("/usr/sbin/sshd -t", sshDropIn);
+    const restartSsh = userData.indexOf("systemctl restart ssh", validateSsh);
+
+    expect(hook).toBeGreaterThan(-1);
+    expect(hookMode).toBeGreaterThan(hook);
+    expect(unit).toBeGreaterThan(hookMode);
+    expect(reload).toBeGreaterThan(unit);
+    expect(enableShutdown).toBeGreaterThan(reload);
+    expect(sshDropIn).toBeGreaterThan(enableShutdown);
+    expect(validateSsh).toBeGreaterThan(sshDropIn);
+    expect(restartSsh).toBeGreaterThan(validateSsh);
   });
 
   it("waits for box health before posting keys and installs credentials mode 0600", () => {
@@ -236,6 +325,64 @@ write_files:
     expect(checksum).toBeGreaterThan(download);
     expect(load).toBeGreaterThan(checksum);
     expect(run).toBeGreaterThan(load);
+  });
+
+  it("keys archive image setup only to image availability on the current daemon", () => {
+    const imageUrl = "https://cp.example/box-image";
+    const userData = buildUserData(
+      SSH_PUBLIC_KEY,
+      PHONE_HOME_URL,
+      imageUrl,
+      undefined,
+      BOX_IMAGE_TAG,
+      BOX_IMAGE_SHA256,
+    );
+
+    const inspectGuard = userData.indexOf(
+      'if ! docker image inspect "$BOX_IMAGE_TAG" >/dev/null 2>&1; then',
+    );
+    const download = userData.indexOf('download "$BOX_IMAGE_REF" "$image_archive"');
+    const load = userData.indexOf('gunzip -c "$image_archive" | docker load');
+    const guardEnd = userData.indexOf("\nfi\n", load);
+    const provenPresent = userData.indexOf(
+      'docker image inspect "$BOX_IMAGE_TAG" >/dev/null',
+      guardEnd + 1,
+    );
+    const run = userData.indexOf("docker run", provenPresent);
+
+    expect(inspectGuard).toBeGreaterThan(-1);
+    expect(download).toBeGreaterThan(inspectGuard);
+    expect(load).toBeGreaterThan(download);
+    expect(guardEnd).toBeGreaterThan(load);
+    expect(provenPresent).toBeGreaterThan(guardEnd);
+    expect(run).toBeGreaterThan(provenPresent);
+    expect(userData.slice(inspectGuard, provenPresent)).not.toMatch(
+      /(?:if|elif)[^\n]*\/var\/lib\/blitz/u,
+    );
+  });
+
+  it("keys registry image setup only to image availability on the current daemon", () => {
+    const userData = registryUserData();
+
+    const inspectGuard = userData.indexOf(
+      'if ! docker image inspect "$BOX_IMAGE_REF" >/dev/null 2>&1; then',
+    );
+    const pull = userData.indexOf('retry docker pull "$BOX_IMAGE_REF"');
+    const guardEnd = userData.indexOf("\nfi\n", pull);
+    const provenPresent = userData.indexOf(
+      'docker image inspect "$BOX_IMAGE_REF" >/dev/null',
+      guardEnd + 1,
+    );
+    const run = userData.indexOf("docker run", provenPresent);
+
+    expect(inspectGuard).toBeGreaterThan(-1);
+    expect(pull).toBeGreaterThan(inspectGuard);
+    expect(guardEnd).toBeGreaterThan(pull);
+    expect(provenPresent).toBeGreaterThan(guardEnd);
+    expect(run).toBeGreaterThan(provenPresent);
+    expect(userData.slice(inspectGuard, provenPresent)).not.toMatch(
+      /(?:if|elif)[^\n]*\/var\/lib\/blitz/u,
+    );
   });
 
   it("validates multipart manifest parts, total digest, and image tag before loading", () => {

@@ -37,6 +37,7 @@ verify_sha256() {
   [ "$actual" = "$expected" ] || fail "SHA-256 mismatch for $path"
 }
 
+if ! docker image inspect "$BOX_IMAGE_TAG" >/dev/null 2>&1; then
 image_tmp_dir=$(mktemp -d /var/lib/blitz/.bootstrap-image.XXXXXX)
 trap 'rm -rf "$image_tmp_dir"' EXIT
 image_archive="$image_tmp_dir/image.tar.gz"
@@ -100,11 +101,15 @@ esac
 
 verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"
 gunzip -c "$image_archive" | docker load
-docker image inspect "$BOX_IMAGE_TAG" >/dev/null
-box_image="$BOX_IMAGE_TAG"
 rm -rf "$image_tmp_dir"
-trap - EXIT`
-    : String.raw`retry docker pull "$BOX_IMAGE_REF"
+trap - EXIT
+fi
+docker image inspect "$BOX_IMAGE_TAG" >/dev/null
+box_image="$BOX_IMAGE_TAG"`
+    : String.raw`if ! docker image inspect "$BOX_IMAGE_REF" >/dev/null 2>&1; then
+  retry docker pull "$BOX_IMAGE_REF"
+fi
+docker image inspect "$BOX_IMAGE_REF" >/dev/null
 box_image="$BOX_IMAGE_REF"`;
 
   return String.raw`#!/bin/bash
@@ -151,6 +156,7 @@ report_bootstrap_failure() {
 trap 'report_bootstrap_failure "$?" "$LINENO"' ERR
 
 readonly BOOTSTRAP_LOG=/var/log/blitz-bootstrap.log
+readonly DURABLE_BOOTSTRAP_LOG=/var/lib/blitz/bootstrap.log
 touch "$BOOTSTRAP_LOG"
 chmod 0600 "$BOOTSTRAP_LOG"
 exec >>"$BOOTSTRAP_LOG" 2>&1
@@ -209,6 +215,11 @@ if [ -n "$volume_device" ]; then
   fstab_entry="UUID=$volume_uuid /var/lib/blitz ext4 defaults,nofail 0 2"
   grep -Fqx "$fstab_entry" /etc/fstab || printf '%s\n' "$fstab_entry" >>/etc/fstab
 fi
+
+touch "$DURABLE_BOOTSTRAP_LOG"
+chmod 0600 "$DURABLE_BOOTSTRAP_LOG"
+cat "$BOOTSTRAP_LOG" >"$DURABLE_BOOTSTRAP_LOG"
+exec > >(tee -a "$BOOTSTRAP_LOG" "$DURABLE_BOOTSTRAP_LOG" >/dev/null) 2>&1
 
 cat >/usr/local/sbin/blitz-volume-shutdown <<'SHUTDOWN_HOOK'
 #!/bin/sh
