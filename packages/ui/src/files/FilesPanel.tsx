@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { endpointTarget } from "../resolver.js";
 import { FileEditor } from "./FileEditor.js";
 import { joinPath, MAX_UPLOAD_BYTES, parentPath, WebDavClient, type WebDavEntry } from "./webdav.js";
 
 export function FilesPanel({ baseUrl }: { baseUrl: string }): React.JSX.Element {
+  const needsOwnOrigin = new URL(baseUrl, window.location.href).origin !== window.location.origin;
   const client = useMemo(() => new WebDavClient(baseUrl), [baseUrl]);
   const [directory, setDirectory] = useState("/");
   const [entries, setEntries] = useState<WebDavEntry[]>([]);
@@ -25,10 +27,11 @@ export function FilesPanel({ baseUrl }: { baseUrl: string }): React.JSX.Element 
   };
 
   useEffect(() => {
+    if (needsOwnOrigin) return;
     setSelected(null);
     void refresh();
     // `client` changes with the endpoint and `directory` is the requested WebDAV path.
-  }, [client, directory]);
+  }, [client, directory, needsOwnOrigin]);
 
   const mkdir = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
@@ -82,12 +85,22 @@ export function FilesPanel({ baseUrl }: { baseUrl: string }): React.JSX.Element 
     }
   };
 
+  if (needsOwnOrigin) {
+    return (
+      <section className="panel files-frame-panel">
+        <div className="panel-toolbar"><code className="endpoint-target">{endpointTarget(baseUrl)}</code></div>
+        <iframe src={baseUrl} title="Files" />
+      </section>
+    );
+  }
+
   return (
     <section className="panel files-panel">
       <aside className="files-sidebar">
         <div className="panel-toolbar">
           <button type="button" disabled={directory === "/"} onClick={() => setDirectory(parentPath(directory))}>Up</button>
           <strong>{directory}</strong>
+          <code className="endpoint-target">{endpointTarget(baseUrl)}</code>
           <button type="button" onClick={() => void refresh()}>Refresh</button>
         </div>
         <form className="inline-form" onSubmit={(event) => void mkdir(event)}>

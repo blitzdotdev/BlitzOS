@@ -22,16 +22,17 @@ customization.
 
 ## Packages
 
-- `box` — one Linux OCI image = one complete agent workspace: key-only ssh,
+- [`box`](packages/box/README.md) — one Linux OCI image = one complete agent workspace: key-only ssh,
   browser terminal (ttyd + tmux), ACP agent chat, WebDAV files. Claude Code +
   Codex installed.
-- `broker` — runs agents in many boxes on one subscription-billed account: it
+- [`broker`](packages/broker/README.md) — runs agents in many boxes on one subscription-billed account: it
   holds the refresh token and issues short-lived tokens to boxes.
-- `control-plane` — the backend: the four-call workspace API (create · poll ·
-  destroy · ssh) over your cloud, plus sessions and the broker registry.
-- `ui` — the web app: workspace manager, terminal, agent chat, filesystem viewer,
+- [`control-plane`](packages/control-plane/README.md) — the backend: the workspace API
+  (create · poll · destroy, with ssh metadata in the workspace view) over your
+  cloud, plus sessions and the broker registry.
+- [`ui`](packages/ui/README.md) — the web app: workspace manager, terminal, agent chat, filesystem viewer,
   port preview.
-- `schema` — one contract for all packages: workspace types, enums, wire
+- [`schema`](packages/schema/README.md) — one contract for all packages: workspace types, enums, wire
   shapes, ACP conformance fixtures.
 
 ## Architecture
@@ -43,7 +44,8 @@ customization.
                   ┌──────────┐
                   │    ui    │
                   └────┬─────┘
-                       │  four-call API: create · poll · destroy · ssh
+                       │  API: create · poll · destroy
+                       │  (ssh metadata in workspace view)
                        ▼
            ┌────────────────────────┐           ┌─────────────┐
            │      control-plane     │◀──────────│   broker    │
@@ -72,21 +74,29 @@ customization.
 - One state rule everywhere: chat lives in the box journal. Workspace truth
   lives in the control plane. Credentials live on your disks.
 
+## Prerequisites
+
+- Node.js `^22.13.0 || >=24.0.0` and npm.
+- Wrangler, run through `npx wrangler` (no global install required).
+- Docker for box work. On macOS, use Colima and run `unset DOCKER_HOST` so
+  Docker uses the Colima context.
+
+**Use a DEDICATED Hetzner project for a control plane. Janitor operations must
+never share a project with other infrastructure.**
+
 ## Installation
 
 Exact commands live in each package README. Three ways in, smallest first:
 
 1. **One box, no server.** `docker run` the box image on any machine
-   (`box/README.md`). ssh in, `claude login` once. You get a terminal (7443),
+   ([`packages/box/README.md`](packages/box/README.md)). ssh in, `claude login` once. You get a terminal (7443),
    agent chat (7444), and files (7445) over an ssh tunnel. No account. No
    control plane.
 2. **A fleet on your cloud.** Deploy the control plane with a cloud adapter
-   (`control-plane/README.md` — Hetzner ships; write your own against two
-   small interfaces) and serve the cockpit (`ui/README.md`). Create, poll,
+   ([`packages/control-plane/README.md`](packages/control-plane/README.md) — Hetzner ships; write your own against two
+   small interfaces) and serve the cockpit
+   ([`packages/ui/README.md`](packages/ui/README.md)). Create, poll,
    and destroy workspaces from the cockpit or from any agent over HTTP.
 3. **One subscription, many workspaces.** Run the broker image and enroll it
-   (`broker/README.md`). Every workspace you spawn authenticates its agents
+   ([`packages/broker/README.md`](packages/broker/README.md)). Every workspace you spawn authenticates its agents
    against your one account, with short-lived tokens minted per turn.
-
-Status: pre-build. The code lands in a fresh repo; this monorepo then deletes
-its core code and consumes the packages.

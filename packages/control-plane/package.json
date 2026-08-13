@@ -2,34 +2,38 @@
   "name": "@blitzos/control-plane",
   "version": "0.0.0",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
     },
     "./hetzner": {
-      "types": "./dist/providers/hetzner.d.ts",
-      "import": "./dist/providers/hetzner.js"
+      "types": "./dist/core/providers/hetzner.d.ts",
+      "import": "./dist/core/providers/hetzner.js"
     }
   },
   "files": [
     "dist",
     "migrations",
     "README.md",
+    "scripts/deploy-helpers.mjs",
+    "scripts/deploy.mjs",
     "wrangler.toml"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
+    "deploy": "node scripts/deploy.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "@blitzos/schema": "0.0.0",
-    "hono": "4.13.1"
+    "hono": "4.13.1",
+    "teenybase": "0.0.15"
   },
   "devDependencies": {
+    "@blitzos/schema": "0.0.0",
     "@cloudflare/vitest-pool-workers": "0.21.1",
     "@cloudflare/workers-types": "5.20260812.1",
     "typescript": "7.0.2",

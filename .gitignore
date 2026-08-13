@@ -7,3 +7,6 @@ coverage/
 *.log
 .idea/
 .DS_Store
+packages/box/test/.smoke-tmp/
+packages/control-plane/.managed-dist/
+scratchpad/

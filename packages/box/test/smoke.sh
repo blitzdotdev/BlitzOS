@@ -3,33 +3,58 @@ set -euo pipefail
 
 script_dir=$(realpath "$(dirname "$0")")
 repo_root=$(realpath "$script_dir/../../..")
-image="blitz-box-smoke:$$"
+image="${IMAGE:-blitz-box:smoke}"
 container="blitz-box-smoke-$$"
 state_volume="blitz-box-smoke-state-$$"
 unprivileged_container="blitz-box-smoke-unprivileged-$$"
 unprivileged_volume="blitz-box-smoke-unprivileged-state-$$"
 curl_image="curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
-test_dir=$(mktemp -d "${TMPDIR:-/tmp}/blitz-box-smoke.XXXXXX")
+smoke_tmp="$script_dir/.smoke-tmp"
+mkdir -p "$smoke_tmp"
+test_dir=$(mktemp -d "$smoke_tmp/run.XXXXXX")
+preserve_test_dir=false
 
 cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
   docker rm -f "$unprivileged_container" >/dev/null 2>&1 || true
   docker volume rm "$state_volume" >/dev/null 2>&1 || true
   docker volume rm "$unprivileged_volume" >/dev/null 2>&1 || true
-  rm -rf "$test_dir"
+  if [ "$preserve_test_dir" != true ]; then
+    rm -rf "$test_dir"
+  fi
 }
 trap cleanup EXIT HUP INT TERM
 
 fail() {
   echo "FAIL: $*" >&2
-  docker logs "$container" >&2 2>/dev/null || true
+  preserve_test_dir=true
+  diagnostics="$test_dir/failure-diagnostics.log"
+  {
+    echo "== docker logs: $container =="
+    docker logs "$container" 2>&1 || true
+    echo
+    echo "== s6 service list: $container =="
+    docker exec "$container" /command/s6-rc -a list 2>&1 || true
+    echo
+    echo "== s6 service state: $container =="
+    for service_path in $(docker exec "$container" sh -c 'find /run/service -mindepth 1 -maxdepth 1 -type d -print' 2>/dev/null || true); do
+      docker exec "$container" /command/s6-svstat "$service_path" 2>&1 || true
+    done
+    echo
+    echo "== docker logs: $unprivileged_container =="
+    docker logs "$unprivileged_container" 2>&1 || true
+  } >"$diagnostics"
+  echo "Diagnostics preserved at: $diagnostics" >&2
   exit 1
 }
+trap 'fail "unexpected command failure at line $LINENO"' ERR
 
-docker build --progress=plain \
-  --file "$repo_root/packages/box/Dockerfile" \
-  --tag "$image" \
-  "$repo_root"
+if [ -z "${IMAGE:-}" ]; then
+  docker build --progress=plain \
+    --file "$repo_root/packages/box/Dockerfile" \
+    --tag "$image" \
+    "$repo_root"
+fi
 
 install -d -m 0755 "$test_dir/workspace"
 ssh-keygen -q -t ed25519 -N '' -C 'blitz-box-smoke' -f "$test_dir/id_ed25519"
@@ -44,10 +69,10 @@ docker run -d \
   --privileged \
   --env "BLITZ_UID=$(id -u)" \
   --env "BLITZ_GID=$(id -g)" \
-  --volume "$state_volume:/var/lib/blitz" \
-  --volume "$test_dir/workspace:/workspace" \
-  --volume "$test_dir/id_ed25519.pub:/run/blitz/authorized_key:ro" \
-  --volume "$test_dir/secret:/run/blitz/smoke-secret:ro" \
+  --mount "type=volume,source=$state_volume,target=/var/lib/blitz" \
+  --mount "type=bind,source=$test_dir/workspace,target=/workspace" \
+  --mount "type=bind,source=$test_dir/id_ed25519.pub,target=/run/blitz/authorized_key,readonly" \
+  --mount "type=bind,source=$test_dir/secret,target=/run/blitz/smoke-secret,readonly" \
   --publish 127.0.0.1::22 \
   "$image" >/dev/null
 
@@ -147,7 +172,7 @@ NODE
 docker run --rm \
   --network "container:$container" \
   --env FILES_BASE=http://127.0.0.1:7445 \
-  --volume "$repo_root/packages/box/test:/test:ro" \
+  --mount "type=bind,source=$repo_root/packages/box/test,target=/test,readonly" \
   --entrypoint /bin/sh \
   "$curl_image" /test/files-smoke.sh
 
@@ -166,9 +191,9 @@ docker run -d \
   --name "$unprivileged_container" \
   --env "BLITZ_UID=$(id -u)" \
   --env "BLITZ_GID=$(id -g)" \
-  --volume "$unprivileged_volume:/var/lib/blitz" \
-  --volume "$test_dir/workspace:/workspace" \
-  --volume "$test_dir/id_ed25519.pub:/run/blitz/authorized_key:ro" \
+  --mount "type=volume,source=$unprivileged_volume,target=/var/lib/blitz" \
+  --mount "type=bind,source=$test_dir/workspace,target=/workspace" \
+  --mount "type=bind,source=$test_dir/id_ed25519.pub,target=/run/blitz/authorized_key,readonly" \
   "$image" >/dev/null
 unprivileged_ready=false
 for _attempt in $(seq 1 50); do

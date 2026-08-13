@@ -9,5 +9,4 @@ One contract for the whole system.
   tests. One pinned ACP SDK version for both sides.
 - control-plane implements it · ui imports it · box tests against it.
 
-Status: pre-build. Decisions: the package TODOs +
-`sessions/2026-08-11-box-redesign-acp-docker.md`.
+Decisions: the package TODOs + `sessions/2026-08-11-box-redesign-acp-docker.md`.

@@ -5,28 +5,59 @@ import type {
   WorkspaceView,
 } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
-import { createApp } from "../src/app.js";
-import { createOperatorPrincipalSource } from "../src/principals.js";
+import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
+import type { $Env } from "teenybase/worker";
+import {
+  createOperatorPrincipalSource,
+  installControlPlaneRoutes,
+  maxConcurrentWorkspacesFromEnv,
+  sessionTtlMsFromEnv,
+  type BlobStore,
+  type CoreContext,
+  type CoreRouter,
+  type CoreRuntime,
+  type Db,
+} from "../core/index.js";
 import type {
   CreatedVm,
   CreateVmInput,
   VmInspection,
   VmProvider,
   VolumeProvider,
-} from "../src/providers/types.js";
+} from "../core/providers/types.js";
+import config from "../teenybase.js";
 
 export const OPERATOR_KEY = "test-operator-key";
+
+interface TestApp {
+  request(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+    env?: Record<string, unknown>,
+  ): Promise<Response>;
+}
+
+type TestBindings = Env & {
+  JWT_SECRET_MAIN?: string;
+  SESSION_TTL_DAYS?: string;
+  MAX_CONCURRENT_WORKSPACES?: string;
+  RESPOND_WITH_ERRORS: string | boolean;
+  RESPOND_WITH_QUERY_LOG: string | boolean;
+};
+
+type TestEnv = $Env<TestBindings>;
 
 export class FakeProviders implements VmProvider, VolumeProvider {
   readonly userData = new Map<string, string>();
   readonly volumes = new Map<string, Volume>();
+  createCalls = 0;
   destroyCalls = 0;
   detachCalls = 0;
   onCreate?: (workspaceId: string) => Promise<void>;
   onDestroy?: (workspaceId: string) => Promise<void>;
 
   capabilities() {
-    return { volumes: true };
+    return { volumes: true, maxUserDataBytes: 32 * 1024 };
   }
 
   async listMachineTypes(): Promise<MachineType[]> {
@@ -44,10 +75,13 @@ export class FakeProviders implements VmProvider, VolumeProvider {
   }
 
   async createVm(input: CreateVmInput): Promise<CreatedVm> {
+    this.createCalls += 1;
     this.userData.set(input.workspaceId, input.userData);
     await this.onCreate?.(input.workspaceId);
     return { id: `vm-${input.workspaceId}`, host: "203.0.113.10", port: 22, user: "blitz" };
   }
+
+  async shutdown(_id: string): Promise<void> {}
 
   async destroy(id: string): Promise<void> {
     this.destroyCalls += 1;
@@ -101,25 +135,78 @@ export class FakeProviders implements VmProvider, VolumeProvider {
   }
 }
 
+export function appWithProviders(
+  vmProvider: VmProvider,
+  volumeProvider: VolumeProvider,
+): TestApp {
+  const app = teenyHono<TestEnv>(
+    async (context) =>
+      new $Database(context, config, context.env.DB, context.env.BOX_IMAGES),
+    undefined,
+    { cors: false, logger: false },
+  ) as TestApp;
+  const runtimeFor = (context: CoreContext): CoreRuntime => ({
+    db: context.get("$db") as Db,
+    blobs: (context.env as TestBindings).BOX_IMAGES as BlobStore,
+    vars: {
+      boxImageRef: (context.env as TestBindings).BOX_IMAGE_REF,
+      boxImageSha256: (context.env as TestBindings).BOX_IMAGE_SHA256,
+      boxImageTag: (context.env as TestBindings).BOX_IMAGE_TAG,
+      sessionTtlMs: sessionTtlMsFromEnv(
+        (context.env as TestBindings).SESSION_TTL_DAYS,
+      ),
+      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
+        (context.env as TestBindings).MAX_CONCURRENT_WORKSPACES,
+      ),
+    },
+    providers: { vm: vmProvider, volume: volumeProvider },
+    principalSource: createOperatorPrincipalSource(OPERATOR_KEY),
+    waitUntil: (promise) => context.executionCtx.waitUntil(promise),
+  });
+  installControlPlaneRoutes(app as unknown as CoreRouter, runtimeFor);
+  return app;
+}
+
 export function harness() {
   const providers = new FakeProviders();
-  const app = createApp({
-    vmProvider: providers,
-    volumeProvider: providers,
-    principalSource: createOperatorPrincipalSource(OPERATOR_KEY),
-  });
+  const app = appWithProviders(providers, providers);
   return { app, providers };
 }
 
-export async function appRequest(
-  app: ReturnType<typeof createApp>,
-  path: string,
-  init?: RequestInit,
-): Promise<Response> {
-  return app.request(`https://cp.example${path}`, init, { DB: env.DB });
+export function testRuntime(providers: FakeProviders): CoreRuntime {
+  return {
+    db: new $DatabaseRawImpl(env.DB),
+    blobs: env.BOX_IMAGES as BlobStore,
+    vars: {
+      boxImageRef: env.BOX_IMAGE_REF,
+      boxImageSha256: env.BOX_IMAGE_SHA256,
+      boxImageTag: env.BOX_IMAGE_TAG,
+      sessionTtlMs: sessionTtlMsFromEnv(undefined),
+      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(undefined),
+    },
+    providers: { vm: providers, volume: providers },
+    principalSource: createOperatorPrincipalSource(OPERATOR_KEY),
+    waitUntil: () => undefined,
+  };
 }
 
-export async function operatorSession(app: ReturnType<typeof createApp>): Promise<string> {
+export async function appRequest(
+  app: TestApp,
+  path: string,
+  init?: RequestInit,
+  bindings: Record<string, unknown> = {},
+): Promise<Response> {
+  return app.request(`https://cp.example${path}`, init, {
+    BOX_IMAGES: env.BOX_IMAGES,
+    BOX_IMAGE_REF: env.BOX_IMAGE_REF,
+    BOX_IMAGE_SHA256: env.BOX_IMAGE_SHA256,
+    BOX_IMAGE_TAG: env.BOX_IMAGE_TAG,
+    DB: env.DB,
+    ...bindings,
+  });
+}
+
+export async function operatorSession(app: TestApp): Promise<string> {
   const response = await appRequest(app, "/sessions", {
     method: "POST",
     headers: { Authorization: `Bearer ${OPERATOR_KEY}` },
@@ -135,7 +222,7 @@ interface CreatedWorkspace {
 }
 
 export async function createWorkspace(
-  app: ReturnType<typeof createApp>,
+  app: TestApp,
   cookie: string,
   volumeId?: string,
 ): Promise<WorkspaceView> {
@@ -154,8 +241,8 @@ export async function createWorkspace(
 
 export function phoneHomeUrl(providers: FakeProviders, workspaceId: string): string {
   const data = providers.userData.get(workspaceId);
-  const match = data?.match(/url: "([^"]+)"/u);
-  if (match?.[1] === undefined) throw new Error("phone_home URL not found");
+  const match = data?.match(/readonly PHONE_HOME_URL='([^']+)'/u);
+  if (match?.[1] === undefined) throw new Error("phone-home URL not found");
   return match[1];
 }
 
@@ -171,7 +258,7 @@ export interface BoxCredential {
 }
 
 export async function enrollBox(
-  app: ReturnType<typeof createApp>,
+  app: TestApp,
   cookie: string,
 ): Promise<BoxCredential> {
   const authorization = await appRequest(app, "/oauth/device_authorization", {

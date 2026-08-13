@@ -17,7 +17,7 @@ export class WebDavClient {
   }
 
   public async list(path: string): Promise<WebDavEntry[]> {
-    const response = await this.fetcher(this.url(path), {
+    const response = await this.request(this.url(path), {
       method: "PROPFIND",
       headers: { Depth: "1" },
       credentials: "include",
@@ -27,28 +27,28 @@ export class WebDavClient {
   }
 
   public async read(path: string): Promise<string> {
-    const response = await this.fetcher(this.url(path), { credentials: "include" });
+    const response = await this.request(this.url(path), { credentials: "include" });
     if (!response.ok) throw new Error(`File load failed (${response.status}).`);
     return response.text();
   }
 
   public async put(path: string, body: BodyInit): Promise<boolean> {
-    const response = await this.fetcher(this.url(path), { method: "PUT", body, credentials: "include" });
+    const response = await this.request(this.url(path), { method: "PUT", body, credentials: "include" });
     return response.ok;
   }
 
   public async remove(path: string): Promise<void> {
-    const response = await this.fetcher(this.url(path), { method: "DELETE", credentials: "include" });
+    const response = await this.request(this.url(path), { method: "DELETE", credentials: "include" });
     if (!response.ok) throw new Error(`Delete failed (${response.status}).`);
   }
 
   public async mkdir(path: string): Promise<void> {
-    const response = await this.fetcher(this.url(path), { method: "MKCOL", credentials: "include" });
+    const response = await this.request(this.url(path), { method: "MKCOL", credentials: "include" });
     if (!response.ok) throw new Error(`Create folder failed (${response.status}).`);
   }
 
   public async move(from: string, to: string): Promise<void> {
-    const response = await this.fetcher(this.url(from), {
+    const response = await this.request(this.url(from), {
       method: "MOVE",
       headers: { Destination: this.url(to).toString() },
       credentials: "include",
@@ -63,6 +63,11 @@ export class WebDavClient {
       .map(encodeURIComponent)
       .join("/");
     return new URL(encoded, this.base);
+  }
+
+  private request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const fetcher = this.fetcher;
+    return fetcher(input, init);
   }
 }
 

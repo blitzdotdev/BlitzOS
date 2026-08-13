@@ -10,7 +10,7 @@ import { SettingsPanel } from "./components/SettingsPanel.js";
 import { TtydTerminal } from "./components/TtydTerminal.js";
 import { useWorkspaceTab, type CockpitTab } from "./device-state.js";
 import { FilesPanel } from "./files/FilesPanel.js";
-import type { EndpointResolver, StandalonePorts } from "./resolver.js";
+import { endpointTarget, type EndpointResolver, type StandalonePorts } from "./resolver.js";
 import "./styles.css";
 import { useWorkspaces } from "./use-workspaces.js";
 
@@ -30,6 +30,7 @@ const TABS: CockpitTab[] = ["terminal", "chat", "files", "preview"];
 export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps): React.JSX.Element {
   const [auth, setAuth] = useState<AuthState>("checking");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showDestroyed, setShowDestroyed] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [destroyId, setDestroyId] = useState<string | null>(null);
@@ -47,13 +48,12 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
     chatSessionsRef.current.set(workspaceId, sessionId);
   }, []);
   const polling = useWorkspaces(client, auth !== "signed-out", authenticated, signedOut);
-  const selected = polling.workspaces.find(({ id }) => id === selectedId) ?? null;
+  const destroyedCount = polling.workspaces.filter(({ phase }) => phase === "destroyed").length;
+  const railWorkspaces = showDestroyed
+    ? polling.workspaces
+    : polling.workspaces.filter(({ phase }) => phase !== "destroyed");
+  const selected = railWorkspaces.find(({ id }) => id === selectedId) ?? null;
   const [tab, setTab] = useWorkspaceTab(selected?.id ?? null);
-
-  useEffect(() => {
-    if (selected !== null) return;
-    setSelectedId(polling.workspaces[0]?.id ?? null);
-  }, [polling.workspaces, selected]);
 
   useEffect(() => {
     if (selected === null || tab !== "chat" || !selected.launchable) return;
@@ -153,6 +153,12 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
   }
 
   const endpoints = selected === null ? null : resolver.resolve(selected);
+  const tabTargets = selected === null || endpoints === null ? null : {
+    terminal: endpointTarget(endpoints.terminalUrl),
+    chat: endpointTarget(endpoints.acpUrl),
+    files: endpointTarget(endpoints.filesBase),
+    preview: endpointTarget(resolver.previewUrl(selected, 3000)),
+  } satisfies Record<CockpitTab, string>;
 
   return (
     <div className="cockpit">
@@ -160,7 +166,7 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
         <div className="brand">BlitzOS</div>
         <button className="primary create-button" type="button" onClick={() => setShowCreate(true)}>+ Workspace</button>
         <nav aria-label="Workspaces">
-          {polling.workspaces.map((workspace) => (
+          {railWorkspaces.map((workspace) => (
             <button
               type="button"
               key={workspace.id}
@@ -172,12 +178,17 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
             </button>
           ))}
         </nav>
+        {destroyedCount > 0 && (
+          <button className="destroyed-toggle" type="button" onClick={() => setShowDestroyed((current) => !current)}>
+            {showDestroyed ? "Hide destroyed" : `Show destroyed (${destroyedCount})`}
+          </button>
+        )}
       </aside>
       <main className="cockpit-main">
         <header className="cockpit-header">
           <div>
             <p className="eyebrow">Open cockpit</p>
-            <h1>{selected === null ? "Workspaces" : selected.id}</h1>
+            <h1>{selected === null ? "Not connected" : selected.id}</h1>
           </div>
           <div className="button-row">
             {standaloneSettings !== undefined && <button type="button" onClick={() => setShowSettings(true)}>Tunnel settings</button>}
@@ -206,7 +217,10 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
         )}
 
         {!showCreate && selected === null && (
-          <div className="empty-state card"><h2>No workspaces</h2><p>Create one to open the cockpit.</p></div>
+          <div className="empty-state card" data-connection-state="not-connected">
+            <h2>Not connected</h2>
+            <p>{railWorkspaces.length === 0 ? "Create a workspace to connect." : "Select a workspace to connect."}</p>
+          </div>
         )}
 
         {!showCreate && selected !== null && endpoints !== null && (
@@ -236,7 +250,8 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
                     disabled={!enabled}
                     onClick={() => selectTab(selected, candidate)}
                   >
-                    {candidate[0]?.toUpperCase()}{candidate.slice(1)}
+                    <span>{candidate[0]?.toUpperCase()}{candidate.slice(1)}</span>
+                    <small>{tabTargets?.[candidate]}</small>
                   </button>
                 );
               })}

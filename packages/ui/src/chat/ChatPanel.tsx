@@ -7,6 +7,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { endpointTarget } from "../resolver.js";
 import { ChatTranscript } from "./ChatTranscript.js";
 import { chatReducer, initialChatState } from "./reducer.js";
 
@@ -190,6 +191,7 @@ export function ChatPanel({
     <section className="panel chat-panel">
       <div className="panel-toolbar">
         <span className="connection-status">{status}</span>
+        <code className="endpoint-target">{endpointTarget(url)}</code>
         {modes !== null && modes.availableModes.length > 0 && (
           <label>
             Mode

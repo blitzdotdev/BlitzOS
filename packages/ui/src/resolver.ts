@@ -22,12 +22,18 @@ export const DEFAULT_PORTS: StandalonePorts = { terminal: 7443, acp: 7444, files
 export function standaloneResolver(ports: StandalonePorts): EndpointResolver {
   return {
     resolve: () => ({
-      terminalUrl: `ws://localhost:${ports.terminal}/ws`,
+      terminalUrl: `http://localhost:${ports.terminal}/`,
       acpUrl: `ws://localhost:${ports.acp}`,
       filesBase: `http://localhost:${ports.files}/workspace/`,
     }),
     previewUrl: (_workspace, port) => `http://localhost:${port}/`,
   };
+}
+
+export function endpointTarget(url: string): string {
+  const parsed = new URL(url);
+  const defaultPort = parsed.protocol === "https:" || parsed.protocol === "wss:" ? "443" : "80";
+  return `${parsed.hostname}:${parsed.port || defaultPort}`;
 }
 
 export function validPort(value: number): boolean {

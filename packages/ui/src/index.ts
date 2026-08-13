@@ -3,6 +3,7 @@ export { StandaloneCockpit } from "./StandaloneCockpit.js";
 export { createControlPlaneClient, type ControlPlaneClient } from "./api.js";
 export {
   DEFAULT_PORTS,
+  endpointTarget,
   standaloneResolver,
   type BoxEndpoints,
   type EndpointResolver,

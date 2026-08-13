@@ -42,7 +42,7 @@ func LoadCredential(dir string) (Credential, error) {
 		return Credential{}, err
 	}
 	var credential Credential
-	if err := decodeStrict(data, &credential); err != nil {
+	if err := decodeCredential(data, &credential); err != nil {
 		return Credential{}, fmt.Errorf("invalid box credential: %w", err)
 	}
 	if credential.BoxID == "" || credential.AccessToken == "" || credential.RefreshToken == "" {
@@ -88,9 +88,8 @@ func SaveOrigin(dir, origin string) error {
 	return atomicfile.Write(OriginPath(dir), []byte(origin+"\n"), 0o644)
 }
 
-func decodeStrict(data []byte, target any) error {
+func decodeCredential(data []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}

@@ -1,0 +1,32 @@
+# Required repository secrets: CP_URL and OPERATOR_API_KEY.
+# The workflow succeeds without running the test when either secret is unavailable.
+name: Nightly self-hosted E2E
+
+on:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selfhost:
+    name: Self-hosted E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+      - name: Run self-hosted E2E when configured
+        env:
+          CP_URL: ${{ secrets.CP_URL }}
+          OPERATOR_API_KEY: ${{ secrets.OPERATOR_API_KEY }}
+        shell: bash
+        run: |
+          if [[ -z "$CP_URL" || -z "$OPERATOR_API_KEY" ]]; then
+            echo "::notice::Skipping self-hosted E2E because CP_URL or OPERATOR_API_KEY is unavailable."
+            exit 0
+          fi
+          node e2e/selfhost.mjs

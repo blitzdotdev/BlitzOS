@@ -1,0 +1,397 @@
+import { buildUserData } from "./cloud-init.js";
+import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
+import type { Db } from "./db.js";
+import { first, rows, transaction } from "./db.js";
+import {
+  HttpError,
+  isRecord,
+  isSshPublicKey,
+  readJson,
+  readText,
+  requiredString,
+} from "./http.js";
+import { issueBoxTokens } from "./oauth.js";
+import type { Principal } from "./principals.js";
+import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
+import type {
+  CreateWorkspaceRequest,
+  CreateWorkspaceResponse,
+  Phase,
+  PollResponse,
+  RetryAction,
+  WorkspaceView,
+} from "./wire.js";
+
+export interface WorkspaceRow {
+  id: string;
+  owner_id: string;
+  phase: Phase;
+  revision: number;
+  vm_id: string | null;
+  volume_id: string | null;
+  ssh_host: string | null;
+  ssh_port: number | null;
+  ssh_user: string | null;
+  ssh_host_public_key: string | null;
+  error: string | null;
+  phone_home_hash: string | null;
+  phone_home_used: number;
+  created_at: number;
+  updated_at: number;
+}
+
+const retryActions: Record<Phase, RetryAction> = {
+  creating: "poll",
+  ready: null,
+  destroying: "poll",
+  destroyed: "create",
+  error: "destroy",
+};
+
+const WORKSPACE_ERROR_MAX_LENGTH = 1_024;
+const BOOTSTRAP_ERROR_PREFIX = "bootstrap failed: ";
+
+export function workspaceView(row: WorkspaceRow): WorkspaceView {
+  const hasSsh = row.ssh_host !== null && row.ssh_port !== null && row.ssh_user !== null;
+  return {
+    id: row.id,
+    phase: row.phase,
+    retryAction: retryActions[row.phase],
+    canObserve: row.phase === "ready",
+    launchable: row.phase === "ready",
+    revision: row.revision,
+    ssh:
+      hasSsh && row.phase !== "destroyed"
+        ? {
+            host: row.ssh_host ?? "",
+            port: row.ssh_port ?? 22,
+            user: row.ssh_user ?? "root",
+            hostPublicKey: row.ssh_host_public_key,
+          }
+        : null,
+    volumeId: row.volume_id,
+    error: row.error,
+  };
+}
+
+async function workspaceById(db: Db, id: string): Promise<WorkspaceRow | null> {
+  return first<WorkspaceRow>(db, {
+    q: "SELECT * FROM workspaces WHERE id = ?1 LIMIT 1",
+    v: [id],
+  });
+}
+
+function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
+  if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
+  const result: CreateWorkspaceRequest = {
+    machineTypeId: requiredString(value.machineTypeId, "machineTypeId", 256),
+    sshPublicKey: requiredString(value.sshPublicKey, "sshPublicKey"),
+  };
+  if (!isSshPublicKey(result.sshPublicKey)) {
+    throw new HttpError(400, "sshPublicKey must be an SSH public key");
+  }
+  if (value.volumeId !== undefined) {
+    result.volumeId = requiredString(value.volumeId, "volumeId", 256);
+  }
+  if (value.userData !== undefined) {
+    result.userData = requiredString(value.userData, "userData", 48 * 1024);
+  }
+  return result;
+}
+
+async function markCreateError(
+  db: Db,
+  id: string,
+  message: string,
+  now: number,
+): Promise<WorkspaceRow> {
+  await rows(db, {
+    q: `UPDATE workspaces
+        SET phase = 'error', error = ?1, phone_home_hash = NULL,
+            revision = revision + 1, updated_at = ?2
+        WHERE id = ?3 AND phase = 'creating'`,
+    v: [message, now, id],
+  });
+  const row = await workspaceById(db, id);
+  if (row === null) throw new Error("workspace disappeared during create");
+  return row;
+}
+
+function providerOperationError(error: unknown): string {
+  if (!(error instanceof Error)) return "provider operation failed";
+  const detail = error.message.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim();
+  return detail === "" ? "provider operation failed" : `provider operation failed: ${detail}`;
+}
+
+function phoneHomeKeys(value: unknown): string[] {
+  if (isRecord(value) && Array.isArray(value.hostPublicKeys)) {
+    return value.hostPublicKeys.filter(isSshPublicKey);
+  }
+  if (!isRecord(value)) return [];
+  return ["pub_key_ed25519", "pub_key_ecdsa", "pub_key_rsa", "pub_key_dsa"]
+    .map((field) => value[field])
+    .filter(isSshPublicKey);
+}
+
+function bootstrapFailureMessage(value: unknown): string | null {
+  if (!isRecord(value) || !("bootstrap_error" in value)) return null;
+  if (typeof value.bootstrap_error !== "string" || value.bootstrap_error.length === 0) {
+    throw new HttpError(400, "bootstrap_error must be a non-empty string");
+  }
+  const detail = value.bootstrap_error
+    .replace(/[\s\u0000-\u001f\u007f-\u009f]+/gu, " ")
+    .trim();
+  if (detail === "") {
+    throw new HttpError(400, "bootstrap_error must contain printable text");
+  }
+  return (
+    BOOTSTRAP_ERROR_PREFIX +
+    detail.slice(0, WORKSPACE_ERROR_MAX_LENGTH - BOOTSTRAP_ERROR_PREFIX.length)
+  );
+}
+
+async function readPhoneHome(context: CoreContext): Promise<unknown> {
+  const contentType = context.req.header("content-type") ?? "";
+  if (contentType.includes("application/json")) return readJson(context.req.raw);
+  const text = await readText(context.req.raw);
+  return Object.fromEntries(new URLSearchParams(text).entries());
+}
+
+export function addWorkspaceRoutes(
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+  requirePrincipal: (context: CoreContext) => Promise<Principal>,
+): void {
+  router.post("/workspaces", async (context) => {
+    const principal = await requirePrincipal(context);
+    const input = parseCreateWorkspace(await readJson(context.req.raw));
+    const id = crypto.randomUUID();
+    const capability = randomToken();
+    const now = Date.now();
+    const phoneHomeUrl = `${new URL(context.req.url).origin}/workspaces/${id}/phone-home/${capability}`;
+    const runtime = runtimeFactory(context);
+    const userData = buildUserData(
+      input.sshPublicKey,
+      phoneHomeUrl,
+      runtime.vars.boxImageRef,
+      input.userData,
+      runtime.vars.boxImageTag,
+      runtime.vars.boxImageSha256,
+    );
+    const maxUserDataBytes =
+      runtime.providers.vm.capabilities().maxUserDataBytes ?? null;
+    if (maxUserDataBytes !== null) {
+      const encoder = new TextEncoder();
+      const callerBytes = encoder.encode(input.userData ?? "").byteLength;
+      const totalBytes = encoder.encode(userData).byteLength;
+      const generatedBytes = totalBytes - callerBytes;
+      if (totalBytes > maxUserDataBytes) {
+        throw new HttpError(
+          413,
+          `userData exceeds the provider limit: caller UTF-8 bytes ${callerBytes} + generated bootstrap bytes ${generatedBytes} = ${totalBytes} > ${maxUserDataBytes}`,
+        );
+      }
+    }
+
+    const inserted = await rows(runtime.db, {
+      q: `INSERT INTO workspaces
+          (id, owner_id, phase, revision, volume_id, phone_home_hash, created_at, updated_at)
+          SELECT ?1, ?2, 'creating', 1, ?3, ?4, ?5, ?5
+          WHERE (
+            SELECT COUNT(*) FROM workspaces
+            WHERE owner_id = ?2 AND phase IN ('creating', 'ready', 'destroying', 'error')
+          ) < ?6
+          RETURNING id`,
+      v: [
+        id,
+        principal.id,
+        input.volumeId ?? null,
+        await hashSecret(capability),
+        now,
+        runtime.vars.maxConcurrentWorkspaces,
+      ],
+    });
+    if (inserted.length !== 1) {
+      throw new HttpError(
+        409,
+        `concurrent workspace quota of ${runtime.vars.maxConcurrentWorkspaces} reached; destroy an existing workspace before creating another`,
+      );
+    }
+
+    try {
+      const vm = await runtime.providers.vm.createVm({
+        workspaceId: id,
+        machineTypeId: input.machineTypeId,
+        sshPublicKey: input.sshPublicKey,
+        userData,
+      });
+      await rows(runtime.db, {
+        q: `UPDATE workspaces
+            SET vm_id = ?1, updated_at = ?2
+            WHERE id = ?3 AND phase = 'creating'`,
+        v: [vm.id, Date.now(), id],
+      });
+      if (input.volumeId !== undefined) {
+        await runtime.providers.volume.attachVolume(input.volumeId, vm.id);
+      }
+      await rows(runtime.db, {
+        q: `UPDATE workspaces
+            SET ssh_host = ?1, ssh_port = ?2, ssh_user = ?3,
+                revision = revision + 1, updated_at = ?4
+            WHERE id = ?5 AND phase = 'creating'`,
+        v: [vm.host, vm.port, vm.user, Date.now(), id],
+      });
+    } catch (error) {
+      const row = await markCreateError(
+        runtime.db,
+        id,
+        providerOperationError(error),
+        Date.now(),
+      );
+      return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row) }, 201);
+    }
+
+    const row = await workspaceById(runtime.db, id);
+    if (row === null) throw new Error("workspace disappeared during create");
+    return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row) }, 201);
+  });
+
+  router.get("/workspaces", async (context) => {
+    const principal = await requirePrincipal(context);
+    const result = await rows<WorkspaceRow>(runtimeFactory(context).db, {
+      q: "SELECT * FROM workspaces WHERE owner_id = ?1 ORDER BY created_at, id",
+      v: [principal.id],
+    });
+    return context.json<PollResponse>({ workspaces: result.map(workspaceView) });
+  });
+
+  router.delete("/workspaces/:id", async (context) => {
+    const principal = await requirePrincipal(context);
+    const id = context.req.param("id");
+    const runtime = runtimeFactory(context);
+    let row = await workspaceById(runtime.db, id);
+    if (row === null || row.owner_id !== principal.id) {
+      throw new HttpError(404, "workspace not found");
+    }
+    if (row.phase === "destroyed") {
+      return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row) });
+    }
+
+    await rows(runtime.db, {
+      q: `UPDATE workspaces
+          SET phase = 'destroying', error = NULL, phone_home_hash = NULL,
+              revision = revision + 1, updated_at = ?1
+          WHERE id = ?2 AND phase IN ('creating', 'ready', 'error')`,
+      v: [Date.now(), id],
+    });
+    row = await workspaceById(runtime.db, id);
+    if (row === null) throw new Error("workspace disappeared during destroy");
+
+    if (row.volume_id !== null && row.vm_id !== null) {
+      await runtime.providers.vm.shutdown(row.vm_id);
+      await runtime.providers.volume.detachVolume(row.volume_id, row.vm_id);
+    }
+    if (row.vm_id !== null) await runtime.providers.vm.destroy(row.vm_id);
+
+    await transaction(runtime.db, [
+      { q: "DELETE FROM boxes WHERE workspace_id = ?1", v: [id] },
+      {
+        q: `UPDATE workspaces
+            SET phase = 'destroyed', vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
+                ssh_user = NULL, ssh_host_public_key = NULL, error = NULL,
+                revision = revision + 1, updated_at = ?1
+            WHERE id = ?2 AND phase = 'destroying'`,
+        v: [Date.now(), id],
+      },
+    ]);
+    const destroyed = await workspaceById(runtime.db, id);
+    if (destroyed === null) throw new Error("workspace disappeared after destroy");
+    return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(destroyed) });
+  });
+
+  router.post("/workspaces/:id/phone-home/:token", async (context) => {
+    const id = context.req.param("id");
+    const token = context.req.param("token");
+    const db = runtimeFactory(context).db;
+    const row = await workspaceById(db, id);
+    if (row === null) throw new HttpError(404, "workspace not found");
+    if (row.phone_home_used === 1) {
+      throw new HttpError(409, "phone_home capability already used");
+    }
+    if (
+      row.phone_home_hash === null ||
+      !(await matchesStoredHash(token, row.phone_home_hash))
+    ) {
+      throw new HttpError(401, "invalid phone_home capability");
+    }
+    if (row.phase !== "creating") throw new HttpError(409, "workspace is not creating");
+    const phoneHome = await readPhoneHome(context);
+    const bootstrapFailure = bootstrapFailureMessage(phoneHome);
+    if (bootstrapFailure !== null) {
+      const consumed = await rows(db, {
+        q: `UPDATE workspaces
+            SET phase = 'error', error = ?1, phone_home_used = 1,
+                phone_home_hash = NULL, revision = revision + 1, updated_at = ?2
+            WHERE id = ?3 AND phase = 'creating' AND phone_home_used = 0
+              AND phone_home_hash = ?4
+            RETURNING id`,
+        v: [bootstrapFailure, Date.now(), id, row.phone_home_hash],
+      });
+      if (consumed.length !== 1) {
+        throw new HttpError(409, "phone_home capability already used");
+      }
+      return context.body(null, 204);
+    }
+    if (row.vm_id === null || row.ssh_host === null) {
+      throw new HttpError(409, "workspace provisioning is not recorded yet");
+    }
+
+    const hostKey = phoneHomeKeys(phoneHome)[0];
+    if (hostKey === undefined) {
+      throw new HttpError(400, "an SSH host public key is required");
+    }
+    const credentials = await issueBoxTokens();
+    const boxId = crypto.randomUUID();
+    const now = Date.now();
+    const results = await transaction(db, [
+      {
+        q: `INSERT INTO boxes (id, principal_id, workspace_id, created_at)
+            SELECT ?1, owner_id, id, ?2 FROM workspaces
+            WHERE id = ?3 AND phase = 'creating' AND phone_home_used = 0 AND phone_home_hash = ?4`,
+        v: [boxId, now, id, row.phone_home_hash],
+      },
+      {
+        q: `INSERT INTO box_token_families
+            (box_id, access_hash, refresh_hash, access_issued_at, generation)
+            SELECT ?1, ?2, ?3, ?4, 1 FROM workspaces
+            WHERE id = ?5 AND phase = 'creating' AND phone_home_used = 0 AND phone_home_hash = ?6`,
+        v: [
+          boxId,
+          credentials.accessHash,
+          credentials.refreshHash,
+          now,
+          id,
+          row.phone_home_hash,
+        ],
+      },
+      {
+        q: `UPDATE workspaces
+            SET phase = 'ready', ssh_host_public_key = ?1, phone_home_used = 1,
+                phone_home_hash = NULL, revision = revision + 1, updated_at = ?2
+            WHERE id = ?3 AND phase = 'creating' AND phone_home_used = 0 AND phone_home_hash = ?4
+            RETURNING id`,
+        v: [hostKey, now, id, row.phone_home_hash],
+      },
+    ]);
+    if (results[2]?.length !== 1) {
+      throw new HttpError(409, "phone_home capability already used");
+    }
+    return context.json({
+      box_id: boxId,
+      access_token: credentials.accessToken,
+      refresh_token: credentials.refreshToken,
+      token_type: "Bearer",
+      expires_in: credentials.expiresIn,
+    });
+  });
+}

@@ -1,5 +1,8 @@
 # broker
 
+Broker images are not published yet; build the image locally before using the
+commands below.
+
 ```sh
 docker volume create blitz-broker
 docker pull ghcr.io/blitzdotdev/blitz-broker@sha256:<image-digest>

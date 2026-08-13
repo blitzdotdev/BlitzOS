@@ -1,0 +1,51 @@
+import { describe, expect, it } from "vitest";
+
+const sources = import.meta.glob<string>("../core/**/*.ts", {
+  eager: true,
+  import: "default",
+  query: "?raw",
+});
+
+const expected = [
+  "app.ts",
+  "blobs.ts",
+  "bootstrap.ts",
+  "box-images.ts",
+  "cloud-init.ts",
+  "crypto.ts",
+  "db.ts",
+  "http.ts",
+  "index.ts",
+  "janitors.ts",
+  "oauth.ts",
+  "principals.ts",
+  "providers/hetzner.ts",
+  "providers/types.ts",
+  "registry.ts",
+  "runtime.ts",
+  "sessions.ts",
+  "types.ts",
+  "volumes.ts",
+  "wire.ts",
+  "workspaces.ts",
+] as const;
+
+describe("portable core imports", () => {
+  it("contains exactly the design module set and only relative imports", async () => {
+    const actual = Object.keys(sources)
+      .map((file) => file.replace("../core/", ""))
+      .sort();
+    expect(actual).toEqual([...expected].sort());
+    for (const relative of expected) {
+      const source = sources[`../core/${relative}`];
+      if (source === undefined) throw new Error(`missing core source: ${relative}`);
+      const specifiers = [...source.matchAll(/\b(?:from|import)\s*(?:\([^)]*\)|["']([^"']+)["'])/gu)]
+        .map((match) => match[1])
+        .filter((value): value is string => value !== undefined);
+      expect(specifiers, relative).toSatisfy(
+        (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
+      );
+    }
+    expect(expected).toHaveLength(21);
+  });
+});

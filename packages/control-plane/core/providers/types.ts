@@ -1,11 +1,8 @@
-import type {
-  CreateVolumeRequest,
-  MachineType,
-  Volume,
-} from "@blitzos/schema";
+import type { CreateVolumeRequest, MachineType, Volume } from "../wire.js";
 
 export interface ProviderCapabilities {
   volumes: boolean;
+  maxUserDataBytes?: number | null;
 }
 
 export interface CreateVmInput {
@@ -30,6 +27,7 @@ export interface VmProvider {
   capabilities(): ProviderCapabilities;
   listMachineTypes(): Promise<MachineType[]>;
   createVm(input: CreateVmInput): Promise<CreatedVm>;
+  shutdown(id: string): Promise<void>;
   destroy(id: string): Promise<void>;
   inspect(id: string): Promise<VmInspection | null>;
 }

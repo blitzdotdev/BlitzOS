@@ -6,6 +6,9 @@ import {
   randomToken,
   safeEqualSecret,
 } from "./crypto.js";
+import type { Db } from "./db.js";
+import { first, rows } from "./db.js";
+import { DEFAULT_SESSION_TTL_MS } from "./runtime.js";
 
 export interface Principal {
   id: string;
@@ -14,7 +17,7 @@ export interface Principal {
 }
 
 export interface PrincipalSource {
-  authenticate(request: Request, db: D1Database): Promise<Principal | null>;
+  authenticate(request: Request, db: Db): Promise<Principal | null>;
   exchange(request: Request): Promise<Principal | null>;
 }
 
@@ -57,19 +60,17 @@ function parseHarnesses(value: string): string[] {
 
 export async function findSessionPrincipal(
   request: Request,
-  db: D1Database,
+  db: Db,
 ): Promise<Principal | null> {
   const token = cookieValue(request, SESSION_COOKIE);
   if (token === null) return null;
   const hash = await hashSecret(token);
-  const row = await db
-    .prepare(
-      `SELECT s.token_hash, p.id, p.unix_name, p.harnesses
+  const row = await first<SessionRow>(db, {
+    q: `SELECT s.token_hash, p.id, p.unix_name, p.harnesses
        FROM sessions s JOIN principals p ON p.id = s.principal_id
-       WHERE s.token_hash = ?1 LIMIT 1`,
-    )
-    .bind(hash)
-    .first<SessionRow>();
+       WHERE s.token_hash = ?1 AND s.expires_at > ?2 LIMIT 1`,
+    v: [hash, Date.now()],
+  });
   const matches = await matchesStoredHash(token, row?.token_hash ?? DUMMY_HASH);
   if (row === null || !matches) return null;
   return { id: row.id, unixName: row.unix_name, harnesses: parseHarnesses(row.harnesses) };
@@ -86,32 +87,32 @@ export function createOperatorPrincipalSource(operatorKey: string): PrincipalSou
   };
 }
 
-export async function ensurePrincipal(db: D1Database, principal: Principal): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO principals (id, unix_name, harnesses) VALUES (?1, ?2, ?3)
-       ON CONFLICT(id) DO UPDATE SET unix_name = excluded.unix_name, harnesses = excluded.harnesses`,
-    )
-    .bind(principal.id, principal.unixName, JSON.stringify(principal.harnesses))
-    .run();
+export async function ensurePrincipal(db: Db, principal: Principal): Promise<void> {
+  await rows(db, {
+    q: `INSERT INTO principals (id, unix_name, harnesses) VALUES (?1, ?2, ?3)
+        ON CONFLICT(id) DO UPDATE SET unix_name = excluded.unix_name, harnesses = excluded.harnesses`,
+    v: [principal.id, principal.unixName, JSON.stringify(principal.harnesses)],
+  });
 }
 
 export async function mintSession(
-  db: D1Database,
+  db: Db,
   principal: Principal,
+  ttlMs = DEFAULT_SESSION_TTL_MS,
   now = Date.now(),
 ): Promise<string> {
   await ensurePrincipal(db, principal);
   const token = randomToken();
-  await db
-    .prepare("INSERT INTO sessions (token_hash, principal_id, created_at) VALUES (?1, ?2, ?3)")
-    .bind(await hashSecret(token), principal.id, now)
-    .run();
+  await rows(db, {
+    q: `INSERT INTO sessions (token_hash, principal_id, created_at, expires_at)
+        VALUES (?1, ?2, ?3, ?4)`,
+    v: [await hashSecret(token), principal.id, now, now + ttlMs],
+  });
   return token;
 }
 
-export function sessionCookie(token: string): string {
-  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict`;
+export function sessionCookie(token: string, ttlMs = DEFAULT_SESSION_TTL_MS): string {
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.floor(ttlMs / 1000)}`;
 }
 
 export function clearSessionCookie(): string {

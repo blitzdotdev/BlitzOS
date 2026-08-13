@@ -29,11 +29,12 @@ Decisions: `sessions/2026-08-11-box-redesign-acp-docker.md`.
   No park verbs. No attach/detach operations in the API.
 - Two provider seams. Separate interfaces. Core-package users write their own
   cloud adapters (AWS EBS, GCP PD, …):
-  - `VmProvider`: `capabilities` · `listMachineTypes` · `createVm` · `destroy` · `inspect`
+  - `VmProvider`: `capabilities` · `listMachineTypes` · `createVm` · `shutdown` · `destroy` · `inspect`
   - `VolumeProvider`: `createVolume` · `attachVolume` · `detachVolume` ·
     `deleteVolume` · `listVolumes` (2026-08-11: the UI volume picker reads it)
-  - Only the provision/destroy flows call attach/detach. `shutdown` is removed:
-    zero callers without park.
+  - Only the provision/destroy flows call attach/detach. Destroy calls `shutdown`
+    before detaching when the workspace has a volume; volume-less workspaces go
+    straight to `destroy`.
 - Hetzner adapter: open. Plain hcloud calls. Nothing secret in it.
 - Sessions: opaque hashed rows. Standalone auth = one operator API key. The
   principal source is a seam. The closed side fills it with GitHub identity.

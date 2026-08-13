@@ -13,7 +13,11 @@ Linux needs Docker. On a fresh Mac, install and start the free, open-source
 ```sh
 brew install colima docker
 colima start
+unset DOCKER_HOST
 ```
+
+Box images are not published yet; build one locally as described in
+[Build and smoke test](#build-and-smoke-test).
 
 Choose the workspace and an existing public key. Never mount a private key.
 Replace the digest placeholder with the immutable digest from the release
@@ -27,12 +31,15 @@ docker run -d \
   --privileged \
   -e BLITZ_UID="$(id -u)" \
   -e BLITZ_GID="$(id -g)" \
-  -v blitz-box-state:/var/lib/blitz \
-  -v "$PWD:/workspace" \
-  -v "$HOME/.ssh/id_ed25519.pub:/run/blitz/authorized_key:ro" \
+  --mount type=volume,source=blitz-box-state,target=/var/lib/blitz \
+  --mount type=bind,source="$PWD",target=/workspace \
+  --mount type=bind,source="$HOME/.ssh/id_ed25519.pub",target=/run/blitz/authorized_key,readonly \
   -p 127.0.0.1:2222:22 \
   ghcr.io/blitzdotdev/blitz-box@sha256:<IMAGE_DIGEST>
 ```
+
+The long `--mount` form fails when a bind-mount source is missing; short `-v`
+can silently create a directory instead.
 
 `--privileged` enables the inner Docker daemon. Without it, the other four
 surfaces still start and dockerd reports a clean skip.

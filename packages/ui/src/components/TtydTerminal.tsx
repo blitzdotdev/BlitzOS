@@ -1,6 +1,8 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
+import { endpointTarget } from "../resolver.js";
+import { createTtydSocket, ttydNeedsOwnOrigin, ttydPageUrl } from "./ttyd-protocol.js";
 import "@xterm/xterm/css/xterm.css";
 
 const INPUT = "0".charCodeAt(0);
@@ -18,8 +20,10 @@ export function TtydTerminal({
   const sendRef = useRef<(text: string) => void>(() => undefined);
   const [status, setStatus] = useState("Connecting…");
   const [touchInput, setTouchInput] = useState("");
+  const needsOwnOrigin = ttydNeedsOwnOrigin(url, window.location.origin);
 
   useEffect(() => {
+    if (needsOwnOrigin) return;
     const host = hostRef.current;
     if (host === null) return;
     const terminal = new Terminal({
@@ -70,12 +74,10 @@ export function TtydTerminal({
     const connect = (): void => {
       if (!active) return;
       setStatus(attempts === 0 ? "Connecting…" : "Reconnecting…");
-      socket = new WebSocket(url, ["tty"]);
-      socket.binaryType = "arraybuffer";
+      socket = createTtydSocket(url, { columns: terminal.cols, rows: terminal.rows });
       socket.addEventListener("open", () => {
         attempts = 0;
         setStatus(readOnly ? "Connected · read only" : "Connected");
-        socket?.send(encoder.encode(JSON.stringify({ AuthToken: "", columns: terminal.cols, rows: terminal.rows })));
         sendSize();
         terminal.focus();
       });
@@ -106,7 +108,7 @@ export function TtydTerminal({
       terminal.dispose();
       sendRef.current = () => undefined;
     };
-  }, [readOnly, url]);
+  }, [needsOwnOrigin, readOnly, url]);
 
   const sendTouchInput = (): void => {
     if (touchInput.length === 0) return;
@@ -123,9 +125,30 @@ export function TtydTerminal({
     }
   };
 
+  if (needsOwnOrigin) {
+    return (
+      <section className="panel terminal-panel">
+        <div className="panel-toolbar">
+          <span className="connection-status">{status}</span>
+          <code className="endpoint-target">{endpointTarget(url)}</code>
+        </div>
+        <iframe
+          className={`terminal-frame${readOnly ? " read-only" : ""}`}
+          src={ttydPageUrl(url)}
+          title="Terminal"
+          tabIndex={readOnly ? -1 : undefined}
+          onLoad={() => setStatus(readOnly ? "Connected · read only" : "Connected")}
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="panel terminal-panel">
-      <div className="panel-toolbar"><span className="connection-status">{status}</span></div>
+      <div className="panel-toolbar">
+        <span className="connection-status">{status}</span>
+        <code className="endpoint-target">{endpointTarget(url)}</code>
+      </div>
       <div className="terminal-host" ref={hostRef} />
       {!readOnly && (
         <div className="terminal-input-row">

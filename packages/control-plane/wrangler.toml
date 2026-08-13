@@ -3,14 +3,39 @@ main = "src/worker.ts"
 compatibility_date = "2026-08-11"
 compatibility_flags = ["nodejs_compat"]
 
+[vars]
+BOX_IMAGE_REF = "https://blitz-control-plane.blitzapp.workers.dev/box-image/manifest.json"
+BOX_IMAGE_TAG = "blitz-box:amd64"
+BOX_IMAGE_SHA256 = "29a63905864b5b34933df2a2f31a84166d5aff7edfacf9efbc144635b3ff9ea3"
+SESSION_TTL_DAYS = "30"
+MAX_CONCURRENT_WORKSPACES = "10"
+
+[[r2_buckets]]
+binding = "BOX_IMAGES"
+bucket_name = "blitz-box-images"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "blitz-control-plane"
-database_id = "replace-with-d1-database-id"
+database_id = "51bebbfa-dc55-4f64-bbbe-e71c02a9c899"
 migrations_dir = "migrations"
 
 [observability]
 enabled = true
+
+[assets]
+directory = "../ui/dist"
+not_found_handling = "single-page-application"
+run_worker_first = [
+  "/sessions*",
+  "/workspaces*",
+  "/volumes*",
+  "/machine-types*",
+  "/oauth/*",
+  "/boxes/*",
+  "/box-image*",
+  "/api/*"
+]
 
 [triggers]
 crons = ["0 * * * *", "0 3 * * *"]

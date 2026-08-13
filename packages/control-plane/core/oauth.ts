@@ -1,4 +1,3 @@
-import type { Context, Hono } from "hono";
 import {
   bearerToken,
   DUMMY_HASH,
@@ -6,10 +5,13 @@ import {
   matchesStoredHash,
   randomToken,
 } from "./crypto.js";
+import type { Db } from "./db.js";
+import { changed, first, rows, transaction } from "./db.js";
 import { HttpError, isRecord, readForm, readJson, requiredString } from "./http.js";
 import type { Principal } from "./principals.js";
 import { ensurePrincipal } from "./principals.js";
-import type { AppEnv, BoxIdentity } from "./types.js";
+import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
+import type { BoxIdentity } from "./types.js";
 
 const DEVICE_LIFETIME_MS = 10 * 60 * 1000;
 const DEVICE_INTERVAL_SECONDS = 5;
@@ -59,8 +61,12 @@ export async function issueBoxTokens(): Promise<IssuedBoxTokens> {
   };
 }
 
-function oauthError(c: Context<AppEnv>, error: string, status: 400 | 401 = 400): Response {
-  return c.json({ error }, status);
+function oauthError(
+  context: CoreContext,
+  error: string,
+  status: 400 | 401 = 400,
+): Response {
+  return context.json({ error }, status);
 }
 
 async function requestParameters(request: Request): Promise<Record<string, unknown>> {
@@ -85,44 +91,41 @@ function normalizedUserCode(value: string): string {
   return value.replaceAll("-", "").toUpperCase();
 }
 
-async function deviceByHash(db: D1Database, hash: string): Promise<DeviceRow | null> {
-  return db
-    .prepare("SELECT * FROM device_authorizations WHERE device_hash = ?1 LIMIT 1")
-    .bind(hash)
-    .first<DeviceRow>();
+async function deviceByHash(db: Db, hash: string): Promise<DeviceRow | null> {
+  return first<DeviceRow>(db, {
+    q: "SELECT * FROM device_authorizations WHERE device_hash = ?1 LIMIT 1",
+    v: [hash],
+  });
 }
 
 async function refreshGrant(
-  c: Context<AppEnv>,
+  context: CoreContext,
+  runtimeFactory: RuntimeFactory,
   refreshToken: string,
 ): Promise<Response> {
+  const db = runtimeFactory(context).db;
   const oldHash = await hashSecret(refreshToken);
-  const row = await c.env.DB
-    .prepare(
-      `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
-              b.id, b.principal_id, b.workspace_id, b.is_broker
-       FROM box_token_families f JOIN boxes b ON b.id = f.box_id
-       WHERE f.refresh_hash = ?1 LIMIT 1`,
-    )
-    .bind(oldHash)
-    .first<BoxTokenRow>();
+  const row = await first<BoxTokenRow>(db, {
+    q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
+               b.id, b.principal_id, b.workspace_id, b.is_broker
+        FROM box_token_families f JOIN boxes b ON b.id = f.box_id
+        WHERE f.refresh_hash = ?1 LIMIT 1`,
+    v: [oldHash],
+  });
   const matches = await matchesStoredHash(refreshToken, row?.refresh_hash ?? DUMMY_HASH);
-  if (row === null || !matches) {
-    return oauthError(c, "invalid_grant");
-  }
+  if (row === null || !matches) return oauthError(context, "invalid_grant");
 
   const tokens = await issueBoxTokens();
-  const result = await c.env.DB
-    .prepare(
-      `UPDATE box_token_families
-       SET access_hash = ?1, refresh_hash = ?2, access_issued_at = ?3,
-           generation = generation + 1
-       WHERE box_id = ?4 AND refresh_hash = ?5`,
-    )
-    .bind(tokens.accessHash, tokens.refreshHash, Date.now(), row.id, row.refresh_hash)
-    .run();
-  if (result.meta.changes !== 1) return oauthError(c, "invalid_grant");
-  return c.json({
+  const count = await changed(db, {
+    q: `UPDATE box_token_families
+        SET access_hash = ?1, refresh_hash = ?2, access_issued_at = ?3,
+            generation = generation + 1
+        WHERE box_id = ?4 AND refresh_hash = ?5
+        RETURNING box_id`,
+    v: [tokens.accessHash, tokens.refreshHash, Date.now(), row.id, row.refresh_hash],
+  });
+  if (count !== 1) return oauthError(context, "invalid_grant");
+  return context.json({
     box_id: row.id,
     access_token: tokens.accessToken,
     refresh_token: tokens.refreshToken,
@@ -133,21 +136,19 @@ async function refreshGrant(
 
 export async function authenticateBox(
   request: Request,
-  db: D1Database,
+  db: Db,
   now = Date.now(),
 ): Promise<BoxIdentity | null> {
   const token = bearerToken(request);
   if (token === null) return null;
   const hash = await hashSecret(token);
-  const row = await db
-    .prepare(
-      `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
-              b.id, b.principal_id, b.workspace_id, b.is_broker
-       FROM box_token_families f JOIN boxes b ON b.id = f.box_id
-       WHERE f.access_hash = ?1 LIMIT 1`,
-    )
-    .bind(hash)
-    .first<BoxTokenRow>();
+  const row = await first<BoxTokenRow>(db, {
+    q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
+               b.id, b.principal_id, b.workspace_id, b.is_broker
+        FROM box_token_families f JOIN boxes b ON b.id = f.box_id
+        WHERE f.access_hash = ?1 LIMIT 1`,
+    v: [hash],
+  });
   const matches = await matchesStoredHash(token, row?.access_hash ?? DUMMY_HASH);
   if (row === null || !matches || now - row.access_issued_at >= ACCESS_LIFETIME_MS) {
     return null;
@@ -161,30 +162,29 @@ export async function authenticateBox(
 }
 
 export function addOAuthRoutes(
-  app: Hono<AppEnv>,
-  requirePrincipal: (c: Context<AppEnv>) => Promise<Principal>,
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+  requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
-  app.post("/oauth/device_authorization", async (c) => {
-    const params = await requestParameters(c.req.raw);
+  router.post("/oauth/device_authorization", async (context) => {
+    const params = await requestParameters(context.req.raw);
     const clientId = requiredString(params.client_id, "client_id", 256);
     const deviceCode = randomToken();
     const code = userCode();
     const now = Date.now();
-    await c.env.DB
-      .prepare(
-        `INSERT INTO device_authorizations
-         (device_hash, user_hash, client_id, created_at)
-         VALUES (?1, ?2, ?3, ?4)`,
-      )
-      .bind(
+    await rows(runtimeFactory(context).db, {
+      q: `INSERT INTO device_authorizations
+          (device_hash, user_hash, client_id, created_at)
+          VALUES (?1, ?2, ?3, ?4)`,
+      v: [
         await hashSecret(deviceCode),
         await hashSecret(normalizedUserCode(code)),
         clientId,
         now,
-      )
-      .run();
-    const verificationUri = `${new URL(c.req.url).origin}/oauth/device/approve`;
-    return c.json({
+      ],
+    });
+    const verificationUri = `${new URL(context.req.url).origin}/oauth/device/approve`;
+    return context.json({
       device_code: deviceCode,
       user_code: code,
       verification_uri: verificationUri,
@@ -194,15 +194,16 @@ export function addOAuthRoutes(
     });
   });
 
-  app.post("/oauth/device/approve", async (c) => {
-    const principal = await requirePrincipal(c);
-    const params = await requestParameters(c.req.raw);
+  router.post("/oauth/device/approve", async (context) => {
+    const principal = await requirePrincipal(context);
+    const params = await requestParameters(context.req.raw);
     const code = normalizedUserCode(requiredString(params.user_code, "user_code", 32));
     const hash = await hashSecret(code);
-    const row = await c.env.DB
-      .prepare("SELECT * FROM device_authorizations WHERE user_hash = ?1 LIMIT 1")
-      .bind(hash)
-      .first<DeviceRow>();
+    const db = runtimeFactory(context).db;
+    const row = await first<DeviceRow>(db, {
+      q: "SELECT * FROM device_authorizations WHERE user_hash = ?1 LIMIT 1",
+      v: [hash],
+    });
     const matches = await matchesStoredHash(code, row?.user_hash ?? DUMMY_HASH);
     if (row === null || !matches) {
       throw new HttpError(404, "device authorization not found");
@@ -210,77 +211,80 @@ export function addOAuthRoutes(
     if (row.consumed_at !== null || Date.now() - row.created_at >= DEVICE_LIFETIME_MS) {
       throw new HttpError(409, "device authorization is no longer active");
     }
-    await ensurePrincipal(c.env.DB, principal);
-    await c.env.DB
-      .prepare("UPDATE device_authorizations SET principal_id = ?1 WHERE device_hash = ?2")
-      .bind(principal.id, row.device_hash)
-      .run();
-    return c.body(null, 204);
+    await ensurePrincipal(db, principal);
+    await rows(db, {
+      q: "UPDATE device_authorizations SET principal_id = ?1 WHERE device_hash = ?2",
+      v: [principal.id, row.device_hash],
+    });
+    return context.body(null, 204);
   });
 
-  app.post("/oauth/token", async (c) => {
-    const params = await requestParameters(c.req.raw);
+  router.post("/oauth/token", async (context) => {
+    const params = await requestParameters(context.req.raw);
     const grantType = requiredString(params.grant_type, "grant_type", 128);
     if (grantType === "refresh_token") {
-      return refreshGrant(c, requiredString(params.refresh_token, "refresh_token"));
+      return refreshGrant(
+        context,
+        runtimeFactory,
+        requiredString(params.refresh_token, "refresh_token"),
+      );
     }
     if (grantType !== "urn:ietf:params:oauth:grant-type:device_code") {
-      return oauthError(c, "unsupported_grant_type");
+      return oauthError(context, "unsupported_grant_type");
     }
 
     const deviceCode = requiredString(params.device_code, "device_code");
     const clientId = requiredString(params.client_id, "client_id", 256);
     const hash = await hashSecret(deviceCode);
-    const row = await deviceByHash(c.env.DB, hash);
+    const db = runtimeFactory(context).db;
+    const row = await deviceByHash(db, hash);
     const matches = await matchesStoredHash(deviceCode, row?.device_hash ?? DUMMY_HASH);
     if (row === null || !matches || row.client_id !== clientId) {
-      return oauthError(c, "invalid_grant");
+      return oauthError(context, "invalid_grant");
     }
     const now = Date.now();
     if (row.consumed_at !== null || now - row.created_at >= DEVICE_LIFETIME_MS) {
-      return oauthError(c, "expired_token");
+      return oauthError(context, "expired_token");
     }
     if (row.principal_id === null) {
       if (
         row.last_poll_at !== null &&
         now - row.last_poll_at < DEVICE_INTERVAL_SECONDS * 1000
       ) {
-        return oauthError(c, "slow_down");
+        return oauthError(context, "slow_down");
       }
-      await c.env.DB
-        .prepare("UPDATE device_authorizations SET last_poll_at = ?1 WHERE device_hash = ?2")
-        .bind(now, row.device_hash)
-        .run();
-      return oauthError(c, "authorization_pending");
+      await rows(db, {
+        q: "UPDATE device_authorizations SET last_poll_at = ?1 WHERE device_hash = ?2",
+        v: [now, row.device_hash],
+      });
+      return oauthError(context, "authorization_pending");
     }
 
     const boxId = crypto.randomUUID();
     const tokens = await issueBoxTokens();
-    const results = await c.env.DB.batch([
-      c.env.DB
-        .prepare(
-          `INSERT INTO boxes (id, principal_id, workspace_id, created_at)
-           SELECT ?1, principal_id, NULL, ?2 FROM device_authorizations
-           WHERE device_hash = ?3 AND consumed_at IS NULL AND principal_id IS NOT NULL`,
-        )
-        .bind(boxId, now, row.device_hash),
-      c.env.DB
-        .prepare(
-          `INSERT INTO box_token_families
-           (box_id, access_hash, refresh_hash, access_issued_at, generation)
-           SELECT ?1, ?2, ?3, ?4, 1 FROM device_authorizations
-           WHERE device_hash = ?5 AND consumed_at IS NULL AND principal_id IS NOT NULL`,
-        )
-        .bind(boxId, tokens.accessHash, tokens.refreshHash, now, row.device_hash),
-      c.env.DB
-        .prepare(
-          `UPDATE device_authorizations SET consumed_at = ?1
-           WHERE device_hash = ?2 AND consumed_at IS NULL AND principal_id IS NOT NULL`,
-        )
-        .bind(now, row.device_hash),
+    const results = await transaction(db, [
+      {
+        q: `INSERT INTO boxes (id, principal_id, workspace_id, created_at)
+            SELECT ?1, principal_id, NULL, ?2 FROM device_authorizations
+            WHERE device_hash = ?3 AND consumed_at IS NULL AND principal_id IS NOT NULL`,
+        v: [boxId, now, row.device_hash],
+      },
+      {
+        q: `INSERT INTO box_token_families
+            (box_id, access_hash, refresh_hash, access_issued_at, generation)
+            SELECT ?1, ?2, ?3, ?4, 1 FROM device_authorizations
+            WHERE device_hash = ?5 AND consumed_at IS NULL AND principal_id IS NOT NULL`,
+        v: [boxId, tokens.accessHash, tokens.refreshHash, now, row.device_hash],
+      },
+      {
+        q: `UPDATE device_authorizations SET consumed_at = ?1
+            WHERE device_hash = ?2 AND consumed_at IS NULL AND principal_id IS NOT NULL
+            RETURNING device_hash`,
+        v: [now, row.device_hash],
+      },
     ]);
-    if (results[2]?.meta.changes !== 1) return oauthError(c, "invalid_grant");
-    return c.json({
+    if (results[2]?.length !== 1) return oauthError(context, "invalid_grant");
+    return context.json({
       box_id: boxId,
       access_token: tokens.accessToken,
       refresh_token: tokens.refreshToken,

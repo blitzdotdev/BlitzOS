@@ -48,6 +48,7 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.9rem/1.
 .brand { margin: 0.2rem 0 1rem; font-size: 1.1rem; font-weight: 800; }
 .create-button { width: 100%; margin-bottom: 1rem; }
 .workspace-rail nav { display: grid; gap: 0.45rem; }
+.destroyed-toggle { width: 100%; margin-top: 0.75rem; color: #87919d; background: transparent; }
 .workspace-button { display: flex; justify-content: space-between; align-items: center; width: 100%; min-width: 0; text-align: left; }
 .workspace-button.selected { background: #1b252c; border-color: #4a766d; }
 .phase-badge { display: inline-flex; align-items: center; min-height: 24px; border-radius: 999px; padding: 0.15rem 0.5rem; color: #aeb8c4; background: #252d36; font-size: 0.72rem; }
@@ -74,15 +75,19 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.9rem/1.
 .workspace-summary { justify-content: flex-start; padding: 0.8rem 0; flex-wrap: wrap; }
 .workspace-summary .danger { margin-left: auto; }
 .tabs { display: flex; gap: 0.35rem; overflow-x: auto; border-bottom: 1px solid #27303a; }
-.tabs button { min-width: 96px; border-color: transparent; border-radius: 8px 8px 0 0; background: transparent; }
+.tabs button { display: grid; min-width: 150px; gap: 0.18rem; border-color: transparent; border-radius: 8px 8px 0 0; background: transparent; }
+.tabs button small { overflow: hidden; text-overflow: ellipsis; font-size: 0.68rem; font-weight: 400; }
 .tabs button[aria-selected="true"] { color: #76e4c4; border-color: #27303a; border-bottom-color: #090c10; }
 .panel { min-height: 0; border: 1px solid #27303a; border-top: 0; background: #0b0f14; }
 .panel-toolbar { min-height: 48px; padding: 0.45rem 0.7rem; border-bottom: 1px solid #222b34; }
 .panel-toolbar label { display: flex; align-items: center; gap: 0.55rem; }
 .panel-toolbar input, .panel-toolbar select { width: 120px; }
 .connection-status { color: #8fa1ad; font-size: 0.82rem; }
+.endpoint-target { color: #aeb8c4; font-size: 0.76rem; white-space: nowrap; }
 .terminal-panel { display: grid; grid-template-rows: auto minmax(340px, 1fr) auto; }
 .terminal-host { min-height: 340px; padding: 0.5rem; overflow: hidden; }
+.terminal-frame { width: 100%; height: 100%; min-height: 340px; border: 0; background: #090c10; }
+.terminal-frame.read-only { pointer-events: none; }
 .terminal-input-row { display: flex; gap: 0.5rem; padding: 0.6rem; border-top: 1px solid #222b34; }
 .terminal-input-row textarea { min-height: 44px; resize: none; }
 .chat-panel { display: grid; grid-template-rows: auto minmax(260px, 1fr) auto auto; }
@@ -104,6 +109,8 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.9rem/1.
 .composer { padding: 0.75rem; border-top: 1px solid #27303a; }
 .composer .button-row { margin-top: 0.55rem; }
 .files-panel { display: grid; grid-template-columns: minmax(300px, 34%) minmax(0, 1fr); }
+.files-frame-panel { display: grid; grid-template-rows: auto minmax(520px, 1fr); }
+.files-frame-panel iframe { width: 100%; height: 100%; min-height: 520px; border: 0; background: white; }
 .files-sidebar { min-width: 0; border-right: 1px solid #27303a; padding-bottom: 0.75rem; }
 .inline-form { display: flex; gap: 0.45rem; padding: 0.6rem; }
 .upload-button { display: inline-flex; min-height: 44px; align-items: center; margin: 0 0.6rem; padding: 0.5rem 0.8rem; border: 1px solid #303945; border-radius: 8px; cursor: pointer; }
