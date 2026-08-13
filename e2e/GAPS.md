@@ -1,5 +1,13 @@
 # e2e deficiencies & gaps log
 
+## MICROVM FEATURE + FINALE (2026-08-13, feat/microvm)
+
+- **MicroVM workspaces live through the deployed control plane: gate 9/9, create→ready 1279–1414 ms** (target <5000). Spike: 739 ms boot; agent API p50 1.06 s. Stress: 108+ lifecycles, unloaded p95 1.49 s, loaded (8 cores + 4 GB stress-ng) p95 1.81 s, 40-cycle churn p95 1.36 s, 10-min endurance 54/54 surface checks, zero leaks throughout. 10 concurrent ready together (1.06 s); 11th create cleanly rejected (principal quota 409). Host: minjune-650S via host agent (systemd) + cloudflared tunnel (ephemeral — durable tunnel is a follow-up).
+- **Volume reattach FIXED and live-proven (nonce match)**: three-bug arc — (1) credential contract drift (fixed both sides), (2) filesystem-unsafe detach (graceful shutdown; marker survives), (3) stale box identity on reattach (destroy deletes the box record; bootstrap now clears stale credential/origin; proven by read-only volume forensics of the durable bootstrap.log).
+- Bootstrap failures now surface as phase=error with the message (live-proven); bootstrap log persists on the volume.
+- New agent capacity model: cpu_overcommit (default 1.0; lab 2.0) with physical+effective reporting.
+- Follow-ups: durable tunnel (named/tailscale) for the agent API; machine-types catalog listed cx23 absent while creatable once (reconcile listing vs create validation); s7 probe wall time ~10 s is test-side tunnel setup, not product.
+
 Customer-POV self-host test of blitz-core on a real Cloudflare account + real Hetzner project.
 Started 2026-08-12. Living document — updated as e2e runs land.
 Severity: **[B]** release blocker · **[F]** friction · **[D]** doc bug · **[ext]** external/provider · **OK** verified working.
