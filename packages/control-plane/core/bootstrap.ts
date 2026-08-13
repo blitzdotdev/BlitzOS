@@ -253,6 +253,12 @@ printf '%s\n' "$SSH_PUBLIC_KEY" >/var/lib/blitz/authorized_key
 chown root:root /var/lib/blitz/authorized_key
 chmod 0644 /var/lib/blitz/authorized_key
 
+# A retained volume belongs to the previous box identity. Its token family is
+# revoked when that workspace is destroyed, and allowing the box init to see
+# those files makes its register one-shot fail before sshd can start. The new
+# credentials are installed after this VM proves its host key to phone-home.
+rm -f /var/lib/blitz/box-credential.json /var/lib/blitz/origin
+
 # Ubuntu 24.04 activates sshd through ssh.socket on port 22. Validate the
 # replacement listener before stopping that socket so Docker can safely claim
 # host port 22 without losing the host SSH recovery path.

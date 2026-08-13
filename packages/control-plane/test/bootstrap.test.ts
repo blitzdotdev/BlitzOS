@@ -165,6 +165,20 @@ describe("production VM bootstrap", () => {
     );
   });
 
+  it("clears stale box credentials before starting a reused-volume container", () => {
+    const userData = registryUserData();
+
+    const mount = userData.indexOf('mount "$volume_device" /var/lib/blitz');
+    const clearCredential = userData.indexOf(
+      "rm -f /var/lib/blitz/box-credential.json /var/lib/blitz/origin",
+    );
+    const run = userData.indexOf("docker run", clearCredential);
+
+    expect(mount).toBeGreaterThan(-1);
+    expect(clearCredential).toBeGreaterThan(mount);
+    expect(run).toBeGreaterThan(clearCredential);
+  });
+
   it("reinstalls and enables host SSH and volume-shutdown configuration on every bootstrap", () => {
     const userData = registryUserData();
 
