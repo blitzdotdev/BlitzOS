@@ -258,6 +258,35 @@ describe("microVM pool provider", () => {
     expect(observedThis).toBeUndefined();
   });
 
+  it("accepts legacy and extended capacity responses during a rolling upgrade", async () => {
+    const raw = hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" });
+    const legacyProvider = provider(raw, async () => Response.json(capacity()));
+    const extendedProvider = provider(raw, async () => Response.json(capacity({
+      physical_cpu: 4,
+      effective_cpu: 8,
+    })));
+
+    await expect(legacyProvider.listMachineTypes()).resolves.toHaveLength(2);
+    await expect(extendedProvider.listMachineTypes()).resolves.toHaveLength(2);
+  });
+
+  it("rejects incomplete or inconsistent extended capacity responses", async () => {
+    const raw = hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" });
+    const invalidResponses: Array<[string, Record<string, number>]> = [
+      ["missing effective CPU", capacity({ physical_cpu: 8 })],
+      ["missing physical CPU", capacity({ effective_cpu: 8 })],
+      ["non-positive physical CPU", capacity({ physical_cpu: 0, effective_cpu: 8 })],
+      ["fractional effective CPU", capacity({ physical_cpu: 4, effective_cpu: 7.5 })],
+      ["legacy total differs from effective CPU", capacity({ physical_cpu: 4, effective_cpu: 16 })],
+      ["physical CPU exceeds effective CPU", capacity({ physical_cpu: 9, effective_cpu: 8 })],
+    ];
+
+    for (const [description, response] of invalidResponses) {
+      const microvm = provider(raw, async () => Response.json(response));
+      await expect(microvm.listMachineTypes(), description).rejects.toThrow();
+    }
+  });
+
   it("rejects agent capacity errors, malformed fields, and oversized JSON before buffering", async () => {
     const raw = hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" });
     const errorProvider = provider(raw, async () =>
@@ -269,6 +298,16 @@ describe("microVM pool provider", () => {
       Response.json({ ...capacity(), unexpected: true }),
     );
     await expect(malformedProvider.listMachineTypes()).rejects.toThrow(
+      "invalid microVM agent capacity response fields",
+    );
+
+    const extendedUnknownFieldProvider = provider(raw, async () =>
+      Response.json({
+        ...capacity({ physical_cpu: 4, effective_cpu: 8 }),
+        unexpected: true,
+      }),
+    );
+    await expect(extendedUnknownFieldProvider.listMachineTypes()).rejects.toThrow(
       "invalid microVM agent capacity response fields",
     );
 

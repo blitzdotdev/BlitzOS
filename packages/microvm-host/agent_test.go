@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -160,7 +161,7 @@ func TestCapacityMathAndLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := manager.Capacity()
-	want := Capacity{TotalCPU: 4, TotalMemMB: 2048, UsedCPU: 3, UsedMemMB: 1536, VMCount: 2, MaxVMs: 2}
+	want := Capacity{TotalCPU: 4, PhysicalCPU: 4, EffectiveCPU: 4, TotalMemMB: 2048, UsedCPU: 3, UsedMemMB: 1536, VMCount: 2, MaxVMs: 2}
 	if got != want {
 		t.Fatalf("Capacity() = %#v; want %#v", got, want)
 	}
@@ -173,6 +174,138 @@ func TestCapacityMathAndLimit(t *testing.T) {
 	got = manager.Capacity()
 	if got.UsedCPU != 1 || got.UsedMemMB != 512 || got.VMCount != 1 {
 		t.Fatalf("Capacity() after delete = %#v", got)
+	}
+}
+
+func TestDefaultCPUCapacityAdmissionIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testConfig(dir)
+	cfg.MaxVMs = 4
+	manager, err := NewManager(cfg, NewStateStore(cfg.StateDir), &mockBackend{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Create(context.Background(), validRequest("ws-1", 3, 512)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Create(context.Background(), validRequest("ws-2", 2, 512)); err != ErrCapacity {
+		t.Fatalf("Create() above physical CPU capacity error = %v; want ErrCapacity", err)
+	}
+	got := manager.Capacity()
+	if got.TotalCPU != 4 || got.PhysicalCPU != 4 || got.EffectiveCPU != 4 {
+		t.Fatalf("Capacity() CPU totals = %#v; want all totals 4", got)
+	}
+}
+
+func TestCPUOvercommitDoublesCapacityAndAdmission(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testConfig(dir)
+	cfg.TotalCPU = 16
+	cfg.CPUOvercommit = 2
+	cfg.SlotCount = 10
+	cfg.MaxVMs = 10
+	cfg.TotalMemMB = 20 * 1024
+	manager, err := NewManager(cfg, NewStateStore(cfg.StateDir), &mockBackend{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := manager.Capacity()
+	if got.TotalCPU != 32 || got.PhysicalCPU != 16 || got.EffectiveCPU != 32 {
+		t.Fatalf("Capacity() CPU totals = %#v; want total/effective 32 and physical 16", got)
+	}
+	var firstVMID string
+	for i := 0; i < 10; i++ {
+		created, err := manager.Create(context.Background(), validRequest(fmt.Sprintf("ws-%d", i), 2, 512))
+		if err != nil {
+			t.Fatalf("Create() for 2-vCPU VM %d of 10: %v", i+1, err)
+		}
+		if i == 0 {
+			firstVMID = created.VMID
+		}
+	}
+	got = manager.Capacity()
+	if got.UsedCPU != 20 || got.VMCount != 10 {
+		t.Fatalf("Capacity() after ten 2-vCPU VMs = %#v", got)
+	}
+	if err := manager.Delete(context.Background(), firstVMID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Create(context.Background(), validRequest("over-effective-capacity", 15, 512)); err != ErrCapacity {
+		t.Fatalf("Create() above effective CPU capacity error = %v; want ErrCapacity", err)
+	}
+}
+
+func TestCapacityEndpointReportsPhysicalAndEffectiveCPU(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testConfig(dir)
+	cfg.TotalCPU = 16
+	cfg.CPUOvercommit = 2
+	manager, err := NewManager(cfg, NewStateStore(cfg.StateDir), &mockBackend{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(manager, "01234567890123456789012345678901")
+	req := httptest.NewRequest(http.MethodGet, "/v1/capacity", nil)
+	req.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]float64{"total_cpu": 32, "physical_cpu": 16, "effective_cpu": 32} {
+		if got[name] != want {
+			t.Fatalf("capacity field %q = %#v; want %v; response=%s", name, got[name], want, res.Body.String())
+		}
+	}
+}
+
+func TestLoadConfigCPUOvercommitDefaultsAndParses(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   float64
+		omitted bool
+		want    float64
+	}{
+		{name: "omitted", omitted: true, want: 1},
+		{name: "zero", value: 0, want: 1},
+		{name: "fractional", value: 1.5, want: 1.5},
+		{name: "double", value: 2, want: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := testConfig(dir)
+			cfg.CPUOvercommit = tc.value
+			body, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.omitted {
+				var raw map[string]any
+				if err := json.Unmarshal(body, &raw); err != nil {
+					t.Fatal(err)
+				}
+				delete(raw, "cpu_overcommit")
+				body, err = json.Marshal(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			path := filepath.Join(dir, "config.json")
+			if err := os.WriteFile(path, body, 0600); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.CPUOvercommit != tc.want {
+				t.Fatalf("CPUOvercommit = %v; want %v", loaded.CPUOvercommit, tc.want)
+			}
+		})
 	}
 }
 

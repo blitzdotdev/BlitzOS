@@ -89,7 +89,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (CreateResponse
 		return CreateResponse{}, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	capacity := m.capacityLocked()
-	if capacity.VMCount >= capacity.MaxVMs || capacity.UsedCPU+req.CPU > capacity.TotalCPU || capacity.UsedMemMB+req.MemMB > capacity.TotalMemMB {
+	if capacity.VMCount >= capacity.MaxVMs || capacity.UsedCPU+req.CPU > capacity.EffectiveCPU || capacity.UsedMemMB+req.MemMB > capacity.TotalMemMB {
 		return CreateResponse{}, ErrCapacity
 	}
 	slot, err := AllocateSlot(m.vms, m.cfg.SlotCount)
@@ -173,7 +173,14 @@ func (m *Manager) Capacity() Capacity {
 }
 
 func (m *Manager) capacityLocked() Capacity {
-	c := Capacity{TotalCPU: m.cfg.TotalCPU, TotalMemMB: m.cfg.TotalMemMB, MaxVMs: m.cfg.MaxVMs}
+	effectiveCPU := m.cfg.effectiveCPU()
+	c := Capacity{
+		TotalCPU:     effectiveCPU,
+		PhysicalCPU:  m.cfg.TotalCPU,
+		EffectiveCPU: effectiveCPU,
+		TotalMemMB:   m.cfg.TotalMemMB,
+		MaxVMs:       m.cfg.MaxVMs,
+	}
 	for _, vm := range m.vms {
 		c.VMCount++
 		c.UsedCPU += vm.CPU

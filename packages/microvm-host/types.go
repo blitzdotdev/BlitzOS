@@ -40,12 +40,15 @@ type CreateResponse struct {
 }
 
 type Capacity struct {
-	TotalCPU   int `json:"total_cpu"`
-	TotalMemMB int `json:"total_mem_mb"`
-	UsedCPU    int `json:"used_cpu"`
-	UsedMemMB  int `json:"used_mem_mb"`
-	VMCount    int `json:"vm_count"`
-	MaxVMs     int `json:"max_vms"`
+	// TotalCPU remains the allocatable CPU ceiling for existing clients.
+	TotalCPU     int `json:"total_cpu"`
+	PhysicalCPU  int `json:"physical_cpu"`
+	EffectiveCPU int `json:"effective_cpu"`
+	TotalMemMB   int `json:"total_mem_mb"`
+	UsedCPU      int `json:"used_cpu"`
+	UsedMemMB    int `json:"used_mem_mb"`
+	VMCount      int `json:"vm_count"`
+	MaxVMs       int `json:"max_vms"`
 }
 
 type Health struct {

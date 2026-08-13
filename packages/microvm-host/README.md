@@ -9,7 +9,7 @@ Every endpoint requires `Authorization: Bearer <token>`. The token is read once 
 - `POST /v1/vms` accepts `{workspace_id,cpu,mem_mb,ssh_authorized_key,phone_home_url,cp_origin}` and returns HTTP 201 with `{vm_id,host_ip,ssh_port}`.
 - `DELETE /v1/vms/:id` sends Firecracker `SendCtrlAltDel`, waits up to the configured timeout, then uses TERM/KILL if required. It removes the three tagged iptables rules, TAP, sparse upper disk, socket, log, and state. Missing IDs return HTTP 204.
 - `GET /v1/vms` returns the persisted VM array.
-- `GET /v1/capacity` returns `{total_cpu,total_mem_mb,used_cpu,used_mem_mb,vm_count,max_vms}`.
+- `GET /v1/capacity` returns `{total_cpu,physical_cpu,effective_cpu,total_mem_mb,used_cpu,used_mem_mb,vm_count,max_vms}`. `total_cpu` remains the allocatable ceiling used by existing clients and matches `effective_cpu`; `physical_cpu` reports the configured host CPU count.
 - `GET /v1/healthz` returns `{ok,versions}` with agent, Firecracker, and kernel versions.
 
 The first free slot determines all network resources: slot N uses TAP `blitz-tapN`, host/guest `172.30.(20+N).1/.2/30`, and host SSH port `22000+N`. DNAT and both forwarding rules carry comment `blitz-microvm:slot-N`.
@@ -51,4 +51,4 @@ Package files to vendor into `blitz-core`:
 - `guest/microvm-init`, `guest/blitz-microvm-enroll.js`, and `guest/build-rootfs-m2.sh` for the versioned guest image recipe
 - `deploy/blitz-microvm-agent.service` and `deploy/config.host.json` as the live-host deployment reference
 
-Config knobs are the API bind/public address, token/state/lab paths, pinned binary/kernel/rootfs paths and version labels, sudo wrapper, network prefix/octet/slot range, SSH port base, sparse upper size, total CPU/RAM, maximum VM count, and graceful shutdown timeout. The live M2 values are in `deploy/config.host.json`; the service is installed at `/etc/systemd/system/blitz-microvm-agent.service` and its lab-local state directory is `/home/minjune/blitz-microvm-lab/agent/state`.
+Config knobs are the API bind/public address, token/state/lab paths, pinned binary/kernel/rootfs paths and version labels, sudo wrapper, network prefix/octet/slot range, SSH port base, sparse upper size, total CPU/RAM, CPU overcommit ratio, maximum VM count, and graceful shutdown timeout. `cpu_overcommit` is a floating-point multiplier; omitted or zero means `1.0`, and fractional effective capacity is rounded down to a whole vCPU. The live M2 values are in `deploy/config.host.json`; the service is installed at `/etc/systemd/system/blitz-microvm-agent.service` and its lab-local state directory is `/home/minjune/blitz-microvm-lab/agent/state`.

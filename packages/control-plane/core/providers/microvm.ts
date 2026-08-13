@@ -261,9 +261,21 @@ function agentError(value: unknown): string | null {
 
 function capacityFromAgent(value: unknown): AgentCapacity {
   if (!isRecord(value)) throw new Error("invalid microVM agent capacity response");
+  const hasCpuCapacityDetails = "physical_cpu" in value || "effective_cpu" in value;
   exactFields(
     value,
-    ["total_cpu", "total_mem_mb", "used_cpu", "used_mem_mb", "vm_count", "max_vms"],
+    hasCpuCapacityDetails
+      ? [
+          "total_cpu",
+          "physical_cpu",
+          "effective_cpu",
+          "total_mem_mb",
+          "used_cpu",
+          "used_mem_mb",
+          "vm_count",
+          "max_vms",
+        ]
+      : ["total_cpu", "total_mem_mb", "used_cpu", "used_mem_mb", "vm_count", "max_vms"],
     "microVM agent capacity response",
   );
   const capacity = {
@@ -274,6 +286,13 @@ function capacityFromAgent(value: unknown): AgentCapacity {
     vmCount: requiredInteger(value, "vm_count", "microVM agent capacity"),
     maxVms: requiredInteger(value, "max_vms", "microVM agent capacity", 1),
   };
+  if (hasCpuCapacityDetails) {
+    const physicalCpu = requiredInteger(value, "physical_cpu", "microVM agent capacity", 1);
+    const effectiveCpu = requiredInteger(value, "effective_cpu", "microVM agent capacity", 1);
+    if (capacity.totalCpu !== effectiveCpu || physicalCpu > effectiveCpu) {
+      throw new Error("invalid microVM agent capacity CPU totals");
+    }
+  }
   if (
     capacity.usedCpu > capacity.totalCpu ||
     capacity.usedMemMb > capacity.totalMemMb ||

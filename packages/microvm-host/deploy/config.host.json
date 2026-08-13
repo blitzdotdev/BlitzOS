@@ -16,6 +16,7 @@
   "ssh_port_base": 22000,
   "upper_size_bytes": 8589934592,
   "total_cpu": 16,
+  "cpu_overcommit": 2.0,
   "total_mem_mb": 24576,
   "max_vms": 10,
   "shutdown_timeout_seconds": 10
