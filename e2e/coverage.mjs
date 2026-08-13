@@ -157,6 +157,7 @@ let cookie = null;
 let publicKey = null;
 let privateKeyPath = null;
 let createRequests = 0;
+let preservedVolumeId = null;
 
 const sleep = (milliseconds) =>
   new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
@@ -962,6 +963,7 @@ try {
       let firstRead = null;
       let secondRead = null;
       let survivalProof = null;
+      let secondCreateStarted = false;
       details.volumePersistence = {
         volumeId,
         markerPath,
@@ -972,6 +974,14 @@ try {
         afterFirstDestroy: survivalProof,
         workspaceIds: [...suiteWorkspaceIds],
         deleted: false,
+        secondCreateStarted,
+        preserved: false,
+        preservedVolumeId: null,
+        preservationReason: null,
+        preservationVerified: false,
+        preservedControlPlaneStatus: null,
+        preservedControlPlaneAttachedTo: null,
+        preservedHetznerServer: null,
         failure: null,
       };
       try {
@@ -1015,6 +1025,8 @@ try {
         details.volumePersistence.afterFirstDestroy = survivalProof;
         assert((await serversForWorkspace(first.id)).length === 0, `first workspace ${first.id} still has a labeled Hetzner server`);
 
+        secondCreateStarted = true;
+        details.volumePersistence.secondCreateStarted = true;
         const second = await createWorkspace(volumeId);
         suiteWorkspaceIds.push(second.id);
         const secondReady = second.phase === "ready" ? second : await waitForWorkspace(second.id, "ready", 900_000);
@@ -1034,6 +1046,15 @@ try {
       } catch (error) {
         details.volumePersistence.failure = shortError(error);
         details.volumePersistence.workspaceIds = [...suiteWorkspaceIds];
+        if (secondCreateStarted && volumeId !== null) {
+          preservedVolumeId = volumeId;
+          details.volumePersistence.preserved = true;
+          details.volumePersistence.preservedVolumeId = volumeId;
+          details.volumePersistence.preservationReason = "volumes suite failed after second workspace create started";
+          console.log(
+            `EVIDENCE INTENTIONAL-RETAINED-VOLUME id=${volumeId}; reason=volumes-suite-failure-after-second-create-started; durable-log=/var/lib/blitz/bootstrap.log`,
+          );
+        }
         throw error;
       } finally {
         const cleanupErrors = [];
@@ -1076,7 +1097,7 @@ try {
             cleanupErrors.push(shortError(error));
           }
         }
-        if (volumeId !== null) {
+        if (volumeId !== null && volumeId !== preservedVolumeId) {
           try {
             await cleanupVolume(volumeId);
             details.volumePersistence.deleted = true;
@@ -1148,6 +1169,7 @@ try {
     }
   }
   for (const id of [...volumeIds].reverse()) {
+    if (id === preservedVolumeId) continue;
     try {
       await cleanupVolume(id);
     } catch (error) {
@@ -1176,13 +1198,47 @@ try {
     assert(allWorkspaceServers.length === 0, `Hetzner blitz-purpose=workspace label query count=${allWorkspaceServers.length}`);
 
     const apiVolumes = await listVolumes();
-    const apiTestVolumes = apiVolumes.filter((volume) => volumeIdSet.has(volume?.id));
-    assert(apiTestVolumes.length === 0, `control-plane volume list still contains test volume ids=${apiTestVolumes.map((volume) => volume.id).join(",")}`);
+    const apiTestVolumes = apiVolumes.filter(
+      (volume) => volumeIdSet.has(volume?.id) || volume?.name === runLabel,
+    );
     const providerVolumes = await listHetzner("/volumes", "volumes");
     const providerTestVolumes = providerVolumes.filter(
       (volume) => volumeIdSet.has(String(volume?.id)) || volume?.name === runLabel,
     );
-    assert(providerTestVolumes.length === 0, `Hetzner volumes list still contains test volumes=${providerTestVolumes.length}`);
+    const unexpectedApiTestVolumes = apiTestVolumes.filter(
+      (volume) => volume?.id !== preservedVolumeId,
+    );
+    const unexpectedProviderTestVolumes = providerTestVolumes.filter(
+      (volume) => String(volume?.id) !== preservedVolumeId,
+    );
+    let retainedVolumeProof = null;
+    if (preservedVolumeId === null) {
+      assert(apiTestVolumes.length === 0, `control-plane volume list still contains test volume ids=${apiTestVolumes.map((volume) => volume.id).join(",")}`);
+      assert(providerTestVolumes.length === 0, `Hetzner volumes list still contains test volumes=${providerTestVolumes.length}`);
+    } else {
+      const apiPreservedVolumes = apiTestVolumes.filter(
+        (volume) => volume?.id === preservedVolumeId,
+      );
+      const providerPreservedVolumes = providerTestVolumes.filter(
+        (volume) => String(volume?.id) === preservedVolumeId,
+      );
+      assert(apiPreservedVolumes.length === 1, `intentional retained volume ${preservedVolumeId} control-plane count=${apiPreservedVolumes.length}; expected 1`);
+      assert(apiPreservedVolumes[0].status === "available", `intentional retained volume ${preservedVolumeId} control-plane status=${apiPreservedVolumes[0].status}; expected available`);
+      assert(apiPreservedVolumes[0].attachedTo === null, `intentional retained volume ${preservedVolumeId} control-plane attachedTo=${apiPreservedVolumes[0].attachedTo}; expected null`);
+      assert(providerPreservedVolumes.length === 1, `intentional retained volume ${preservedVolumeId} Hetzner count=${providerPreservedVolumes.length}; expected 1`);
+      assert(providerPreservedVolumes[0].server === null, `intentional retained volume ${preservedVolumeId} remains attached to Hetzner server=${providerPreservedVolumes[0].server}`);
+      assert(unexpectedApiTestVolumes.length === 0, `unexpected control-plane test volume leaks=${unexpectedApiTestVolumes.map((volume) => volume.id).join(",")}`);
+      assert(unexpectedProviderTestVolumes.length === 0, `unexpected Hetzner test volume leaks=${unexpectedProviderTestVolumes.map((volume) => volume.id).join(",")}`);
+      retainedVolumeProof = {
+        id: preservedVolumeId,
+        controlPlaneStatus: apiPreservedVolumes[0].status,
+        hetznerServer: providerPreservedVolumes[0].server,
+      };
+      details.volumePersistence.preservationVerified = true;
+      details.volumePersistence.preservedControlPlaneStatus = apiPreservedVolumes[0].status;
+      details.volumePersistence.preservedControlPlaneAttachedTo = apiPreservedVolumes[0].attachedTo;
+      details.volumePersistence.preservedHetznerServer = providerPreservedVolumes[0].server;
+    }
 
     const containers = await runCommand(
       "docker",
@@ -1208,11 +1264,17 @@ try {
       allWorkspacePurposeLabelCount: allWorkspaceServers.length,
       apiTestVolumes: apiTestVolumes.length,
       hetznerTestVolumes: providerTestVolumes.length,
+      intentionalRetainedVolume: retainedVolumeProof,
+      unexpectedApiTestVolumeLeaks: unexpectedApiTestVolumes.length,
+      unexpectedHetznerTestVolumeLeaks: unexpectedProviderTestVolumes.length,
       hetznerProjectVolumeTotal: providerVolumes.length,
       labeledDockerContainers: containerCount,
       labeledDockerVolumes: dockerVolumeCount,
     };
-    return `API active workspaces=0; ${workspaceIds.length} test tombstones all destroyed; exact label queries all 0; blitz-purpose=workspace count=0; API test volumes=0; Hetzner test volumes=0 (project total=${providerVolumes.length}); labeled Docker containers=0; labeled Docker volumes=0`;
+    const volumeEvidence = preservedVolumeId === null
+      ? `intentional retained volume=none; API test volumes=0; Hetzner test volumes=0 (project total=${providerVolumes.length}); unexpected test volume leaks=0`
+      : `intentional retained volume=${preservedVolumeId}; control-plane status=available attachedTo=null; Hetzner server=null; unexpected test volume leaks=0 (project total=${providerVolumes.length})`;
+    return `API active workspaces=0; ${workspaceIds.length} test tombstones all destroyed; exact label queries all 0; blitz-purpose=workspace count=0; ${volumeEvidence}; labeled Docker containers=0; labeled Docker volumes=0`;
   });
   rmSync(workDir, { recursive: true, force: true });
 }
