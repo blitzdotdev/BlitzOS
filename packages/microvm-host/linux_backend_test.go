@@ -143,3 +143,71 @@ func TestMicroVMInitWritesRegularResolvConfBeforeEnrollment(t *testing.T) {
 		t.Fatalf("resolver replacement must occur before enrollment: remove=%d write=%d enroll=%d", remove, write, enroll)
 	}
 }
+
+func TestMicroVMEnrollmentPokesRegisterAfterAtomicWrites(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("guest", "blitz-microvm-enroll.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(contents)
+	credential := strings.Index(script, "atomicWrite(path.join(stateDir, 'box-credential.json')")
+	origin := strings.Index(script, "atomicWrite(path.join(stateDir, 'origin')")
+	register := strings.Index(script, "await pokeRegister()")
+	complete := strings.Index(script, "microvm-enroll: complete")
+	if credential < 0 || origin < 0 || register < 0 || complete < 0 {
+		t.Fatalf("credential/origin writes, awaited register poke, or completion log missing")
+	}
+	if credential >= origin || origin >= register || register >= complete {
+		t.Fatalf("register poke must be awaited after both writes and before completion: credential=%d origin=%d register=%d complete=%d", credential, origin, register, complete)
+	}
+	for _, required := range []string{
+		"const registerTimeoutMs = 30000",
+		"const registerKillGraceMs = 5000",
+		"...process.env",
+		"BLITZ_STATE_DIR: stateDir",
+		"HOME: '/var/lib/blitz/home'",
+		"USER: 'blitz'",
+		"blitz-cred",
+		"register",
+		"timer = setTimeout(",
+		"killGraceTimer = setTimeout(",
+		"process.kill(-child.pid, 'SIGKILL')",
+		"child.once('error'",
+		"child.once('close'",
+		"stdio: ['ignore', 'inherit', 'inherit']",
+		"uid: 1000",
+		"gid: 1000",
+		"detached: true",
+		"if (settled) return",
+		"settled = true",
+		"register timeout",
+		"register failed",
+		"register complete",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("guest enrollment is missing bounded/logged register behavior %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"spawn('/usr/bin/env'",
+		"child.kill('SIGKILL')",
+		"child.unref()",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("guest enrollment contains unsafe register behavior %q", forbidden)
+		}
+	}
+	timeout := strings.Index(script, "timer = setTimeout(")
+	groupKill := strings.Index(script, "process.kill(-child.pid, 'SIGKILL')")
+	killGrace := strings.Index(script, "killGraceTimer = setTimeout(")
+	if timeout < 0 || groupKill <= timeout || killGrace <= groupKill {
+		t.Fatalf("register timeout must kill the process group before starting bounded close grace: timeout=%d kill=%d grace=%d", timeout, groupKill, killGrace)
+	}
+	initContents, err := os.ReadFile(filepath.Join("guest", "microvm-init"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(initContents), ">/mnt/root/run/blitz/microvm-enroll.log 2>&1 &") {
+		t.Fatal("guest init does not capture enrollment and register output")
+	}
+}

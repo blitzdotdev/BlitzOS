@@ -16,15 +16,56 @@ type Accounts interface {
 	Deprovision(string, string) error
 }
 
-type SystemAccounts struct{}
+type SystemAccounts struct {
+	lookupUser  func(string) (*user.User, error)
+	lookupGroup func(string) (*user.Group, error)
+	run         func(string, ...string) error
+	lchown      func(string, int, int) error
+}
 
-func (SystemAccounts) Ensure(name, home string) error {
-	account, err := user.Lookup(name)
+func (accounts SystemAccounts) Ensure(name, home string) error {
+	lookupUser := accounts.lookupUser
+	if lookupUser == nil {
+		lookupUser = user.Lookup
+	}
+	lookupGroup := accounts.lookupGroup
+	if lookupGroup == nil {
+		lookupGroup = user.LookupGroup
+	}
+	run := accounts.run
+	if run == nil {
+		run = runSystem
+	}
+	lchown := accounts.lchown
+	if lchown == nil {
+		lchown = os.Lchown
+	}
+
+	account, err := lookupUser(name)
 	if errors.Is(err, user.UnknownUserError(name)) {
-		if err := runSystem("useradd", "--create-home", "--home-dir", home, "--shell", "/bin/sh", "--", name); err != nil {
+		args := []string{"--create-home", "--home-dir", home, "--shell", "/bin/sh"}
+		expectedGID := ""
+		group, groupErr := lookupGroup(name)
+		switch {
+		case groupErr == nil:
+			expectedGID = group.Gid
+			gid, parseErr := strconv.Atoi(expectedGID)
+			if parseErr != nil || gid < 0 {
+				return fmt.Errorf("managed group %s has invalid GID", name)
+			}
+			args = append(args, "--gid", expectedGID)
+		case errors.Is(groupErr, user.UnknownGroupError(name)):
+		default:
+			return groupErr
+		}
+		args = append(args, "--", name)
+		if err := run("useradd", args...); err != nil {
 			return err
 		}
-		account, err = user.Lookup(name)
+		account, err = lookupUser(name)
+		if err == nil && expectedGID != "" && account.Gid != expectedGID {
+			return fmt.Errorf("managed user %s has unexpected primary group", name)
+		}
 	}
 	if err != nil {
 		return err
@@ -50,7 +91,7 @@ func (SystemAccounts) Ensure(name, home string) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		return os.Lchown(path, uid, gid)
+		return lchown(path, uid, gid)
 	})
 }
 

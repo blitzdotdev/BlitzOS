@@ -240,6 +240,72 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain("chown 1000:1000 /var/lib/blitz/origin");
   });
 
+  it("pokes registration after both enrollment files are installed with a bounded logged best-effort command", () => {
+    const userData = registryUserData();
+
+    const credential = userData.indexOf(
+      'install -m 0600 -o 1000 -g 1000 "$credential_tmp" /var/lib/blitz/box-credential.json',
+    );
+    const origin = userData.indexOf(
+      `printf '%s\\n' "$CONTROL_PLANE_ORIGIN" >/var/lib/blitz/origin`,
+      credential,
+    );
+    const originMode = userData.indexOf(
+      "chmod 0644 /var/lib/blitz/origin",
+      origin,
+    );
+    const registerStart = userData.indexOf(
+      'echo "blitz bootstrap: credential registration poke start outer_timeout_seconds=40 inner_timeout_seconds=30"',
+      originMode,
+    );
+    const outerTimeout = userData.indexOf(
+      "timeout --foreground --kill-after=5s 40s",
+      registerStart,
+    );
+    const dockerExec = userData.indexOf("docker exec", outerTimeout);
+    const containerUser = userData.indexOf("--user 1000:1000", dockerExec);
+    const stateEnv = userData.indexOf(
+      "--env BLITZ_STATE_DIR=/var/lib/blitz",
+      containerUser,
+    );
+    const homeEnv = userData.indexOf(
+      "--env HOME=/var/lib/blitz/home",
+      stateEnv,
+    );
+    const userEnv = userData.indexOf("--env USER=blitz", homeEnv);
+    const container = userData.indexOf("blitz-box", userEnv);
+    const innerTimeout = userData.indexOf(
+      "timeout --foreground --kill-after=5s 30s",
+      container,
+    );
+    const register = userData.indexOf("blitz-cred register", innerTimeout);
+    const completed = userData.indexOf('echo "blitz bootstrap completed"');
+    const registerBlock = userData.slice(registerStart, completed);
+
+    expect(credential).toBeGreaterThan(-1);
+    expect(origin).toBeGreaterThan(credential);
+    expect(originMode).toBeGreaterThan(origin);
+    expect(registerStart).toBeGreaterThan(originMode);
+    expect(outerTimeout).toBeGreaterThan(registerStart);
+    expect(dockerExec).toBeGreaterThan(outerTimeout);
+    expect(containerUser).toBeGreaterThan(dockerExec);
+    expect(stateEnv).toBeGreaterThan(containerUser);
+    expect(homeEnv).toBeGreaterThan(stateEnv);
+    expect(userEnv).toBeGreaterThan(homeEnv);
+    expect(container).toBeGreaterThan(userEnv);
+    expect(innerTimeout).toBeGreaterThan(container);
+    expect(register).toBeGreaterThan(innerTimeout);
+    expect(completed).toBeGreaterThan(register);
+    expect(registerBlock).toContain(
+      "credential registration poke",
+    );
+    expect(registerBlock).toContain(
+      "continuing bootstrap because registration poke is best-effort",
+    );
+    expect(registerBlock).not.toContain("watch will retry");
+    expect(userData.slice(register, completed)).toMatch(/\|\|[\s\S]*true/u);
+  });
+
   it("reports bootstrap failures to the capability with only a bounded bootstrap_error field", () => {
     const userData = registryUserData();
     const failureReporter = userData.match(

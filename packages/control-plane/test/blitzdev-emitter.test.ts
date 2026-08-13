@@ -6,6 +6,7 @@ import {
   createUploadSet,
   importSpecifiers,
   redactSecrets,
+  rewriteManagedRelativeSpecifiers,
 } from "../scripts/build-blitzdev.mjs";
 
 const rawCore = import.meta.glob<string>("../core/**/*.ts", {
@@ -74,6 +75,38 @@ describe("blitz.dev managed emitter", () => {
       "virtual:teenybase",
       "./core/index",
     ]);
+  });
+
+  it("emits no relative .js specifiers while leaving repository sources unchanged", () => {
+    const sources = coreSources();
+    expect(sources.get("core/index.ts")).toContain('from "./app.js"');
+
+    const uploadSet = createUploadSet(sources);
+    for (const file of uploadSet.files) {
+      const forbidden = importSpecifiers(file.source).filter(({ specifier }) =>
+        (specifier.startsWith("./") || specifier.startsWith("../")) && /\.js(?:$|[?#])/u.test(specifier));
+      expect(forbidden, file.path).toEqual([]);
+    }
+
+    const emittedIndex = uploadSet.files.find((file) => file.path === "core/index.ts");
+    expect(emittedIndex?.source).toContain('from "./app"');
+  });
+
+  it("rewrites static, type-only, export-from, and dynamic relative specifiers", () => {
+    const source = [
+      'import value from "./value.js";',
+      'import type { Value } from "../types.js";',
+      'export type { Other } from "./other.js";',
+      'const lazy = import("./lazy.js");',
+      'import external from "package.js";',
+    ].join("\n");
+    expect(rewriteManagedRelativeSpecifiers(source)).toBe([
+      'import value from "./value";',
+      'import type { Value } from "../types";',
+      'export type { Other } from "./other";',
+      'const lazy = import("./lazy");',
+      'import external from "package.js";',
+    ].join("\n"));
   });
 
   it("redacts agent credentials from diagnostics", () => {

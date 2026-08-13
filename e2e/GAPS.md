@@ -7,6 +7,8 @@
 - Bootstrap failures now surface as phase=error with the message (live-proven); bootstrap log persists on the volume.
 - New agent capacity model: cpu_overcommit (default 1.0; lab 2.0) with physical+effective reporting.
 - Follow-ups: durable tunnel (named/tailscale) for the agent API; machine-types catalog listed cx23 absent while creatable once (reconcile listing vs create validation); s7 probe wall time ~10 s is test-side tunnel setup, not product.
+- Durable image-side follow-up: `blitz-cred watch` should retry `register` when phone-home installs credentials and origin after the image's register one-shot; the substrate bootstrap pokes are recovery bridges, not the long-term home.
+- Broker + microVM verdict: transport, assignment, forced-command auth all work across the boundary; auto-provisioning live-proven post-fix (zero manual registers). Full mint/deposit needs a real vendor OAuth credential on the broker (correctly refused without one). [F] `blitz-cred token` maps all broker failures to a generic "broker SSH request failed" — surface broker stderr for diagnosability.
 
 Customer-POV self-host test of blitz-core on a real Cloudflare account + real Hetzner project.
 Started 2026-08-12. Living document — updated as e2e runs land.

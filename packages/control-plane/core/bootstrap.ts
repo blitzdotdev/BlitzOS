@@ -350,6 +350,26 @@ chmod 0644 /var/lib/blitz/origin
 rm -f "$credential_tmp"
 trap - EXIT
 
+echo "blitz bootstrap: credential registration poke start outer_timeout_seconds=40 inner_timeout_seconds=30"
+register_status=0
+timeout --foreground --kill-after=5s 40s \
+  docker exec \
+    --user 1000:1000 \
+    --env BLITZ_STATE_DIR=/var/lib/blitz \
+    --env HOME=/var/lib/blitz/home \
+    --env USER=blitz \
+    blitz-box \
+    timeout --foreground --kill-after=5s 30s \
+    blitz-cred register ||
+  {
+    register_status=$?
+    echo "blitz bootstrap: credential registration poke failed or timed out (exit $register_status); continuing bootstrap because registration poke is best-effort"
+    true
+  }
+if (( register_status == 0 )); then
+  echo "blitz bootstrap: credential registration poke complete"
+fi
+
 trap - ERR
 echo "blitz bootstrap completed"
 `;

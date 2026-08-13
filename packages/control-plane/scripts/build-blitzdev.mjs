@@ -547,6 +547,28 @@ function isRelative(specifier) {
   return specifier.startsWith("./") || specifier.startsWith("../");
 }
 
+function extensionlessSpecifier(specifier) {
+  if (!isRelative(specifier)) return specifier;
+  return specifier.replace(/\.js(?=$|[?#])/u, "");
+}
+
+// Managed projects resolve TypeScript sources from extensionless relative
+// specifiers. Rewrite only the emitted upload copy so NodeNext repo sources can
+// retain their .js specifiers for normal package builds and tests.
+export function rewriteManagedRelativeSpecifiers(source) {
+  const rewrite = (_match, prefix, quote, specifier, suffix) =>
+    `${prefix}${quote}${extensionlessSpecifier(specifier)}${suffix}`;
+  return source
+    .replace(
+      /(\b(?:import|export)\s+(?:type\s+)?(?:[^"'`;]*?\s+from\s*)?)(["'])(\.\.?\/[^"']+)(["'])/gu,
+      rewrite,
+    )
+    .replace(
+      /(\bimport\s*\(\s*)(["'])(\.\.?\/[^"']+)(["']\s*\))/gu,
+      rewrite,
+    );
+}
+
 export function validateUploadSet(entries) {
   const paths = entries.map((entry) => entry.path);
   const duplicates = paths.filter((entryPath, index) => paths.indexOf(entryPath) !== index);
@@ -580,7 +602,7 @@ export function createUploadSet(coreSources) {
       if (source === undefined) throw new Error(`missing source for ${uploadPath}`);
       return { path: uploadPath, source: normalizeSource(source) };
     }),
-  ];
+  ].map((entry) => ({ ...entry, source: rewriteManagedRelativeSpecifiers(entry.source) }));
   validateUploadSet(entries);
   const files = entries.map((entry) => ({
     ...entry,
