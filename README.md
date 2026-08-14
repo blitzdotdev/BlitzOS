@@ -4,12 +4,7 @@ The open core of BlitzOS. Apache-2.0.
 
 ## What is BlitzOS
 
-BlitzOS is an open-source library for building your own cloud agent. "Cloud agent" = AI agents in a computer that do increasingly complex, long-horizon work. Cloud agent products package and sell this concept
-as a product. While this is convenient, you pay extra for compute & storage
-and cannot customize cloud agents for your use case. BlitzOS exists so you
-can build & self-host your own cloud agent product as frictionlessly as
-buying an existing product, while enjoying stronger capabilities from
-customization.
+BlitzOS is infrastructure for your company's 
 
 ## Capabilities
 
