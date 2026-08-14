@@ -2,6 +2,8 @@
 
 The workspace engine for fleets on your cloud.
 
+Self-hosters set `APP_URL` to their Worker origin.
+
 - The workspace API: create (machine shape + ssh pubkey + optional volume +
   optional user-data) · poll (the only authoritative read) · destroy
   (idempotent, tombstone). The workspace view carries the public SSH endpoint

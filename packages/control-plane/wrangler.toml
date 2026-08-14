@@ -4,6 +4,7 @@ compatibility_date = "2026-08-11"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
+APP_URL = "https://blitz-control-plane.blitzapp.workers.dev"
 BOX_IMAGE_REF = "https://blitz-control-plane.blitzapp.workers.dev/box-image/manifest.json"
 BOX_IMAGE_TAG = "blitz-box:amd64"
 BOX_IMAGE_SHA256 = "29a63905864b5b34933df2a2f31a84166d5aff7edfacf9efbc144635b3ff9ea3"

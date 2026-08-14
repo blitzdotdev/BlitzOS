@@ -23,6 +23,7 @@ describe("blitz.dev managed schema", () => {
     expect(TEENYBASE_SOURCE).toMatch(/^import type \{ DatabaseSettings, TableRulesExtensionData \} from "teenybase";/u);
     expect(TEENYBASE_SOURCE).toContain("satisfies DatabaseSettings;");
     expect(databaseSettingsSchema.parse(BLITZDEV_CONFIG)).toEqual(BLITZDEV_CONFIG);
+    expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
   it("contains the eight domain tables plus the deny-all file support table", () => {

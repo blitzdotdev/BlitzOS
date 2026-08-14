@@ -62,7 +62,7 @@ export const DENY_ALL_RULES = Object.freeze({
 
 export const BLITZDEV_CONFIG = Object.freeze({
   appName: "Blitz Control Plane",
-  appUrl: "https://blitz-core-probe-caae.app.blitz.dev",
+  appUrl: "$APP_URL",
   jwtSecret: "$JWT_SECRET_MAIN",
   tables: [
     {
@@ -248,6 +248,7 @@ import {
 } from "./core/index";
 
 type ManagedBindings = {
+  APP_URL: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
   TEENY_PRIMARY_DB: ConstructorParameters<typeof $Database>[2];
@@ -711,6 +712,7 @@ async function projectAccess(probeFile) {
   if (agentUrl.origin !== "https://blitz.dev" || match === null) throw new Error("invalid probe agent_link");
   return {
     base: `https://blitz.dev/api/v1/projects/${encodeURIComponent(probe.slug)}`,
+    appUrl: `https://${probe.slug}.app.blitz.dev`,
     token: decodeURIComponent(match[1]),
   };
 }
@@ -859,6 +861,11 @@ function migrationText(body) {
 
 export async function uploadManagedSet(uploadSet, probeFile, { commit = false } = {}) {
   const access = await projectAccess(probeFile);
+  await apiRequest(access, "/vars/APP_URL", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: access.appUrl }),
+  });
   const listed = await apiRequest(access, "/files");
   let version = saveVersion(listed.response, listed.body);
   if (version === undefined) throw new Error("file listing omitted x-save-version");

@@ -77,6 +77,16 @@ describe("blitz.dev managed emitter", () => {
     ]);
   });
 
+  it("emits an environment-resolved app URL without deployment URLs", () => {
+    const uploadSet = createUploadSet(coreSources());
+    const emitted = uploadSet.files.map((file) => file.source).join("\n");
+    const teenybase = uploadSet.files.find((file) => file.path === "teenybase.ts");
+
+    expect(teenybase?.source).toContain('appUrl: "$APP_URL"');
+    expect(emitted).not.toMatch(/https:\/\/[^\s"']*workers\.dev/iu);
+    expect(emitted).not.toContain("blitz-core-probe-caae.app.blitz.dev");
+  });
+
   it("emits no relative .js specifiers while leaving repository sources unchanged", () => {
     const sources = coreSources();
     expect(sources.get("core/index.ts")).toContain('from "./app.js"');
