@@ -9,6 +9,7 @@ import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
 import type { $Env } from "teenybase/worker";
 import {
   createOperatorPrincipalSource,
+  credentialMasterKeyFor,
   installControlPlaneRoutes,
   maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
@@ -28,6 +29,9 @@ import type {
 import config from "../teenybase.js";
 
 export const OPERATOR_KEY = "test-operator-key";
+export const CRED_MASTER_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+const credentialMasterKey = await credentialMasterKeyFor(CRED_MASTER_KEY);
 
 interface TestApp {
   request(
@@ -41,11 +45,16 @@ type TestBindings = Env & {
   JWT_SECRET_MAIN?: string;
   SESSION_TTL_DAYS?: string;
   MAX_CONCURRENT_WORKSPACES?: string;
+  CRED_MASTER_KEY: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
 };
 
-type TestEnv = $Env<TestBindings>;
+type TestEnv = $Env<TestBindings> & {
+  Variables: $Env<TestBindings>["Variables"] & {
+    $credentialMasterKey: CryptoKey;
+  };
+};
 
 export class FakeProviders implements VmProvider, VolumeProvider {
   readonly userData = new Map<string, string>();
@@ -140,14 +149,17 @@ export function appWithProviders(
   volumeProvider: VolumeProvider,
 ): TestApp {
   const app = teenyHono<TestEnv>(
-    async (context) =>
-      new $Database(context, config, context.env.DB, context.env.BOX_IMAGES),
+    async (context) => {
+      context.set("$credentialMasterKey", credentialMasterKey);
+      return new $Database(context, config, context.env.DB, context.env.BOX_IMAGES);
+    },
     undefined,
     { cors: false, logger: false },
   ) as TestApp;
   const runtimeFor = (context: CoreContext): CoreRuntime => ({
     db: context.get("$db") as Db,
     blobs: (context.env as TestBindings).BOX_IMAGES as BlobStore,
+    credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
       boxImageRef: (context.env as TestBindings).BOX_IMAGE_REF,
       boxImageSha256: (context.env as TestBindings).BOX_IMAGE_SHA256,
@@ -177,6 +189,7 @@ export function testRuntime(providers: FakeProviders): CoreRuntime {
   return {
     db: new $DatabaseRawImpl(env.DB),
     blobs: env.BOX_IMAGES as BlobStore,
+    credentialMasterKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
       boxImageSha256: env.BOX_IMAGE_SHA256,
@@ -202,6 +215,7 @@ export async function appRequest(
     BOX_IMAGE_SHA256: env.BOX_IMAGE_SHA256,
     BOX_IMAGE_TAG: env.BOX_IMAGE_TAG,
     DB: env.DB,
+    CRED_MASTER_KEY,
     ...bindings,
   });
 }
@@ -288,6 +302,11 @@ export async function enrollBox(
 
 export async function resetDatabase(): Promise<void> {
   const tables = [
+    "credential_events",
+    "credential_requests",
+    "credential_leases",
+    "user_connections",
+    "integrations",
     "broker_keys",
     "broker_boxes",
     "box_token_families",

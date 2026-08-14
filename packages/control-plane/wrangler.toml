@@ -6,11 +6,11 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 APP_URL = "https://blitz-control-plane.blitzapp.workers.dev"
 BOX_IMAGE_REF = "https://blitz-control-plane.blitzapp.workers.dev/box-image/manifest.json"
-BOX_IMAGE_TAG = "blitz-box:amd64"
-BOX_IMAGE_SHA256 = "29a63905864b5b34933df2a2f31a84166d5aff7edfacf9efbc144635b3ff9ea3"
+BOX_IMAGE_TAG = "blitz-box:20260814-amd64"
+BOX_IMAGE_SHA256 = "db41bc6bb5d76963c1dcde41d434c1aecc12b92869300a358044543d7f1668f1"
 SESSION_TTL_DAYS = "30"
 MAX_CONCURRENT_WORKSPACES = "10"
-MICROVM_HOSTS = '[{"name":"lab","url":"https://behavior-deal-anthony-jobs.trycloudflare.com","tokenVar":"MICROVM_LAB_TOKEN"}]'
+MICROVM_HOSTS = '[{"name":"lab","url":"https://higher-diet-hitting-ipod.trycloudflare.com","tokenVar":"MICROVM_LAB_TOKEN"}]'
 
 [[r2_buckets]]
 binding = "BOX_IMAGES"
@@ -31,6 +31,10 @@ not_found_handling = "single-page-application"
 run_worker_first = [
   "/sessions*",
   "/workspaces*",
+  "/integrations*",
+  "/leases*",
+  "/requests*",
+  "/proxy*",
   "/volumes*",
   "/machine-types*",
   "/oauth/*",

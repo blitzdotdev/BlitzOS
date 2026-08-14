@@ -1,0 +1,370 @@
+import type { Custody, Integration, Minter, MintKind } from "./types.js";
+import type { Db } from "../db.js";
+import { first, rows, transaction } from "../db.js";
+import {
+  HttpError,
+  isRecord,
+  readJson,
+  requiredString,
+} from "../http.js";
+import type { Principal } from "../principals.js";
+import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
+import { revokeIntegrationLeasesQuery } from "./leases.js";
+import { sealRoot } from "./root-crypto.js";
+import {
+  githubAppMinter,
+  importGithubAppPrivateKey,
+} from "./minters/app-jwt/github-app.js";
+import { staticMinter } from "./minters/static.js";
+
+const minters: readonly Minter[] = [githubAppMinter, staticMinter];
+
+function isMintKind(value: unknown): value is MintKind {
+  return value === "app-jwt" || value === "oauth" || value === "static";
+}
+
+function isCustody(value: unknown): value is Custody {
+  return value === "cp" || value === "broker" || value === "proxy";
+}
+
+function stringArray(value: unknown, field: string): string[] {
+  if (
+    !Array.isArray(value) ||
+    !value.every((item) => typeof item === "string" && item.length > 0)
+  ) {
+    throw new HttpError(400, `${field} must be an array of non-empty strings`);
+  }
+  return value;
+}
+
+function placementTemplate(
+  value: unknown,
+  allowStaticFill = false,
+): Record<string, unknown> {
+  if (!isRecord(value)) throw new HttpError(400, "each placement must be an object");
+  if (value.kind === "env") {
+    const result: Record<string, unknown> = {
+      kind: "env",
+      name: requiredString(value.name, "placement.name", 256),
+    };
+    if (allowStaticFill && value.fill !== undefined) {
+      if (value.fill !== "token" && value.fill !== "proxy-url") {
+        throw new HttpError(400, "placement.fill must be token or proxy-url");
+      }
+      result.fill = value.fill;
+    }
+    return result;
+  }
+  if (value.kind === "file") {
+    const result: Record<string, unknown> = {
+      kind: "file",
+      path: requiredString(value.path, "placement.path", 4_096),
+    };
+    if (value.mode !== undefined) {
+      if (
+        typeof value.mode !== "number" ||
+        !Number.isSafeInteger(value.mode) ||
+        value.mode < 0 ||
+        value.mode > 0o777
+      ) {
+        throw new HttpError(400, "placement.mode must be an integer from 0 through 511");
+      }
+      result.mode = value.mode;
+    }
+    if (allowStaticFill && value.fill !== undefined) {
+      if (value.fill !== "token" && value.fill !== "proxy-url") {
+        throw new HttpError(400, "placement.fill must be token or proxy-url");
+      }
+      result.fill = value.fill;
+    }
+    return result;
+  }
+  if (value.kind === "unset-env") {
+    if (allowStaticFill && value.fill !== undefined) {
+      throw new HttpError(400, "unset-env placements cannot declare fill");
+    }
+    return {
+      kind: "unset-env",
+      name: requiredString(value.name, "placement.name", 256),
+    };
+  }
+  throw new HttpError(400, "placement.kind must be env, file, or unset-env");
+}
+
+function proxyConfig(value: unknown): Record<string, string> {
+  if (!isRecord(value)) throw new HttpError(400, "config.proxy must be an object");
+  const baseUrl = requiredString(value.base_url, "config.proxy.base_url", 4_096);
+  try {
+    if (new URL(baseUrl).protocol !== "https:") throw new Error("not https");
+  } catch {
+    throw new HttpError(400, "config.proxy.base_url must be an https URL");
+  }
+  const tokenHeader = value.token_header ?? "Authorization";
+  if (typeof tokenHeader !== "string" || tokenHeader.length === 0) {
+    throw new HttpError(400, "config.proxy.token_header must be a non-empty string");
+  }
+  const tokenPrefix = value.token_prefix ?? "Bearer ";
+  if (typeof tokenPrefix !== "string" || tokenPrefix.length > 4_096) {
+    throw new HttpError(400, "config.proxy.token_prefix must be a string");
+  }
+  try {
+    const headers = new Headers();
+    headers.set(tokenHeader, `${tokenPrefix}token`);
+  } catch {
+    throw new HttpError(400, "config.proxy token header or prefix is invalid");
+  }
+  return {
+    base_url: baseUrl,
+    token_header: tokenHeader,
+    token_prefix: tokenPrefix,
+  };
+}
+
+function staticConfigJson(value: unknown, custody: Custody): string {
+  if (!isRecord(value)) throw new HttpError(400, "config must be an object");
+  if (!Array.isArray(value.placements)) {
+    throw new HttpError(400, "config.placements must be an array");
+  }
+  const config: Record<string, unknown> = {
+    placements: value.placements.map((placement) =>
+      placementTemplate(placement, true)
+    ),
+  };
+  if (value.default_scopes !== undefined) {
+    config.default_scopes = stringArray(value.default_scopes, "config.default_scopes");
+  }
+  if (value.proxy !== undefined) config.proxy = proxyConfig(value.proxy);
+  if (custody === "proxy" && config.proxy === undefined) {
+    throw new HttpError(400, "config.proxy.base_url is required for proxy custody");
+  }
+  return JSON.stringify(config);
+}
+
+function digitString(value: unknown, field: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 256 ||
+    !/^\d+$/u.test(value)
+  ) {
+    throw new HttpError(400, `${field} must be a non-empty string of digits`);
+  }
+  return value;
+}
+
+function stringMap(value: unknown, field: string): Record<string, string> {
+  if (!isRecord(value)) {
+    throw new HttpError(400, `${field} must be an object of non-empty strings`);
+  }
+  const result: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key.length === 0 || typeof item !== "string" || item.length === 0) {
+      throw new HttpError(400, `${field} must be an object of non-empty strings`);
+    }
+    result[key] = item;
+  }
+  return result;
+}
+
+function appJwtConfigJson(value: unknown): string {
+  if (!isRecord(value)) throw new HttpError(400, "config must be an object");
+  const config: Record<string, unknown> = {
+    app_id: digitString(value.app_id, "config.app_id"),
+    installation_id: digitString(value.installation_id, "config.installation_id"),
+  };
+  if (value.placements !== undefined) {
+    if (!Array.isArray(value.placements)) {
+      throw new HttpError(400, "config.placements must be an array");
+    }
+    config.placements = value.placements.map((placement) =>
+      placementTemplate(placement)
+    );
+  }
+  if (value.repositories !== undefined) {
+    config.repositories = stringArray(value.repositories, "config.repositories");
+  }
+  if (value.permissions !== undefined) {
+    config.permissions = stringMap(value.permissions, "config.permissions");
+  }
+  return JSON.stringify(config);
+}
+
+function configJson(kind: MintKind, custody: Custody, value: unknown): string {
+  return kind === "app-jwt"
+    ? appJwtConfigJson(value)
+    : staticConfigJson(value, custody);
+}
+
+async function validateRoot(kind: MintKind, root: string): Promise<void> {
+  if (kind !== "app-jwt") return;
+  try {
+    await importGithubAppPrivateKey(root);
+  } catch {
+    throw new HttpError(
+      400,
+      "private key must be a PKCS#8 PEM; convert PKCS#1 with: openssl pkcs8 -topk8 -nocrypt",
+    );
+  }
+}
+
+function usableByJson(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)) throw new HttpError(400, "usable_by must be an object or null");
+  return JSON.stringify({ owners: stringArray(value.owners, "usable_by.owners") });
+}
+
+export function resolveMinter(integration: Integration): Minter | null {
+  return (
+    minters.find(
+      (minter) =>
+        minter.kind === integration.kind &&
+        minter.providers?.includes(integration.provider) === true,
+    ) ??
+    minters.find(
+      (minter) => minter.kind === integration.kind && minter.providers === undefined,
+    ) ??
+    null
+  );
+}
+
+export async function integrationByName(
+  db: Db,
+  name: string,
+  activeOnly = true,
+): Promise<Integration | null> {
+  return first<Integration>(db, {
+    q: `SELECT * FROM integrations
+        WHERE name = ?1${activeOnly ? " AND revoked_at IS NULL" : ""}
+        LIMIT 1`,
+    v: [name],
+  });
+}
+
+export async function activeIntegrations(db: Db): Promise<Integration[]> {
+  return rows<Integration>(db, {
+    q: "SELECT * FROM integrations WHERE revoked_at IS NULL ORDER BY created_at, name",
+    v: [],
+  });
+}
+
+function validateServedIntegration(
+  provider: string,
+  kind: MintKind,
+  custody: Custody,
+): void {
+  const candidate: Integration = {
+    id: "",
+    name: "",
+    provider,
+    kind,
+    custody,
+    config: "{}",
+    root_ciphertext: null,
+    usable_by: null,
+    created_by: "",
+    created_at: 0,
+    revoked_at: null,
+  };
+  if (resolveMinter(candidate) === null) {
+    throw new HttpError(400, `credential kind ${kind} is not available`);
+  }
+  if (kind === "static" && (custody === "proxy" || custody === "cp")) return;
+  if (kind === "app-jwt" && custody === "cp") return;
+  throw new HttpError(400, `credential kind ${kind} does not support ${custody} custody`);
+}
+
+export function addIntegrationRoutes(
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+  requirePrincipal: (context: CoreContext) => Promise<Principal>,
+): void {
+  router.get("/integrations", async (context) => {
+    await requirePrincipal(context);
+    const integrations = await rows<
+      Pick<Integration, "name" | "provider" | "kind" | "custody" | "revoked_at">
+    >(runtimeFactory(context).db, {
+      q: `SELECT name, provider, kind, custody, revoked_at
+          FROM integrations ORDER BY created_at, name`,
+      v: [],
+    });
+    return context.json({
+      integrations: integrations.map((integration) => ({
+        name: integration.name,
+        provider: integration.provider,
+        kind: integration.kind,
+        custody: integration.custody,
+        status: integration.revoked_at === null ? "active" : "revoked",
+      })),
+    });
+  });
+
+  router.put("/integrations/:name", async (context) => {
+    const principal = await requirePrincipal(context);
+    const name = requiredString(context.req.param("name"), "name", 256);
+    const value = await readJson(context.req.raw);
+    if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
+    const provider = requiredString(value.provider, "provider", 256);
+    if (!isMintKind(value.kind)) {
+      throw new HttpError(400, "kind must be app-jwt, oauth, or static");
+    }
+    const custodyValue = value.custody ?? (value.kind === "static" ? "proxy" : "cp");
+    if (!isCustody(custodyValue)) {
+      throw new HttpError(400, "custody must be cp, broker, or proxy");
+    }
+    validateServedIntegration(provider, value.kind, custodyValue);
+    const config = configJson(value.kind, custodyValue, value.config);
+    const root = requiredString(value.root, "root");
+    await validateRoot(value.kind, root);
+    const usableBy = usableByJson(value.usable_by);
+    const runtime = runtimeFactory(context);
+    const existing = await integrationByName(runtime.db, name, false);
+    const id = existing?.id ?? crypto.randomUUID();
+    const now = Date.now();
+    const rootCiphertext = await sealRoot(runtime.credentialMasterKey, name, root);
+    await rows(runtime.db, {
+      q: `INSERT INTO integrations
+          (id, name, provider, kind, custody, config, root_ciphertext,
+           usable_by, created_by, created_at, revoked_at)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)
+          ON CONFLICT(name) DO UPDATE SET
+            provider = excluded.provider,
+            kind = excluded.kind,
+            custody = excluded.custody,
+            config = excluded.config,
+            root_ciphertext = excluded.root_ciphertext,
+            usable_by = excluded.usable_by,
+            revoked_at = NULL`,
+      v: [
+        id,
+        name,
+        provider,
+        value.kind,
+        custodyValue,
+        config,
+        rootCiphertext,
+        usableBy,
+        principal.id,
+        now,
+      ],
+    });
+    return context.body(null, 204);
+  });
+
+  router.delete("/integrations/:name", async (context) => {
+    await requirePrincipal(context);
+    const name = requiredString(context.req.param("name"), "name", 256);
+    const runtime = runtimeFactory(context);
+    const integration = await integrationByName(runtime.db, name, false);
+    if (integration === null) throw new HttpError(404, "integration not found");
+    await transaction(runtime.db, [
+      {
+        q: `UPDATE integrations
+            SET revoked_at = ?1, root_ciphertext = NULL
+            WHERE id = ?2`,
+        v: [Date.now(), integration.id],
+      },
+      revokeIntegrationLeasesQuery(integration.id),
+    ]);
+    return context.body(null, 204);
+  });
+}

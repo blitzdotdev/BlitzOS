@@ -1,3 +1,5 @@
+import "@xterm/xterm/css/xterm.css";
+import "./styles.css";
 import type { MachineType, Volume, WorkspaceView } from "@blitzos/schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, type ControlPlaneClient } from "./api.js";
@@ -5,13 +7,14 @@ import { ChatPanel } from "./chat/ChatPanel.js";
 import { CreateWorkspaceForm } from "./components/CreateWorkspaceForm.js";
 import { ErrorState } from "./components/RetryActionButton.js";
 import { LoginForm } from "./components/LoginForm.js";
+import { LeasesPanel } from "./components/LeasesPanel.js";
 import { PreviewPanel } from "./components/PreviewPanel.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
 import { TtydTerminal } from "./components/TtydTerminal.js";
 import { useWorkspaceTab, type CockpitTab } from "./device-state.js";
 import { FilesPanel } from "./files/FilesPanel.js";
+import { IntegrationsPanel } from "./settings/IntegrationsPanel.js";
 import { endpointTarget, type EndpointResolver, type StandalonePorts } from "./resolver.js";
-import "./styles.css";
 import { useWorkspaces } from "./use-workspaces.js";
 
 export interface CockpitProps {
@@ -25,7 +28,7 @@ export interface CockpitProps {
 
 type AuthState = "checking" | "authenticated" | "signed-out";
 
-const TABS: CockpitTab[] = ["terminal", "chat", "files", "preview"];
+const TABS: CockpitTab[] = ["terminal", "chat", "files", "preview", "leases"];
 
 export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps): React.JSX.Element {
   const [auth, setAuth] = useState<AuthState>("checking");
@@ -33,6 +36,7 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
   const [showDestroyed, setShowDestroyed] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showCredentials, setShowCredentials] = useState(false);
   const [destroyId, setDestroyId] = useState<string | null>(null);
   const [machineTypes, setMachineTypes] = useState<MachineType[]>([]);
   const [volumes, setVolumes] = useState<Volume[]>([]);
@@ -158,19 +162,21 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
     chat: endpointTarget(endpoints.acpUrl),
     files: endpointTarget(endpoints.filesBase),
     preview: endpointTarget(resolver.previewUrl(selected, 3000)),
+    leases: "Control plane",
   } satisfies Record<CockpitTab, string>;
 
   return (
     <div className="cockpit">
       <aside className="workspace-rail">
         <div className="brand">BlitzOS</div>
-        <button className="primary create-button" type="button" onClick={() => setShowCreate(true)}>+ Workspace</button>
+        <button className="cockpit-action cockpit-action--primary create-button" type="button" onClick={() => setShowCreate(true)}>+ Workspace</button>
         <nav aria-label="Workspaces">
+          {railWorkspaces.length === 0 && <p className="rail-empty">No workspaces yet</p>}
           {railWorkspaces.map((workspace) => (
             <button
               type="button"
               key={workspace.id}
-              className={workspace.id === selectedId ? "workspace-button selected" : "workspace-button"}
+              className={workspace.id === selectedId ? "cockpit-action workspace-button selected" : "cockpit-action workspace-button"}
               onClick={() => setSelectedId(workspace.id)}
             >
               <span>{workspace.id.slice(0, 8)}</span>
@@ -179,7 +185,7 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
           ))}
         </nav>
         {destroyedCount > 0 && (
-          <button className="destroyed-toggle" type="button" onClick={() => setShowDestroyed((current) => !current)}>
+          <button className="cockpit-action destroyed-toggle" type="button" onClick={() => setShowDestroyed((current) => !current)}>
             {showDestroyed ? "Hide destroyed" : `Show destroyed (${destroyedCount})`}
           </button>
         )}
@@ -191,8 +197,9 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
             <h1>{selected === null ? "Not connected" : selected.id}</h1>
           </div>
           <div className="button-row">
-            {standaloneSettings !== undefined && <button type="button" onClick={() => setShowSettings(true)}>Tunnel settings</button>}
-            <button type="button" onClick={() => void logout()}>Logout</button>
+            <button className="cockpit-action" type="button" onClick={() => setShowCredentials(true)}>Credentials</button>
+            {standaloneSettings !== undefined && <button className="cockpit-action" type="button" onClick={() => setShowSettings(true)}>Tunnel settings</button>}
+            <button className="cockpit-action" type="button" onClick={() => void logout()}>Logout</button>
           </div>
         </header>
 
@@ -205,7 +212,7 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
 
         {showCreate && (
           <>
-            {createOptionsError !== null && <p className="form-error">{createOptionsError}</p>}
+            {createOptionsError !== null && <p className="cockpit-form-message form-error">{createOptionsError}</p>}
             <CreateWorkspaceForm
               machineTypes={machineTypes}
               volumes={volumes}
@@ -217,9 +224,16 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
         )}
 
         {!showCreate && selected === null && (
-          <div className="empty-state card" data-connection-state="not-connected">
-            <h2>Not connected</h2>
+          <div className="cockpit-empty" data-connection-state="not-connected">
+            <svg viewBox="0 0 32 32" aria-hidden="true">
+              <path d="M6.5 9.5 16 4l9.5 5.5v11L16 26l-9.5-5.5z" />
+              <path d="m6.5 9.5 9.5 5.5 9.5-5.5M16 15v11" />
+            </svg>
+            <h1>Not connected</h1>
             <p>{railWorkspaces.length === 0 ? "Create a workspace to connect." : "Select a workspace to connect."}</p>
+            {railWorkspaces.length === 0 && (
+              <button className="cockpit-action cockpit-action--primary" type="button" onClick={() => setShowCreate(true)}>Create workspace</button>
+            )}
           </div>
         )}
 
@@ -231,18 +245,23 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
                 <code>{selected.ssh.user}@{selected.ssh.host}:{selected.ssh.port}</code>
               )}
               {selected.retryAction !== null && (
-                <button type="button" data-retry-action={selected.retryAction} onClick={() => retry(selected, selected.retryAction!)}>Retry</button>
+                <button className="cockpit-action" type="button" data-retry-action={selected.retryAction} onClick={() => retry(selected, selected.retryAction!)}>Retry</button>
               )}
               {selected.phase !== "destroyed" && selected.phase !== "destroying" && (
-                <button className="danger" type="button" onClick={() => setDestroyId(selected.id)}>Destroy</button>
+                <button className="cockpit-action danger" type="button" onClick={() => setDestroyId(selected.id)}>Destroy</button>
               )}
             </div>
             {selected.error !== null && <p className="workspace-error" role="alert">{selected.error}</p>}
             <div className="tabs" role="tablist" aria-label="Workspace tools">
               {TABS.map((candidate) => {
-                const enabled = candidate === "terminal" ? selected.canObserve : selected.launchable;
+                const enabled = candidate === "leases"
+                  ? true
+                  : candidate === "terminal"
+                    ? selected.canObserve
+                    : selected.launchable;
                 return (
                   <button
+                    className="cockpit-action"
                     role="tab"
                     type="button"
                     key={candidate}
@@ -259,8 +278,17 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
             {tab === "terminal" && selected.canObserve && <TtydTerminal url={endpoints.terminalUrl} readOnly={!selected.launchable} />}
             {tab === "files" && selected.launchable && <FilesPanel baseUrl={endpoints.filesBase} />}
             {tab === "preview" && selected.launchable && <PreviewPanel workspace={selected} resolver={resolver} />}
-            {((tab === "terminal" && !selected.canObserve) || (tab !== "terminal" && !selected.launchable)) && (
-              <div className="empty-state card">This surface is unavailable in the current server view.</div>
+            {tab === "leases" && <LeasesPanel client={client} workspaceId={selected.id} />}
+            {((tab === "terminal" && !selected.canObserve) ||
+              (tab !== "terminal" && tab !== "leases" && !selected.launchable)) && (
+              <div className="cockpit-empty">
+                <svg viewBox="0 0 32 32" aria-hidden="true">
+                  <rect x="5" y="7" width="22" height="18" />
+                  <path d="M10 12h12M10 16h8" />
+                </svg>
+                <h1>Surface unavailable</h1>
+                <p>This surface is unavailable in the current server view.</p>
+              </div>
             )}
           </section>
         )}
@@ -288,8 +316,8 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
             <h2>Destroy workspace?</h2>
             <p>This destroys {destroyId}. An attached volume is preserved.</p>
             <div className="button-row">
-              <button type="button" onClick={() => setDestroyId(null)}>Cancel</button>
-              <button className="danger" type="button" onClick={() => void destroy()}>Destroy</button>
+              <button className="cockpit-action" type="button" onClick={() => setDestroyId(null)}>Cancel</button>
+              <button className="cockpit-action danger" type="button" onClick={() => void destroy()}>Destroy</button>
             </div>
           </div>
         </div>
@@ -300,6 +328,9 @@ export function Cockpit({ client, resolver, standaloneSettings }: CockpitProps):
           onSave={standaloneSettings.onSave}
           onClose={() => setShowSettings(false)}
         />
+      )}
+      {showCredentials && (
+        <IntegrationsPanel client={client} onClose={() => setShowCredentials(false)} />
       )}
     </div>
   );

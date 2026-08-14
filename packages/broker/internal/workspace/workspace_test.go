@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -150,5 +151,158 @@ func TestLoadBrokerRejectsMissingMember(t *testing.T) {
 	}
 	if _, err := LoadBroker(stateDir); err == nil {
 		t.Fatal("broker config without member was accepted")
+	}
+}
+
+func TestApplyMintResultWritesQuotedEnvironmentAndFilePlacements(t *testing.T) {
+	stateDir := t.TempDir()
+	filePath := filepath.Join(t.TempDir(), "nested", "credential.json")
+	mode := os.FileMode(0o640)
+	result := MintResult{
+		Integration: "example",
+		Mode:        "inject",
+		ExpiresAt:   2_000_000,
+		Placements: []Placement{
+			{Kind: "unset-env", Name: "OLD_TOKEN"},
+			{Kind: "env", Name: "API_TOKEN", Value: "it's $HOME"},
+			{Kind: "file", Path: filePath, Value: "file-secret", Mode: &mode},
+		},
+	}
+	if err := applyMintResult(stateDir, result); err != nil {
+		t.Fatal(err)
+	}
+	environmentPath := filepath.Join(stateDir, credentialsDirectory, environmentDirectory, "example.sh")
+	environment, err := os.ReadFile(environmentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(environment) != "export API_TOKEN='it'\"'\"'s $HOME'\nunset OLD_TOKEN\n" {
+		t.Fatalf("environment file = %q", environment)
+	}
+	assertFileMode(t, environmentPath, 0o600)
+	file, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(file) != "file-secret" {
+		t.Fatalf("file placement = %q", file)
+	}
+	assertFileMode(t, filePath, mode)
+}
+
+func TestApplySyncReplacesEnvironmentDirectoryAndWritesMinimumExpiry(t *testing.T) {
+	stateDir := t.TempDir()
+	envDir := filepath.Join(stateDir, credentialsDirectory, environmentDirectory)
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, "stale.sh"), []byte("export STALE='yes'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	results := []MintResult{
+		{Integration: "one", Mode: "inject", ExpiresAt: 900_000, Placements: []Placement{{Kind: "env", Name: "ONE", Value: "1"}}},
+		{Integration: "two", Mode: "proxy", ExpiresAt: 800_000, Placements: []Placement{{Kind: "unset-env", Name: "TWO"}}},
+	}
+	if err := applySync(stateDir, results, 123_456); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(envDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if !slices.Equal(names, []string{"one.sh", "two.sh"}) {
+		t.Fatalf("env.d entries = %q", names)
+	}
+	statePath := filepath.Join(stateDir, credentialsDirectory, syncStateFile)
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(state) != "{\"synced_at\":123456,\"expires_at\":800000}\n" {
+		t.Fatalf("sync state = %q", state)
+	}
+	assertFileMode(t, statePath, 0o600)
+}
+
+func TestEmptySyncUsesZeroExpiry(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := applySync(stateDir, []MintResult{}, 123_456); err != nil {
+		t.Fatal(err)
+	}
+	state, err := os.ReadFile(filepath.Join(stateDir, credentialsDirectory, syncStateFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(state) != "{\"synced_at\":123456,\"expires_at\":0}\n" {
+		t.Fatalf("sync state = %q", state)
+	}
+}
+
+func TestSyncStateFreshnessUsesSixtySecondMargin(t *testing.T) {
+	state := SyncState{ExpiresAt: 1_000_000}
+	if !state.Fresh(939_999) {
+		t.Fatal("state more than 60 seconds from expiry is stale")
+	}
+	if state.Fresh(940_000) {
+		t.Fatal("state exactly 60 seconds from expiry is fresh")
+	}
+	if (SyncState{ExpiresAt: 0}).Fresh(0) {
+		t.Fatal("zero expiry is fresh")
+	}
+}
+
+func TestSyncMintsAllOnce(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := store.SaveCredential(stateDir, store.Credential{BoxID: "box", AccessToken: "access", RefreshToken: "refresh"}); err != nil {
+		t.Fatal(err)
+	}
+	filePath := filepath.Join(t.TempDir(), "credential")
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls++
+		if request.Method != http.MethodPost || request.URL.Path != "/workspaces/self/credentials" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer access" {
+			t.Errorf("Authorization = %q", request.Header.Get("Authorization"))
+		}
+		body, _ := io.ReadAll(request.Body)
+		if string(body) != "{}" {
+			t.Errorf("body = %q", body)
+		}
+		fmt.Fprintf(writer, `[{"integration":"example","mode":"inject","placements":[{"kind":"file","path":%q,"value":"secret"}],"expiresAt":2000000000000}]`, filePath)
+	}))
+	defer server.Close()
+	if err := store.SaveOrigin(stateDir, server.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := Sync(context.Background(), stateDir, server.Client()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("mint-all calls = %d", calls)
+	}
+	file, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(file) != "secret" {
+		t.Fatalf("file placement = %q", file)
+	}
+	assertFileMode(t, filePath, 0o600)
+}
+
+func assertFileMode(t *testing.T, path string, expected os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != expected {
+		t.Errorf("%s mode = %o, want %o", path, info.Mode().Perm(), expected)
 	}
 }

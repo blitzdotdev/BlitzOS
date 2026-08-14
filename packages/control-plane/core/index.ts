@@ -3,6 +3,11 @@ export type { BlobObject, BlobStore, LogicalBlobLookup } from "./blobs.js";
 export { blobResponse, NullBlobStore, streamBlob } from "./blobs.js";
 export type { Db, Query, RawRun, TransactionRun } from "./db.js";
 export { changed, first, rows, transaction } from "./db.js";
+export { runLeaseSweep } from "./credentials/leases.js";
+export {
+  credentialMasterKeyFor,
+  importCredentialMasterKey,
+} from "./credentials/root-crypto.js";
 export {
   LAZY_SWEEP_INTERVAL_MS,
   maybeScheduleLazySweep,

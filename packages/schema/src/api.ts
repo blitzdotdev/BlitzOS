@@ -12,6 +12,9 @@ export interface CreateWorkspaceRequest {
   volumeId?: string;
   /** User-data is readable inside the VM; never put secrets here. */
   userData?: string;
+  manifest?: {
+    integrations: Record<string, Record<string, unknown>>;
+  };
 }
 
 export interface CreateWorkspaceResponse {

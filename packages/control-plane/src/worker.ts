@@ -3,6 +3,7 @@ import type { $Env } from "teenybase/worker";
 import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
 import {
   CompositeVmProvider,
+  credentialMasterKeyFor,
   createOperatorPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
@@ -10,6 +11,7 @@ import {
   maybeScheduleLazySweep,
   maxConcurrentWorkspacesFromEnv,
   runInvariantSweep,
+  runLeaseSweep,
   runOrphanSweep,
   runSessionSweep,
   sessionTtlMsFromEnv,
@@ -28,6 +30,7 @@ type WorkerBindings = Env & {
   MICROVM_HOSTS?: string;
   SESSION_TTL_DAYS?: string;
   MAX_CONCURRENT_WORKSPACES?: string;
+  CRED_MASTER_KEY: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
 };
@@ -35,6 +38,7 @@ type WorkerBindings = Env & {
 type WorkerEnv = $Env<WorkerBindings> & {
   Variables: $Env<WorkerBindings>["Variables"] & {
     settings: DatabaseSettings;
+    $credentialMasterKey: CryptoKey;
   };
 };
 
@@ -67,6 +71,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
   return {
     db: context.get("$db") as Db,
     blobs: env.BOX_IMAGES as BlobStore,
+    credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
       boxImageSha256: env.BOX_IMAGE_SHA256,
@@ -86,10 +91,12 @@ function runtimeForScheduled(
   env: WorkerBindings,
   db: Db,
   executionContext: ExecutionContext,
+  credentialMasterKey: CryptoKey,
 ): CoreRuntime {
   return {
     db,
     blobs: env.BOX_IMAGES as BlobStore,
+    credentialMasterKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
       boxImageSha256: env.BOX_IMAGE_SHA256,
@@ -106,8 +113,13 @@ function runtimeForScheduled(
 }
 
 const app = teenyHono<WorkerEnv>(
-  async (context) =>
-    new $Database(context, config, context.env.DB, context.env.BOX_IMAGES),
+  async (context) => {
+    context.set(
+      "$credentialMasterKey",
+      await credentialMasterKeyFor(context.env.CRED_MASTER_KEY),
+    );
+    return new $Database(context, config, context.env.DB, context.env.BOX_IMAGES);
+  },
   undefined,
   { cors: false, logger: true },
   async (context) => {
@@ -133,8 +145,14 @@ export default {
     const db = new $DatabaseRawImpl(env.DB);
     executionContext.waitUntil(
       (async () => {
-        const runtime = runtimeForScheduled(env, db, executionContext);
+        const runtime = runtimeForScheduled(
+          env,
+          db,
+          executionContext,
+          await credentialMasterKeyFor(env.CRED_MASTER_KEY),
+        );
         await runSessionSweep(runtime);
+        await runLeaseSweep(runtime);
         await runInvariantSweep(runtime);
         await runOrphanSweep(runtime);
       })(),

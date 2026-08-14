@@ -1,4 +1,8 @@
 import { changed, rows, transaction } from "./db.js";
+import {
+  revokeWorkspaceLeasesQuery,
+  runLeaseSweep,
+} from "./credentials/leases.js";
 import type { CoreRuntime } from "./runtime.js";
 import type { WorkspaceRow } from "./workspaces.js";
 
@@ -15,6 +19,9 @@ const LAZY_SWEEP_PREFIXES = [
   "/machine-types",
   "/oauth/",
   "/boxes/",
+  "/integrations",
+  "/leases/",
+  "/requests",
 ] as const;
 
 function sweepPath(path: string): boolean {
@@ -42,6 +49,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
     }
     if (row.phase === "destroying") {
       const transition = await transaction(runtime.db, [
+        revokeWorkspaceLeasesQuery(row.id),
         { q: "DELETE FROM boxes WHERE workspace_id = ?1", v: [row.id] },
         {
           q: `UPDATE workspaces
@@ -53,7 +61,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
           v: [Date.now(), row.id],
         },
       ]);
-      if (transition[1]?.length !== 1) continue;
+      if (transition[2]?.length !== 1) continue;
     } else {
       await rows(runtime.db, {
         q: "UPDATE workspaces SET vm_id = NULL WHERE id = ?1",
@@ -101,6 +109,7 @@ export function maybeScheduleLazySweep(runtime: CoreRuntime, path: string): void
   inFlight = (async () => {
     try {
       await runSessionSweep(runtime);
+      await runLeaseSweep(runtime);
       await runInvariantSweep(runtime);
       await runOrphanSweep(runtime);
     } catch (error) {

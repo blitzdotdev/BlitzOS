@@ -1,4 +1,5 @@
 import { addBoxImageRoutes } from "./box-images.js";
+import { addCredentialRoutes } from "./credentials/mint.js";
 import { HttpError } from "./http.js";
 import { addOAuthRoutes } from "./oauth.js";
 import type { Principal } from "./principals.js";
@@ -26,6 +27,7 @@ export function installControlPlaneRoutes(
   addSessionRoutes(router, runtimeFactory, requirePrincipal);
   addOAuthRoutes(router, runtimeFactory, requirePrincipal);
   addWorkspaceRoutes(router, runtimeFactory, requirePrincipal);
+  addCredentialRoutes(router, runtimeFactory, requirePrincipal);
   addVolumeRoutes(router, runtimeFactory, requirePrincipal);
   addRegistryRoutes(router, runtimeFactory);
 
@@ -41,7 +43,12 @@ export function installControlPlaneRoutes(
   );
   router.onError((error, context) => {
     if (error instanceof HttpError) {
-      return context.json({ error: error.message, retryAction: null }, error.status);
+      return error.requestId === undefined
+        ? context.json({ error: error.message, retryAction: null }, error.status)
+        : context.json(
+            { error: error.message, request_id: error.requestId },
+            error.status,
+          );
     }
     console.error(
       JSON.stringify({

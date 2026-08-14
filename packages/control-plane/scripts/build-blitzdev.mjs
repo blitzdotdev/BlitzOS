@@ -24,6 +24,16 @@ export const CORE_MANIFEST = Object.freeze([
   "core/box-images.ts",
   "core/cloud-init.ts",
   "core/crypto.ts",
+  "core/credentials/types.ts",
+  "core/credentials/root-crypto.ts",
+  "core/credentials/manifest.ts",
+  "core/credentials/leases.ts",
+  "core/credentials/minters/static.ts",
+  "core/credentials/minters/app-jwt/github-app.ts",
+  "core/credentials/registry.ts",
+  "core/credentials/requests.ts",
+  "core/credentials/mint.ts",
+  "core/credentials/proxy.ts",
   "core/http.ts",
   "core/janitors.ts",
   "core/oauth.ts",
@@ -105,6 +115,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "phone_home_used", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "phone_home_used IN (0, 1)" },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "updated_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "manifest", type: "text", sqlType: "text" },
       ],
       indexes: [
         { name: "owner", fields: ["owner_id", "created_at"] },
@@ -177,6 +188,89 @@ export const BLITZDEV_CONFIG = Object.freeze({
       extensions: [DENY_ALL_RULES],
     },
     {
+      name: "integrations",
+      fields: [
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
+        { name: "name", type: "text", sqlType: "text", notNull: true, unique: true },
+        { name: "provider", type: "text", sqlType: "text", notNull: true },
+        { name: "kind", type: "text", sqlType: "text", notNull: true },
+        { name: "custody", type: "text", sqlType: "text", notNull: true, default: { l: "cp" } },
+        { name: "config", type: "text", sqlType: "text", notNull: true, default: { l: "{}" } },
+        { name: "root_ciphertext", type: "text", sqlType: "text" },
+        { name: "usable_by", type: "text", sqlType: "text" },
+        { name: "created_by", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "revoked_at", type: "integer", sqlType: "integer" },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "user_connections",
+      fields: [
+        { name: "user_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } },
+        { name: "integration_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "integrations", column: "id" } },
+        { name: "refresh_ciphertext", type: "text", sqlType: "text", notNull: true },
+        { name: "scopes", type: "text", sqlType: "text", notNull: true },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "revoked_at", type: "integer", sqlType: "integer" },
+      ],
+      indexes: [
+        { name: "identity", unique: true, fields: ["user_id", "integration_id"] },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "credential_leases",
+      fields: [
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
+        { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } },
+        { name: "box_id", type: "text", sqlType: "text", foreignKey: { table: "boxes", column: "id", onDelete: "SET NULL" } },
+        { name: "integration_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "integrations", column: "id" } },
+        { name: "user_id", type: "text", sqlType: "text" },
+        { name: "scopes", type: "text", sqlType: "text", notNull: true },
+        { name: "mode", type: "text", sqlType: "text", notNull: true, check: "mode IN ('inject','proxy')" },
+        { name: "token_hash", type: "text", sqlType: "text", unique: true },
+        { name: "issued_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "expires_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('active','revoked','expired')" },
+      ],
+      indexes: [
+        { name: "workspace", fields: ["workspace_id", "state"] },
+        { name: "expiry", fields: ["state", "expires_at"] },
+        { name: "token", fields: "token_hash", where: { q: "token_hash IS NOT NULL" } },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "credential_events",
+      fields: [
+        { name: "id", type: "integer", sqlType: "integer", primary: true, autoIncrement: true, noUpdate: true, noInsert: true },
+        { name: "lease_id", type: "text", sqlType: "text", foreignKey: { table: "credential_leases", column: "id" } },
+        { name: "event", type: "text", sqlType: "text", notNull: true, check: "event IN ('minted','revoked','denied','approved')" },
+        { name: "detail", type: "text", sqlType: "text" },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "credential_requests",
+      fields: [
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
+        { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } },
+        { name: "integration_name", type: "text", sqlType: "text", notNull: true },
+        { name: "requested_scopes", type: "text", sqlType: "text", notNull: true },
+        { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('pending','approved','denied')" },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "resolved_at", type: "integer", sqlType: "integer" },
+        { name: "resolved_by", type: "text", sqlType: "text" },
+      ],
+      indexes: [
+        { name: "pending", fields: ["state", "created_at"] },
+        { name: "dedup", unique: true, fields: ["workspace_id", "integration_name", "requested_scopes"], where: { q: "state = 'pending'" } },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
       name: "blitz_files",
       r2Base: "blitz-files",
       autoDeleteR2Files: false,
@@ -230,6 +324,7 @@ export const WORKER_SOURCE = normalizeSource(`import { $Database, teenyHono } fr
 import config from "virtual:teenybase";
 import {
   CompositeVmProvider,
+  credentialMasterKeyFor,
   createOperatorPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
@@ -262,6 +357,7 @@ type ManagedBindings = {
   SESSION_TTL_DAYS?: string;
   MAX_CONCURRENT_WORKSPACES?: string;
   MICROVM_HOSTS?: string;
+  CRED_MASTER_KEY: string;
 };
 
 type ManagedEnv = {
@@ -269,6 +365,7 @@ type ManagedEnv = {
   Variables: {
     settings: typeof config;
     $db: $Database;
+    $credentialMasterKey: CryptoKey;
   };
 };
 
@@ -313,6 +410,10 @@ const API_PREFIXES = [
   "/machine-types",
   "/oauth/",
   "/boxes/",
+  "/integrations",
+  "/leases/",
+  "/requests",
+  "/proxy/",
   "/box-image",
   "/api/",
 ];
@@ -364,6 +465,7 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
   return {
     db: context.get("$db") as Db,
     blobs: managedBlobStore(context.get("$db") as $Database, "box-image"),
+    credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
       boxImageSha256: env.BOX_IMAGE_SHA256,
@@ -378,7 +480,10 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
 }
 
 const app = teenyHono<ManagedEnv>(
-  async (c) => new $Database(c, config, c.env.TEENY_PRIMARY_DB, c.env.TEENY_PRIMARY_R2),
+  async (c) => {
+    c.set("$credentialMasterKey", await credentialMasterKeyFor(c.env.CRED_MASTER_KEY));
+    return new $Database(c, config, c.env.TEENY_PRIMARY_DB, c.env.TEENY_PRIMARY_R2);
+  },
   undefined,
   { cors: false, logger: true },
   async (c) => {

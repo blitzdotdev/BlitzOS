@@ -1,10 +1,14 @@
 import type {
   ApiError,
+  ListCredentialLeasesResponse,
+  ListCredentialRequestsResponse,
+  ListIntegrationsResponse,
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
   ListMachineTypesResponse,
   ListVolumesResponse,
   PollResponse,
+  PutIntegrationRequest,
   RetryAction,
 } from "@blitzos/schema";
 
@@ -26,6 +30,14 @@ export interface ControlPlaneClient {
   destroy(id: string): Promise<CreateWorkspaceResponse>;
   listMachineTypes(): Promise<ListMachineTypesResponse>;
   listVolumes(): Promise<ListVolumesResponse>;
+  listIntegrations(signal?: AbortSignal): Promise<ListIntegrationsResponse>;
+  putIntegration(name: string, input: PutIntegrationRequest): Promise<void>;
+  deleteIntegration(name: string): Promise<void>;
+  listLeases(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialLeasesResponse>;
+  revokeLease(id: string): Promise<void>;
+  listCredentialRequests(signal?: AbortSignal): Promise<ListCredentialRequestsResponse>;
+  approveCredentialRequest(id: string): Promise<void>;
+  denyCredentialRequest(id: string): Promise<void>;
 }
 
 export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
@@ -40,7 +52,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       } catch {
         // The status is still authoritative when an intermediary returns non-JSON.
       }
-      throw new ApiRequestError(error.error, response.status, error.retryAction);
+      throw new ApiRequestError(error.error, response.status, error.retryAction ?? null);
     }
     if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
@@ -66,5 +78,34 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       }),
     listMachineTypes: () => request<ListMachineTypesResponse>("/machine-types"),
     listVolumes: () => request<ListVolumesResponse>("/volumes"),
+    listIntegrations: (signal) =>
+      request<ListIntegrationsResponse>("/integrations", { signal }),
+    putIntegration: (name, input) =>
+      request<void>(`/integrations/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    deleteIntegration: (name) =>
+      request<void>(`/integrations/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+      }),
+    listLeases: (workspaceId, signal) =>
+      request<ListCredentialLeasesResponse>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/leases`,
+        { signal },
+      ),
+    revokeLease: (id) =>
+      request<void>(`/leases/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    listCredentialRequests: (signal) =>
+      request<ListCredentialRequestsResponse>("/requests?state=pending", { signal }),
+    approveCredentialRequest: (id) =>
+      request<void>(`/requests/${encodeURIComponent(id)}/approve`, {
+        method: "POST",
+      }),
+    denyCredentialRequest: (id) =>
+      request<void>(`/requests/${encodeURIComponent(id)}/deny`, {
+        method: "POST",
+      }),
   };
 }

@@ -12,6 +12,7 @@ export default defineConfig(async () => {
           bindings: {
             TEST_MIGRATIONS: migrations,
             MICROVM_LAB_TOKEN: "test-only-microvm-lab-token-00000000",
+            CRED_MASTER_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
           },
         },
       }),

@@ -5,7 +5,7 @@ import { DEFAULT_PORTS, validPort } from "./resolver.js";
 const PORTS_KEY = "blitz.cockpit.ports.v1";
 const LAYOUT_KEY = "blitz.cockpit.layout.v1";
 
-export type CockpitTab = "terminal" | "chat" | "files" | "preview";
+export type CockpitTab = "terminal" | "chat" | "files" | "preview" | "leases";
 
 interface LayoutState {
   tabs: Record<string, CockpitTab>;

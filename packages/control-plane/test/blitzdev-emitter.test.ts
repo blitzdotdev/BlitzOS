@@ -27,6 +27,16 @@ const expected = [
   "core/box-images.ts",
   "core/cloud-init.ts",
   "core/crypto.ts",
+  "core/credentials/types.ts",
+  "core/credentials/root-crypto.ts",
+  "core/credentials/manifest.ts",
+  "core/credentials/leases.ts",
+  "core/credentials/minters/static.ts",
+  "core/credentials/minters/app-jwt/github-app.ts",
+  "core/credentials/registry.ts",
+  "core/credentials/requests.ts",
+  "core/credentials/mint.ts",
+  "core/credentials/proxy.ts",
   "core/http.ts",
   "core/janitors.ts",
   "core/oauth.ts",
@@ -57,7 +67,7 @@ describe("blitz.dev managed emitter", () => {
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(25);
+    expect(first.files).toHaveLength(35);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

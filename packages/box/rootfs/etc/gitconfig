@@ -1,0 +1,2 @@
+[credential "https://github.com"]
+	helper = "!blitz-cred git-helper"

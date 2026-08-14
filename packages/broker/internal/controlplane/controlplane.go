@@ -132,6 +132,14 @@ func (c *Client) RegisterKeys(ctx context.Context, keys []feed.Key) (KeyRegistra
 	return KeyRegistration{Broker: result.Broker, MemberUnixName: result.MemberUnixName}, nil
 }
 
+// PostWorkspaceCredentials makes the box-authenticated credential mint request.
+// The caller owns and must close the returned response body.
+func (c *Client) PostWorkspaceCredentials(ctx context.Context, body []byte) (*http.Response, error) {
+	return c.authenticated(ctx, http.MethodPost, func(string) string {
+		return "/workspaces/self/credentials"
+	}, body)
+}
+
 func (c *Client) FetchFeed(ctx context.Context, etag string) ([]byte, string, bool, error) {
 	credential, err := store.LoadCredential(c.stateDir)
 	if err != nil {

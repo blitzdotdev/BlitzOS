@@ -66,6 +66,9 @@ export interface CreateWorkspaceRequest {
   sshPublicKey: string;
   volumeId?: string;
   userData?: string;
+  manifest?: {
+    integrations: Record<string, Record<string, unknown>>;
+  };
 }
 
 export interface CreateWorkspaceResponse {

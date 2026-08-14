@@ -15,6 +15,11 @@ const expectedTables = [
   "box_token_families",
   "broker_boxes",
   "broker_keys",
+  "integrations",
+  "user_connections",
+  "credential_leases",
+  "credential_events",
+  "credential_requests",
   "blitz_files",
 ] as const;
 
@@ -26,9 +31,9 @@ describe("blitz.dev managed schema", () => {
     expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
-  it("contains the eight domain tables plus the deny-all file support table", () => {
+  it("contains the thirteen domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(9);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(14);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -51,6 +56,17 @@ describe("blitz.dev managed schema", () => {
       ]),
       indexes: [{ name: "expires_at", fields: "expires_at" }],
     });
+    expect(
+      BLITZDEV_CONFIG.tables.find(({ name }) => name === "credential_leases"),
+    ).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({
+          name: "box_id",
+          foreignKey: { table: "boxes", column: "id", onDelete: "SET NULL" },
+        }),
+        expect.objectContaining({ name: "token_hash", unique: true }),
+      ]),
+    });
   });
 
   it("generates only the expected table and index creates from an empty schema", () => {
@@ -65,6 +81,12 @@ describe("blitz.dev managed schema", () => {
       "idx_boxes_principal",
       "idx_broker_keys_box",
       "idx_broker_keys_identity",
+      "idx_user_connections_identity",
+      "idx_credential_leases_workspace",
+      "idx_credential_leases_expiry",
+      "idx_credential_leases_token",
+      "idx_credential_requests_pending",
+      "idx_credential_requests_dedup",
       "idx_blitz_files_logical",
       "idx_blitz_files_release",
     ]);

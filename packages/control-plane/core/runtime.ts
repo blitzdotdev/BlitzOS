@@ -31,6 +31,7 @@ export type CoreHandler = (
 ) => Response | Promise<Response>;
 
 export interface CoreRouter {
+  all(path: string, handler: CoreHandler): unknown;
   get(path: string, handler: CoreHandler): unknown;
   post(path: string, handler: CoreHandler): unknown;
   put(path: string, handler: CoreHandler): unknown;
@@ -78,6 +79,7 @@ export function maxConcurrentWorkspacesFromEnv(value: unknown): number {
 export interface CoreRuntime {
   db: Db;
   blobs: BlobStore;
+  credentialMasterKey: CryptoKey;
   vars: RuntimeVariables;
   providers: {
     vm: VmProvider;

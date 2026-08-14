@@ -1,4 +1,6 @@
 import { buildUserData } from "./cloud-init.js";
+import { manifestJson, parseManifest } from "./credentials/manifest.js";
+import { revokeWorkspaceLeasesQuery } from "./credentials/leases.js";
 import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
@@ -38,6 +40,7 @@ export interface WorkspaceRow {
   phone_home_used: number;
   created_at: number;
   updated_at: number;
+  manifest: string | null;
 }
 
 const retryActions: Record<Phase, RetryAction> = {
@@ -95,6 +98,9 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   }
   if (value.userData !== undefined) {
     result.userData = requiredString(value.userData, "userData", 48 * 1024);
+  }
+  if (value.manifest !== undefined) {
+    result.manifest = parseManifest(value.manifest);
   }
   return result;
 }
@@ -198,18 +204,20 @@ export function addWorkspaceRoutes(
 
     const inserted = await rows(runtime.db, {
       q: `INSERT INTO workspaces
-          (id, owner_id, phase, revision, volume_id, phone_home_hash, created_at, updated_at)
-          SELECT ?1, ?2, 'creating', 1, ?3, ?4, ?5, ?5
+          (id, owner_id, phase, revision, volume_id, phone_home_hash, manifest,
+           created_at, updated_at)
+          SELECT ?1, ?2, 'creating', 1, ?3, ?4, ?5, ?6, ?6
           WHERE (
             SELECT COUNT(*) FROM workspaces
             WHERE owner_id = ?2 AND phase IN ('creating', 'ready', 'destroying', 'error')
-          ) < ?6
+          ) < ?7
           RETURNING id`,
       v: [
         id,
         principal.id,
         input.volumeId ?? null,
         await hashSecret(capability),
+        input.manifest === undefined ? null : manifestJson(input.manifest),
         now,
         runtime.vars.maxConcurrentWorkspaces,
       ],
@@ -298,6 +306,7 @@ export function addWorkspaceRoutes(
     if (row.vm_id !== null) await runtime.providers.vm.destroy(row.vm_id);
 
     await transaction(runtime.db, [
+      revokeWorkspaceLeasesQuery(id),
       { q: "DELETE FROM boxes WHERE workspace_id = ?1", v: [id] },
       {
         q: `UPDATE workspaces

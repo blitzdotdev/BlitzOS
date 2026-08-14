@@ -29,6 +29,14 @@ function client(workspaces: WorkspaceView[]): ControlPlaneClient {
     destroy: vi.fn(async () => { throw new Error("not used"); }),
     listMachineTypes: vi.fn(async () => ({ machineTypes: [] })),
     listVolumes: vi.fn(async () => ({ volumes: [] })),
+    listIntegrations: vi.fn(async () => ({ integrations: [] })),
+    putIntegration: vi.fn(async () => undefined),
+    deleteIntegration: vi.fn(async () => undefined),
+    listLeases: vi.fn(async () => ({ leases: [] })),
+    revokeLease: vi.fn(async () => undefined),
+    listCredentialRequests: vi.fn(async () => ({ requests: [] })),
+    approveCredentialRequest: vi.fn(async () => undefined),
+    denyCredentialRequest: vi.fn(async () => undefined),
   };
 }
 
@@ -92,6 +100,7 @@ describe("cockpit connection truth", () => {
       "localhost:8444",
       "localhost:8445",
       "localhost:3000",
+      "Control plane",
     ]);
 
     await view.unmount();

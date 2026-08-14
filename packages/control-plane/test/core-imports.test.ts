@@ -12,6 +12,16 @@ const expected = [
   "bootstrap.ts",
   "box-images.ts",
   "cloud-init.ts",
+  "credentials/leases.ts",
+  "credentials/manifest.ts",
+  "credentials/mint.ts",
+  "credentials/minters/app-jwt/github-app.ts",
+  "credentials/minters/static.ts",
+  "credentials/proxy.ts",
+  "credentials/registry.ts",
+  "credentials/requests.ts",
+  "credentials/root-crypto.ts",
+  "credentials/types.ts",
   "crypto.ts",
   "db.ts",
   "http.ts",
@@ -48,6 +58,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(23);
+    expect(expected).toHaveLength(33);
   });
 });
