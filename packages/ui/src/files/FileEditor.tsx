@@ -53,10 +53,10 @@ export function FileEditor({
     <section className="file-editor" aria-label={`Editing ${path}`}>
       <div className="section-heading">
         <h3>{path}</h3>
-        <button type="button" onClick={onClose}>Close</button>
+        <button className="cockpit-action" type="button" onClick={onClose}>Close</button>
       </div>
-      {loading && <p className="loading-state">Loading file…</p>}
-      {loadError !== null && <p className="form-error">{loadError}</p>}
+      {loading && <p className="loading-state has-spinner">Loading file…</p>}
+      {loadError !== null && <p className="cockpit-form-message form-error">{loadError}</p>}
       {!loading && loadError === null && (
         <>
           <textarea
@@ -73,7 +73,7 @@ export function FileEditor({
             <span className={saveState === "failed" ? "form-error" : "muted"}>
               {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "failed" ? "Save failed" : "Unsaved"}
             </span>
-            <button className="primary" type="button" disabled={saveState === "saving"} onClick={() => void save()}>Save</button>
+            <button className="cockpit-action cockpit-action--primary" type="button" disabled={saveState === "saving"} onClick={() => void save()}>Save</button>
           </footer>
         </>
       )}

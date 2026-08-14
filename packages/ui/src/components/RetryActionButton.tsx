@@ -9,7 +9,7 @@ export function RetryActionButton({
 }): React.JSX.Element | null {
   if (retryAction === null) return null;
   return (
-    <button type="button" data-retry-action={retryAction} onClick={() => onRetry(retryAction)}>
+    <button className="cockpit-action" type="button" data-retry-action={retryAction} onClick={() => onRetry(retryAction)}>
       Retry
     </button>
   );

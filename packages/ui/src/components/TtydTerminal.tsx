@@ -3,7 +3,6 @@ import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import { endpointTarget } from "../resolver.js";
 import { createTtydSocket, ttydNeedsOwnOrigin, ttydPageUrl } from "./ttyd-protocol.js";
-import "@xterm/xterm/css/xterm.css";
 
 const INPUT = "0".charCodeAt(0);
 const OUTPUT = "0".charCodeAt(0);
@@ -26,12 +25,35 @@ export function TtydTerminal({
     if (needsOwnOrigin) return;
     const host = hostRef.current;
     if (host === null) return;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const color = (name: string): string => rootStyle.getPropertyValue(name).trim();
     const terminal = new Terminal({
       cursorBlink: !readOnly,
       disableStdin: readOnly,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+      fontFamily: color("--font-mono"),
       fontSize: 14,
-      theme: { background: "#090c10", foreground: "#dce3ea", cursor: "#76e4c4" },
+      theme: {
+        background: color("--paper"),
+        foreground: color("--ink"),
+        cursor: color("--ink"),
+        selectionBackground: color("--terminal-selection"),
+        black: color("--ansi-black"),
+        red: color("--ansi-red"),
+        green: color("--ansi-green"),
+        yellow: color("--ansi-yellow"),
+        blue: color("--ansi-blue"),
+        magenta: color("--ansi-magenta"),
+        cyan: color("--ansi-cyan"),
+        white: color("--ansi-white"),
+        brightBlack: color("--ansi-bright-black"),
+        brightRed: color("--ansi-bright-red"),
+        brightGreen: color("--ansi-bright-green"),
+        brightYellow: color("--ansi-bright-yellow"),
+        brightBlue: color("--ansi-bright-blue"),
+        brightMagenta: color("--ansi-bright-magenta"),
+        brightCyan: color("--ansi-bright-cyan"),
+        brightWhite: color("--ansi-bright-white"),
+      },
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
@@ -129,7 +151,7 @@ export function TtydTerminal({
     return (
       <section className="panel terminal-panel">
         <div className="panel-toolbar">
-          <span className="connection-status">{status}</span>
+          <span className={`connection-status${status.startsWith("Connected") ? " active" : status.includes("Connecting") ? " transitional" : ""}`}>{status}</span>
           <code className="endpoint-target">{endpointTarget(url)}</code>
         </div>
         <iframe
@@ -146,7 +168,7 @@ export function TtydTerminal({
   return (
     <section className="panel terminal-panel">
       <div className="panel-toolbar">
-        <span className="connection-status">{status}</span>
+        <span className={`connection-status${status.startsWith("Connected") ? " active" : status.includes("Connecting") ? " transitional" : ""}`}>{status}</span>
         <code className="endpoint-target">{endpointTarget(url)}</code>
       </div>
       <div className="terminal-host" ref={hostRef} />
@@ -159,8 +181,8 @@ export function TtydTerminal({
             placeholder="Touch input or paste"
             onChange={(event) => setTouchInput(event.currentTarget.value)}
           />
-          <button type="button" onClick={() => void paste()}>Paste</button>
-          <button type="button" onClick={sendTouchInput}>Send</button>
+          <button className="cockpit-action" type="button" onClick={() => void paste()}>Paste</button>
+          <button className="cockpit-action cockpit-action--primary" type="button" onClick={sendTouchInput}>Send</button>
         </div>
       )}
     </section>

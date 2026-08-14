@@ -36,10 +36,10 @@ export function SettingsPanel({
         <label>Terminal<input name="terminal" type="number" defaultValue={ports.terminal} /></label>
         <label>Chat ACP<input name="acp" type="number" defaultValue={ports.acp} /></label>
         <label>Files<input name="files" type="number" defaultValue={ports.files} /></label>
-        {error !== null && <p className="form-error">{error}</p>}
+        {error !== null && <p className="cockpit-form-message form-error">{error}</p>}
         <div className="button-row">
-          <button type="button" onClick={onClose}>Cancel</button>
-          <button className="primary" type="submit">Save</button>
+          <button className="cockpit-action" type="button" onClick={onClose}>Cancel</button>
+          <button className="cockpit-action cockpit-action--primary" type="submit">Save</button>
         </div>
       </form>
     </div>

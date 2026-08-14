@@ -56,6 +56,7 @@ export function ChatTranscript({
               <div className="button-row">
                 {permission.options.map((option) => (
                   <button
+                    className="cockpit-action"
                     type="button"
                     key={option.optionId}
                     disabled={answered}

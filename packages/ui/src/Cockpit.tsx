@@ -1,3 +1,5 @@
+import "./tokens.css";
+import "./cockpit-base.css";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import type { MachineType, Volume, WorkspaceView } from "@blitzos/schema";

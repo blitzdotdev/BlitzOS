@@ -98,42 +98,49 @@ export function FilesPanel({ baseUrl }: { baseUrl: string }): React.JSX.Element 
     <section className="panel files-panel">
       <aside className="files-sidebar">
         <div className="panel-toolbar">
-          <button type="button" disabled={directory === "/"} onClick={() => setDirectory(parentPath(directory))}>Up</button>
+          <button className="cockpit-action" type="button" disabled={directory === "/"} onClick={() => setDirectory(parentPath(directory))}>Up</button>
           <strong>{directory}</strong>
           <code className="endpoint-target">{endpointTarget(baseUrl)}</code>
-          <button type="button" onClick={() => void refresh()}>Refresh</button>
+          <button className="cockpit-action" type="button" onClick={() => void refresh()}>Refresh</button>
         </div>
         <form className="inline-form" onSubmit={(event) => void mkdir(event)}>
           <input aria-label="New folder name" value={folderName} placeholder="New folder" onChange={(event) => setFolderName(event.currentTarget.value)} />
-          <button type="submit" disabled={folderName.trim().length === 0}>Make</button>
+          <button className="cockpit-action" type="submit" disabled={folderName.trim().length === 0}>Make</button>
         </form>
         <label className="upload-button">
           Upload
           <input type="file" multiple onChange={(event) => void upload(event.currentTarget.files)} />
         </label>
         {notice !== null && <p className="muted">{notice}</p>}
-        {loading && <p className="loading-state">Loading files…</p>}
-        {error !== null && <p className="form-error">{error}</p>}
+        {loading && <p className="loading-state has-spinner">Loading files…</p>}
+        {error !== null && <p className="cockpit-form-message form-error">{error}</p>}
         <div className="file-list">
           {entries.map((entry) => (
             <div className="file-row" key={entry.path}>
               <button
-                className="file-name"
+                className="cockpit-action file-name"
                 type="button"
                 onClick={() => entry.directory ? setDirectory(entry.path) : setSelected(entry.path)}
               >
                 <span>{entry.directory ? "▸" : "·"} {entry.name}</span>
                 {!entry.directory && entry.size !== null && <small>{entry.size} B</small>}
               </button>
-              <button type="button" aria-label={`Rename ${entry.name}`} onClick={() => void rename(entry)}>Rename</button>
-              <button type="button" aria-label={`Delete ${entry.name}`} onClick={() => void remove(entry)}>Delete</button>
+              <button className="cockpit-action" type="button" aria-label={`Rename ${entry.name}`} onClick={() => void rename(entry)}>Rename</button>
+              <button className="cockpit-action" type="button" aria-label={`Delete ${entry.name}`} onClick={() => void remove(entry)}>Delete</button>
             </div>
           ))}
         </div>
       </aside>
       <div className="file-editor-pane">
         {selected === null
-          ? <p className="empty-state">Select a file to view or edit it.</p>
+          ? <div className="cockpit-empty">
+              <svg viewBox="0 0 32 32" aria-hidden="true">
+                <path d="M6 5h8l3 4h9v18H6z" />
+                <path d="M6 11h20" />
+              </svg>
+              <h1>No file selected</h1>
+              <p>Select a file to view or edit it.</p>
+            </div>
           : <FileEditor key={selected} client={client} path={selected} onClose={() => setSelected(null)} />}
       </div>
     </section>

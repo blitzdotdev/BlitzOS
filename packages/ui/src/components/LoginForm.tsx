@@ -32,8 +32,9 @@ export function LoginForm({
         <h1>Open cockpit</h1>
         <label htmlFor="operator-key">Operator key</label>
         <input id="operator-key" name="operatorKey" type="password" autoComplete="off" required />
-        {error !== null && <p className="form-error">{error}</p>}
-        <button className="primary" type="submit" disabled={submitting}>
+        {error !== null && <p className="cockpit-form-message form-error">{error}</p>}
+        <button className="cockpit-action cockpit-action--primary" type="submit" disabled={submitting}>
+          {submitting && <span className="cockpit-inline-spinner" />}
           {submitting ? "Signing in…" : "Sign in"}
         </button>
       </form>

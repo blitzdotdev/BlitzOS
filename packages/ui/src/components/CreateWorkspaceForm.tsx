@@ -56,10 +56,10 @@ export function CreateWorkspaceForm({
     <section className="create-panel card" aria-label="Create workspace">
       <div className="section-heading">
         <div><p className="eyebrow">New workspace</p><h2>Create</h2></div>
-        <button type="button" onClick={onCancel}>Close</button>
+        <button className="cockpit-action" type="button" onClick={onCancel}>Close</button>
       </div>
       {loading ? (
-        <p className="loading-state">Loading machine types and volumes…</p>
+        <p className="loading-state has-spinner">Loading machine types and volumes…</p>
       ) : (
         <form className="stack-form" onSubmit={review}>
           <label>
@@ -92,11 +92,11 @@ export function CreateWorkspaceForm({
             User-data <span className="muted">optional</span>
             <textarea name="userData" rows={7} spellCheck={false} />
           </label>
-          <p className="warning">the VM can read user-data; never put secrets in it</p>
-          {error !== null && <p className="form-error">{error}</p>}
+          <p className="cockpit-form-message warning">the VM can read user-data; never put secrets in it</p>
+          {error !== null && <p className="cockpit-form-message form-error">{error}</p>}
           <div className="button-row">
-            <button type="button" onClick={onCancel}>Cancel</button>
-            <button className="primary" type="submit">Review create</button>
+            <button className="cockpit-action" type="button" onClick={onCancel}>Cancel</button>
+            <button className="cockpit-action cockpit-action--primary" type="submit">Review create</button>
           </div>
         </form>
       )}
@@ -106,8 +106,9 @@ export function CreateWorkspaceForm({
             <h2>Create this workspace?</h2>
             <p>One confirmation sends one create request.</p>
             <div className="button-row">
-              <button type="button" disabled={submitting} onClick={() => setPending(null)}>Cancel</button>
-              <button className="primary" type="button" disabled={submitting} onClick={() => void confirm()}>
+              <button className="cockpit-action" type="button" disabled={submitting} onClick={() => setPending(null)}>Cancel</button>
+              <button className="cockpit-action cockpit-action--primary" type="button" disabled={submitting} onClick={() => void confirm()}>
+                {submitting && <span className="cockpit-inline-spinner" />}
                 {submitting ? "Creating…" : "Confirm create"}
               </button>
             </div>

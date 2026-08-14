@@ -190,7 +190,7 @@ export function ChatPanel({
   return (
     <section className="panel chat-panel">
       <div className="panel-toolbar">
-        <span className="connection-status">{status}</span>
+        <span className={`connection-status${status === "Connected" ? " active" : status.includes("Connecting") ? " transitional" : ""}`}>{status}</span>
         <code className="endpoint-target">{endpointTarget(url)}</code>
         {modes !== null && modes.availableModes.length > 0 && (
           <label>
@@ -215,8 +215,8 @@ export function ChatPanel({
           onChange={(event) => setComposer(event.currentTarget.value)}
         />
         <div className="button-row">
-          {state.running && <button type="button" onClick={cancel}>Cancel turn</button>}
-          <button className="primary" type="submit" disabled={state.running || status !== "Connected"}>Send</button>
+          {state.running && <button className="cockpit-action" type="button" onClick={cancel}>Cancel turn</button>}
+          <button className="cockpit-action cockpit-action--primary" type="submit" disabled={state.running || status !== "Connected"}>Send</button>
         </div>
       </form>
     </section>
