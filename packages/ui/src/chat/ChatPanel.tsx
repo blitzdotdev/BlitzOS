@@ -23,11 +23,13 @@ export function ChatPanel({
   workspaceId,
   initialSessionId,
   onSessionId,
+  onOpenPreview,
 }: {
   url: string;
   workspaceId: string;
   initialSessionId: string | null;
   onSessionId: (workspaceId: string, sessionId: string) => void;
+  onOpenPreview?: (port: number) => boolean;
 }): React.JSX.Element {
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
   const [status, setStatus] = useState("Connecting…");
@@ -201,7 +203,11 @@ export function ChatPanel({
           </label>
         )}
       </div>
-      <ChatTranscript state={state} onPermission={answerPermission} />
+      <ChatTranscript
+        state={state}
+        onPermission={answerPermission}
+        onOpenPreview={onOpenPreview}
+      />
       {state.stopReasons.length > 0 && (
         <p className="stop-reason">Stopped: {state.stopReasons.at(-1)?.stopReason}</p>
       )}

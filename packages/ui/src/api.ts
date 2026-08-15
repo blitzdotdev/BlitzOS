@@ -22,6 +22,8 @@ export class ApiRequestError extends Error {
   }
 }
 
+export type CredentialRequestState = "pending" | "approved" | "denied";
+
 export interface ControlPlaneClient {
   login(operatorKey: string): Promise<void>;
   logout(): Promise<void>;
@@ -35,7 +37,10 @@ export interface ControlPlaneClient {
   deleteIntegration(name: string): Promise<void>;
   listLeases(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialLeasesResponse>;
   revokeLease(id: string): Promise<void>;
-  listCredentialRequests(signal?: AbortSignal): Promise<ListCredentialRequestsResponse>;
+  listCredentialRequests(
+    signal?: AbortSignal,
+    state?: CredentialRequestState,
+  ): Promise<ListCredentialRequestsResponse>;
   approveCredentialRequest(id: string): Promise<void>;
   denyCredentialRequest(id: string): Promise<void>;
 }
@@ -62,7 +67,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     login: (operatorKey) =>
       request<void>("/sessions", {
         method: "POST",
-        headers: { Authorization: `Bearer ${operatorKey}` },
+        headers: { "x-operator-key": operatorKey },
       }),
     logout: () => request<void>("/sessions", { method: "DELETE" }),
     poll: (signal) => request<PollResponse>("/workspaces", { signal }),
@@ -97,8 +102,8 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       ),
     revokeLease: (id) =>
       request<void>(`/leases/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    listCredentialRequests: (signal) =>
-      request<ListCredentialRequestsResponse>("/requests?state=pending", { signal }),
+    listCredentialRequests: (signal, state = "pending") =>
+      request<ListCredentialRequestsResponse>(`/requests?state=${state}`, { signal }),
     approveCredentialRequest: (id) =>
       request<void>(`/requests/${encodeURIComponent(id)}/approve`, {
         method: "POST",

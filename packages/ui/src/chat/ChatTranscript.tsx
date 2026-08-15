@@ -1,12 +1,16 @@
 import type { ContentBlock, ToolCallContent } from "@agentclientprotocol/sdk";
+import type { MouseEvent, ReactNode } from "react";
+import { previewPortFromLocalUrl } from "../preview.js";
 import type { ChatState } from "./reducer.js";
 
 export function ChatTranscript({
   state,
   onPermission,
+  onOpenPreview,
 }: {
   state: ChatState;
   onPermission: (toolCallId: string, optionId: string) => void;
+  onOpenPreview?: (port: number) => boolean;
 }): React.JSX.Element {
   return (
     <div className="chat-transcript" aria-live="polite">
@@ -17,8 +21,10 @@ export function ChatTranscript({
           return (
             <article className={`chat-message ${message.role}`} key={`${row.kind}:${row.id}`}>
               <p className="message-role">{message.role === "user" ? "You" : message.role === "agent" ? "Agent" : "Agent thought"}</p>
-              {message.text.length > 0 && <pre>{message.text}</pre>}
-              {message.otherContent.map((content, index) => <ContentView key={index} content={content} />)}
+              {message.text.length > 0 && <LinkedText text={message.text} onOpenPreview={onOpenPreview} />}
+              {message.otherContent.map((content, index) => (
+                <ContentView key={index} content={content} onOpenPreview={onOpenPreview} />
+              ))}
             </article>
           );
         }
@@ -31,7 +37,9 @@ export function ChatTranscript({
                 <strong>{tool.title}</strong>
                 <span>{[tool.kind, tool.status].filter(Boolean).join(" · ")}</span>
               </div>
-              {tool.content.map((content, index) => <ToolContentView key={index} content={content} />)}
+              {tool.content.map((content, index) => (
+                <ToolContentView key={index} content={content} onOpenPreview={onOpenPreview} />
+              ))}
               {tool.rawInput !== undefined && <JsonDetails label="Input" value={tool.rawInput} />}
               {tool.rawOutput !== undefined && <JsonDetails label="Output" value={tool.rawOutput} />}
             </article>
@@ -82,9 +90,64 @@ export function ChatTranscript({
   );
 }
 
-function ContentView({ content }: { content: ContentBlock }): React.JSX.Element {
-  if (content.type === "text") return <pre>{content.text}</pre>;
-  if (content.type === "resource_link") return <p>{content.title ?? content.name}: {content.uri}</p>;
+function previewLinkClick(
+  event: MouseEvent<HTMLAnchorElement>,
+  href: string,
+  onOpenPreview?: (port: number) => boolean,
+): void {
+  const port = previewPortFromLocalUrl(href);
+  if (port !== null && onOpenPreview?.(port)) event.preventDefault();
+}
+
+function LinkedText({
+  text,
+  onOpenPreview,
+}: {
+  text: string;
+  onOpenPreview?: (port: number) => boolean;
+}): React.JSX.Element {
+  const pieces: ReactNode[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(/https?:\/\/[^\s<]+/gu)) {
+    const index = match.index;
+    const href = match[0];
+    if (index > cursor) pieces.push(text.slice(cursor, index));
+    pieces.push(
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        key={`${index}:${href}`}
+        onClick={(event) => previewLinkClick(event, href, onOpenPreview)}
+      >{href}</a>,
+    );
+    cursor = index + href.length;
+  }
+  if (cursor < text.length) pieces.push(text.slice(cursor));
+  return <pre>{pieces}</pre>;
+}
+
+function ContentView({
+  content,
+  onOpenPreview,
+}: {
+  content: ContentBlock;
+  onOpenPreview?: (port: number) => boolean;
+}): React.JSX.Element {
+  if (content.type === "text") return <LinkedText text={content.text} onOpenPreview={onOpenPreview} />;
+  if (content.type === "resource_link") {
+    return (
+      <p>
+        {content.title ?? content.name}:{' '}
+        <a
+          href={content.uri}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(event) => previewLinkClick(event, content.uri, onOpenPreview)}
+        >{content.uri}</a>
+      </p>
+    );
+  }
   if (content.type === "resource") {
     return "text" in content.resource
       ? <pre>{content.resource.text}</pre>
@@ -94,8 +157,16 @@ function ContentView({ content }: { content: ContentBlock }): React.JSX.Element 
   return <p>Audio content ({content.mimeType})</p>;
 }
 
-function ToolContentView({ content }: { content: ToolCallContent }): React.JSX.Element {
-  if (content.type === "content") return <ContentView content={content.content} />;
+function ToolContentView({
+  content,
+  onOpenPreview,
+}: {
+  content: ToolCallContent;
+  onOpenPreview?: (port: number) => boolean;
+}): React.JSX.Element {
+  if (content.type === "content") {
+    return <ContentView content={content.content} onOpenPreview={onOpenPreview} />;
+  }
   if (content.type === "terminal") return <p className="terminal-reference">Terminal {content.terminalId}</p>;
   return (
     <div className="diff-view">

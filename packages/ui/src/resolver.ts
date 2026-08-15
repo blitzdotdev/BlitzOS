@@ -12,21 +12,44 @@ export interface EndpointResolver {
 }
 
 export interface StandalonePorts {
-  terminal: number;
   acp: number;
   files: number;
 }
 
-export const DEFAULT_PORTS: StandalonePorts = { terminal: 7443, acp: 7444, files: 7445 };
+export const DEFAULT_PORTS: StandalonePorts = { acp: 7444, files: 7445 };
 
-export function standaloneResolver(ports: StandalonePorts): EndpointResolver {
+export function isMicrovmWorkspace(workspace: WorkspaceView): boolean {
+  return workspace.machineTypeId.startsWith("mv-");
+}
+
+export function standaloneResolver(
+  ports: StandalonePorts,
+  controlPlaneOrigin = globalThis.location?.origin ?? "",
+): EndpointResolver {
+  const filesOrigin = `http://localhost:${ports.files}`;
+  const cpOrigin = controlPlaneOrigin.replace(/\/+$/u, "");
+  const microvmEndpoints = (workspace: WorkspaceView): BoxEndpoints => {
+    if (cpOrigin === "") throw new Error("control-plane origin is required for microVM surfaces");
+    const prefix = `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/surface`;
+    const acp = new URL(`${prefix}/7444`);
+    acp.protocol = acp.protocol === "https:" ? "wss:" : "ws:";
+    return {
+      terminalUrl: `${prefix}/7445/terminal/`,
+      acpUrl: acp.toString(),
+      filesBase: `${prefix}/7445/workspace/`,
+    };
+  };
   return {
-    resolve: () => ({
-      terminalUrl: `http://localhost:${ports.terminal}/`,
-      acpUrl: `ws://localhost:${ports.acp}`,
-      filesBase: `http://localhost:${ports.files}/workspace/`,
-    }),
-    previewUrl: (_workspace, port) => `http://localhost:${port}/`,
+    resolve: (workspace) => isMicrovmWorkspace(workspace)
+      ? microvmEndpoints(workspace)
+      : {
+          terminalUrl: `${filesOrigin}/terminal/`,
+          acpUrl: `ws://localhost:${ports.acp}`,
+          filesBase: `${filesOrigin}/workspace/`,
+        },
+    previewUrl: (workspace, port) => isMicrovmWorkspace(workspace)
+      ? `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/surface/7445/preview/${port}/`
+      : `${filesOrigin}/preview/${port}/`,
   };
 }
 

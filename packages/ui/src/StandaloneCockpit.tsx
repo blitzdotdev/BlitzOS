@@ -1,12 +1,19 @@
 import { useMemo } from "react";
 import { createControlPlaneClient } from "./api.js";
-import { Cockpit } from "./Cockpit.js";
+import CloudApp from "./CloudApp.js";
 import { useStandalonePorts } from "./device-state.js";
 import { standaloneResolver } from "./resolver.js";
 
 export function StandaloneCockpit({ controlPlaneBaseUrl = "" }: { controlPlaneBaseUrl?: string }): React.JSX.Element {
-  const [ports, setPorts] = useStandalonePorts();
+  const [ports] = useStandalonePorts();
   const client = useMemo(() => createControlPlaneClient(controlPlaneBaseUrl), [controlPlaneBaseUrl]);
-  const resolver = useMemo(() => standaloneResolver(ports), [ports]);
-  return <Cockpit client={client} resolver={resolver} standaloneSettings={{ ports, onSave: setPorts }} />;
+  const controlPlaneOrigin = useMemo(
+    () => new URL(controlPlaneBaseUrl || window.location.origin, window.location.href).origin,
+    [controlPlaneBaseUrl],
+  );
+  const resolver = useMemo(
+    () => standaloneResolver(ports, controlPlaneOrigin),
+    [controlPlaneOrigin, ports],
+  );
+  return <CloudApp client={client} resolver={resolver} />;
 }

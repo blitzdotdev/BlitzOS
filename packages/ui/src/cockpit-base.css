@@ -179,6 +179,55 @@ a {
   to { transform: rotate(360deg); }
 }
 
+/* blitz-core operator-key entry uses the cockpit primitives. */
+.login-screen {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--paper);
+}
+
+.login-card {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 28px;
+  border: 1px solid var(--rule);
+}
+
+.login-card .eyebrow {
+  margin: 0;
+  color: var(--faint);
+  font: 700 10px/1.5 var(--font-mono);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.login-card h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+}
+
+.login-card label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.login-card input {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--font-mono);
+  outline: 0;
+}
+
+.login-card input:focus {
+  border-color: var(--accent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cockpit-inline-spinner {
     animation: none;

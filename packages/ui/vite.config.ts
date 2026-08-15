@@ -9,9 +9,13 @@ export default defineConfig({
       "/workspaces": { target: "https://blitz-control-plane.blitzapp.workers.dev", changeOrigin: true },
       "/volumes": { target: "https://blitz-control-plane.blitzapp.workers.dev", changeOrigin: true },
       "/machine-types": { target: "https://blitz-control-plane.blitzapp.workers.dev", changeOrigin: true },
+      "/integrations": { target: "https://blitz-control-plane.blitzapp.workers.dev", changeOrigin: true },
+      "/leases": { target: "https://blitz-control-plane.blitzapp.workers.dev", changeOrigin: true },
+      "/requests": { target: "https://blitz-control-plane.blitzapp.workers.dev", changeOrigin: true },
     },
   },
   test: {
     environment: "jsdom",
+    setupFiles: ["./test/setup.ts"],
   },
 });

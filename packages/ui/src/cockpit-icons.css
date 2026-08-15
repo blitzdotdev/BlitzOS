@@ -1,0 +1,99 @@
+.mi-box,
+.mi-claude,
+.mi-chat,
+.mi-enter,
+.mi-keyboard,
+.mi-kimi,
+.mi-opencode,
+.mi-paste,
+.mi-pi,
+.mi-preview,
+.mi-prime,
+.mi-reconnect,
+.mi-terminal,
+.mi-trash,
+.mi-ubuntu {
+  display: inline-block;
+  background: currentColor;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+}
+
+.mi-box {
+  -webkit-mask-image: url('./assets/icons/box-mask.png');
+  mask-image: url('./assets/icons/box-mask.png');
+}
+
+.mi-claude {
+  -webkit-mask-image: url('./assets/icons/claude-mask.png');
+  mask-image: url('./assets/icons/claude-mask.png');
+}
+
+.mi-opencode {
+  -webkit-mask-image: url('./assets/icons/opencode-mask.svg');
+  mask-image: url('./assets/icons/opencode-mask.svg');
+}
+
+.mi-pi {
+  -webkit-mask-image: url('./assets/icons/pi-mask.svg');
+  mask-image: url('./assets/icons/pi-mask.svg');
+}
+
+.mi-kimi {
+  -webkit-mask-image: url('./assets/icons/kimi-mask.svg');
+  mask-image: url('./assets/icons/kimi-mask.svg');
+}
+
+.mi-prime {
+  -webkit-mask-image: url('./assets/icons/prime-mask.svg');
+  mask-image: url('./assets/icons/prime-mask.svg');
+}
+
+.mi-enter {
+  -webkit-mask-image: url('./assets/icons/enter-return-mask.svg');
+  mask-image: url('./assets/icons/enter-return-mask.svg');
+}
+
+.mi-keyboard {
+  -webkit-mask-image: url('./assets/icons/keyboard-mask.svg');
+  mask-image: url('./assets/icons/keyboard-mask.svg');
+}
+
+.mi-paste {
+  -webkit-mask-image: url('./assets/icons/paste-clipboard-mask.svg');
+  mask-image: url('./assets/icons/paste-clipboard-mask.svg');
+}
+
+.mi-preview {
+  -webkit-mask-image: url('./assets/icons/browser-window-mask.svg');
+  mask-image: url('./assets/icons/browser-window-mask.svg');
+}
+
+.mi-reconnect {
+  -webkit-mask-image: url('./assets/icons/reconnect-mask.svg');
+  mask-image: url('./assets/icons/reconnect-mask.svg');
+}
+
+.mi-chat {
+  -webkit-mask-image: url('./assets/icons/message-bubble-mask.svg');
+  mask-image: url('./assets/icons/message-bubble-mask.svg');
+}
+
+.mi-terminal {
+  -webkit-mask-image: url('./assets/icons/terminal-mask.svg');
+  mask-image: url('./assets/icons/terminal-mask.svg');
+}
+
+.mi-trash {
+  -webkit-mask-image: url('./assets/icons/trash-mask.svg');
+  mask-image: url('./assets/icons/trash-mask.svg');
+}
+
+.mi-ubuntu {
+  -webkit-mask-image: url('./assets/icons/ubuntu-mask.svg');
+  mask-image: url('./assets/icons/ubuntu-mask.svg');
+}
