@@ -17,7 +17,7 @@ describe("control-plane deploy command", () => {
       vars: {
         MICROVM_HOSTS: JSON.stringify([
           { name: "lab", url: "https://microvm-lab.example", tokenVar: "MICROVM_LAB_TOKEN" },
-          { name: "edge", url: "https://microvm-edge.example", tokenVar: "MICROVM_EDGE_TOKEN" },
+          { name: "edge", tokenVar: "MICROVM_EDGE_TOKEN", dynamic: true },
         ]),
       },
     })).toEqual([
@@ -27,6 +27,32 @@ describe("control-plane deploy command", () => {
       "MICROVM_LAB_TOKEN",
       "MICROVM_EDGE_TOKEN",
     ]);
+  });
+
+  it("validates pinned and dynamic MICROVM_HOSTS shapes before checking secrets", () => {
+    const valid = {
+      name: "lab",
+      url: "https://microvm-lab.example",
+      tokenVar: "MICROVM_LAB_TOKEN",
+    };
+    const dynamic = {
+      name: "home",
+      tokenVar: "MICROVM_HOME_TOKEN",
+      dynamic: true,
+    };
+    const invalid = [
+      [{ ...valid, dynamic: false }],
+      [{ ...dynamic, url: "https://home.example" }],
+      [{ name: "home", tokenVar: "MICROVM_HOME_TOKEN" }],
+      [{ ...valid, url: "file:///tmp/agent" }],
+      [valid, { ...valid, url: "https://other.example" }],
+      [valid, { ...valid, name: "other" }],
+    ];
+    for (const hosts of invalid) {
+      expect(() => requiredSecretsForConfig({
+        vars: { MICROVM_HOSTS: JSON.stringify(hosts) },
+      })).toThrow();
+    }
   });
 
   it("cleans stale package output before rebuilding dist", async () => {

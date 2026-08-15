@@ -49,13 +49,20 @@ npx wrangler secret put HETZNER_API_TOKEN --config packages/control-plane/wrangl
 npx wrangler secret put OPERATOR_API_KEY --config packages/control-plane/wrangler.toml
 ```
 
-`MICROVM_HOSTS` is a non-secret JSON array. Each entry has exactly `name`,
-`url`, and `tokenVar`; `tokenVar` names a Worker secret binding whose value is
-the host agent Bearer token. For example:
+`MICROVM_HOSTS` is a non-secret JSON array. The primary production shape is a
+pinned host with exactly `name`, `url`, and `tokenVar`; `tokenVar` names a
+Worker secret binding whose value is the host agent Bearer token. Use this for
+the intended large AWS, Hetzner, or bare-metal host at a stable URL:
 
 ```toml
 MICROVM_HOSTS = '[{"name":"lab","url":"https://microvm-lab.example","tokenVar":"MICROVM_LAB_TOKEN"}]'
 ```
+
+Only a home-lab/NAT host using a rotating Cloudflare Quick Tunnel should omit
+`url` and instead set exactly `{name,tokenVar,dynamic:true}`. That host reports
+its current HTTPS URL to `POST /hosts/:name/register` with its own Bearer token.
+Pinned hosts reject registration and are refreshed into D1 from configuration
+on every request, so the dynamic path does not alter their behavior.
 
 Set the referenced value as a secret, never inside `MICROVM_HOSTS`:
 

@@ -1,6 +1,7 @@
 import type { BlobStore } from "./blobs.js";
 import type { Db } from "./db.js";
 import type { PrincipalSource } from "./principals.js";
+import type { MicrovmPoolProvider } from "./providers/microvm.js";
 import type { VmProvider, VolumeProvider } from "./providers/types.js";
 
 export interface CoreRequest {
@@ -84,6 +85,7 @@ export interface CoreRuntime {
   providers: {
     vm: VmProvider;
     volume: VolumeProvider;
+    microvm?: MicrovmPoolProvider;
   };
   principalSource: PrincipalSource;
   waitUntil(promise: Promise<unknown>): void;

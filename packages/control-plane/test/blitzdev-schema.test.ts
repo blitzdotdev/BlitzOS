@@ -20,6 +20,7 @@ const expectedTables = [
   "credential_leases",
   "credential_events",
   "credential_requests",
+  "microvm_hosts",
   "blitz_files",
 ] as const;
 
@@ -31,9 +32,9 @@ describe("blitz.dev managed schema", () => {
     expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
-  it("contains the thirteen domain tables plus the deny-all file support table", () => {
+  it("contains the fourteen domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(14);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(15);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -55,6 +56,26 @@ describe("blitz.dev managed schema", () => {
         }),
       ]),
       indexes: [{ name: "expires_at", fields: "expires_at" }],
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspaces")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({
+          name: "machine_type_id",
+          notNull: true,
+          default: { l: "unknown" },
+        }),
+      ]),
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "microvm_hosts")).toMatchObject({
+      fields: [
+        expect.objectContaining({ name: "name", primary: true }),
+        expect.objectContaining({ name: "url", sqlType: "text" }),
+        expect.objectContaining({ name: "updated_at", sqlType: "integer" }),
+        expect.objectContaining({
+          name: "source",
+          check: "source IN ('static', 'registered')",
+        }),
+      ],
     });
     expect(
       BLITZDEV_CONFIG.tables.find(({ name }) => name === "credential_leases"),

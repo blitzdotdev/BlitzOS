@@ -25,6 +25,7 @@
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "deploy": "node scripts/deploy.mjs",
+    "test:shell": "sh test/shell-syntax.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

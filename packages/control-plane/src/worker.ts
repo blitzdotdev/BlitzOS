@@ -52,15 +52,17 @@ function dynamicBinding(env: WorkerBindings, name: string): unknown {
   return Reflect.get(env, name);
 }
 
-function providersFor(env: WorkerBindings): CoreRuntime["providers"] {
+function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
   const hetzner = new HetznerProvider(env.HETZNER_API_TOKEN);
   const microvm = new MicrovmPoolProvider(
     env.MICROVM_HOSTS,
     (tokenVar) => dynamicBinding(env, tokenVar),
+    { db },
   );
   return {
     vm: new CompositeVmProvider(hetzner, microvm),
     volume: hetzner,
+    microvm,
   };
 }
 
@@ -68,8 +70,9 @@ function runtimeFor(context: CoreContext): CoreRuntime;
 function runtimeFor(context: TargetContext): CoreRuntime;
 function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
   const env = context.env as WorkerBindings;
+  const db = context.get("$db") as Db;
   return {
-    db: context.get("$db") as Db,
+    db,
     blobs: env.BOX_IMAGES as BlobStore,
     credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
@@ -81,7 +84,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
         env.MAX_CONCURRENT_WORKSPACES,
       ),
     },
-    providers: providersFor(env),
+    providers: providersFor(env, db),
     principalSource: createOperatorPrincipalSource(env.OPERATOR_API_KEY),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
   };
@@ -93,6 +96,7 @@ function runtimeForScheduled(
   executionContext: ExecutionContext,
   credentialMasterKey: CryptoKey,
 ): CoreRuntime {
+  const providers = providersFor(env, db);
   return {
     db,
     blobs: env.BOX_IMAGES as BlobStore,
@@ -106,7 +110,7 @@ function runtimeForScheduled(
         env.MAX_CONCURRENT_WORKSPACES,
       ),
     },
-    providers: providersFor(env),
+    providers,
     principalSource: createOperatorPrincipalSource(env.OPERATOR_API_KEY),
     waitUntil: (promise) => executionContext.waitUntil(promise),
   };
@@ -123,7 +127,9 @@ const app = teenyHono<WorkerEnv>(
   undefined,
   { cors: false, logger: true },
   async (context) => {
-    maybeScheduleLazySweep(runtimeFor(context), context.req.path);
+    const runtime = runtimeFor(context);
+    await runtime.providers.microvm?.syncStaticHosts();
+    maybeScheduleLazySweep(runtime, context.req.path);
   },
 );
 
@@ -151,6 +157,7 @@ export default {
           executionContext,
           await credentialMasterKeyFor(env.CRED_MASTER_KEY),
         );
+        await runtime.providers.microvm?.syncStaticHosts();
         await runSessionSweep(runtime);
         await runLeaseSweep(runtime);
         await runInvariantSweep(runtime);

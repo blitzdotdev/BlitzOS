@@ -2,7 +2,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 
 export class HttpError extends Error {
   constructor(
-    readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 502,
+    readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 502 | 503,
     message: string,
     readonly requestId?: string,
   ) {

@@ -14,6 +14,8 @@ import {
 } from "./http.js";
 import { issueBoxTokens } from "./oauth.js";
 import type { Principal } from "./principals.js";
+import { isMicrovmProviderId } from "./providers/microvm.js";
+import type { SurfacePort } from "./providers/types.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import type {
   CreateWorkspaceRequest,
@@ -26,6 +28,7 @@ import type {
 
 export interface WorkspaceRow {
   id: string;
+  machine_type_id: string;
   owner_id: string;
   phase: Phase;
   revision: number;
@@ -54,10 +57,19 @@ const retryActions: Record<Phase, RetryAction> = {
 const WORKSPACE_ERROR_MAX_LENGTH = 1_024;
 const BOOTSTRAP_ERROR_PREFIX = "bootstrap failed: ";
 
+function machineTypeIdForRow(row: WorkspaceRow): string {
+  return row.machine_type_id === "unknown"
+      && row.vm_id !== null
+      && isMicrovmProviderId(row.vm_id)
+    ? "mv-legacy"
+    : row.machine_type_id;
+}
+
 export function workspaceView(row: WorkspaceRow): WorkspaceView {
   const hasSsh = row.ssh_host !== null && row.ssh_port !== null && row.ssh_user !== null;
   return {
     id: row.id,
+    machineTypeId: machineTypeIdForRow(row),
     phase: row.phase,
     retryAction: retryActions[row.phase],
     canObserve: row.phase === "ready",
@@ -88,10 +100,18 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const result: CreateWorkspaceRequest = {
     machineTypeId: requiredString(value.machineTypeId, "machineTypeId", 256),
-    sshPublicKey: requiredString(value.sshPublicKey, "sshPublicKey"),
   };
-  if (!isSshPublicKey(result.sshPublicKey)) {
-    throw new HttpError(400, "sshPublicKey must be an SSH public key");
+  if (value.sshPublicKey !== undefined) {
+    const sshPublicKey = typeof value.sshPublicKey === "string"
+      ? value.sshPublicKey.trim()
+      : requiredString(value.sshPublicKey, "sshPublicKey");
+    if (sshPublicKey !== "") {
+      requiredString(sshPublicKey, "sshPublicKey");
+      if (!isSshPublicKey(sshPublicKey)) {
+        throw new HttpError(400, "sshPublicKey must be an SSH public key");
+      }
+      result.sshPublicKey = sshPublicKey;
+    }
   }
   if (value.volumeId !== undefined) {
     result.volumeId = requiredString(value.volumeId, "volumeId", 256);
@@ -204,17 +224,18 @@ export function addWorkspaceRoutes(
 
     const inserted = await rows(runtime.db, {
       q: `INSERT INTO workspaces
-          (id, owner_id, phase, revision, volume_id, phone_home_hash, manifest,
-           created_at, updated_at)
-          SELECT ?1, ?2, 'creating', 1, ?3, ?4, ?5, ?6, ?6
+          (id, owner_id, machine_type_id, phase, revision, volume_id,
+           phone_home_hash, manifest, created_at, updated_at)
+          SELECT ?1, ?2, ?3, 'creating', 1, ?4, ?5, ?6, ?7, ?7
           WHERE (
             SELECT COUNT(*) FROM workspaces
             WHERE owner_id = ?2 AND phase IN ('creating', 'ready', 'destroying', 'error')
-          ) < ?7
+          ) < ?8
           RETURNING id`,
       v: [
         id,
         principal.id,
+        input.machineTypeId,
         input.volumeId ?? null,
         await hashSecret(capability),
         input.manifest === undefined ? null : manifestJson(input.manifest),
@@ -254,6 +275,13 @@ export function addWorkspaceRoutes(
         v: [vm.host, vm.port, vm.user, Date.now(), id],
       });
     } catch (error) {
+      if (error instanceof HttpError && error.status === 503) {
+        await rows(runtime.db, {
+          q: "DELETE FROM workspaces WHERE id = ?1 AND phase = 'creating' RETURNING id",
+          v: [id],
+        });
+        throw error;
+      }
       const row = await markCreateError(
         runtime.db,
         id,
@@ -276,6 +304,60 @@ export function addWorkspaceRoutes(
     });
     return context.json<PollResponse>({ workspaces: result.map(workspaceView) });
   });
+
+  const surface = async (context: CoreContext): Promise<Response> => {
+    const principal = await requirePrincipal(context);
+    const id = context.req.param("id");
+    const runtime = runtimeFactory(context);
+    const row = await workspaceById(runtime.db, id);
+    if (row === null || row.owner_id !== principal.id) {
+      throw new HttpError(404, "workspace not found");
+    }
+    if (!machineTypeIdForRow(row).startsWith("mv-")) {
+      throw new HttpError(400, "workspace is not backed by the microVM provider");
+    }
+    if (row.vm_id === null) {
+      throw new HttpError(409, "microVM workspace is not ready for surface access");
+    }
+    const rawPort = context.req.param("port");
+    if (rawPort !== "7444" && rawPort !== "7445") {
+      throw new HttpError(400, "surface port must be 7444 or 7445");
+    }
+    const port = Number(rawPort) as SurfacePort;
+    const requestURL = new URL(context.req.url);
+    const routePrefix = `/workspaces/${encodeURIComponent(id)}/surface/${rawPort}`;
+    if (!requestURL.pathname.startsWith(routePrefix)) {
+      throw new HttpError(400, "invalid workspace surface path");
+    }
+    const suffix = requestURL.pathname.slice(routePrefix.length);
+    const pathAndQuery = `${suffix === "" ? "/" : suffix}${requestURL.search}`;
+    const provider = runtime.providers.vm;
+    if (provider.proxySurface === undefined) {
+      throw new HttpError(400, "microVM surface proxy is unavailable");
+    }
+    let upstream: Response | null;
+    try {
+      upstream = await provider.proxySurface(
+        row.vm_id,
+        port,
+        pathAndQuery,
+        context.req.raw,
+      );
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 503) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new HttpError(502, `microVM surface proxy is unavailable: ${detail}`);
+    }
+    if (upstream === null) {
+      throw new HttpError(400, "workspace is not owned by the microVM provider");
+    }
+    if (!isWebSocketUpgrade(context.req.raw)) return upstream;
+    if (upstream.status !== 101 || upstream.webSocket === null) return upstream;
+    return websocketProxyResponse(upstream);
+  };
+
+  router.all("/workspaces/:id/surface/:port", surface);
+  router.all("/workspaces/:id/surface/:port/*", surface);
 
   router.delete("/workspaces/:id", async (context) => {
     const principal = await requirePrincipal(context);
@@ -406,5 +488,56 @@ export function addWorkspaceRoutes(
       token_type: "Bearer",
       expires_in: credentials.expiresIn,
     });
+  });
+}
+
+function isWebSocketUpgrade(request: Request): boolean {
+  return request.headers.get("upgrade")?.toLowerCase() === "websocket";
+}
+
+function closeWebSocket(socket: WebSocket, code: number, reason: string): void {
+  if (socket.readyState === WebSocket.CLOSED) return;
+  try {
+    socket.close(code, reason);
+  } catch {
+    // The peer may have completed the close between the state check and call.
+  }
+}
+
+function pipeWebSocket(source: WebSocket, target: WebSocket): void {
+  source.addEventListener("message", (event) => {
+    try {
+      target.send(event.data);
+    } catch {
+      closeWebSocket(source, 1011, "surface proxy send failed");
+      closeWebSocket(target, 1011, "surface proxy send failed");
+    }
+  });
+  source.addEventListener("close", (event) => {
+    closeWebSocket(target, event.code, event.reason);
+    closeWebSocket(source, event.code, event.reason);
+  });
+  source.addEventListener("error", () => {
+    closeWebSocket(source, 1011, "surface proxy error");
+    closeWebSocket(target, 1011, "surface proxy error");
+  });
+}
+
+function websocketProxyResponse(upstream: Response): Response {
+  const upstreamSocket = upstream.webSocket;
+  if (upstreamSocket === null) return upstream;
+  const pair = new WebSocketPair();
+  const client = pair[0];
+  const server = pair[1];
+  upstreamSocket.binaryType = "arraybuffer";
+  server.binaryType = "arraybuffer";
+  upstreamSocket.accept({ allowHalfOpen: true });
+  server.accept({ allowHalfOpen: true });
+  pipeWebSocket(server, upstreamSocket);
+  pipeWebSocket(upstreamSocket, server);
+  return new Response(null, {
+    status: 101,
+    headers: upstream.headers,
+    webSocket: client,
   });
 }

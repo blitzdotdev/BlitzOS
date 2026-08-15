@@ -22,6 +22,7 @@ export const PHASE_TRANSITIONS: Record<Phase, readonly Phase[]> = {
 
 export interface WorkspaceView {
   id: string;
+  machineTypeId: string;
   phase: Phase;
   retryAction: RetryAction;
   canObserve: boolean;

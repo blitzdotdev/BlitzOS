@@ -80,6 +80,49 @@ describe("production VM bootstrap", () => {
     expect(runBox).toBeGreaterThan(moveHostSsh);
   });
 
+  it.each([undefined, "", " \t\n"])(
+    "omits cloud-init authorization and provisions an empty mounted key file when no public key is provided",
+    (sshPublicKey) => {
+      const userData = buildUserData(
+        sshPublicKey,
+        PHONE_HOME_URL,
+        BOX_IMAGE_REF,
+        undefined,
+        "",
+        "",
+      );
+
+      expect(userData).not.toContain("ssh_authorized_keys");
+      expect(userData).not.toContain("SSH_PUBLIC_KEY");
+      expect(userData).toContain(": >/var/lib/blitz/authorized_key");
+      expect(userData).toContain("chown root:root /var/lib/blitz/authorized_key");
+      expect(userData).toContain("chmod 0644 /var/lib/blitz/authorized_key");
+      expect(userData).toContain(
+        "src=/var/lib/blitz/authorized_key,dst=/run/blitz/authorized_key,readonly",
+      );
+      expect(userData).toContain('readonly PHONE_HOME_URL=');
+    },
+  );
+
+  it("keeps the box container spec identical without an SSH key", () => {
+    const keyed = registryUserData();
+    const keyless = buildUserData(
+      undefined,
+      PHONE_HOME_URL,
+      BOX_IMAGE_REF,
+      undefined,
+      "",
+      "",
+    );
+    const containerSpec = (userData: string): string => {
+      const start = userData.indexOf("docker run --detach");
+      const end = userData.indexOf("\n\nhealth_deadline=", start);
+      return userData.slice(start, end);
+    };
+
+    expect(containerSpec(keyless)).toBe(containerSpec(keyed));
+  });
+
   it("formats a volume only for blkid's blank-device status and mounts idempotently", () => {
     const userData = registryUserData();
 

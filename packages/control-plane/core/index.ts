@@ -21,20 +21,24 @@ export { HetznerProvider } from "./providers/hetzner.js";
 export { HETZNER_USER_DATA_MAX_BYTES } from "./providers/hetzner.js";
 export { CompositeVmProvider } from "./providers/composite.js";
 export {
+  addMicrovmHostRoutes,
   isMicrovmProviderId,
   MicrovmPoolProvider,
   parseMicrovmHosts,
   parseMicrovmMachineTypeId,
 } from "./providers/microvm.js";
 export type {
+  DynamicMicrovmHostConfig,
   MicrovmHostConfig,
   MicrovmMachineType,
   MicrovmPoolProviderOptions,
+  StaticMicrovmHostConfig,
 } from "./providers/microvm.js";
 export type {
   CreatedVm,
   CreateVmInput,
   ProviderCapabilities,
+  SurfacePort,
   VmInspection,
   VmProvider,
   VolumeProvider,

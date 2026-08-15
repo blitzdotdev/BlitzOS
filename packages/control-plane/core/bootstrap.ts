@@ -3,7 +3,7 @@ export interface BootstrapOptions {
   boxImageRef: string;
   boxImageTag: string;
   phoneHomeUrl: string;
-  sshPublicKey: string;
+  sshPublicKey?: string;
 }
 
 function shellQuote(value: string): string {
@@ -13,6 +13,8 @@ function shellQuote(value: string): string {
 export function buildBootstrapScript(options: BootstrapOptions): string {
   const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
   const isTarball = options.boxImageRef.startsWith("https://");
+  const trimmedSshPublicKey = options.sshPublicKey?.trim();
+  const sshPublicKey = trimmedSshPublicKey === "" ? undefined : trimmedSshPublicKey;
   if (isTarball && options.boxImageTag.trim() === "") {
     throw new Error("BOX_IMAGE_TAG is required when BOX_IMAGE_REF is an HTTPS URL");
   }
@@ -112,11 +114,23 @@ fi
 docker image inspect "$BOX_IMAGE_REF" >/dev/null
 box_image="$BOX_IMAGE_REF"`;
 
+  const sshPublicKeyDeclaration = sshPublicKey === undefined
+    ? ""
+    : `readonly SSH_PUBLIC_KEY=${shellQuote(sshPublicKey)}\n`;
+  const sshPublicKeyProvisioning = sshPublicKey === undefined
+    ? String.raw`: >/var/lib/blitz/authorized_key
+chown root:root /var/lib/blitz/authorized_key
+chmod 0644 /var/lib/blitz/authorized_key
+`
+    : String.raw`printf '%s\n' "$SSH_PUBLIC_KEY" >/var/lib/blitz/authorized_key
+chown root:root /var/lib/blitz/authorized_key
+chmod 0644 /var/lib/blitz/authorized_key
+`;
+
   return String.raw`#!/bin/bash
 set -Eeuo pipefail
 
-readonly SSH_PUBLIC_KEY=${shellQuote(options.sshPublicKey)}
-readonly PHONE_HOME_URL=${shellQuote(options.phoneHomeUrl)}
+${sshPublicKeyDeclaration}readonly PHONE_HOME_URL=${shellQuote(options.phoneHomeUrl)}
 readonly CONTROL_PLANE_ORIGIN=${shellQuote(controlPlaneOrigin)}
 readonly BOX_IMAGE_REF=${shellQuote(options.boxImageRef)}
 readonly BOX_IMAGE_TAG=${shellQuote(options.boxImageTag)}
@@ -249,10 +263,7 @@ systemctl daemon-reload
 systemctl enable --now blitz-volume-shutdown.service
 
 mkdir -p /var/lib/blitz/workspace
-printf '%s\n' "$SSH_PUBLIC_KEY" >/var/lib/blitz/authorized_key
-chown root:root /var/lib/blitz/authorized_key
-chmod 0644 /var/lib/blitz/authorized_key
-
+${sshPublicKeyProvisioning}
 # A retained volume belongs to the previous box identity. Its token family is
 # revoked when that workspace is destroyed, and allowing the box init to see
 # those files makes its register one-shot fail before sshd can start. The new

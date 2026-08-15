@@ -1,5 +1,8 @@
 import type { MachineType, WorkspaceView } from "@blitzos/schema";
+import { env } from "cloudflare:workers";
+import { $DatabaseRawImpl } from "teenybase/worker";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Db } from "../core/db.js";
 import { CompositeVmProvider } from "../core/providers/composite.js";
 import {
   MicrovmPoolProvider,
@@ -25,7 +28,11 @@ const EDGE_TOKEN = "edge-token-0123456789012345678901";
 const SSH_KEY = "ssh-ed25519 AAAAC3Nzatest caller";
 const PHONE_HOME_URL = "https://cp.example/workspaces/workspace-id/phone-home/capability";
 
-function hosts(...entries: Array<{ name: string; url: string; tokenVar: string }>): string {
+type HostInput =
+  | { name: string; url: string; tokenVar: string }
+  | { name: string; tokenVar: string; dynamic: true };
+
+function hosts(...entries: HostInput[]): string {
   return JSON.stringify(entries);
 }
 
@@ -36,11 +43,12 @@ function provider(
     MICROVM_LAB_TOKEN: LAB_TOKEN,
     MICROVM_EDGE_TOKEN: EDGE_TOKEN,
   },
+  db?: Db,
 ): MicrovmPoolProvider {
   return new MicrovmPoolProvider(
     rawHosts,
     (tokenVar) => Reflect.get(secrets, tokenVar),
-    { fetcher },
+    { fetcher, db },
   );
 }
 
@@ -151,7 +159,9 @@ describe("microVM pool provider", () => {
 
   it("rejects invalid MICROVM_HOSTS names, URLs, fields, duplicates, tokenVar, and unresolved tokens without exposing secrets", () => {
     const valid = { name: "lab", url: "http://192.0.2.10:8086", tokenVar: "MICROVM_LAB_TOKEN" };
+    const dynamic = { name: "home", tokenVar: "MICROVM_EDGE_TOKEN", dynamic: true } as const;
     expect(parseMicrovmHosts(hosts(valid))).toEqual([valid]);
+    expect(parseMicrovmHosts(hosts(valid, dynamic))).toEqual([valid, dynamic]);
 
     const invalidConfigs: Array<[string, unknown]> = [
       ["JSON", "not-json"],
@@ -160,6 +170,9 @@ describe("microVM pool provider", () => {
       ["URL", hosts({ ...valid, url: "file:///tmp/agent" })],
       ["credentials", hosts({ ...valid, url: "https://user:pass@example.com" })],
       ["fields", JSON.stringify([{ ...valid, token: "embedded-secret" }])],
+      ["dynamic URL", JSON.stringify([{ ...dynamic, url: "https://home.example" }])],
+      ["dynamic false", JSON.stringify([{ ...valid, dynamic: false }])],
+      ["dynamic missing marker", JSON.stringify([{ name: "home", tokenVar: "MICROVM_EDGE_TOKEN" }])],
       ["duplicate name", hosts(valid, { ...valid, url: "https://second.example" })],
       ["duplicate url", hosts(valid, { ...valid, name: "second" })],
       ["tokenVar", hosts({ ...valid, tokenVar: "lowercase-token" })],
@@ -178,6 +191,159 @@ describe("microVM pool provider", () => {
         MICROVM_LAB_TOKEN: secretValue,
       }),
     ).toThrowError(expect.not.stringContaining(secretValue));
+  });
+
+  it("resolves pinned hosts from the bootstrapped D1 row on every call", async () => {
+    const db = new $DatabaseRawImpl(env.DB);
+    const calls: string[] = [];
+    const microvm = provider(
+      hosts({
+        name: "lab",
+        url: "https://configured.example",
+        tokenVar: "MICROVM_LAB_TOKEN",
+      }),
+      async (input) => {
+        calls.push(String(input));
+        return Response.json(capacity());
+      },
+      undefined,
+      db,
+    );
+
+    await microvm.syncStaticHosts();
+    await microvm.listMachineTypes();
+    await env.DB
+      .prepare("UPDATE microvm_hosts SET url = ?1 WHERE name = 'lab'")
+      .bind("https://persisted.example")
+      .run();
+    await microvm.listMachineTypes();
+    await microvm.syncStaticHosts();
+    await microvm.listMachineTypes();
+
+    expect(calls).toEqual([
+      "https://configured.example/v1/capacity",
+      "https://persisted.example/v1/capacity",
+      "https://configured.example/v1/capacity",
+    ]);
+    await expect(
+      env.DB
+        .prepare("SELECT source FROM microvm_hosts WHERE name = 'lab'")
+        .first<string>("source"),
+    ).resolves.toBe("static");
+  });
+
+  it("skips an unregistered dynamic host without degrading a pinned host", async () => {
+    const db = new $DatabaseRawImpl(env.DB);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const microvm = provider(
+      hosts(
+        {
+          name: "lab",
+          url: "https://configured.example",
+          tokenVar: "MICROVM_LAB_TOKEN",
+        },
+        { name: "home", tokenVar: "MICROVM_EDGE_TOKEN", dynamic: true },
+      ),
+      async (input) => {
+        expect(String(input)).toBe("https://configured.example/v1/capacity");
+        return Response.json(capacity());
+      },
+      undefined,
+      db,
+    );
+    await microvm.syncStaticHosts();
+
+    await expect(microvm.listMachineTypes()).resolves.toEqual([
+      expect.objectContaining({ id: "mv-2c2g@lab" }),
+      expect.objectContaining({ id: "mv-2c4g@lab" }),
+    ]);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('"host":"home"'));
+    warning.mockRestore();
+  });
+
+  it("resolves a registered dynamic URL from D1 for every provider operation", async () => {
+    const db = new $DatabaseRawImpl(env.DB);
+    const calls: string[] = [];
+    const microvm = provider(
+      hosts({ name: "home", tokenVar: "MICROVM_EDGE_TOKEN", dynamic: true }),
+      async (input, init) => {
+        const url = String(input);
+        calls.push(url);
+        if (url.endsWith("/v1/capacity")) return Response.json(capacity());
+        if (url.endsWith("/v1/vms") && init?.method === "POST") {
+          return Response.json({
+            vm_id: "vm-1-abcdef123456",
+            host_ip: "192.0.2.10",
+            ssh_port: 22_001,
+          }, { status: 201 });
+        }
+        if (url.endsWith("/v1/vms") && init?.method === undefined) {
+          return Response.json([agentVm()]);
+        }
+        if (url.endsWith("/v1/vms/vm-1-abcdef123456")) {
+          return new Response(null, { status: 204 });
+        }
+        if (url.includes("/surface/7445/")) return new Response("surface");
+        throw new Error(`unexpected request ${init?.method ?? "GET"} ${url}`);
+      },
+      undefined,
+      db,
+    );
+    await microvm.registerHost("home", EDGE_TOKEN, "https://one.trycloudflare.com/");
+
+    const pointAt = async (url: string) => {
+      await env.DB
+        .prepare("UPDATE microvm_hosts SET url = ?1 WHERE name = 'home'")
+        .bind(url)
+        .run();
+    };
+    await microvm.listMachineTypes();
+    await pointAt("https://two.trycloudflare.com");
+    const created = await microvm.createVm(createInput("mv-2c2g@home"));
+    await pointAt("https://three.trycloudflare.com");
+    await microvm.inspect(created.id);
+    await pointAt("https://four.trycloudflare.com");
+    await microvm.proxySurface(
+      created.id,
+      7445,
+      "/ports",
+      new Request("https://cp.example/surface"),
+    );
+    await pointAt("https://five.trycloudflare.com");
+    await microvm.destroy(created.id);
+
+    expect(calls).toEqual([
+      "https://one.trycloudflare.com/v1/capacity",
+      "https://two.trycloudflare.com/v1/vms",
+      "https://three.trycloudflare.com/v1/vms",
+      "https://four.trycloudflare.com/vms/vm-1-abcdef123456/surface/7445/ports",
+      "https://five.trycloudflare.com/v1/vms/vm-1-abcdef123456",
+    ]);
+  });
+
+  it("returns a 503-style error when a dynamic host has not registered", async () => {
+    const db = new $DatabaseRawImpl(env.DB);
+    const microvm = provider(
+      hosts({ name: "home", tokenVar: "MICROVM_EDGE_TOKEN", dynamic: true }),
+      async () => {
+        throw new Error("unregistered hosts must not be fetched");
+      },
+      undefined,
+      db,
+    );
+
+    await expect(microvm.createVm(createInput("mv-2c2g@home"))).rejects.toMatchObject({
+      status: 503,
+      message: "dynamic microVM host home is unavailable; waiting for registration",
+    });
+    await expect(
+      microvm.proxySurface(
+        "microvm:v1:home:vm-1-abcdef123456",
+        7445,
+        "/",
+        new Request("https://cp.example/surface"),
+      ),
+    ).rejects.toMatchObject({ status: 503 });
   });
 
   it("lists only recognized sizes fitting each live authenticated host capacity", async () => {
@@ -369,6 +535,33 @@ describe("microVM pool provider", () => {
     ).rejects.toThrow("invalid microVM agent create response ssh_port");
   });
 
+  it("omits the agent SSH key field for missing and blank provider input", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const microvm = provider(
+      hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
+      async (_input, init) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return Response.json({
+          vm_id: "vm-1-abcdef123456",
+          host_ip: "192.0.2.10",
+          ssh_port: 22_001,
+        }, { status: 201 });
+      },
+    );
+
+    for (const sshPublicKey of [undefined, "", " \t\n "]) {
+      await microvm.createVm({
+        ...createInput("mv-2c2g@lab"),
+        sshPublicKey,
+      });
+    }
+
+    expect(bodies).toHaveLength(3);
+    for (const body of bodies) {
+      expect(body).not.toHaveProperty("ssh_authorized_key");
+    }
+  });
+
   it("inspects, gracefully shuts down, and idempotently destroys through the encoded host identity", async () => {
     let listCalls = 0;
     let deleteCalls = 0;
@@ -496,6 +689,186 @@ describe("microVM pool provider", () => {
         hostPublicKey: "ssh-ed25519 AAAAmicrovmhost",
       },
     });
+  });
+
+  it("session-authenticates and streams allowed HTTP surface requests to the agent", async () => {
+    const surfaceCalls: Array<{
+      url: string;
+      method: string;
+      authorization: string | null;
+      cookie: string | null;
+      body: string;
+    }> = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/vms") && init?.method === "POST") {
+        return Response.json({
+          vm_id: "vm-1-abcdef123456",
+          host_ip: "192.0.2.10",
+          ssh_port: 22_001,
+        }, { status: 201 });
+      }
+      if (url.includes("/vms/vm-1-abcdef123456/surface/7445/")) {
+        const headers = new Headers(init?.headers);
+        surfaceCalls.push({
+          url,
+          method: init?.method ?? "GET",
+          authorization: headers.get("authorization"),
+          cookie: headers.get("cookie"),
+          body: init?.body === undefined || init.body === null
+            ? ""
+            : await new Response(init.body).text(),
+        });
+        return new Response("guest-response", {
+          status: 207,
+          headers: { "X-Guest-Surface": "7445" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${url}`);
+    });
+    const microvm = provider(
+      hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
+      fetcher,
+    );
+    const app = appWithProviders(microvm, new FakeProviders());
+    const cookie = await operatorSession(app);
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "mv-2c2g@lab" }),
+    });
+    const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
+    expect(workspace.machineTypeId).toBe("mv-2c2g@lab");
+
+    const unauthorized = await appRequest(
+      app,
+      `/workspaces/${workspace.id}/surface/7445/ports`,
+    );
+    expect(unauthorized.status).toBe(401);
+    const disallowed = await appRequest(
+      app,
+      `/workspaces/${workspace.id}/surface/7443/ports`,
+      { headers: { Cookie: cookie } },
+    );
+    expect(disallowed.status).toBe(400);
+    const missing = await appRequest(
+      app,
+      "/workspaces/missing/surface/7445/ports",
+      { headers: { Cookie: cookie } },
+    );
+    expect(missing.status).toBe(404);
+
+    const response = await appRequest(
+      app,
+      `/workspaces/${workspace.id}/surface/7445/workspace/a%20b?arg=one&arg=two`,
+      {
+        method: "PATCH",
+        headers: { Cookie: cookie, "Content-Type": "text/plain" },
+        body: "stream-me",
+      },
+    );
+    expect(response.status).toBe(207);
+    expect(response.headers.get("x-guest-surface")).toBe("7445");
+    expect(await response.text()).toBe("guest-response");
+    expect(surfaceCalls).toEqual([{
+      url: "https://lab.example/vms/vm-1-abcdef123456/surface/7445/workspace/a%20b?arg=one&arg=two",
+      method: "PATCH",
+      authorization: `Bearer ${LAB_TOKEN}`,
+      cookie: null,
+      body: "stream-me",
+    }]);
+  });
+
+  it("rejects surface access for non-microVM workspaces with a clear 400", async () => {
+    const cloud = new FakeProviders();
+    const app = appWithProviders(cloud, cloud);
+    const cookie = await operatorSession(app);
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "small" }),
+    });
+    const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
+    const response = await appRequest(
+      app,
+      `/workspaces/${workspace.id}/surface/7445/ports`,
+      { headers: { Cookie: cookie } },
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "workspace is not backed by the microVM provider",
+    });
+  });
+
+  it("pipes WebSocket messages in both directions through the agent fetch", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/vms") && init?.method === "POST") {
+        return Response.json({
+          vm_id: "vm-1-abcdef123456",
+          host_ip: "192.0.2.10",
+          ssh_port: 22_001,
+        }, { status: 201 });
+      }
+      if (url.endsWith("/vms/vm-1-abcdef123456/surface/7444/?arg=kept")) {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe(`Bearer ${LAB_TOKEN}`);
+        expect(headers.get("cookie")).toBeNull();
+        expect(headers.get("upgrade")).toBe("websocket");
+        const pair = new WebSocketPair();
+        const upstreamServer = pair[1];
+        upstreamServer.accept();
+        upstreamServer.addEventListener("message", (event) => {
+          upstreamServer.send(`agent:${String(event.data)}`);
+        });
+        return new Response(null, {
+          status: 101,
+          headers: { "Sec-WebSocket-Protocol": "acp" },
+          webSocket: pair[0],
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${url}`);
+    });
+    const microvm = provider(
+      hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
+      fetcher,
+    );
+    const app = appWithProviders(microvm, new FakeProviders());
+    const cookie = await operatorSession(app);
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "mv-2c2g@lab" }),
+    });
+    const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
+
+    const response = await appRequest(
+      app,
+      `/workspaces/${workspace.id}/surface/7444?arg=kept`,
+      {
+        headers: {
+          Cookie: cookie,
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Protocol": "acp",
+        },
+      },
+    );
+    expect(response.status).toBe(101);
+    expect(response.headers.get("sec-websocket-protocol")).toBe("acp");
+    const socket = response.webSocket;
+    if (socket === null) throw new Error("control-plane response omitted its WebSocket");
+    socket.accept();
+    const message = new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("WebSocket response timed out")), 2_000);
+      socket.addEventListener("message", (event) => {
+        clearTimeout(timer);
+        resolve(String(event.data));
+      });
+    });
+    socket.send("hello");
+    await expect(message).resolves.toBe("agent:hello");
+    socket.close(1000, "done");
   });
 
   it("combines listings and routes mv creates and encoded lifecycle IDs to microVM while leaving other operations on Hetzner", async () => {

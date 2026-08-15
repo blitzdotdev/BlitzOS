@@ -1,9 +1,13 @@
-import { isRecord } from "../http.js";
+import { first, transaction, type Db } from "../db.js";
+import { bearerToken, safeEqualSecret } from "../crypto.js";
+import { HttpError, isRecord, readJson } from "../http.js";
+import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import type { MachineType } from "../wire.js";
 import type {
   CreatedVm,
   CreateVmInput,
   ProviderCapabilities,
+  SurfacePort,
   VmInspection,
   VmProvider,
 } from "./types.js";
@@ -20,13 +24,27 @@ type Fetcher = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-export interface MicrovmHostConfig {
+export interface StaticMicrovmHostConfig {
   name: string;
   url: string;
   tokenVar: string;
 }
 
-interface ResolvedMicrovmHost extends MicrovmHostConfig {
+export interface DynamicMicrovmHostConfig {
+  name: string;
+  tokenVar: string;
+  dynamic: true;
+}
+
+export type MicrovmHostConfig =
+  | StaticMicrovmHostConfig
+  | DynamicMicrovmHostConfig;
+
+type ResolvedMicrovmHost = MicrovmHostConfig & { token: string };
+
+interface ActiveMicrovmHost {
+  name: string;
+  url: string;
   token: string;
 }
 
@@ -38,6 +56,12 @@ export interface MicrovmMachineType {
 
 export interface MicrovmPoolProviderOptions {
   fetcher?: Fetcher;
+  db?: Db;
+}
+
+interface MicrovmHostRow {
+  url: string | null;
+  source: "static" | "registered" | null;
 }
 
 interface AgentCapacity {
@@ -129,6 +153,38 @@ function normalizedHostUrl(raw: string): string {
   return url.href.replace(/\/+$/u, "");
 }
 
+function normalizedRegisteredHostUrl(raw: unknown): string {
+  if (typeof raw !== "string") {
+    throw new HttpError(400, "url must be an HTTPS URL");
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new HttpError(400, "url must be an HTTPS URL");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.length === 0 ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new HttpError(
+      400,
+      "url must be an HTTPS URL without credentials, query, or fragment",
+    );
+  }
+  return url.href.replace(/\/+$/u, "");
+}
+
+function isDynamicHost(
+  host: MicrovmHostConfig,
+): host is DynamicMicrovmHostConfig {
+  return "dynamic" in host && host.dynamic === true;
+}
+
 export function parseMicrovmHosts(value: unknown): MicrovmHostConfig[] {
   if (value === undefined || value === null || value === "") return [];
   if (typeof value !== "string") {
@@ -146,20 +202,18 @@ export function parseMicrovmHosts(value: unknown): MicrovmHostConfig[] {
   const urls = new Set<string>();
   return parsed.map((entry, index) => {
     if (!isRecord(entry)) throw new Error(`MICROVM_HOSTS[${index}] must be an object`);
-    exactFields(entry, ["name", "url", "tokenVar"], `MICROVM_HOSTS[${index}]`);
+    const dynamic = entry.dynamic === true;
+    exactFields(
+      entry,
+      dynamic ? ["name", "tokenVar", "dynamic"] : ["name", "url", "tokenVar"],
+      `MICROVM_HOSTS[${index}]`,
+    );
     const name = entry.name;
     if (typeof name !== "string" || !HOST_NAME_PATTERN.test(name)) {
       throw new Error(`MICROVM_HOSTS[${index}].name is invalid`);
     }
     if (names.has(name)) throw new Error(`MICROVM_HOSTS contains duplicate name ${name}`);
     names.add(name);
-
-    if (typeof entry.url !== "string") {
-      throw new Error(`MICROVM_HOSTS[${index}].url must be a string`);
-    }
-    const url = normalizedHostUrl(entry.url);
-    if (urls.has(url)) throw new Error(`MICROVM_HOSTS contains duplicate url ${url}`);
-    urls.add(url);
 
     const tokenVar = entry.tokenVar;
     if (typeof tokenVar !== "string" || !TOKEN_VAR_PATTERN.test(tokenVar)) {
@@ -168,6 +222,14 @@ export function parseMicrovmHosts(value: unknown): MicrovmHostConfig[] {
     if (tokenVar === "MICROVM_HOSTS") {
       throw new Error(`MICROVM_HOSTS[${index}].tokenVar must name a secret binding`);
     }
+    if (dynamic) return { name, tokenVar, dynamic: true };
+
+    if (typeof entry.url !== "string") {
+      throw new Error(`MICROVM_HOSTS[${index}].url must be a string`);
+    }
+    const url = normalizedHostUrl(entry.url);
+    if (urls.has(url)) throw new Error(`MICROVM_HOSTS contains duplicate url ${url}`);
+    urls.add(url);
     return { name, url, tokenVar };
   });
 }
@@ -347,6 +409,7 @@ export class MicrovmPoolProvider implements VmProvider {
   private readonly hosts: ResolvedMicrovmHost[];
   private readonly hostsByName: ReadonlyMap<string, ResolvedMicrovmHost>;
   private readonly fetcher: Fetcher;
+  private readonly db: Db | undefined;
 
   constructor(
     rawHosts: unknown,
@@ -366,6 +429,7 @@ export class MicrovmPoolProvider implements VmProvider {
     });
     this.hostsByName = new Map(this.hosts.map((host) => [host.name, host]));
     this.fetcher = options.fetcher ?? fetch;
+    this.db = options.db;
   }
 
   capabilities(): ProviderCapabilities {
@@ -376,18 +440,134 @@ export class MicrovmPoolProvider implements VmProvider {
     return isMicrovmProviderId(id);
   }
 
+  async syncStaticHosts(): Promise<void> {
+    if (this.db === undefined) return;
+    const now = Date.now();
+    const upserts = this.hosts.flatMap((host) =>
+      isDynamicHost(host)
+        ? []
+        : [{
+            q: `INSERT INTO microvm_hosts (name, url, updated_at, source)
+                VALUES (?1, ?2, ?3, 'static')
+                ON CONFLICT(name) DO UPDATE SET
+                  url = excluded.url,
+                  updated_at = excluded.updated_at,
+                  source = excluded.source
+                WHERE microvm_hosts.url IS NOT excluded.url
+                   OR microvm_hosts.source IS NOT excluded.source`,
+            v: [host.name, host.url, now],
+          }],
+    );
+    if (upserts.length > 0) await transaction(this.db, upserts);
+  }
+
+  async prepareHostRegistration(
+    name: string,
+    providedToken: string | null,
+  ): Promise<(rawUrl: unknown) => Promise<void>> {
+    const host = this.hostsByName.get(name);
+    if (host === undefined) throw new HttpError(404, "microVM host not found");
+    if (
+      providedToken === null ||
+      !(await safeEqualSecret(providedToken, host.token))
+    ) {
+      throw new HttpError(401, "unauthorized");
+    }
+    if (!isDynamicHost(host)) {
+      throw new HttpError(409, "pinned microVM hosts cannot register");
+    }
+    return async (rawUrl: unknown) => {
+      const url = normalizedRegisteredHostUrl(rawUrl);
+      if (this.db === undefined) {
+        throw new Error("microVM host registration database is unavailable");
+      }
+      const [previousRows] = await transaction<MicrovmHostRow>(this.db, [
+        {
+          q: "SELECT url, source FROM microvm_hosts WHERE name = ?1 LIMIT 1",
+          v: [host.name],
+        },
+        {
+          q: `INSERT INTO microvm_hosts (name, url, updated_at, source)
+              VALUES (?1, ?2, ?3, 'registered')
+              ON CONFLICT(name) DO UPDATE SET
+                url = excluded.url,
+                updated_at = excluded.updated_at,
+                source = excluded.source
+              WHERE microvm_hosts.url IS NOT excluded.url
+                 OR microvm_hosts.source IS NOT excluded.source`,
+          v: [host.name, url, Date.now()],
+        },
+      ]);
+      const previousUrl = previousRows?.[0]?.url ?? null;
+      if (previousUrl !== url) {
+        console.log(
+          JSON.stringify({
+            message: "microVM host URL changed",
+            host: host.name,
+            old_url: previousUrl,
+            new_url: url,
+          }),
+        );
+      }
+    };
+  }
+
+  async registerHost(
+    name: string,
+    providedToken: string | null,
+    rawUrl: unknown,
+  ): Promise<void> {
+    const register = await this.prepareHostRegistration(name, providedToken);
+    await register(rawUrl);
+  }
+
+  private unavailableHost(host: ResolvedMicrovmHost): HttpError {
+    return new HttpError(
+      503,
+      isDynamicHost(host)
+        ? `dynamic microVM host ${host.name} is unavailable; waiting for registration`
+        : `pinned microVM host ${host.name} is unavailable`,
+    );
+  }
+
+  private async resolveHost(host: ResolvedMicrovmHost): Promise<ActiveMicrovmHost> {
+    if (this.db === undefined) {
+      if (isDynamicHost(host)) throw this.unavailableHost(host);
+      return { name: host.name, url: host.url, token: host.token };
+    }
+    const expectedSource = isDynamicHost(host) ? "registered" : "static";
+    const row = await first<MicrovmHostRow>(this.db, {
+      q: `SELECT url, source FROM microvm_hosts
+          WHERE name = ?1 AND source = ?2
+          LIMIT 1`,
+      v: [host.name, expectedSource],
+    });
+    if (row?.url === null || row?.url === undefined) {
+      throw this.unavailableHost(host);
+    }
+    try {
+      const url = isDynamicHost(host)
+        ? normalizedRegisteredHostUrl(row.url)
+        : normalizedHostUrl(row.url);
+      return { name: host.name, url, token: host.token };
+    } catch {
+      throw this.unavailableHost(host);
+    }
+  }
+
   private async request(
     host: ResolvedMicrovmHost,
     path: string,
     init?: RequestInit,
     notFoundIsNull = false,
   ): Promise<unknown> {
+    const activeHost = await this.resolveHost(host);
     const fetcher = this.fetcher;
-    const response = await fetcher(`${host.url}${path}`, {
+    const response = await fetcher(`${activeHost.url}${path}`, {
       ...init,
       signal: init?.signal ?? AbortSignal.timeout(AGENT_REQUEST_TIMEOUT_MS),
       headers: {
-        Authorization: `Bearer ${host.token}`,
+        Authorization: `Bearer ${activeHost.token}`,
         ...(init?.body === undefined ? {} : { "Content-Type": "application/json" }),
       },
     });
@@ -427,12 +607,34 @@ export class MicrovmPoolProvider implements VmProvider {
   }
 
   async listMachineTypes(): Promise<MachineType[]> {
-    const capacities = await Promise.all(
+    const settled = await Promise.allSettled(
       this.hosts.map(async (host) => ({
         host,
         capacity: capacityFromAgent(await this.request(host, "/v1/capacity")),
       })),
     );
+    const capacities = settled.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    settled.forEach((result, index) => {
+      if (result.status !== "rejected") return;
+      console.warn(
+        JSON.stringify({
+          message: "microVM host capacity unavailable",
+          host: this.hosts[index]?.name ?? "unknown",
+          error:
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason),
+        }),
+      );
+    });
+    if (capacities.length === 0) {
+      const failure = settled.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (failure !== undefined) throw failure.reason;
+    }
     return capacities.flatMap(({ host, capacity }) => {
       if (capacity.vmCount >= capacity.maxVms) return [];
       const freeCpu = capacity.totalCpu - capacity.usedCpu;
@@ -460,7 +662,9 @@ export class MicrovmPoolProvider implements VmProvider {
         workspace_id: input.workspaceId,
         cpu: machine.cpu,
         mem_mb: machine.memGb * 1_024,
-        ssh_authorized_key: input.sshPublicKey,
+        ...(input.sshPublicKey === undefined || input.sshPublicKey.trim() === ""
+          ? {}
+          : { ssh_authorized_key: input.sshPublicKey }),
         phone_home_url: input.phoneHomeUrl,
         cp_origin: new URL(input.phoneHomeUrl).origin,
       }),
@@ -505,4 +709,53 @@ export class MicrovmPoolProvider implements VmProvider {
       state: vm.status === "running" ? "running" : "stopped",
     };
   }
+
+  async proxySurface(
+    id: string,
+    port: SurfacePort,
+    pathAndQuery: string,
+    request: Request,
+  ): Promise<Response | null> {
+    if (!this.owns(id)) return null;
+    const { host, agentVmId } = this.hostForProviderId(id);
+    const activeHost = await this.resolveHost(host);
+    const headers = new Headers(request.headers);
+    headers.delete("Cookie");
+    headers.delete("Host");
+    headers.set("Authorization", `Bearer ${activeHost.token}`);
+    const hasBody = request.method !== "GET" && request.method !== "HEAD";
+    const fetcher = this.fetcher;
+    return fetcher(
+      `${activeHost.url}/vms/${encodeURIComponent(agentVmId)}/surface/${port}${pathAndQuery}`,
+      {
+        method: request.method,
+        headers,
+        body: hasBody ? request.body : undefined,
+        redirect: "manual",
+        signal: request.signal,
+      },
+    );
+  }
+}
+
+export function addMicrovmHostRoutes(
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+): void {
+  router.post("/hosts/:name/register", async (context: CoreContext) => {
+    const runtime = runtimeFactory(context);
+    const microvm = runtime.providers.microvm;
+    if (microvm === undefined) throw new HttpError(404, "microVM host not found");
+    const register = await microvm.prepareHostRegistration(
+      context.req.param("name"),
+      bearerToken(context.req.raw),
+    );
+    const body = await readJson(context.req.raw);
+    if (!isRecord(body)) throw new HttpError(400, "request body must be an object");
+    if (Object.keys(body).length !== 1 || !("url" in body)) {
+      throw new HttpError(400, "request body must contain only url");
+    }
+    await register(body.url);
+    return context.body(null, 204);
+  });
 }

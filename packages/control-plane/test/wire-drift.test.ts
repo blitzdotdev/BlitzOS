@@ -4,6 +4,7 @@ import * as wire from "../core/wire.js";
 
 const workspace: wire.WorkspaceView & schema.WorkspaceView = {
   id: "workspace",
+  machineTypeId: "mv-2c2g@lab",
   phase: "ready",
   retryAction: null,
   canObserve: true,

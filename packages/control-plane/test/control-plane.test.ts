@@ -177,6 +177,70 @@ describe("control plane security and lifecycle", () => {
     });
   });
 
+  it("creates workspaces without an SSH key and normalizes blank keys to absence", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+
+    for (const sshPublicKey of [undefined, "", " \t\n "]) {
+      const response = await appRequest(app, "/workspaces", {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          machineTypeId: "small",
+          ...(sshPublicKey === undefined ? {} : { sshPublicKey }),
+        }),
+      });
+
+      expect(response.status).toBe(201);
+      const { workspace } = await response.json<WorkspaceResponse>();
+      const userData = providers.userData.get(workspace.id);
+      expect(userData).toBeDefined();
+      expect(userData).not.toContain("ssh_authorized_keys");
+      expect(userData).not.toContain("SSH_PUBLIC_KEY");
+      expect(userData).toContain(": >/var/lib/blitz/authorized_key");
+      expect(userData).toContain(
+        "src=/var/lib/blitz/authorized_key,dst=/run/blitz/authorized_key,readonly",
+      );
+      expect(providers.sshPublicKeys.get(workspace.id)).toBeUndefined();
+    }
+    expect(providers.createCalls).toBe(3);
+  });
+
+  it("trims an SSH public key before passing it downstream", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const sshPublicKey = "ssh-ed25519 AAAAC3Nzatest caller";
+    const response = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "small", sshPublicKey: ` \t${sshPublicKey}\n ` }),
+    });
+
+    expect(response.status).toBe(201);
+    const { workspace } = await response.json<WorkspaceResponse>();
+    expect(providers.sshPublicKeys.get(workspace.id)).toBe(sshPublicKey);
+    expect(providers.userData.get(workspace.id)).toContain(
+      `readonly SSH_PUBLIC_KEY='${sshPublicKey}'`,
+    );
+  });
+
+  it("keeps SSH public key validation strict for a provided nonempty value", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const response = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "small", sshPublicKey: "not-a-key" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "sshPublicKey must be an SSH public key",
+      retryAction: null,
+    });
+    expect(providers.createCalls).toBe(0);
+  });
+
   it("filters deprecated Hetzner machine types and locations from the API response", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({

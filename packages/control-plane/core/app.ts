@@ -4,6 +4,7 @@ import { HttpError } from "./http.js";
 import { addOAuthRoutes } from "./oauth.js";
 import type { Principal } from "./principals.js";
 import { ensurePrincipal } from "./principals.js";
+import { addMicrovmHostRoutes } from "./providers/microvm.js";
 import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import { addSessionRoutes } from "./sessions.js";
@@ -15,6 +16,7 @@ export function installControlPlaneRoutes(
   runtimeFactory: RuntimeFactory,
 ): void {
   addBoxImageRoutes(router, runtimeFactory);
+  addMicrovmHostRoutes(router, runtimeFactory);
 
   async function requirePrincipal(context: CoreContext): Promise<Principal> {
     const runtime = runtimeFactory(context);

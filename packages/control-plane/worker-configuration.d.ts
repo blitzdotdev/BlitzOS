@@ -9,7 +9,7 @@ interface __BaseEnv_Env {
 	BOX_IMAGE_SHA256: "29a63905864b5b34933df2a2f31a84166d5aff7edfacf9efbc144635b3ff9ea3";
 	SESSION_TTL_DAYS: "30";
 	MAX_CONCURRENT_WORKSPACES: "10";
-	MICROVM_HOSTS: "[{\"name\":\"lab\",\"url\":\"https://behavior-deal-anthony-jobs.trycloudflare.com\",\"tokenVar\":\"MICROVM_LAB_TOKEN\"}]";
+	MICROVM_HOSTS: "[{\"name\":\"lab\",\"tokenVar\":\"MICROVM_LAB_TOKEN\",\"dynamic\":true}]";
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

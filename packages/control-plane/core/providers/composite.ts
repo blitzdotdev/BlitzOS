@@ -3,6 +3,7 @@ import type {
   CreatedVm,
   CreateVmInput,
   ProviderCapabilities,
+  SurfacePort,
   VmInspection,
   VmProvider,
 } from "./types.js";
@@ -19,11 +20,30 @@ export class CompositeVmProvider implements VmProvider {
   }
 
   async listMachineTypes(): Promise<MachineType[]> {
-    const [hetzner, microvm] = await Promise.all([
+    const settled = await Promise.allSettled([
       this.hetzner.listMachineTypes(),
       this.microvm.listMachineTypes(),
     ]);
-    return [...hetzner, ...microvm];
+    const types = settled.flatMap((result) =>
+      result.status === "fulfilled" ? result.value : [],
+    );
+    settled.forEach((result, index) => {
+      if (result.status === "rejected") {
+        const provider = index === 0 ? "hetzner" : "microvm";
+        const reason =
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason);
+        console.warn(`listMachineTypes: ${provider} provider unavailable: ${reason}`);
+      }
+    });
+    if (types.length === 0) {
+      const failure = settled.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (failure !== undefined) throw failure.reason;
+    }
+    return types;
   }
 
   async createVm(input: CreateVmInput): Promise<CreatedVm> {
@@ -48,5 +68,16 @@ export class CompositeVmProvider implements VmProvider {
     return this.microvm.owns(id)
       ? this.microvm.inspect(id)
       : this.hetzner.inspect(id);
+  }
+
+  async proxySurface(
+    id: string,
+    port: SurfacePort,
+    pathAndQuery: string,
+    request: Request,
+  ): Promise<Response | null> {
+    return this.microvm.owns(id)
+      ? this.microvm.proxySurface(id, port, pathAndQuery, request)
+      : null;
   }
 }

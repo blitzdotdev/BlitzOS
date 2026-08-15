@@ -102,6 +102,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
       fields: [
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
         { name: "owner_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } },
+        { name: "machine_type_id", type: "text", sqlType: "text", notNull: true, default: { l: "unknown" } },
         { name: "phase", type: "text", sqlType: "text", notNull: true, check: "phase IN ('creating', 'ready', 'destroying', 'destroyed', 'error')" },
         { name: "revision", type: "integer", sqlType: "integer", notNull: true, check: "revision > 0" },
         { name: "vm_id", type: "text", sqlType: "text" },
@@ -271,6 +272,16 @@ export const BLITZDEV_CONFIG = Object.freeze({
       extensions: [DENY_ALL_RULES],
     },
     {
+      name: "microvm_hosts",
+      fields: [
+        { name: "name", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
+        { name: "url", type: "text", sqlType: "text" },
+        { name: "updated_at", type: "integer", sqlType: "integer" },
+        { name: "source", type: "text", sqlType: "text", check: "source IN ('static', 'registered')" },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
       name: "blitz_files",
       r2Base: "blitz-files",
       autoDeleteR2Files: false,
@@ -391,15 +402,17 @@ function dynamicBinding(env: ManagedBindings, name: string): unknown {
   return Reflect.get(env, name);
 }
 
-function providersFor(env: ManagedBindings): CoreRuntime["providers"] {
+function providersFor(env: ManagedBindings, db: Db): CoreRuntime["providers"] {
   const hetzner = new HetznerProvider(env.HETZNER_API_TOKEN);
   const microvm = new MicrovmPoolProvider(
     env.MICROVM_HOSTS,
     (tokenVar) => dynamicBinding(env, tokenVar),
+    { db },
   );
   return {
     vm: new CompositeVmProvider(hetzner, microvm),
     volume: hetzner,
+    microvm,
   };
 }
 
@@ -408,6 +421,7 @@ const API_PREFIXES = [
   "/workspaces",
   "/volumes",
   "/machine-types",
+  "/hosts/",
   "/oauth/",
   "/boxes/",
   "/integrations",
@@ -462,8 +476,9 @@ function runtimeFor(context: CoreContext): CoreRuntime;
 function runtimeFor(context: ManagedContext): CoreRuntime;
 function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
   const env = context.env as ManagedBindings;
+  const db = context.get("$db") as Db;
   return {
-    db: context.get("$db") as Db,
+    db,
     blobs: managedBlobStore(context.get("$db") as $Database, "box-image"),
     credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
@@ -473,7 +488,7 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
       sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
       maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(env.MAX_CONCURRENT_WORKSPACES),
     },
-    providers: providersFor(env),
+    providers: providersFor(env, db),
     principalSource: createOperatorPrincipalSource(env.OPERATOR_API_KEY),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
   };
@@ -487,7 +502,9 @@ const app = teenyHono<ManagedEnv>(
   undefined,
   { cors: false, logger: true },
   async (c) => {
-    maybeScheduleLazySweep(runtimeFor(c), c.req.path);
+    const runtime = runtimeFor(c);
+    await runtime.providers.microvm?.syncStaticHosts();
+    maybeScheduleLazySweep(runtime, c.req.path);
   },
 );
 

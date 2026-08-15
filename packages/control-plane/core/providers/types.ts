@@ -8,7 +8,7 @@ export interface ProviderCapabilities {
 export interface CreateVmInput {
   workspaceId: string;
   machineTypeId: string;
-  sshPublicKey: string;
+  sshPublicKey?: string;
   phoneHomeUrl: string;
   userData: string;
 }
@@ -24,6 +24,8 @@ export interface VmInspection extends CreatedVm {
   state: "running" | "stopped";
 }
 
+export type SurfacePort = 7444 | 7445;
+
 export interface VmProvider {
   capabilities(): ProviderCapabilities;
   listMachineTypes(): Promise<MachineType[]>;
@@ -31,6 +33,12 @@ export interface VmProvider {
   shutdown(id: string): Promise<void>;
   destroy(id: string): Promise<void>;
   inspect(id: string): Promise<VmInspection | null>;
+  proxySurface?(
+    id: string,
+    port: SurfacePort,
+    pathAndQuery: string,
+    request: Request,
+  ): Promise<Response | null>;
 }
 
 export interface VolumeProvider {

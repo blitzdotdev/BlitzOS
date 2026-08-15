@@ -57,6 +57,7 @@ type TestEnv = $Env<TestBindings> & {
 };
 
 export class FakeProviders implements VmProvider, VolumeProvider {
+  readonly sshPublicKeys = new Map<string, string | undefined>();
   readonly userData = new Map<string, string>();
   readonly volumes = new Map<string, Volume>();
   createCalls = 0;
@@ -85,6 +86,7 @@ export class FakeProviders implements VmProvider, VolumeProvider {
 
   async createVm(input: CreateVmInput): Promise<CreatedVm> {
     this.createCalls += 1;
+    this.sshPublicKeys.set(input.workspaceId, input.sshPublicKey);
     this.userData.set(input.workspaceId, input.userData);
     await this.onCreate?.(input.workspaceId);
     return { id: `vm-${input.workspaceId}`, host: "203.0.113.10", port: 22, user: "blitz" };
@@ -302,6 +304,7 @@ export async function enrollBox(
 
 export async function resetDatabase(): Promise<void> {
   const tables = [
+    "microvm_hosts",
     "credential_events",
     "credential_requests",
     "credential_leases",

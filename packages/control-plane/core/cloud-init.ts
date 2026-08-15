@@ -1,6 +1,13 @@
 import { buildBootstrapScript } from "./bootstrap.js";
 
-function cloudConfig(sshPublicKey: string): string {
+function cloudConfig(sshPublicKey: string | undefined): string {
+  const trimmedSshPublicKey = sshPublicKey?.trim();
+  const includedSshPublicKey = trimmedSshPublicKey === "" ? undefined : trimmedSshPublicKey;
+  const sshAuthorizedKeys = includedSshPublicKey === undefined
+    ? ""
+    : `    ssh_authorized_keys:
+      - ${JSON.stringify(includedSshPublicKey)}
+`;
   return `#cloud-config
 ssh_pwauth: false
 disable_root: false
@@ -10,9 +17,7 @@ users:
     groups: [sudo]
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
-    ssh_authorized_keys:
-      - ${JSON.stringify(sshPublicKey)}
-`;
+${sshAuthorizedKeys}`;
 }
 
 function contentType(userData: string): string {
@@ -31,7 +36,7 @@ ${content}`;
 }
 
 export function buildUserData(
-  sshPublicKey: string,
+  sshPublicKey: string | undefined,
   phoneHomeUrl: string,
   boxImageRef: string,
   callerUserData?: string,
