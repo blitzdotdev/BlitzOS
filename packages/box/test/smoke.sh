@@ -14,6 +14,8 @@ mkdir -p "$smoke_tmp"
 test_dir=$(mktemp -d "$smoke_tmp/run.XXXXXX")
 preserve_test_dir=false
 
+"$script_dir/syntax.sh"
+
 cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
   docker rm -f "$unprivileged_container" >/dev/null 2>&1 || true
@@ -85,7 +87,8 @@ for _attempt in $(seq 1 100); do
   if grep -q '0.0.0.0:22' <<<"$listeners" \
     && grep -q '127.0.0.1:7443' <<<"$listeners" \
     && grep -q '127.0.0.1:7444' <<<"$listeners" \
-    && grep -q '127.0.0.1:7445' <<<"$listeners"; then
+    && grep -q '127.0.0.1:7445' <<<"$listeners" \
+    && grep -q '127.0.0.1:17445' <<<"$listeners"; then
     ready=true
     break
   fi
@@ -94,10 +97,10 @@ done
 [ "$ready" = true ] || fail "loopback services did not become ready"
 
 services=$(docker exec "$container" /command/s6-rc -a list)
-for service in init-state enroll register sshd ttyd actor dufs watch dockerd; do
+for service in init-state enroll register sshd ttyd actor dufs gateway watch dockerd; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
 done
-for service in sshd ttyd actor dufs watch dockerd; do
+for service in sshd ttyd actor dufs gateway watch dockerd; do
   docker exec "$container" /command/s6-svstat "/run/service/$service" | grep -q '^up' || fail "$service is not up"
 done
 dufs_version=$(docker exec "$container" /usr/local/bin/dufs --version)
@@ -143,6 +146,41 @@ if ssh "${ssh_common[@]}" -o PubkeyAuthentication=no -o PasswordAuthentication=y
 fi
 echo "PASS sshd key-only authentication"
 
+docker cp "$script_dir/ttyd-client.mjs" "$container:/tmp/ttyd-client.mjs" >/dev/null
+ttyd_url='ws://127.0.0.1:7443/ws?arg=terminal&arg=smoke-contract'
+docker exec --user blitz \
+  --env "TTYD_URL=$ttyd_url" \
+  --env $'TTYD_INPUT=printf first-connect > /workspace/ttyd-first\r' \
+  "$container" node /tmp/ttyd-client.mjs
+docker exec "$container" test -f /workspace/ttyd-first || fail "writable ttyd attach did not accept input"
+session_before=$(docker exec --user blitz "$container" tmux list-panes \
+  -t '=term-smoke-contract' -F '#{session_name}:#{session_created}:#{pane_pid}')
+grep -Eq '^term-smoke-contract:[0-9]+:[0-9]+$' <<<"$session_before" \
+  || fail "could not identify the tmux session: $session_before"
+docker exec --user blitz "$container" tmux has-session -t '=term-smoke-contract' \
+  || fail "tmux session did not survive the first WebSocket disconnect"
+
+docker exec --user blitz \
+  --env "TTYD_URL=${ttyd_url}&arg=ro" \
+  --env $'TTYD_INPUT=printf forbidden > /workspace/ttyd-read-only\r' \
+  "$container" node /tmp/ttyd-client.mjs
+docker exec "$container" test ! -e /workspace/ttyd-read-only || fail "read-only ttyd attach accepted input"
+
+docker exec --user blitz \
+  --env "TTYD_URL=$ttyd_url" \
+  --env $'TTYD_INPUT=printf reconnected > /workspace/ttyd-reconnected\r' \
+  "$container" node /tmp/ttyd-client.mjs
+docker exec "$container" test -f /workspace/ttyd-reconnected || fail "reconnected ttyd attach did not accept input"
+session_after=$(docker exec --user blitz "$container" tmux list-panes \
+  -t '=term-smoke-contract' -F '#{session_name}:#{session_created}:#{pane_pid}')
+[ "$session_before" = "$session_after" ] || fail "ttyd reconnect replaced the tmux session"
+docker exec --user blitz --env TTYD_URL=ws://127.0.0.1:7443/ws \
+  "$container" node /tmp/ttyd-client.mjs
+if docker exec --user blitz "$container" /usr/local/libexec/blitz-term terminal 'bad.key' >/dev/null 2>&1; then
+  fail "terminal launcher accepted an unsafe session key"
+fi
+echo "PASS ttyd URL args, no-arg shell, read-only attach, and tmux persistence ($session_before)"
+
 docker exec -i --workdir /opt/blitz/actor "$container" node --input-type=module <<'NODE'
 import { WebSocket } from "ws";
 
@@ -175,6 +213,46 @@ docker run --rm \
   --mount "type=bind,source=$repo_root/packages/box/test,target=/test,readonly" \
   --entrypoint /bin/sh \
   "$curl_image" /test/files-smoke.sh
+
+docker cp "$script_dir/preview-fixture.mjs" "$container:/tmp/preview-fixture.mjs" >/dev/null
+docker exec -d --user blitz --env PREVIEW_FIXTURE_PORT=31234 \
+  "$container" node /tmp/preview-fixture.mjs
+ports_json=''
+for _attempt in $(seq 1 50); do
+  ports_json=$(docker run --rm --network "container:$container" "$curl_image" \
+    -fsS http://127.0.0.1:7445/ports 2>/dev/null || true)
+  if grep -q '"port":31234' <<<"$ports_json"; then
+    break
+  fi
+  sleep 0.1
+done
+grep -q '"port":31234,"process":"node"' <<<"$ports_json" \
+  || fail "/ports omitted the node test listener: $ports_json"
+if grep -Eq '"port":(22|7443|7444|7445|17445),' <<<"$ports_json"; then
+  fail "/ports exposed a box service port: $ports_json"
+fi
+preview_http=$(docker run --rm --network "container:$container" "$curl_image" \
+  -fsS 'http://127.0.0.1:7445/preview/31234/deep/path?probe=1')
+[ "$preview_http" = 'preview-http:GET:/deep/path?probe=1' ] \
+  || fail "preview HTTP proxy returned: $preview_http"
+docker exec -i --workdir /opt/blitz/actor "$container" node --input-type=module <<'NODE'
+import { WebSocket } from "ws";
+
+const result = await new Promise((resolve, reject) => {
+  const socket = new WebSocket("ws://127.0.0.1:7445/preview/31234/socket?probe=1");
+  const timer = setTimeout(() => reject(new Error("preview WebSocket timeout")), 5000);
+  socket.on("open", () => socket.send("hello"));
+  socket.on("message", (message) => {
+    clearTimeout(timer);
+    socket.close();
+    resolve(message.toString());
+  });
+  socket.on("error", reject);
+});
+if (result !== "preview-ws:/socket?probe=1:hello") throw new Error(`bad preview WebSocket response: ${result}`);
+NODE
+echo "PASS ports discovery ($ports_json)"
+echo "PASS preview HTTP + WebSocket proxy ($preview_http)"
 
 docker exec --user blitz "$container" sh -c \
   'test ! -r /etc/shadow && test ! -r /var/lib/blitz/ssh/ssh_host_ed25519_key' \

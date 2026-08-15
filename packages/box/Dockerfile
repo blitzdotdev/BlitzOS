@@ -9,6 +9,15 @@ COPY packages/broker/cmd ./cmd
 COPY packages/broker/internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -trimpath -ldflags="-s -w" -o /out/blitz-cred ./cmd/blitz-cred
 
+FROM --platform=$BUILDPLATFORM golang:1.26.5-bookworm@sha256:53eeac89074db483fdf0ab3be1df32bf6e47562263d2d0d6baa7f26acb4957dd AS gateway-build
+
+ARG TARGETARCH
+WORKDIR /src/packages/box/gateway
+COPY packages/box/gateway/go.mod ./
+COPY packages/box/gateway/*.go ./
+RUN go test ./... \
+    && CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -trimpath -ldflags="-s -w" -o /out/blitz-box-gateway .
+
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS actor-build
 
 RUN set -eux; \
@@ -100,6 +109,7 @@ FROM runtime-base
 COPY --from=artifacts /out/root/ /
 COPY --from=vendors /usr/local/ /usr/local/
 COPY --from=cred-build /out/blitz-cred /usr/local/bin/blitz-cred
+COPY --from=gateway-build /out/blitz-box-gateway /usr/local/bin/blitz-box-gateway
 COPY --from=actor-build /src/packages/box/actor/package.json /opt/blitz/actor/package.json
 COPY --from=actor-build /src/packages/box/actor/package-lock.json /opt/blitz/actor/package-lock.json
 COPY --from=actor-build /src/packages/box/actor/dist /opt/blitz/actor/dist

@@ -66,13 +66,13 @@ chown root:root "$host_key" "$host_key.pub"
 chmod 0600 "$host_key"
 chmod 0644 "$host_key.pub"
 
-if [ ! -s /run/blitz/authorized_key ]; then
-  echo "mount one caller public key at /run/blitz/authorized_key" >&2
-  exit 1
+if [ -s /run/blitz/authorized_key ]; then
+  ssh-keygen -l -f /run/blitz/authorized_key >/dev/null
+  install -m 0644 -o root -g root /run/blitz/authorized_key "$state_dir/authorized_keys.new"
+  mv -f "$state_dir/authorized_keys.new" "$state_dir/authorized_keys"
+else
+  rm -f "$state_dir/authorized_keys"
 fi
-ssh-keygen -l -f /run/blitz/authorized_key >/dev/null
-install -m 0644 -o root -g root /run/blitz/authorized_key "$state_dir/authorized_keys.new"
-mv -f "$state_dir/authorized_keys.new" "$state_dir/authorized_keys"
 
 if [ -n "${BLITZ_CP_ORIGIN:-}" ]; then
   case "$BLITZ_CP_ORIGIN" in

@@ -13,9 +13,10 @@ Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
   immutably. Run by digest. Mac runs the same Linux image. This replaces both
   native installers (~1,275 duplicate lines), curl|sh, the host tarball,
   NodeSource, and self-update.
-- Four surfaces (files added 2026-08-11): key-only sshd · ttyd+tmux · ACP
-  session endpoint · WebDAV files server. Nothing else. No preview. No
-  heartbeat. No exec jobs. No activity. No layout REST. No volume API.
+- Four externally reachable surfaces: key-only sshd · ttyd+tmux · ACP session
+  endpoint · the files HTTP origin, which carries WebDAV, port discovery, and
+  preview proxying. No heartbeat. No exec jobs. No activity. No layout REST.
+  No volume API.
 - The ACP session actor:
   - One actor per session. One serialized turn queue. N subscriber sockets.
   - The server creates session and turn IDs. Each turn gets exactly one
@@ -44,7 +45,7 @@ Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
 - One unprivileged `blitz` user runs the work. Root does init, sshd, and UID
   mapping only. No password login. No root login.
 - Supervision: pinned s6-overlay. Service graph: init-state → enroll (first
-  start) → `blitz-cred register` → sshd · ttyd · actor · files server ·
+  start) → `blitz-cred register` → sshd · ttyd · actor · dufs · HTTP gateway ·
   `blitz-cred watch`. No CP config on the volume → enroll, register, and watch
   are SKIPPED (2026-08-11). The box runs alone: `docker run` → working box,
   zero accounts; agent credentials = native HOME files (`claude login` over
@@ -53,11 +54,12 @@ Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
   (Node stays: the actor and the Claude SDK are Node; NodeSource dies),
   openssh, tmux, git, ttyd (checksummed release), dufs 0.46.0 (checksummed
   release), Claude Code,
-  `@openai/codex`, compiled actor + lockfile, static `blitz-cred`.
-- Files server: dufs 0.46.0, pinned and checksummed for amd64 + arm64, on
-  loopback 7445. It serves `/workspace` + the blitz HOME through its stock
-  WebDAV surface. Decision reversal 2026-08-11: the precondition acceptance check is DELETED; last-write-wins is accepted. dufs has no stock Origin
-  allowlist, so no Origin gate or proxy is added.
+  `@openai/codex`, compiled actor + lockfile, static `blitz-cred`, and the
+  static box HTTP gateway.
+- Files server: dufs 0.46.0, pinned and checksummed for amd64 + arm64, on the
+  private loopback port 17445. The box HTTP gateway owns loopback 7445,
+  preserves dufs `/workspace` + HOME WebDAV, and adds `/ports` plus
+  `/preview/<port>/`. Last-write-wins remains accepted for WebDAV.
 - Ports: sshd 22, published. ttyd 7443 + ACP 7444 + files 7445, loopback only.
   Standalone reaches them through the SSH tunnel. Hosted publishes them on the
   WG interface (closed bootstrap). `EXPOSE` is documentation, not publication.
@@ -117,9 +119,9 @@ Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
   work).
 - `blitz-volume-attach`/`-backup`, restic excludes, tmux-resurrect park
   coupling, Home materialization (drives/restic dead).
-- `/preview` + box-side Caddy + port discovery. Preview needs no box code: the
-  user enters a port; hosted ingress routes host → WG:port; standalone uses
-  `ssh -L`. dufs WebDAV is the fourth surface (2026-08-11), without Caddy.
+- Box-side Caddy and direct ingress to arbitrary app ports. Preview and port
+  discovery now share the files HTTP surface through the static box gateway;
+  no extra listener, SSH forward, or hosted ingress route is added.
 - Private `/chat` protocol, layout REST, marker files, client-asserted
   attribution, handoff synthesis, Codex SDK translation + rollout parsing +
   fallback catalogs + fabricated diffs (ACP + official App Server).
@@ -206,11 +208,11 @@ Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
 
 ## Resolved
 
-- Files gap: FOUR surfaces (founder, 2026-08-11). dufs 0.46.0 is the files
-  server, with accepted last-write-wins behavior. Hosted attach needs no
-  box-side Caddy: the closed bootstrap
-  publishes 7443/7444/7445 on the WG interface; ingress Caddy routes to them.
-  Preview needs no box code at all.
+- Files/preview gap: FOUR external surfaces. dufs 0.46.0 retains accepted
+  last-write-wins behavior behind the 7445 box gateway, which also provides
+  port discovery and WebSocket-capable preview routing (2026-08-14). Hosted
+  attach needs no new ingress: the closed bootstrap already publishes
+  7443/7444/7445 on the WG interface and ingress Caddy routes to them.
 - Browser access for OSS users (2026-08-11): tunnel on the same machine, or
   the user's own edge from the docs recipe. No open ingress package.
 - Launcher (was open q 7, 2026-08-11): none. Install is docs only. The box is

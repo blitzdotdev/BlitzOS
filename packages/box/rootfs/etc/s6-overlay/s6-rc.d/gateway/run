@@ -2,5 +2,4 @@
 set -euo pipefail
 exec /command/s6-setuidgid blitz /usr/bin/env \
   HOME=/var/lib/blitz/home USER=blitz \
-  /usr/local/bin/dufs --bind 127.0.0.1 --port 17445 --allow-all --allow-symlink \
-  /srv/blitz-files
+  /usr/local/bin/blitz-box-gateway

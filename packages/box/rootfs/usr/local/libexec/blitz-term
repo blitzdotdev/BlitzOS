@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace=/workspace
+
+plain_shell() {
+  local shell=${SHELL:-}
+  if [ -z "$shell" ]; then
+    shell=$(getent passwd "$(id -u)" | cut -d: -f7)
+  fi
+  if [ ! -x "$shell" ]; then
+    echo "terminal: user shell is not executable" >&2
+    exit 1
+  fi
+  cd "$workspace"
+  exec "$shell" -l
+}
+
+if [ "$#" -eq 0 ]; then
+  plain_shell
+fi
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  echo "terminal: expected <terminal|claude|codex> <session-key> [ro]" >&2
+  exit 2
+fi
+
+session_type=$1
+session_key=$2
+mode=${3:-rw}
+
+case "$session_type" in
+  terminal) session_prefix=term ;;
+  claude|codex) session_prefix=$session_type ;;
+  *) echo "terminal: unsupported session type: $session_type" >&2; exit 2 ;;
+esac
+case "$session_key" in
+  ''|*[!A-Za-z0-9_-]*)
+    echo "terminal: session key must contain only A-Z, a-z, 0-9, _ or -" >&2
+    exit 2
+    ;;
+esac
+if [ "${#session_key}" -gt 128 ]; then
+  echo "terminal: session key must be at most 128 characters" >&2
+  exit 2
+fi
+if [ "$mode" != rw ] && [ "$mode" != ro ]; then
+  echo "terminal: optional third argument must be ro" >&2
+  exit 2
+fi
+
+session="$session_prefix-$session_key"
+
+new_session() {
+  case "$session_type" in
+    terminal) tmux -u new-session -d -s "$session" -c "$workspace" ;;
+    claude) tmux -u new-session -d -s "$session" -c "$workspace" claude ;;
+    codex) tmux -u new-session -d -s "$session" -c "$workspace" codex ;;
+  esac
+}
+
+if [ "$mode" = ro ]; then
+  if ! tmux has-session -t "=$session" 2>/dev/null; then
+    new_session || tmux has-session -t "=$session"
+  fi
+  exec tmux -u attach-session -r -t "=$session"
+fi
+
+case "$session_type" in
+  terminal) exec tmux -u new-session -A -s "$session" -c "$workspace" ;;
+  claude) exec tmux -u new-session -A -s "$session" -c "$workspace" claude ;;
+  codex) exec tmux -u new-session -A -s "$session" -c "$workspace" codex ;;
+esac

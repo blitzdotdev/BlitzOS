@@ -1,9 +1,10 @@
 # BlitzOS box
 
 One OCI image is one complete agent workspace: key-only SSH, a ttyd + tmux
-terminal, the ACP session actor, dufs WebDAV, and Docker-in-Docker. The state
-volume keeps host keys, broker client state, agent HOME, the actor journal, and
-box credentials. `/workspace` is a caller-owned bind mount.
+terminal, the ACP session actor, WebDAV plus preview routing, and
+Docker-in-Docker. The state volume keeps host keys, broker client state, agent
+HOME, the actor journal, and box credentials. `/workspace` is a caller-owned
+bind mount.
 
 ## Install
 
@@ -90,7 +91,46 @@ ssh -p 2222 \
 The terminal is then at `http://127.0.0.1:7443`, ACP at
 `ws://127.0.0.1:7444`, workspace files at
 `http://127.0.0.1:7445/workspace/`, and agent HOME files at
-`http://127.0.0.1:7445/home/`.
+`http://127.0.0.1:7445/home/`. Port discovery and preview share the files
+origin, so they need no additional SSH forward or ingress route.
+
+### Terminal URL contract
+
+ttyd accepts the v2 cockpit's ordered, repeated `arg` query parameters:
+
+```text
+http://127.0.0.1:7443/?arg=<terminal|claude|codex>&arg=<session-key>[&arg=ro]
+```
+
+The direct WebSocket equivalent is the same query on
+`ws://127.0.0.1:7443/ws`, with WebSocket subprotocol `tty`. `session-key` must
+be 1–128 characters from `A-Z`, `a-z`, `0-9`, `_`, or `-`. The launcher maps
+the types to persistent tmux sessions named `term-<session-key>`,
+`claude-<session-key>`, and `codex-<session-key>`. `ro` attaches a tmux client
+read-only. Omitting the query entirely opens one non-tmux login shell for
+older cockpit clients.
+
+### Ports and preview URL contract
+
+Poll the existing files HTTP origin:
+
+```text
+GET http://127.0.0.1:7445/ports
+=> {"ports":[{"port":3000,"process":"node"}]}
+```
+
+The list includes listening TCP ports and excludes SSH, ttyd, ACP, the public
+gateway, and its private dufs upstream. Use the same origin for preview URLs:
+
+```text
+http://127.0.0.1:7445/preview/<port>/
+http://127.0.0.1:7445/preview/<port>/<path>?<query>
+```
+
+The gateway strips `/preview/<port>` and forwards HTTP and WebSocket traffic
+to `localhost:<port>`. Under hosted ingress, replace
+`http://127.0.0.1:7445` with the resolver's files-surface origin; TLS,
+authentication, and WebSocket handling remain those of that existing route.
 
 Limitation: dufs 0.46.0 has no stock Origin allowlist; concurrent file-sidebar saves are last-write-wins.
 
@@ -121,7 +161,7 @@ The build context is the repository root because the image compiles
 `packages/broker` into `blitz-cred`:
 
 ```sh
-docker build -f packages/box/Dockerfile -t blitz-box:local .
+docker build --platform linux/amd64 -f packages/box/Dockerfile -t blitz-box:local .
 packages/box/test/smoke.sh
 ```
 
