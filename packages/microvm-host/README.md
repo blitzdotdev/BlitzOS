@@ -2,17 +2,42 @@
 
 This is a standalone, standard-library-only Go module implementing the M2 Firecracker host agent. Runtime paths come exclusively from JSON config; no scratchpad path is compiled into the package.
 
+## Intended deployment
+
+The primary deployment is the agent on a large public-cloud or bare-metal box,
+such as AWS or Hetzner, exposed at a stable pinned HTTPS URL. Configure that URL
+directly in the control plane as
+`{name,url,tokenVar}`. This is the production path and requires no reporter.
+
+Dynamic registration is only for a home-lab/NAT host that cannot keep a stable
+inbound URL and therefore uses a rotating Cloudflare Quick Tunnel. Quick
+Tunnels are an edge-case convenience, not the production hosting model. Such a
+host is configured as `{name,tokenVar,dynamic:true}`; it is unavailable until
+the reporter registers a URL, and it self-heals when cloudflared emits a new
+URL. This dynamic path does not participate in or override pinned-host routing.
+
 ## API
 
 Every endpoint requires `Authorization: Bearer <token>`. The token is read once at startup from a regular mode-`0600` file and must contain at least 32 non-whitespace characters.
 
-- `POST /v1/vms` accepts `{workspace_id,cpu,mem_mb,ssh_authorized_key,phone_home_url,cp_origin}` and returns HTTP 201 with `{vm_id,host_ip,ssh_port}`.
+- `POST /v1/vms` accepts `{workspace_id,cpu,mem_mb,phone_home_url,cp_origin}` plus optional `ssh_authorized_key`, and returns HTTP 201 with `{vm_id,host_ip,ssh_port}`.
 - `DELETE /v1/vms/:id` sends Firecracker `SendCtrlAltDel`, waits up to the configured timeout, then uses TERM/KILL if required. It removes the three tagged iptables rules, TAP, sparse upper disk, socket, log, and state. Missing IDs return HTTP 204.
 - `GET /v1/vms` returns the persisted VM array.
 - `GET /v1/capacity` returns `{total_cpu,physical_cpu,effective_cpu,total_mem_mb,used_cpu,used_mem_mb,vm_count,max_vms}`. `total_cpu` remains the allocatable ceiling used by existing clients and matches `effective_cpu`; `physical_cpu` reports the configured host CPU count.
 - `GET /v1/healthz` returns `{ok,versions}` with agent, Firecracker, and kernel versions.
+- `ANY /vms/:id/surface/:port/*` streams HTTP and WebSocket traffic to the
+  named guest, with `port` restricted to `7444` (ACP) or `7445` (box gateway).
+  The agent bearer credential and control-plane cookie are removed before the
+  request reaches the guest. Missing VMs return HTTP 404.
 
 The first free slot determines all network resources: slot N uses TAP `blitz-tapN`, host/guest `172.30.(20+N).1/.2/30`, and host SSH port `22000+N`. DNAT and both forwarding rules carry comment `blitz-microvm:slot-N`.
+
+The box gateway and ACP deliberately remain bound to guest loopback. During
+microVM boot, `/microvm-init` enables `route_localnet` on `eth0` and installs
+guest-side NAT rules that translate only traffic from the TAP gateway address,
+to the guest address, on ports 7444/7445 back to `127.0.0.1`. This avoids public
+host-port allocation and preserves the box image's loopback contract while
+making the surfaces reachable solely across each VM's host-only `/30`.
 
 ## Lifecycle and recovery
 
@@ -22,9 +47,79 @@ Each VM has an atomic mode-`0600` state record under `<state_dir>/vms` and runti
 
 The M2 systemd unit uses `KillMode=process`, allowing a Firecracker child to survive an agent crash/restart long enough for reconciliation to adopt it. `Restart=always` keeps the API available.
 
+## Home-lab Quick Tunnel setup
+
+Use this only for the NAT/home-lab case described above. First configure the
+Worker and store the same token that is already in the agent's mode-`0600`
+token file as a Worker secret:
+
+```toml
+MICROVM_HOSTS = '[{"name":"home-lab","tokenVar":"MICROVM_HOME_LAB_TOKEN","dynamic":true}]'
+```
+
+```sh
+npx wrangler secret put MICROVM_HOME_LAB_TOKEN --config packages/control-plane/wrangler.toml
+```
+
+On the host, install cloudflared and create
+`/etc/systemd/system/blitz-microvm-tunnel.service` with the quick tunnel aimed
+at the local agent:
+
+```ini
+[Unit]
+Description=Blitz microVM Cloudflare Quick Tunnel
+After=network-online.target blitz-microvm-agent.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=minjune
+Group=minjune
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8086
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Install the reporter and its unit, then create the non-secret environment file
+that points at the existing token file. `CP_URL` is the stable control-plane
+origin; do not put the token itself in this file.
+
+```sh
+sudo install -d -m 0755 /usr/local/libexec /etc/blitz
+sudo install -m 0755 deploy/blitz-tunnel-reporter.sh /usr/local/libexec/blitz-tunnel-reporter.sh
+sudo install -m 0644 deploy/blitz-tunnel-reporter.service /etc/systemd/system/blitz-tunnel-reporter.service
+sudo install -m 0644 /dev/null /etc/blitz/tunnel-reporter.env
+```
+
+Set `/etc/blitz/tunnel-reporter.env` to these exact variables, adjusting only
+the control-plane origin, configured host name, and token path:
+
+```sh
+CP_URL=https://control-plane.example
+HOST_NAME=home-lab
+TOKEN_FILE=/home/minjune/blitz-microvm-lab/agent/token
+```
+
+Start all three units after the agent config and token file are in place:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now blitz-microvm-agent.service
+sudo systemctl enable --now blitz-microvm-tunnel.service
+sudo systemctl enable --now blitz-tunnel-reporter.service
+journalctl -f -u blitz-tunnel-reporter.service
+```
+
+The reporter scans the tunnel unit's recent journal and follows it, extracts
+each `https://*.trycloudflare.com` URL, and posts changes with exponential
+backoff. It logs the URL and HTTP status only; it never logs the token.
+
 ## Guest enrollment
 
-`guest/build-rootfs-m2.sh` copies the spike base to the versioned `blitz-box-base-m2-v3.ext4` and replaces only `/microvm-init` plus `/usr/local/libexec/blitz-microvm-enroll.js` through `debugfs`; it refuses to overwrite an existing version. The spike's `blitz-box-base.ext4` remains unchanged. The host also retains the preflight `m2-v1` image, superseded because it used the host's Node path instead of the image's `/usr/local/bin/node`.
+`guest/build-rootfs-m2.sh` copies the spike base to the versioned `blitz-box-base-m2-v4.ext4` and replaces only `/microvm-init` plus `/usr/local/libexec/blitz-microvm-enroll.js` through `debugfs`; it refuses to overwrite an existing version. The spike's `blitz-box-base.ext4` remains unchanged. The host also retains the preflight `m2-v1` image, superseded because it used the host's Node path instead of the image's `/usr/local/bin/node`.
 
 The agent passes phone-home URL, control-plane origin, and workspace ID as base64url kernel arguments. The M2 init starts a Node one-shot, then execs the image's original `/init`. The one-shot waits until the image has generated SSH host keys and sshd accepts TCP connections, POSTs JSON containing `workspace_id`, `host_public_keys`, and `ssh_host_public_keys`, and atomically writes:
 
@@ -49,6 +144,6 @@ Package files to vendor into `blitz-core`:
 - `allocator.go`, `config.go`, `http.go`, `linux_backend.go`, `manager.go`, `state_store.go`, `types.go`
 - `cmd/blitz-microvm-agent/main.go` if the standalone daemon entry point is retained
 - `guest/microvm-init`, `guest/blitz-microvm-enroll.js`, and `guest/build-rootfs-m2.sh` for the versioned guest image recipe
-- `deploy/blitz-microvm-agent.service` and `deploy/config.host.json` as the live-host deployment reference
+- `deploy/blitz-microvm-agent.service`, `deploy/config.host.json`, and the optional home-lab-only `deploy/blitz-tunnel-reporter.*` files as the live-host deployment reference
 
 Config knobs are the API bind/public address, token/state/lab paths, pinned binary/kernel/rootfs paths and version labels, sudo wrapper, network prefix/octet/slot range, SSH port base, sparse upper size, total CPU/RAM, CPU overcommit ratio, maximum VM count, and graceful shutdown timeout. `cpu_overcommit` is a floating-point multiplier; omitted or zero means `1.0`, and fractional effective capacity is rounded down to a whole vCPU. The live M2 values are in `deploy/config.host.json`; the service is installed at `/etc/systemd/system/blitz-microvm-agent.service` and its lab-local state directory is `/home/minjune/blitz-microvm-lab/agent/state`.

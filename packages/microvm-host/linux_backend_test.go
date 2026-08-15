@@ -127,6 +127,50 @@ func assertRuleCalls(t *testing.T, got []runnerCall, wrapper string, rules []ipt
 	}
 }
 
+func TestAuthorizedKeySeedIsOptional(t *testing.T) {
+	imageRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(imageRoot, "seed"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(imageRoot, "seed", "authorized_key")
+
+	for _, key := range []*string{nil, stringPointer(""), stringPointer(" \t\n ")} {
+		if err := writeAuthorizedKeySeed(imageRoot, key); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("keyless seed file stat error = %v; want os.ErrNotExist", err)
+		}
+	}
+
+	key := stringPointer("  ssh-ed25519 AAAAtest caller  ")
+	if err := writeAuthorizedKeySeed(imageRoot, key); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "ssh-ed25519 AAAAtest caller\n" {
+		t.Fatalf("authorized key seed = %q", contents)
+	}
+}
+
+func TestMicroVMInitCopiesAuthorizedKeyOnlyWhenPresent(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("guest", "microvm-init"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(contents)
+	if !strings.Contains(script, "if [ -s /mnt/rw/seed/authorized_key ]; then") ||
+		!strings.Contains(script, "install -m 0644 /mnt/rw/seed/authorized_key /mnt/root/run/blitz/authorized_key") {
+		t.Fatal("guest init does not conditionally copy the authorized key")
+	}
+	if strings.Contains(script, "missing vdb seed/authorized_key") {
+		t.Fatal("guest init still requires the authorized key seed")
+	}
+}
+
 func TestMicroVMInitWritesRegularResolvConfBeforeEnrollment(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("guest", "microvm-init"))
 	if err != nil {

@@ -3,7 +3,7 @@ set -euo pipefail
 
 LAB=${BLITZ_LAB:-"$HOME/blitz-microvm-lab"}
 SOURCE=${BLITZ_BASE_SOURCE:-"$LAB/rootfs/blitz-box-base.ext4"}
-OUTPUT=${BLITZ_M2_BASE_OUTPUT:-"$LAB/rootfs/blitz-box-base-m2-v3.ext4"}
+OUTPUT=${BLITZ_M2_BASE_OUTPUT:-"$LAB/rootfs/blitz-box-base-m2-v4.ext4"}
 INIT=${BLITZ_M2_INIT:-"$LAB/recipe/m2/microvm-init"}
 ENROLL=${BLITZ_M2_ENROLL:-"$LAB/recipe/m2/blitz-microvm-enroll.js"}
 

@@ -6,10 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
+
+var allowedSurfacePorts = map[int]struct{}{
+	7444: {},
+	7445: {},
+}
 
 func ReadBearerToken(path string) (string, error) {
 	info, err := os.Stat(path)
@@ -31,8 +41,9 @@ func ReadBearerToken(path string) (string, error) {
 }
 
 type API struct {
-	manager *Manager
-	token   string
+	manager          *Manager
+	token            string
+	surfaceTransport http.RoundTripper
 }
 
 func NewHandler(manager *Manager, token string) http.Handler {
@@ -54,11 +65,100 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, a.manager.List())
 	case r.URL.Path == "/v1/vms" && r.Method == http.MethodPost:
 		a.create(w, r)
+	case strings.HasPrefix(r.URL.Path, "/vms/"):
+		a.surface(w, r)
 	case strings.HasPrefix(r.URL.Path, "/v1/vms/") && r.Method == http.MethodDelete:
 		a.delete(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
+}
+
+type surfaceTarget struct {
+	vmID        string
+	port        int
+	path        string
+	rawPath     string
+	matchedPath bool
+}
+
+func parseSurfaceTarget(requestURL *url.URL) surfaceTarget {
+	escaped := requestURL.EscapedPath()
+	if !strings.HasPrefix(escaped, "/vms/") {
+		return surfaceTarget{}
+	}
+	parts := strings.SplitN(strings.TrimPrefix(escaped, "/vms/"), "/", 4)
+	if len(parts) < 3 || parts[1] != "surface" || parts[0] == "" || parts[2] == "" {
+		return surfaceTarget{}
+	}
+	vmID, err := url.PathUnescape(parts[0])
+	if err != nil || !vmIDPattern.MatchString(vmID) {
+		return surfaceTarget{}
+	}
+	port, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return surfaceTarget{matchedPath: true}
+	}
+	rawPath := "/"
+	if len(parts) == 4 && parts[3] != "" {
+		rawPath += parts[3]
+	}
+	path, err := url.PathUnescape(rawPath)
+	if err != nil {
+		return surfaceTarget{matchedPath: true, port: port}
+	}
+	return surfaceTarget{
+		vmID: vmID, port: port, path: path, rawPath: rawPath, matchedPath: true,
+	}
+}
+
+func (a *API) surface(w http.ResponseWriter, r *http.Request) {
+	target := parseSurfaceTarget(r.URL)
+	if !target.matchedPath {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if _, ok := allowedSurfacePorts[target.port]; !ok || target.vmID == "" || target.path == "" {
+		writeError(w, http.StatusBadRequest, "surface port must be 7444 or 7445")
+		return
+	}
+	vm, ok := a.manager.Lookup(target.vmID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "VM not found")
+		return
+	}
+	// Surface uploads, downloads, previews, and upgraded connections may all
+	// legitimately outlive the API server's short JSON request deadlines.
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(time.Time{})
+	_ = controller.SetWriteDeadline(time.Time{})
+	upstream := &url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(vm.GuestIP, strconv.Itoa(target.port)),
+	}
+	proxy := &httputil.ReverseProxy{
+		Transport:     a.surfaceTransport,
+		FlushInterval: -1,
+		Rewrite: func(proxyRequest *httputil.ProxyRequest) {
+			proxyRequest.SetURL(upstream)
+			proxyRequest.Out.URL.Path = target.path
+			proxyRequest.Out.URL.RawPath = target.rawPath
+			proxyRequest.Out.Host = upstream.Host
+			proxyRequest.Out.Header.Del("Authorization")
+			proxyRequest.Out.Header.Del("Proxy-Authorization")
+			proxyRequest.Out.Header.Del("Cookie")
+			if target.port == 7444 {
+				// The authenticated surface proxy is the ACP security boundary. The
+				// loopback-only actor intentionally accepts only loopback origins.
+				proxyRequest.Out.Header.Set("Origin", "http://127.0.0.1")
+			}
+			proxyRequest.SetXForwarded()
+		},
+		ErrorHandler: func(response http.ResponseWriter, _ *http.Request, _ error) {
+			writeError(response, http.StatusBadGateway, "guest surface unavailable")
+		},
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 func (a *API) authorized(r *http.Request) bool {

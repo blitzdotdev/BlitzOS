@@ -25,12 +25,12 @@ type VM struct {
 }
 
 type CreateRequest struct {
-	WorkspaceID      string `json:"workspace_id"`
-	CPU              int    `json:"cpu"`
-	MemMB            int    `json:"mem_mb"`
-	SSHAuthorizedKey string `json:"ssh_authorized_key"`
-	PhoneHomeURL     string `json:"phone_home_url"`
-	CPOrigin         string `json:"cp_origin"`
+	WorkspaceID      string  `json:"workspace_id"`
+	CPU              int     `json:"cpu"`
+	MemMB            int     `json:"mem_mb"`
+	SSHAuthorizedKey *string `json:"ssh_authorized_key,omitempty"`
+	PhoneHomeURL     string  `json:"phone_home_url"`
+	CPOrigin         string  `json:"cp_origin"`
 }
 
 type CreateResponse struct {

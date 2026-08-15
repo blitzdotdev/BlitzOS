@@ -59,8 +59,7 @@ func (b *LinuxBackend) Boot(ctx context.Context, vm *VM, req CreateRequest) (int
 	if err := os.MkdirAll(filepath.Join(imageRoot, "seed"), 0700); err != nil {
 		return 0, err
 	}
-	key := strings.TrimSpace(req.SSHAuthorizedKey) + "\n"
-	if err := os.WriteFile(filepath.Join(imageRoot, "seed", "authorized_key"), []byte(key), 0600); err != nil {
+	if err := writeAuthorizedKeySeed(imageRoot, req.SSHAuthorizedKey); err != nil {
 		return 0, err
 	}
 	upper := filepath.Join(runtimeDir, "upper.ext4")
@@ -124,6 +123,14 @@ func (b *LinuxBackend) Boot(ctx context.Context, vm *VM, req CreateRequest) (int
 		return 0, err
 	}
 	return pid, nil
+}
+
+func writeAuthorizedKeySeed(imageRoot string, sshAuthorizedKey *string) error {
+	if sshAuthorizedKey == nil || strings.TrimSpace(*sshAuthorizedKey) == "" {
+		return nil
+	}
+	key := strings.TrimSpace(*sshAuthorizedKey) + "\n"
+	return os.WriteFile(filepath.Join(imageRoot, "seed", "authorized_key"), []byte(key), 0600)
 }
 
 func (b *LinuxBackend) configure(ctx context.Context, vm *VM, req CreateRequest) error {

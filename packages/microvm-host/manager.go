@@ -166,6 +166,17 @@ func (m *Manager) List() []VM {
 	return result
 }
 
+// Lookup returns a copy so proxy requests never retain mutable manager state.
+func (m *Manager) Lookup(vmID string) (VM, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[vmID]
+	if !ok {
+		return VM{}, false
+	}
+	return *vm, true
+}
+
 func (m *Manager) Capacity() Capacity {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -202,8 +213,11 @@ func validateCreate(req CreateRequest) error {
 	if req.CPU < 1 || req.CPU > 32 || req.MemMB < 128 {
 		return errors.New("cpu or mem_mb is out of range")
 	}
-	key := strings.TrimSpace(req.SSHAuthorizedKey)
-	if strings.ContainsAny(key, "\r\n") || !(strings.HasPrefix(key, "ssh-ed25519 ") || strings.HasPrefix(key, "ssh-rsa ") || strings.HasPrefix(key, "ecdsa-sha2-")) {
+	key := ""
+	if req.SSHAuthorizedKey != nil {
+		key = strings.TrimSpace(*req.SSHAuthorizedKey)
+	}
+	if key != "" && (strings.ContainsAny(key, "\r\n") || !(strings.HasPrefix(key, "ssh-ed25519 ") || strings.HasPrefix(key, "ssh-rsa ") || strings.HasPrefix(key, "ecdsa-sha2-"))) {
 		return errors.New("ssh_authorized_key must contain one supported public key")
 	}
 	for name, raw := range map[string]string{"phone_home_url": req.PhoneHomeURL, "cp_origin": req.CPOrigin} {

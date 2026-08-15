@@ -80,9 +80,31 @@ func testConfig(dir string) Config {
 }
 
 func validRequest(workspace string, cpu, mem int) CreateRequest {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey test"
 	return CreateRequest{WorkspaceID: workspace, CPU: cpu, MemMB: mem,
-		SSHAuthorizedKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey test",
+		SSHAuthorizedKey: &key,
 		PhoneHomeURL:     "http://172.30.21.1:39000/enroll", CPOrigin: "https://cp.example.test"}
+}
+
+func TestSSHAuthorizedKeyIsOptionalAndProvidedValuesRemainStrict(t *testing.T) {
+	valid := validRequest("ws-key-validation", 1, 512)
+	for _, key := range []*string{nil, stringPointer(""), stringPointer(" \t\n "), valid.SSHAuthorizedKey} {
+		req := valid
+		req.SSHAuthorizedKey = key
+		if err := validateCreate(req); err != nil {
+			t.Fatalf("validateCreate() rejected optional or valid key %#v: %v", key, err)
+		}
+	}
+
+	invalid := valid
+	invalid.SSHAuthorizedKey = stringPointer("not-a-key")
+	if err := validateCreate(invalid); err == nil {
+		t.Fatal("validateCreate() accepted an invalid nonempty key")
+	}
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func TestAllocateSlotAndNetwork(t *testing.T) {
