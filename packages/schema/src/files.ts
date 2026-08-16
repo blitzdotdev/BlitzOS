@@ -2,7 +2,7 @@
  * Eight MiB stays above R2's five MiB multipart minimum while remaining well
  * below Cloudflare's smallest current inbound request limit (100 MB).
  */
-export const FILES_MULTIPART_CHUNK_BYTES = 8 * 1024 * 1024;
+export const FILES_MULTIPART_CHUNK_BYTES = 32 * 1024 * 1024;
 
 export type FolderRole = "owner" | "admin" | "editor" | "viewer";
 

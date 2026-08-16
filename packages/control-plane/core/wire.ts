@@ -1,6 +1,6 @@
 export const FEED_MAX_BYTES = 1_048_576;
 export const HARNESSES = ["claude", "codex"] as const;
-export const FILES_MULTIPART_CHUNK_BYTES = 8 * 1024 * 1024;
+export const FILES_MULTIPART_CHUNK_BYTES = 32 * 1024 * 1024;
 
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 
