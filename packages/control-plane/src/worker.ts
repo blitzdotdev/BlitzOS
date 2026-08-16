@@ -3,7 +3,7 @@ import type { $Env } from "teenybase/worker";
 import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
 import {
   credentialMasterKeyFor,
-  createOperatorPrincipalSource,
+  createSessionPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
   MicrovmPoolProvider,
@@ -29,6 +29,8 @@ type WorkerBindings = Env & {
   HETZNER_API_TOKEN: string;
   JWT_SECRET_MAIN: string;
   OPERATOR_API_KEY: string;
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
   MICROVM_HOSTS: string;
   SESSION_TTL_DAYS: string;
   MAX_CONCURRENT_WORKSPACES: string;
@@ -93,9 +95,12 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
         env.MAX_CONCURRENT_WORKSPACES,
       ),
+      googleClientId: env.GOOGLE_CLIENT_ID,
+      googleClientSecret: env.GOOGLE_CLIENT_SECRET,
+      bootstrapSecret: env.OPERATOR_API_KEY,
     },
     providers: providersFor(env, db),
-    principalSource: createOperatorPrincipalSource(env.OPERATOR_API_KEY),
+    principalSource: createSessionPrincipalSource(),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
   };
 }
@@ -120,9 +125,12 @@ function runtimeForScheduled(
       maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
         env.MAX_CONCURRENT_WORKSPACES,
       ),
+      googleClientId: env.GOOGLE_CLIENT_ID,
+      googleClientSecret: env.GOOGLE_CLIENT_SECRET,
+      bootstrapSecret: env.OPERATOR_API_KEY,
     },
     providers,
-    principalSource: createOperatorPrincipalSource(env.OPERATOR_API_KEY),
+    principalSource: createSessionPrincipalSource(),
     waitUntil: (promise) => executionContext.waitUntil(promise),
   };
 }

@@ -8,8 +8,14 @@ import {
 
 const expectedTables = [
   "principals",
+  "users",
+  "orgs",
+  "memberships",
   "sessions",
   "workspaces",
+  "invites",
+  "workspace_grants",
+  "webapp_state",
   "device_authorizations",
   "boxes",
   "box_token_families",
@@ -32,9 +38,9 @@ describe("blitz.dev managed schema", () => {
     expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
-  it("contains the fourteen domain tables plus the deny-all file support table", () => {
+  it("contains the twenty domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(15);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(21);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -54,6 +60,10 @@ describe("blitz.dev managed schema", () => {
           notNull: true,
           default: { l: 0 },
         }),
+        expect.objectContaining({
+          name: "membership_id",
+          foreignKey: { table: "memberships", column: "id" },
+        }),
       ]),
       indexes: [{ name: "expires_at", fields: "expires_at" }],
     });
@@ -64,7 +74,67 @@ describe("blitz.dev managed schema", () => {
           notNull: true,
           default: { l: "unknown" },
         }),
+        expect.objectContaining({
+          name: "org_id",
+          foreignKey: { table: "orgs", column: "id" },
+        }),
+        expect.objectContaining({
+          name: "owner_membership_id",
+          foreignKey: { table: "memberships", column: "id" },
+        }),
       ]),
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "users")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({ name: "google_user_id", unique: true }),
+        expect.objectContaining({ name: "email", unique: true, check: "email = lower(email)" }),
+        expect.objectContaining({
+          name: "platform_operator",
+          check: "platform_operator IN (0, 1)",
+        }),
+      ]),
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "memberships")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({ name: "role", check: "role IN ('admin', 'member')" }),
+        expect.objectContaining({
+          name: "status",
+          check: "status IN ('invited', 'active', 'disabled')",
+        }),
+      ]),
+      indexes: [{ name: "identity", unique: true, fields: ["user_id", "org_id"] }],
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "invites")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({ name: "code_hash", check: "length(code_hash) = 43" }),
+        expect.objectContaining({
+          name: "state",
+          check: "state IN ('ready', 'redeemed', 'revoked', 'expired')",
+        }),
+      ]),
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspace_grants")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({ name: "role", check: "role IN ('editor', 'viewer')" }),
+      ]),
+      indexes: [{
+        name: "identity",
+        unique: true,
+        fields: ["workspace_id", "membership_id"],
+      }],
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "webapp_state")).toMatchObject({
+      fields: [
+        expect.objectContaining({ name: "principal_id" }),
+        expect.objectContaining({ name: "workspace_id" }),
+        expect.objectContaining({ name: "doc", type: "json" }),
+        expect.objectContaining({ name: "updated_at" }),
+      ],
+      indexes: [{
+        name: "identity",
+        unique: true,
+        fields: ["principal_id", "workspace_id"],
+      }],
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "microvm_hosts")).toMatchObject({
       fields: [
@@ -95,9 +165,12 @@ describe("blitz.dev managed schema", () => {
     const sql = generated.migrations.map((migration) => migration.sql).join("\n");
     expect([...sql.matchAll(/CREATE TABLE\s+([A-Za-z_][A-Za-z0-9_]*)/gu)].map((match) => match[1])).toEqual(expectedTables);
     expect([...sql.matchAll(/CREATE (?:UNIQUE )?INDEX\s+([A-Za-z_][A-Za-z0-9_]*)/gu)].map((match) => match[1])).toEqual([
+      "idx_memberships_identity",
       "idx_sessions_expires_at",
       "idx_workspaces_owner",
       "idx_workspaces_phase",
+      "idx_workspace_grants_identity",
+      "idx_webapp_state_identity",
       "idx_boxes_broker",
       "idx_boxes_principal",
       "idx_broker_keys_box",

@@ -6,7 +6,7 @@ import { IntegrationsPanel } from './settings/IntegrationsPanel';
 import { RequestsPanel } from './settings/RequestsPanel';
 
 function initial(identity: TenantMe['identity']): string {
-  return (identity.name || identity.githubLogin || 'B').trim().charAt(0).toUpperCase() || 'B';
+  return (identity.name || identity.email || 'B').trim().charAt(0).toUpperCase() || 'B';
 }
 
 function PanelHeader({ title, detail, action }: { title: string; detail: string; action?: React.ReactNode }) {
@@ -29,7 +29,7 @@ function ProfilePanel({
   viewer: TenantMe;
   onSignOut: () => Promise<void>;
 }) {
-  const displayName = viewer.identity.name || viewer.identity.githubLogin;
+  const displayName = viewer.identity.name || viewer.identity.email;
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const signOut = useCallback(async () => {
@@ -66,12 +66,12 @@ function ProfilePanel({
         </svg>
         <div>
           <strong>{displayName}</strong>
-          <span>{viewer.identity.githubLogin}</span>
+          <span>{viewer.identity.email}</span>
         </div>
       </div>
       <dl className="settings-definition-list">
         <div><dt>Display name</dt><dd>{displayName}</dd></div>
-        <div><dt>Operator identity</dt><dd>{viewer.identity.githubLogin}</dd></div>
+        <div><dt>Identity</dt><dd>{viewer.identity.email}</dd></div>
         <div><dt>Workspace scope</dt><dd>{viewer.org.name || viewer.org.slug}</dd></div>
         <div><dt>Role</dt><dd>{viewer.membership.role}</dd></div>
       </dl>

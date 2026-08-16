@@ -1,4 +1,5 @@
 export { installControlPlaneRoutes } from "./app.js";
+export type { MeResponse } from "./identity/routes.js";
 export type { BlobObject, BlobStore, LogicalBlobLookup } from "./blobs.js";
 export { blobResponse, NullBlobStore, streamBlob } from "./blobs.js";
 export type { Db, Query, RawRun, TransactionRun } from "./db.js";
@@ -16,7 +17,7 @@ export {
   runWorkspaceTunnelSweep,
   runSessionSweep,
 } from "./janitors.js";
-export { createOperatorPrincipalSource } from "./principals.js";
+export { createSessionPrincipalSource } from "./principals.js";
 export type { Principal, PrincipalSource } from "./principals.js";
 export { HetznerProvider } from "./providers/hetzner.js";
 export { HETZNER_USER_DATA_MAX_BYTES } from "./providers/hetzner.js";
@@ -61,4 +62,8 @@ export {
   sessionTtlMsFromEnv,
 } from "./runtime.js";
 export type { BoxIdentity } from "./types.js";
+export type {
+  GlobalWebAppStateV1,
+  WorkspaceWebAppStateV1,
+} from "./webapp-state.js";
 export * from "./wire.js";

@@ -1,25 +1,24 @@
 import type { CredentialLeaseView, CredentialRequestView } from '@blitzos/schema';
-import { act, useEffect, useState } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, useState } from 'react';
+import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
-import {
-  createStorageNamespace,
-  loadWorkspaceFiles,
-  saveWorkspaceFiles,
-  type WorkspaceDrawerSegment,
-} from '../src/storage.js';
+import type { WorkspaceDrawerSegment } from '../src/storage.js';
 import {
   WorkspaceDrawer,
   WorkspaceLeasesPanel,
 } from '../src/WorkspaceDrawer.js';
 import { render, settle } from './dom.js';
 
-const namespace = createStorageNamespace('personal', 'personal');
-
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
-    login: vi.fn(async () => undefined),
+    googleLoginUrl: () => '/auth/google/start',
     logout: vi.fn(async () => undefined),
+    me: vi.fn(async () => { throw new Error('unused'); }),
+    createOrg: vi.fn(async () => { throw new Error('unused'); }),
+    getGlobalWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
+    putGlobalWebAppState: vi.fn(async (doc) => ({ doc, updatedAt: 1 })),
+    getWorkspaceWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
+    putWorkspaceWebAppState: vi.fn(async (_id, doc) => ({ doc, updatedAt: 1 })),
     poll: vi.fn(async () => ({ workspaces: [] })),
     create: vi.fn(async () => { throw new Error('unused'); }),
     destroy: vi.fn(async () => { throw new Error('unused'); }),
@@ -41,30 +40,11 @@ function click(button: Element): void {
   button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 }
 
-beforeEach(() => {
-  const values = new Map<string, string>();
-  Object.defineProperty(globalThis, 'localStorage', {
-    configurable: true,
-    value: {
-      getItem: (key: string) => values.get(key) ?? null,
-      setItem: (key: string, value: string) => values.set(key, value),
-      removeItem: (key: string) => values.delete(key),
-      clear: () => values.clear(),
-    },
-  });
-});
-
 describe('v2 credential surfaces', () => {
-  it('switches drawer segments and restores the per-workspace segment', async () => {
+  it('switches drawer segments under controlled workspace state', async () => {
     const wire = client();
     function Harness() {
-      const [segment, setSegment] = useState<WorkspaceDrawerSegment>(() => (
-        loadWorkspaceFiles(namespace, 'workspace-one').segment
-      ));
-      useEffect(() => {
-        const stored = loadWorkspaceFiles(namespace, 'workspace-one');
-        saveWorkspaceFiles(namespace, 'workspace-one', { ...stored, segment });
-      }, [segment]);
+      const [segment, setSegment] = useState<WorkspaceDrawerSegment>('files');
       return (
         <WorkspaceDrawer
           client={wire}
@@ -87,10 +67,6 @@ describe('v2 credential surfaces', () => {
       .find((tab) => tab.textContent?.includes('Requests'))!;
     await act(async () => click(requestsTab));
     expect(requestsTab.getAttribute('aria-selected')).toBe('true');
-    expect(loadWorkspaceFiles(namespace, 'workspace-one').segment).toBe('requests');
-    await view.unmount();
-
-    view = await render(<Harness />);
     expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
       .toContain('Requests');
     await view.unmount();

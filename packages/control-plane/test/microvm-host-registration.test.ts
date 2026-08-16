@@ -5,7 +5,7 @@ import {
 } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/worker.js";
-import { OPERATOR_KEY, resetDatabase } from "./helpers.js";
+import { OPERATOR_KEY, operatorSession, resetDatabase } from "./helpers.js";
 
 const DYNAMIC_TOKEN = "dynamic-host-token-0123456789012345";
 const PINNED_TOKEN = "pinned-host-token-012345678901234567";
@@ -302,12 +302,7 @@ describe("microVM host registration", () => {
   });
 
   it("returns 503 and removes the provisional row when create targets an unregistered host", async () => {
-    const session = await workerRequest(dynamicHosts(), "/sessions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${OPERATOR_KEY}` },
-    });
-    const cookie = session.headers.get("set-cookie")?.split(";", 1)[0];
-    if (cookie === undefined) throw new Error("operator session cookie is missing");
+    const cookie = await operatorSession();
     const response = await workerRequest(dynamicHosts(), "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -339,12 +334,7 @@ describe("microVM host registration", () => {
       },
       body: JSON.stringify({ url: "https://home.trycloudflare.com" }),
     })).status).toBe(204);
-    const session = await workerRequest(dynamicHosts(), "/sessions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${OPERATOR_KEY}` },
-    });
-    const cookie = session.headers.get("set-cookie")?.split(";", 1)[0];
-    if (cookie === undefined) throw new Error("operator session cookie is missing");
+    const cookie = await operatorSession();
     const created = await workerRequest(dynamicHosts(), "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },

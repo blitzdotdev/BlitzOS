@@ -7,8 +7,7 @@ import type {
 import { env } from "cloudflare:workers";
 import { $DatabaseRawImpl } from "teenybase/worker";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runLeaseSweep, sessionTtlMsFromEnv } from "../core/index.js";
-import { mintSession, SESSION_COOKIE } from "../core/principals.js";
+import { runLeaseSweep } from "../core/index.js";
 import {
   appRequest,
   harness,
@@ -16,6 +15,7 @@ import {
   phoneHomeUrl,
   resetDatabase,
   testRuntime,
+  userSession,
   type BoxCredential,
 } from "./helpers.js";
 
@@ -270,16 +270,7 @@ async function mint(
 }
 
 async function principalSession(id: string): Promise<string> {
-  const token = await mintSession(
-    new $DatabaseRawImpl(env.DB),
-    {
-      id,
-      unixName: id,
-      harnesses: ["codex"],
-    },
-    sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
-  );
-  return `${SESSION_COOKIE}=${encodeURIComponent(token)}`;
+  return userSession(id);
 }
 
 describe("credential control plane", () => {

@@ -25,6 +25,10 @@ const expected = [
   "crypto.ts",
   "db.ts",
   "http.ts",
+  "identity/google.ts",
+  "identity/oauth-state.ts",
+  "identity/orgs.ts",
+  "identity/routes.ts",
   "index.ts",
   "janitors.ts",
   "oauth.ts",
@@ -46,6 +50,7 @@ const expected = [
   "workspace-tunnels.ts",
   "types.ts",
   "volumes.ts",
+  "webapp-state.ts",
   "wire.ts",
   "workspaces.ts",
 ] as const;
@@ -66,6 +71,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(41);
+    expect(expected).toHaveLength(46);
   });
 });

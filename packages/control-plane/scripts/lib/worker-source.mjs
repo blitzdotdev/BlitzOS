@@ -31,6 +31,10 @@ export const CORE_MANIFEST = Object.freeze([
   "core/credentials/mint.ts",
   "core/credentials/proxy.ts",
   "core/http.ts",
+  "core/identity/google.ts",
+  "core/identity/oauth-state.ts",
+  "core/identity/orgs.ts",
+  "core/identity/routes.ts",
   "core/janitors.ts",
   "core/oauth.ts",
   "core/principals.ts",
@@ -38,6 +42,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/sessions.ts",
   "core/types.ts",
   "core/volumes.ts",
+  "core/webapp-state.ts",
   "core/workspaces.ts",
   "core/providers/registry.ts",
   "core/providers/types.ts",
@@ -85,12 +90,53 @@ export const BLITZDEV_CONFIG = Object.freeze({
       extensions: [DENY_ALL_RULES],
     },
     {
+      name: "users",
+      fields: [
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
+        { name: "google_user_id", type: "text", sqlType: "text", unique: true },
+        { name: "email", type: "email", sqlType: "text", notNull: true, unique: true, check: "email = lower(email)" },
+        { name: "name", type: "text", sqlType: "text", notNull: true },
+        { name: "avatar_url", type: "url", sqlType: "text" },
+        { name: "platform_operator", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "platform_operator IN (0, 1)" },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true, check: "created_at >= 0" },
+        { name: "updated_at", type: "integer", sqlType: "integer", notNull: true, check: "updated_at >= created_at" },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "orgs",
+      fields: [
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
+        { name: "slug", type: "text", sqlType: "text", notNull: true, unique: true },
+        { name: "name", type: "text", sqlType: "text", notNull: true },
+        { name: "vm_limit", type: "integer", sqlType: "integer", notNull: true, check: "vm_limit > 0" },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true, check: "created_at >= 0" },
+        { name: "updated_at", type: "integer", sqlType: "integer", notNull: true, check: "updated_at >= created_at" },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "memberships",
+      fields: [
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
+        { name: "user_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "users", column: "id" } },
+        { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } },
+        { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('admin', 'member')" },
+        { name: "status", type: "text", sqlType: "text", notNull: true, check: "status IN ('invited', 'active', 'disabled')" },
+      ],
+      indexes: [
+        { name: "identity", unique: true, fields: ["user_id", "org_id"] },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
       name: "sessions",
       fields: [
         { name: "token_hash", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
         { name: "principal_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "expires_at", type: "integer", sqlType: "integer", notNull: true, default: { l: 0 } },
+        { name: "membership_id", type: "text", sqlType: "text", foreignKey: { table: "memberships", column: "id" } },
       ],
       indexes: [
         { name: "expires_at", fields: "expires_at" },
@@ -120,10 +166,57 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "tunnel_id", type: "text", sqlType: "text" },
         { name: "tunnel_hostname", type: "text", sqlType: "text" },
         { name: "dns_record_id", type: "text", sqlType: "text" },
+        { name: "org_id", type: "text", sqlType: "text", foreignKey: { table: "orgs", column: "id" } },
+        { name: "owner_membership_id", type: "text", sqlType: "text", foreignKey: { table: "memberships", column: "id" } },
       ],
       indexes: [
         { name: "owner", fields: ["owner_id", "created_at"] },
         { name: "phase", fields: ["phase", "updated_at"] },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "invites",
+      fields: [
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
+        { name: "code_hash", type: "text", sqlType: "text", notNull: true, unique: true, check: "length(code_hash) = 43" },
+        { name: "email", type: "email", sqlType: "text", check: "email IS NULL OR email = lower(email)" },
+        { name: "target_org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } },
+        { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('admin', 'member')" },
+        { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('ready', 'redeemed', 'revoked', 'expired')" },
+        { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } },
+        { name: "redeemed_by_user_id", type: "text", sqlType: "text", foreignKey: { table: "users", column: "id" } },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "expires_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "redeemed_at", type: "integer", sqlType: "integer" },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "workspace_grants",
+      fields: [
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
+        { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } },
+        { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } },
+        { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('editor', 'viewer')" },
+        { name: "granted_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
+      ],
+      indexes: [
+        { name: "identity", unique: true, fields: ["workspace_id", "membership_id"] },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "webapp_state",
+      fields: [
+        { name: "principal_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } },
+        { name: "workspace_id", type: "text", sqlType: "text", foreignKey: { table: "workspaces", column: "id" } },
+        { name: "doc", type: "json", sqlType: "text", notNull: true },
+        { name: "updated_at", type: "integer", sqlType: "integer", notNull: true },
+      ],
+      indexes: [
+        { name: "identity", unique: true, fields: ["principal_id", "workspace_id"] },
       ],
       extensions: [DENY_ALL_RULES],
     },
@@ -338,7 +431,7 @@ export const WORKER_SOURCE = normalizeSource(`import { $Database, teenyHono } fr
 import config from "virtual:teenybase";
 import {
   credentialMasterKeyFor,
-  createOperatorPrincipalSource,
+  createSessionPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
   MicrovmPoolProvider,
@@ -365,6 +458,8 @@ type ManagedBindings = {
   HETZNER_API_TOKEN: string;
   JWT_SECRET_MAIN: string;
   OPERATOR_API_KEY: string;
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
   BOX_IMAGE_REF: string;
   BOX_IMAGE_SHA256: string;
   BOX_IMAGE_TAG: string;
@@ -424,6 +519,10 @@ const API_PREFIXES = [
   "/workspaces",
   "/volumes",
   "/machine-types",
+  "/webapp-state",
+  "/auth/",
+  "/me",
+  "/orgs",
   "/hosts/",
   "/oauth/",
   "/boxes/",
@@ -490,9 +589,12 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
       boxImageTag: env.BOX_IMAGE_TAG,
       sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
       maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(env.MAX_CONCURRENT_WORKSPACES),
+      googleClientId: env.GOOGLE_CLIENT_ID,
+      googleClientSecret: env.GOOGLE_CLIENT_SECRET,
+      bootstrapSecret: env.OPERATOR_API_KEY,
     },
     providers: providersFor(env, db),
-    principalSource: createOperatorPrincipalSource(env.OPERATOR_API_KEY),
+    principalSource: createSessionPrincipalSource(),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
   };
 }

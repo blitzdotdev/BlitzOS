@@ -2,10 +2,10 @@ import type { WorkspaceView } from "@blitzos/schema";
 import { describe, expect, it, vi } from "vitest";
 import {
   ApiAdapter,
-  synthesizePersonalMe,
   workspaceFromWire,
 } from "../src/api-adapter.js";
 import type { ControlPlaneClient } from "../src/api.js";
+import { defaultGlobalWebAppState, defaultWorkspaceWebAppState } from "../src/storage.js";
 
 function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["retryAction"]): WorkspaceView {
   return {
@@ -25,8 +25,27 @@ function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["re
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
-    login: vi.fn(async () => undefined),
+    googleLoginUrl: () => "/auth/google/start",
     logout: vi.fn(async () => undefined),
+    me: vi.fn(async () => ({
+      user: {
+        id: "user-one",
+        email: "person@example.com",
+        name: "Person",
+        avatarUrl: null,
+        platformOperator: false,
+      },
+      membership: { id: "membership-one", role: "admin" as const, status: "active" as const },
+      org: { id: "org-one", slug: "example", name: "Example", vmLimit: 10 },
+    })),
+    createOrg: vi.fn(async () => ({
+      org: { id: "org-one", slug: "example", name: "Example", vmLimit: 10 },
+      membership: { id: "membership-one", role: "admin" as const, status: "active" as const },
+    })),
+    getGlobalWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
+    putGlobalWebAppState: vi.fn(async (doc) => ({ doc, updatedAt: 1 })),
+    getWorkspaceWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
+    putWorkspaceWebAppState: vi.fn(async (_id, doc) => ({ doc, updatedAt: 1 })),
     poll: vi.fn(async () => ({ workspaces: [] })),
     create: vi.fn(async () => ({ workspace: workspace("creating", "poll") })),
     destroy: vi.fn(async () => ({ workspace: workspace("destroying", "poll") })),
@@ -46,10 +65,10 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
 
 describe("webapp API adapter", () => {
   it("maps blitz phases and filters terminal phases", () => {
-    expect(workspaceFromWire(workspace("ready", null))).toMatchObject({
+    expect(workspaceFromWire(workspace("ready", null), "membership-one")).toMatchObject({
       status: "running",
       canControl: true,
-      ownerMembershipId: "personal",
+      ownerMembershipId: "membership-one",
       machineType: "mv-2c2g@lab",
     });
     expect(workspaceFromWire(workspace("creating", "poll"))?.status).toBe("creating");
@@ -62,23 +81,19 @@ describe("webapp API adapter", () => {
     expect(workspaceFromWire(workspace("destroyed", "create"))).toBeNull();
   });
 
-  it("synthesizes a stable personal org and membership", () => {
-    expect(synthesizePersonalMe()).toMatchObject({
-      membership: { id: "personal", role: "admin" },
-      org: { id: "personal", slug: "personal", name: "Personal" },
-    });
-  });
-
-  it("uses the bootstrap list as adapter me and sends a keyless create body unchanged", async () => {
+  it("uses real identity data and sends a keyless create body unchanged", async () => {
     const poll = vi.fn(async () => ({ workspaces: [workspace("ready", null)] }));
     const create = vi.fn(async () => ({ workspace: workspace("creating", "poll") }));
     const adapter = new ApiAdapter(client({ poll, create }), () => undefined);
 
-    expect((await adapter.getMe()).org.id).toBe("personal");
+    expect((await adapter.getMe()).org?.id).toBe("org-one");
     expect((await adapter.listWorkspaces()).map(({ status }) => status)).toEqual(["running"]);
     expect(poll).toHaveBeenCalledOnce();
 
     await adapter.createWorkspace({ machineTypeId: "mv-2c2g@lab" });
     expect(create).toHaveBeenCalledWith({ machineTypeId: "mv-2c2g@lab" });
+
+    await adapter.putGlobalWebAppState(defaultGlobalWebAppState());
+    await adapter.putWorkspaceWebAppState("workspace-ready", defaultWorkspaceWebAppState());
   });
 });

@@ -4,6 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import CloudApp from "../src/CloudApp.js";
 import { ApiRequestError, type ControlPlaneClient } from "../src/api.js";
 import { standaloneResolver } from "../src/resolver.js";
+import {
+  defaultWorkspaceFiles,
+  defaultWorkspaceWebAppState,
+  type WorkspaceWebAppStateV1,
+} from "../src/storage.js";
 import { render, settle } from "./dom.js";
 
 const createClientSpy = vi.hoisted(() => vi.fn());
@@ -112,15 +117,41 @@ const runningTwo: WorkspaceView = {
   },
 };
 
-let storageValues: Map<string, string>;
+const tenantMe = {
+  user: {
+    id: "user-one",
+    email: "person@example.com",
+    name: "Person",
+    avatarUrl: null,
+    platformOperator: false,
+  },
+  membership: { id: "membership-one", role: "admin" as const, status: "active" as const },
+  org: { id: "org-one", slug: "example", name: "Example", vmLimit: 10 },
+};
+
+let deviceStorageValues: Map<string, string>;
+let serverWorkspaceStates: Map<string, WorkspaceWebAppStateV1>;
 
 function client(): ControlPlaneClient {
   return {
-    login: vi.fn(async () => undefined),
+    googleLoginUrl: () => "/auth/google/start",
     logout: vi.fn(async () => undefined),
-    poll: vi.fn()
-      .mockRejectedValueOnce(new ApiRequestError("unauthorized", 401, null))
-      .mockResolvedValue({ workspaces: [creating] }),
+    me: vi.fn(async () => { throw new ApiRequestError("unauthorized", 401, null); }),
+    createOrg: vi.fn(async () => ({
+      org: tenantMe.org,
+      membership: tenantMe.membership,
+    })),
+    getGlobalWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
+    putGlobalWebAppState: vi.fn(async (doc) => ({ doc, updatedAt: 1 })),
+    getWorkspaceWebAppState: vi.fn(async (workspaceId) => ({
+      doc: serverWorkspaceStates.get(workspaceId) ?? null,
+      updatedAt: serverWorkspaceStates.has(workspaceId) ? 1 : null,
+    })),
+    putWorkspaceWebAppState: vi.fn(async (workspaceId, doc) => {
+      serverWorkspaceStates.set(workspaceId, doc);
+      return { doc, updatedAt: 1 };
+    }),
+    poll: vi.fn(async () => ({ workspaces: [creating] })),
     create: vi.fn(async () => ({ workspace: creating })),
     destroy: vi.fn(async () => ({ workspace: creating })),
     listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
@@ -139,6 +170,7 @@ function client(): ControlPlaneClient {
 function runningClient(): ControlPlaneClient {
   return {
     ...client(),
+    me: vi.fn(async () => tenantMe),
     poll: vi.fn(async () => ({ workspaces: [running] })),
   };
 }
@@ -147,13 +179,20 @@ function saveTabs(
   workspaceId: string,
   tabs: Array<Record<string, unknown>>,
   activeId: number,
+  drawerOpen = true,
 ): void {
-  storageValues.set(`personal:personal:blitz-webapp-tabs-v1:${workspaceId}`, JSON.stringify({
-    version: 1,
-    tabs,
-    activeId,
-    nextId: Math.max(...tabs.map((tab) => Number(tab.id))) + 1,
-  }));
+  const state = defaultWorkspaceWebAppState();
+  serverWorkspaceStates.set(workspaceId, {
+    ...state,
+    tabs: {
+      version: 1,
+      // SAFETY: Each caller below supplies complete tab objects accepted by the state decoder.
+      tabs: tabs as WorkspaceWebAppStateV1["tabs"]["tabs"],
+      activeId,
+      nextId: Math.max(...tabs.map((tab) => Number(tab.id))) + 1,
+    },
+    drawer: { ...defaultWorkspaceFiles(), open: drawerOpen },
+  });
 }
 
 beforeEach(() => {
@@ -162,14 +201,15 @@ beforeEach(() => {
   webAppHarness.nextMountId = 0;
   webAppHarness.unmounts.mockClear();
   window.history.replaceState({}, "", "/");
-  storageValues = new Map<string, string>();
+  deviceStorageValues = new Map<string, string>();
+  serverWorkspaceStates = new Map<string, WorkspaceWebAppStateV1>();
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
     value: {
-      getItem: (key: string) => storageValues.get(key) ?? null,
-      setItem: (key: string, value: string) => storageValues.set(key, value),
-      removeItem: (key: string) => storageValues.delete(key),
-      clear: () => storageValues.clear(),
+      getItem: (key: string) => deviceStorageValues.get(key) ?? null,
+      setItem: (key: string, value: string) => deviceStorageValues.set(key, value),
+      removeItem: (key: string) => deviceStorageValues.delete(key),
+      clear: () => deviceStorageValues.clear(),
     },
   });
   vi.stubGlobal("fetch", vi.fn(async () => new Response("<html></html>", {
@@ -195,7 +235,7 @@ beforeEach(() => {
 });
 
 describe("webapp shell smoke", () => {
-  it("renders operator login, then the v2 rail after adapter me and workspaces load", async () => {
+  it("renders Google login after an unauthenticated /me", async () => {
     const wire = client();
     const view = await render(
       <CloudApp
@@ -205,33 +245,72 @@ describe("webapp shell smoke", () => {
     );
     await settle();
 
-    expect(view.container.querySelector('input[name="operatorKey"]')).not.toBeNull();
-    const input = view.container.querySelector<HTMLInputElement>('input[name="operatorKey"]')!;
-    input.value = "operator-secret";
+    const link = view.container.querySelector<HTMLAnchorElement>('a[href="/auth/google/start"]');
+    expect(link?.textContent).toContain("Continue with Google");
+    await view.unmount();
+  });
+
+  it("renders the real organization and workspace after /me", async () => {
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.querySelector(".webapp-rail")?.textContent).toContain("workspace-running");
+    expect(view.container.textContent).toContain("Example");
+    await view.unmount();
+  });
+
+  it("creates an organization from the identity-only onboarding page", async () => {
+    const createOrg = vi.fn(async () => ({
+      org: tenantMe.org,
+      membership: tenantMe.membership,
+    }));
+    const wire = {
+      ...runningClient(),
+      me: vi.fn()
+        .mockResolvedValueOnce({ ...tenantMe, membership: null, org: null })
+        .mockResolvedValue(tenantMe),
+      createOrg,
+    };
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+
+    expect(view.container.querySelectorAll("input")).toHaveLength(1);
+    expect(view.container.querySelectorAll("button")).toHaveLength(1);
+    const input = view.container.querySelector<HTMLInputElement>('input[name="name"]')!;
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    if (setInputValue === undefined) throw new Error("input value setter is unavailable");
     await act(async () => {
+      setInputValue.call(input, "Example");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
       view.container.querySelector("form")?.dispatchEvent(
         new Event("submit", { bubbles: true, cancelable: true }),
       );
     });
     await settle();
     await settle();
-    await settle();
 
-    expect(wire.login).toHaveBeenCalledWith("operator-secret");
-    expect(view.container.querySelector(".webapp-rail")?.textContent).toContain("workspace-one");
-    expect(view.container.textContent).toContain("Personal");
+    expect(createOrg).toHaveBeenCalledWith("Example");
+    expect(view.container.querySelector(".webapp-rail")?.textContent).toContain("workspace-running");
     await view.unmount();
   });
 
   it("opens a workspace with terminal tabs enabled through control-plane surfaces", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
-    storageValues.set("personal:personal:blitz-webapp-files-v1:workspace-running", JSON.stringify({
-      version: 1,
-      open: false,
-      width: 264,
-      expanded: [],
-      segment: "files",
-    }));
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1, false);
     const wire = runningClient();
     const view = await render(
       <CloudApp
@@ -250,9 +329,7 @@ describe("webapp shell smoke", () => {
     expect(view.container.querySelector<HTMLButtonElement>('button[aria-label="New session"]')?.disabled)
       .toBe(false);
     expect(view.container.querySelector('[aria-label="Loading workspace"]')).toBeNull();
-    expect(JSON.parse(
-      storageValues.get("personal:personal:blitz-webapp-tabs-v1:workspace-running") ?? "null",
-    )).toEqual({
+    expect(serverWorkspaceStates.get("workspace-running")?.tabs).toEqual({
       version: 1,
       tabs: [{ id: 1, type: "terminal" }],
       activeId: 1,
@@ -295,22 +372,10 @@ describe("webapp shell smoke", () => {
         removeEventListener: () => undefined,
       }),
     });
-    storageValues.set("personal:personal:blitz-webapp-tabs-v1:workspace-running", JSON.stringify({
-      version: 1,
-      tabs: [
-        { id: 1, type: "terminal" },
-        { id: 2, type: "preview", port: 3000 },
-      ],
-      activeId: 2,
-      nextId: 3,
-    }));
-    storageValues.set("personal:personal:blitz-webapp-files-v1:workspace-running", JSON.stringify({
-      version: 1,
-      open: false,
-      width: 264,
-      expanded: [],
-      segment: "files",
-    }));
+    saveTabs("workspace-running", [
+      { id: 1, type: "terminal" },
+      { id: 2, type: "preview", port: 3000 },
+    ], 2, false);
 
     const view = await render(
       <CloudApp
@@ -415,7 +480,7 @@ describe("webapp shell smoke", () => {
     saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
     saveTabs("workspace-two", [{ id: 1, type: "terminal" }], 1);
     const wire = {
-      ...client(),
+      ...runningClient(),
       poll: vi.fn(async () => ({ workspaces: [running, runningTwo] })),
     };
     const view = await render(

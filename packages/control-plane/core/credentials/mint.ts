@@ -61,12 +61,12 @@ function parseMintBody(value: unknown): ParsedMintBody {
 
 export function authorize(
   principalId: string,
+  platformOperator: boolean,
   workspace: WorkspaceCredentialRow,
   integration: Integration,
   requestedScopes: readonly string[],
 ): boolean {
-  const callerIsAdminOrOwner =
-    principalId === "operator" || workspace.owner_id === principalId;
+  const callerIsAdminOrOwner = platformOperator || workspace.owner_id === principalId;
   const requestFitsCeiling =
     manifestAllows(workspace.manifest, integration.name, requestedScopes) &&
     usableByAllows(integration, principalId);
@@ -102,13 +102,14 @@ async function mintOne(
   workspace: WorkspaceCredentialRow,
   boxId: string,
   principalId: string,
+  platformOperator: boolean,
   origin: string,
   integration: Integration,
   scopes: string[],
   denied: "error" | "skip",
 ): Promise<MintResult | null> {
   const now = Date.now();
-  if (!authorize(principalId, workspace, integration, scopes)) {
+  if (!authorize(principalId, platformOperator, workspace, integration, scopes)) {
     if (denied === "skip") return null;
     await recordDenied(
       runtime,
@@ -212,6 +213,7 @@ export function addCredentialRoutes(
         workspace,
         box.id,
         box.principalId,
+        box.platformOperator,
         origin,
         integration,
         scopes,
@@ -228,6 +230,7 @@ export function addCredentialRoutes(
         workspace,
         box.id,
         box.principalId,
+        box.platformOperator,
         origin,
         integration,
         integrationDefaultScopes(integration),
@@ -244,7 +247,7 @@ export function addCredentialRoutes(
       leases: await listLeases(
         runtimeFactory(context).db,
         context.req.param("id"),
-        principal.id,
+        principal,
       ),
     });
   });
@@ -254,7 +257,7 @@ export function addCredentialRoutes(
     await revokeLease(
       runtimeFactory(context).db,
       context.req.param("id"),
-      principal.id,
+      principal,
     );
     return context.body(null, 204);
   });

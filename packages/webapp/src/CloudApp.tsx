@@ -46,10 +46,6 @@ import {
 import {
   defaultWorkspaceFiles,
   removeDismissedChatAuthProviders,
-  removeWorkspaceFiles,
-  removeWorkspaceTabs,
-  saveUiPreferences,
-  storedWorkspacePreference,
   type StorageNamespace,
   type WorkspaceDrawerSegment,
   type WorkspaceTab,
@@ -79,6 +75,8 @@ import {
 } from './preview';
 import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
+import { CreateOrgPage } from './components/CreateOrgPage';
+import type { IdentityRecord } from './protocol';
 import type { EndpointResolver } from './resolver';
 import { WorkspaceDrawer } from './WorkspaceDrawer';
 import {
@@ -201,6 +199,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [route, setRoute] = useState(() => parseAppRoute(window.location.pathname));
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => route.workspaceId ?? '');
   const [storageNamespace, setStorageNamespace] = useState<StorageNamespace | null>(null);
+  const [identityOnly, setIdentityOnly] = useState<IdentityRecord | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updateAvailableHash, setUpdateAvailableHash] = useState<string | null>(null);
@@ -214,12 +213,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false);
   const [terminalSignInUrl, setTerminalSignInUrl] = useState<string | null>(null);
   const [showPasteCodeModal, setShowPasteCodeModal] = useState(false);
-  const {
-    workspaceTabs,
-    setWorkspaceTabs,
-    workspaceFiles,
-    setWorkspaceFiles,
-  } = useWorkspacePersistence(storageNamespace, activeWorkspaceId);
   const [dirtyFileIds, setDirtyFileIds] = useState<Set<string>>(new Set());
   const [fileCloseConfirmation, setFileCloseConfirmation] = useState<FileCloseConfirmation | null>(null);
   const [filesRefreshVersion, setFilesRefreshVersion] = useState(0);
@@ -299,6 +292,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     () => new ApiAdapter(client, handleUnauthorized),
     [client, handleUnauthorized],
   );
+  const handlePersistenceError = useCallback((cause: Error) => {
+    if (cause instanceof ApiError && cause.status === 401) return;
+    setError(caughtErrorMessage(cause, 'Could not save webApp state.'));
+  }, []);
   const signOut = useCallback(async () => {
     try {
       await api.logout();
@@ -323,6 +320,25 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const activeWorkspace = useMemo(
     () => store.workspaces.find(({ id, canControl }) => id === activeWorkspaceId && canControl),
     [activeWorkspaceId, store.workspaces],
+  );
+  const persistenceMetadata = useMemo(() => activeWorkspace === undefined
+    ? null
+    : {
+        title: activeWorkspace.title,
+        serverName: activeWorkspace.serverName,
+        agentDefault: activeWorkspace.agentDefault,
+      }, [activeWorkspace]);
+  const {
+    workspaceTabs,
+    setWorkspaceTabs,
+    workspaceFiles,
+    setWorkspaceFiles,
+  } = useWorkspacePersistence(
+    api,
+    storageNamespace !== null,
+    activeWorkspaceId,
+    persistenceMetadata,
+    handlePersistenceError,
   );
   const activeIngressEntry = activeWorkspace
     ? workspaceEndpoints.current.get(activeWorkspace.id) ?? null
@@ -461,6 +477,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     activeWorkspaceIdRef,
     setActiveWorkspaceId,
     setStorageNamespace,
+    setIdentityOnly,
     dispatch,
     setLoaded,
     setError,
@@ -585,19 +602,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
   useEffect(() => {
     if (!loaded || !storageNamespace) return;
-    saveUiPreferences(storageNamespace, {
-      version: 1,
-      activeWorkspaceId,
-      railWidth: 264,
-      order: store.workspaces.map(({ id }) => id),
-      workspaces: Object.fromEntries(store.workspaces
-        .filter(({ canControl }) => canControl)
-        .map((workspace) => [
-          workspace.id,
-          storedWorkspacePreference(workspace.title, workspace.serverName, workspace.agentDefault),
-        ])),
-    });
-  }, [activeWorkspaceId, loaded, storageNamespace, store.workspaces]);
+    const timer = window.setTimeout(() => {
+      void api.putGlobalWebAppState({
+        version: 1,
+        activeWorkspaceId,
+        order: store.workspaces.map(({ id }) => id),
+      }).catch(handlePersistenceError);
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [activeWorkspaceId, api, handlePersistenceError, loaded, storageNamespace, store.workspaces]);
 
   const navigateToWorkspacePage = useCallback((workspaceId: string) => {
     window.history.pushState({}, '', workspacePath(workspaceId));
@@ -650,8 +663,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     void api.deleteWorkspace(workspaceId)
       .then(() => {
         if (storageNamespace) {
-          removeWorkspaceTabs(storageNamespace, workspaceId);
-          removeWorkspaceFiles(storageNamespace, workspaceId);
           removeDismissedChatAuthProviders(storageNamespace, workspaceId);
         }
         workspaceEndpoints.current.delete(workspaceId);
@@ -1048,12 +1059,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   );
 
   if (signedOut) {
+    return <LoginForm loginUrl={api.googleLoginUrl()} />;
+  }
+
+  if (identityOnly !== null) {
     return (
-      <LoginForm
-        onLogin={async (operatorKey) => {
-          await api.login(operatorKey);
+      <CreateOrgPage
+        onCreate={async (name) => {
+          await api.createOrg(name);
+          setIdentityOnly(null);
           setLoaded(false);
-          setSignedOut(false);
           setBootstrapVersion((version) => version + 1);
         }}
       />

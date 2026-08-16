@@ -61,6 +61,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
       const transition = await transaction(runtime.db, [
         revokeWorkspaceLeasesQuery(row.id),
         { q: "DELETE FROM boxes WHERE workspace_id = ?1", v: [row.id] },
+        { q: "DELETE FROM webapp_state WHERE workspace_id = ?1", v: [row.id] },
         {
           q: `UPDATE workspaces
               SET phase = 'destroyed', vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
@@ -71,7 +72,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
           v: [Date.now(), row.id],
         },
       ]);
-      if (transition[2]?.length !== 1) continue;
+      if (transition[3]?.length !== 1) continue;
     } else {
       await rows(runtime.db, {
         q: "UPDATE workspaces SET vm_id = NULL WHERE id = ?1",

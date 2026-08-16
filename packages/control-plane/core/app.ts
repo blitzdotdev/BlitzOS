@@ -1,6 +1,7 @@
 import { addBoxImageRoutes } from "./box-images.js";
 import { addCredentialRoutes } from "./credentials/mint.js";
 import { HttpError } from "./http.js";
+import { addIdentityRoutes } from "./identity/routes.js";
 import { addOAuthRoutes } from "./oauth.js";
 import type { Principal } from "./principals.js";
 import { addMicrovmHostRoutes } from "./providers/microvm.js";
@@ -8,6 +9,7 @@ import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import { addSessionRoutes } from "./sessions.js";
 import { addVolumeRoutes } from "./volumes.js";
+import { addWebAppStateRoutes } from "./webapp-state.js";
 import { addWorkspaceRoutes } from "./workspaces.js";
 
 export function installControlPlaneRoutes(
@@ -26,15 +28,23 @@ export function installControlPlaneRoutes(
     return principal;
   }
 
+  async function requireMembershipPrincipal(context: CoreContext): Promise<Principal> {
+    const principal = await requirePrincipal(context);
+    if (principal.membershipId === null) throw new HttpError(403, "active membership required");
+    return principal;
+  }
+
   addSessionRoutes(router, runtimeFactory, requirePrincipal);
-  addOAuthRoutes(router, runtimeFactory, requirePrincipal);
-  addWorkspaceRoutes(router, runtimeFactory, requirePrincipal);
-  addCredentialRoutes(router, runtimeFactory, requirePrincipal);
-  addVolumeRoutes(router, runtimeFactory, requirePrincipal);
+  addIdentityRoutes(router, runtimeFactory, requirePrincipal);
+  addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addWorkspaceRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addVolumeRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addRegistryRoutes(router, runtimeFactory);
 
   router.get("/machine-types", async (context) => {
-    await requirePrincipal(context);
+    await requireMembershipPrincipal(context);
     return context.json(
       await runtimeFactory(context).providers.vmRegistry.listMachineTypes(),
     );

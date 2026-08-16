@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
 import type { $Env } from "teenybase/worker";
 import {
-  createOperatorPrincipalSource,
+  createSessionPrincipalSource,
   credentialMasterKeyFor,
   installControlPlaneRoutes,
   maxConcurrentWorkspacesFromEnv,
@@ -25,6 +25,7 @@ import type {
   VolumeProvider,
 } from "../core/providers/types.js";
 import config from "../teenybase.js";
+import { hashSecret, randomToken } from "../core/crypto.js";
 
 export const OPERATOR_KEY = "test-operator-key";
 export const CRED_MASTER_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
@@ -188,13 +189,16 @@ export function appWithVmProviders(
         (context.env as TestBindings).MAX_CONCURRENT_WORKSPACES ??
           env.MAX_CONCURRENT_WORKSPACES,
       ),
+      googleClientId: "test-google-client-id",
+      googleClientSecret: "test-google-client-secret",
+      bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
     },
     providers: {
       vmRegistry: new VmProviderRegistry(vmProviders),
       volume: volumeProvider,
       workspaceTunnels,
     },
-    principalSource: createOperatorPrincipalSource(OPERATOR_KEY),
+    principalSource: createSessionPrincipalSource(),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
   });
   installControlPlaneRoutes(app as unknown as CoreRouter, runtimeFor);
@@ -223,13 +227,16 @@ export function testRuntime(
       maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
         env.MAX_CONCURRENT_WORKSPACES,
       ),
+      googleClientId: "test-google-client-id",
+      googleClientSecret: "test-google-client-secret",
+      bootstrapSecret: OPERATOR_KEY,
     },
     providers: {
       vmRegistry: new VmProviderRegistry([providers]),
       volume: providers,
       workspaceTunnels,
     },
-    principalSource: createOperatorPrincipalSource(OPERATOR_KEY),
+    principalSource: createSessionPrincipalSource(),
     waitUntil: () => undefined,
   };
 }
@@ -249,19 +256,74 @@ export async function appRequest(
     MAX_CONCURRENT_WORKSPACES: env.MAX_CONCURRENT_WORKSPACES,
     DB: env.DB,
     CRED_MASTER_KEY,
+    GOOGLE_CLIENT_ID: "test-google-client-id",
+    GOOGLE_CLIENT_SECRET: "test-google-client-secret",
+    OPERATOR_API_KEY: OPERATOR_KEY,
     ...bindings,
   });
 }
 
-export async function operatorSession(app: TestApp): Promise<string> {
-  const response = await appRequest(app, "/sessions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${OPERATOR_KEY}` },
-  });
-  if (response.status !== 204) throw new Error("operator session exchange failed");
-  const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
-  if (cookie === undefined) throw new Error("operator session cookie is missing");
-  return cookie;
+export async function operatorSession(app?: TestApp): Promise<string> {
+  void app;
+  const token = randomToken();
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO principals (id, unix_name, harnesses)
+       VALUES ('operator', 'operator', '["claude","codex"]')`,
+    ),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO users
+       (id, google_user_id, email, name, avatar_url, platform_operator, created_at, updated_at)
+       VALUES ('operator', 'google-operator', 'operator@example.com', 'Operator', NULL, 1, ?1, ?1)`,
+    ).bind(now),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO orgs
+       (id, slug, name, vm_limit, created_at, updated_at)
+       VALUES ('personal', 'personal', 'Personal', 10, ?1, ?1)`,
+    ).bind(now),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO memberships (id, user_id, org_id, role, status)
+       VALUES ('personal', 'operator', 'personal', 'admin', 'active')`,
+    ),
+    env.DB.prepare(
+      `INSERT INTO sessions
+       (token_hash, principal_id, created_at, expires_at, membership_id)
+       VALUES (?1, 'operator', ?2, ?3, 'personal')`,
+    ).bind(await hashSecret(token), now, now + 30 * 24 * 60 * 60 * 1_000),
+  ]);
+  return `blitz_session=${token}`;
+}
+
+export async function userSession(id: string): Promise<string> {
+  const token = randomToken();
+  const now = Date.now();
+  const orgId = `${id}-org`;
+  const membershipId = `${id}-membership`;
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO principals (id, unix_name, harnesses) VALUES (?1, ?1, '["codex"]')`,
+    ).bind(id),
+    env.DB.prepare(
+      `INSERT INTO users
+       (id, google_user_id, email, name, avatar_url, platform_operator, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?1, NULL, 0, ?4, ?4)`,
+    ).bind(id, `google-${id}`, `${id}@example.com`, now),
+    env.DB.prepare(
+      `INSERT INTO orgs (id, slug, name, vm_limit, created_at, updated_at)
+       VALUES (?1, ?1, ?1, 10, ?2, ?2)`,
+    ).bind(orgId, now),
+    env.DB.prepare(
+      `INSERT INTO memberships (id, user_id, org_id, role, status)
+       VALUES (?1, ?2, ?3, 'admin', 'active')`,
+    ).bind(membershipId, id, orgId),
+    env.DB.prepare(
+      `INSERT INTO sessions
+       (token_hash, principal_id, created_at, expires_at, membership_id)
+       VALUES (?1, ?2, ?3, ?4, ?5)`,
+    ).bind(await hashSecret(token), id, now, now + 30 * 24 * 60 * 60 * 1_000, membershipId),
+  ]);
+  return `blitz_session=${token}`;
 }
 
 interface CreatedWorkspace {
@@ -339,6 +401,7 @@ export async function resetDatabase(): Promise<void> {
     "credential_events",
     "credential_requests",
     "credential_leases",
+    "workspace_grants",
     "user_connections",
     "integrations",
     "broker_keys",
@@ -346,8 +409,13 @@ export async function resetDatabase(): Promise<void> {
     "box_token_families",
     "boxes",
     "device_authorizations",
+    "webapp_state",
     "workspaces",
     "sessions",
+    "invites",
+    "memberships",
+    "orgs",
+    "users",
     "principals",
   ];
   await env.DB.batch(tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)));

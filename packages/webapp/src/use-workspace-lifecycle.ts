@@ -1,12 +1,15 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import { ApiAdapter, ApiError } from './api-adapter.js';
+import { ApiAdapter, ApiError, isTenantMe } from './api-adapter.js';
 import { caughtErrorMessage } from './error-message.js';
 import { parseAppRoute } from './sessions-page-state.js';
 import {
   createStorageNamespace,
-  loadUiPreferences,
+  defaultGlobalWebAppState,
+  reconcileUiPreferences,
   type StorageNamespace,
+  type WorkspaceWebAppStateV1,
 } from './storage.js';
+import type { IdentityRecord } from './protocol.js';
 import type { EndpointResolver } from './resolver.js';
 import type { WorkspaceAction } from './workspace-store.js';
 import {
@@ -25,6 +28,7 @@ type WorkspaceBootstrapOptions = {
   activeWorkspaceIdRef: MutableRefObject<string>;
   setActiveWorkspaceId: StateSetter<string>;
   setStorageNamespace: StateSetter<StorageNamespace | null>;
+  setIdentityOnly: StateSetter<IdentityRecord | null>;
   dispatch: Dispatch<WorkspaceAction>;
   setLoaded: StateSetter<boolean>;
   setError: StateSetter<string | null>;
@@ -39,6 +43,7 @@ export function useWorkspaceBootstrap({
   activeWorkspaceIdRef,
   setActiveWorkspaceId,
   setStorageNamespace,
+  setIdentityOnly,
   dispatch,
   setLoaded,
   setError,
@@ -50,9 +55,33 @@ export function useWorkspaceBootstrap({
     setError(null);
     void api.getMe()
       .then(async (me) => {
+        if (!isTenantMe(me)) {
+          if (!mounted) return;
+          setIdentityOnly(me.identity);
+          setStorageNamespace(null);
+          setLoaded(true);
+          return;
+        }
+        setIdentityOnly(null);
         const namespace = createStorageNamespace(me.org.id, me.membership.id);
-        const preferences = loadUiPreferences(namespace);
-        const records = await api.listWorkspaces();
+        const [globalState, records] = await Promise.all([
+          api.getGlobalWebAppState(),
+          api.listWorkspaces(),
+        ]);
+        const workspaceStates = new Map<string, WorkspaceWebAppStateV1>();
+        await Promise.all(records.map(async ({ id }) => {
+          try {
+            const state = await api.getWorkspaceWebAppState(id);
+            if (state.doc !== null) workspaceStates.set(id, state.doc);
+          } catch (cause) {
+            if (!(cause instanceof ApiError && cause.status === 404)) throw cause;
+          }
+        }));
+        const preferences = reconcileUiPreferences(
+          globalState.doc ?? defaultGlobalWebAppState(),
+          workspaceStates,
+          records.map(({ id }) => id),
+        );
         if (!mounted) return;
         rememberWorkspaceEndpoints(workspaceEndpoints.current, records, resolver, true);
         const routeWorkspaceId = parseAppRoute(window.location.pathname).workspaceId;
@@ -80,6 +109,7 @@ export function useWorkspaceBootstrap({
     setActiveWorkspaceId,
     setError,
     setLoaded,
+    setIdentityOnly,
     setStorageNamespace,
     signedOut,
     workspaceEndpoints,

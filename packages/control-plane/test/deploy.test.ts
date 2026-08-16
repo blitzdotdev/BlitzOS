@@ -23,6 +23,8 @@ describe("control-plane deploy command", () => {
     })).toEqual([
       "HETZNER_API_TOKEN",
       "OPERATOR_API_KEY",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
       "CRED_MASTER_KEY",
       "MICROVM_LAB_TOKEN",
       "MICROVM_EDGE_TOKEN",
@@ -143,6 +145,8 @@ describe("control-plane deploy command", () => {
           stdout: JSON.stringify([
             { name: "HETZNER_API_TOKEN", type: "secret_text" },
             { name: "OPERATOR_API_KEY", type: "secret_text" },
+            { name: "GOOGLE_CLIENT_ID", type: "secret_text" },
+            { name: "GOOGLE_CLIENT_SECRET", type: "secret_text" },
             { name: "CRED_MASTER_KEY", type: "secret_text" },
           ]),
         };
@@ -239,7 +243,12 @@ describe("control-plane deploy command", () => {
           throw new Error("matching D1 config should not be rewritten");
         },
       }),
-    ).rejects.toThrow(missingSecretsMessage(["OPERATOR_API_KEY", "CRED_MASTER_KEY"]));
+    ).rejects.toThrow(missingSecretsMessage([
+      "OPERATOR_API_KEY",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "CRED_MASTER_KEY",
+    ]));
     expect(calls.some(([tool]) => tool === "npm")).toBe(false);
     expect(calls.some(([tool, command]) => tool === "wrangler" && command === "deploy")).toBe(false);
   });

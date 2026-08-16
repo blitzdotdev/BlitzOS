@@ -1,5 +1,11 @@
 const MAX_BODY_BYTES = 64 * 1024;
 
+export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
+
+export interface JsonObject {
+  [key: string]: JsonValue;
+}
+
 export class HttpError extends Error {
   constructor(
     readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 502 | 503,
@@ -40,7 +46,7 @@ export async function readText(request: Request): Promise<string> {
   return new TextDecoder().decode(body);
 }
 
-export async function readJson(request: Request): Promise<unknown> {
+export async function readJson(request: Request): Promise<JsonValue> {
   const text = await readText(request);
   try {
     return JSON.parse(text);
@@ -53,7 +59,7 @@ export async function readForm(request: Request): Promise<URLSearchParams> {
   return new URLSearchParams(await readText(request));
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord<Value>(value: Value): value is Value & JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -65,8 +71,8 @@ export function isNumber<Value>(value: Value): value is Value & number {
   return typeof value === "number";
 }
 
-export function requiredString(
-  value: unknown,
+export function requiredString<Value>(
+  value: Value,
   field: string,
   maxLength = 16_384,
 ): string {
@@ -76,14 +82,14 @@ export function requiredString(
   return value;
 }
 
-export function positiveInteger(value: unknown, field: string): number {
+export function positiveInteger<Value>(value: Value, field: string): number {
   if (!isNumber(value) || !Number.isSafeInteger(value) || value <= 0) {
     throw new HttpError(400, `${field} must be a positive integer`);
   }
   return value;
 }
 
-export function isSshPublicKey(value: unknown): value is string {
+export function isSshPublicKey<Value>(value: Value): value is Value & string {
   if (typeof value !== "string") return false;
   const [algorithm, encoded] = value.trim().split(/\s+/u, 3);
   return (

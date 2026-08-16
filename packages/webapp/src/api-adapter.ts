@@ -8,7 +8,13 @@ import type {
 import {
   ApiRequestError,
   type ControlPlaneClient,
+  type MeResponse,
 } from "./api.js";
+import type {
+  GlobalWebAppStateV1,
+  WebAppStateResponse,
+  WorkspaceWebAppStateV1,
+} from "./storage.js";
 import type {
   IdentityRecord,
   MembershipRecord,
@@ -29,13 +35,16 @@ export class ApiError extends Error {
 }
 
 export type TenantMe = {
-  githubAppSlug: string;
   identity: IdentityRecord;
   membership: MembershipRecord;
   org: OrgRecord;
 };
 
-export type Me = TenantMe;
+export type Me = {
+  identity: IdentityRecord;
+  membership: MembershipRecord | null;
+  org: OrgRecord | null;
+};
 
 export type V2WorkspaceRecord = WorkspaceRecord & {
   ingressLabel: string;
@@ -46,8 +55,14 @@ export type V2WorkspaceRecord = WorkspaceRecord & {
 
 type WebAppWireClient = Pick<
   ControlPlaneClient,
-  | "login"
+  | "googleLoginUrl"
   | "logout"
+  | "me"
+  | "createOrg"
+  | "getGlobalWebAppState"
+  | "putGlobalWebAppState"
+  | "getWorkspaceWebAppState"
+  | "putWorkspaceWebAppState"
   | "poll"
   | "create"
   | "destroy"
@@ -55,35 +70,26 @@ type WebAppWireClient = Pick<
   | "listVolumes"
 >;
 
-const PERSONAL_ME: TenantMe = {
-  githubAppSlug: "",
-  identity: {
-    githubLogin: "operator",
-    name: "Operator",
-    avatarUrl: null,
-  },
-  membership: {
-    id: "personal",
-    role: "admin",
-  },
-  org: {
-    id: "personal",
-    slug: "personal",
-    name: "Personal",
-  },
-};
-
-export function synthesizePersonalMe(): TenantMe {
-  return {
-    ...PERSONAL_ME,
-    identity: { ...PERSONAL_ME.identity },
-    membership: { ...PERSONAL_ME.membership },
-    org: { ...PERSONAL_ME.org },
-  };
+export function isTenantMe(viewer: Me): viewer is TenantMe {
+  return viewer.membership !== null && viewer.org !== null;
 }
 
-export function isTenantMe(_viewer: Me): _viewer is TenantMe {
-  return true;
+function meFromWire(me: MeResponse): Me {
+  return {
+    identity: {
+      id: me.user.id,
+      email: me.user.email,
+      name: me.user.name,
+      avatarUrl: me.user.avatarUrl,
+      platformOperator: me.user.platformOperator,
+    },
+    membership: me.membership === null
+      ? null
+      : { id: me.membership.id, role: me.membership.role },
+    org: me.org === null
+      ? null
+      : { id: me.org.id, slug: me.org.slug, name: me.org.name, vmLimit: me.org.vmLimit },
+  };
 }
 
 function statusFromWire(workspace: WorkspaceView): RestWorkspaceStatus {
@@ -93,11 +99,14 @@ function statusFromWire(workspace: WorkspaceView): RestWorkspaceStatus {
   return workspace.phase;
 }
 
-export function workspaceFromWire(workspace: WorkspaceView): V2WorkspaceRecord | null {
+export function workspaceFromWire(
+  workspace: WorkspaceView,
+  ownerMembershipId = "",
+): V2WorkspaceRecord | null {
   if (workspace.phase === "destroying" || workspace.phase === "destroyed") return null;
   return {
     id: workspace.id,
-    ownerMembershipId: "personal",
+    ownerMembershipId,
     canControl: true,
     shared: false,
     machineType: workspace.machineTypeId,
@@ -114,41 +123,43 @@ export function workspaceFromWire(workspace: WorkspaceView): V2WorkspaceRecord |
 }
 
 export class ApiAdapter {
-  private bootstrapWorkspaces: WorkspaceView[] | null = null;
+  private ownerMembershipId = "";
 
   public constructor(
     private readonly client: WebAppWireClient,
     private readonly onUnauthorized: () => void,
   ) {}
 
-  public async login(operatorKey: string): Promise<void> {
-    await this.call(() => this.client.login(operatorKey));
-    this.bootstrapWorkspaces = null;
+  public googleLoginUrl(): string {
+    return this.client.googleLoginUrl();
   }
 
   public async logout(): Promise<void> {
     await this.call(() => this.client.logout());
-    this.bootstrapWorkspaces = null;
+    this.ownerMembershipId = "";
   }
 
   public async getMe(): Promise<Me> {
-    const response = await this.call(() => this.client.poll());
-    this.bootstrapWorkspaces = response.workspaces;
-    return synthesizePersonalMe();
+    const me = meFromWire(await this.call(() => this.client.me()));
+    this.ownerMembershipId = me.membership?.id ?? "";
+    return me;
+  }
+
+  public async createOrg(name: string): Promise<void> {
+    await this.call(() => this.client.createOrg(name));
   }
 
   public async listWorkspaces(): Promise<V2WorkspaceRecord[]> {
-    const wire = this.bootstrapWorkspaces ?? (await this.call(() => this.client.poll())).workspaces;
-    this.bootstrapWorkspaces = null;
+    const wire = (await this.call(() => this.client.poll())).workspaces;
     return wire.flatMap((workspace) => {
-      const mapped = workspaceFromWire(workspace);
+      const mapped = workspaceFromWire(workspace, this.ownerMembershipId);
       return mapped === null ? [] : [mapped];
     });
   }
 
   public async createWorkspace(input: CreateWorkspaceRequest): Promise<V2WorkspaceRecord> {
     const response = await this.call(() => this.client.create(input));
-    const mapped = workspaceFromWire(response.workspace);
+    const mapped = workspaceFromWire(response.workspace, this.ownerMembershipId);
     if (mapped === null) throw new ApiError("The created workspace is no longer available.", 409);
     return mapped;
   }
@@ -163,6 +174,29 @@ export class ApiAdapter {
 
   public async listVolumes(): Promise<Volume[]> {
     return (await this.call(() => this.client.listVolumes())).volumes;
+  }
+
+  public getGlobalWebAppState(): Promise<WebAppStateResponse<GlobalWebAppStateV1>> {
+    return this.call(() => this.client.getGlobalWebAppState());
+  }
+
+  public putGlobalWebAppState(
+    doc: GlobalWebAppStateV1,
+  ): Promise<WebAppStateResponse<GlobalWebAppStateV1>> {
+    return this.call(() => this.client.putGlobalWebAppState(doc));
+  }
+
+  public getWorkspaceWebAppState(
+    workspaceId: string,
+  ): Promise<WebAppStateResponse<WorkspaceWebAppStateV1>> {
+    return this.call(() => this.client.getWorkspaceWebAppState(workspaceId));
+  }
+
+  public putWorkspaceWebAppState(
+    workspaceId: string,
+    doc: WorkspaceWebAppStateV1,
+  ): Promise<WebAppStateResponse<WorkspaceWebAppStateV1>> {
+    return this.call(() => this.client.putWorkspaceWebAppState(workspaceId, doc));
   }
 
   private async call<T>(operation: () => Promise<T>): Promise<T> {
