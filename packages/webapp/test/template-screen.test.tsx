@@ -42,14 +42,26 @@ const folders = [
   },
 ];
 
-function stub() {
+function stub(extra?: (url: URL, init?: RequestInit) => Response | null) {
   const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
+    const handled = extra?.(url, init);
+    if (handled) return handled;
     if (url.pathname === '/machine-types') {
       return Response.json({ machineTypes: machines, failures: [] });
     }
     if (url.pathname === '/folders' && init?.method === undefined) {
       return Response.json({ folders });
+    }
+    if (url.pathname === '/folders/folder-ada/objects') {
+      return Response.json({
+        objects: [
+          { key: 'raw/data.csv', size: 2048, mtime: 5, editedBy: 'Ada Park' },
+          { key: 'report.md', size: 128, mtime: 6, editedBy: 'Ada Park' },
+        ],
+        cursor: null,
+        truncated: false,
+      });
     }
     if (url.pathname === '/folders/folder-mine' && init?.method === 'PATCH') {
       return new Response(null, { status: 204 });
@@ -70,31 +82,64 @@ function stub() {
   return fetcher;
 }
 
-function check(view: { container: HTMLElement }, label: string) {
-  const row = [...view.container.querySelectorAll('label.template-pick')]
+function row(view: { container: HTMLElement }, label: string): HTMLElement {
+  const found = [...view.container.querySelectorAll<HTMLElement>('.tplf-row')]
     .find((candidate) => candidate.textContent?.includes(label));
-  expect(row, label).toBeDefined();
-  const box = row?.querySelector('input');
-  box?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(found, label).toBeDefined();
+  return found!;
+}
+
+function attachButton(view: { container: HTMLElement }): HTMLButtonElement {
+  const found = [...view.container.querySelectorAll('button')]
+    .find((candidate) => candidate.closest('.tplf-foot') !== null);
+  expect(found).toBeDefined();
+  return found as HTMLButtonElement;
+}
+
+async function screenWith(fetcher = stub()) {
+  const onCreated = vi.fn();
+  const view = await render(
+    <CreateTemplateScreen
+      client={createControlPlaneClient('https://cp.example')}
+      orgName="acme"
+      onCreated={onCreated}
+      onCancel={() => undefined}
+    />,
+  );
+  await settle();
+  return { view, onCreated, fetcher };
 }
 
 describe('create template screen', () => {
-  it('picks folders, org-shares owned ones, and posts the template', async () => {
+  it('selects with one click, attaches with the button, and posts the template', async () => {
     const fetcher = stub();
-    const onCreated = vi.fn();
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        onCreated={onCreated}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
+    const { view, onCreated } = await screenWith(fetcher);
 
-    expect(view.container.textContent).toContain('My Drive');
-    expect(view.container.textContent).toContain('Shared with me');
-    expect(view.container.textContent).toContain('everyone at acme');
+    // One merged list, Google-Drive-style rows with owner attribution.
+    expect(view.container.textContent).not.toContain('Shared with me');
+    expect(row(view, 'datasets').textContent).toContain('me');
+    expect(row(view, 'ada-notes').textContent).toContain('Ada Park');
+    expect(attachButton(view).disabled).toBe(true);
+    expect(attachButton(view).textContent).toContain('Select a folder');
+
+    await act(async () => {
+      row(view, 'datasets').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(attachButton(view).textContent).toBe('Attach “datasets”');
+    await act(async () => {
+      attachButton(view).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-side')?.textContent).toContain('datasets');
+    expect(row(view, 'datasets').textContent).toContain('In template');
+    expect(attachButton(view).textContent).toBe('Detach “datasets”');
+
+    await act(async () => {
+      row(view, 'ada-notes').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      attachButton(view).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('2 folders attached');
 
     const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
     const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
@@ -102,10 +147,7 @@ describe('create template screen', () => {
     await act(async () => {
       setInputValue.call(name, 'starter');
       name.dispatchEvent(new Event('input', { bubbles: true }));
-      check(view, 'datasets');
-      check(view, 'ada-notes');
     });
-    await settle();
     await act(async () => {
       view.container.querySelector('form')?.dispatchEvent(
         new Event('submit', { bubbles: true, cancelable: true }),
@@ -118,7 +160,6 @@ describe('create template screen', () => {
     const patches = fetcher.mock.calls.filter(([, init]) => init?.method === 'PATCH');
     expect(patches.map(([input]) => new URL(String(input)).pathname)).toEqual(['/folders/folder-mine']);
     expect(patches[0]?.[1]?.body).toBe(JSON.stringify({ orgRole: 'viewer' }));
-
     const post = fetcher.mock.calls.find(([input, init]) => (
       new URL(String(input)).pathname === '/workspace-templates' && init?.method === 'POST'
     ));
@@ -128,6 +169,101 @@ describe('create template screen', () => {
       folderIds: ['folder-mine', 'folder-ada'],
     });
     expect(onCreated).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it('enters a folder on double click, walks back up, and keeps the attach target', async () => {
+    const { view } = await screenWith();
+    const back = view.container.querySelector<HTMLButtonElement>('.tplf-back')!;
+    expect(back.disabled).toBe(true);
+
+    await act(async () => {
+      row(view, 'ada-notes').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    await settle();
+    expect(view.container.querySelector('.tplf-crumb')?.textContent).toBe('ada-notes');
+    expect(row(view, 'raw').textContent).toContain('1 file');
+    expect(row(view, 'report.md').textContent).toContain('128 B');
+    expect(attachButton(view).textContent).toBe('Attach “ada-notes”');
+
+    await act(async () => {
+      row(view, 'raw').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-crumb')?.textContent).toBe('ada-notes / raw');
+    expect(row(view, 'data.csv')).toBeDefined();
+
+    await act(async () => {
+      back.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-crumb')?.textContent).toBe('ada-notes');
+    await act(async () => {
+      back.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-crumb')?.textContent).toBe('All folders');
+    await view.unmount();
+  });
+
+  it('uploads a dropped directory into a new attached folder', async () => {
+    const createdFolder = {
+      id: 'folder-new',
+      name: 'field-photos',
+      role: 'owner',
+      orgRole: null,
+      owner: { name: 'Min Song', avatarUrl: null },
+      attachedWorkspaceIds: [],
+      createdAt: 3,
+      updatedAt: 3,
+      grants: [],
+    };
+    let uploaded = false;
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/folders' && init?.method === 'POST') {
+        uploaded = true;
+        return Response.json({ folder: createdFolder }, { status: 201 });
+      }
+      if (url.pathname === '/folders' && init?.method === undefined && uploaded) {
+        return Response.json({ folders: [...folders, createdFolder] });
+      }
+      if (init?.method === 'PUT' && url.pathname.startsWith('/folders/folder-new/objects/')) {
+        return new Response(null, { status: 200 });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    const strip = view.container.querySelector('.tplf-drop')!;
+    const entry = {
+      isFile: false,
+      isDirectory: true,
+      name: 'Field Photos',
+      createReader: () => {
+        let drained = false;
+        return {
+          readEntries: (resolve: (entries: unknown[]) => void) => {
+            resolve(drained ? [] : [{
+              isFile: true,
+              isDirectory: false,
+              name: 'one.jpg',
+              file: (accept: (file: File) => void) => accept(new File(['x'], 'one.jpg')),
+            }]);
+            drained = true;
+          },
+        };
+      },
+    };
+    const event = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: { types: ['Files'], items: [{ webkitGetAsEntry: () => entry }], files: [] },
+    });
+    await act(async () => {
+      strip.dispatchEvent(event);
+    });
+    await settle();
+
+    const putKeys = fetcher.mock.calls
+      .filter(([, init]) => init?.method === 'PUT')
+      .map(([input]) => new URL(String(input)).pathname);
+    expect(putKeys).toEqual(['/folders/folder-new/objects/one.jpg']);
+    expect(view.container.querySelector('.tplf-side')?.textContent).toContain('field-photos');
     await view.unmount();
   });
 });
