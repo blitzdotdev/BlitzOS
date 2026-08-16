@@ -31,7 +31,7 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const selected = folders.find(({ id }) => id === selectedId) ?? null;
   const canControl = selected?.role === 'owner' || selected?.role === 'admin';
-  const canWrite = selected !== null && selected.role !== 'viewer';
+  const canWrite = selected !== null && selected.role !== null && selected.role !== 'viewer';
 
   const loadFolders = useCallback(async () => {
     try {
@@ -47,7 +47,7 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
   }, [client]);
 
   const loadObjects = useCallback(async () => {
-    if (!selectedId) {
+    if (!selectedId || selected?.role === null) {
       setObjects([]);
       return;
     }
@@ -57,7 +57,7 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not load folder files.');
     }
-  }, [client, selectedId]);
+  }, [client, selected?.role, selectedId]);
 
   useEffect(() => { void loadFolders(); }, [loadFolders]);
   useEffect(() => { void loadObjects(); }, [loadObjects]);
@@ -87,7 +87,7 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
   }, [canControl, client]);
 
   const grantedMemberships = useMemo(
-    () => new Set(selected?.grants.map((grant) => grant.membershipId) ?? []),
+    () => new Set(selected?.grants?.map((grant) => grant.membershipId) ?? []),
     [selected?.grants],
   );
   const shareCandidates = members.filter((member) => (
@@ -136,7 +136,7 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
       ) : (
         <>
           <div className="files-library-toolbar">
-            <label>Folder<select value={selectedId} onChange={(event) => setSelectedId(event.currentTarget.value)}>{folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name} · {folder.role}</option>)}</select></label>
+            <label>Folder<select value={selectedId} onChange={(event) => setSelectedId(event.currentTarget.value)}>{folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name} · {folder.role ?? 'no access'}</option>)}</select></label>
             {canWrite && <label className="webapp-action">{busy ? 'Uploading…' : 'Upload'}<input ref={fileInput} type="file" multiple disabled={busy} onChange={(event) => { if (event.currentTarget.files) void upload(event.currentTarget.files); }} /></label>}
             {canControl && selected && <button className="webapp-action webapp-action--danger" type="button" disabled={busy} onClick={() => {
               if (!window.confirm(`Delete ${selected.name} and every file in it?`)) return;
@@ -144,7 +144,7 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
               void client.deleteFolder(selected.id).then(loadFolders).catch((caught: Error) => setError(caught.message)).finally(() => setBusy(false));
             }}>Delete folder</button>}
           </div>
-          {selected && workspaces.length > 0 && (
+          {selected !== null && selected.role !== null && workspaces.length > 0 && (
             <div className="files-library-attach">
               <label>Add to workspace<select aria-label="Workspace" value={workspaceId} onChange={(event) => setWorkspaceId(event.currentTarget.value)}>{workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.name}</option>)}</select></label>
               <button className="webapp-action" type="button" disabled={!workspaceId || attachedFolderIds.has(selected.id)} onClick={() => {
@@ -152,6 +152,7 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
                   setAttachedFolderIds((current) => new Set(current).add(selected.id));
                 }).catch((caught: Error) => setError(caught.message));
               }}>{attachedFolderIds.has(selected.id) ? 'Attached' : 'Add folder'}</button>
+              <p>Workspace copies sync on a periodic tick and immediately after webapp edits.</p>
             </div>
           )}
           {canControl && selected && (
@@ -170,10 +171,11 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
                 <select aria-label="Folder role" value={shareRole} onChange={(event) => setShareRole(event.currentTarget.value === 'viewer' ? 'viewer' : 'editor')}><option value="editor">Editor</option><option value="viewer">Viewer</option></select>
                 <button type="submit" disabled={!membershipId}>Share</button>
               </form>
-              <ul>{selected.grants.map((grant) => <li key={grant.id}><span>{grant.member.name || grant.member.email} · {grant.role}</span><button type="button" onClick={() => void client.revokeFolderGrant(selected.id, grant.id).then(loadFolders).catch((caught: Error) => setError(caught.message))}>Revoke</button></li>)}</ul>
+              <ul>{selected.grants?.map((grant) => <li key={grant.id}><span>{grant.member.name || grant.member.email} · {grant.role}</span><button type="button" onClick={() => void client.revokeFolderGrant(selected.id, grant.id).then(loadFolders).catch((caught: Error) => setError(caught.message))}>Revoke</button></li>)}</ul>
             </section>
           )}
-          <div className="settings-credential-list files-library-list">
+          {selected?.role === null && <p className="settings-credential-state">You do not have access to this folder.</p>}
+          {selected !== null && selected.role !== null && <div className="settings-credential-list files-library-list">
             {objects.length === 0 && <p className="settings-credential-state">This folder is empty.</p>}
             {objects.map((object) => (
               <div className="settings-credential-row" key={object.key}>
@@ -188,7 +190,7 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
                 }).catch((caught: Error) => setError(caught.message))}>Download</button>
               </div>
             ))}
-          </div>
+          </div>}
         </>
       )}
     </section>

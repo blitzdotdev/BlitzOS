@@ -13,7 +13,6 @@ describe('organization files panel', () => {
         id: 'folder-one',
         name: 'Shared Notes',
         role: 'owner',
-        version: 1,
         createdAt: 1,
         updatedAt: 1,
         grants: [],
@@ -34,7 +33,6 @@ describe('organization files panel', () => {
           id: 'folder-one',
           name: 'Shared Notes',
           role: 'owner',
-          version: 1,
           attachedAt: 2,
         } }, { status: 201 });
       }
@@ -59,5 +57,31 @@ describe('organization files panel', () => {
     ));
     expect(request?.[1]?.body).toBe(JSON.stringify({ folderId: 'folder-one' }));
     expect(add?.textContent).toBe('Attached');
+    expect(view.container.textContent).toContain('periodic tick');
+  });
+
+  it('renders an org folder without access as inert metadata', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/folders') return Response.json({ folders: [{
+        id: 'private-folder',
+        name: 'Private',
+        role: null,
+        createdAt: 1,
+        updatedAt: 2,
+      }] });
+      if (url.pathname === '/workspaces') return Response.json({ workspaces: [] });
+      return new Response('not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const view = await render(<FilesPanel client={createControlPlaneClient('https://cp.example')} />);
+    await settle();
+
+    expect(view.container.textContent).toContain('Private · no access');
+    expect(view.container.textContent).toContain('You do not have access');
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes('/objects'))).toBe(false);
+    expect([...view.container.querySelectorAll('button')].some((button) => (
+      button.textContent === 'Add folder' || button.textContent === 'Download'
+    ))).toBe(false);
   });
 });

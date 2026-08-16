@@ -78,26 +78,27 @@ function grant(value: JsonValue, label: string): FolderGrantView {
 function folder(value: JsonValue, label: string): FolderView {
   const object = asJsonObject(value);
   const role = object?.role;
+  const controlled = role === 'owner' || role === 'admin';
   if (
     object === null
     || !isString(object.id)
     || !isString(object.name)
-    || (role !== 'owner' && role !== 'admin' && role !== 'editor' && role !== 'viewer')
-    || !isNumber(object.version)
-    || !Number.isSafeInteger(object.version)
+    || !(role === null || role === 'owner' || role === 'admin' || role === 'editor' || role === 'viewer')
     || !isNumber(object.createdAt)
     || !isNumber(object.updatedAt)
-    || !Array.isArray(object.grants)
+    || (controlled ? !Array.isArray(object.grants) : object.grants !== undefined)
   ) throw new Error(`${label} returned an invalid folder`);
-  return {
+  const result: FolderView = {
     id: object.id,
     name: object.name,
     role,
-    version: object.version,
     createdAt: object.createdAt,
     updatedAt: object.updatedAt,
-    grants: object.grants.map((item) => grant(item, label)),
   };
+  if (controlled && Array.isArray(object.grants)) {
+    result.grants = object.grants.map((item) => grant(item, label));
+  }
+  return result;
 }
 
 function folderObject(value: JsonValue): FolderObjectView {
@@ -127,8 +128,6 @@ function attachment(value: JsonValue, label: string): FolderAttachmentView {
     || !isString(object.id)
     || !isString(object.name)
     || (role !== 'owner' && role !== 'admin' && role !== 'editor' && role !== 'viewer')
-    || !isNumber(object.version)
-    || !Number.isSafeInteger(object.version)
     || !isNumber(object.attachedAt)
     || !Number.isSafeInteger(object.attachedAt)
   ) throw new Error(`${label} returned an invalid attachment`);
@@ -136,7 +135,6 @@ function attachment(value: JsonValue, label: string): FolderAttachmentView {
     id: object.id,
     name: object.name,
     role,
-    version: object.version,
     attachedAt: object.attachedAt,
   };
 }
