@@ -27,6 +27,7 @@ import {
   normalizeFolderName,
   splitFolders,
 } from './drive-model';
+import { collectDropped, type DroppedPayload } from './drop-upload';
 import { ShareFolderDialog } from './ShareFolderDialog';
 
 export type DrivePageRoute =
@@ -58,6 +59,13 @@ interface UploadState {
   total: number;
   done: boolean;
   folderName: string;
+  index: number;
+  count: number;
+}
+
+interface UploadEntry {
+  file: File;
+  key: string;
 }
 
 const SNACK_MS = 7_000;
@@ -89,8 +97,10 @@ export function FilesDrive({
   const [upload, setUpload] = useState<UploadState | null>(null);
   const [snack, setSnack] = useState<React.ReactNode | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dropActive, setDropActive] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const snackTimer = useRef<number | null>(null);
+  const dragDepth = useRef(0);
 
   const folderId = route.page === 'folder' ? route.folderId : null;
   const path = route.page === 'folder' ? route.folderPath : [];
@@ -204,27 +214,108 @@ export function FilesDrive({
     setMenu({ x: event.clientX, y: event.clientY + 4, items });
   };
 
-  const uploadFiles = async (target: FolderView, files: File[]) => {
-    for (const file of files) {
-      const key = path.length === 0 ? file.name : `${path.join('/')}/${file.name}`;
-      setUpload({ name: file.name, sent: 0, total: file.size, done: false, folderName: target.name });
-      try {
-        await client.uploadFolderObject(target.id, key, file, (sent, total) => {
-          setUpload({ name: file.name, sent, total, done: false, folderName: target.name });
+  const uploadEntries = async (target: FolderView, entries: UploadEntry[]): Promise<boolean> => {
+    const count = entries.length;
+    for (const [position, { file, key }] of entries.entries()) {
+      const progress = (sent: number, total: number) => {
+        setUpload({
+          name: file.name,
+          sent,
+          total,
+          done: false,
+          folderName: target.name,
+          index: position + 1,
+          count,
         });
-        setUpload({ name: file.name, sent: file.size, total: file.size, done: true, folderName: target.name });
-        showSnack(<span><b>{file.name}</b> uploaded to {target.name}</span>);
+      };
+      progress(0, file.size);
+      try {
+        await client.uploadFolderObject(target.id, key, file, progress);
       } catch (caught) {
         setUpload(null);
         setError(caught instanceof Error ? caught.message : 'Upload failed.');
-        return;
+        return false;
       }
     }
+    const last = entries[count - 1];
+    if (last !== undefined) {
+      setUpload({
+        name: last.file.name,
+        sent: last.file.size,
+        total: last.file.size,
+        done: true,
+        folderName: target.name,
+        index: count,
+        count,
+      });
+    }
+    showSnack(count === 1
+      ? <span><b>{last?.file.name}</b> uploaded to {target.name}</span>
+      : <span><b>{count} files</b> uploaded to {target.name}</span>);
     window.setTimeout(() => {
       setUpload((current) => (current?.done ? null : current));
     }, 3_200);
-    await loadObjects(target.id);
+    if (target.id === folderId) await loadObjects(target.id);
     await loadFolders();
+    return true;
+  };
+
+  const keyedAtPath = (name: string) =>
+    path.length === 0 ? name : `${path.join('/')}/${name}`;
+
+  const handleDropPayload = async (payload: DroppedPayload) => {
+    if (folder !== null) {
+      if (!canWriteFolder(folder.role)) {
+        showSnack(<span>You have view-only access to <b>{folder.name}</b> — ask for editor access to upload</span>);
+        return;
+      }
+      const entries: UploadEntry[] = [
+        ...payload.files.map(({ file, relativePath }) => ({ file, key: keyedAtPath(relativePath) })),
+        ...payload.folders.flatMap(({ name, files }) =>
+          files.map(({ file, relativePath }) => ({ file, key: keyedAtPath(`${name}/${relativePath}`) }))),
+      ];
+      if (entries.length === 0) {
+        showSnack('Nothing to upload — the drop had no files in it');
+        return;
+      }
+      await uploadEntries(folder, entries);
+      return;
+    }
+    if (scope === 'shared') {
+      showSnack('Shared with me is read-only — drop into My Drive, or open a folder you can edit');
+      return;
+    }
+    if (payload.folders.length === 0) {
+      showSnack('Drop a folder to add it to My Drive — open a folder to drop single files');
+      return;
+    }
+    for (const dropped of payload.folders) {
+      const name = normalizeFolderName(dropped.name);
+      if (name === '') {
+        showSnack(<span><b>{dropped.name}</b> does not normalize to a usable folder name</span>);
+        continue;
+      }
+      let created: FolderView;
+      try {
+        created = (await client.createFolder(name)).folder;
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : 'Could not create the folder.');
+        return;
+      }
+      if (dropped.files.length === 0) {
+        showSnack(<span><b>{created.name}</b> created — the dropped folder was empty</span>);
+        continue;
+      }
+      const uploaded = await uploadEntries(
+        created,
+        dropped.files.map(({ file, relativePath }) => ({ file, key: relativePath })),
+      );
+      if (!uploaded) return;
+    }
+    await loadFolders();
+    if (payload.files.length > 0) {
+      showSnack('Loose files skipped — open a folder to upload single files');
+    }
   };
 
   const folderMenuItems = (target: FolderView): MenuItem[] => {
@@ -343,8 +434,39 @@ export function FilesDrive({
     </div>
   );
 
+  const dragHasFiles = (event: React.DragEvent) => event.dataTransfer.types.includes('Files');
+
   return (
-    <div className="drive-page drive">
+    <div
+      className={`drive-page drive${dropActive ? ' drive-page--dropping' : ''}`}
+      onDragEnter={(event) => {
+        if (!dragHasFiles(event)) return;
+        event.preventDefault();
+        dragDepth.current += 1;
+        setDropActive(true);
+      }}
+      onDragOver={(event) => {
+        if (!dragHasFiles(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+      }}
+      onDragLeave={() => {
+        if (dragDepth.current === 0) return;
+        dragDepth.current -= 1;
+        if (dragDepth.current === 0) setDropActive(false);
+      }}
+      onDrop={(event) => {
+        if (!dragHasFiles(event)) return;
+        event.preventDefault();
+        dragDepth.current = 0;
+        setDropActive(false);
+        // collectDropped must be invoked inside the handler: DataTransferItems
+        // go inert once the drop event yields to the event loop.
+        void collectDropped(Array.from(event.dataTransfer.items), Array.from(event.dataTransfer.files))
+          .then(handleDropPayload)
+          .catch((caught: Error) => setError(caught.message));
+      }}
+    >
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
       {folder === null ? (
@@ -472,7 +594,12 @@ export function FilesDrive({
         hidden
         onChange={(event) => {
           const files = event.currentTarget.files;
-          if (files && files.length > 0 && folder !== null) void uploadFiles(folder, Array.from(files));
+          if (files && files.length > 0 && folder !== null) {
+            void uploadEntries(
+              folder,
+              Array.from(files).map((file) => ({ file, key: keyedAtPath(file.name) })),
+            );
+          }
           event.currentTarget.value = '';
         }}
       />
@@ -635,7 +762,11 @@ export function FilesDrive({
       {upload !== null && (
         <section className="drive-uploader" aria-label="Upload status">
           <header className="drive-uploader-head">
-            <span>{upload.done ? 'Upload complete' : 'Uploading 1 item'}</span>
+            <span>
+              {upload.done
+                ? upload.count === 1 ? 'Upload complete' : `Uploaded ${upload.count} items`
+                : upload.count === 1 ? 'Uploading 1 item' : `Uploading ${upload.index} of ${upload.count}`}
+            </span>
             <button type="button" aria-label="Close upload status" onClick={() => setUpload(null)}><CloseGlyph /></button>
           </header>
           <div className="drive-uploader-item">
@@ -662,6 +793,20 @@ export function FilesDrive({
               )}
           </div>
         </section>
+      )}
+
+      {dropActive && (
+        <div className="drive-droptarget" aria-hidden="true">
+          <span>
+            {folder !== null
+              ? canWriteFolder(folder.role)
+                ? <>Drop to upload to <b>{[folder.name, ...path].join('/')}</b></>
+                : 'View-only — you need editor access to upload here'
+              : scope === 'mine'
+                ? 'Drop folders to add them to My Drive'
+                : 'Shared with me is read-only'}
+          </span>
+        </div>
       )}
 
       {snack !== null && (

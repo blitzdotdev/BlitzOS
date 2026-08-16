@@ -832,3 +832,37 @@
 }
 
 .ws-shared-link svg { width: 13px; height: 13px; }
+
+/* ------------------------------------------------------------ drop target */
+.drive-page {
+  position: relative;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+/* While a drag hovers, children stop catching pointer events so the drop
+ * lands on the page itself instead of churning enter/leave on every tile. */
+.drive-page--dropping > :not(.drive-droptarget) { pointer-events: none; }
+
+.drive-droptarget {
+  position: absolute;
+  inset: 8px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border: 2px dashed var(--accent);
+  border-radius: var(--r-card);
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+}
+
+.drive-droptarget span {
+  padding: 10px 18px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 13.5px;
+  box-shadow: var(--lift);
+}
