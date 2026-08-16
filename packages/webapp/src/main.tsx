@@ -9,12 +9,16 @@ import './webapp-shell.css';
 import './webapp-workspace.css';
 import './chat-panel.css';
 import './files-drive.css';
+import './drive-shell.css';
 import './files.css';
 import './confirmation-dialog.css';
 import './loading-skeleton.css';
 import './create-workspace-dialog.css';
 import './settings.css';
 import { StandaloneWebApp } from './StandaloneWebApp';
+import { initTheme } from './theme';
+
+initTheme();
 
 const root = document.getElementById('root');
 if (root === null) throw new Error('Missing root element');

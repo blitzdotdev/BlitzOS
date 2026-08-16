@@ -180,6 +180,7 @@ const folderAttachment: SharedShape<
 > = {
   id: "folder",
   name: "Shared",
+  guestPath: null,
   role: "editor",
   attachedAt: 3,
 };

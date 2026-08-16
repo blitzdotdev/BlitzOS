@@ -42,6 +42,7 @@ export interface FolderAttachmentView {
   id: string;
   name: string;
   role: FolderRole;
+  guestPath: string | null;
   attachedAt: number;
 }
 

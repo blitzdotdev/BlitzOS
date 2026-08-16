@@ -31,6 +31,7 @@ interface SyncAttachmentRow {
   attacher_org_id: string;
   attacher_role: "admin" | "member";
   owner_name: string;
+  guest_path: string | null;
 }
 
 interface DavEntry {
@@ -74,8 +75,11 @@ function syncPrincipal(row: SyncAttachmentRow): Principal {
   };
 }
 
-function guestRoot(name: string): string {
-  return `/workspace/shared/${encodeURIComponent(name)}/`;
+/** Published workspace directories keep their original guest path; plain
+ * attachments materialize under /workspace/shared/<name>. */
+function guestRoot(attachment: SyncAttachmentRow): string {
+  const relative = attachment.guest_path ?? `shared/${attachment.folder_name}`;
+  return `/workspace/${relative.split("/").map(encodeURIComponent).join("/")}/`;
 }
 
 function guestObjectPath(root: string, key: string): string {
@@ -227,7 +231,7 @@ async function listGuest(
   runtime: CoreRuntime,
   attachment: SyncAttachmentRow,
 ): Promise<Map<string, DavEntry>> {
-  const root = guestRoot(attachment.folder_name);
+  const root = guestRoot(attachment);
   const rootRequest = new Request("https://control-plane.invalid", {
     method: "PROPFIND",
     headers: { Depth: "1" },
@@ -401,7 +405,7 @@ async function syncAttachment(
     }
     throw caught;
   }
-  const root = guestRoot(attachment.folder_name);
+  const root = guestRoot(attachment);
   const [remoteFiles, guestFiles] = await Promise.all([
     listRemote(runtime, folder.org_id, folder.id),
     listGuest(runtime, attachment),
@@ -468,7 +472,7 @@ async function attachmentRows(
                attacher.user_id AS attacher_user_id,
                attacher.org_id AS attacher_org_id,
                attacher.role AS attacher_role,
-               owner_user.name AS owner_name
+               owner_user.name AS owner_name, attachment.guest_path
         FROM folder_attachments attachment
         JOIN folders folder ON folder.id = attachment.folder_id
         JOIN workspaces workspace

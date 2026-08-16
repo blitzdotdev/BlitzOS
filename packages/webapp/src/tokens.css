@@ -17,6 +17,8 @@
   --r-item: 8px;
   --r-pill: 999px;
   --lift: 0 10px 30px color-mix(in oklab, #000 34%, transparent);
+
+  color-scheme: dark;
   --terminal-selection: color-mix(in oklab, var(--accent) 25%, transparent);
 
   --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -48,4 +50,38 @@
 
   /* Founder screenshot 2026-07-22: reconnect status uses the ANSI-ramp gold. */
   --status-warm-yellow: var(--ansi-yellow);
+}
+
+/* Light palette (plans/mockups/folders-v1-library.html). System preference
+ * first; the explicit data-theme choice from the topbar toggle wins. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --paper: #f7f7f4;
+    --ink: #1c1f26;
+    --accent: #4c62aa;
+    --hover: color-mix(in oklab, var(--ink) 6%, var(--paper));
+    --selected: color-mix(in oklab, var(--accent) 16%, var(--paper));
+    --lift: 0 10px 30px color-mix(in oklab, #000 16%, transparent);
+    color-scheme: light;
+  }
+}
+
+:root[data-theme='dark'] {
+  --paper: #16181d;
+  --ink: #dfe2e8;
+  --accent: #7e95d7;
+  --hover: color-mix(in oklab, var(--ink) 7%, var(--paper));
+  --selected: color-mix(in oklab, var(--accent) 20%, var(--paper));
+  --lift: 0 10px 30px color-mix(in oklab, #000 34%, transparent);
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --paper: #f7f7f4;
+  --ink: #1c1f26;
+  --accent: #4c62aa;
+  --hover: color-mix(in oklab, var(--ink) 6%, var(--paper));
+  --selected: color-mix(in oklab, var(--accent) 16%, var(--paper));
+  --lift: 0 10px 30px color-mix(in oklab, #000 16%, transparent);
+  color-scheme: light;
 }

@@ -1,11 +1,17 @@
-export type SettingsSection = 'profile' | 'members' | 'files' | 'invites' | 'integrations' | 'requests';
+export type SettingsSection = 'profile' | 'members' | 'invites' | 'integrations' | 'requests';
+
+export type DriveScope = 'mine' | 'shared';
 
 export type AppRoute =
-  | { workspaceId: string | null; page: 'webApp' }
+  | { workspaceId: string; page: 'webApp' }
+  | { workspaceId: null; page: 'drive'; scope: DriveScope }
+  | { workspaceId: null; page: 'folder'; folderId: string; folderPath: string[] }
   | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
 
+const HOME: AppRoute = { workspaceId: null, page: 'drive', scope: 'mine' };
+
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|members|files|invites|integrations|requests))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|integrations|requests))?\/?$/u);
   if (settings) {
     return {
       workspaceId: null,
@@ -14,15 +20,34 @@ export function parseAppRoute(pathname: string): AppRoute {
       settingsSection: (settings[1] as SettingsSection | undefined) ?? 'profile',
     };
   }
+  if (/^\/shared\/?$/u.test(pathname)) {
+    return { workspaceId: null, page: 'drive', scope: 'shared' };
+  }
+  const folder = pathname.match(/^\/folder\/([^/]+)((?:\/[^/]+)*)\/?$/u);
+  if (folder) {
+    try {
+      return {
+        workspaceId: null,
+        page: 'folder',
+        folderId: decodeURIComponent(folder[1]!),
+        folderPath: (folder[2] ?? '')
+          .split('/')
+          .filter((segment) => segment.length > 0)
+          .map(decodeURIComponent),
+      };
+    } catch {
+      return HOME;
+    }
+  }
   const match = pathname.match(/^\/workspaces\/([^/]+)\/?$/u);
-  if (!match) return { workspaceId: null, page: 'webApp' };
+  if (!match) return HOME;
   try {
     return {
       workspaceId: decodeURIComponent(match[1]!),
       page: 'webApp',
     };
   } catch {
-    return { workspaceId: null, page: 'webApp' };
+    return HOME;
   }
 }
 
@@ -32,4 +57,13 @@ export function workspacePath(workspaceId: string): string {
 
 export function settingsPath(section: SettingsSection): string {
   return section === 'profile' ? '/settings' : `/settings/${section}`;
+}
+
+export function drivePath(scope: DriveScope): string {
+  return scope === 'shared' ? '/shared' : '/';
+}
+
+export function folderPagePath(folderId: string, folderPath: string[] = []): string {
+  const suffix = folderPath.map(encodeURIComponent).join('/');
+  return `/folder/${encodeURIComponent(folderId)}${suffix === '' ? '' : `/${suffix}`}`;
 }

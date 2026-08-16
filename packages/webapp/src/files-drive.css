@@ -758,3 +758,77 @@
 @media (prefers-reduced-motion: reduce) {
   .drive * { transition: none !important; }
 }
+
+/* ---------------------------------------------- workspace shared section */
+.ws-shared {
+  padding: 8px 8px 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.ws-shared-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.ws-shared-head svg { width: 15px; height: 15px; color: var(--faint); }
+
+.ws-shared-publish {
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: var(--r-pill);
+  color: var(--accent);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ws-shared-publish:hover { background: var(--hover); }
+.ws-shared-empty { margin: 0; padding: 2px 8px 4px; color: var(--faint); font-size: 12px; }
+
+.ws-shared-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-item);
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ws-shared-row:hover { color: var(--ink); background: var(--hover); }
+.ws-shared-row > svg { width: 16px; height: 16px; color: var(--faint); }
+
+.ws-shared-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-shared-link {
+  display: grid;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  place-items: center;
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.ws-shared-link svg { width: 13px; height: 13px; }
