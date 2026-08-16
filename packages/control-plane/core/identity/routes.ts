@@ -18,7 +18,7 @@ interface MeRow {
   platform_operator: number;
   membership_id: string | null;
   role: "admin" | "member" | null;
-  status: "invited" | "active" | "disabled" | null;
+  status: "active" | null;
   org_id: string | null;
   slug: string | null;
   org_name: string | null;
@@ -28,7 +28,7 @@ interface MeRow {
 interface MembershipView {
   id: string;
   role: "admin" | "member";
-  status: "invited" | "active" | "disabled";
+  status: "active";
 }
 
 interface OrgView {
@@ -69,7 +69,7 @@ function meResponse(row: MeRow): MeResponse {
       platformOperator: row.platform_operator === 1,
     },
     membership: hasMembership
-      ? { id: row.membership_id ?? "", role: row.role ?? "member", status: row.status ?? "disabled" }
+      ? { id: row.membership_id ?? "", role: row.role ?? "member", status: "active" }
       : null,
     org: hasMembership
       ? {

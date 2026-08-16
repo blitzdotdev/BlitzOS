@@ -96,7 +96,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
       name: "users",
       fields: [
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
-        { name: "google_user_id", type: "text", sqlType: "text", unique: true },
+        { name: "google_user_id", type: "text", sqlType: "text", notNull: true, unique: true },
         { name: "email", type: "email", sqlType: "text", notNull: true, unique: true, check: "email = lower(email)" },
         { name: "name", type: "text", sqlType: "text", notNull: true, unique: true },
         { name: "avatar_url", type: "url", sqlType: "text" },

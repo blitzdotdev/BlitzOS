@@ -18,7 +18,7 @@ import {
 async function sameOrgSession(
   id: string,
   role: "admin" | "member" = "member",
-  status: "active" | "invited" | "disabled" = "active",
+  status: "active" | "disabled" = "active",
 ): Promise<{ cookie: string; membershipId: string }> {
   const token = randomToken();
   const membershipId = `${id}-membership`;
@@ -63,13 +63,14 @@ async function googleCallback(
   app: ReturnType<typeof harness>["app"],
   email: string,
   startPath = "/auth/google/start",
+  emailVerified = true,
 ): Promise<Response> {
   vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(Response.json({ access_token: "google-token" }))
     .mockResolvedValueOnce(Response.json({
       sub: `sub-${email}`,
       email,
-      email_verified: true,
+      email_verified: emailVerified,
       name: `Google ${email}`,
       picture: "https://images.example/avatar.png",
     }));
@@ -168,52 +169,68 @@ describe("identity phase 2", () => {
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
   });
 
-  it("supports member stubs, claim, lifecycle rules, and last-active-admin protection", async () => {
+  it("lists real memberships only and keeps last-active-admin protection", async () => {
     const { app } = harness();
     const adminCookie = await operatorSession(app);
-    const invited = await appRequest(app, "/members", {
+    expect((await appRequest(app, "/members", {
       ...json({ email: "Claim@Example.com", role: "member" }),
       headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+    })).status).toBe(404);
+    await expect(appRequest(app, "/members", {
+      headers: { Cookie: adminCookie },
+    }).then((response) => response.json())).resolves.toEqual({
+      members: [{
+        id: "personal",
+        email: "operator@example.com",
+        name: "Operator",
+        avatarUrl: null,
+        role: "admin",
+        status: "active",
+      }],
     });
-    const invitedBody = await invited.json<{ member: { id: string } }>();
-    expect(invited.status).toBe(201);
-    expect((await appRequest(app, `/members/${invitedBody.member.id}`, {
-      method: "PATCH",
-      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "active" }),
-    })).status).toBe(400);
     expect((await appRequest(app, "/members/personal", {
       method: "PATCH",
       headers: { Cookie: adminCookie, "Content-Type": "application/json" },
       body: JSON.stringify({ role: "member" }),
     })).status).toBe(409);
-
-    const callback = await googleCallback(app, "claim@example.com");
-    expect(callback.status).toBe(302);
-    expect(await env.DB.prepare(
-      "SELECT google_user_id FROM users WHERE email = 'claim@example.com'",
-    ).first<string>("google_user_id")).toBe("sub-claim@example.com");
-    expect(await env.DB.prepare(
-      "SELECT status FROM memberships WHERE id = ?1",
-    ).bind(invitedBody.member.id).first<string>("status")).toBe("active");
+    expect((await appRequest(app, "/members/personal", {
+      method: "DELETE",
+      headers: { Cookie: adminCookie },
+    })).status).toBe(404);
   });
 
-  it("stores invite hashes only, shares the seven-day TTL, redeems in callback, and revokes", async () => {
+  it("mints a lowercased email-pinned invite and redeems it atomically for a matching verified login", async () => {
     const { app } = harness();
     const adminCookie = await operatorSession(app);
     const before = Date.now();
     const created = await appRequest(app, "/invites", {
-      ...json({ email: "invitee@example.com", role: "member" }),
+      ...json({ email: "Invitee@Example.com", role: "member" }),
       headers: { Cookie: adminCookie, "Content-Type": "application/json" },
     });
-    const body = await created.json<{ code: string; invite: { id: string; expiresAt: number }; ttlDays: number }>();
+    const body = await created.json<{
+      code: string;
+      invite: { id: string; email: string; expiresAt: number };
+      ttlDays: number;
+    }>();
     expect(body.code).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(body.invite.email).toBe("invitee@example.com");
     expect(body.ttlDays).toBe(7);
     expect(body.invite.expiresAt).toBeGreaterThanOrEqual(before + INVITE_TTL_MS);
     const stored = await env.DB.prepare("SELECT code_hash FROM invites WHERE id = ?1").bind(body.invite.id).first<string>("code_hash");
     expect(stored).toBe(await inviteCodeHash(body.code));
     expect(stored).not.toBe(body.code);
-    expect((await appRequest(app, `/invite/${body.code}`)).status).toBe(200);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<number>("count")).toBe(1);
+    await expect(appRequest(app, `/invite/${body.code}`).then((response) => response.json())).resolves.toMatchObject({
+      invite: { email: "invitee@example.com", role: "member", state: "ready" },
+    });
+    await expect(appRequest(app, "/invites", {
+      headers: { Cookie: adminCookie },
+    }).then((response) => response.json())).resolves.toMatchObject({
+      invites: [expect.objectContaining({ email: "invitee@example.com", state: "ready" })],
+    });
+    await expect(appRequest(app, "/members", {
+      headers: { Cookie: adminCookie },
+    }).then((response) => response.json())).resolves.toMatchObject({ members: [{ id: "personal" }] });
 
     const callback = await googleCallback(app, "invitee@example.com", `/auth/google/start?invite=${body.code}`);
     expect(callback.status).toBe(302);
@@ -223,6 +240,82 @@ describe("identity phase 2", () => {
        WHERE s.principal_id = (SELECT id FROM users WHERE email = 'invitee@example.com')
        ORDER BY s.created_at DESC LIMIT 1`,
     ).first<string>("org_id")).toBe("personal");
+    expect(await env.DB.prepare(
+      `SELECT m.role FROM memberships m JOIN users u ON u.id = m.user_id
+       WHERE u.email = 'invitee@example.com' AND m.org_id = 'personal'`,
+    ).first<string>("role")).toBe("member");
+  });
+
+  it("refuses a mismatched verified email and leaves the pinned invite ready", async () => {
+    const { app } = harness();
+    const adminCookie = await operatorSession(app);
+    const created = await appRequest(app, "/invites", {
+      ...json({ email: "pinned@example.com", role: "admin" }),
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+    });
+    const body = await created.json<{ code: string; invite: { id: string } }>();
+    const callback = await googleCallback(
+      app,
+      "wrong@example.com",
+      `/auth/google/start?invite=${body.code}`,
+    );
+    expect(callback.status).toBe(403);
+    await expect(callback.json()).resolves.toEqual({
+      error: "invite is for a different email address",
+      retryAction: null,
+    });
+    await expect(appRequest(app, `/invite/${body.code}`).then((response) => response.json())).resolves.toMatchObject({
+      invite: { email: "pinned@example.com", role: "admin", state: "ready" },
+    });
+    expect(await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM memberships WHERE user_id = (SELECT id FROM users WHERE email = 'wrong@example.com')",
+    ).first<number>("count")).toBe(0);
+  });
+
+  it("refuses an unverified email and leaves the pinned invite ready", async () => {
+    const { app } = harness();
+    const adminCookie = await operatorSession(app);
+    const created = await appRequest(app, "/invites", {
+      ...json({ email: "pinned@example.com", role: "member" }),
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+    });
+    const body = await created.json<{ code: string }>();
+    const callback = await googleCallback(
+      app,
+      "pinned@example.com",
+      `/auth/google/start?invite=${body.code}`,
+      false,
+    );
+    expect(callback.status).toBe(401);
+    await expect(callback.json()).resolves.toEqual({
+      error: "Google email is not verified",
+      retryAction: null,
+    });
+    await expect(appRequest(app, `/invite/${body.code}`).then((response) => response.json())).resolves.toMatchObject({
+      invite: { email: "pinned@example.com", state: "ready" },
+    });
+    expect(await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM users WHERE email = 'pinned@example.com'",
+    ).first<number>("count")).toBe(0);
+  });
+
+  it("keeps open invites redeemable by any verified Google email and revocable while ready", async () => {
+    const { app } = harness();
+    const adminCookie = await operatorSession(app);
+    const open = await appRequest(app, "/invites", {
+      ...json({ role: "member" }),
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+    });
+    const openBody = await open.json<{ code: string; invite: { id: string } }>();
+    await expect(appRequest(app, `/invite/${openBody.code}`).then((response) => response.json())).resolves.toMatchObject({
+      invite: { email: null, state: "ready" },
+    });
+    expect((await googleCallback(
+      app,
+      "anyone@example.com",
+      `/auth/google/start?invite=${openBody.code}`,
+    )).status).toBe(302);
+    expect(await env.DB.prepare("SELECT state FROM invites WHERE id = ?1").bind(openBody.invite.id).first<string>("state")).toBe("redeemed");
 
     const second = await appRequest(app, "/invites", {
       ...json({ role: "member" }),

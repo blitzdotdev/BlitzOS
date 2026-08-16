@@ -139,24 +139,29 @@ async function resolveUser(
     v: [profile.googleUserId],
   });
   if (user !== null) {
+    const emailOwner = await first<{ id: string }>(db, {
+      q: "SELECT id FROM users WHERE email = ?1 LIMIT 1",
+      v: [profile.email],
+    });
+    if (emailOwner !== null && emailOwner.id !== user.id) {
+      throw new HttpError(409, "email belongs to another Google identity");
+    }
     await rows(db, {
       q: `UPDATE users SET email = ?1, name = ?2, avatar_url = ?3, updated_at = ?4
           WHERE id = ?5`,
       v: [profile.email, profile.name, profile.avatarUrl, now, user.id],
     });
   } else {
-    const stub = await first<UserRow & { google_user_id: string | null }>(db, {
-      q: `SELECT id, platform_operator, name, google_user_id
-          FROM users WHERE email = ?1 LIMIT 1`,
+    const emailOwner = await first<{ id: string }>(db, {
+      q: "SELECT id FROM users WHERE email = ?1 LIMIT 1",
       v: [profile.email],
     });
-    if (stub?.google_user_id !== null && stub !== null) {
-      throw new HttpError(409, "email is already bound to another Google identity");
+    if (emailOwner !== null) {
+      throw new HttpError(409, "email belongs to another Google identity");
     }
-    const id = stub?.id ?? crypto.randomUUID();
-    if (stub === null) {
-      await rows(db, {
-        q: `INSERT INTO users
+    const id = crypto.randomUUID();
+    await rows(db, {
+      q: `INSERT INTO users
           (id, google_user_id, email, name, avatar_url, platform_operator,
            created_at, updated_at)
           VALUES (?1, ?2, ?3, ?4, ?5,
@@ -164,30 +169,16 @@ async function resolveUser(
                    AND NOT EXISTS (SELECT 1 FROM users WHERE platform_operator = 1)
                  THEN 1 ELSE 0 END,
             ?7, ?7)`,
-        v: [
-          id,
-          profile.googleUserId,
-          profile.email,
-          profile.name,
-          profile.avatarUrl,
-          bootstrapEnabled ? 1 : 0,
-          now,
-        ],
-      });
-    } else {
-      await transaction(db, [
-        {
-          q: `UPDATE users SET google_user_id = ?1, email = ?2, name = ?3,
-                  avatar_url = ?4, updated_at = ?5 WHERE id = ?6 AND google_user_id IS NULL`,
-          v: [profile.googleUserId, profile.email, profile.name, profile.avatarUrl, now, id],
-        },
-        {
-          q: `UPDATE memberships SET status = 'active'
-              WHERE user_id = ?1 AND status = 'invited'`,
-          v: [id],
-        },
-      ]);
-    }
+      v: [
+        id,
+        profile.googleUserId,
+        profile.email,
+        profile.name,
+        profile.avatarUrl,
+        bootstrapEnabled ? 1 : 0,
+        now,
+      ],
+    });
     user = { id, platform_operator: 0, name: profile.name };
   }
   await rows(db, {

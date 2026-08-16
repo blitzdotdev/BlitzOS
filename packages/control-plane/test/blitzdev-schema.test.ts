@@ -87,7 +87,7 @@ describe("blitz.dev managed schema", () => {
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "users")).toMatchObject({
       fields: expect.arrayContaining([
-        expect.objectContaining({ name: "google_user_id", unique: true }),
+        expect.objectContaining({ name: "google_user_id", notNull: true, unique: true }),
         expect.objectContaining({ name: "email", unique: true, check: "email = lower(email)" }),
         expect.objectContaining({
           name: "platform_operator",
