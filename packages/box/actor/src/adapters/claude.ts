@@ -1,4 +1,10 @@
-import { query, type CanUseTool, type Options, type PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type CanUseTool,
+  type Options,
+  type PermissionResult,
+  type SDKMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import { hasObjectType, isString } from "../type-guards.js";
 import type { AgentAdapter, TurnInput, TurnOutput } from "../types.js";
 
@@ -21,6 +27,38 @@ export function claudeOptionalOptions(
     options.getOAuthToken = async () => input.token as string;
   }
   return options;
+}
+
+const PERMISSION_MODES: ReadonlySet<string> = new Set([
+  "default",
+  "acceptEdits",
+  "bypassPermissions",
+  "plan",
+]);
+
+export function claudePermissionMode(value: string): NonNullable<Options["permissionMode"]> {
+  // SAFETY: The set above holds exactly the PermissionMode literals the SDK accepts.
+  return PERMISSION_MODES.has(value) ? (value as NonNullable<Options["permissionMode"]>) : "default";
+}
+
+export interface ClaudeStreamChunk {
+  messageId: string;
+  text?: string;
+}
+
+/** One assistant message keeps one id: stream records carry a fresh uuid per
+ * event, so keying chunks on the record would split a reply into fragments. */
+export function claudeStreamChunk(
+  message: SDKMessage,
+  currentMessageId: string,
+): ClaudeStreamChunk {
+  if (message.type !== "stream_event") return { messageId: currentMessageId };
+  const event = message.event;
+  if (event.type === "message_start") return { messageId: message.uuid };
+  if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+    return { messageId: currentMessageId, text: event.delta.text };
+  }
+  return { messageId: currentMessageId };
 }
 
 export function claudeTurnOutput(
@@ -63,30 +101,24 @@ export class ClaudeAdapter implements AgentAdapter {
       cwd: input.cwd,
       includePartialMessages: true,
       pathToClaudeCodeExecutable: "/usr/local/bin/claude",
-      permissionMode: "default",
+      permissionMode: claudePermissionMode(input.config.permission),
     };
+    if (input.config.model !== "default") options.model = input.config.model;
     Object.assign(options, claudeOptionalOptions(input));
     let resumeId = input.resumeId ?? undefined;
     let stopReason: TurnOutput["stopReason"] = "refusal";
-    // Stream-event records carry a fresh uuid per event, so deltas must share
-    // an id per assistant message or every chunk renders as its own message.
     let messageId = input.turnId;
     for await (const message of query({ prompt: promptText(input.prompt), options })) {
       const record = asRecord(message);
       if (isString(record.session_id)) resumeId = record.session_id;
-      if (record.type === "stream_event") {
-        const event = asRecord(record.event);
-        if (event.type === "message_start") {
-          messageId = isString(record.uuid) ? record.uuid : `${input.turnId}-${Date.now()}`;
-        }
-        const delta = asRecord(event.delta);
-        if (event.type === "content_block_delta" && delta.type === "text_delta" && isString(delta.text)) {
-          await input.emit({
-            sessionUpdate: "agent_message_chunk",
-            messageId,
-            content: { type: "text", text: delta.text },
-          });
-        }
+      const chunk = claudeStreamChunk(message, messageId);
+      messageId = chunk.messageId;
+      if (chunk.text !== undefined) {
+        await input.emit({
+          sessionUpdate: "agent_message_chunk",
+          messageId,
+          content: { type: "text", text: chunk.text },
+        });
       }
       if (record.type === "result") stopReason = record.subtype === "success" ? "end_turn" : "refusal";
     }

@@ -3,7 +3,7 @@ import type {
   ClientContext,
   RequestPermissionRequest,
   RequestPermissionResponse,
-  SessionModeState,
+  SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
@@ -14,6 +14,26 @@ import { chatReducer, initialChatState } from "./reducer.js";
 interface RawSessionNotification {
   sessionId: string;
   update: Record<string, unknown>;
+}
+
+const SHOW_THINKING_KEY = "blitz-chat-show-thinking";
+
+type SelectConfig = {
+  id: string;
+  name: string;
+  currentValue: string;
+  choices: { value: string; name: string }[];
+};
+
+/** Keeps only the single-value selectors; grouped option lists are flattened. */
+function selectConfigs(options: SessionConfigOption[]): SelectConfig[] {
+  return options.flatMap((option) => {
+    if (option.type !== "select") return [];
+    const choices = option.options.flatMap((entry) =>
+      "group" in entry ? entry.options : [entry],
+    );
+    return [{ id: option.id, name: option.name, currentValue: option.currentValue, choices }];
+  });
 }
 
 type PermissionResolver = (response: RequestPermissionResponse) => void;
@@ -34,7 +54,10 @@ export function ChatPanel({
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
   const [status, setStatus] = useState("Connecting…");
   const [composer, setComposer] = useState("");
-  const [modes, setModes] = useState<SessionModeState | null>(null);
+  const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>([]);
+  const [showThinking, setShowThinking] = useState(
+    () => localStorage.getItem(SHOW_THINKING_KEY) === "true",
+  );
   const connectionRef = useRef<ClientContext | null>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId);
   const onSessionIdRef = useRef(onSessionId);
@@ -106,7 +129,7 @@ export function ChatPanel({
             });
             sessionIdRef.current = created.sessionId;
             onSessionIdRef.current(workspaceId, created.sessionId);
-            setModes(created.modes ?? null);
+            setConfigOptions(created.configOptions ?? []);
           } else {
             dispatch({ type: "begin-replay" });
             const loaded = await context.request(acp.methods.agent.session.load, {
@@ -114,7 +137,7 @@ export function ChatPanel({
               cwd: "/workspace",
               mcpServers: [],
             });
-            setModes(loaded.modes ?? null);
+            setConfigOptions(loaded.configOptions ?? []);
           }
           if (!active) break;
           attempts = 0;
@@ -206,15 +229,24 @@ export function ChatPanel({
     }
   };
 
-  const setMode = async (modeId: string): Promise<void> => {
+  const chooseConfig = async (configId: string, value: string): Promise<void> => {
     const sessionId = sessionIdRef.current;
     const context = connectionRef.current;
-    if (sessionId === null || context === null || modes === null) return;
-    await context.request(acp.methods.agent.session.setMode, { sessionId, modeId });
-    setModes({ ...modes, currentModeId: modeId });
+    if (sessionId === null || context === null) return;
+    const answer = await context.request(acp.methods.agent.session.setConfigOption, {
+      sessionId,
+      configId,
+      value,
+    });
+    setConfigOptions(answer.configOptions ?? []);
   };
 
   const connected = status === "Connected";
+  const selects = selectConfigs(configOptions);
+  const model = selects.find((option) => option.id === "model");
+  const runningModel = state.running && model !== undefined && model.currentValue !== "default"
+    ? model.choices.find((choice) => choice.value === model.currentValue)?.name
+    : undefined;
   return (
     <section className="panel chat-panel">
       <div className="chat-body">
@@ -228,6 +260,7 @@ export function ChatPanel({
           )}
           <ChatTranscript
             state={state}
+            showThinking={showThinking}
             onPermission={answerPermission}
             onOpenPreview={onOpenPreview}
           />
@@ -254,20 +287,40 @@ export function ChatPanel({
           void send();
         }}
       >
-        {modes !== null && modes.availableModes.length > 0 && (
-          <div className="chat-composer-controls">
-            <label className="chat-composer-control">
-              Mode
+        <div className="chat-composer-controls">
+          {selects.map((option) => (
+            <label
+              className={`chat-composer-control${option.id === "model" ? " chat-composer-control--model" : ""}`}
+              key={option.id}
+            >
+              <span>{option.name}</span>
               <select
-                className="chat-model-select"
-                value={modes.currentModeId}
-                onChange={(event) => void setMode(event.currentTarget.value)}
+                className={option.id === "model" ? "chat-model-select" : undefined}
+                aria-label={option.name}
+                value={option.currentValue}
+                disabled={!connected}
+                onChange={(event) => void chooseConfig(option.id, event.currentTarget.value)}
               >
-                {modes.availableModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.name}</option>)}
+                {option.choices.map((choice) => (
+                  <option key={choice.value} value={choice.value}>{choice.name}</option>
+                ))}
               </select>
             </label>
-          </div>
-        )}
+          ))}
+          <label className="chat-thinking-toggle">
+            <input
+              type="checkbox"
+              aria-label="Show thinking"
+              checked={showThinking}
+              onChange={(event) => {
+                setShowThinking(event.target.checked);
+                localStorage.setItem(SHOW_THINKING_KEY, String(event.target.checked));
+              }}
+            />
+            <span>Show thinking</span>
+          </label>
+          {runningModel && <span className="chat-active-model">Running: {runningModel}</span>}
+        </div>
         <div className="chat-input-row">
           <textarea
             aria-label="Message"

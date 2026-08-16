@@ -5,9 +5,16 @@ import type {
   PromptResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SessionConfigOption,
   SessionUpdate,
   StopReason,
 } from "@agentclientprotocol/sdk";
+import {
+  agentConfigOptions,
+  applyAgentConfig,
+  defaultAgentConfig,
+  type AgentConfig,
+} from "./agent-config.js";
 import { CredentialSource } from "./credentials.js";
 import { Journal } from "./journal.js";
 import { PROMPT_QUEUE_LIMIT, REPLAY_LIMIT } from "./config.js";
@@ -57,6 +64,7 @@ class SessionActor {
   private delivery = Promise.resolve();
   private queued = 0;
   private currentAbort: AbortController | undefined;
+  private config: AgentConfig;
 
   public constructor(
     public readonly id: string,
@@ -66,7 +74,18 @@ class SessionActor {
     private readonly adapter: AgentAdapter,
     private readonly journal: Journal,
     private readonly credentials: CredentialSource,
-  ) {}
+  ) {
+    this.config = defaultAgentConfig(provider);
+  }
+
+  public configOptions(): SessionConfigOption[] {
+    return agentConfigOptions(this.provider, this.config);
+  }
+
+  public setConfigOption(configId: string, valueId: string): SessionConfigOption[] {
+    this.config = applyAgentConfig(this.provider, this.config, configId, valueId);
+    return this.configOptions();
+  }
 
   public attach(subscriber: Subscriber, replay: boolean): Promise<void> {
     const operation = this.delivery.then(async () => {
@@ -138,6 +157,7 @@ class SessionActor {
           resumeId: this.resumeId,
           signal: abort.signal,
           token,
+          config: this.config,
           emit: (update) => this.emit(update),
           requestPermission: (request) => this.requestPermission(request),
         });
@@ -265,6 +285,14 @@ export class ActorService {
     const stored = this.journal.session(id);
     if (!stored || stored.cwd !== cwd) throw new Error("unknown session");
     await this.restore(id).attach(subscriber, true);
+  }
+
+  public configOptions(id: string): SessionConfigOption[] {
+    return this.restore(id).configOptions();
+  }
+
+  public setConfigOption(id: string, configId: string, valueId: string): SessionConfigOption[] {
+    return this.restore(id).setConfigOption(configId, valueId);
   }
 
   public prompt(id: string, prompt: ContentBlock[]): Promise<PromptResponse> {
